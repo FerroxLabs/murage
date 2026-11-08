@@ -21,7 +21,7 @@ import { TEXT_RULES } from "./redact.ts";
 export const FEEDBACK_DEADLINE_MS = 10_000;
 export const FEEDBACK_MAX_BODY_BYTES = 16 * 1024;
 
-// ── the contract (handoffs/HANDOFF-1012-UX-L-FB.md; L4A's FeedbackForm.tsx sends it) ──
+// ── the contract (HANDOFF-1012-UX-L-FB.md; L4A's FeedbackForm.tsx sends it) ──
 const id = (max: number) => z.string().min(1).max(max).regex(/^[A-Za-z0-9:._-]+$/);
 const oneOf = (values: readonly string[]) => z.string().refine((value) => values.includes(value));
 const FIXED_TITLES = new Map(Object.entries(fixed.titles));

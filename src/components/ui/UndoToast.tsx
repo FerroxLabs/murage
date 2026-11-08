@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The one Undo toast (L5A, handoffs/UNDO-HOST-DESIGN.md sections 4 and 8).
+// The one Undo toast (L5A, UNDO-HOST-DESIGN.md sections 4 and 8).
 // Bottom-left like TeamFeedbackToast (bottom-centre would cover Send). It
 // never takes focus when it appears; pointer over or focus inside holds the
 // 8-second window; Esc or X hides it while the offer keeps its deadline.

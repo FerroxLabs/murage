@@ -1,3 +1,4 @@
+import { bumpChatsGen } from "./thread-summary.ts";
 import type { HeldContinuation } from "./external-context-delivery.ts";
 import type { AskerWakeSnapshot } from "./asker-wake.ts";
 import { formerChiefOutcome } from "../shared/chief-handover.ts";
@@ -12,7 +13,7 @@ import type { MessageEngine } from "../shared/engine-switch.ts";
 import type { MessageActorKind } from "../shared/message-actor.ts";
 import { BROWSER_CHECK_FAILED_REASON, browserUnavailableActivityName } from "../shared/browser-unavailable.ts";
 import { isErrorActivity } from "../shared/message-visibility.ts";
-import { bumpUsageMonth, type UsageMonth } from "../shared/usage-month.ts";
+import { bumpRoutineUsageMonth, bumpUsageMonth, type RoutineUsageMonth, type UsageMonth } from "../shared/usage-month.ts";
 import type { RoutineRunMarkerTrigger } from "../shared/routine-run-marker.ts";
 import type { ProcedurePin } from "./procedure-bundles.ts";
 import { threadHumanPrincipal, isWorkspaceOwner, withBindingScope } from "./human-principals.ts";
@@ -26,7 +27,7 @@ import { accessRoleBinding, botAccessPolicy } from "./bot-access-role.ts";
 import type { ConnectedAppAccess } from "../shared/bot-access.ts";
 import { mentionedPeers, mentionsEveryone } from "../shared/mention-boundary.ts";
 import type { LocalSetupFailure, ProviderErrorInfo } from "../shared/provider-error.ts";
-import { parseRuntimeErrorDiagnostic, type RuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
+import type { RuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
 import { existsSync, mkdirSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -36,6 +37,7 @@ import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import { DATA_DIR, loadBrowserProfileIdAliases } from "./config.ts";
 import { clearFollowingPins, followCleanupDone, markFollowCleanupDone } from "./thread-follow-model.ts";
 import * as mdb from "./message-db.ts";
+import type { LineageRef } from "./memory/lineage-types.ts";
 import { murageLine } from "./murage-line.ts";
 import { guardHandoffPrompt, isHandoffPromptId } from "./handoff-stamp.ts";
 import type { ProviderReply } from "./provider-reply.ts";
@@ -58,6 +60,7 @@ import { newId, type CloudBackend, type EffortLevel, type ModelCatalog, type Mod
 import { fuigoBirthModel, fuigoUsable } from "./default-engine.ts";
 import { pickBotName, DEFAULT_BOT_COLOR } from "./names.ts";
 import { redactSecretsForCard, redactSecretsInText } from "./redact.ts";
+import { checkStoredRow } from "./stored-row-check.ts";
 import { queueExternalUpdate } from "./external-context-delivery.ts";
 import { AVATAR_FOCUS_CENTER, AVATAR_ZOOM_MIN, botAvatarProfile, clampAvatarFocus, clampAvatarZoom, type BotAvatarCrop } from "../shared/bot-avatar.ts";
 import { BOT_PROFILE_LIMITS } from "../shared/bot-profile.ts";
@@ -135,6 +138,8 @@ export interface OptionCardData {
   /** The tool input on this card was cut to fit; the card offers no
    * "always allow" and the owner must read the full card. */
   toolInputTruncated?: boolean;
+  /** APPROVALS-SIMPLE-1018: what the bot says it wants, one line (server/approval-text.ts cardWants). Display only. */
+  wants?: string;
   /** What a push notification for this card may say (no typed text or field values). */
   pushBody?: string;
   /** Murage for Chrome (D1): the step is one Murage asks about every time, in every mode. */
@@ -166,6 +171,9 @@ export interface OptionCardData {
   cardClass?: import("../shared/fold-scopes.ts").CardClass;
   /** 1.4: the why-line, a locale key and its params (server/approval-card-why.ts). */
   why?: import("./approval-card-why.ts").CardWhy;
+  /** NOLIMITS v1 (1.0.18): on the card No limits raises for a turn on an engine Murage does not see in full, that
+   * engine (server/approval-card-why.ts outsideEngineCard). The page says why it asks and offers Switch to Fuigo. */
+  outsideEngine?: import("./approval-card-why.ts").OutsideEngine;
   /** Advisory only, for the page: the engine path rated this permission card low when it raised it. A browser
    * pairing shows Allow only on these. The harness never reads it back (SEC-006, Decision 1). */
   lowRisk?: boolean;
@@ -289,6 +297,13 @@ export interface SecretRequestCardData {
   error?: string;
 }
 
+/** A routine turn's share of the month, beside the bot's own bucket (upstream #1864). No routine, no write. */
+function bumpRoutineUsage(owner: { usageRoutineMonths?: Record<string, Record<string, RoutineUsageMonth>> }, routine: { id: string; name: string } | undefined, turn: { input?: number; output?: number; cachedInput?: number }): void {
+  if (!routine?.id) return;
+  owner.usageRoutineMonths ??= {};
+  bumpRoutineUsageMonth(owner.usageRoutineMonths, routine, turn);
+}
+
 /** Who put a user message into the transcript. The harness decides this when
  * it writes the message, from the surface the request proved (the desktop
  * app's secret, the phone companion's launch credential), never from the
@@ -297,6 +312,38 @@ export interface SecretRequestCardData {
 export type MessageOrigin = "desktop" | "companion" | "unproven";
 export function isOwnerOrigin(origin: MessageOrigin | undefined): boolean {
   return origin === "desktop" || origin === "companion";
+}
+
+/** VENUE-POST-1017 route (a): the owner's structured pick. */
+export type PostTo = { venueId: string; venueThreadId?: string };
+
+/** The store boundary for `postTo` (VENUE-POST-1017 section 1): it stays only on a `role: "user"` text line with a proven owner origin
+ * written to a bot's own direct thread (main chat or one of its own tasks that is neither a desk nor shared work). Every other writer
+ * (channel services, import, steer, routine, an unproven caller) has it dropped: the line is stored without it, never an error. */
+export function dropUnprovenPostTo<T extends { role?: string; kind?: string; origin?: MessageOrigin; postTo?: unknown; quoteMessageId?: unknown }>(
+  input: T, directThread: boolean,
+): T {
+  if (input.postTo === undefined && input.quoteMessageId === undefined) return input;
+  const p = input.postTo as { venueId?: unknown; venueThreadId?: unknown } | undefined;
+  const shaped = !!p && typeof p === "object" && typeof p.venueId === "string" && p.venueId.length > 0
+    && (p.venueThreadId === undefined || (typeof p.venueThreadId === "string" && p.venueThreadId.length > 0));
+  if (shaped && directThread && input.role === "user" && input.kind === "text" && isOwnerOrigin(input.origin)) {
+    const postTo: PostTo = { venueId: p!.venueId as string, ...(p!.venueThreadId ? { venueThreadId: p!.venueThreadId as string } : {}) };
+    const { quoteMessageId, ...rest } = input;
+    return { ...rest, postTo, ...(typeof quoteMessageId === "string" && quoteMessageId ? { quoteMessageId } : {}) } as T;
+  }
+  const { postTo: _postTo, quoteMessageId: _quote, ...rest } = input;
+  return rest as T;
+}
+
+/** CROSS-CHAT-READ-1019 store boundary: `sharedFrom` stays only on a proven owner text line that carries a server-written copyOf (the
+ * Share route's write); `roomShareId` only on a Murage line. Every other writer has them dropped, never an error. */
+export function dropUnprovenShare<T extends { role?: string; kind?: string; origin?: MessageOrigin; copyOf?: unknown; sharedFrom?: unknown; roomShareId?: unknown; murageLine?: unknown }>(input: T): T {
+  if (input.sharedFrom === undefined && input.roomShareId === undefined) return input;
+  let out = input;
+  if (out.sharedFrom !== undefined && !(out.role === "user" && out.kind === "text" && out.copyOf && isOwnerOrigin(out.origin))) { const { sharedFrom: _s, ...rest } = out; out = rest as T; }
+  if (out.roomShareId !== undefined && out.murageLine !== true) { const { roomShareId: _r, ...rest } = out; out = rest as T; }
+  return out;
 }
 
 export interface Message {
@@ -359,9 +406,13 @@ export interface Message {
    * something — the UI offers setup instead of a retry that cannot work. */
   /** `summary` is a short read of what the call was for — the only thing that
    * tells two chips apart on engines that route every tool through a wrapper. */
-  tool?: { name: string; action?: ReturnType<typeof import("./reply-action-guard.ts").toolAction>; ok?: boolean; /** An engine notice shown in the conversation; never an action or a tool outcome. */ notice?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; claudeUpdate?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; localFailure?: LocalSetupFailure; /** The engine a local failure is about (an engine-folder failure), for the localized line. */ localFailureEngine?: string; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number;
+  tool?: { name: string; action?: ReturnType<typeof import("./reply-action-guard.ts").toolAction>; ok?: boolean; /** An engine notice shown in the conversation; never an action or a tool outcome. */ notice?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; claudeUpdate?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; /** 1.0.18: a Fuigo / Flux refusal that is not a limit (limit-continuation.ts gatewayBusy): the one card's copy. */ busy?: { engine: string; reason: import("./limit-continuation.ts").GatewayBusyReason; /** the hourly gate's reset time Flux sent (epoch ms) */ resetsAt?: number }; localFailure?: LocalSetupFailure; /** The engine a local failure is about (an engine-folder failure), for the localized line. */ localFailureEngine?: string; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number;
+    /** 1.0.18 U6 E15: the turn ended with this step still open, so it has no recorded end ("No result"). A late real completion replaces the tool and clears it. */
+    unrecorded?: boolean;
     /** An image made without an approval card (server/image-approval.ts): what was asked for and the whole prompt, shown folded like the card's. */
-    imageRecord?: { summary: string; prompt: string } };
+    imageRecord?: { summary: string; prompt: string };
+    /** U4 S3: a hand-off row's "done when" line (server/done-when.ts), shown muted under the chip. */
+    doneWhen?: string };
   /** user messages sent INTO a running turn (capabilities.queueing): the
    * model saw it mid-turn, so the transcript marks it — a reader should
    * know the reply above it may already account for this line */
@@ -393,6 +444,8 @@ export interface Message {
   /** The last assistant text item from a settled provider turn. Earlier text
    * with the same turnId is progress narration, not another final answer. */
   turnTerminal?: boolean;
+  /** Server dispatch attribution, never inferred from the current thread turn. */
+  speechGenerationId?: string;
   /** "provider": this row was written with a provider reply (server/provider-reply.ts), the engine's own text or tool start. For audit only: nothing reads it
    * as proof (the proof is the marker handed to the store as the row is written, handoff-evidence.ts). */
   provenance?: "provider";
@@ -444,6 +497,18 @@ export interface Message {
   queueId?: string;
   /** user messages: see MessageOrigin. Server-written only. */
   origin?: MessageOrigin;
+  /** VENUE-POST-1017 route (a): the venue the owner picked with Post in… for this line. Kept only on a proven owner line of a bot's own
+   *  direct thread (dropUnprovenPostTo, at every append); never rendered to bots. */
+  postTo?: PostTo;
+  /** VENUE-POST-1017: the bot reply the owner asked to post with "Post this in…" (only beside postTo). */
+  quoteMessageId?: string;
+  /** VENUE-POST-1017: a row a bot posted into a room from its own chat with the owner (the room note and the bots' context line). */
+  postedFrom?: { botId: string; threadId: string };
+  /** CROSS-CHAT-READ-1019: an owner line written by the owner's Share of a room_shares card (server/room-shares.ts), beside a server-written
+   *  copyOf. Kept only on a role "user" line that carries copyOf (dropUnprovenShare); memory capture skips it. */
+  sharedFrom?: { botId: string; shareId: string };
+  /** CROSS-CHAT-READ-1019: the room line that holds a bot's share request (its text is the query only; the card body is owner-only). */
+  roomShareId?: string;
   /** user messages: the line is third-party words that arrived by a phone share or an ask-intent. Server-written only; patchMessage never changes it. */
   via?: "share" | "ask-intent";
   /** user messages: the standing instruction a scheduled or manual routine
@@ -676,6 +741,9 @@ export interface TaskRecord {
   linkAuto?: boolean;
   /** provider-native continuation per instance, for THIS task only */
   resumeCursors: Record<string, unknown>;
+  /** Site 26: private, bounded to one entry per provider slot. */
+  resumePolicies?: Record<string, { root: string; sha256: string }>;
+  replayPending?: Record<string, { cursor: string }>;
   /** SPEC-P 13.1 (lane E1): the audience fingerprint each cursor was made
    * under (owner-audience.ts). A turn for another audience never resumes it.
    * Absent for a cursor from before, which reads as the owner's. */
@@ -814,15 +882,9 @@ export interface TaskUsage {
  * is theirs and stays as typed. Stored, not just displayed: the transcript
  * is replayed into every rebuild, and a leaked key would otherwise be
  * permanent. */
-function sanitizeMessageDiagnostic<T extends Omit<Message, "id" | "at">>(message: T): T {
-  if (message.tool?.diagnostic === undefined) return message;
-  const tool = { ...message.tool };
-  delete tool.diagnostic;
-  const diagnostic = parseRuntimeErrorDiagnostic(message.tool.diagnostic);
-  if (message.role === "bot" && message.kind === "activity" && diagnostic?.turnId === message.turnId) tool.diagnostic = diagnostic;
-  return { ...message, tool };
-}
-
+/** U4 S3: a stored row passes checkStoredRow (server/stored-row-check.ts) at the one decoder and encoder (transcript-seq.ts), so every
+ * mdb read is already checked. It is called here only where a row is built or patched in memory, so the copy in memory equals the
+ * stored copy. */
 /** A removal row keeps what the guard cut from a bot's reply: bot-authored,
  * so it is redacted and bounded wherever it is written. */
 function boundRemovedText<T extends Partial<Message>>(message: T): T {
@@ -830,7 +892,7 @@ function boundRemovedText<T extends Partial<Message>>(message: T): T {
 }
 
 function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number }>(message: T): T {
-  message = boundRemovedText(sanitizeMessageDiagnostic(message));
+  message = boundRemovedText(checkStoredRow(message));
   if (typeof message.text === "string") message = { ...message, text: renderMurageTools(message.text, NEUTRAL_TOOL_SURFACE, { agents: "agents", memory: "murage-memory", phone: "phone", browser: "browser" }) };
   if (message.role !== "bot") return message;
   const out = { ...message };
@@ -1042,6 +1104,9 @@ export interface BotRecord {
   partitionedAt?: number;
   /** What this bot used per local calendar month (Settings, Usage). Upserted with each settled turn; bounded to a year. Months before 1.0.3 have no bucket. */
   usageMonths?: Record<string, UsageMonth>;
+  /** The part of usageMonths that routines ran, by month then routine id (Settings, Usage: "This month by routine").
+   * Upserted in the same write; bounded to a year and ROUTINE_USAGE_KEPT routines a month. Months before 1.0.18 have none. */
+  usageRoutineMonths?: Record<string, Record<string, RoutineUsageMonth>>;
   id: string;
   /** the ACTIVE task's thread — everything that runs a turn reads this */
   threadId: ThreadId;
@@ -1078,6 +1143,9 @@ export interface BotRecord {
   limitBackup?: { selection: ModelSelection; routines: boolean; at: number };
   /** provider-native continuation per instance (e.g. claude session id) */
   resumeCursors: Record<string, unknown>;
+  /** Site 26: private, bounded to one entry per provider slot. */
+  resumePolicies?: Record<string, { root: string; sha256: string }>;
+  replayPending?: Record<string, { cursor: string }>;
   /** Presentation only; never excludes the bot from authority or routing. */
   sidebarHidden?: boolean;
   /** Durable replay refusal for the exact reviewed package import. */
@@ -1262,6 +1330,9 @@ export interface BotRecord {
   browser?: boolean;
   /** 1.0.9 phone tools: what this bot may ask the owner's phone to do. Absent key = off. Owner-only PATCH (S7). */
   phoneApps?: import("../shared/phone-apps.ts").PhoneApps;
+  /** Native HighLevel grants (HL-S2): which confirmed locations and tools this bot may use, read or propose. Owner-only PUT
+   * /api/highlevel/bots/:botId/access; bound to the bot's role (server/highlevel/access.ts nativeAccessFor). */
+  highlevelAccess?: import("../shared/highlevel.ts").HighLevelBotAccess;
   /** Id of a named browser profile from config.browserProfiles; absent = the
    * bot's own private session. */
   browserProfile?: string;
@@ -1713,6 +1784,8 @@ function isOnboardingSuggestion(message: Message): boolean {
 /** 1.0.15 BIRTH-FUIGO: the live inputs of birthSelection. `fuigo` lists the registry's live Fuigo instances (birth keeps only the
  * usable ones); `copyChief` is false on a Cloud home, where engine sign-ins are per bot and a copy cannot be shown to work. */
 export interface BirthDeps {
+  signedIn?: (source: ModelSelection | null) => { instanceId: string; model: string } | null;
+  eligible?: (instanceId: string) => boolean;
   fuigo(): ReadonlyArray<{ instanceId: string; driverKind?: string; enabled?: boolean; models: ModelCatalog }>;
   copyChief: boolean;
   /** r3 (MurageMain 11-02): desktop only. The first-launch engine probe's reading (pickDefaultEngine, which already leaves out a keyless
@@ -1720,7 +1793,24 @@ export interface BirthDeps {
   firstBot?: () => ModelSelection;
 }
 
+export interface SpeechStoreHooks {
+  attribute(threadId: string, message: Message): string | undefined;
+  prompt(threadId: string, message: Message): void;
+  settle(threadId: string, turnId: string, message: Message | null, outcome: MemoryTurnOutcome): void;
+  deleted(threadId: string): void;
+}
 export class Store {
+  private speechHooks?: SpeechStoreHooks;
+  setSpeechHooks(hooks: SpeechStoreHooks): void { this.speechHooks = hooks; }
+  private speechAttribute(threadId: string, message: Message): void {
+    delete message.speechGenerationId;
+    const generation = this.speechHooks?.attribute(threadId, message);
+    if (generation) message.speechGenerationId = generation;
+  }
+  private speechAccepted(threadId: string, message: Message): void {
+    if (message.role === "user" && message.kind === "text" && isOwnerOrigin(message.origin)) this.speechHooks?.prompt(threadId, message);
+  }
+
   bots: BotRecord[] = [];
   groups: GroupRecord[] = [];
   /** Threads whose holder has pending held work: held continuations, owed external updates, or a queue row still to settle. The
@@ -1736,6 +1826,15 @@ export class Store {
   /** Unsubscribes this store from the numbering walk (a test that builds many stores). */
   readonly stopSeqStamps: () => void;
   /** Where each id sits in a held thread's array, for the walk's stamps: rebuilt when a position no longer names the id. */
+  /** VENUE-POST-1017: dropUnprovenPostTo with the direct-thread fact from the roster now. */
+  private boundPostTo<T extends Omit<Message, "id" | "at">>(threadId: string, input: T): T {
+    input = dropUnprovenShare(input);
+    if (input.postTo === undefined && input.quoteMessageId === undefined) return input;
+    const direct = this.bots.some(bot => bot.threadId === threadId
+      || (bot.tasks ?? []).some(task => task.threadId === threadId && !task.channelProjectDesk && !task.sharedWork));
+    const room = this.groups.some(group => group.threadId === threadId || (group.tasks ?? []).some(task => task.threadId === threadId));
+    return dropUnprovenPostTo(input, direct && !room);
+  }
   private seqPlaces = new WeakMap<ThreadState, Map<string, number>>();
   private stampSeq(threadId: string, stamps: ReadonlyArray<readonly [string, number]>, flipped: () => boolean): void {
     const t = this.threads.peek(threadId);
@@ -1769,7 +1868,7 @@ export class Store {
   private writes = new Map<string, number>();
   /** 1.0.15 BIRTH-FUIGO: what a bot with no owner pick is born on (birthSelection). A bare function is a fixed fixture selection
    * (tests and test worlds); the server passes BirthDeps. */
-  private birth: (() => ModelSelection) | BirthDeps;
+  private birth: (() => ModelSelection) | (BirthDeps & { eligible: (instanceId: string) => boolean });
   private listeners = new Set<(change: StoreChange) => void>();
   private accessRoles = new Map<string, string>();
   private legacyActivities = new Map<string, BotActivity>();
@@ -1780,14 +1879,16 @@ export class Store {
   private memoryReady = true;
   finishSharingBoot(): void { this.memoryReady = true; reconcileMemoryRoster(this, { unlessUnchanged: true }); }
 
-  constructor(birth: (() => ModelSelection) | BirthDeps, completeNewBotSelection: (selection: ModelSelection) => ModelSelection = (selection) => selection, deferMemoryReconcile = false) {
+  // Standalone callers can load records and supply explicit selections without a
+  // live engine registry. With no birth dependencies, automatic births stay empty.
+  constructor(birth: (() => ModelSelection) | BirthDeps = () => ({ instanceId: "", model: "" }), completeNewBotSelection: (selection: ModelSelection) => ModelSelection = (selection) => selection, deferMemoryReconcile = false) {
     // A load reads the files: any deferred write from an earlier instance lands first.
     flushCoalesced();
     this.memoryReady = !deferMemoryReconcile;
     // the numbering walk stamps the threads held in memory in place, and sorts one by number once when it flips (r7 R1)
     this.stopSeqStamps = onSeqNumbered((threadId, stamps, flipped) => this.stampSeq(threadId, stamps, flipped));
     this.completeNewBotSelection = completeNewBotSelection;
-    this.birth = birth;
+    this.birth = typeof birth === "function" ? birth : { ...birth, eligible: birth.eligible ?? (() => true) };
     mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
     // The registries carry souls, project paths and per-bot settings: owner
     // only like routines and webhooks (upstream #1620). Older releases wrote
@@ -2522,7 +2623,7 @@ export class Store {
   private deleteThreadRecord(threadId: string) {
     this.threads.delete(threadId);
     this.lastActivity.delete(threadId);
-    mdb.deleteThread(threadId);
+    transaction(() => { this.speechHooks?.deleted(threadId); mdb.deleteThread(threadId); });
     for (const file of [messagesFile(threadId), `${messagesFile(threadId)}.imported`]) {
       try {
         unlinkSync(file);
@@ -2722,7 +2823,7 @@ export class Store {
   /** Patch one message whose row is already in hand. A thread already in memory goes through patchMessage (its cache stays right); otherwise only that row is rewritten, so the transcript is never loaded. */
   private patchMessageRow(threadId: string, current: Message, patch: Partial<Message>): Message | null {
     if (this.threads.has(threadId)) return this.patchMessage(threadId, current.id, patch);
-    const next = sanitizeMessageDiagnostic({ ...current, ...boundRemovedText(patch), card: patch.card ?? current.card });
+    const next = checkStoredRow({ ...current, ...boundRemovedText(patch), card: patch.card ?? current.card });
     mdb.updateMessage(threadId, next);
     this.emit({ type: "message.patch", threadId, message: next, before: current });
     return next;
@@ -2876,7 +2977,7 @@ export class Store {
    * sanitization, and legacy rows (no parentId) chained to the row before
    * them in stored order. `previous` seeds that chain for a bounded slice. */
   private loadedMessages(stored: Message[], previous: Message | null = null): Message[] {
-    const messages = stored.map(sanitizeMessageDiagnostic);
+    const messages = stored.slice();
     let prev: string | null = previous?.id ?? null;
     for (const m of messages) {
       if (m.parentId === undefined) m.parentId = prev;
@@ -3191,7 +3292,7 @@ export class Store {
       return at === -1 ? null : loaded.messages.slice(at + 1, at + 1 + limit);
     }
     const rows = mdb.readThreadAfter(threadId, messageId, limit);
-    return rows && rows.map(sanitizeMessageDiagnostic);
+    return rows;
   }
 
   /** Walk the active branch from its head toward the root, at most `limit`
@@ -3209,7 +3310,7 @@ export class Store {
       seen.add(next);
       const step = mdb.branchStep(threadId, next);
       if (!step) return false;
-      if (visit(sanitizeMessageDiagnostic(step.message))) return true;
+      if (visit(step.message)) return true;
       next = step.parent;
     }
     return false;
@@ -3263,14 +3364,28 @@ export class Store {
   turnRows(threadId: string, turnId: string): Message[] {
     const loaded = this.threads.get(threadId);
     if (loaded) return loaded.messages.filter((m) => m.turnId === turnId);
-    return mdb.turnRows(threadId, turnId).map(sanitizeMessageDiagnostic);
+    return mdb.turnRows(threadId, turnId);
   }
 
   /** The rows one turn wrote, read through the turn index (turn_first) even when the thread is loaded: the work is the turn's own
    * rows, never a filter over the loaded thread's history. A loaded thread not yet prepared reads its cache, as turnRows does. */
   turnRowsBounded(threadId: string, turnId: string): Message[] {
     if (this.threads.has(threadId) && !isThreadPrepared(threadId)) return this.turnRows(threadId, turnId);
-    return mdb.turnRows(threadId, turnId).map(sanitizeMessageDiagnostic);
+    return mdb.turnRows(threadId, turnId);
+  }
+
+  /** 1.0.18 U6 E15 (pass 1, turn end): the open tool rows of exactly this turn (turn index, never a time window or the whole
+   * thread) are marked `unrecorded`, so they stop spinning forever. Rows of another turn, engine notices and settled rows are
+   * left as they are. Idempotent. Returns how many rows were marked. */
+  markTurnToolsUnrecorded(threadId: string, turnId: string): number {
+    let marked = 0;
+    for (const row of this.turnRowsBounded(threadId, turnId)) {
+      const tool = row.tool;
+      if (row.role !== "bot" || row.kind !== "activity" || row.turnId !== turnId || !tool) continue;
+      if (tool.ok !== undefined || tool.notice || tool.unrecorded) continue;
+      if (this.patchMessagePoint(threadId, row.id, { tool: { ...tool, unrecorded: true } })) marked += 1;
+    }
+    return marked;
   }
 
   /** The ids of the replies a turn wrote on its own (bot text that is not a copy), oldest first: the originals a copy of the
@@ -3279,7 +3394,7 @@ export class Store {
   turnReplyOriginals(threadId: string, turnId: string): string[] {
     const isOriginal = (m: Message) => m.role === "bot" && m.kind === "text" && !m.copyOf;
     const loaded = this.threads.get(threadId);
-    const rows = loaded ? loaded.messages.filter((m) => m.turnId === turnId) : mdb.turnTextRows(threadId, turnId, [LINE_TEXT, LINE_BOT_EMPTY]).map(sanitizeMessageDiagnostic);
+    const rows = loaded ? loaded.messages.filter((m) => m.turnId === turnId) : mdb.turnTextRows(threadId, turnId, [LINE_TEXT, LINE_BOT_EMPTY]);
     return rows.filter(isOriginal).map((m) => m.id);
   }
 
@@ -3290,17 +3405,17 @@ export class Store {
       for (let i = loaded.messages.length - 1; i >= 0; i--) { const m = loaded.messages[i]!; if (lineClassesOf(m).some((cls) => classes.includes(cls)) && visit(m)) return true; }
       return false;
     }
-    return mdb.scanTextLinesNewest(threadId, (m) => visit(sanitizeMessageDiagnostic(m)), classes);
+    return mdb.scanTextLinesNewest(threadId, visit, classes);
   }
 
   /** The rows of this thread that carry saved files (artifactIds), by index. */
   artifactRows(threadId: string): Message[] {
-    return mdb.artifactRows(threadId).map(sanitizeMessageDiagnostic);
+    return mdb.artifactRows(threadId);
   }
 
   /** ROUTINE-DELIVER-1010: saved-file rows of one window of a conversation (message-db.ts artifactRowsBetween). */
   artifactRowsBetween(threadId: string, from: number, to: number, limit: number): Message[] {
-    return mdb.artifactRowsBetween(threadId, from, to, limit).map(sanitizeMessageDiagnostic);
+    return mdb.artifactRowsBetween(threadId, from, to, limit);
   }
 
   /** The first row of this thread that attaches `path`, by the message_image
@@ -3309,7 +3424,7 @@ export class Store {
     const loaded = this.threads.get(threadId);
     if (loaded) return loaded.messages.find((message) => message.attachments?.some((item) => item.path === path));
     const row = mdb.rowsNamingImage(threadId, path).find((message) => message.attachments?.some((item) => item.path === path));
-    return row && sanitizeMessageDiagnostic(row);
+    return row;
   }
 
   /** The thread's open request cards, read through the card index (never the
@@ -3317,10 +3432,10 @@ export class Store {
   openRequestCardRows(threadId: string): Message[] {
     const loaded = this.threads.get(threadId);
     const open = mdb.openRequestCards(threadId, OPEN_CARD_SWEEP_LIMIT).reverse()
-      .map(({ message }) => loaded?.messages.find((row) => row.id === message.id) ?? sanitizeMessageDiagnostic(message));
+      .map(({ message }) => loaded?.messages.find((row) => row.id === message.id) ?? message);
     // a card the start retired (its run died) is out of the open-card list but still answerable: it counts as open here (keyed family "orphaned")
     const seen = new Set(open.map((row) => row.id));
-    const orphaned = (loaded ? loaded.messages.filter((row) => row.card?.orphaned && row.card.requestId && !row.card.answered && !row.card.dismissed) : mdb.keyedCardRows(threadId, "orphaned").map(sanitizeMessageDiagnostic))
+    const orphaned = (loaded ? loaded.messages.filter((row) => row.card?.orphaned && row.card.requestId && !row.card.answered && !row.card.dismissed) : mdb.keyedCardRows(threadId, "orphaned"))
       .filter((row) => !seen.has(row.id));
     return orphaned.length ? [...orphaned, ...open].sort((a, b) => a.at - b.at) : open;
   }
@@ -3366,19 +3481,19 @@ export class Store {
    * setup flow said, an unconfirmed steer. Read through keyed_card, so the
    * work is those rows and never the thread, loaded or not. */
   keyedCards(threadId: string, family: KeyedFamily, key?: string): Message[] {
-    return mdb.keyedCardRows(threadId, family, key).map(sanitizeMessageDiagnostic);
+    return mdb.keyedCardRows(threadId, family, key);
   }
 
   /** A thread's rows of one kind, oldest first, by the (kind, thread) index:
    * only for a kind that is rare by nature ("secret", "connector"). */
   rowsOfKind(threadId: string, kind: string): Message[] {
-    return mdb.rowsOfKind(threadId, kind).map(sanitizeMessageDiagnostic);
+    return mdb.rowsOfKind(threadId, kind);
   }
 
   /** Every thread's rows filed under `family` (a family that is small by
    * nature: open browser-setup offers), by thread then position. */
   keyedCardsEverywhere(family: KeyedFamily): Array<{ threadId: string; message: Message }> {
-    return mdb.keyedCardRowsAll(family).map((row) => ({ threadId: row.threadId, message: sanitizeMessageDiagnostic(row.message) }));
+    return mdb.keyedCardRowsAll(family).map((row) => ({ threadId: row.threadId, message: row.message }));
   }
 
   /** The newest screen frame of a thread that still carries its pixels. Pruning
@@ -3388,7 +3503,7 @@ export class Store {
     const loaded = this.threads.get(threadId);
     if (loaded) return loaded.messages.findLast((m) => m.kind === "screen" && Boolean(m.png));
     const found = mdb.newestScreenWithPixels(threadId);
-    return found ? sanitizeMessageDiagnostic(found) : undefined;
+    return found ?? undefined;
   }
 
   /** Whether the thread has a row with this id: one keyed read, loaded or not. */
@@ -3455,7 +3570,7 @@ export class Store {
           seen.add(cursor);
           const step = mdb.branchStep(threadId, cursor);
           if (!step) { cursor = null; break; }
-          messages.push(sanitizeMessageDiagnostic(step.message));
+          messages.push(step.message);
           cursor = step.parent;
           if ((messages.length & 31) === 0 && performance.now() >= end) break;
         }
@@ -3508,7 +3623,7 @@ export class Store {
         while (id && page.length < pageRows) {
           const step = mdb.branchStep(threadId, id);
           if (!step) break;
-          page.push(sanitizeMessageDiagnostic(step.message));
+          page.push(step.message);
           id = step.parent;
         }
         return { messages: page.reverse(), done: starts.length === 0 };
@@ -3555,7 +3670,7 @@ export class Store {
     const loaded = this.threads.get(threadId);
     if (loaded && !isThreadPrepared(threadId)) { const path = this.activePath(threadId); return path.findLast((m) => Boolean(m.card?.requestId)); }
     const found = mdb.topRowsOnBranch(threadId, this.branchLeaf(threadId), LINE_REQUEST_CARD, 1).rows[0];
-    return found && sanitizeMessageDiagnostic(found.message);
+    return found && found.message;
   }
 
   /** The newest text line of the active branch that `test` accepts (the room's last owner message, for one). */
@@ -3563,7 +3678,7 @@ export class Store {
     const loaded = this.threads.get(threadId);
     if (loaded && !isThreadPrepared(threadId)) return this.activePath(threadId).findLast((m) => m.kind === "text" && Boolean(m.text) && test(m));
     const found = mdb.topRowsOnBranch(threadId, this.branchLeaf(threadId), LINE_TEXT, 1, test).rows[0];
-    return found && sanitizeMessageDiagnostic(found.message);
+    return found && found.message;
   }
 
   /** The newest row of a class (branch-index LINE_*) on the active branch, with its place for ordering against other rows. */
@@ -3575,12 +3690,12 @@ export class Store {
       return undefined;
     }
     const found = mdb.topRowsOnBranch(threadId, this.branchLeaf(threadId), cls, 1, accept).rows[0];
-    return found && mdb.rowPlace(threadId, this.branchLeaf(threadId), found.mrow, sanitizeMessageDiagnostic(found.message));
+    return found && mdb.rowPlace(threadId, this.branchLeaf(threadId), found.mrow, found.message);
   }
 
   /** The newest `limit` text lines of the active branch, oldest first, and whether the branch has older ones: the lines a
    * replay is built from, found through the line index and the branch index however many tool rows lie between them. */
-  activeTextLines(threadId: string, limit: number): { messages: Message[]; hasMore: boolean } {
+  activeTextLines(threadId: string, limit: number): { messages: Message[]; hasMore: boolean; exact: boolean } {
     const loaded = this.threads.get(threadId);
     if (loaded && !isThreadPrepared(threadId)) {
       const out: Message[] = [];
@@ -3591,10 +3706,11 @@ export class Store {
         out.push(m);
         return false;
       });
-      return { messages: out.reverse(), hasMore: more };
+      // the loaded thread's whole active path is in memory: the walk is exact
+      return { messages: out.reverse(), hasMore: more, exact: true };
     }
     const found = mdb.activeTextLines(threadId, loaded ? loaded.activeLeafId : mdb.readActiveLeafOrNewest(threadId), limit);
-    return { messages: found.messages.map(sanitizeMessageDiagnostic), hasMore: found.hasMore };
+    return { messages: found.messages, hasMore: found.hasMore, exact: found.exact };
   }
 
   /** Rows of one class of the line index (branch-index.ts LINE_*) that are on the active branch, newest first. `after(other)`
@@ -3607,7 +3723,7 @@ export class Store {
       return;
     }
     for (const row of mdb.branchLinesNewest(threadId, loaded ? loaded.activeLeafId : mdb.readActiveLeafOrNewest(threadId), cls)) {
-      yield { message: sanitizeMessageDiagnostic(row.message), position: row.mrow, after: row.after };
+      yield { message: row.message, position: row.mrow, after: row.after };
     }
   }
 
@@ -3620,7 +3736,7 @@ export class Store {
       for (let i = loaded.messages.length - 1; i >= 0 && out.length < limit; i--) { const m = loaded.messages[i]!; if (m.kind === "text" && m.text) out.push(m); }
       return out.reverse();
     }
-    return mdb.newestTextLines(threadId, limit).map(sanitizeMessageDiagnostic);
+    return mdb.newestTextLines(threadId, limit);
   }
 
   /** The visible conversation: root → activeLeafId. */
@@ -3676,9 +3792,13 @@ export class Store {
       });
       const kept = settledTurnHelpers(helpers);
       const next = message ? { ...message, turnTerminal: true, ...(kept.length ? { turnHelpers: kept } : {}) } : null;
-      transaction(() => {
-        if (next) mdb.updateMessage(threadId,next);
+      transaction(db => {
+        if (next) {
+          mdb.updateMessage(threadId,next);
+          if (outcome === "cancelled") bumpChatsGen(db);
+        }
         recordMemorySettlement(threadId,turnId,outcome);
+        this.speechHooks?.settle(threadId, turnId, next, outcome);
       });
       if (next) {
         const at = t ? t.messages.findIndex(m => m.id === next.id) : -1;
@@ -3714,12 +3834,14 @@ export class Store {
    * messages as in one of 20 (the restart marker of an interrupted direct turn). */
   appendAfterHead(threadId: string, headId: string, input: Omit<Message, "id" | "at">): Message | null {
     if (this.threads.has(threadId)) return this.thread(threadId).activeLeafId === headId ? this.appendMessage(threadId, input) : null;
+    input = this.boundPostTo(threadId, input);
     return this.writing(threadId, () => {
       if (mdb.readActiveLeafOrNewest(threadId) !== headId) return null;
       const message = this.messageRewrite ? this.messageRewrite(threadId, input) : input;
       if (message === null) return null;
       const full: Message = { id: newId(), at: Date.now(), parentId: headId, ...redactBotAuthored(message) };
-      mdb.appendMessage(threadId, full);
+      this.speechAttribute(threadId, full);
+      mdb.appendMessage(threadId, full, () => this.speechAccepted(threadId, full));
       this.emit({ type: "message", threadId, message: full });
       return full;
     });
@@ -3727,12 +3849,14 @@ export class Store {
 
   /** `within` runs in the same transaction as the insert (links the message must not exist without); if it throws, nothing
    * is written, cached or announced. A `stableId` that already names a stored row returns that row (a redelivered event). */
-  appendMessage(threadId: string, input: Omit<Message, "id" | "at"> & { at?: number }, stableId?: string, within?: (message: Message) => void, reply?: ProviderReply): Message {
+  appendMessage(threadId: string, input: Omit<Message, "id" | "at"> & { at?: number }, stableId?: string, within?: (message: Message) => void, reply?: ProviderReply,
+    lineage?: readonly LineageRef[]): Message {
+    input = this.boundPostTo(threadId, input);
     return this.writing(threadId, () => {
       // A thread that is not loaded is not loaded to add one row (a screen
       // frame prunes the newest frames, read by index).
       if (!this.threads.has(threadId)) {
-        const appended = this.appendUnloaded(threadId, input, stableId, within);
+        const appended = this.appendUnloaded(threadId, input, stableId, within, lineage);
         if (appended) return appended;
       }
       const t = this.thread(threadId);
@@ -3741,8 +3865,9 @@ export class Store {
       if (message === null) return { id: newId(), at: Date.now(), parentId: t.activeLeafId, ...redactBotAuthored(input) };
       const full: Message = { id: stableId ?? newId(), at: Date.now(), parentId: t.activeLeafId, ...redactBotAuthored(message) };
       // Runtime proof of the one dispatch path: a hand-off's prompt id is written only in the transaction that moves its row to started (handoff-stamp.ts).
-      const inside = within ? () => within(full) : undefined;
-      mdb.appendMessage(threadId, full, isHandoffPromptId(full.id) ? guardHandoffPrompt(database, full.id, inside) : inside, reply);
+      this.speechAttribute(threadId, full);
+      const inside = () => { this.speechAccepted(threadId, full); within?.(full); };
+      mdb.appendMessage(threadId, full, isHandoffPromptId(full.id) ? guardHandoffPrompt(database, full.id, inside) : inside, reply, lineage);
       t.messages.push(full);
       t.activeLeafId = full.id;
       this.grew(threadId, t, messageBytes(full));
@@ -3769,7 +3894,8 @@ export class Store {
    * and owner-message follow-up, from the stored branch head and the newest
    * APPEND_TAIL_ROWS rows, never the transcript. Null for a thread with no
    * rows, which takes the full path (its one-time legacy import). */
-  private appendUnloaded(threadId: string, input: Omit<Message, "id" | "at"> & { at?: number }, stableId?: string, within?: (message: Message) => void): Message | null {
+  private appendUnloaded(threadId: string, input: Omit<Message, "id" | "at"> & { at?: number }, stableId?: string, within?: (message: Message) => void,
+    lineage?: readonly LineageRef[]): Message | null {
     const leaf = mdb.readActiveLeafOrNewest(threadId);
     if (leaf === null) return null;
     if (stableId) { const held = mdb.storedMessage(threadId, stableId); if (held) return held; }
@@ -3778,7 +3904,8 @@ export class Store {
     const owner = message.role === "user" && message.kind === "text";
     const recent = owner ? this.newestMessages(threadId, APPEND_TAIL_ROWS).messages : [];
     const full: Message = { id: stableId ?? newId(), at: Date.now(), parentId: leaf, ...redactBotAuthored(message) };
-    mdb.appendMessage(threadId, full, within ? () => within(full) : undefined);
+    this.speechAttribute(threadId, full);
+    mdb.appendMessage(threadId, full, () => { this.speechAccepted(threadId, full); within?.(full); }, undefined, lineage);
     if (full.kind === "screen") {
       for (const pruned of this.pruneScreenFrames({ messages: this.newestFrames(threadId) }, 4)) {
         mdb.updateMessage(threadId, pruned);
@@ -3809,7 +3936,7 @@ export class Store {
    * it), never from a look through the rows stored since. A legacy row with no parentId is the child of the row stored
    * before it, as a load reads it. */
   private childrenStoredAfter(threadId: string, anchorId: string): Message[] {
-    return mdb.childrenOfRow(threadId, anchorId).map(sanitizeMessageDiagnostic);
+    return mdb.childrenOfRow(threadId, anchorId);
   }
 
   /** The newest screen frames of a thread that is not loaded, oldest first:
@@ -3853,8 +3980,9 @@ export class Store {
         const screens = [...(t ? t.messages : this.newestFrames(threadId)), full].filter((m) => m.kind === "screen" && m.png);
         for (const m of screens.slice(0, Math.max(0, screens.length - 4))) prunedCopies.push({ ...m, png: undefined });
       }
-      const reparented = children.map((child) => sanitizeMessageDiagnostic({ ...child, parentId: full.id }));
-      transaction(() => { mdb.insertMessageAfter(threadId, full, anchorId!, prunedCopies, reparented); });
+      const reparented = children.map((child) => checkStoredRow({ ...child, parentId: full.id }));
+      this.speechAttribute(threadId, full);
+      transaction(() => { mdb.insertMessageAfter(threadId, full, anchorId!, prunedCopies, reparented); this.speechAccepted(threadId, full); });
       if (!t) {
         for (const pruned of prunedCopies) this.emit({ type: "message.patch", threadId, message: pruned });
         this.emit({ type: "message", threadId, message: full });
@@ -3898,16 +4026,18 @@ export class Store {
       const t = this.threads.get(threadId);
       if (stableId) { const held = t?.messages.find(m => m.id === stableId) ?? mdb.storedMessage(threadId, stableId); if (held) return held; }
       const step = t ? undefined : mdb.branchStep(threadId, beforeId);
-      const target = t ? t.messages.find((m) => m.id === beforeId) : step ? sanitizeMessageDiagnostic({ ...step.message, parentId: step.parent }) : undefined;
+      const target = t ? t.messages.find((m) => m.id === beforeId) : step ? checkStoredRow({ ...step.message, parentId: step.parent }) : undefined;
       if (!target) return this.appendMessage(threadId, input, stableId, within, reply);
       const message = this.messageRewrite ? this.messageRewrite(threadId, input) : input;
       if (message === null) return { id: newId(), at: Date.now(), parentId: target.parentId, ...redactBotAuthored(input) };
       // No backfill for unmarked rows: insertion before a row first ships with
       // this marker, so no saved database holds an unmarked inserted row.
       const full: Message = { id: stableId ?? newId(), at: Date.now(), ...redactBotAuthored(message), parentId: target.parentId, insertedBefore: target.id };
-      const moved = sanitizeMessageDiagnostic({ ...target, parentId: full.id });
+      const moved = checkStoredRow({ ...target, parentId: full.id });
+      this.speechAttribute(threadId, full);
       transaction(() => {
         mdb.insertMessageBefore(threadId, full, moved, reply);
+        this.speechAccepted(threadId, full);
         const inside = within ? () => within(full) : undefined;
         if (isHandoffPromptId(full.id)) guardHandoffPrompt(database, full.id, inside)(); else inside?.();
       });
@@ -3996,7 +4126,8 @@ export class Store {
         ...(source.via ? { via: source.via } : {}),
         ...(sendId ? { sendId } : {}),
       };
-      mdb.appendMessage(threadId, full);
+      this.speechAttribute(threadId, full);
+      mdb.appendMessage(threadId, full, () => this.speechAccepted(threadId, full));
       t.messages.push(full);
       t.activeLeafId = full.id;
       this.grew(threadId, t, messageBytes(full));
@@ -4031,7 +4162,8 @@ export class Store {
         ...(source.via ? { via: source.via } : {}),
         ...(sendId ? { sendId } : {}),
       };
-      mdb.appendMessage(threadId, full);
+      this.speechAttribute(threadId, full);
+      mdb.appendMessage(threadId, full, () => this.speechAccepted(threadId, full));
       this.emit({ type: "message", threadId, message: full });
       this.emit({ type: "thread", threadId, activeLeafId: full.id });
       return full;
@@ -4068,8 +4200,8 @@ export class Store {
         const step = mdb.branchStep(threadId, messageId);
         // the message is gone: the other change is still owed, as on a loaded thread (no conversation is made for it)
         if (!step) { if (within) transaction(() => within()); return null; }
-        const before = sanitizeMessageDiagnostic({ ...step.message, parentId: step.parent });
-        const next = sanitizeMessageDiagnostic({ ...before, ...boundRemovedText(patch), card: patch.card ?? before.card });
+        const before = checkStoredRow({ ...step.message, parentId: step.parent });
+        const next = checkStoredRow({ ...before, ...boundRemovedText(patch), card: patch.card ?? before.card });
         // `within` joins this write too: a card settled with the send it became (QW Q1) is one transaction on an unloaded thread as well
         mdb.updateMessage(threadId, next, within);
         this.emit({ type: "message.patch", threadId, message: next, before });
@@ -4078,7 +4210,7 @@ export class Store {
       const t = this.thread(threadId);
       const idx = t.messages.findIndex((m) => m.id === messageId);
       if (idx === -1) { if (within) transaction(() => within()); return null; }
-      const next = sanitizeMessageDiagnostic({ ...t.messages[idx], ...boundRemovedText(patch), card: patch.card ?? t.messages[idx].card });
+      const next = checkStoredRow({ ...t.messages[idx], ...boundRemovedText(patch), card: patch.card ?? t.messages[idx].card });
       // SQLite is the durable source of truth. Persist before changing memory so
       // a failed write cannot make this process believe a card was answered
       // while a restart would still show it as pending.
@@ -4109,6 +4241,7 @@ export class Store {
       /** false = no greeting/onboarding seed. Imported bots must not open
        * with a first-person greeting the user never asked for. */
       seedMessages?: boolean;
+      beforeCreate?: (id: string) => void;
       /** A bot made by a caller that proved nothing (route-policy.ts): no
        *  computer, browser or connected apps until the owner turns them on. */
       noAccess?: boolean;
@@ -4124,6 +4257,7 @@ export class Store {
     // bot's released state) must never come back, so the guard may throw and nothing is created.
     const id = newId();
     this.botIdGuard?.(id);
+    opts.beforeCreate?.(id);
     const bot: BotRecord = {
       id,
       threadId: newId(),
@@ -4137,7 +4271,7 @@ export class Store {
       unread: false,
       // 1.0.15 BIRTH-FUIGO: no owner pick means birth decides, here, in the same tick as the write (section 5: one condition, one place).
       modelSelection: this.completeNewBotSelection(born ? this.birthSelection() : profile.modelSelection!),
-      resumeCursors: {},
+      resumeCursors: {}, resumePolicies: undefined, replayPending: undefined,
       createdAt: Date.now(),
       // a new bot has done nothing yet: Auto asks before it first uses this computer
       hostComputerConsent: "ask",
@@ -4148,7 +4282,7 @@ export class Store {
     if (opts.noAccess) { bot.computer = "off"; bot.browser = false; bot.composio = false; }
     // The one mark write (BIRTH-FUIGO section 5): a born bot, or a trusted caller's explicit mark (R3b), in the record saved below.
     if (born || opts.engineAutoPicked === true) bot.engineAutoPicked = true;
-    bot.tasks = [{ threadId: bot.threadId, title: UNTITLED_TASK, createdAt: bot.createdAt, resumeCursors: {},autoApprove:false,alwaysAllow:[],unread:false }];
+    bot.tasks = [{ threadId: bot.threadId, title: UNTITLED_TASK, createdAt: bot.createdAt, resumeCursors: {}, resumePolicies: undefined, replayPending: undefined,autoApprove:false,alwaysAllow:[],unread:false }];
     // All or nothing: the roster (bots.json and its memory binding), the announcement and the opening lines land together. The write lock
     // is taken first (BEGIN IMMEDIATE), so a busy database refuses before anything changes; any later failure rolls the rows back, the
     // announcements never go out (tx-scope.ts), and the roster is written again without the bot. A caller that retries after an error
@@ -4337,7 +4471,7 @@ export class Store {
     if (patch.modelSelection && patch.modelSelection.connectionId !== bot.modelSelection.connectionId) {
       const tasks = patch.tasks ?? bot.tasks;
       const activeFollows = tasks?.some(task => task.threadId === bot.threadId && task.modelSelection === undefined);
-      patch = { ...patch, ...(activeFollows ? { resumeCursors: {} } : {}), ...(tasks ? { tasks: tasks.map(task => task.modelSelection === undefined ? withoutEffortSent({ ...task, resumeCursors: {} }) : task) } : {}) };
+      patch = { ...patch, ...(activeFollows ? { resumeCursors: {}, resumePolicies: undefined, replayPending: undefined } : {}), ...(tasks ? { tasks: tasks.map(task => task.modelSelection === undefined ? withoutEffortSent({ ...task, resumeCursors: {}, resumePolicies: undefined, replayPending: undefined }) : task) } : {}) };
     }
     const partitionedAt = bot.partitionedAt ?? patch.partitionedAt ?? (patch.sharedWith && patch.sharedWith.mode !== "none" ? Date.now() : undefined);
     const formerName = bot.name;
@@ -4348,6 +4482,9 @@ export class Store {
     // top-level fields only), committed, and only then published into the live record and its held task objects.
     const next: BotRecord = { ...bot, ...(bot.tasks ? { tasks: bot.tasks.map(task => ({ ...task })) } : {}) };
     Object.assign(next, patch);
+    if (patch.resumeCursors && Object.keys(patch.resumeCursors).length === 0) {
+      next.resumePolicies = undefined; next.replayPending = undefined;
+    }
     if (engineWrite) { delete next.engineAutoPicked; Object.assign(next, ownerEngineWrite(next)); }
     // an internal caller's level move counts like any other (the routes' level writes use setPermissionLevel)
     if (permissionLevel(next) !== levelBefore) Object.assign(next, levelMove(next, levelBefore));
@@ -4363,6 +4500,7 @@ export class Store {
       const task={...next.tasks[0]!},taskLevel=permissionLevel(task);
       // 1.0.4 SL-K K1: the model is no longer mirrored onto the one task (it follows the bot unless picked); the permission mirror stays.
       for(const key of ["autoApprove","fullAccess","noLimits","alwaysAllow","unread","rewound","pinnedMessageId","resumeCursors"] as const)if(Object.hasOwn(patch,key)&&(!options.preserveTaskSettings||!["autoApprove","fullAccess","noLimits","alwaysAllow"].includes(key)))Object.assign(task,{[key]:structuredClone(patch[key])});
+      if(Object.hasOwn(patch,"resumeCursors") && Object.keys(task.resumeCursors).length===0){task.resumePolicies=undefined;task.replayPending=undefined;}
       if(permissionLevel(task)!==taskLevel)Object.assign(task,levelMove(task,taskLevel));
       next.tasks=[task];
     }
@@ -4641,31 +4779,29 @@ export class Store {
    * a package import naming a coordinator — silently rewires everything and
    * looks like nothing happened. Refusing costs one extra step and makes the
    * change something a person decided rather than something that occurred. */
-  /** 1.0.15 BIRTH-FUIGO-1014 section 2: the engine a bot is born on when no owner pick is given. Synchronous, no await, called
-   * from createBot and preparePackageAddition only (P3/P6 previews read it in the same tick as their createBot). In order:
-   * 1. a usable Fuigo (filtered catalogue has a model): the source bot's own Fuigo instance when it is one, else the first;
-   * 2. not usable, a later bot, desktop: a value copy of the Chief's (else the oldest bot's) current selection when it names an
-   *    engine and a model (BN2: copied as it is, even a Fuigo/flux-auto left after a key removal);
-   * 3. otherwise the empty seed, which createBot marks so the engine pass moves it when a key lands.
-   * Reads no sign-in, no snapshot, no remembered startup choice. */
+  /** Sean's ruling, 2026-11-06, Option A: a verified subscription engine first on desktop,
+   * then eligible Fuigo, the eligible Chief copy, the eligible first-bot probe, or empty.
+   * The injected dependency owns login evidence and native catalogue selection. */
   birthSelection(): ModelSelection {
     if (typeof this.birth === "function") return this.birth();
     const visible = this.bots.filter(bot => !bot.hidden);
     // the oldest visible bot by createdAt (createBot unshifts, a package import appends: array order is not age; Astra lane M1)
     const oldest = visible.reduce<BotRecord | null>((best, bot) => (best === null || bot.createdAt <= best.createdAt ? bot : best), null);
     const source = this.workspaceChief() ?? oldest;
-    const fuigo = this.birth.fuigo().filter(fuigoUsable);
+    const found = this.birth.signedIn?.(source ? structuredClone(source.modelSelection) : null) ?? null;
+    if (found) return { instanceId: found.instanceId, model: found.model };
+    const fuigo = this.birth.fuigo().filter(fuigoUsable).filter(instance => typeof this.birth !== "function" && this.birth.eligible(instance.instanceId));
     if (fuigo.length) {
       const own = source ? fuigo.find(instance => instance.instanceId === source.modelSelection.instanceId) : undefined;
       const chosen = own ?? fuigo[0]!;
       return { instanceId: chosen.instanceId, model: fuigoBirthModel(chosen) };
     }
-    if (this.birth.copyChief && source && source.modelSelection.instanceId !== "" && source.modelSelection.model !== "") return structuredClone(source.modelSelection);
+    if (this.birth.copyChief && source && source.modelSelection.instanceId !== "" && source.modelSelection.model !== "" && this.birth.eligible(source.modelSelection.instanceId)) return structuredClone(source.modelSelection);
     // r3: the first desktop bot takes the probe's reading, never a Fuigo that cannot answer (a remembered flux-auto after a key removal).
     if (!source && this.birth.copyChief && this.birth.firstBot) {
       const probed = this.birth.firstBot();
       const allFuigo = this.birth.fuigo().map(instance => instance.instanceId);
-      if (probed.instanceId !== "" && probed.model !== "" && !allFuigo.includes(probed.instanceId)) return structuredClone(probed);
+      if (probed.instanceId !== "" && probed.model !== "" && !allFuigo.includes(probed.instanceId) && this.birth.eligible(probed.instanceId)) return structuredClone(probed);
     }
     return { instanceId: "", model: "" };
   }
@@ -4808,13 +4944,22 @@ export class Store {
     this.saveBots(this.bots, { defer: true });
   }
 
-  setResumeCursor(botId: string, instanceId: string, cursor: unknown, threadId?: string, audience?: string, contract?: number, plainToolNames = false, incarnation?: number, sealStart?: number) {
+  setResumeCursor(botId: string, instanceId: string, cursor: unknown, threadId?: string, audience?: string, contract?: number, plainToolNames = false, incarnation?: number, sealStart?: number, fuigo?: { policy: { root: string; sha256: string }; replayPending?: boolean }) {
     const bot = this.bot(botId);
     if (!bot) return;
     // the cursor belongs to the task that produced it, not to the bot
     const task = threadId ? this.taskByThread(botId, threadId) : this.activeTask(botId);
     if (task) {
+      const previousCursor = task.resumeCursors[instanceId];
       task.resumeCursors[instanceId] = cursor;
+      if (cursor !== undefined && fuigo) task.resumePolicies = { ...task.resumePolicies, [instanceId]: fuigo.policy };
+      else if (cursor === undefined || cursor !== previousCursor) {
+        if (task.resumePolicies) { const { [instanceId]: _removed, ...rest } = task.resumePolicies; task.resumePolicies = rest; }
+      }
+      if (cursor !== undefined && fuigo?.replayPending) task.replayPending = { ...task.replayPending, [instanceId]: { cursor: String(cursor) } };
+      else if (cursor === undefined || cursor !== previousCursor) {
+        if (task.replayPending) { const { [instanceId]: _removed, ...rest } = task.replayPending; task.replayPending = rest; }
+      }
       // 1.0.4 SL-K K4: a cleared session takes what it was last sent with it
       if (cursor === undefined && task.effortSent?.instanceId === instanceId) delete task.effortSent;
       // and to the audience it was made for (SPEC-P 13.1)
@@ -4847,9 +4992,42 @@ export class Store {
     }
     // The legacy mirror follows the task visible in chat, never a detached
     // routine task working in the background.
-    if (!threadId || bot.threadId === threadId) bot.resumeCursors[instanceId] = cursor;
+    if (!threadId || bot.threadId === threadId) {
+      bot.resumeCursors[instanceId] = cursor;
+      bot.resumePolicies = structuredClone(task?.resumePolicies);
+      bot.replayPending = structuredClone(task?.replayPending);
+    }
     this.saveBots(this.bots, { defer: true });
     this.emit({ type: "bot", botId });
+  }
+
+  /** Instance removal is a lifecycle operation, never a turn/boot backfill. */
+  retireFuigoResumeState(instanceId: string) {
+    let changed = false;
+    for (const bot of this.bots) for (const holder of [bot, ...(bot.tasks ?? [])]) {
+      for (const field of ["resumePolicies", "replayPending"] as const) {
+        const entries = holder[field];
+        if (entries && Object.hasOwn(entries, instanceId)) {
+          const { [instanceId]: _removed, ...rest } = entries;
+          // Both fields are replaced whole; the concrete value type stays with its field.
+          if (field === "resumePolicies") holder.resumePolicies = rest as NonNullable<BotRecord["resumePolicies"]>;
+          else holder.replayPending = rest as NonNullable<BotRecord["replayPending"]>;
+          changed = true;
+        }
+      }
+    }
+    if (changed) this.saveBots(this.bots, { defer: true });
+  }
+
+  /** Only the confirmed replay for this exact provider/cursor consumes its pending entry. */
+  clearReplayPending(botId: string, instanceId: string, threadId: string, cursor: string) {
+    const task = this.taskByThread(botId, threadId);
+    if (task?.replayPending?.[instanceId]?.cursor !== cursor) return;
+    const { [instanceId]: _removed, ...rest } = task.replayPending;
+    task.replayPending = rest;
+    const bot = this.bot(botId);
+    if (bot?.threadId === threadId) bot.replayPending = structuredClone(rest);
+    this.saveBots(this.bots, { defer: true });
   }
 
   /** Record which instance just took a turn on this task. Called at
@@ -5110,6 +5288,8 @@ export class Store {
     turn: { input?: number; output?: number; cachedInput?: number; costUsd: number | null },
     /** idempotency key of the provider turn: banked in the same write as the totals, so a redelivery changes nothing */
     turnKey?: string,
+    /** the routine whose run this turn was, if any: its share of the month is kept apart as well */
+    routine?: { id: string; name: string },
   ): TaskUsage | null {
     const task = this.taskByThread(botId, threadId);
     if (!task) return null;
@@ -5137,7 +5317,7 @@ export class Store {
     if (turnKey) task.usageTurnKeys = [...(task.usageTurnKeys ?? []), turnKey].slice(-64);
     // The month's bucket: one small upsert in the same deferred write, nothing that grows with history.
     const owner = this.bots.find(candidate => candidate.id === botId);
-    if (owner) { owner.usageMonths ??= {}; bumpUsageMonth(owner.usageMonths, turn); }
+    if (owner) { owner.usageMonths ??= {}; bumpUsageMonth(owner.usageMonths, turn); bumpRoutineUsage(owner, routine, turn); }
     this.saveBots(this.bots, { defer: true });
     this.emit({ type: "bot", botId });
     return task.usage;
@@ -5147,13 +5327,14 @@ export class Store {
    * task of the bot's own, so addTaskUsage never saw them while the project ledger (settleProjectUsage) counted the same
    * tokens against the limit. Same figures, same turn event: Usage and the limit now read one stream. A redelivery adds nothing. */
   private roomUsageKeys = new Set<string>();
-  addRoomTurnUsage(botId: string, turn: { input?: number; output?: number; cachedInput?: number }, turnKey: string): boolean {
+  addRoomTurnUsage(botId: string, turn: { input?: number; output?: number; cachedInput?: number }, turnKey: string, routine?: { id: string; name: string }): boolean {
     const owner = this.bots.find(candidate => candidate.id === botId);
     if (!owner || this.roomUsageKeys.has(turnKey)) return false;
     this.roomUsageKeys.add(turnKey);
     if (this.roomUsageKeys.size > 512) this.roomUsageKeys.delete(this.roomUsageKeys.values().next().value as string);
     owner.usageMonths ??= {};
     bumpUsageMonth(owner.usageMonths, turn);
+    bumpRoutineUsage(owner, routine, turn);
     this.saveBots(this.bots, { defer: true });
     this.emit({ type: "bot", botId });
     return true;
@@ -5214,6 +5395,18 @@ export class Store {
    * future rooms, never under a room that already started working
    * somewhere. Returns the pinned value: a path, or null = each member's
    * own default. */
+  /** S5-DATADIR-PATHS r4.1 site 3: a room's stored pinnedCwd rebased by reconstruction (turn-paths.ts admitGroupStoredCwd), in the
+   * groups record's own write. Only the exact stored value is replaced; no new field. */
+  rebaseGroupPinnedCwd(groupId: string, threadId: string | undefined, stored: string, next: string): void {
+    const group = this.group(groupId);
+    if (!group) return;
+    const task = threadId ? this.groupTaskByThread(groupId, threadId) : undefined;
+    if (task) { if (task.pinnedCwd !== stored) return; task.pinnedCwd = next; if (group.threadId === task.threadId && group.pinnedCwd === stored) group.pinnedCwd = next; }
+    else { if (group.pinnedCwd !== stored) return; group.pinnedCwd = next; }
+    this.saveGroups();
+    this.emit({ type: "group", groupId: group.id });
+  }
+
   pinGroupCwd(groupId: string, threadId?: string): string | null {
     const group = this.group(groupId);
     if (!group) return null;
@@ -5279,7 +5472,7 @@ export class Store {
     const bot=this.bot(botId),task=this.taskByThread(botId,threadId);if(!bot||!task)return null;
     // the thread's human, read once for the whole projection (it was asked five times)
     const owner=withBindingScope(()=>isWorkspaceOwner(threadHumanPrincipal(threadId)));
-    return {...bot,...(!owner?{computer:"off" as const,browser:false,composio:false}:{}),threadId,modelSelection:structuredClone(task.modelSelection??bot.modelSelection),resumeCursors:structuredClone(task.resumeCursors),autoApprove:owner&&(task.autoApprove??false),fullAccess:owner&&task.autoApprove===true&&task.fullAccess===true,noLimits:owner&&task.autoApprove===true&&task.fullAccess===true&&task.noLimits===true,alwaysAllow:owner?structuredClone(task.alwaysAllow??[]):[],unread:task.unread??false,rewound:task.rewound,pinnedMessageId:task.pinnedMessageId,busy:task.busy??false,activity:task.activity??"idle"};
+    return {...bot,...(!owner?{computer:"off" as const,browser:false,composio:false}:{}),threadId,modelSelection:structuredClone(task.modelSelection??bot.modelSelection),resumeCursors:structuredClone(task.resumeCursors),resumePolicies:structuredClone(task.resumePolicies),replayPending:structuredClone(task.replayPending),autoApprove:owner&&(task.autoApprove??false),fullAccess:owner&&task.autoApprove===true&&task.fullAccess===true,noLimits:owner&&task.autoApprove===true&&task.fullAccess===true&&task.noLimits===true,alwaysAllow:owner?structuredClone(task.alwaysAllow??[]):[],unread:task.unread??false,rewound:task.rewound,pinnedMessageId:task.pinnedMessageId,busy:task.busy??false,activity:task.activity??"idle"};
   }
   /** Host-only, write-once procedural admission. Never accepted in API patches. */
   pinTaskProcedures(botId:string, threadId:string, pin:ProcedurePin):ProcedurePin {
@@ -5336,7 +5529,7 @@ export class Store {
     // 1.0.4 SL-K K4: what the engine was last sent belongs to the session; a cursor reset ends it (unless this patch records the new one)
     if(Object.keys(next.resumeCursors??{}).length===0&&Object.keys(task.resumeCursors??{}).length>0&&!Object.hasOwn(patch,"effortSent"))delete next.effortSent;
     // The seal record is bound to the cursors it describes (THREAD-SEAL 3.1): emptied with them in this same write.
-    if(Object.keys(next.resumeCursors??{}).length===0)next.resumeSeals=undefined;
+    if(Object.keys(next.resumeCursors??{}).length===0){next.resumeSeals=undefined;next.resumePolicies=undefined;next.replayPending=undefined;}
     // The first pick adopts.
     //
     // A bot made before any engine could answer carries the honest-empty
@@ -5356,7 +5549,7 @@ export class Store {
     // Bot learning (B1): an edit or branch switch rewound the conversation, a weak negative.
     if(patch.rewound===true&&task.rewound!==true){try{recordWeakSignal(database(),{botId:bot.id,threadId,action:"rewind",targetMessageId:this.activeLeaf(threadId)},bot);}catch{/* optional */}}
     const tasks=bot.tasks!.map(candidate=>candidate===task?next:candidate);
-    const mirrors=bot.threadId===threadId?{resumeCursors:{...next.resumeCursors},rewound:next.rewound,pinnedMessageId:next.pinnedMessageId}:{};
+    const mirrors=bot.threadId===threadId?{resumeCursors:{...next.resumeCursors},resumePolicies:structuredClone(next.resumePolicies),replayPending:structuredClone(next.replayPending),rewound:next.rewound,pinnedMessageId:next.pinnedMessageId}:{};
     // 1.0.14 FIRST-ENGINE-REPICK: a task's own pick set or removed (adoption included) is an owner engine write: mark cleared, engineRev moved.
     const engineWrite=Object.hasOwn(patch,"modelSelection");
     const candidate:BotRecord={...bot,...mirrors,...adopted,tasks,unread:tasks.some(task=>task.unread),...(engineWrite?ownerEngineWrite(bot):{})};
@@ -5430,10 +5623,10 @@ export class Store {
       if(task.busy||isBusy(task.threadId)){busy++;return task;}
       switched.push(task.threadId);if(task.limitFailover)endedFailovers.push(task.limitFailover);
       const {modelSelection:_modelSelection,effortSent:_effortSent,limitFailover:_limitFailover,...rest}=task;
-      const next={...rest,resumeCursors:{},resumeSeals:undefined};changed.set(task,next);return next;
+      const next={...rest,resumeCursors:{},resumePolicies:undefined,replayPending:undefined,resumeSeals:undefined};changed.set(task,next);return next;
     });
     if(!switched.length)return {switched,busy,endedFailovers};
-    const mirrors=switched.includes(bot.threadId)?{resumeCursors:{}}:{};
+    const mirrors=switched.includes(bot.threadId)?{resumeCursors:{},resumePolicies:undefined,replayPending:undefined}:{};
     // 1.0.14 FIRST-ENGINE-REPICK: an owner engine write: the mark is cleared and engineRev moves in the same write.
     const {engineAutoPicked:_mark,...unmarked}=bot;
     const candidate:BotRecord={...unmarked,...mirrors,tasks,...ownerEngineWrite(bot)};
@@ -5458,14 +5651,15 @@ export class Store {
       ...(channelProjectDesk ? { channelProjectDesk } : {}),
       ...(sharedWork ? { sharedWork, cwd: partitionRoots(bot, { kind: "team", teamId: sharedWork.teamId })[0] } : {}),
       createdAt: Date.now(),
-      resumeCursors: {},
+      resumeCursors: {}, resumePolicies: undefined, replayPending: undefined,
       // 1.0.4 SL-K K1: born following the bot's model (no copy)
       autoApprove:bot.autoApprove===true,fullAccess:bot.autoApprove===true&&bot.fullAccess===true,noLimits:bot.autoApprove===true&&bot.fullAccess===true&&bot.noLimits===true,alwaysAllow:structuredClone(bot.alwaysAllow??[]),unread:false,activity:"idle",busy:false,
     };
     bot.tasks = [task, ...(bot.tasks ?? [])];
     if (activate) {
       bot.threadId = task.threadId;
-      bot.resumeCursors = {}; // legacy mirror follows the active task
+      bot.resumeCursors = {};
+      bot.resumePolicies = undefined; bot.replayPending = undefined; // legacy mirror follows the active task
     }
     this.saveBots();
     this.emit({ type: "bot", botId });
@@ -5504,6 +5698,7 @@ export class Store {
     if (!bot || !task) return null;
     bot.threadId = task.threadId;
     bot.resumeCursors = { ...task.resumeCursors };
+    bot.resumePolicies = structuredClone(task.resumePolicies); bot.replayPending = structuredClone(task.replayPending);
     bot.rewound=task.rewound;bot.pinnedMessageId=task.pinnedMessageId;
     this.saveBots(this.bots, { defer: true });
     this.emit({ type: "bot", botId });
@@ -5544,6 +5739,7 @@ export class Store {
       const next = bot.tasks[0]!;
       bot.threadId = next.threadId;
       bot.resumeCursors = { ...next.resumeCursors };
+      bot.resumePolicies = structuredClone(next.resumePolicies); bot.replayPending = structuredClone(next.replayPending);
       bot.rewound = next.rewound;
       bot.pinnedMessageId = next.pinnedMessageId;
     }
@@ -5591,14 +5787,14 @@ export class Store {
     const tasks = bot.tasks?.map(task => {
       if (!followsBot(task)) return task;
       const { modelSelection: _pick, limitFailover: _failover, ...rest } = task;
-      return withoutEffortSent({ ...(task === ownerTask ? rest : task), resumeCursors: {}, resumeSeals: undefined });
+      return withoutEffortSent({ ...(task === ownerTask ? rest : task), resumeCursors: {}, resumePolicies: undefined, replayPending: undefined, resumeSeals: undefined });
     });
     const activeFollows = bot.tasks?.some(task => task.threadId === bot.threadId && followsBot(task)) ?? true;
     const { engineAutoPicked: _mark, ...unmarked } = bot;
     const record: BotRecord = {
       ...(move.mark === "keep" && bot.engineAutoPicked ? bot : unmarked),
       modelSelection: selection, engineRev: (bot.engineRev ?? 0) + 1,
-      ...(activeFollows ? { resumeCursors: {} } : {}), ...(tasks ? { tasks } : {}),
+      ...(activeFollows ? { resumeCursors: {}, resumePolicies: undefined, replayPending: undefined } : {}), ...(tasks ? { tasks } : {}),
     };
     if (move.mark === "clear") delete record.engineAutoPicked;
     let normalized: BotRecord[] | undefined;

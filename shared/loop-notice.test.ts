@@ -11,8 +11,8 @@ describe("loop notice keys", () => {
     expect(loopNotice(loopNoticeName("repeat", 5, "Bash: npm test: x"))).toEqual({ code: "repeat", count: 5, call: "Bash: npm test: x" });
     expect(loopNotice("Read src/x.ts")).toBeUndefined();
     expect(loopNotice("loop-notice:other")).toBeUndefined();
-    expect(loopNoticeDisplayName(loopNoticeName("nudged"))).toBe("Nudged after 5 identical failures");
-    expect(loopNoticeDisplayName(loopNoticeName("repeat", 5, "Bash: ls"))).toBe("Same call repeated 5×: Bash: ls (it may be stuck)");
+    expect(loopNoticeDisplayName(loopNoticeName("nudged"))).toBe("Sent the bot a follow-up after 5 identical failures");
+    expect(loopNoticeDisplayName(loopNoticeName("repeat", 5, "Bash: ls"))).toBe("Same action repeated 5×: Bash: ls (it may be stuck)");
   });
 
   it("every shipped language pack spells both rows, keeping the placeholders", () => {

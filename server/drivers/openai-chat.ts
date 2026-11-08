@@ -1,3 +1,7 @@
+import { checkFluxBudget, FluxBudgetReached } from "../voice/flux-budget.ts";
+import { classifyFluxRefusal } from "../../shared/flux-refusal.ts";
+import { markBudgetReached } from "../voice/voice-routes.ts";
+import { botFolderOrThrow } from "../bot-folder.ts";
 import { NO_TOOL_SURFACE, PI_TOOL_SURFACE, renderMurageTurn, type McpToolSurface } from "../murage-tool-surface.ts";
 import { KEY_REJECTED_REASON, keyRejected, noteKeyAccepted, noteKeyRejected, rejectsKey } from "../key-rejections.ts";
 import { httpErrorDetail, providerSentence } from "./provider-error-body.ts";
@@ -20,6 +24,8 @@ import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { classifyProviderError, isEndpointUnreachable, neverConnected, unreachableEndpointMessage } from "../../shared/provider-error.ts";
+import { withProviderSaid } from "../provider-said.ts";
+import { fluxRefusalCode, fluxRefusalFields, type FluxRefusalCode } from "../flux-refusal.ts";
 import { checkLocalServerUrl } from "../local-address-guard.ts";
 import { providerDispatcher } from "../provider-dispatcher.ts";
 import { httpTextOnlyTurn } from "./http-text-only.ts";
@@ -31,6 +37,7 @@ import { ProviderStopUnconfirmedError, stopBudget } from "./child-teardown.ts";
 import { engineClosedLine } from "./stop-copy.ts";
 import { CLI_TERM_GRACE_MS } from "../procs.ts";
 import { approvalSummary } from "../../shared/approval-summary.ts";
+import { phoneAskLine } from "./phone-tool-schemas.ts";
 import { boundedToolInput } from "../approval-text.ts";
 import {
   announcesAction, capUtf8, chatToolCatalog, FENCE_AFTER_TOOLS, isLocalModelUrl, MAX_ANNOUNCEMENT_NUDGES, MAX_CHAT_ROUNDS,
@@ -242,10 +249,14 @@ class StreamOutcomeError extends Error {
  * another vendor's branding and URLs, into the chat bubble (F5). The body is
  * kept as `details` for the Technical details disclosure. */
 class ProviderHttpError extends Error {
-  readonly data: { http_status: number; message: string };
+  readonly data: { http_status: number; message: string; body: string; flux_code?: FluxRefusalCode };
+  readonly flux: boolean;
   readonly details: string;
 
-  constructor(status: number, rawBody: string, label: string) {
+  /** `flux`: the answer came from Flux (its preset or a Flux host), so a budget refusal in `body` stops the key.
+   *  `fluxCode`: read from the whole body and the X-Flux-Hold-Reason header when the answer came in (1.0.18 f), because the
+   *  detail kept below is one sentence and the headers are not kept at all. */
+  constructor(status: number, rawBody: string, label: string, flux = false, fluxCode?: FluxRefusalCode) {
     // rawBody is already redacted. The Technical details carry the provider's
     // own sentence (and its machine code), not the first bytes of its JSON.
     const body = httpErrorDetail(rawBody, 500);
@@ -254,7 +265,8 @@ class ProviderHttpError extends Error {
     const why = status === 402 || status === 403 ? providerSentence(rawBody) : undefined;
     super(why ? `${providerHttpMessage(status)} The provider says: ${why}` : providerHttpMessage(status));
     this.name = "ProviderHttpError";
-    this.data = { http_status: status, message: body };
+    this.data = { http_status: status, message: body, body: rawBody, ...(fluxCode ? { flux_code: fluxCode } : {}) };
+    this.flux = flux;
     this.details = `${label} HTTP ${status}${body ? `: ${body}` : ""}`;
   }
 }
@@ -765,12 +777,19 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       if (!round.noReasoningReplay && messages.some((message) => message.reasoning_content !== undefined) && rejectsReasoningReplay(response.status, body)) {
         throw new UnsupportedReasoningReplayError(response.status, body, label);
       }
-      throw new ProviderHttpError(response.status, body, label);
+      if ((providerRoute?.preset === "flux" || isFluxUrl(endpoint)) && secret && classifyFluxRefusal(response.status, rawBody) === "budget") markBudgetReached({ via: "flux", label: "Flux", baseUrl: providerRoute?.baseUrl ?? new URL(".", endpoint).toString().replace(/\/$/, ""), key: secret, model: "" });
+      // Flux's refusal code, read here while the whole body and the headers are still in hand: a free_cap_reached 429 keeps it in
+      // error.state, and a metered credit_exhausted 402 sends it only as the X-Flux-Hold-Reason header (1.0.18 f). Only an answer
+      // from a Flux host is read this way: another provider's 429 keeps the shared retry, whatever words its body holds.
+      const holdReason = isFluxUrl(endpoint) ? response.headers.get("x-flux-hold-reason") : null;
+      const fluxCode = isFluxUrl(endpoint) ? fluxRefusalCode(body, holdReason === null ? undefined : { "x-flux-hold-reason": holdReason.slice(0, 200) }) : undefined;
+      throw new ProviderHttpError(response.status, body, label, providerRoute?.preset === "flux" || isFluxUrl(endpoint), fluxCode);
     }
     if (secret) noteKeyAccepted(providerRoute?.baseUrl ?? options.apiUrl, secret);
 
     if (!stream) {
       const json = (JSON.parse(await readBoundedBody(response, requestSignal, MAX_RESPONSE_BYTES, false, idle.renew)) ?? {}) as CompletionJson;
+      if ((providerRoute?.preset === "flux" || isFluxUrl(endpoint)) && secret) checkFluxBudget(0, json, providerRoute?.baseUrl ?? options.apiUrl, secret);
       const errorDetail = inBandErrorDetail(json);
       if (errorDetail !== null) throw new Error(redact(`${label} error: ${errorDetail}`).slice(0, 300));
       const choice = json.choices?.[0];
@@ -837,6 +856,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         unreadableFrames++;
         return false;
       }
+      if ((providerRoute?.preset === "flux" || isFluxUrl(endpoint)) && secret) checkFluxBudget(0, chunk, providerRoute?.baseUrl ?? options.apiUrl, secret);
       const errorDetail = inBandErrorDetail(chunk);
       if (errorDetail !== null) {
         throw failure("The model server reported an error part-way through the answer.", `stream error: ${errorDetail}`, "provider_error");
@@ -1041,6 +1061,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
   };
 
   const sendTurn = async (turn: SendTurnInput) => {
+    if (turn.draftOnly !== true) turn = { ...turn, cwd: botFolderOrThrow(turn) }; // a draft-only turn is tool-less and has no working folder by design
     if (turn.providerRoute) validateProviderTurnRoute(options.driverKind, turn.providerRoute);
     const local = turn.providerRoute ? null : options.localEndpoint?.(turn.model || options.models().default) ?? null;
     if (!turn.providerRoute?.apiKey && !options.apiKey && !local) throw new Error(options.missingKeyError);
@@ -1138,6 +1159,8 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       else void mcpTeardowns.closed(threadId, turnId).then(() => { emit(completed); markEmitted(); });
       markDone();
     };
+    /** CHARGE-UNKNOWN-1018: set once a finished step of this turn reported no charge, so the summed charge is a lower bound. */
+    let chargeGap = false;
     const completedEvent = (ok: boolean, stopReason: string | null, usage: Usage | null, denials: string[]): RuntimeEvent => {
       const completed: RuntimeEvent = {
         ...base(threadId, turnId),
@@ -1145,7 +1168,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         ok,
         stopReason,
         cost: null,
-        ...(ok && stopReason === null && usage?.charge !== undefined ? { charge: usage.charge } : {}),
+        ...(ok && stopReason === null ? turnCharge(usage, chargeGap) : {}),
         ...(denials.length ? { denials } : {}),
       };
       return options.includeUsageInCompleted && usage && ok && stopReason === null ? { ...completed, usage } : completed;
@@ -1172,7 +1195,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         // s3: one mount per turn; every child is tracked from its spawn, before any await can lose it.
         let catalog: ChatToolCatalog = { definitions: [], routes: new Map(), dropped: [] };
         if (servers) {
-          const opened = await openChatMcpServers(servers, { signal: abort.signal, onSpawn: (_server, teardown) => mcpTeardowns.track(threadId, turnId, teardown) });
+          const opened = await openChatMcpServers(servers, { cwd: turn.cwd, signal: abort.signal, onSpawn: (_server, teardown) => mcpTeardowns.track(threadId, turnId, teardown) });
           sessions = opened.sessions;
           for (const server of opened.failed) notice(`The ${server.slice(0, 64)} tools could not start, so this turn runs without them.`);
           if (abort.signal.aborted) { cancelled(); return; }
@@ -1289,7 +1312,9 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 if (outcome.partial.usage && total) emit({ ...base(threadId, turnId), type: "thread.token-usage.updated", ...total });
               }
               const details = (error as { details?: unknown }).details;
-              const providerError = classifyProviderError(error);
+              const classified = error instanceof FluxBudgetReached ? undefined : classifyProviderError(error, error instanceof ProviderHttpError && error.flux);
+              // A budget stop keeps its own record: it is Murage's refusal, so no provider sentence is attached to it.
+              const providerError = error instanceof FluxBudgetReached ? error.providerError : classified ? withProviderSaid(classified, error) : undefined;
               if (!aborted) {
                 // s10: a size refusal after tool rounds says the steps already ran.
                 const message = seenCalls.size ? `${error.message} ${STEPS_ALREADY_RAN}` : error.message;
@@ -1299,6 +1324,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                   message: scrub(message),
                   ...(typeof details === "string" && details ? { details: scrub(details) } : {}),
                   ...(providerError ? { providerError } : {}),
+                  ...(isFluxUrl(endpointUrl) ? fluxRefusalFields(fluxRefusalCode(error, details), Date.now(), error, details) : {}),
                 });
               }
               // An abort is Murage stopping the turn (interruptTurn, stopAll): settled as cancelled like every other driver (STOP1).
@@ -1312,6 +1338,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
           emitAnswerDelta(filter.flush());
           emitAnswerDelta(rest.text);
           native("in", options.nativeLog.incoming(completion));
+          chargeGap = foldStepCharge(chargeGap, completion.usage);
           if (completion.usage) {
             total = addUsage(total, completion.usage);
             emit({ ...base(threadId, turnId), type: "thread.token-usage.updated", ...total });
@@ -1405,7 +1432,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         type: "request.opened",
         requestType: "permission",
         tool: name,
-        summary: approvalSummary(route.tool),
+        summary: phoneAskLine(name, input) ?? approvalSummary(route.tool),
         ...(toolInput ? { toolInput } : {}),
         // the EXACT call the stop line, autoVerdict and grants read; never logged (runtime-event-out.ts loggedRuntimeEvent)
         toolCall: { name, input },
@@ -1578,6 +1605,15 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     },
   };
 }
+
+/** CHARGE-UNKNOWN-1018: true once any finished step of the turn reported no charge (no usage at all, or usage without one). */
+export const foldStepCharge = (gap: boolean, usage: Usage | null | undefined): boolean => gap || usage?.charge === undefined;
+
+/** CHARGE-UNKNOWN-1018 (A-prime): the turn's charge is the sum of the steps that reported one (addUsage). When another step
+ *  reported none, the sum is kept as the known part and marked chargePartial, so it is shown as a lower bound and never as
+ *  the whole spend. No step with a charge: no charge at all, as before. */
+export const turnCharge = (usage: Usage | null, gap: boolean): { charge?: number; chargePartial?: true } =>
+  usage?.charge === undefined ? {} : { charge: usage.charge, ...(gap ? { chargePartial: true as const } : {}) };
 
 const addUsage = (total: Usage | null, usage: Usage): Usage => ({
   input: (total?.input ?? 0) + usage.input,

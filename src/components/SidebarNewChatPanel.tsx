@@ -9,6 +9,7 @@ import { Search } from "lucide-react";
 
 import { BotAvatar } from "@/components/Avatar";
 import { cn } from "@/lib/cn";
+import { canHandleLayerEscape } from "@/lib/focus-trap";
 import { t } from "@/lib/i18n";
 import { newChatBots } from "@/lib/new-chat-bots";
 import type { Bot } from "@/state/store";
@@ -36,7 +37,8 @@ export function SidebarNewChatPanel({ bots, onPick, onClose }: { bots: readonly 
             if (event.key === "ArrowDown") { event.preventDefault(); move(at + 1); }
             else if (event.key === "ArrowUp") { event.preventDefault(); move(at - 1); }
             else if (event.key === "Enter" && rows[at]) { event.preventDefault(); onPick(rows[at]!); }
-            else if (event.key === "Escape") { event.stopPropagation(); onClose(); }
+            // Astra r3 High 2: an open layer above (the empty palette among them) keeps its Esc.
+            else if (event.key === "Escape" && canHandleLayerEscape(null, event.nativeEvent)) { event.stopPropagation(); onClose(); }
           }}
           placeholder={t("nav.newChatFilter")}
           aria-label={t("nav.newChatAria")}

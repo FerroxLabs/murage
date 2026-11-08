@@ -1,9 +1,12 @@
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { chmodSync, readFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import * as procs from "../procs.ts";
+import { recordEvents } from "../testing/events.ts";
 import { CodexDriver } from "./codex.ts";
 import {
   decodeCodexSelection,
@@ -57,7 +60,96 @@ describe("decodeCodexSelection", () => {
   });
 });
 
+describe("STATIC_CODEX_MODELS", () => {
+  it("names gpt-6.1-sol, the verified Codex CLI model, in the offline fallback", () => {
+    expect(STATIC_CODEX_MODELS.options.map(option => option.id)).toContain("gpt-6.1-sol");
+    expect(STATIC_CODEX_MODELS.options.map(option => option.id)).toContain("gpt-6-sol");
+  });
+});
+
 describe("readCodexModelCatalog", () => {
+  it("uses the new default for an empty configured choice without writing the config", async () => {
+    const config = 'model = ""\n';
+    const home = scratchHome({ "config.toml": config });
+    expect((await readCodexModelCatalog({ HOME: home })).default).toBe("gpt-6.1-sol");
+    expect(readFileSync(join(home, ".codex/config.toml"), "utf8")).toBe(config);
+  });
+
+  it.each(["gpt-5.6-sol", "openai::gpt-5.6-sol"])("keeps the configured old default %s without rewriting config", async saved => {
+    const qualified = saved.startsWith("openai::");
+    const config = `${qualified ? 'model_provider = "openai"\n' : ''}model = "gpt-5.6-sol"\n`;
+    const home = scratchHome({ "config.toml": config });
+    const catalog = await readCodexModelCatalog({ HOME: home });
+    expect(catalog.default).toBe("gpt-5.6-sol");
+    expect(readFileSync(join(home, ".codex/config.toml"), "utf8")).toBe(config);
+  });
+
+  it.each([false, true])("preserves the configured old choice omitted by a live catalog (qualified=%s)", async qualified => {
+    chmodSync(FAKE_CLI, 0o755);
+    const config = `${qualified ? 'model_provider = "openai"\n' : ''}model = "gpt-5.6-sol"\n`;
+    const home = scratchHome({ "config.toml": config });
+    const catalog = await readCodexModelCatalog({ HOME: home, PATH: process.env.PATH }, fetch, FAKE_CLI);
+    expect(catalog.default).toBe("gpt-5.6-sol");
+    expect(catalog.options).toContainEqual(STATIC_CODEX_MODELS.options.find(row => row.id === "gpt-5.6-sol"));
+    expect(readFileSync(join(home, ".codex/config.toml"), "utf8")).toBe(config);
+  });
+
+  it.each(["0.144.4", "unknown", "0.162.1"])("gates an initial failed catalog probe for engine %s", async version => {
+    const home = scratchHome({});
+    const cli = join(home, "codex-fixture");
+    writeFileSync(cli, `#!/usr/bin/env node\nif (process.argv[2] === "--version") { console.log("codex-cli ${version}"); } else { process.exit(1); }\n`, { mode: 0o755 });
+    const result = readCodexModelCatalog({ HOME: home, PATH: process.env.PATH }, fetch, cli);
+    if (version === "0.162.1") expect((await result).default).toBe("gpt-6.1-sol");
+    else await expect(result).rejects.toThrow("Update Codex");
+    const instance = await CodexDriver.create({ instanceId: "fallback-gate", displayName: "Codex", enabled: true, environment: { HOME: home }, config: { ...CodexDriver.defaultConfig(), cli } });
+    try {
+      if (version !== "0.162.1") {
+        expect(await instance.snapshot()).toMatchObject({ state: "unavailable", reason: expect.stringContaining("Update Codex") });
+        const recorder = recordEvents(instance.adapter);
+        try {
+          await instance.adapter.sendTurn({ threadId: "blocked", text: "hello" });
+          expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: version === "unknown" ? "scope_unavailable" : "update_required" });
+        } finally { recorder.stop(); }
+      } else expect(instance.models.default).toBe("gpt-6.1-sol");
+    } finally { await instance.dispose(); }
+  });
+
+  it("requalifies a replaced binary before reusing a previous fallback", async () => {
+    const home = scratchHome({});
+    const cli = join(home, "codex-replaced");
+    const binary = (version: string) => writeFileSync(cli, '#!/usr/bin/env node\nif(process.argv[2] === "--version") console.log("codex-cli ' + version + '"); else process.exit(1);\n', { mode: 0o755 });
+    binary("0.162.1");
+    const instance = await CodexDriver.create({ instanceId: "replaced", displayName: "Codex", enabled: true, environment: { HOME: home }, config: { ...CodexDriver.defaultConfig(), cli } });
+    try {
+      expect(instance.models.default).toBe("gpt-6.1-sol");
+      binary("0.144.4-old");
+      await instance.refreshModels?.();
+      expect(await instance.snapshot()).toMatchObject({ state: "unavailable", reason: expect.stringContaining("Update Codex") });
+      expect(instance.models.options).toEqual([]);
+    } finally { await instance.dispose(); }
+  });
+
+  it("qualifies the cloud fallback even though cloud skips model/list", async () => {
+    const home = scratchHome({});
+    const prior = process.env.MURAGE_CLOUD_ROLE;
+    process.env.MURAGE_CLOUD_ROLE = "home";
+    let version = "0.144.4";
+    // Stand in for the Cloud launcher's signed, botless --version response.
+    const probe = vi.spyOn(procs, "execCli").mockImplementation((_cli, _args, _opts, callback) => {
+      callback(null, "codex-cli " + version, "");
+    });
+    try {
+      await expect(readCodexModelCatalog({ HOME: home }, fetch, "codex")).rejects.toThrow("Update Codex");
+      version = "0.162.1";
+      expect((await readCodexModelCatalog({ HOME: home }, fetch, "codex")).default).toBe("gpt-6.1-sol");
+      expect(probe.mock.calls.map(call => call[1])).toEqual([["--version"], ["--version"]]);
+    } finally {
+      probe.mockRestore();
+      if (prior === undefined) delete process.env.MURAGE_CLOUD_ROLE;
+      else process.env.MURAGE_CLOUD_ROLE = prior;
+    }
+  });
+
   it("returns the static cloud fallback when there is no config or CLI probe", async () => {
     expect(await readCodexModelCatalog({ HOME: join(tmpdir(), "murage-codex-missing-home") })).toEqual(
       STATIC_CODEX_MODELS,
@@ -195,12 +287,41 @@ name = "oMLX"
 `,
     });
     const catalog = await readCodexModelCatalog({ HOME: home });
-    expect(catalog.default).toBe("gpt-5.6-sol");
+    expect(catalog.default).toBe("gpt-6.1-sol");
     expect(catalog.options.every((option) => !option.custom)).toBe(true);
   });
 });
 
 describe("CodexDriver catalog", () => {
+  it("stores an omitted explicit OpenAI choice once and dispatches its bare id", async () => {
+    chmodSync(FAKE_CLI, 0o755);
+    const model = "gpt-saved-omitted";
+    const home = scratchHome({ "config.toml": `model_provider = "openai"\nmodel = "${model}"\n` });
+    const dump = join(home, "dispatch.json");
+    const instance = await CodexDriver.create({
+      instanceId: "saved-openai",
+      displayName: "Codex",
+      environment: { HOME: home, CODEX_HOME: join(home, ".codex"), FAKE_CODEX_DUMP: dump },
+      enabled: true,
+      config: { ...CodexDriver.defaultConfig(), cli: FAKE_CLI },
+    });
+    const recorder = recordEvents(instance.adapter);
+    try {
+      expect(instance.models.default).toBe(model);
+      expect(instance.models.options.filter(row => decodeCodexSelection(row.id).model === model)).toEqual([
+        { id: model, label: model },
+      ]);
+      expect(instance.models.options.some(row => row.id === `openai::${model}`)).toBe(false);
+      const sent = await instance.adapter.sendTurn({ threadId: "saved-openai", text: "hello", cwd: home, model: instance.models.default });
+      await recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId);
+      const { calls } = JSON.parse(readFileSync(dump, "utf8"));
+      expect(calls.find((call: { method: string }) => call.method === "thread/start").params.model).toBe(model);
+    } finally {
+      recorder.stop();
+      await instance.dispose();
+    }
+  });
+
   it("loads the config catalog when the instance is created", async () => {
     chmodSync(FAKE_CLI, 0o755);
     const home = scratchHome({
@@ -215,7 +336,7 @@ name = "oMLX"
     const instance = await CodexDriver.create({
       instanceId: "codex-catalog",
       displayName: "Codex",
-      environment: { HOME: home },
+      environment: { HOME: home, CODEX_HOME: join(home, ".codex") },
       enabled: true,
       config: { ...CodexDriver.defaultConfig(), cli: FAKE_CLI },
     });
@@ -227,3 +348,6 @@ name = "oMLX"
     }
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

@@ -86,7 +86,10 @@ export const WINDOWS_ADDON_FUNCTIONS = ["openFile", "handleRead", "handleWrite",
  * WINDOWS_ADDON_FUNCTIONS (engine-exclusion-called-exports.test.ts derives the called names from server/ and electron/). */
 export const POSIX_ADDON_FUNCTIONS = ["writers", "fullSync", "bootId", "environment"];
 /** What a package for `platform` must export besides the four every platform answers for. */
-export const requiredAddonFunctions = (platform) => (platform === "win32" ? WINDOWS_ADDON_FUNCTIONS : POSIX_ADDON_FUNCTIONS);
+/** macOS adds diskWritten (IO-IDLE-DRAIN-1018 r3.6): the io watchdog's OS write floor there (io-budget.ts readProcess; getrusage's block
+ * count reads 0 on macOS). A macOS package whose addon lacks it is refused; the Linux and Windows lists are unchanged. */
+export const DARWIN_ADDON_FUNCTIONS = [...POSIX_ADDON_FUNCTIONS, "diskWritten"];
+export const requiredAddonFunctions = (platform) => (platform === "win32" ? WINDOWS_ADDON_FUNCTIONS : platform === "darwin" ? DARWIN_ADDON_FUNCTIONS : POSIX_ADDON_FUNCTIONS);
 
 /** Loads the addon at `file` for real, with the TARGET package's own runtime, and checks that it answers with the version this build
  * expects, offers its functions and lists this very process among the machine's processes (a stub with a valid header cannot). `binary`

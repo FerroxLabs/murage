@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -43,13 +45,13 @@ describe.skipIf(!REAL)("real Fuigo on Windows through Murage's launch path", () 
         .map((event) => event.delta).join("");
 
       const started = Date.now();
-      const first = await live.adapter.sendTurn({ threadId: "t-real", text: "Reply with exactly the single word PONG and nothing else. Do not use any tools." });
+      const first = await live.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-real", text: "Reply with exactly the single word PONG and nothing else. Do not use any tools." });
       const done = await events.until((event) => event.type === "turn.completed" && event.turnId === first.turnId, 180_000);
       console.log(`[proof] turn1 ${JSON.stringify({ ok: (done as { ok?: boolean }).ok, stopReason: (done as { stopReason?: string }).stopReason, ms: Date.now() - started, text: text(first.turnId).slice(0, 80) })}`);
       expect(done).toMatchObject({ ok: true });
       expect(text(first.turnId).toUpperCase()).toContain("PONG");
 
-      const second = await live.adapter.sendTurn({ threadId: "t-real", text: "Write the numbers from 1 to 3000, one per line, as plain text. Do not use any tools." });
+      const second = await live.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-real", text: "Write the numbers from 1 to 3000, one per line, as plain text. Do not use any tools." });
       await events.until((event) => event.type === "content.delta" && (event as { turnId?: string }).turnId === second.turnId, 180_000);
       // mid-turn: the whole tree under this test process (the launcher, fuigo.exe and its console host, any node shim)
       const tree = await descendantPids(process.pid);
@@ -74,3 +76,6 @@ describe.skipIf(!REAL)("real Fuigo on Windows through Murage's launch path", () 
     }
   }, 600_000);
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

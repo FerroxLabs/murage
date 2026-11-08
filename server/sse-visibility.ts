@@ -268,7 +268,9 @@ export function requestFromComputer(
 
 /** What one frame is about. `workspace` frames belong to no conversation. */
 export type FrameSubject =
+  | { scope: "chats-readers" }
   | { scope: "workspace" }
+  | { scope: "connection" }
   | { scope: "thread"; threadId: string }
   | { scope: "bot"; botId: string }
   | { scope: "group"; groupId: string }
@@ -282,7 +284,9 @@ const WORKSPACE: FrameSubject = { scope: "workspace" };
 
 /** Whether a stream gets a frame addressed to one audience; null when the
  * frame is not addressed that way and the ordinary rules decide. */
-export function frameAudience(subject: FrameSubject, scoped: boolean): boolean | null {
+export function frameAudience(subject: FrameSubject, scoped: boolean, chatsReader = false): boolean | null {
+  if (subject.scope === "chats-readers") return chatsReader;
+  if (subject.scope === "connection") return false;
   if (subject.scope === "desktop") return !scoped;
   if (subject.scope === "remote") return scoped;
   return null;
@@ -320,6 +324,9 @@ const nested = (payload: Record<string, unknown>, key: string): Record<string, u
  * of `index.ts` and fails if any of them is missing from this list, so a new
  * kind breaks the build and has to be classified on purpose. */
 export const KNOWN_FRAME_KINDS = [
+  "speech.sessionClosed",
+  "speech.ready",
+  "speech.invalidate",
   "message",
   "message.patch",
   "sends",
@@ -345,6 +352,7 @@ export const KNOWN_FRAME_KINDS = [
   "memory.waiting",
   "open-cards.ready",
   "deletion-owed",
+  "chats.forgot",
   "routine",
   "routine.run",
   "webhook",
@@ -361,6 +369,12 @@ export const KNOWN_FRAME_KINDS = [
 export function frameSubject(payload: Record<string, unknown>): FrameSubject {
   const kind = String(payload.kind ?? "");
   switch (kind) {
+    case "speech.sessionClosed": return { scope: "connection" };
+    case "speech.ready":
+    case "speech.invalidate": {
+      const threadId = id(payload.threadId);
+      return threadId ? { scope: "thread", threadId } : { scope: "connection" };
+    }
     case "message":
     case "message.patch":
     case "sends":
@@ -449,6 +463,9 @@ export function frameSubject(payload: Record<string, unknown>): FrameSubject {
     // An engine's copy of a deleted conversation is still owed: fixed sentences naming the engine, no paths. Desktop only.
     case "deletion-owed":
       return { scope: "desktop" };
+    // A chat preview lost a forgotten line (no ids, no text): All chats asks again. Desktop only, like the previews it refreshes.
+    case "chats.forgot":
+      return { scope: "chats-readers" };
     // A routine and its run carry the prompt, the instruction history and the
     // run's output, so they follow the bot they belong to: a hidden bot's
     // routine never reaches a phone or chat browser.
@@ -515,7 +532,9 @@ export function frameSubject(payload: Record<string, unknown>): FrameSubject {
  * Splitting the two lets the second be counted instead of guessed at. */
 export function subjectResolves(store: VisibilityStore, subject: FrameSubject): boolean {
   switch (subject.scope) {
+    case "connection": return false;
     case "workspace":
+    case "chats-readers":
     case "desktop":
     case "remote":
       return true;
@@ -530,9 +549,11 @@ export function subjectResolves(store: VisibilityStore, subject: FrameSubject): 
 
 export function visibleToCompanion(store: VisibilityStore, subject: FrameSubject): boolean {
   switch (subject.scope) {
+    case "connection": return false;
     case "workspace":
     case "remote":
       return true;
+    case "chats-readers":
     case "desktop":
       return false;
     case "thread": {
@@ -561,6 +582,7 @@ export function scopedConfig<T extends { profile?: unknown; vps?: unknown }>(con
   // until someone decides a phone should see it (Kimi round 3, L3).
   const out: Record<string, unknown> = { ...config };
   delete out.noLimitsTerms; // the desktop's to read, and its alone to accept
+  delete out.spend; // the monthly limit and the Flux key fingerprint (UX-L2C): the desktop's alone
   if (out.features && typeof out.features === "object") {
     const { botsSharedAcrossTeams: _sharing, ...features } = out.features as Record<string, unknown>;
     out.features = features;

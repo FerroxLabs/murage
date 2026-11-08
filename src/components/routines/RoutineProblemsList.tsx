@@ -1,3 +1,6 @@
+import { useRef } from "react";
+import { useCalendarLayer, type CalendarLayerProps } from "@/components/CalendarLayer";
+import { LayerSurface } from "@/components/LayerSurface";
 import { CheckCheck, CircleAlert, X } from "lucide-react";
 import { isUnseenRoutineProblem } from "../../../shared/routine-problems";
 import type { RoutineRun } from "@/lib/routines";
@@ -15,22 +18,23 @@ const when = (at: number) => new Date(at).toLocaleString([], { month: "short", d
 /** The problems filter behind the Routines pill (upstream #1629). The pill
  * used to be a bare count: failures scattered across past weeks could only
  * be cleared by finding each one on the calendar and opening it. */
-export function RoutineProblemsList({ runs, bots, onClose, onOpen, onMarkAllSeen }: {
+export function RoutineProblemsList({ lifecycle, runs, bots, onClose, onOpen, onMarkAllSeen }: {
   runs: readonly RoutineRun[];
   bots: readonly Bot[];
   onClose: () => void;
   onOpen: (run: RoutineRun) => void;
   onMarkAllSeen: () => void;
-}) {
+} & CalendarLayerProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const layer = useCalendarLayer(dialogRef, "routine-problems", onClose, lifecycle, "[data-layer-close]");
   const problems = unseenRoutineProblems(runs);
-  return (
-    <div className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div role="dialog" aria-modal="true" aria-label="Routine problems" className={`${BOX_FRAME} max-h-[calc(var(--vvh,100dvh)-1.5rem)] w-full max-w-[520px] rounded-2xl border border-hairline/60 bg-panel shadow-2xl`}>
+  return <LayerSurface handle={layer}><div className="overlay-inset fixed inset-0 flex items-center justify-center bg-black/60 p-3" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Routine problems" className={`${BOX_FRAME} max-h-[calc(var(--vvh,100dvh)-1.5rem)] w-full max-w-[520px] rounded-2xl border border-hairline/60 bg-panel shadow-2xl`}>
         <BoxHead className="border-b border-hairline/40 px-5 py-4">
           <div className="min-w-0"><div className="text-[16px] font-semibold text-ink">Routine problems</div><div className="mt-0.5 text-[11.5px] text-ink-secondary">Failed and missed runs you have not opened yet.</div></div>
           <div className="flex shrink-0 items-center gap-1">
             {problems.length > 0 && <button type="button" onClick={onMarkAllSeen} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] font-medium text-ink-secondary hover:bg-raised hover:text-ink"><CheckCheck size={12} />Mark all as read</button>}
-            <button type="button" onClick={onClose} aria-label="Close" className="rounded-full p-2 text-ink-secondary hover:bg-raised"><X size={17} /></button>
+            <button type="button" data-layer-close onClick={onClose} aria-label="Close" className="rounded-full p-2 text-ink-secondary hover:bg-raised"><X size={17} /></button>
           </div>
         </BoxHead>
         <BoxBody className="space-y-1 p-3">
@@ -50,6 +54,5 @@ export function RoutineProblemsList({ runs, bots, onClose, onOpen, onMarkAllSeen
           })}
         </BoxBody>
       </div>
-    </div>
-  );
+    </div></LayerSurface>;
 }

@@ -1,3 +1,4 @@
+import { probeFolder } from "./probe-folder.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -42,7 +43,7 @@ export function cachedCliVersion(cli: string, env: NodeJS.ProcessEnv, run: Exec 
   const entry: Entry = { identity, at: 0, probe: Promise.resolve({ error: null, stdout: "", stderr: "" }) };
   entries.set(key, entry);
   entry.probe = new Promise<CliVersionProbe>((resolve) => {
-    run(cli, ["--version"], { timeout, env }, (error, stdout, stderr) => {
+    run(cli, ["--version"], { timeout, env, cwd: probeFolder() }, (error, stdout, stderr) => {
       const result: CliVersionProbe = { error: error ?? null, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") };
       if (entries.get(key) === entry) {
         if (!result.error && result.stdout.trim()) entry.at = Date.now(); else entries.delete(key);

@@ -1,3 +1,5 @@
+import { probeFolder } from "../probe-folder.ts";
+import { botFolderOrThrow } from "../bot-folder.ts";
 import { cliSig, engineLaunchFile, knownCliVersion, memoDeps, noteVersionProbe, pathExists, rememberCliVersion, versionProbeAllowed } from "./isolation-cache.ts";
 import { engineUpdateRequired } from "./scoped-cli-home.ts";
 import { cloudTurnBot, cloudTurnEnvironment } from "../cloud-home/turn-process.ts";
@@ -66,6 +68,7 @@ import { localContextWindow, type LocalHost } from "./local-inject.ts";
 import { isPlainObject, readNativeJsonConfig } from "./native-config-file.ts";
 import { primeLocalContext } from "../local-server-probe.ts";
 import { approvalSummary } from "../../shared/approval-summary.ts";
+import { phoneAskLine } from "./phone-tool-schemas.ts";
 import { boundedToolInput } from "../approval-text.ts";
 import type { McpMountRecord } from "../../shared/mount-identity.ts";
 import { PI_GATE_TITLE_PREFIX } from "./pi-permission-gate.ts";
@@ -463,7 +466,7 @@ export async function fetchPiModels(
   cli: string,
   env: Record<string, string | undefined>,
 ): Promise<ModelCatalog> {
-  const child = spawnCli(cli, PI_ARGS, { stdio: ["pipe", "pipe", "pipe"], env });
+  const child = spawnCli(cli, PI_ARGS, { stdio: ["pipe", "pipe", "pipe"], cwd: probeFolder(), env });
   return new Promise((resolve) => {
     let done = false;
     const fallbackDefault = readPiDefaultModel(env);
@@ -679,7 +682,7 @@ function piGateCall(message: string, mounts: readonly McpMountRecord[]): PiGateA
     const identity = { namespace: "mcp", name: `${mount}__${mcpTool}` };
     if (cut) return { tool: name, summary: `${mcpTool.slice(0, 300)} (the call was cut)${note}`, truncated: true, toolIdentity: identity };
     if (!input) return { tool: name, summary: `${mcpTool.slice(0, 300)} (the call was cut)${note}`, truncated: true, toolInputMissing: "input", toolIdentity: identity };
-    return { tool: name, summary: `${mcpTool.slice(0, 300)}${note}`, ...(boundedToolInput(input) ? { toolInput: boundedToolInput(input) } : {}), toolCall: { name, input }, toolIdentity: identity, gateInput: input };
+    return { tool: name, summary: phoneAskLine(name, input) ?? `${mcpTool.slice(0, 300)}${note}`, ...(boundedToolInput(input) ? { toolInput: boundedToolInput(input) } : {}), toolCall: { name, input }, toolIdentity: identity, gateInput: input };
   }
   const display = tool === "bash" ? "Bash" : tool === "powershell" ? "PowerShell" : tool === "edit" ? "Edit" : tool === "write" ? "Write" : tool || "pi";
   if (cut) return { tool: display, summary: `${shown} (the call was cut)${note}`, truncated: true };
@@ -822,6 +825,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
     });
 
     const sendTurn = async (turn: SendTurnInput) => {
+      turn = { ...turn, cwd: botFolderOrThrow(turn) };
       const { threadId } = turn;
       if (active.has(threadId)) throw new Error("a turn is already running on this thread");
       earlyStops.delete(threadId); starting.add(threadId);
@@ -951,7 +955,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       const instanceEnv: Record<string, string> = {};
       for (const [name, value] of Object.entries(input.environment)) if (typeof value === "string") instanceEnv[name] = value;
       const handed = await handedEngineEnv({
-        cwd: turn.cwd,
+        cwd: botFolderOrThrow(turn),
         strip: (env) => {
           const cleaned = piEnvironment(env);
           const out: Record<string, string> = {};
@@ -989,9 +993,9 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           }
           return spawnCli(launchCli, childArgs, {
             stdio: ["pipe", "pipe", "pipe"],
-            cwd: turn.cwd,
+            cwd: botFolderOrThrow(turn),
             env: handed.env,
-          }, engineJob());
+          }, engineJob(), undefined, threadId);
         } catch (err) {
           if (mcpTempDir) {
             try {
@@ -1394,8 +1398,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               };
               // only the gate's command ask is checked (and so only a command card can carry U20); any other ask reports the
               // map as handed, unchecked
-              if (gate && !questions && (gate.tool === "Bash" || gate.tool === "PowerShell")) void execEnvNow(threadId, piCheckForm(gate.tool, shellForm), handed, turn.cwd ?? process.cwd()).then(open);
-              else open(execEnvHanded(handed, turn.cwd ?? process.cwd(), shellForm));
+              if (gate && !questions && (gate.tool === "Bash" || gate.tool === "PowerShell")) void execEnvNow(threadId, piCheckForm(gate.tool, shellForm), handed, botFolderOrThrow(turn)).then(open);
+              else open(execEnvHanded(handed, botFolderOrThrow(turn), shellForm));
             }
             return;
           }
@@ -1606,6 +1610,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
     async function probePi(): Promise<{ version: string } | { reason: string }> {
       const answer = await new Promise<{ err: Error | null; out: string }>((resolve) => {
         const child = spawnCli(config.cli, ["--version"], {
+          cwd: probeFolder(),
           stdio: ["ignore", "pipe", "pipe"],
           env: piProbeEnv(),
         });

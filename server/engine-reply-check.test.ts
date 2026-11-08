@@ -1,3 +1,4 @@
+import { fixtureLearningBot } from "./testing/learning-bot-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it, vi } from "vitest";
@@ -68,7 +69,7 @@ describe("the hidden session", () => {
       sendTurn: async (input: { threadId: string }) => { sent.push(input); queueMicrotask(() => script(input.threadId, event => { for (const listener of listeners) listener(event); })); return {}; },
       respondToRequest: async () => {}, interruptTurn: async () => {}, resetSession: async () => {},
     } } as unknown as ProviderInstance;
-    return { live: withCliMemoryLearning(live, { run: hiddenTurnRunner }), sent };
+    return { live: fixtureLearningBot(withCliMemoryLearning(live, { run: hiddenTurnRunner })), sent };
   }
   const event = (threadId: string, fields: Record<string, unknown>) => ({ threadId, ...fields }) as unknown as RuntimeEvent;
 

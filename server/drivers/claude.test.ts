@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 import { fixtureCredentialFingerprint } from "../testing/fixture-dump.ts";
 import { LEGACY_NAMES_ENV, withLegacyNames } from "../../shared/connected-app-names.ts";
 import { buildRemoteMount } from "../custom-mcp-mounts.ts";
@@ -19,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { DATA_DIR, ensureDirs } from "../config.ts";
 import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
+import { EventBus } from "../harness/bus.ts";
 import { CLAUDE_BROKER_TOOL_TIMEOUT_MS, brokerSocketCandidates, ClaudeDriver, CLAUDE_BUILT_IN_AGENTS, CLAUDE_ISOLATION_CONTRACT, claudeCostSnapshot, claudeIsolation, claudeIsolationSettings, createPermissionBroker, permissionSocketPath, socketNameHasLiveListener, restoredCostBase, turnCostFromRunningTotal, type ClaudeConfig } from "./claude.ts";
 import { resolveCall } from "../../shared/app-action-grant.ts";
 import { autoVerdict } from "../auto-approve.ts";
@@ -486,10 +489,21 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await removeTempDir(scratch);
   });
 
+  it.each(["", undefined])("dispatches an empty native selection %s with the catalog default", async model => {
+    const dump = join(scratch, "blank-model.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    await create();
+    const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "blank-model", text: "hi", model });
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId);
+    const { argv } = JSON.parse(readFileSync(dump, "utf8"));
+    expect(argv[argv.indexOf("--model") + 1]).toBe(instance.models.default);
+    expect(instance.models.default).toBe("claude-sonnet-5-5");
+  });
+
   it("reports exactly one usage total for each of two turns on the same process",async()=>{
     const dump=join(scratch,"usage-process.json");process.env.FAKE_CLAUDE_DUMP=dump;
     await create();const pids=new Set<number>();
-    for(let n=0;n<2;n++){const sent=await instance.adapter.sendTurn({threadId:"usage-two",text:"hi"});await recorder.until(e=>e.type==="turn.completed"&&e.turnId===sent.turnId);pids.add(JSON.parse(readFileSync(dump,"utf8")).pid);}
+    for(let n=0;n<2;n++){const sent=await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),threadId:"usage-two",text:"hi"});await recorder.until(e=>e.type==="turn.completed"&&e.turnId===sent.turnId);pids.add(JSON.parse(readFileSync(dump,"utf8")).pid);}
     expect(pids.size).toBe(1);
     const completed=recorder.events.filter(e=>e.type==="turn.completed");expect(completed).toHaveLength(2);
     for(const event of completed)expect(event).toMatchObject({ok:true,usage:{input:12,output:5,cachedInput:2}});
@@ -504,7 +518,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const controlLog = join(scratch, "control.log");
     process.env.FAKE_CLAUDE_CONTROL_LOG = controlLog;
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-commands", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-commands", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
     expect(readFileSync(controlLog, "utf8")).toContain('"subtype":"initialize"');
     const reports = recorder.events.filter((e) => e.type === "engine.commands") as Array<Extract<RuntimeEvent, { type: "engine.commands" }>>;
@@ -521,7 +535,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const dump = join(scratch, "dump.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-context", text: "/context", engineCommand: { name: "context", args: "" }, system: "You are Moss." });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-context", text: "/context", engineCommand: { name: "context", args: "" }, system: "You are Moss." });
     expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
     expect(JSON.parse(readFileSync(dump, "utf8")).prompt.message.content).toBe("/context");
     expect(recorder.events.find((e) => e.type === "item.completed" && (e as any).itemType === "assistant_text")).toMatchObject({ text: "FAKE_CONTEXT 12k of 200k tokens used" });
@@ -529,7 +543,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("normalizes a full turn into the canonical event sequence", async () => {
     await create();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-happy", text: "hi", model: "claude-sonnet-5" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-happy", text: "hi", model: "claude-sonnet-5" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const types = recorder.events.map((e) => e.type);
@@ -556,7 +570,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("streams partial-message text deltas without re-emitting the whole message", async () => {
     await create("stream");
-    await instance.adapter.sendTurn({ threadId: "t-stream", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stream", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const deltas = recorder.events.filter((e) => e.type === "content.delta");
@@ -576,7 +590,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   it("passes on a running tool's heartbeat as tool activity, so a long tool is not taken for a stall", async () => {
     // Upstream #3328.
     await create("tool-heartbeat");
-    await instance.adapter.sendTurn({ threadId: "t-heartbeat", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-heartbeat", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const types = recorder.events.map((e) => e.type);
@@ -589,7 +603,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("drops a heartbeat that lands after the turn settled, so it cannot keep a newer turn alive", async () => {
     await create("tool-heartbeat-late");
-    await instance.adapter.sendTurn({ threadId: "t-heartbeat-late", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-heartbeat-late", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
     // the late line follows the result on the same stream
     await new Promise((resolve) => setTimeout(resolve, 300));
@@ -598,7 +612,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it.each(["not-logged-in", "not-logged-in-success-result"])("routes signed-out CLI mode %s to setup and one failed auth terminal", async mode => {
     await create(mode);
-    await instance.adapter.sendTurn({ threadId: "t-auth", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-auth", text: "hi" });
     await recorder.until(event => event.type === "turn.completed");
     expect(recorder.events.filter(event => event.type === "runtime.error")).toEqual([
       expect.objectContaining({ message: "Not logged in · Please run /login", setup: true, authRequired: true }),
@@ -612,7 +626,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("gives an org-disabled login its plain line and the sign-in path, not a bot reply", async () => {
     await create("org-login-off");
-    await instance.adapter.sendTurn({ threadId: "t-org-off", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-org-off", text: "hi" });
     await recorder.until(event => event.type === "turn.completed");
     expect(recorder.events.filter(event => event.type === "runtime.error")).toEqual([
       expect.objectContaining({ message: CLAUDE_ORG_LOGIN_LINE, setup: true, authRequired: true }),
@@ -628,7 +642,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   it("settles an outdated CLI as update_required without emitting an assistant reply", async () => {
     const message = "API Error: 400 Claude Code 2.1.268 does not support this model; version 2.1.280 or newer is required. Run 'claude update'.";
     await create("api-error", { FAKE_CLAUDE_API_ERROR: message });
-    await instance.adapter.sendTurn({ threadId: "t-update", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-update", text: "hi" });
     await recorder.until((event) => event.type === "turn.completed");
     expect(recorder.events).toContainEqual(expect.objectContaining({ type: "runtime.error", message, setup: true, claudeUpdate: true }));
     expect(recorder.events.some((event: any) => event.type === "item.completed" && event.itemType === "assistant_text")).toBe(false);
@@ -638,7 +652,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   it("keeps update_required when the CLI exits after the refusal with no result (audit round 1, Kimi 2)", async () => {
     const message = "API Error: 400 Claude Code 2.1.268 does not support this model; version 2.1.280 or newer is required.";
     await create("api-error-exit", { FAKE_CLAUDE_API_ERROR: message });
-    await instance.adapter.sendTurn({ threadId: "t-update-exit", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-update-exit", text: "hi" });
     await recorder.until((event) => event.type === "turn.completed");
     expect(recorder.events.filter((event) => event.type === "runtime.error")).toEqual([
       expect.objectContaining({ message, setup: true, claudeUpdate: true }),
@@ -650,7 +664,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await create(undefined, { FAKE_CLAUDE_API_ERROR: "Claude Code 2.1.268 does not support this model; version 2.1.280 or newer is required." });
     const healthyDump = join(scratch, "healthy-session.json");
     process.env.FAKE_CLAUDE_DUMP = healthyDump;
-    const healthy = await instance.adapter.sendTurn({ threadId: "t-update-healthy", text: "keep this session" });
+    const healthy = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-update-healthy", text: "keep this session" });
     await recorder.until((event) => event.type === "turn.completed" && event.turnId === healthy.turnId);
     const healthyPid = JSON.parse(readFileSync(healthyDump, "utf8")).pid;
 
@@ -658,7 +672,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const outdatedDump = join(scratch, "outdated-session.json");
     process.env.FAKE_CLAUDE_DUMP = outdatedDump;
     const resumeCursor = "fixture-update-session";
-    const outdated = await instance.adapter.sendTurn({ threadId: "t-update-retry", text: "try the model", resumeCursor });
+    const outdated = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-update-retry", text: "try the model", resumeCursor });
     await expect(recorder.until((event) => event.type === "turn.completed" && event.turnId === outdated.turnId))
       .resolves.toMatchObject({ ok: false, stopReason: "update_required" });
     const outdatedPid = JSON.parse(readFileSync(outdatedDump, "utf8")).pid;
@@ -668,22 +682,37 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     process.env.FAKE_CLAUDE_MODE = "happy";
     const retryDump = join(scratch, "updated-session.json");
     process.env.FAKE_CLAUDE_DUMP = retryDump;
-    const retry = await instance.adapter.sendTurn({ threadId: "t-update-retry", text: "retry explicitly", resumeCursor });
+    const retry = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-update-retry", text: "retry explicitly", resumeCursor });
     await expect(recorder.until((event) => event.type === "turn.completed" && event.turnId === retry.turnId))
       .resolves.toMatchObject({ ok: true });
     const replacement = JSON.parse(readFileSync(retryDump, "utf8"));
     expect(replacement.pid).not.toBe(outdatedPid);
     expect(replacement.argv).toContain("--resume");
 
-    const continued = await instance.adapter.sendTurn({ threadId: "t-update-healthy", text: "continue normally" });
+    const continued = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-update-healthy", text: "continue normally" });
     await expect(recorder.until((event) => event.type === "turn.completed" && event.turnId === continued.turnId))
       .resolves.toMatchObject({ ok: true });
     expect(JSON.parse(readFileSync(healthyDump, "utf8")).pid).toBe(healthyPid);
   });
 
+  it.each(["key_budget_reached", "budget_exceeded", "premium_locked"])("preserves the routed CLI refusal %s and its key", async code => {
+    const { isBudgetReached, resetUnavailable } = await import("../voice/voice-routes.ts");
+    resetUnavailable();
+    await create("api-error", { FAKE_CLAUDE_API_ERROR: `API Error: 402 ${JSON.stringify({ error: { code } })}` });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-cli-budget", text: "hi", model: "fixture-model",
+      providerRoute: { connectionId: "fixture", revision: "1", preset: "flux", protocol: "anthropic", baseUrl: "https://fixture.invalid/v1", apiKey: "fixture-budget", model: "fixture-model" } });
+    await recorder.until(e => e.type === "turn.completed");
+    const failure = recorder.events.find(e => e.type === "runtime.error" && e.providerError?.fluxBudget);
+    expect(Boolean(failure)).toBe(code !== "premium_locked");
+    expect(isBudgetReached({ via: "flux", label: "Flux", baseUrl: "https://fixture.invalid/v1", key: "fixture-budget", model: "speech" })).toBe(code !== "premium_locked");
+    expect(isBudgetReached({ via: "flux", label: "Flux", baseUrl: "https://fixture.invalid/v1", key: "different-key", model: "speech" })).toBe(false);
+    if (code !== "premium_locked") expect(recorder.events.some(e => e.type === "content.delta" && e.streamKind === "assistant_text")).toBe(false);
+    resetUnavailable();
+  });
+
   it.each(["anthropic", "flux"] as const)("routes a selected %s provider authentication failure to its connection, never native Claude login", async preset => {
     await create("not-logged-in");
-    await instance.adapter.sendTurn({ threadId: "t-provider-auth", text: "hi", model: "claude-fixture",
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-provider-auth", text: "hi", model: "claude-fixture",
       providerRoute: { connectionId: "fixture-provider", revision: "fixture-revision", preset, protocol: "anthropic", baseUrl: preset === "flux" ? "https://fluxrouter.ai/api/v1" : "https://api.anthropic.com", apiKey: "fixture-only-not-real", model: "claude-fixture" } });
     await recorder.until(event => event.type === "turn.completed");
     const failure = recorder.events.find(event => event.type === "runtime.error");
@@ -695,7 +724,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   it("keeps unflagged assistant text about login as a normal reply", async () => {
     const text = "You are not logged in to npm; run npm login.";
     await create("happy", { FAKE_CLAUDE_REPLIES: JSON.stringify([text]) });
-    await instance.adapter.sendTurn({ threadId: "t-login-text", text: "explain sign-in" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-login-text", text: "explain sign-in" });
     await recorder.until(event => event.type === "turn.completed");
     expect(recorder.events.some(event => event.type === "runtime.error")).toBe(false);
     expect(recorder.events).toContainEqual(expect.objectContaining({ type: "item.completed", itemType: "assistant_text", text }));
@@ -712,7 +741,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     process.env.FAKE_CLAUDE_DUMP = dump;
     const data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aM1sAAAAASUVORK5CYII=";
 
-    await instance.adapter.sendTurn({ threadId: "t-image", text: "what is this", images: [{ mimeType: "image/png", data }] });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-image", text: "what is this", images: [{ mimeType: "image/png", data }] });
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -734,7 +763,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const dump = join(scratch, "dump-no-image.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-no-image", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-no-image", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
 
     expect(JSON.parse(readFileSync(dump, "utf8")).prompt.message.content).toBe("hi");
@@ -751,7 +780,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     process.env.BOX_TOKEN = "box-should-not-leak";
     process.env.MURAGE_TTS_KEY = "tts-should-not-leak";
 
-    await instance.adapter.sendTurn({ threadId: "t-hygiene", text: "the secret prompt", system: "You are Testy." });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-hygiene", text: "the secret prompt", system: "You are Testy." });
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -954,7 +983,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   it("gives a proposal the managed-policy code when the CLI refuses", async () => {
     process.env.FAKE_CLAUDE_REFUSE = "managed-mcp";
     await create();
-    await expect(instance.proposeProject?.("Propose", new AbortController().signal, "chief-model")).rejects.toMatchObject({ code: CLAUDE_MANAGED_MCP_CONFLICT });
+    await expect(instance.proposeProject?.("Propose", new AbortController().signal, "chief-model", undefined, fixtureBotFolder())).rejects.toMatchObject({ code: CLAUDE_MANAGED_MCP_CONFLICT });
   });
 
   it("settles update_required before any launch when the CLI is older than 2.1.280", async () => {
@@ -967,26 +996,20 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(recorder.events).toContainEqual(expect.objectContaining({ type: "runtime.error", setup: true, claudeUpdate: true, message: CLAUDE_UPDATE_MESSAGE }));
     expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: false, stopReason: "update_required" });
     expect(existsSync(dump)).toBe(false);
-    await expect(instance.proposeProject?.("Propose", new AbortController().signal, "chief-model")).rejects.toMatchObject({ code: "update_required" });
+    await expect(instance.proposeProject?.("Propose", new AbortController().signal, "chief-model", undefined, fixtureBotFolder())).rejects.toMatchObject({ code: "update_required" });
     expect(await instance.snapshot()).toMatchObject({ state: "unavailable", version: "2.1.279 (Claude Code)", reason: CLAUDE_UPDATE_MESSAGE });
   });
 
-  it("launches at the floor, and on a version answer it cannot read, which it logs", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      for (const [version, thread] of [["2.1.280", "t-at-floor"], ["nightly", "t-unknown"]] as const) {
-        process.env.FAKE_CLAUDE_VERSION = version;
-        resetClaudeVersionGate();
-        await create();
-        await instance.adapter.sendTurn({ threadId: thread, text: "hi", cwd: scratch });
-        await recorder.until((e) => e.type === "turn.completed" && e.threadId === thread);
-        expect(recorder.events.filter((e) => e.threadId === thread).at(-1)).toMatchObject({ type: "turn.completed", ok: true });
-        if (version !== "nightly") await instance.dispose();
-      }
-      expect(warn.mock.calls.filter((call) => String(call[0]).includes("printed no version"))).toHaveLength(1);
-    } finally {
-      warn.mockRestore();
-    }
+  it.each([["2.1.292", true], ["2.1.280", false], ["nightly", false]] as const)("qualifies launch version %s", async (version, allowed) => {
+    process.env.FAKE_CLAUDE_VERSION = version;
+    resetClaudeVersionGate();
+    await create();
+    const dump = join(scratch, "qualified-launch.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    await instance.adapter.sendTurn({ threadId: "t-qualified", text: "hi", cwd: scratch });
+    const done = await recorder.until(e => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: allowed, ...(!allowed ? { stopReason: "update_required" } : {}) });
+    expect(existsSync(dump)).toBe(allowed);
   });
 
   it("strips ambient routing switches left in the shell by a provider switcher", async () => {
@@ -1009,7 +1032,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       const dump = join(scratch, "dump-routing.json");
       process.env.FAKE_CLAUDE_DUMP = dump;
 
-      await instance.adapter.sendTurn({ threadId: "t-routing", text: "hi" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-routing", text: "hi" });
       await recorder.until((e) => e.type === "turn.completed");
 
       const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -1034,7 +1057,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       const dump = join(scratch, "dump-routing-inject.json");
       process.env.FAKE_CLAUDE_DUMP = dump;
 
-      await instance.adapter.sendTurn({ threadId: "t-routing-inject", text: "hi", model: "unsloth::local-model" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-routing-inject", text: "hi", model: "unsloth::local-model" });
       await recorder.until((e) => e.type === "turn.completed");
 
       const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -1061,7 +1084,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const dump = join(scratch, "dump-flux.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-flux", text: "hi", model: "flux-auto" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-flux", text: "hi", model: "flux-auto" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -1095,7 +1118,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       const dump = join(scratch, "dump-flux-ambient.json");
       process.env.FAKE_CLAUDE_DUMP = dump;
 
-      await instance.adapter.sendTurn({ threadId: "t-flux-ambient", text: "hi", model: "flux-reasoning" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-flux-ambient", text: "hi", model: "flux-reasoning" });
       await recorder.until((e) => e.type === "turn.completed");
 
       const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -1119,7 +1142,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const dump = join(scratch, "dump-flux-nokey.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-flux-nokey", text: "hi", model: "flux-auto" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-flux-nokey", text: "hi", model: "flux-auto" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -1136,7 +1159,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const dump = join(scratch, "dump-flux-native.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-flux-native", text: "hi", model: "claude-sonnet-5" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-flux-native", text: "hi", model: "claude-sonnet-5" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -1152,7 +1175,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     process.env.FAKE_CLAUDE_DUMP = dump;
     const system = `room instructions\n${"context-0123456789".repeat(8_000)}`;
 
-    await instance.adapter.sendTurn({ threadId: "t-long-system", text: "review this", system });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-long-system", text: "review this", system });
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -1166,7 +1189,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const dump = join(scratch, "dump.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
 
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-local-model",
       text: "hi",
       model: "unsloth::local-model",
@@ -1192,7 +1215,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       const dump = join(scratch, "dump-leftover.json");
       process.env.FAKE_CLAUDE_DUMP = dump;
 
-      await instance.adapter.sendTurn({
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
         threadId: "t-leftover-local",
         text: "hi",
         model: "orcarouter/Qwen3.8-27B-Uncensored-GGUF",
@@ -1213,7 +1236,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await create();
     const dump = join(scratch, "dump.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
-    await instance.adapter.sendTurn({ threadId: "t-boxtok", text: "hi", integrations: { computer: { boxId: "bx_u20", token: "box-secret-u20" } } });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-boxtok", text: "hi", integrations: { computer: { boxId: "bx_u20", token: "box-secret-u20" } } });
     await recorder.until((e) => e.type === "turn.completed");
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.mcpConfig.mcpServers.computer.env).toMatchObject({ MURAGEBOX_BOX_ID: "bx_u20", MURAGE_CRED_SERVER: "computer" });
@@ -1228,7 +1251,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const dump = join(scratch, "dump.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
 
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-agents",
       text: "hi",
       integrations: {
@@ -1271,7 +1294,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       command: "attacker-mcp", args: [], env: { [key]: "attacker-value", CUSTOM_REJECTED_MARKER: "must-not-copy" },
     }]));
 
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-custom-mcp",
       text: "hi",
       integrations: {
@@ -1320,7 +1343,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     process.env.FAKE_CLAUDE_DUMP = dump;
     const token = "a1".repeat(24);
     const context = { execPath: process.execPath, proxyPath: "/fake/remote-mcp-proxy.js", harnessUrl: "http://127.0.0.1:1", token: () => token };
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-remote-mount",
       text: "hi",
       integrations: {
@@ -1363,7 +1386,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const dump = join(scratch, "tool-scope.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-tool-scope", text: "inspect" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-tool-scope", text: "inspect" });
     await recorder.until((event) => event.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -1376,7 +1399,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const dump = join(scratch, "no-builtins.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-no-builtins", text: "reply only" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-no-builtins", text: "reply only" });
     await recorder.until((event) => event.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -1391,7 +1414,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const dump = join(scratch, "dump.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
 
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-dweb",
       text: "hi",
       integrations: { dweb: { url: "http://127.0.0.1:49737" } },
@@ -1413,7 +1436,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     process.env.FAKE_CLAUDE_DUMP = dump;
 
     expect(instance.adapter.capabilities.composioMcp).toBe(true);
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-composio",
       text: "hi",
       integrations: {
@@ -1443,7 +1466,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await create();
     const dump = join(scratch, "dump.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-composio-legacy",
       text: "hi",
       resumeCursor: "sess-from-1-0-1",
@@ -1470,7 +1493,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const dump = join(scratch, "dump.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
 
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-cleanup",
       text: "hi",
       integrations: {
@@ -1497,7 +1520,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const dump = join(scratch, "browser-dump.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
     const browser = { command: process.execPath, args: ["/fake/browser-proxy.js"], env: {} };
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-browser-preload", text: "read the page", preloadBrowserTools,
       integrations: { browser },
     });
@@ -1515,7 +1538,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const phoneJobs = { command: process.execPath, args: ["/fake/phone-jobs-proxy.js"], env: { MURAGE_PHONE_TOOLS: "calendar_read", MURAGE_PJ_GEN: "g1" } };
     const withDump = join(scratch, "phonejobs-with.json");
     process.env.FAKE_CLAUDE_DUMP = withDump;
-    await instance.adapter.sendTurn({ threadId: "t-pj-with", text: "go", integrations: { phoneJobs } });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pj-with", text: "go", integrations: { phoneJobs } });
     await recorder.until(event => event.type === "turn.completed" && event.threadId === "t-pj-with");
     const seen = JSON.parse(readFileSync(withDump, "utf8"));
     // the Claude launcher adds only its own MURAGE_EXEC_KEEP list of the names it keeps
@@ -1524,7 +1547,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(seen.argv.join(" ")).not.toMatch(/mcp__phoneJobs(?!__)/);
     const withoutDump = join(scratch, "phonejobs-without.json");
     process.env.FAKE_CLAUDE_DUMP = withoutDump;
-    await instance.adapter.sendTurn({ threadId: "t-pj-without", text: "go", integrations: { browser: { command: process.execPath, args: ["/fake/browser-proxy.js"], env: {} } } });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pj-without", text: "go", integrations: { browser: { command: process.execPath, args: ["/fake/browser-proxy.js"], env: {} } } });
     await recorder.until(event => event.type === "turn.completed" && event.threadId === "t-pj-without");
     expect(JSON.parse(readFileSync(withoutDump, "utf8")).mcpConfig.mcpServers).not.toHaveProperty("phoneJobs");
   });
@@ -1533,7 +1556,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await create();
     const dump = join(scratch, "local-dump.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-local",
       text: "inspect the desktop",
       integrations: {
@@ -1565,7 +1588,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const dump = join(scratch, "dump.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-resume", text: "again", resumeCursor: "sess-123" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-resume", text: "again", resumeCursor: "sess-123" });
     const started = await recorder.until((e) => e.type === "session.started");
     expect(started).toMatchObject({ sessionId: "sess-123" });
 
@@ -1576,8 +1599,8 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("rejects a second turn while one is in flight", async () => {
     await create("hang");
-    await instance.adapter.sendTurn({ threadId: "t-busy", text: "one" });
-    await expect(instance.adapter.sendTurn({ threadId: "t-busy", text: "two" })).rejects.toThrow(/already running/);
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-busy", text: "one" });
+    await expect(instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-busy", text: "two" })).rejects.toThrow(/already running/);
     expect(instance.adapter.hasSession("t-busy")).toBe(true);
     await instance.adapter.interruptTurn("t-busy");
     await recorder.until((e) => e.type === "turn.completed");
@@ -1590,14 +1613,14 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   // the stopped child's close and then runs (WIN1 fix round).
   it("a send that arrives while a stopped turn's child is still closing waits for the close, then runs", async () => {
     await create("hang", { FAKE_CLAUDE_SIGTERM_DELAY_MS: "600" });
-    const first = await instance.adapter.sendTurn({ threadId: "t-stop-resend", text: "one" });
+    const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stop-resend", text: "one" });
     await recorder.until((e) => e.type === "session.started");
     await instance.adapter.interruptTurn("t-stop-resend");
     // still closing: the child is alive and the thread still reads busy
     expect(instance.adapter.hasSession("t-stop-resend")).toBe(true);
     expect(recorder.events.some((e) => e.type === "turn.completed")).toBe(false);
     process.env.FAKE_CLAUDE_MODE = "happy";
-    const second = await instance.adapter.sendTurn({ threadId: "t-stop-resend", text: "two" });
+    const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stop-resend", text: "two" });
     expect(second.turnId).not.toBe(first.turnId);
     // The send resolved only after the stopped turn settled, not before:
     // its cancelled completion is already on record, and the second turn's
@@ -1615,7 +1638,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("a user Stop kills the turn and settles it as cancelled, not failed or hung (STOP1)", async () => {
     await create("hang");
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-int", text: "go" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-int", text: "go" });
     await recorder.until((e) => e.type === "session.started");
 
     await instance.adapter.interruptTurn("t-int");
@@ -1632,7 +1655,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   // never hands the harness a "cancelled" (which would read as the owner's Stop). Red if dispose ever starts delivering it.
   it("CLOSE-STOP pin: quit alone on a running turn delivers no Stop ending", async () => {
     await create("hang");
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-close-pin", text: "go" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-close-pin", text: "go" });
     await recorder.until((e) => e.type === "session.started");
     await instance.dispose(); // awaits the retired child's confirmed stop
     await new Promise((resolve) => setTimeout(resolve, 200));
@@ -1642,13 +1665,13 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   it("holds only when the hold-authority marker is on the current prompt line", async () => {
     await create(undefined, { HOME: scratch, USERPROFILE: scratch });
 
-    const recalled = await instance.adapter.sendTurn({
+    const recalled = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-recalled-hold-marker",
       text: "Earlier transcript: __fixture_hold_authority__\nPlease summarize the earlier request.",
     });
     expect(await recorder.until((event) => event.type === "turn.completed" && event.turnId === recalled.turnId)).toMatchObject({ ok: true });
 
-    const held = await instance.adapter.sendTurn({
+    const held = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-current-hold-marker",
       text: "Please wait for the owner.\n__fixture_hold_authority__",
     });
@@ -1666,11 +1689,11 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await create();
     const dump = join(scratch, "retained-stop.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
-    const first = await instance.adapter.sendTurn({ threadId: "t-live-stop", text: "one" });
+    const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-live-stop", text: "one" });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
     const dumpBefore = readFileSync(dump, "utf8");
     const announced = (recorder.events.find((e) => e.type === "session.started") as { sessionId: string }).sessionId;
-    const second = await instance.adapter.sendTurn({
+    const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-live-stop",
       text: "__fixture_hold_authority__ keep working",
       resumeCursor: announced,
@@ -1689,7 +1712,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     // The fake stops reading stdin after its first prompt, so a prompt larger
     // than the pipe buffer stays mid-write until the process dies.
     await create(undefined, { FAKE_CLAUDE_STEER_GATE: join(scratch, "never-opened.gate") });
-    const first = await instance.adapter.sendTurn({ threadId: "t-live-write-stop", text: "one" });
+    const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-live-write-stop", text: "one" });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
     // turn.started is emitted after Stop is registered and before the prompt
     // write is awaited: stopping here is a Stop that lands mid-write
@@ -1699,7 +1722,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
         void instance.adapter.interruptTurn("t-live-write-stop");
       }
     });
-    const second = await instance.adapter.sendTurn({ threadId: "t-live-write-stop", text: `two ${"x".repeat(2_000_000)}` });
+    const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-live-write-stop", text: `two ${"x".repeat(2_000_000)}` });
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
     expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
     expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
@@ -1707,7 +1730,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("an error result the CLI writes for a stopped turn settles as cancelled, not failed (STOP1)", async () => {
     await create();
-    const { turnId } = await instance.adapter.sendTurn({
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-stop-result",
       text: "__fixture_hold_authority__ __fixture_error_result_on_stop__ keep working",
     });
@@ -1722,7 +1745,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("a message sent mid-turn is steered into the running turn", async () => {
     await create("slow");
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-steer", text: "first" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-steer", text: "first" });
     await recorder.until((e) => e.type === "item.completed" && e.itemType === "tool");
     expect(instance.adapter.capabilities.queueing).toBe(true);
     await expect(instance.adapter.steer!("t-steer", "and also this")).resolves.toBe(true);
@@ -1741,7 +1764,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     // its own, right after `result` (probed on 2.1.309). The driver used to
     // settle at that result, then close the process for "late frames".
     await create("final-steer");
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-final-steer", text: "first" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-final-steer", text: "first" });
     await recorder.until((e) => e.type === "content.delta" && (e as { delta?: string }).delta === "Writing the final answer");
     await expect(instance.adapter.steer!("t-final-steer", "and also this")).resolves.toBe(true);
     await recorder.until((e) => e.type === "item.completed" && e.itemType === "assistant_text" && (e as { text: string }).text === "reply to: and also this");
@@ -1759,7 +1782,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     process.env.FAKE_CLAUDE_FINAL_STEERS = "2";
     try {
       await create("final-steer");
-      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-final-two", text: "first" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-final-two", text: "first" });
       await recorder.until((e) => e.type === "content.delta" && (e as { delta?: string }).delta === "Writing the final answer");
       await expect(instance.adapter.steer!("t-final-two", "one")).resolves.toBe(true);
       await expect(instance.adapter.steer!("t-final-two", "two")).resolves.toBe(true);
@@ -1776,7 +1799,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     process.env.FAKE_CLAUDE_FOLLOWUP_DELAY_MS = "300";
     try {
       await create("final-steer");
-      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-final-notice", text: "first" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-final-notice", text: "first" });
       await recorder.until((e) => e.type === "content.delta" && (e as { delta?: string }).delta === "Writing the final answer");
       await expect(instance.adapter.steer!("t-final-notice", "and also this")).resolves.toBe(true);
       const done = await recorder.until((e) => e.type === "turn.completed");
@@ -1796,7 +1819,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     process.env.FAKE_CLAUDE_FOLLOWUP_DELAY_MS = "3000";
     try {
       await create("final-steer");
-      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-final-extend", text: "first" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-final-extend", text: "first" });
       await recorder.until((e) => e.type === "content.delta" && (e as { delta?: string }).delta === "Writing the final answer");
       await expect(instance.adapter.steer!("t-final-extend", "one")).resolves.toBe(true);
       await recorder.until((e) => e.type === "item.completed" && e.itemType === "assistant_text" && (e as { text: string }).text === "reply to: first");
@@ -1815,7 +1838,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   it("a Stop while the turn waits for a steer's follow-up ends it as cancelled, never as the earlier success", async () => {
     // `slow` folds a steer written after its tool result into the reply, so no follow-up comes: the turn waits up to 2 s
     await create("slow");
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-hold-stop", text: "first" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-hold-stop", text: "first" });
     await recorder.until((e) => e.type === "item.completed" && e.itemType === "tool");
     await expect(instance.adapter.steer!("t-hold-stop", "and also this")).resolves.toBe(true);
     await recorder.until((e) => e.type === "item.completed" && e.itemType === "assistant_text" && (e as { text: string }).text.includes("steered: and also this"));
@@ -1827,7 +1850,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("a card that opens in the steer follow-up wait holds the turn; its close lets the wait finish", async () => {
     await create("slow");
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-hold-card", text: "first" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-hold-card", text: "first" });
     const conn = await connectSocket(permissionSocketPath("t-hold-card"));
     await recorder.until((e) => e.type === "item.completed" && e.itemType === "tool");
     await expect(instance.adapter.steer!("t-hold-card", "and also this")).resolves.toBe(true);
@@ -1844,7 +1867,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("Stop wins in a steer wait held by a card: one end, as cancelled", async () => {
     await create("slow");
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-hold-card-stop", text: "first" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-hold-card-stop", text: "first" });
     const conn = await connectSocket(permissionSocketPath("t-hold-card-stop"));
     await recorder.until((e) => e.type === "item.completed" && e.itemType === "tool");
     await expect(instance.adapter.steer!("t-hold-card-stop", "and also this")).resolves.toBe(true);
@@ -1864,11 +1887,11 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await create();
     const dump = join(scratch, "dump.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
-    await instance.adapter.sendTurn({ threadId: "t-live", text: "one" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-live", text: "one" });
     await recorder.until((e) => e.type === "turn.completed");
     const dumpBefore = readFileSync(dump, "utf8");
     const announced = (recorder.events.find((e) => e.type === "session.started") as { sessionId: string }).sessionId;
-    const second = await instance.adapter.sendTurn({ threadId: "t-live", text: "two", resumeCursor: announced });
+    const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-live", text: "two", resumeCursor: announced });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
     expect(readFileSync(dump, "utf8")).toBe(dumpBefore);
     expect(recorder.events.filter((e) => e.type === "turn.started")).toHaveLength(2);
@@ -1885,7 +1908,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const costs: unknown[] = [];
     let launch: string | undefined;
     for (const text of ["one", "two", "three"]) {
-      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-running-total", text });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-running-total", text });
       costs.push((await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId) as { cost?: unknown }).cost);
       launch ??= readFileSync(dump, "utf8");
       // one process for all three turns: a relaunch would rewrite the dump
@@ -1901,7 +1924,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     mkdirSync(costState);
     await create(undefined, { FAKE_CLAUDE_COST_STATE: costState });
     const threadId = `t-resumed-cost-${restarted}`;
-    const first = await instance.adapter.sendTurn({ threadId, text: "one", system: "Before." });
+    const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "one", system: "Before." });
     const firstDone = await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
     const announced = (recorder.events.find((e) => e.type === "session.started") as { sessionId: string }).sessionId;
     if (restarted) {
@@ -1911,7 +1934,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       await create(undefined, { FAKE_CLAUDE_COST_STATE: costState });
     }
     // a changed prompt relaunches the CLI, resuming the same session
-    const second = await instance.adapter.sendTurn({ threadId, text: "two", system: "After.", resumeCursor: announced });
+    const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "two", system: "After.", resumeCursor: announced });
     const secondDone = await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
     expect(JSON.parse(readFileSync(join(costState, `${announced}.json`), "utf8")).total).toBe(0.02);
     expect([firstDone, secondDone].map((e) => (e as { cost?: unknown }).cost)).toEqual([0.01, 0.01]);
@@ -1932,13 +1955,13 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       mkdirSync(costState);
       await create(undefined, { FAKE_CLAUDE_COST_STATE: costState });
       const threadId = `t-cost-history-${kind}`;
-      const first = await instance.adapter.sendTurn({ threadId, text: "one", system: "Before." });
+      const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "one", system: "Before." });
       const firstDone = await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
       const announced = (recorder.events.find((e) => e.type === "session.started") as { sessionId: string }).sessionId;
       recorder.stop();
       await instance.dispose();
       await create(undefined, { FAKE_CLAUDE_COST_STATE: costState });
-      const second = await instance.adapter.sendTurn({ threadId, text: "two", system: "After.", resumeCursor: announced });
+      const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "two", system: "After.", resumeCursor: announced });
       const secondDone = await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
       expect(firstDone).toMatchObject({ ok: true, cost: 0.01 });
       expect(secondDone).toMatchObject({ ok: true, cost: resumedCost });
@@ -1960,7 +1983,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       const costState = join(scratch, "cost-state-proto");
       mkdirSync(costState);
       await create(undefined, { FAKE_CLAUDE_COST_STATE: costState });
-      const turn = await instance.adapter.sendTurn({ threadId: "t-cost-proto", text: "one", system: "Before." });
+      const turn = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-cost-proto", text: "one", system: "Before." });
       await recorder.until((e) => e.type === "turn.completed" && e.turnId === turn.turnId);
       const announced = (recorder.events.find((e) => e.type === "session.started") as { sessionId: string }).sessionId;
       const keys = Object.keys(JSON.parse(readFileSync(file, "utf8")));
@@ -1981,13 +2004,13 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const dump = join(scratch, "resumed-error-dump.json");
     await create(undefined, { FAKE_CLAUDE_COST_STATE: costState, FAKE_CLAUDE_RESUMED_API_ERROR: "1", FAKE_CLAUDE_DUMP: dump });
     const threadId = "t-resumed-error-cost";
-    const first = await instance.adapter.sendTurn({ threadId, text: "one", system: "Before." });
+    const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "one", system: "Before." });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
     const announced = (recorder.events.find((e) => e.type === "session.started") as { sessionId: string }).sessionId;
-    const failed = await instance.adapter.sendTurn({ threadId, text: "two", system: "After.", resumeCursor: announced });
+    const failed = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "two", system: "After.", resumeCursor: announced });
     expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === failed.turnId)).toMatchObject({ ok: false, cost: null });
     const launch = readFileSync(dump, "utf8");
-    const third = await instance.adapter.sendTurn({ threadId, text: "three", system: "After.", resumeCursor: announced });
+    const third = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "three", system: "After.", resumeCursor: announced });
     const thirdDone = await recorder.until((e) => e.type === "turn.completed" && e.turnId === third.turnId);
     // the same resumed process, whose total now reads 0.02
     expect(readFileSync(dump, "utf8")).toBe(launch);
@@ -2003,12 +2026,12 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await create();
     const dump = join(scratch, "session-reset.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
-    const first = await instance.adapter.sendTurn({ threadId: "t-rebuilt", text: "abandoned branch" });
+    const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-rebuilt", text: "abandoned branch" });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
     const previous = JSON.parse(readFileSync(dump, "utf8"));
     const oldSession = (recorder.events.find((e) => e.type === "session.started") as { sessionId: string }).sessionId;
 
-    const second = await instance.adapter.sendTurn({
+    const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-rebuilt", text: "replacement history", sessionReset: true,
       ...(withCursor ? { resumeCursor: oldSession } : {}),
     });
@@ -2022,7 +2045,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(newSession).not.toBe(oldSession);
 
     // an ordinary follow-up reuses the replacement again
-    const third = await instance.adapter.sendTurn({ threadId: "t-rebuilt", text: "continue", resumeCursor: newSession });
+    const third = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-rebuilt", text: "continue", resumeCursor: newSession });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === third.turnId);
     expect(JSON.parse(readFileSync(dump, "utf8")).pid).toBe(replacement.pid);
   });
@@ -2033,12 +2056,12 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await create();
     const dump = join(scratch, "sealed-turns.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
-    const pre = await instance.adapter.sendTurn({ threadId: "t-sealed", text: "before the seal" });
+    const pre = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-sealed", text: "before the seal" });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === pre.turnId);
     const seen = [JSON.parse(readFileSync(dump, "utf8"))];
     const sessions = [(recorder.events.filter((e) => e.type === "session.started").at(-1) as { sessionId: string }).sessionId];
     for (const text of ["sealed one", "sealed two", "sealed three"]) {
-      const sent = await instance.adapter.sendTurn({ threadId: "t-sealed", text, sessionReset: true });
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-sealed", text, sessionReset: true });
       await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
       seen.push(JSON.parse(readFileSync(dump, "utf8")));
       sessions.push((recorder.events.filter((e) => e.type === "session.started").at(-1) as { sessionId: string }).sessionId);
@@ -2058,10 +2081,10 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await create();
     const dump = join(scratch, "reset-session.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
-    const first = await instance.adapter.sendTurn({ threadId: "t-reset", text: "old private reference" });
+    const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-reset", text: "old private reference" });
     await recorder.until(event => event.type === "turn.completed" && event.turnId === first.turnId);
     const firstPid = JSON.parse(readFileSync(dump, "utf8")).pid;
-    const sibling = await instance.adapter.sendTurn({ threadId: "t-sibling", text: "independent request" });
+    const sibling = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-sibling", text: "independent request" });
     await recorder.until(event => event.type === "turn.completed" && event.turnId === sibling.turnId);
     const siblingPid = JSON.parse(readFileSync(dump, "utf8")).pid;
     expect(siblingPid).not.toBe(firstPid);
@@ -2069,10 +2092,10 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(instance.adapter.hasSession("t-reset")).toBe(false);
     await instance.adapter.resetSession!("t-reset");
     rmSync(dump);
-    const siblingNext = await instance.adapter.sendTurn({ threadId: "t-sibling", text: "continue independently" });
+    const siblingNext = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-sibling", text: "continue independently" });
     await recorder.until(event => event.type === "turn.completed" && event.turnId === siblingNext.turnId);
     expect(existsSync(dump)).toBe(false); // retained sibling did not launch again
-    const fresh = await instance.adapter.sendTurn({ threadId: "t-reset", text: "filtered fresh request" });
+    const fresh = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-reset", text: "filtered fresh request" });
     await recorder.until(event => event.type === "turn.completed" && event.turnId === fresh.turnId);
     const freshDump = JSON.parse(readFileSync(dump, "utf8"));
     expect(freshDump.pid).not.toBe(firstPid);
@@ -2089,7 +2112,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     process.env.FAKE_CLAUDE_DUMP = dump;
     const memory = { command: process.execPath, args: ["fixture-memory-proxy"], env: { MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_MEMORY_TOKEN: "fixture-memory-token" } };
     const custom = { command: process.execPath, args: ["user-server"], env: {} };
-    const turn = await instance.adapter.sendTurn({ threadId: "t-memory-mcp", text: "recall", integrations: {
+    const turn = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-memory-mcp", text: "recall", integrations: {
       memory, custom: { user: custom, malicious: { ...custom, env: { MURAGE_MEMORY_TOKEN: "forged" } } },
     } });
     await recorder.until(event => event.type === "turn.completed" && event.turnId === turn.turnId);
@@ -2104,12 +2127,12 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       ["mcp__murage-memory__memory_search", "mcp__murage-memory__memory_get", "mcp__murage-memory__memory_save", "mcp__murage-memory__memory_propose_correction"]));
     expect(seen.argv[seen.argv.indexOf("--allowedTools") + 1].split(",")).not.toContain("mcp__murage-memory");
     expect(JSON.stringify(seen.argv)).not.toContain("fixture-memory-token");
-    await expect(instance.adapter.sendTurn({ threadId: "t-memory-collision", text: "recall", integrations: { memory, custom: { "murage-memory": custom } } })).rejects.toThrow("MEMORY_MCP_NAME_COLLISION");
+    await expect(instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-memory-collision", text: "recall", integrations: { memory, custom: { "murage-memory": custom } } })).rejects.toThrow("MEMORY_MCP_NAME_COLLISION");
   });
 
   it("denies late broker asks between retained turns without opening a zombie card", async () => {
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-retained-late", text: "one" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-retained-late", text: "one" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const conn = await connectSocket(permissionSocketPath("t-retained-late"));
@@ -2134,7 +2157,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const gate = join(scratch, "background-finish");
     await create("background-result", { FAKE_CLAUDE_REPLY_GATE: gate });
     const threadId = "t-background-result";
-    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "continue the requested work" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "continue the requested work" });
     await recorder.until(event => event.type === "item.completed" && event.itemType === "assistant_text");
     const conn = await connectSocket(permissionSocketPath(threadId));
     const nextAnswer = answerQueue(conn);
@@ -2166,7 +2189,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const dump = join(scratch, `${threadId}.json`);
     process.env.FAKE_CLAUDE_DUMP = dump;
     await create("background-result", { FAKE_CLAUDE_REPLY_GATE: gate });
-    await instance.adapter.sendTurn({ threadId, text: "work", ...turn } as never);
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "work", ...turn } as never);
     await recorder.until(event => event.type === "item.completed" && event.itemType === "assistant_text");
     const conn = await connectSocket(permissionSocketPath(threadId));
     const nextAnswer = answerQueue(conn);
@@ -2297,7 +2320,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       expect(await recorder.until(event => event.type === "request.resolved" && event.requestId === id)).toMatchObject({ turnId });
     };
     try {
-      const first = await instance.adapter.sendTurn({ threadId, text: "first happy turn", integrations: integrations("first-fake-capability") });
+      const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "first happy turn", integrations: integrations("first-fake-capability") });
       expect(await recorder.until(event => event.type === "turn.completed" && event.turnId === first.turnId)).toMatchObject({ ok: true });
       const firstDump = JSON.parse(readFileSync(dump, "utf8"));
       pids.add(firstDump.pid);
@@ -2305,7 +2328,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       const old = await open(firstDump.mcpConfig.mcpServers.muragebox.args[1]);
       for (const tool of ["Bash", "WebSearch"]) await denied(old, `idle-first-${tool}`, tool);
 
-      const second = await instance.adapter.sendTurn({ threadId, text: "__fixture_hold_authority__ second", resumeCursor: session, integrations: integrations("first-fake-capability") });
+      const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "__fixture_hold_authority__ second", resumeCursor: session, integrations: integrations("first-fake-capability") });
       await recorder.until(event => event.type === "session.started" && event.turnId === second.turnId);
       expect(JSON.parse(readFileSync(dump, "utf8")).pid).toBe(firstDump.pid);
       for (const tool of ["Bash", "WebSearch"]) await allowed(old, second.turnId, `second-${tool}`, tool);
@@ -2313,7 +2336,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       expect(await recorder.until(event => event.type === "turn.completed" && event.turnId === second.turnId)).toMatchObject({ ok: true });
       await denied(old, "idle-second", "Bash");
 
-      const third = await instance.adapter.sendTurn({ threadId, text: "__fixture_hold_authority__ third", resumeCursor: session, integrations: integrations("rotated-fake-capability", "1") });
+      const third = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "__fixture_hold_authority__ third", resumeCursor: session, integrations: integrations("rotated-fake-capability", "1") });
       await recorder.until(event => event.type === "session.started" && event.turnId === third.turnId);
       const thirdDump = JSON.parse(readFileSync(dump, "utf8"));
       pids.add(thirdDump.pid);
@@ -2372,7 +2395,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       command: process.execPath, args: ["fixture-agents-proxy"],
       env: { MURAGE_BOT_ID: "fixture-bot", MURAGE_THREAD_ID: "t-rotate", MURAGE_COMMS_TOKEN: token },
     });
-    const first = await instance.adapter.sendTurn({ threadId: "t-rotate", text: "one", integrations: { agents: agents("first-capability") } });
+    const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-rotate", text: "one", integrations: { agents: agents("first-capability") } });
     await recorder.until((event) => event.type === "turn.completed" && event.turnId === first.turnId);
     const firstDump = JSON.parse(readFileSync(dumpPath, "utf8"));
     const session = (recorder.events.find((event) => event.type === "session.started") as { sessionId: string }).sessionId;
@@ -2380,7 +2403,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(JSON.stringify(firstDump.mcpConfig)).not.toContain("first-capability");
     expect(JSON.stringify(firstDump.argv)).not.toContain("first-capability");
     expect(readFileSync(firstDump.credFile.path, "utf8")).toBe("{}");
-    const second = await instance.adapter.sendTurn({ threadId: "t-rotate", text: "two", resumeCursor: session, integrations: { agents: agents("second-capability") } });
+    const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-rotate", text: "two", resumeCursor: session, integrations: { agents: agents("second-capability") } });
     await recorder.until((event) => event.type === "turn.completed" && event.turnId === second.turnId);
     const lines = readFileSync(logPath, "utf8").trim().split("\n").map((line) => JSON.parse(line));
     expect(lines).toHaveLength(2);
@@ -2396,11 +2419,11 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await create();
     const dumpPath = join(scratch, "dump.json");
     process.env.FAKE_CLAUDE_DUMP = dumpPath;
-    await instance.adapter.sendTurn({ threadId: "t-switch", text: "one" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-switch", text: "one" });
     await recorder.until((e) => e.type === "turn.completed");
     rmSync(dumpPath);
     const announced = (recorder.events.find((e) => e.type === "session.started") as { sessionId: string }).sessionId;
-    const second = await instance.adapter.sendTurn({
+    const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-switch",
       text: "two",
       model: "claude-other",
@@ -2416,19 +2439,19 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     process.env.MURAGE_CLAUDE_SESSION_IDLE_MIN_MS = "10";
     process.env.MURAGE_CLAUDE_SESSION_IDLE_MS = "50";
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-idle", text: "one" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-idle", text: "one" });
     await recorder.until((e) => e.type === "turn.completed");
     process.env.FAKE_CLAUDE_DUMP = join(scratch, "idle-dump.json");
     await new Promise((resolve) => setTimeout(resolve, 150));
     const announced = (recorder.events.find((e) => e.type === "session.started") as { sessionId: string }).sessionId;
-    const second = await instance.adapter.sendTurn({ threadId: "t-idle", text: "two", resumeCursor: announced });
+    const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-idle", text: "two", resumeCursor: announced });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
     expect(JSON.parse(readFileSync(join(scratch, "idle-dump.json"), "utf8")).argv).toContain("--resume");
   });
 
   it("an exit before result becomes runtime.error + failed turn", async () => {
     await create("exit-early");
-    await instance.adapter.sendTurn({ threadId: "t-crash", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-crash", text: "go" });
     const done = await recorder.until((e) => e.type === "turn.completed");
 
     expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
@@ -2446,7 +2469,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     process.env.FAKE_CLAUDE_STATE = join(scratch, "launches");
     process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-retry", text: PRE_ACCEPT_PROMPT });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-retry", text: PRE_ACCEPT_PROMPT });
 
     await recorder.until((e) => e.type === "turn.completed" && e.ok === true);
     const retries = recorder.events.filter((e) => e.type === "turn.retrying");
@@ -2473,7 +2496,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     process.env.FAKE_CLAUDE_STATE = join(scratch, "launches-reset");
     process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
     await create();
-    const turn = await instance.adapter.sendTurn({
+    const turn = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-reset-retry", text: PRE_ACCEPT_PROMPT, sessionReset: true, resumeCursor: "old-abandoned-session",
     });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === turn.turnId);
@@ -2492,7 +2515,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     process.env.FAKE_CLAUDE_STATE = join(scratch, "launches-same-id");
     process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
     await create();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-retry-id", text: PRE_ACCEPT_PROMPT });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-retry-id", text: PRE_ACCEPT_PROMPT });
 
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true, turnId });
@@ -2507,7 +2530,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     process.env.FAKE_CLAUDE_STATE = join(scratch, "launches-cap");
     process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-cap", text: PRE_ACCEPT_PROMPT });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-cap", text: PRE_ACCEPT_PROMPT });
 
     const done = await recorder.until((e) => e.type === "turn.completed" && e.ok === false);
     const retries = recorder.events.filter((e) => e.type === "turn.retrying");
@@ -2523,9 +2546,9 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
     await create();
 
-    await instance.adapter.sendTurn({ threadId: "t-fresh-budget", text: `${PRE_ACCEPT_PROMPT}one` });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fresh-budget", text: `${PRE_ACCEPT_PROMPT}one` });
     const firstDone = await recorder.until((e) => e.type === "turn.completed");
-    await instance.adapter.sendTurn({ threadId: "t-fresh-budget", text: `${PRE_ACCEPT_PROMPT}two` });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fresh-budget", text: `${PRE_ACCEPT_PROMPT}two` });
     await recorder.until((e) => e.type === "turn.completed" && e.eventId !== firstDone.eventId);
 
     expect(recorder.events.filter((e) => e.type === "turn.retrying").map((e) => e.attempt)).toEqual([1, 2, 1, 2]);
@@ -2533,7 +2556,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("never retries a terminal (auth-shaped) exit", async () => {
     await create("exit-early"); // exit 3 with no transient vocabulary — terminal
-    await instance.adapter.sendTurn({ threadId: "t-terminal", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-terminal", text: "go" });
 
     await recorder.until((e) => e.type === "turn.completed" && e.ok === false);
     expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
@@ -2545,7 +2568,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     process.env.FAKE_CLAUDE_STATE = join(scratch, "launches-written");
     process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-written", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-written", text: "go" });
 
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
@@ -2566,7 +2589,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
       await create();
       const threadId = `t-after-${failAfter}`;
-      await instance.adapter.sendTurn({ threadId, text: "run the sentinel action" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "run the sentinel action" });
 
       const done = await recorder.until((e) => e.threadId === threadId && e.type === "turn.completed");
       expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
@@ -2597,7 +2620,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     process.env.FAKE_CLAUDE_STATE = join(scratch, "launches-partial");
     process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-partial", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-partial", text: "go" });
 
     await recorder.until((e) => e.type === "turn.completed" && e.ok === false);
     expect(recorder.events.some((e) => e.type === "content.delta" && e.streamKind === "assistant_text")).toBe(true);
@@ -2609,7 +2632,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     process.env.FAKE_CLAUDE_STATE = join(scratch, "launches-cancel");
     process.env.FAKE_CLAUDE_RETRY_SCALE = "60"; // long backoff — we cancel inside it
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-cancel-backoff", text: PRE_ACCEPT_PROMPT });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-cancel-backoff", text: PRE_ACCEPT_PROMPT });
 
     await recorder.until((e) => e.type === "turn.retrying");
     await instance.adapter.interruptTurn("t-cancel-backoff");
@@ -2650,11 +2673,11 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const hold = holdRelaunchProbe();
     try {
       const threadId = "t-stop-relaunch-setup";
-      const { turnId } = await instance.adapter.sendTurn({ threadId, text: PRE_ACCEPT_PROMPT, model: "custom-slow-model" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: PRE_ACCEPT_PROMPT, model: "custom-slow-model" });
       await recorder.until((e) => e.threadId === threadId && e.type === "turn.retrying");
       // an unrelated thread's turn, started after the failed launch so the
       // fixture's pre-accept quota is already spent
-      await instance.adapter.sendTurn({ threadId: "t-unrelated-live", text: "keep working" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-unrelated-live", text: "keep working" });
       // init proves that CLI is running (and counted its launch), not just spawned
       await recorder.until((e) => e.threadId === "t-unrelated-live" && e.type === "session.started");
       await hold.reached;
@@ -2690,11 +2713,11 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const hold = holdRelaunchProbe();
     try {
       const threadId = "t-stop-relaunch-next";
-      const { turnId } = await instance.adapter.sendTurn({ threadId, text: PRE_ACCEPT_PROMPT, model: "custom-slow-model" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: PRE_ACCEPT_PROMPT, model: "custom-slow-model" });
       await recorder.until((e) => e.type === "turn.retrying");
       await hold.reached;
       await instance.adapter.interruptTurn(threadId);
-      const next = instance.adapter.sendTurn({ threadId, text: "the next request" });
+      const next = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "the next request" });
       hold.release();
       const { turnId: nextTurnId } = await next;
 
@@ -2720,11 +2743,11 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const hold = holdRelaunchProbe();
     try {
       const threadId = "t-relaunch-busy";
-      const { turnId } = await instance.adapter.sendTurn({ threadId, text: PRE_ACCEPT_PROMPT, model: "custom-slow-model" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: PRE_ACCEPT_PROMPT, model: "custom-slow-model" });
       await recorder.until((e) => e.type === "turn.retrying");
       await hold.reached;
       expect(instance.adapter.hasSession(threadId)).toBe(true);
-      await expect(instance.adapter.sendTurn({ threadId, text: "a concurrent request" })).rejects.toThrow("a turn is already running");
+      await expect(instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "a concurrent request" })).rejects.toThrow("a turn is already running");
       hold.release();
 
       const done = await recorder.until((e) => e.type === "turn.completed");
@@ -2744,7 +2767,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     process.env.FAKE_CLAUDE_RETRY_SCALE = "0.001";
     await create("hang");
     const threadId = "t-stop-relaunch-started";
-    const { turnId } = await instance.adapter.sendTurn({ threadId, text: PRE_ACCEPT_PROMPT });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: PRE_ACCEPT_PROMPT });
     await recorder.until((e) => e.type === "turn.retrying");
     // the relaunched CLI is running and took up the prompt: only it emits init
     await recorder.until((e) => e.type === "session.started");
@@ -2762,7 +2785,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("skips malformed protocol lines without losing the turn", async () => {
     await create("malformed");
-    await instance.adapter.sendTurn({ threadId: "t-noise", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-noise", text: "go" });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true });
   });
@@ -2777,7 +2800,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     });
     recorder = recordEvents(instance.adapter);
 
-    await instance.adapter.sendTurn({ threadId: "t-missing", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-missing", text: "go" });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: false, stopReason: "spawn_error" });
 
@@ -2786,7 +2809,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("carries the FULL tool input of a permission ask, beside the unchanged summary", async () => {
     await create("hang");
-    await instance.adapter.sendTurn({ threadId: "t-perm-full", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-perm-full", text: "go" });
     await recorder.until((e) => e.type === "session.started");
     const conn = connect(permissionSocketPath("t-perm-full"));
     await new Promise<void>((resolve, reject) => {
@@ -2814,7 +2837,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   // OpenMausBot d83f5b3b3 (#1102): a turn the harness stamped with its bot binds that bot's own socket.
   it("binds the broker under the turn's bot, so another bot's socket name never reaches it", async () => {
     await create("hang");
-    await instance.adapter.sendTurn({ threadId: "t-perm-bot", text: "go", warmIdentity: { botId: "bot-ada", audience: "owner" } });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-perm-bot", text: "go", warmIdentity: { botId: "bot-ada", audience: "owner" } });
     await recorder.until((e) => e.type === "session.started");
     expect(permissionSocketPath("t-perm-bot", "bot-ada")).not.toBe(permissionSocketPath("t-perm-bot"));
     const conn = connect(permissionSocketPath("t-perm-bot", "bot-ada"));
@@ -2838,7 +2861,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("brokers a permission ask into request.opened and answers over the socket", async () => {
     await create("hang");
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-perm-abc",
       text: "go",
       integrations: {
@@ -2931,7 +2954,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       squatter.listen(basePath);
     });
     try {
-      await instance.adapter.sendTurn({ threadId: "t-perm-squat", text: "go" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-perm-squat", text: "go" });
       await recorder.until((e) => e.type === "session.started");
       await expect.poll(() => existsSync(dump), { timeout: 5_000 }).toBe(true);
       const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -2966,7 +2989,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("answers to unknown or already-resolved asks resolve `unavailable` — typed, never a throw", async () => {
     await create("hang");
-    await instance.adapter.sendTurn({ threadId: "t-perm-2", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-perm-2", text: "go" });
     await expect(instance.adapter.respondToRequest("t-perm-2", "never-asked", { behavior: "allow" })).resolves.toBe("unavailable");
     // and a thread with no turn at all is the same answer
     await expect(instance.adapter.respondToRequest("no-such-thread", "x", { behavior: "deny" })).resolves.toBe("unavailable");
@@ -2976,7 +2999,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("resolves a pending ask as a system denial when the turn is interrupted", async () => {
     await create("hang");
-    await instance.adapter.sendTurn({ threadId: "t-perm-stop", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-perm-stop", text: "go" });
     await recorder.until((e) => e.type === "session.started");
 
     const conn = connect(permissionSocketPath("t-perm-stop"));
@@ -2999,7 +3022,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   it("checks each permission ask's environment in the generation its card opens in", async () => {
     await create("hang");
     resetExecChecks();
-    await instance.adapter.sendTurn({ threadId: "t-gen-claude", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-gen-claude", text: "go" });
     await recorder.until((e) => e.type === "session.started");
     const conn = await connectSocket(permissionSocketPath("t-gen-claude"));
     const nextAnswer = answerQueue(conn);
@@ -3025,7 +3048,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   it("checks only a command ask's environment; a file ask carries the handed map, unchecked", async () => {
     await create("hang");
     resetExecChecks();
-    await instance.adapter.sendTurn({ threadId: "t-u20-scope", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-u20-scope", text: "go" });
     await recorder.until((e) => e.type === "session.started");
     const conn = await connectSocket(permissionSocketPath("t-u20-scope"));
     const nextAnswer = answerQueue(conn);
@@ -3053,7 +3076,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("denies a colliding ask id on the same connection without orphaning the original", async () => {
     await create("hang");
-    await instance.adapter.sendTurn({ threadId: COLLISION_THREAD_IDS[0], text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: COLLISION_THREAD_IDS[0], text: "go" });
     await recorder.until((e) => e.type === "session.started");
 
     const conn = await connectSocket(permissionSocketPath(COLLISION_THREAD_IDS[0]));
@@ -3088,7 +3111,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("denies a colliding ask id from a second connection on the same broker", async () => {
     await create("hang");
-    await instance.adapter.sendTurn({ threadId: COLLISION_THREAD_IDS[1], text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: COLLISION_THREAD_IDS[1], text: "go" });
     await recorder.until((e) => e.type === "session.started");
 
     const conn1 = await connectSocket(permissionSocketPath(COLLISION_THREAD_IDS[1]));
@@ -3120,7 +3143,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("accepts an ask id reused after the original already resolved — not a collision", async () => {
     await create("hang");
-    await instance.adapter.sendTurn({ threadId: COLLISION_THREAD_IDS[2], text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: COLLISION_THREAD_IDS[2], text: "go" });
     await recorder.until((e) => e.type === "session.started");
 
     const conn = await connectSocket(permissionSocketPath(COLLISION_THREAD_IDS[2]));
@@ -3147,7 +3170,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("denies a colliding ask id for question-kind asks too, without disturbing the original", async () => {
     await create("hang");
-    await instance.adapter.sendTurn({ threadId: COLLISION_THREAD_IDS[3], text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: COLLISION_THREAD_IDS[3], text: "go" });
     await recorder.until((e) => e.type === "session.started");
 
     const conn = await connectSocket(permissionSocketPath(COLLISION_THREAD_IDS[3]));
@@ -3178,7 +3201,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("drops a late ask on an already-closed broker instead of a dead card (#211)", async () => {
     await create("hang");
-    await instance.adapter.sendTurn({ threadId: "t-perm-late", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-perm-late", text: "go" });
     await recorder.until((e) => e.type === "session.started");
 
     // Same connection stays open across the turn ending — the exact
@@ -3223,7 +3246,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     // systemEndedReply(kind) branches on "question" vs "permission" — cover
     // the question arm too, since the deny arm above doesn't exercise it.
     await create("hang");
-    await instance.adapter.sendTurn({ threadId: "t-question-late", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-question-late", text: "go" });
     await recorder.until((e) => e.type === "session.started");
 
     const conn = connect(permissionSocketPath("t-question-late"));
@@ -3264,7 +3287,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const dump = join(scratch, "effort.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-effort", text: "hi", effort: "xhigh" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-effort", text: "hi", effort: "xhigh" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -3278,7 +3301,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const dump = join(scratch, "no-effort.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-no-effort", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-no-effort", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -3293,7 +3316,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const names = ["XAI_API_KEY", "COMPOSIO_API_KEY", "BOX_TOKEN", "OPENCODE_API_KEY", "MURAGE_TTS_KEY"] as const;
     for (const name of names) process.env[name] = `${name}-must-not-leak`;
 
-    await instance.generateText?.("summarize safely");
+    await instance.generateText?.("summarize safely", undefined, fixtureBotFolder());
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.prompt).toBe("summarize safely");
@@ -3304,7 +3327,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
 
   it("runs a proposal without tools, MCP, hooks or session persistence", async () => {
     await create(); const dump=join(scratch,"project-proposal.json"); process.env.FAKE_CLAUDE_DUMP=dump;
-    await expect(instance.proposeProject?.("Propose",new AbortController().signal,"chief-model")).resolves.toBe("fake generated text");
+    await expect(instance.proposeProject?.("Propose",new AbortController().signal,"chief-model", undefined, fixtureBotFolder())).resolves.toBe("fake generated text");
     const seen=JSON.parse(readFileSync(dump,"utf8"));
     expect(seen.argv).toEqual(expect.arrayContaining(["--tools","","--strict-mcp-config","--no-session-persistence","--settings","chief-model"]));
     // the same isolation as a turn: hooks and the owner's plugins off, default setting sources kept for the login
@@ -3318,7 +3341,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     // after `init`, a refusal-shaped line is the CLI's later output, not a refusal of Murage's flags
     process.env.FAKE_CLAUDE_ONE_SHOT_FAIL = "after-init";
     try {
-      const late = await instance.proposeProject?.("Propose", new AbortController().signal, "chief-model").then(() => null, (error: Error & { code?: string }) => error);
+      const late = await instance.proposeProject?.("Propose", new AbortController().signal, "chief-model", undefined, fixtureBotFolder()).then(() => null, (error: Error & { code?: string }) => error);
       expect(late).toBeInstanceOf(Error);
       expect(late?.code).toBeUndefined();
     } finally {
@@ -3326,19 +3349,19 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     }
     // before `init` it is the CLI refusing the launch: the update offer
     process.env.FAKE_CLAUDE_REFUSE = "unknown-option";
-    await expect(instance.proposeProject?.("Propose", new AbortController().signal, "chief-model")).rejects.toMatchObject({ code: "update_required" });
+    await expect(instance.proposeProject?.("Propose", new AbortController().signal, "chief-model", undefined, fixtureBotFolder())).rejects.toMatchObject({ code: "update_required" });
   });
 
   it("declares safe same-provider permission review", async () => {
     await create();
-    await expect(instance.reviewPermission?.("review this request")).resolves.toBe("fake generated text");
+    await expect(instance.reviewPermission?.("review this request", undefined, undefined, fixtureBotFolder())).resolves.toBe("fake generated text");
   });
 
   it("stops permission review when its caller gives up", async () => {
     await create();
     const controller = new AbortController();
     controller.abort();
-    await expect(instance.reviewPermission?.("review this request", controller.signal)).rejects.toThrow(/aborted/);
+    await expect(instance.reviewPermission?.("review this request", controller.signal, undefined, fixtureBotFolder())).rejects.toThrow(/aborted/);
   });
 
   it("declares the effort levels the CLI accepts", async () => {
@@ -3374,7 +3397,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
   /** Raise an AskUserQuestion on a live turn the way the MCP proxy does. */
   const askUserQuestion = async (threadId: string, askId: string, input: unknown = AUQ_INPUT) => {
     await create("hang");
-    await instance.adapter.sendTurn({ threadId, text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go" });
     await recorder.until((e) => e.type === "session.started");
     const conn = await connectSocket(permissionSocketPath(threadId));
     const nextAnswer = answerQueue(conn);
@@ -3511,7 +3534,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       original(callback, delay === 30 * 60_000 ? 300 : delay, ...args)) as typeof setTimeout);
     onTestFinished(() => shortNote.mockRestore());
     await create("hang", {});
-    await instance.adapter.sendTurn({ threadId: "t-auq-timeout", text: "go", unattendedAskNote: true });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-auq-timeout", text: "go", unattendedAskNote: true });
     await recorder.until((e) => e.type === "session.started");
     const conn = await connectSocket(permissionSocketPath("t-auq-timeout"));
     const nextAnswer = answerQueue(conn);
@@ -3537,7 +3560,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       original(callback, delay === 30 * 60_000 ? 300 : delay, ...args)) as typeof setTimeout);
     onTestFinished(() => shortNote.mockRestore());
     await create("hang", {});
-    await instance.adapter.sendTurn({ threadId: "t-auq-mixed", text: "go", unattendedAskNote: true });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-auq-mixed", text: "go", unattendedAskNote: true });
     await recorder.until((e) => e.type === "session.started");
     const conn = await connectSocket(permissionSocketPath("t-auq-mixed"));
     const nextAnswer = answerQueue(conn);
@@ -3563,7 +3586,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       const dump = join(scratch, `enforce-asks-${permissionMode}.json`);
       process.env.FAKE_CLAUDE_DUMP = dump;
       for (const [turn, enforced] of [false, true, false].entries()) {
-        const sent = await instance.adapter.sendTurn({
+        const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
           threadId: `t-enforce-${permissionMode}-${turn}`, text: "hi",
           ...(enforced ? { routeAsks: true as const } : {}),
         });
@@ -3585,7 +3608,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     for (const [name, flags] of [["plain", {}], ["routeAsks", { routeAsks: true as const }]] as const) {
       const dump = join(scratch, `dump-composio-${name}.json`);
       process.env.FAKE_CLAUDE_DUMP = dump;
-      const sent = await instance.adapter.sendTurn({ threadId: `t-composio-${name}`, text: "hi", ...flags, integrations: { composio } });
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-composio-${name}`, text: "hi", ...flags, integrations: { composio } });
       await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
       const seen = JSON.parse(readFileSync(dump, "utf8"));
       const allowed = seen.argv[seen.argv.indexOf("--allowedTools") + 1] ?? "";
@@ -3600,7 +3623,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     process.env.FAKE_CLAUDE_DUMP = dump;
     process.env.FAKE_CLAUDE_PERM_INPUT = JSON.stringify({ command: "rm -rf ~/Documents" });
     const composio = { command: process.execPath, args: ["-e", ""], env: {} };
-    await instance.adapter.sendTurn({ threadId: "t-stop-line", text: "__fixture_permission_tool__", stopLine: true, integrations: { composio } });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stop-line", text: "__fixture_permission_tool__", stopLine: true, integrations: { composio } });
     const opened = await recorder.until((e) => e.type === "request.opened" && e.tool === "Bash");
     expect(opened).toMatchObject({ toolCall: { name: "Bash", input: { command: "rm -rf ~/Documents" } } });
     const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -3648,7 +3671,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       const dump = join(scratch, `dump-own-allow-${key}.json`);
       process.env.FAKE_CLAUDE_DUMP = dump;
       const mounts = emailMode ? { ...ownMounts, agents: { ...ownMounts.agents, env: { ...ownMounts.agents.env, MURAGE_EMAIL: emailMode } } } : ownMounts;
-      const sent = await instance.adapter.sendTurn({ threadId: `t-own-allow-${key}`, text: "my phone", ...flags, integrations: mounts } as never);
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-own-allow-${key}`, text: "my phone", ...flags, integrations: mounts } as never);
       await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
       const seen = JSON.parse(readFileSync(dump, "utf8"));
       for (const server of ["agents", "murage-memory", "phone", "phoneJobs", "browser", "dweb", "computer"]) expect(seen.mcpConfig.mcpServers[server]).toBeDefined();
@@ -3660,7 +3683,9 @@ describe("ClaudeDriver turns (fake CLI)", () => {
         expect(preAllowedByCli(allowed, tool), tool).toBe(false);
       }
       // every OWN_UNASKED tool of a mounted own server stays pre-allowed, by its exact name; the email tools only as the mount lists them
-      const ownUnasked = OWN_UNASKED.filter((row) => row.mount !== "own:connector").flatMap((row) => row.tools.map((tool) => `mcp__${OWN_BUILTINS[row.mount.slice("own:".length) as OwnBuiltin]}__${tool}`));
+      // native HighLevel is not mounted on these turns: none of its tools may be pre-allowed (an owner's own server could carry the name)
+      expect(allowed.filter((tool) => tool.startsWith("mcp__highlevel"))).toEqual([]);
+      const ownUnasked = OWN_UNASKED.filter((row) => row.mount !== "own:connector" && row.mount !== "own:highlevel").flatMap((row) => row.tools.map((tool) => `mcp__${OWN_BUILTINS[row.mount.slice("own:".length) as OwnBuiltin]}__${tool}`));
       expect(ownUnasked).toEqual(expect.arrayContaining(EMAIL_ALL));
       const expected = ownUnasked.filter((tool) => !EMAIL_ALL.includes(tool) || (emailListed as readonly string[]).includes(tool));
       expect(expected.length).toBeGreaterThan(40);
@@ -3680,7 +3705,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       process.env.FAKE_CLAUDE_PERM_TOOL = tool;
       process.env.FAKE_CLAUDE_PERM_INPUT = JSON.stringify({ x: 1 });
       try {
-        await instance.adapter.sendTurn({ threadId: `t-route-${id}`, text: "__fixture_permission_tool__", routeAsks: true, integrations: ownMounts } as never);
+        await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-route-${id}`, text: "__fixture_permission_tool__", routeAsks: true, integrations: ownMounts } as never);
         const opened = await recorder.until((e) => e.type === "request.opened" && e.tool === tool);
         const seen = JSON.parse(readFileSync(dump, "utf8"));
         expect(preAllowedByCli(seen.argv[seen.argv.indexOf("--allowedTools") + 1].split(","), tool)).toBe(false);
@@ -3698,7 +3723,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const dump = join(scratch, "dump-bypass.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
     process.env.FAKE_CLAUDE_PERM_INPUT = JSON.stringify({ command: "echo hi" });
-    await instance.adapter.sendTurn({ threadId: "t-bypass", text: "__fixture_permission_tool__" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-bypass", text: "__fixture_permission_tool__" });
     const opened = await recorder.until((e) => e.type === "request.opened" && e.tool === "Bash");
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.argv.join(" ")).toContain("--permission-mode acceptEdits");
@@ -3755,6 +3780,33 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     }
   });
 
+  // NOLIMITS 1.0.18 logger lane (design NOLIMITS-S1S2-H6-ALLOWLIST.md L1-L4/L6, section 4.4 row 7): a Write start's event
+  // log line keeps its file_path and the tool name, never the file text.
+  it("logs a Write start with its file_path only and title Write (NOLIMITS L4)", async () => {
+    const SECRET = "confidential-plan-text-7f3a";
+    await create(undefined, {}, { permissionMode: "acceptEdits" });
+    const proj = realpathSync.native(mkdtempSync(join(scratch, "proj-log-")));
+    const filePath = join(proj, "plan.md");
+    process.env.FAKE_CLAUDE_PERM_TOOL = "Write";
+    process.env.FAKE_CLAUDE_PERM_INPUT = JSON.stringify({ file_path: filePath, content: SECRET });
+    try {
+      await instance.adapter.sendTurn({ threadId: "t-log-write", text: "__fixture_permission_tool__", cwd: proj });
+      const live = await recorder.until((e) => e.type === "item.started" && e.threadId === "t-log-write" && (e as unknown as { itemType?: string }).itemType === "tool");
+      await recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-log-write");
+      expect(JSON.stringify(live)).toContain(SECRET);
+      const writes: string[] = [];
+      const bus = new EventBus(((_file: string, data: string) => { writes.push(data); }) as never);
+      bus.publish(live);
+      const row = JSON.parse(writes.join("").trim()) as Record<string, unknown>;
+      expect(row.title).toBe("Write");
+      expect(row.input).toEqual({ file_path: filePath });
+      expect(writes.join("")).not.toContain(SECRET);
+    } finally {
+      delete process.env.FAKE_CLAUDE_PERM_TOOL;
+      delete process.env.FAKE_CLAUDE_PERM_INPUT;
+    }
+  });
+
   it("hands the CLI the finished environment and the Bash wrapper (Rules 69f, 74a)", async () => {
     await create();
     const dump = join(scratch, "dump-env.json");
@@ -3791,7 +3843,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await create(undefined, {}, { permissionMode: "acceptEdits" });
     process.env.FAKE_CLAUDE_PERM_INPUT = JSON.stringify({ command: "grep -r KEY ." });
     try {
-      await instance.adapter.sendTurn({ threadId: "t-narrow", text: "__fixture_permission_tool__" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-narrow", text: "__fixture_permission_tool__" });
       const opened = await recorder.until((e) => e.type === "request.opened" && e.threadId === "t-narrow");
       const decision = { behavior: "deny", message: "add --exclude=.env", source: "narrow" } as const;
       await expect(instance.adapter.respondToRequest("t-narrow", opened.requestId!, decision as never)).resolves.toBe("rejected");
@@ -3807,7 +3859,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     // the tool_result string the binary would. This is the end-to-end proof
     // that the proxy's reply is a shape Claude accepts as answers.
     await create("ask-user-question");
-    const turn = instance.adapter.sendTurn({ threadId: "t-auq-e2e", text: "ask me" });
+    const turn = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-auq-e2e", text: "ask me" });
     const opened = await recorder.until((e) => e.type === "request.opened" && e.tool === "AskUserQuestion");
     expect(opened).toMatchObject({ requestType: "question" });
     await expect(
@@ -3979,8 +4031,8 @@ describe("ClaudeDriver bounded ingress (A4)", () => {
 
   it("fails only the turn whose frame is over the limit, even when a success result follows it", async () => {
     await create();
-    const oversized = await instance.adapter.sendTurn({ threadId: "t-oversize", text: "__fixture_oversize_frame__" });
-    const ordinary = await instance.adapter.sendTurn({ threadId: "t-ordinary", text: "hi" });
+    const oversized = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oversize", text: "__fixture_oversize_frame__" });
+    const ordinary = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-ordinary", text: "hi" });
     const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === oversized.turnId);
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === ordinary.turnId);
 
@@ -4001,9 +4053,9 @@ describe("ClaudeDriver bounded ingress (A4)", () => {
 
   it("runs the next turn on the same thread in a fresh process after an overflow", async () => {
     await create();
-    const first = await instance.adapter.sendTurn({ threadId: "t-again", text: "__fixture_oversize_frame__" });
+    const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-again", text: "__fixture_oversize_frame__" });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
-    const second = await instance.adapter.sendTurn({ threadId: "t-again", text: "hi again" });
+    const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-again", text: "hi again" });
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
 
     expect(done).toMatchObject({ ok: true });
@@ -4014,7 +4066,7 @@ describe("ClaudeDriver bounded ingress (A4)", () => {
 
   it("fails an unterminated oversized frame without waiting for a newline", async () => {
     await create();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-open", text: "__fixture_oversize_open_frame__" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-open", text: "__fixture_oversize_open_frame__" });
     const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
 
     expect(failed).toMatchObject({ ok: false, stopReason: "frame_too_large" });
@@ -4023,7 +4075,7 @@ describe("ClaudeDriver bounded ingress (A4)", () => {
 
   it("still carries a valid 14 MiB multibyte frame intact", async () => {
     await create();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-large", text: "__fixture_large_frame__" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-large", text: "__fixture_large_frame__" });
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId, 90_000);
 
     expect(done).toMatchObject({ ok: true });
@@ -4088,7 +4140,7 @@ describe("ClaudeDriver MCP tool-result images", () => {
 
   it("surfaces a custom MCP tool's image and withholds the computer surface's frame", async () => {
     await create();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-mcp-image", text: "__fixture_mcp_tool_image__" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-mcp-image", text: "__fixture_mcp_tool_image__" });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
 
     const images = recorder.events.filter((e) => e.type === "item.completed" && e.itemType === "assistant_image");
@@ -4164,7 +4216,7 @@ describe("ClaudeDriver background tasks (fake CLI)", () => {
   it("keeps the turn open past the first result and approves the helpers' later asks", async () => {
     await create();
     autoApprove("t-bg-open");
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-bg-open", text: "__fixture_background__" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-bg-open", text: "__fixture_background__" });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
     expect(verdicts()).toEqual(["verdict:allowed", "verdict:allowed"]);
     expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
@@ -4174,7 +4226,7 @@ describe("ClaudeDriver background tasks (fake CLI)", () => {
   it("delivers the notifications' follow-up reply inside the same turn, before it completes", async () => {
     await create();
     autoApprove("t-bg-notify");
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-bg-notify", text: "__fixture_background__" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-bg-notify", text: "__fixture_background__" });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
     const reply = recorder.events.findIndex((e) => e.type === "item.completed" && e.itemType === "assistant_text" && e.text === "All helpers reported.");
     const done = recorder.events.findIndex((e) => e.type === "turn.completed");
@@ -4186,7 +4238,7 @@ describe("ClaudeDriver background tasks (fake CLI)", () => {
   it("reports each helper as a turn.subtask with a running snapshot", async () => {
     await create();
     autoApprove("t-bg-sub");
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-bg-sub", text: "__fixture_background__" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-bg-sub", text: "__fixture_background__" });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
     const subs = recorder.events.filter((e) => e.type === "turn.subtask") as any[];
     expect(subs.filter((e) => e.subtask.status === "started").map((e) => e.subtask.id)).toEqual(["bgtask1", "bgtask2", "bgtask3"]);
@@ -4200,7 +4252,7 @@ describe("ClaudeDriver background tasks (fake CLI)", () => {
   it("still asks in Ask mode: a helper's ask waits for the owner instead of being denied", async () => {
     await create();
     process.env.FAKE_CLAUDE_BG_ASKS = "1";
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-bg-ask", text: "__fixture_background__" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-bg-ask", text: "__fixture_background__" });
     const opened = await recorder.until((e) => e.type === "request.opened" && e.threadId === "t-bg-ask");
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(verdicts()).toEqual([]);
@@ -4214,7 +4266,7 @@ describe("ClaudeDriver background tasks (fake CLI)", () => {
     await create();
     process.env.FAKE_CLAUDE_BG_HOLD = "1";
     process.env.FAKE_CLAUDE_BG_ASKS = "0";
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-bg-stop", text: "__fixture_background__" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-bg-stop", text: "__fixture_background__" });
     await recorder.until((e) => e.type === "turn.subtask" && (e as any).subtask.id === "bgtask3");
     await expect.poll(() => readFileSync(log, "utf8")).toContain("held");
     expect(recorder.events.some((e) => e.type === "turn.completed")).toBe(false);
@@ -4228,7 +4280,7 @@ describe("ClaudeDriver background tasks (fake CLI)", () => {
     await create({ backgroundTaskCapMs: 300 });
     process.env.FAKE_CLAUDE_BG_HOLD = "1";
     process.env.FAKE_CLAUDE_BG_ASKS = "0";
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-bg-cap", text: "__fixture_background__" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-bg-cap", text: "__fixture_background__" });
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
     expect(done).toMatchObject({ ok: true, stopReason: "background_wait_cap" });
     const note = recorder.events.find((e) => e.type === "item.completed" && e.itemType === "assistant_text" && /still running/.test((e as any).text)) as any;
@@ -4242,7 +4294,7 @@ describe("ClaudeDriver background tasks (fake CLI)", () => {
     await create({ backgroundTaskCapMs: 300 });
     process.env.FAKE_CLAUDE_BG_HOLD = "1";
     process.env.FAKE_CLAUDE_BG_ASKS = "0";
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-bg-card", text: "__fixture_background__" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-bg-card", text: "__fixture_background__" });
     await recorder.until((e) => e.type === "session.started");
     const conn = await connectSocket(permissionSocketPath("t-bg-card"));
     conn.write(JSON.stringify({ t: "ask", id: "bg-card", kind: "question", tool: "AskUserQuestion", input: AUQ_INPUT }) + "\n");
@@ -4259,7 +4311,7 @@ describe("ClaudeDriver background tasks (fake CLI)", () => {
     await create({ backgroundTaskCapMs: 300 });
     process.env.FAKE_CLAUDE_BG_HOLD = "1";
     process.env.FAKE_CLAUDE_BG_ASKS = "0";
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-bg-card-stop", text: "__fixture_background__" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-bg-card-stop", text: "__fixture_background__" });
     await recorder.until((e) => e.type === "session.started");
     const conn = await connectSocket(permissionSocketPath("t-bg-card-stop"));
     conn.write(JSON.stringify({ t: "ask", id: "bg-stop", kind: "question", tool: "AskUserQuestion", input: AUQ_INPUT }) + "\n");
@@ -4286,7 +4338,7 @@ describe("ClaudeDriver background tasks (fake CLI)", () => {
       process.env.FAKE_CLAUDE_BG_HOLD = "1";
       process.env.FAKE_CLAUDE_BG_ASKS = "0";
       const threadId = "t-bg-steer-cap";
-      const { turnId } = await instance.adapter.sendTurn({ threadId, text: "__fixture_background__" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "__fixture_background__" });
       await recorder.until((e) => e.type === "turn.subtask" && e.subtask.id === "bgtask3");
       await expect.poll(() => readFileSync(log, "utf8")).toContain("held");
       expect(capTimers()).toHaveLength(1);
@@ -4332,7 +4384,7 @@ describe("ClaudeDriver background tasks (fake CLI)", () => {
     await create();
     process.env.FAKE_CLAUDE_BG_TASKS = "0";
     process.env.FAKE_CLAUDE_BG_ASKS = "0";
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-bg-none", text: "__fixture_background__" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-bg-none", text: "__fixture_background__" });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
     expect(recorder.events.some((e) => e.type === "turn.subtask")).toBe(false);
     expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
@@ -4345,7 +4397,7 @@ describe("ClaudeDriver background tasks (fake CLI)", () => {
       await create(config);
       const dump = join(scratch, `dump-${thread}.json`);
       process.env.FAKE_CLAUDE_DUMP = dump;
-      const { turnId } = await instance.adapter.sendTurn({ threadId: thread, text: "hi", ...(addDirs ? { addDirs } : {}) });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: thread, text: "hi", ...(addDirs ? { addDirs } : {}) });
       await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
       const argv = JSON.parse(readFileSync(dump, "utf8")).argv as string[];
       recorder.stop();
@@ -4587,12 +4639,12 @@ describe("claudeLaunchRefusal", () => {
     ]) expect(claudeLaunchRefusal(said), said).toBeNull();
   });
 
-  it("holds the floor at 1.0.1's 2.1.280 and lets an unreadable answer through", () => {
-    expect(CLAUDE_MIN_VERSION).toBe("2.1.280");
+  it("requires the qualified Sonnet 5.5 floor and identifies unreadable answers", () => {
+    expect(CLAUDE_MIN_VERSION).toBe("2.1.292");
     expect(claudeVersionBelow("2.1.279 (Claude Code)")).toBe(true);
     expect(claudeVersionBelow("2.0.999")).toBe(true);
-    expect(claudeVersionBelow("2.1.280 (Claude Code)")).toBe(false);
-    expect(claudeVersionBelow("2.1.281 (Claude Code)")).toBe(false);
+    expect(claudeVersionBelow("2.1.280 (Claude Code)")).toBe(true);
+    expect(claudeVersionBelow("2.1.281 (Claude Code)")).toBe(true);
     expect(claudeVersionBelow("2.2.0")).toBe(false);
     expect(claudeVersionVerdict("2.1.295 (Claude Code)")).toBe("ok");
     expect(claudeVersionVerdict("1.0.0")).toBe("below");
@@ -4625,24 +4677,24 @@ describe("requireClaudeCliVersion", () => {
     expect(calls).toHaveLength(2);
   });
 
-  it("lets a failed probe launch, logged once, and does not probe again for ten minutes", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      vi.useFakeTimers({ toFake: ["Date"] });
-      const cli = cliFile();
-      const { run, calls } = runner([null, "2.1.295 (Claude Code)"]);
-      await requireClaudeCliVersion(cli, {}, undefined, run);
-      await requireClaudeCliVersion(cli, {}, undefined, run);
-      vi.setSystemTime(Date.now() + VERSION_FAILURE_BACKOFF_MS - 1_000);
-      await requireClaudeCliVersion(cli, {}, undefined, run);
-      expect(calls).toHaveLength(1);
-      expect(warn.mock.calls.filter((c) => String(c[0]).includes("did not answer"))).toHaveLength(1);
-      vi.setSystemTime(Date.now() + 2_000);
-      await requireClaudeCliVersion(cli, {}, undefined, run);
-      expect(calls).toHaveLength(2);
-    } finally {
-      warn.mockRestore();
-    }
+  it.each([null, "garbage", "2.1.291 (Claude Code)"])("blocks unqualified version %s", async answer => {
+    const cli = cliFile();
+    const { run } = runner([answer]);
+    await expect(requireClaudeCliVersion(cli, {}, undefined, run)).rejects.toBeInstanceOf(ClaudeUpdateRequired);
+  });
+
+  it("blocks a failed probe and does not probe again for ten minutes", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const cli = cliFile();
+    const { run, calls } = runner([null, "2.1.292 (Claude Code)"]);
+    await expect(requireClaudeCliVersion(cli, {}, undefined, run)).rejects.toBeInstanceOf(ClaudeUpdateRequired);
+    await expect(requireClaudeCliVersion(cli, {}, undefined, run)).rejects.toBeInstanceOf(ClaudeUpdateRequired);
+    vi.setSystemTime(Date.now() + VERSION_FAILURE_BACKOFF_MS - 1_000);
+    await expect(requireClaudeCliVersion(cli, {}, undefined, run)).rejects.toBeInstanceOf(ClaudeUpdateRequired);
+    expect(calls).toHaveLength(1);
+    vi.setSystemTime(Date.now() + 2_000);
+    await requireClaudeCliVersion(cli, {}, undefined, run);
+    expect(calls).toHaveLength(2);
   });
 
   it("stops waiting the moment the turn is stopped", async () => {
@@ -4789,3 +4841,5 @@ describe("Claude gate: overlay, in-project check, wrapper (Rules 63, 69, 74b)", 
     }
   });
 });
+
+useOutsideStoreFixture();

@@ -35,9 +35,14 @@ describe("returning focus when an overlay closes", () => {
   });
 
   it("is what the overlays that can be opened from the drawer use", () => {
-    for (const file of ["SettingsModal", "BotSettingsDialog", "PluginsPanel", "TeamLibraryPanel", "KeyboardShortcutsDialog"]) {
+    // Bot settings is a page of the Settings window (S7), so SettingsModal returns focus for it.
+    for (const file of ["KeyboardShortcutsDialog"]) {
       expect(readFileSync(new URL(`../components/${file}.tsx`, import.meta.url), "utf8"), file).toContain("returnFocus(");
     }
+    for (const file of ["SettingsModal", "PluginsPanel", "TeamLibraryPanel"]) {
+      expect(readFileSync(new URL(`../components/${file}.tsx`, import.meta.url), "utf8"), file).toContain("useLayerContainer(");
+    }
+    expect(readFileSync(new URL("./focus-trap.ts", import.meta.url), "utf8")).toContain("returnTarget(");
     // The menu button moved out of App.tsx into each view's header
     // (OpenBotListButton.tsx, mobile/v1); the marker moved with it.
     expect(readFileSync(new URL("../components/OpenBotListButton.tsx", import.meta.url), "utf8")).toContain('data-focus-fallback=""');

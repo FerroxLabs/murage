@@ -1,3 +1,4 @@
+import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // ACP driver contract tests, run against the scripted fake ACP CLI in
 // server/testing/fake-acp-cli.ts. Covers the shared acp/core.ts runtime via
 // its two harness shims (grok = fail-closed auth, gemini = lenient auth):
@@ -22,14 +23,14 @@ import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
 import { buildRemoteMount } from "../../custom-mcp-mounts.ts";
-import { acpErrorDiagnostic, acpEngineErrorText, acpEngineExitStderrText, acpEngineStderrCapture, acpPromptIdleTimeoutMs, acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, LOCATORS, skipSubscriptionAuthForLocalInject, type AcpSupport } from "./core.ts";
+import { acpErrorDiagnostic, acpEngineErrorText, acpEngineExitStderrText, acpEngineStderrCapture, acpPromptIdleTimeoutMs, acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, LOCATORS, skipSubscriptionAuthForLocalInject, splitAcpCacheReads, type AcpSupport } from "./core.ts";
 import { redactSecretsInText } from "../../redact.ts";
 import { redactSecretsInText as redactSecretsInTextShipped } from "../../testing/redact-release-0.1.53.ts";
 import { ERROR_MESSAGE_MAX, ENGINE_ERROR_CATEGORIES } from "../../../shared/provider-error.ts";
 import { GrokAgentDriver } from "./grok.ts";
 import { FuigoAgentDriver } from "./fuigo.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
-import { KimiAgentDriver, KIMI_LOGIN_NOTE } from "./kimi.ts";
+import { KimiAgentDriver, KIMI_LOGIN_NOTE, kimiSignedIn } from "./kimi.ts";
 import { DroidAgentDriver } from "./droid.ts";
 import { CursorAgentDriver } from "./cursor.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
@@ -201,7 +202,7 @@ describe("ACP decodeConfig", () => {
     });
     expect(fullAuto.adapter.capabilities.localComputerMcp).toBe(false);
     await expect(
-      fullAuto.adapter.sendTurn({
+      fullAuto.adapter.sendTurn({ cwd: fixtureBotFolder(),
         threadId: "t-full-auto-local",
         text: "click",
         integrations: {
@@ -277,7 +278,7 @@ describe("ACP turns (fake CLI)", () => {
 
   it("forwards bounded, redacted Fuigo stderr notices while the engine is live", async () => {
     await create(FuigoDiagnosticDriver, "fuigo-live-notices");
-    await instance.adapter.sendTurn({ threadId: "t-live-notices", text: "hello" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-live-notices", text: "hello" });
     await recorder.until((e) => e.type === "item.started" && e.title?.startsWith("Fuigo: xxx") === true);
     await recorder.until((e) => e.type === "content.delta" && e.delta === "notices written");
     const notices = recorder.events.filter((e) => e.type === "item.started");
@@ -294,7 +295,7 @@ describe("ACP turns (fake CLI)", () => {
 
   it("does not forward live stderr notices from other ACP engines", async () => {
     await create(GrokAgentDriver, "fuigo-live-notices");
-    await instance.adapter.sendTurn({ threadId: "t-other-notices", text: "hello" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-other-notices", text: "hello" });
     await recorder.until((e) => e.type === "content.delta" && e.delta === "notices written");
     expect(recorder.events.filter((e) => e.type === "item.started")).toEqual([]);
   });
@@ -310,7 +311,7 @@ describe("ACP turns (fake CLI)", () => {
     const promptDump = join(scratch, "command-prompt.json");
     process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-commands", text: "/web cats", system: "You are Moss.", engineCommand: { name: "web", args: "cats" } });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-commands", text: "/web cats", system: "You are Moss.", engineCommand: { name: "web", args: "cats" } });
     expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
     expect(await recorder.until((e) => e.type === "engine.commands")).toMatchObject({
       provider: "grokAgent",
@@ -343,7 +344,7 @@ describe("ACP turns (fake CLI)", () => {
     }
     const driver = await load();
     await create(driver as typeof GrokAgentDriver);
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-commands-each", text: "/init", system: "You are Moss.", engineCommand: { name: "init", args: "" },
       ...(name === "OpenCode" ? { model: "opencode/x-preview-f-free" } : {}),
     });
@@ -362,14 +363,14 @@ describe("ACP turns (fake CLI)", () => {
     await create(driver());
     let calls = 0;
     // sendTurn hands the id back while setup continues; the revoke lands in that window
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-fence", text: "hi", beforeSubmit: () => { calls++; throw new Error("MEMORY_CONTEXT_REVOKED"); } });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fence", text: "hi", beforeSubmit: () => { calls++; throw new Error("MEMORY_CONTEXT_REVOKED"); } });
     expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: false, stopReason: "submission_refused" });
     expect(recorder.events.some((e) => e.type === "runtime.error" && e.turnId === turnId)).toBe(false);
     expect(calls).toBe(1);
     expect(JSON.parse(readFileSync(rpcFile, "utf8")) as string[]).not.toContain("session/prompt");
     // a passing fence lets the next turn through, once per write
     let passes = 0;
-    const next = await instance.adapter.sendTurn({ threadId: "t-fence", text: "hi", beforeSubmit: () => { passes++; } });
+    const next = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fence", text: "hi", beforeSubmit: () => { passes++; } });
     expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === next.turnId)).toMatchObject({ ok: true });
     expect(passes).toBe(1);
     expect(JSON.parse(readFileSync(rpcFile, "utf8")) as string[]).toContain("session/prompt");
@@ -393,7 +394,7 @@ describe("ACP turns (fake CLI)", () => {
       const threadId = `t-fence-${how}`;
       let notWritten = 0;
       let stopping: Promise<unknown> | undefined;
-      const { turnId } = await instance.adapter.sendTurn({
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
         threadId, text: "hi", notWritten: () => { notWritten++; },
         beforeSubmit: () => { stopping = (how === "stopAll" ? instance.adapter.stopAll() : instance.adapter.interruptTurn(threadId)).catch(() => undefined); },
       });
@@ -410,7 +411,7 @@ describe("ACP turns (fake CLI)", () => {
       const exit = join(scratch, "exit");
       Object.assign(process.env, { FAKE_ACP_RPC_DUMP: rpcFile, FAKE_ACP_SESSION_NEW_REFUSE_GATE: refuse, FAKE_ACP_TERM: "gate", FAKE_ACP_EXIT_GATE: exit });
       await create(driver());
-      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-setup-stopped", text: "hi" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-setup-stopped", text: "hi" });
       await until(() => polled(rpcFile, "session/new"));
       const stopping = instance.adapter.stopAll().catch(() => undefined);
       writeFileSync(refuse, "");
@@ -425,7 +426,7 @@ describe("ACP turns (fake CLI)", () => {
       writeFileSync(refuse, "");
       process.env.FAKE_ACP_SESSION_NEW_REFUSE_GATE = refuse;
       await create(driver());
-      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-setup-failed", text: "hi" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-setup-failed", text: "hi" });
       expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: false, stopReason: "rpc_error" });
       expect(errors(turnId)).toHaveLength(1);
     });
@@ -434,7 +435,7 @@ describe("ACP turns (fake CLI)", () => {
       const rpcFile = join(scratch, "stopped-prompt.json");
       process.env.FAKE_ACP_RPC_DUMP = rpcFile;
       await create(driver(), "hang");
-      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-prompt-stopped", text: "hi" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-prompt-stopped", text: "hi" });
       await until(() => polled(rpcFile, "session/prompt"));
       await instance.adapter.stopAll();
       expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: true, stopReason: "cancelled" });
@@ -444,7 +445,7 @@ describe("ACP turns (fake CLI)", () => {
 
   it("normalizes a full turn into the canonical event sequence", async () => {
     await create();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-happy", text: "hi", model: "grok-4.5" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-happy", text: "hi", model: "grok-4.5" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const types = recorder.events.map((e) => e.type);
@@ -470,7 +471,7 @@ describe("ACP turns (fake CLI)", () => {
 
   it("emits each assistant text block before the tool that follows it", async () => {
     await create(GrokAgentDriver, "interleave");
-    await instance.adapter.sendTurn({ threadId: "t-interleave", text: "go", model: "grok-4.5" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-interleave", text: "go", model: "grok-4.5" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const types = recorder.events.map((e) => e.type);
@@ -498,7 +499,7 @@ describe("ACP turns (fake CLI)", () => {
 
   it("normalizes a structured ACP image block without treating it as text", async () => {
     await create(GeminiAgentDriver, "image");
-    await instance.adapter.sendTurn({ threadId: "t-image", text: "draw it" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-image", text: "draw it" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const image = recorder.events.find(
@@ -522,13 +523,14 @@ describe("ACP turns (fake CLI)", () => {
   // the normalizer and nothing else.
   it("keeps the image bytes out of the provider-native log", async () => {
     await create(GeminiAgentDriver, "image");
-    await instance.adapter.sendTurn({ threadId: "t-image-log", text: "draw it" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-image-log", text: "draw it" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const log = readFileSync(join(NATIVE_DIR, "t-image-log.ndjson"), "utf8");
     expect(log).toContain("agent_message_chunk");
-    expect(log).toContain("[image data: ");
+    // ql2 sink fold (was a "[image data: N base64 chars]" stand-in): a chunk's content is not written at all
     expect(log).not.toContain("iVBOR");
+    expect(log).not.toContain("base64");
   });
 
   it.each(["root", "fuigo"])("banks two prompt totals once (%s), never Fuigo last-call counts", async (shape) => {
@@ -536,20 +538,47 @@ describe("ACP turns (fake CLI)", () => {
     await create(shape === "fuigo" ? createAcpDriver({ ...SELECT_MODEL_SUPPORT, driverKind: FuigoAgentDriver.driverKind, selectModel: undefined }) as typeof GrokAgentDriver : GrokAgentDriver);
     try {
       for (let n = 0; n < 2; n++) {
-        const sent = await instance.adapter.sendTurn({ threadId: "t-bank", text: "go" });
+        const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-bank", text: "go" });
         await recorder.until(e => e.type === "turn.completed" && e.turnId === sent.turnId);
       }
       const completed = recorder.events.filter(e => e.type === "turn.completed");
       expect(completed).toHaveLength(2);
-      for (const event of completed) expect(event).toMatchObject({ usage: { input: shape === "fuigo" ? 100 : 10, output: shape === "fuigo" ? 50 : 5 } });
+      for (const event of completed) expect(event).toMatchObject({ usage: { input: shape === "fuigo" ? 100 : 10, output: shape === "fuigo" ? 50 : 5, ...(shape === "fuigo" ? { cachedInput: 30 } : {}) } });
       if (shape === "fuigo") expect(completed).toEqual(expect.arrayContaining([expect.objectContaining({ charge: 0.25 })]));
     } finally { delete process.env.FAKE_ACP_USAGE_ROOT; }
+  });
+
+  // upstream #1993: OpenCode keeps cache reads out of inputTokens. Counting
+  // only inputTokens as the whole prompt, with the cache reads named as its
+  // cached part, made the fresh figure zero on a cached turn.
+  it.each([
+    ["cache-beside", { input: 100, output: 5, cachedInput: 90 }],
+    ["cache-inside", { input: 100, output: 5, cachedInput: 90 }],
+  ] as const)("counts cache reads as part of the whole prompt (%s)", async (shape, want) => {
+    process.env.FAKE_ACP_USAGE_ROOT = shape;
+    await create();
+    try {
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-cache-${shape}`, text: "go" });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+      expect(recorder.events.find((e) => e.type === "thread.token-usage.updated")).toMatchObject(want);
+      expect(recorder.events.find((e) => e.type === "turn.completed")).toMatchObject({ usage: want });
+    } finally { delete process.env.FAKE_ACP_USAGE_ROOT; }
+  });
+
+  it("splits cache reads: no total means beside, absent or bad is not zero, Fuigo counts inside", () => {
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5, cachedReadTokens: 90 }, false)).toEqual({ input: 100, cachedInput: 90 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5, cachedReadTokens: 0 }, false)).toEqual({ input: 10, cachedInput: 0 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5 }, false)).toEqual({ input: 10 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5, cachedReadTokens: -1 }, false)).toEqual({ input: 10 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5, cachedReadTokens: 2.5 }, false)).toEqual({ input: 10 });
+    expect(splitAcpCacheReads({ inputTokens: 100, outputTokens: 50, cachedReadTokens: 30 }, true)).toEqual({ input: 100, cachedInput: 30 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 50, cachedReadTokens: 30 }, true)).toEqual({ input: 10, cachedInput: 10 });
   });
 
   it("reads token usage from the root of the prompt result", async () => {
     process.env.FAKE_ACP_USAGE_ROOT = "1";
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-usage-root", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-usage-root", text: "go" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const usage = recorder.events.find((e) => e.type === "thread.token-usage.updated");
@@ -569,7 +598,7 @@ describe("ACP turns (fake CLI)", () => {
     process.env.BOX_TOKEN = "box-should-not-leak";
     process.env.MURAGE_TTS_KEY = "tts-should-not-leak";
 
-    await instance.adapter.sendTurn({ threadId: "t-hygiene", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-hygiene", text: "go" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -602,7 +631,7 @@ describe("ACP turns (fake CLI)", () => {
       const dump = join(scratch, "dump-routing.json");
       process.env.FAKE_ACP_DUMP = dump;
 
-      await instance.adapter.sendTurn({ threadId: "t-routing", text: "go" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-routing", text: "go" });
       await recorder.until((e) => e.type === "turn.completed");
 
       const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -622,7 +651,7 @@ describe("ACP turns (fake CLI)", () => {
     const dump = join(scratch, "composio.json");
     process.env.FAKE_ACP_DUMP = dump;
     expect(instance.adapter.capabilities.composioMcp).toBe(true);
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-composio",
       text: "go",
       integrations: {
@@ -657,7 +686,7 @@ describe("ACP turns (fake CLI)", () => {
     const dump = join(scratch, "droid-dump.json");
     process.env.FAKE_ACP_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-droid", text: "go", model: "claude-sonnet-5" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-droid", text: "go", model: "claude-sonnet-5" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -683,7 +712,7 @@ describe("ACP turns (fake CLI)", () => {
     const dump = join(scratch, "droid-safe.json");
     process.env.FAKE_ACP_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-droid-safe", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-droid-safe", text: "go" });
     await recorder.until((e) => e.type === "turn.completed");
 
     // Both settings are explicit even with nothing on the turn: whatever
@@ -709,7 +738,7 @@ describe("ACP turns (fake CLI)", () => {
     });
     recorder = recordEvents(instance.adapter);
 
-    await instance.adapter.sendTurn({ threadId: "t-droid-skew", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-droid-skew", text: "go" });
     const done = await recorder.until((e) => e.type === "turn.completed");
 
     expect(done).toMatchObject({ ok: false, stopReason: "rpc_error" });
@@ -727,7 +756,7 @@ describe("ACP turns (fake CLI)", () => {
     const phoneJobs = { command: process.execPath, args: ["/fake/phone-jobs-proxy.js"], env: { MURAGE_PHONE_TOOLS: "calendar_read", MURAGE_PJ_GEN: "g1" } };
     const withDump = join(scratch, "pj-with.json");
     process.env.FAKE_ACP_DUMP = withDump;
-    await instance.adapter.sendTurn({ threadId: "t-pj-with", text: "go", integrations: { phoneJobs } });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pj-with", text: "go", integrations: { phoneJobs } });
     await recorder.until((event) => event.type === "turn.completed" && event.threadId === "t-pj-with");
     expect(JSON.parse(readFileSync(withDump, "utf8")).mcpServers).toContainEqual({
       name: "phoneJobs", command: process.execPath, args: ["/fake/phone-jobs-proxy.js"],
@@ -735,7 +764,7 @@ describe("ACP turns (fake CLI)", () => {
     });
     const withoutDump = join(scratch, "pj-without.json");
     process.env.FAKE_ACP_DUMP = withoutDump;
-    await instance.adapter.sendTurn({ threadId: "t-pj-without", text: "go", integrations: { browser: { command: process.execPath, args: ["/fake/browser-proxy.js"], env: {} } } });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pj-without", text: "go", integrations: { browser: { command: process.execPath, args: ["/fake/browser-proxy.js"], env: {} } } });
     await recorder.until((event) => event.type === "turn.completed" && event.threadId === "t-pj-without");
     expect((JSON.parse(readFileSync(withoutDump, "utf8")).mcpServers as Array<{ name: string }>).map((server) => server.name)).not.toContain("phoneJobs");
   });
@@ -744,7 +773,7 @@ describe("ACP turns (fake CLI)", () => {
     await create();
     const dump = join(scratch, "local-dump.json");
     process.env.FAKE_ACP_DUMP = dump;
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-local",
       text: "inspect",
       integrations: {
@@ -777,7 +806,7 @@ describe("ACP turns (fake CLI)", () => {
       const dump = join(scratch, `${threadId}-dump.json`);
       process.env.FAKE_ACP_DUMP = dump;
       const mount = { command: process.execPath, args: ["/fake/connector-proxy.js"], env: { MURAGE_CONNECTOR_UPSTREAM_URL: "https://example.test/mcp" } };
-      await instance.adapter.sendTurn({ threadId, text: "hi", integrations: { composio: legacy ? withLegacyNames(mount) : mount } });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "hi", integrations: { composio: legacy ? withLegacyNames(mount) : mount } });
       await recorder.until((event) => event.type === "turn.completed" && event.threadId === threadId);
       return (JSON.parse(readFileSync(dump, "utf8")).mcpServers as Array<{ name: string }>).map((server) => server.name);
     };
@@ -790,7 +819,7 @@ describe("ACP turns (fake CLI)", () => {
   it("mounts dedicated memory without agents and rejects custom replacement", async () => {
     await create();
     const dump=join(scratch,"memory-dump.json");process.env.FAKE_ACP_DUMP=dump;
-    await instance.adapter.sendTurn({threadId:"memory-only",text:"recall",integrations:{
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),threadId:"memory-only",text:"recall",integrations:{
       memory:{command:process.execPath,args:["/fake/memory-proxy.js"],env:{MURAGE_HARNESS_URL:"http://127.0.0.1:1",MURAGE_MEMORY_TOKEN:"memory-fixture-secret"}},
       custom:{"murage-memory":{command:"attacker-mcp",args:[],env:{}},forged:{command:"attacker-mcp",args:[],env:{MURAGE_MEMORY_TOKEN:"forged"}}},
     }});
@@ -814,7 +843,7 @@ describe("ACP turns (fake CLI)", () => {
     ].map((key, index) => [`blocked${index}`, {
       command: "attacker-mcp", args: [], env: { [key]: "attacker-value", CUSTOM_REJECTED_MARKER: "must-not-copy" },
     }]));
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-custom-mcp",
       text: "go",
       integrations: {
@@ -857,7 +886,7 @@ describe("ACP turns (fake CLI)", () => {
     process.env.FAKE_ACP_DUMP = dump;
     const token = "c3".repeat(24);
     const context = { execPath: process.execPath, proxyPath: "/fake/remote-mcp-proxy.js", harnessUrl: "http://127.0.0.1:1", token: () => token };
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-remote-mount",
       text: "go",
       integrations: {
@@ -896,7 +925,7 @@ describe("ACP turns (fake CLI)", () => {
     ] as const) {
       process.env.FAKE_ACP_PERMISSION_TOOLCALL = JSON.stringify(toolCall);
       await create(GrokAgentDriver, "permission");
-      await instance.adapter.sendTurn({ threadId: id, text: "go" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: id, text: "go" });
       const opened = await recorder.until((e) => e.type === "request.opened");
       expect(opened).toMatchObject({ requestType: "permission", summary: want });
       await instance.adapter.respondToRequest(id, (opened as any).requestId, { behavior: "deny" });
@@ -914,11 +943,11 @@ describe("ACP turns (fake CLI)", () => {
     ] as const) {
       process.env.FAKE_ACP_PERMISSION_TOOLCALL = JSON.stringify(toolCall);
       await create(GrokAgentDriver, "permission");
-      await instance.adapter.sendTurn({ threadId: id, text: "go" } as any);
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: id, text: "go" } as any);
       const opened = (await recorder.until((e) => e.type === "request.opened")) as any;
       expect(opened.toolInputTruncated === true, id).toBe(cut);
       if (cut) {
-        const verdict = autoVerdict({ autoApprove: true, fullAccess: true, noLimits: true }, opened.tool, opened.summary, { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, inputCut: true, inputTruncated: true });
+        const verdict = autoVerdict({ autoApprove: true, fullAccess: true, noLimits: true }, opened.tool, opened.summary, { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null, inputCut: true, inputTruncated: true });
         expect(verdict.approve).toBeNull();
       }
       await instance.adapter.respondToRequest(id, opened.requestId, { behavior: "deny" });
@@ -935,7 +964,7 @@ describe("ACP turns (fake CLI)", () => {
     ] as const) {
       process.env.FAKE_ACP_PERMISSION_TOOLCALL = JSON.stringify(toolCall);
       await create(GrokAgentDriver, "permission");
-      await instance.adapter.sendTurn({ threadId: id, text: "go" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: id, text: "go" });
       const opened = await recorder.until((e) => e.type === "request.opened");
       check(opened);
       await instance.adapter.respondToRequest(id, (opened as any).requestId, { behavior: "deny" });
@@ -948,7 +977,7 @@ describe("ACP turns (fake CLI)", () => {
   const askedWith = async (id: string, toolCall: object, integrations?: object) => {
     process.env.FAKE_ACP_PERMISSION_TOOLCALL = JSON.stringify(toolCall);
     await create(GrokAgentDriver, "permission");
-    await instance.adapter.sendTurn({ threadId: id, text: "go", ...(integrations ? { integrations } : {}) } as any);
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: id, text: "go", ...(integrations ? { integrations } : {}) } as any);
     const opened = (await recorder.until((e) => e.type === "request.opened")) as any;
     await instance.adapter.respondToRequest(id, opened.requestId, { behavior: "deny" });
     await recorder.until((e) => e.type === "turn.completed");
@@ -988,7 +1017,7 @@ describe("ACP turns (fake CLI)", () => {
     try {
       await create(GrokAgentDriver, "permission");
       resetExecChecks();
-      await instance.adapter.sendTurn({ threadId: "t-gen-acp", text: "go" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-gen-acp", text: "go" });
       const first = (await recorder.until((e) => e.type === "request.opened")) as any;
       expect(first.execEnv).toMatchObject({ shell: expect.any(Array) });
       // Both shell families must answer their fixed environment probe.
@@ -1076,7 +1105,7 @@ describe("ACP turns (fake CLI)", () => {
       _meta: { "fuigo/tool": { version: 1, name: "run_terminal_command", kind: "execute", namespace: "fuigo_build", label: "Run Command", read_only: false } },
     });
     await create(GrokAgentDriver, "permission");
-    await instance.adapter.sendTurn({ threadId: "t-host-shell", text: "go", integrations: hostComputer });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-host-shell", text: "go", integrations: hostComputer });
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({ requestType: "permission", tool: "shell", toolCall: { name: "shell" } });
     expect((opened as any).approvalScope).toBeUndefined();
@@ -1097,7 +1126,7 @@ describe("ACP turns (fake CLI)", () => {
   ])("keeps a computer tool %s as local-computer", async (_label, toolCall) => {
     process.env.FAKE_ACP_PERMISSION_TOOLCALL = JSON.stringify(toolCall);
     await create(GrokAgentDriver, "permission");
-    await instance.adapter.sendTurn({ threadId: "t-host-computer", text: "go", integrations: hostComputer });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-host-computer", text: "go", integrations: hostComputer });
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({ requestType: "permission", approvalScope: "local-computer" });
     await instance.adapter.respondToRequest("t-host-computer", (opened as any).requestId, { behavior: "allow" });
@@ -1110,7 +1139,7 @@ describe("ACP turns (fake CLI)", () => {
       rawInput: { variant: "UseTool", tool_name: "browser__agent_browser_open", tool_input: { url: "https://example.com" } },
       _meta: { "fuigo/tool": { version: 1, name: "use_tool", kind: "use_tool", namespace: "fuigo_build", label: "Use Tool", read_only: false } } });
     await create(GrokAgentDriver, "permission");
-    await instance.adapter.sendTurn({ threadId: "t-host-other", text: "go", integrations: hostComputer });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-host-other", text: "go", integrations: hostComputer });
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect((opened as any).approvalScope).toBeUndefined();
     await instance.adapter.respondToRequest("t-host-other", (opened as any).requestId, { behavior: "deny" });
@@ -1120,7 +1149,7 @@ describe("ACP turns (fake CLI)", () => {
   it("surfaces a permission ask as request.opened and completes once allowed", async () => {
     process.env.FAKE_ACP_PERMISSION_TOOLCALL = JSON.stringify({ kind: "other", title: "computer__screenshot", rawInput: {} });
     await create(GrokAgentDriver, "permission");
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-perm",
       text: "go",
       integrations: {
@@ -1166,7 +1195,7 @@ describe("ACP turns (fake CLI)", () => {
       recorder = recordEvents(instance.adapter);
       for (const [turn, enforced] of [false, true, false].entries()) {
         const threadId = `t-enforce-${fullAuto}-${turn}`;
-        const sent = await instance.adapter.sendTurn({ threadId, text: "go", ...(enforced ? { routeAsks: true as const } : {}) });
+        const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go", ...(enforced ? { routeAsks: true as const } : {}) });
         const event = await recorder.until((event) => event.turnId === sent.turnId &&
           (event.type === "request.opened" || event.type === "turn.completed"));
         const asks = !fullAuto || enforced;
@@ -1194,7 +1223,7 @@ describe("ACP turns (fake CLI)", () => {
       const dump = join(scratch, `enforce-mode-${fullAuto}.json`);
       process.env.FAKE_ACP_DUMP = dump;
       for (const [turn, enforced] of [false, true, false].entries()) {
-        const sent = await instance.adapter.sendTurn({
+        const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
           threadId: `t-mode-${fullAuto}-${turn}`, text: "hi",
           ...(enforced ? { routeAsks: true as const } : {}),
         });
@@ -1225,7 +1254,7 @@ describe("ACP turns (fake CLI)", () => {
     recorder = recordEvents(instance.adapter);
     const dump = join(scratch, "stop-line.json");
     process.env.FAKE_ACP_DUMP = dump;
-    await instance.adapter.sendTurn({ threadId: "t-stop-line", text: "go", stopLine: true });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stop-line", text: "go", stopLine: true });
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({ requestType: "permission", tool: "shell", toolCall: { name: "shell", input: { command: expect.any(String) } } });
     await instance.adapter.respondToRequest("t-stop-line", opened.requestId!, { behavior: "allow" });
@@ -1256,7 +1285,7 @@ describe("ACP turns (fake CLI)", () => {
       recorder = recordEvents(instance.adapter);
       const dump = join(scratch, `route-asks-${name}.json`);
       process.env.FAKE_ACP_DUMP = dump;
-      await instance.adapter.sendTurn({ threadId: `t-route-asks-${name}`, text: "go", routeAsks: true });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-route-asks-${name}`, text: "go", routeAsks: true });
       const opened = await recorder.until((e) => e.type === "request.opened");
       expect(opened).toMatchObject({ requestType: "permission", tool: "shell" });
       await instance.adapter.respondToRequest(`t-route-asks-${name}`, opened.requestId!, { behavior: "allow" });
@@ -1275,7 +1304,7 @@ describe("ACP turns (fake CLI)", () => {
       config: { cli: FAKE_CLI, fullAuto: true },
     });
     recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: "t-full-auto", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-full-auto", text: "go" });
     await recorder.until((e) => e.type === "turn.completed");
     expect(recorder.events.some((e) => e.type === "request.opened")).toBe(false);
   });
@@ -1289,7 +1318,7 @@ describe("ACP turns (fake CLI)", () => {
     const dump = join(scratch, "decision.json");
     process.env.FAKE_ACP_DUMP = dump;
     await create(GrokAgentDriver, "permission-session-first");
-    await instance.adapter.sendTurn({ threadId: "t-perm-once", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-perm-once", text: "go" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({ requestType: "permission", tool: "shell" });
 
@@ -1303,7 +1332,7 @@ describe("ACP turns (fake CLI)", () => {
     const dump = join(scratch, "decision.json");
     process.env.FAKE_ACP_DUMP = dump;
     await create(GrokAgentDriver, "permission-session-first");
-    await instance.adapter.sendTurn({ threadId: "t-perm-deny-once", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-perm-deny-once", text: "go" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     await instance.adapter.respondToRequest("t-perm-deny-once", (opened as any).requestId, { behavior: "deny" });
     expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "user" });
@@ -1342,7 +1371,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     instance = await SelectModelDriver.create({ instanceId: "always-only", displayName: "Always only", environment: {}, enabled: true,
       config: { cli, fullAuto: behavior === "full-auto" } });
     recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: "always-only", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "always-only", text: "go" });
     if (behavior !== "full-auto") {
       const opened = await recorder.until(event => event.type === "request.opened");
       expect(await instance.adapter.respondToRequest("always-only", (opened as any).requestId, { behavior })).toBe("unavailable");
@@ -1394,7 +1423,7 @@ createInterface({ input: process.stdin }).on("line", line => {
         config: { cli, fullAuto: scenario === "full-auto" } });
       recorder = recordEvents(instance.adapter);
       {
-        const { turnId } = await instance.adapter.sendTurn({ threadId: "denial-wire", text: "go" });
+        const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "denial-wire", text: "go" });
         if (scenario !== "full-auto") {
           const opened = await recorder.until(event => event.type === "request.opened");
           if (scenario === "cancel") await instance.adapter.interruptTurn("denial-wire", turnId);
@@ -1464,7 +1493,7 @@ createInterface({ input: process.stdin }).on("line", line => {
       return originalTimeout(callback, delay === 15 * 60_000 ? 100 : delay, ...args);
     }) as typeof setTimeout);
     try {
-      await instance.adapter.sendTurn({ threadId: "hold-wire", text: "go" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "hold-wire", text: "go" });
       const opened = await recorder.until(event => event.type === "request.opened");
       await new Promise(resolve => originalTimeout(resolve, 400));
       expect(delays).toEqual([]);
@@ -1487,7 +1516,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     });
     recorder = recordEvents(instance.adapter);
 
-    await instance.adapter.sendTurn({ threadId: "t-question-tool", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-question-tool", text: "go" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({ requestType: "permission", tool: "AskUserQuestion", questionTool: true });
 
@@ -1502,7 +1531,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     try {
       instance = await GrokAgentDriver.create({ instanceId: "acp-test", displayName: "ACP Test", environment: {}, enabled: true, config: { cli: FAKE_CLI, fullAuto: true } });
       recorder = recordEvents(instance.adapter);
-      await instance.adapter.sendTurn({ threadId: "t-question-title", text: "go" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-question-title", text: "go" });
       const opened = await recorder.until((e) => e.type === "request.opened");
       expect(opened).toMatchObject({ tool: "AskUserQuestion", questionTool: true });
       expect(JSON.stringify((opened as any).tool)).not.toContain("sam.example");
@@ -1516,7 +1545,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     const dump = join(scratch, "init.json");
     process.env.FAKE_ACP_DUMP = dump;
     await create(GrokAgentDriver);
-    await instance.adapter.sendTurn({ threadId: "t-init-caps", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-init-caps", text: "go" });
     await recorder.until((e) => e.type === "turn.completed");
     const init = JSON.parse(readFileSync(dump, "utf8")).initialize;
     expect(init).toMatchObject({
@@ -1531,7 +1560,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     const timer = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) =>
       original(callback, delay === QUESTION_TIMEOUT_MS ? 50 : delay, ...args)) as typeof setTimeout);
     try {
-      await instance.adapter.sendTurn({ threadId: "project-question", text: "choose" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "project-question", text: "choose" });
       const opened = await recorder.until(event => event.type === "request.opened");
       expect(opened).toMatchObject({ requestType: "question" });
       await new Promise(resolve => original(resolve, 200));
@@ -1555,7 +1584,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     });
     recorder = recordEvents(instance.adapter);
 
-    await instance.adapter.sendTurn({ threadId: "t-fuigo-q", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fuigo-q", text: "go" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({
       requestType: "question",
@@ -1592,7 +1621,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     const dump = join(scratch, "fuigo-cancel.json");
     process.env.FAKE_ACP_DUMP = dump;
     await create(GrokAgentDriver, "fuigo-question");
-    await instance.adapter.sendTurn({ threadId: "t-fuigo-skip", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fuigo-skip", text: "go" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     await expect(instance.adapter.respondToRequest("t-fuigo-skip", (opened as any).requestId, { behavior: "deny" })).resolves.toBe("rejected");
     expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "user" });
@@ -1605,7 +1634,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     // cancelled reply is written before the child is torn down; whether a
     // dying child still reads it is not something a test can pin).
     await create(GrokAgentDriver, "fuigo-question");
-    await instance.adapter.sendTurn({ threadId: "t-fuigo-stop", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fuigo-stop", text: "go" });
     await recorder.until((e) => e.type === "request.opened");
     await instance.adapter.interruptTurn("t-fuigo-stop");
     expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "system" });
@@ -1616,7 +1645,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     const dump = join(scratch, "fuigo-elicit.json");
     process.env.FAKE_ACP_DUMP = dump;
     await create(GrokAgentDriver, "fuigo-elicit");
-    await instance.adapter.sendTurn({ threadId: "t-fuigo-elicit", text: "deploy" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fuigo-elicit", text: "deploy" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({
       requestType: "question",
@@ -1636,7 +1665,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     const dump2 = join(scratch, "fuigo-elicit-decline.json");
     process.env.FAKE_ACP_DUMP = dump2;
     await create(GrokAgentDriver, "fuigo-elicit");
-    await instance.adapter.sendTurn({ threadId: "t-fuigo-elicit-skip", text: "deploy" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fuigo-elicit-skip", text: "deploy" });
     const skipped = await recorder.until((e) => e.type === "request.opened");
     await expect(instance.adapter.respondToRequest("t-fuigo-elicit-skip", (skipped as any).requestId, { behavior: "deny" })).resolves.toBe("rejected");
     await recorder.until((e) => e.type === "turn.completed");
@@ -1649,7 +1678,7 @@ createInterface({ input: process.stdin }).on("line", line => {
       process.env.FAKE_ACP_DUMP = dump;
       await create(GrokAgentDriver, mode);
       const threadId = `t-${mode}`;
-      await instance.adapter.sendTurn({ threadId, text: "deploy" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "deploy" });
       const opened = await recorder.until((e) => e.type === "request.opened");
       expect(opened).toMatchObject({
         requestType: "question",
@@ -1686,7 +1715,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     const dump = join(scratch, "elicit-decline.json");
     process.env.FAKE_ACP_DUMP = dump;
     await create(GrokAgentDriver, "elicitation-form");
-    await instance.adapter.sendTurn({ threadId: "t-elicit-skip", text: "deploy" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-elicit-skip", text: "deploy" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     await expect(instance.adapter.respondToRequest("t-elicit-skip", (opened as any).requestId, { behavior: "deny" })).resolves.toBe("rejected");
     await recorder.until((e) => e.type === "turn.completed");
@@ -1695,7 +1724,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     await instance.dispose();
 
     await create(GrokAgentDriver, "elicitation-form");
-    await instance.adapter.sendTurn({ threadId: "t-elicit-stop", text: "deploy" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-elicit-stop", text: "deploy" });
     await recorder.until((e) => e.type === "request.opened");
     await instance.adapter.interruptTurn("t-elicit-stop");
     expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "system" });
@@ -1706,7 +1735,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     const dump = join(scratch, "elicit-url.json");
     process.env.FAKE_ACP_DUMP = dump;
     await create(GrokAgentDriver, "elicitation-url");
-    await instance.adapter.sendTurn({ threadId: "t-elicit-url", text: "deploy" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-elicit-url", text: "deploy" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({
       requestType: "question",
@@ -1733,20 +1762,20 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("grok accepts the grok.com sign-in method that current CLI versions offer", async () => {
     process.env.FAKE_ACP_AUTH_METHODS = "grok.com";
     await create(GrokAgentDriver);
-    await instance.adapter.sendTurn({ threadId: "t-grok-current-auth", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-grok-current-auth", text: "go" });
     expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
   });
 
   it("grok fails closed when the CLI advertises no sign-in method it knows", async () => {
     process.env.FAKE_ACP_AUTH_METHODS = "api_key";
     await create(GrokAgentDriver);
-    await instance.adapter.sendTurn({ threadId: "t-grok-unknown-auth", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-grok-unknown-auth", text: "go" });
     expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "auth_required" });
   });
 
   it("grok fails closed when the CLI advertises no cached_token (needs login)", async () => {
     await create(GrokAgentDriver, "no-auth");
-    await instance.adapter.sendTurn({ threadId: "t-auth", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-auth", text: "go" });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: false, stopReason: "auth_required" });
     const err = recorder.events.find((e) => e.type === "runtime.error")!;
@@ -1764,7 +1793,7 @@ createInterface({ input: process.stdin }).on("line", line => {
       config: { cli: FAKE_CLI, fullAuto: false },
     });
     recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-local-auth",
       text: "go",
       model: "omlx::MiniMax-M3-4bit",
@@ -1776,7 +1805,7 @@ createInterface({ input: process.stdin }).on("line", line => {
 
   it("gemini proceeds through a missing auth method (lenient login)", async () => {
     await create(GeminiAgentDriver, "no-auth");
-    await instance.adapter.sendTurn({ threadId: "t-lenient", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-lenient", text: "go" });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true });
     expect(recorder.events.some((e) => e.provider === "geminiAgent")).toBe(true);
@@ -1786,7 +1815,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     const dump = join(scratch, "gemini-acp.json");
     process.env.FAKE_ACP_DUMP = dump;
     await create(GeminiAgentDriver);
-    await instance.adapter.sendTurn({ threadId: "t-gemini-acp", text: "go", model: "gemini-test" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-gemini-acp", text: "go", model: "gemini-test" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const argv = JSON.parse(readFileSync(dump, "utf8")).argv as string[];
@@ -1796,16 +1825,16 @@ createInterface({ input: process.stdin }).on("line", line => {
 
   it("rejects a second turn while one is in flight", async () => {
     await create(GrokAgentDriver, "hang");
-    await instance.adapter.sendTurn({ threadId: "t-busy", text: "one" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-busy", text: "one" });
     await recorder.until((e) => e.type === "session.started");
-    await expect(instance.adapter.sendTurn({ threadId: "t-busy", text: "two" })).rejects.toThrow(/already running/);
+    await expect(instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-busy", text: "two" })).rejects.toThrow(/already running/);
     await instance.adapter.interruptTurn("t-busy");
     await recorder.until((e) => e.type === "turn.completed");
   });
 
   it("interrupt settles a hung turn as cancelled", async () => {
     await create(GrokAgentDriver, "hang");
-    await instance.adapter.sendTurn({ threadId: "t-int", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-int", text: "go" });
     await recorder.until((e) => e.type === "session.started");
     await instance.adapter.interruptTurn("t-int");
     const done = await recorder.until((e) => e.type === "turn.completed");
@@ -1831,7 +1860,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("fails a turn whose agent goes silent mid-answer, and kills the wedged child", async () => {
     process.env.MURAGE_ACP_PROMPT_IDLE_MS = "150";
     await create(GrokAgentDriver, "stall-after-text");
-    await instance.adapter.sendTurn({ threadId: "t-stall", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stall", text: "go" });
 
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: false, stopReason: "rpc_error" });
@@ -1853,7 +1882,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("the prompt idle guard does not expire an agent while a person is answering a card", async () => {
     process.env.MURAGE_ACP_PROMPT_IDLE_MS = "150";
     await create(GrokAgentDriver, "permission");
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-stall-ask",
       text: "go",
       integrations: {
@@ -1880,7 +1909,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     process.env.FAKE_ACP_TOOL_MS = "3500";
     try {
       await create(GrokAgentDriver, "slow-tool");
-      await instance.adapter.sendTurn({ threadId: "t-slow-tool", text: "go" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-slow-tool", text: "go" });
       expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
       expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(false);
       expect(recorder.events.find((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "tool")).toMatchObject({ ok: true });
@@ -1892,7 +1921,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("still fails an agent that goes silent once its tool has finished", async () => {
     process.env.MURAGE_ACP_PROMPT_IDLE_MS = "150";
     await create(GrokAgentDriver, "stall-after-tool");
-    await instance.adapter.sendTurn({ threadId: "t-stall-tool", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stall-tool", text: "go" });
     expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
     expect((recorder.events.find((e) => e.type === "runtime.error") as { message?: string } | undefined)?.message).toMatch(/no tool running/i);
     expect(instance.adapter.hasSession("t-stall-tool")).toBe(false);
@@ -1906,7 +1935,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     process.env.FAKE_ACP_TOOL_NEVER_FINISHES = "1";
     try {
       await create(GrokAgentDriver, "stall-after-tool");
-      await instance.adapter.sendTurn({ threadId: "t-tool-cap", text: "go" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-tool-cap", text: "go" });
       expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
       expect((recorder.events.find((e) => e.type === "runtime.error") as { message?: string } | undefined)?.message)
         .toMatch(/tool running .* without a word/i);
@@ -1922,7 +1951,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   // incident (upstream #1623).
   it("an end_turn with no reply, image or tool result is a failed turn with a plain reason", async () => {
     await create(GrokAgentDriver, "empty-reply");
-    await instance.adapter.sendTurn({ threadId: "t-empty", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-empty", text: "go" });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: false, stopReason: "empty_turn" });
     expect((recorder.events.find((e) => e.type === "runtime.error") as { message?: string } | undefined)?.message)
@@ -1933,7 +1962,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     // a provider that never leaves its thinking stream: thought chunks
     // stream, the engine still answers end_turn
     await create(GrokAgentDriver, "reasoning-only");
-    await instance.adapter.sendTurn({ threadId: "t-reasoning", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-reasoning", text: "go" });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: false, stopReason: "empty_turn" });
     expect(recorder.events.some((e) => e.type === "content.delta" && (e as any).streamKind === "reasoning_text")).toBe(true);
@@ -1942,7 +1971,7 @@ createInterface({ input: process.stdin }).on("line", line => {
 
   it("an end_turn with only an image is still a success", async () => {
     await create(GrokAgentDriver, "image");
-    await instance.adapter.sendTurn({ threadId: "t-image-only", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-image-only", text: "go" });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true, stopReason: null });
     expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(false);
@@ -1951,7 +1980,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("cancellation-close regression: exit on cancellation is not an unexpected failure", async () => {
     await create(GrokAgentDriver, "exit-on-cancel");
     const threadId = "t-cancel-close";
-    await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "fixture only" });
     await recorder.until(event => event.type === "content.delta" && event.delta === "fixture cancellation ready");
     const started = performance.now();
     await instance.adapter.interruptTurn(threadId);
@@ -1971,7 +2000,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("a repeated Stop does not postpone the kill: the turn settles at the grace from the first Stop", async () => {
     await create(GrokAgentDriver, "cancel-ignore");
     const threadId = "t-cancel-repeat";
-    await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "fixture only" });
     await recorder.until(event => event.type === "content.delta" && event.delta === "fixture cancellation ready");
     const started = performance.now();
     const first = instance.adapter.interruptTurn(threadId).catch(() => undefined);
@@ -1991,7 +2020,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("a prompt rejected after Stop sent session/cancel settles as a cancellation, not an engine error", async () => {
     await create(GrokAgentDriver, "cancel-reject");
     const threadId = `t-cancel-reject-${Date.now()}`;
-    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "fixture only" });
     await recorder.until(event => event.type === "content.delta" && event.delta === "fixture cancellation ready");
     await instance.adapter.interruptTurn(threadId);
     const done = await recorder.until(event => event.type === "turn.completed", 4000);
@@ -2011,7 +2040,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("a prompt that ends with another stop reason after Stop settles as a cancellation, not an engine error", async () => {
     await create(GrokAgentDriver, "cancel-other-reason");
     const threadId = `t-cancel-other-${Date.now()}`;
-    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "fixture only" });
     await recorder.until(event => event.type === "content.delta" && event.delta === "fixture cancellation ready");
     await instance.adapter.interruptTurn(threadId);
     const done = await recorder.until(event => event.type === "turn.completed", 4000);
@@ -2034,7 +2063,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     process.env.FAKE_ACP_RPC_DUMP = rpcFile;
     await create(GrokAgentDriver, "cancel-end-turn");
     const threadId = `t-cancel-end-turn-${Date.now()}`;
-    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "fixture only" });
     await vi.waitFor(() => expect(JSON.parse(readFileSync(rpcFile, "utf8"))).toContain("session/prompt"), { timeout: 4000 });
     await instance.adapter.interruptTurn(threadId);
     const done = await recorder.until(event => event.type === "turn.completed", 4000);
@@ -2060,7 +2089,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("an interrupt Murage raised itself settles as a cancellation, exactly as a user's Stop does", async () => {
     await create(GrokAgentDriver, "cancel-other-reason");
     const threadId = `t-cancel-watchdog-${Date.now()}`;
-    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "fixture only" });
     await recorder.until(event => event.type === "content.delta" && event.delta === "fixture cancellation ready");
     // The exact call the stall watchdog and the provider-connection subscriber
     // make: no argument tells the driver a user asked for this.
@@ -2083,40 +2112,42 @@ createInterface({ input: process.stdin }).on("line", line => {
       .map((line) => JSON.parse(line) as { dir: string; msg: Record<string, any> })
       .filter((row) => row.msg?.engineStderr !== undefined);
 
-  it("an engine failure writes its last stderr lines to the native log as one bounded, redacted record", async () => {
+  // ql2 sink fold (MurageMain ruling 11-06, one sink allowlist): engine stderr is free text, so the record keeps its stop reason,
+  // how many lines and whether it was cut, never the lines (was: the last 100 redacted lines)
+  it("an engine failure writes one bounded stderr record to the native log: its counts, never its lines", async () => {
     await create(GrokAgentDriver, "stderr-rpc-error");
     const threadId = `t-stderr-rpc-error-${Date.now()}`;
-    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ turnId, ok: false, stopReason: "rpc_error" });
     await instance.adapter.awaitTurnTeardown!(threadId, turnId);
     const records = engineStderrRecords(threadId);
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({ dir: "in", msg: { engineStderr: { stopReason: "rpc_error", truncated: true } } });
-    const lines: string[] = records[0].msg.engineStderr.lines;
-    expect(lines.at(-1)).toBe("STDERR_LAST_LINE retry 15/15 gave up");
-    expect(lines.at(-2)).toMatch(/^auth header «redacted \d+ chars»$/);
-    expect(lines.length).toBeLessThanOrEqual(100);
+    expect(records[0].msg.engineStderr.lineCount).toBeGreaterThan(1);
+    expect(records[0].msg.engineStderr.lineCount).toBeLessThanOrEqual(100);
+    expect(Object.hasOwn(records[0].msg.engineStderr, "lines")).toBe(false);
     const encoded = JSON.stringify(records[0]);
-    expect(encoded).not.toMatch(/\\u001b|SYNTHETICKEYCANARY|STDERR_EVICTED_FIRST_LINE/);
+    expect(encoded).not.toMatch(/\\u001b|SYNTHETICKEYCANARY|STDERR_EVICTED_FIRST_LINE|STDERR_LAST_LINE|auth header/);
     expect(Buffer.byteLength(encoded)).toBeLessThanOrEqual(16 * 1024);
   });
 
   it("an engine exit before the prompt result also keeps its stderr in the native log", async () => {
     await create(GrokAgentDriver, "exit-with-ansi");
     const threadId = `t-stderr-exit-${Date.now()}`;
-    await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "exit_before_result" });
     const records = engineStderrRecords(threadId);
     expect(records).toHaveLength(1);
     expect(records[0].msg.engineStderr).toMatchObject({ stopReason: "exit_before_result", truncated: false });
-    expect(records[0].msg.engineStderr.lines).toContain("STDERR_VISIBLE_END");
-    expect(JSON.stringify(records[0])).not.toMatch(/\\u001b|SYNTHETICKEYCANARY/);
+    // ql2 sink fold (was: its lines held STDERR_VISIBLE_END): the record counts the lines and writes none
+    expect(records[0].msg.engineStderr.lineCount).toBeGreaterThan(0);
+    expect(JSON.stringify(records[0])).not.toMatch(/\\u001b|SYNTHETICKEYCANARY|STDERR_VISIBLE_END/);
   });
 
   it("a successful turn keeps its stderr out of the native log", async () => {
     await create(GrokAgentDriver, "stderr-happy");
     const threadId = `t-stderr-happy-${Date.now()}`;
-    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ turnId, ok: true });
     await instance.adapter.awaitTurnTeardown!(threadId, turnId);
     expect(engineStderrRecords(threadId)).toEqual([]);
@@ -2124,7 +2155,7 @@ createInterface({ input: process.stdin }).on("line", line => {
 
   it("Fuigo retry progress arrives as reasoning and never joins the answer", async () => {
     await create(GrokAgentDriver, "retry-status-thought");
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-retry-status-thought", text: "fixture only" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-retry-status-thought", text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ turnId, ok: true, stopReason: null });
     const stream = (kind: "assistant_text" | "reasoning_text") =>
       recorder.events.flatMap(event => event.type === "content.delta" && event.streamKind === kind ? [event.delta] : []).join("");
@@ -2136,7 +2167,7 @@ createInterface({ input: process.stdin }).on("line", line => {
 
   it("ACP plan updates arrive as whole plans, never as answer text", async () => {
     await create(GrokAgentDriver, "plan");
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-plan", text: "fixture only" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-plan", text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ turnId, ok: true });
     const plans = recorder.events.flatMap(event => event.type === "plan.updated" ? [event] : []);
     expect(plans.map(event => event.entries)).toEqual([
@@ -2162,7 +2193,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     process.env.FAKE_ACP_TERM_MS = "400";
     await create(GrokAgentDriver, "cancel-ack");
     const threadId = "t-close-confirmed";
-    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "fixture only" });
     await recorder.until((e) => e.type === "content.delta" && e.delta === "fixture cancellation ready");
     const pid = Number(readFileSync(pidFile, "utf8"));
     expect(processAlive(pid)).toBe(true);
@@ -2183,7 +2214,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     process.env.MURAGE_PROVIDER_CLOSE_MS = "300";
     await create(GrokAgentDriver, "cancel-ack");
     const threadId = "t-close-unconfirmed";
-    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "fixture only" });
     await recorder.until((e) => e.type === "content.delta" && e.delta === "fixture cancellation ready");
     const pid = Number(readFileSync(pidFile, "utf8"));
     try {
@@ -2217,14 +2248,14 @@ createInterface({ input: process.stdin }).on("line", line => {
     process.env.FAKE_ACP_PID_FILE = pidFile;
     await create();
     const threadId = "t-teardown-generation";
-    const first = await instance.adapter.sendTurn({ threadId, text: "hi" });
+    const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "hi" });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
     const firstPid = Number(readFileSync(pidFile, "utf8"));
     await expect(instance.adapter.awaitTurnTeardown!(threadId, first.turnId)).resolves.toEqual({ closeConfirmed: true });
     expect(processAlive(firstPid)).toBe(false);
 
     process.env.FAKE_ACP_MODE = "cancel-ack";
-    const second = await instance.adapter.sendTurn({ threadId, text: "again" });
+    const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "again" });
     await recorder.until((e) => e.type === "content.delta" && e.turnId === second.turnId);
     const secondPid = Number(readFileSync(pidFile, "utf8"));
     expect(secondPid).not.toBe(firstPid);
@@ -2247,7 +2278,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("lifecycle diagnostics: a completed turn traces one generation from spawn to close", async () => {
     await create();
     const threadId = `t-lifecycle-complete-${Date.now()}`;
-    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "LIFECYCLE_PROMPT_CANARY" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "LIFECYCLE_PROMPT_CANARY" });
     await recorder.until((e) => e.type === "turn.completed");
     await expect(instance.adapter.awaitTurnTeardown!(threadId, turnId)).resolves.toEqual({ closeConfirmed: true });
     const rows = lifecycleRows(threadId);
@@ -2283,7 +2314,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("lifecycle diagnostics: an unsolicited close is recorded before settlement with no stop request", async () => {
     await create(GrokAgentDriver, "exit-on-prompt");
     const threadId = `t-lifecycle-unsolicited-${Date.now()}`;
-    await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "fixture only" });
     await recorder.until((e) => e.type === "turn.completed");
     const rows = lifecycleRows(threadId);
     const events = rows.map((row) => row.event);
@@ -2314,7 +2345,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("lifecycle diagnostics: a requested cancel is recorded before the close it preceded", async () => {
     await create(GrokAgentDriver, "exit-on-cancel");
     const threadId = `t-lifecycle-cancel-${Date.now()}`;
-    await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "fixture only" });
     await recorder.until((e) => e.type === "content.delta" && e.delta === "fixture cancellation ready");
     await expect(instance.adapter.interruptTurn(threadId)).resolves.toEqual({ closeConfirmed: true });
     const rows = lifecycleRows(threadId);
@@ -2330,7 +2361,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("lifecycle diagnostics: an RPC rejection is attributed to its pending method before close", async () => {
     await create(GrokAgentDriver, "rpc-error:session/new");
     const threadId = `t-lifecycle-rejected-${Date.now()}`;
-    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "fixture only" });
     await recorder.until((e) => e.type === "turn.completed");
     await instance.adapter.awaitTurnTeardown!(threadId, turnId);
     const rows = lifecycleRows(threadId);
@@ -2345,7 +2376,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("lifecycle diagnostics: a rejection with an unknown RPC id names no method", async () => {
     await create(GrokAgentDriver, "unknown-rpc-error");
     const threadId = `t-lifecycle-unknown-id-${Date.now()}`;
-    await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "fixture only" });
     await recorder.until((e) => e.type === "turn.completed");
     const rejected = lifecycleRows(threadId).filter((row) => row.event === "rpc_rejected");
     expect(rejected).toHaveLength(1);
@@ -2359,7 +2390,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     await create();
     const threadId = `t-lifecycle-generations-${Date.now()}`;
     for (const text of ["one", "two"]) {
-      const { turnId } = await instance.adapter.sendTurn({ threadId, text });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text });
       await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
       await expect(instance.adapter.awaitTurnTeardown!(threadId, turnId)).resolves.toEqual({ closeConfirmed: true });
     }
@@ -2375,7 +2406,7 @@ createInterface({ input: process.stdin }).on("line", line => {
 
   it.each(["string", "object"])("terminal compatibility: reasoning-only %s data is visible and classified without invented HTTP status", async shape => {
     await create(GrokAgentDriver, `reasoning-only:${shape}`);
-    const threadId = `t-reasoning-${shape}`, { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    const threadId = `t-reasoning-${shape}`, { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "fixture only" });
     const done = await recorder.until(event => event.type === "turn.completed");
     expect(done).toMatchObject({ ok: false, stopReason: "rpc_error" });
     const error = recorder.events.find(event => event.type === "runtime.error");
@@ -2394,7 +2425,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("terminal compatibility: requested cancel wins a late prompt RPC rejection", async () => {
     await create(GrokAgentDriver, "cancel-rpc-error");
     const threadId = "t-cancel-rpc-error";
-    await instance.adapter.sendTurn({threadId,text:"fixture only"});
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),threadId,text:"fixture only"});
     await recorder.until(event => event.type === "content.delta" && event.delta === "fixture cancellation ready");
     await instance.adapter.interruptTurn(threadId);
     const done = await recorder.until(event => event.type === "turn.completed");
@@ -2405,19 +2436,23 @@ createInterface({ input: process.stdin }).on("line", line => {
 
   it("terminal compatibility: stderr before the 8KiB tail survives in redacted native diagnostics", async () => {
     await create(GrokAgentDriver, "exit-with-stderr-history");
-    const threadId = "t-stderr-history", {turnId} = await instance.adapter.sendTurn({threadId,text:"fixture only"});
+    const threadId = "t-stderr-history", {turnId} = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),threadId,text:"fixture only"});
     await recorder.until(event => event.type === "turn.completed");
     await instance.adapter.awaitTurnTeardown!(threadId,turnId);
     const records=readFileSync(join(NATIVE_DIR,`${threadId}.ndjson`),"utf8").trim().split("\n").map(line=>JSON.parse(line));
-    const stderr=records.filter(row=>row.msg?.type==="engine_stderr").map(row=>row.msg.text).join("");
-    expect(stderr).toContain("STDERR_EARLY_CANARY");expect(stderr).toContain("STDERR_VISIBLE_END");
-    expect(stderr.length).toBeGreaterThan(8192);expect(stderr).not.toContain("SYNTHETICKEYCANARY");
-    expect(stderr.length).toBeLessThanOrEqual(256*1024);
+    // ql2 sink fold (was: the records' text held STDERR_EARLY_CANARY and STDERR_VISIBLE_END): one record counts what was captured,
+    // past the 8KiB tail, and writes none of it
+    const stderrRows=records.filter(row=>row.msg?.type==="engine_stderr");
+    expect(stderrRows).toHaveLength(1);
+    const chars:number=stderrRows[0].msg.chars;
+    expect(chars).toBeGreaterThan(8192);expect(chars).toBeLessThanOrEqual(256*1024);
+    const written=JSON.stringify(records);
+    expect(written).not.toContain("STDERR_EARLY_CANARY");expect(written).not.toContain("STDERR_VISIBLE_END");expect(written).not.toContain("SYNTHETICKEYCANARY");
   });
 
   it("cancellation-close regression: unsolicited prompt exit remains a failure", async () => {
     await create(GrokAgentDriver, "exit-on-prompt");
-    await instance.adapter.sendTurn({ threadId: "t-unsolicited-close", text: "fixture only" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-unsolicited-close", text: "fixture only" });
     const done = await recorder.until(event => event.type === "turn.completed");
     expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
     const error = recorder.events.find(event => event.type === "runtime.error");
@@ -2428,7 +2463,7 @@ createInterface({ input: process.stdin }).on("line", line => {
 
   it("cancellation-close regression: unsolicited stderr is plain redacted bounded text", async () => {
     await create(GrokAgentDriver, "exit-with-ansi");
-    await instance.adapter.sendTurn({ threadId: "t-ansi-close", text: "fixture only" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-ansi-close", text: "fixture only" });
     const done = await recorder.until(event => event.type === "turn.completed");
     expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
     const error = recorder.events.find(event => event.type === "runtime.error");
@@ -2447,7 +2482,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   // sanitiser `error.data.message` and the JSON-RPC `error.message` use.
   it("sanitises hostile engine stderr on the exit-before-result line", async () => {
     await create(GrokAgentDriver, "exit-hostile-stderr");
-    await instance.adapter.sendTurn({ threadId: "t-hostile-stderr", text: "fixture only" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-hostile-stderr", text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "exit_before_result" });
     const error = recorder.events.find(event => event.type === "runtime.error");
     if (error?.type !== "runtime.error") throw new Error("Expected runtime failure");
@@ -2468,7 +2503,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   // window instead of its end (MU-R7-2).
   it("keeps the fatal last line of a noisy engine readable on the exit-before-result line", async () => {
     await create(GrokAgentDriver, "exit-noisy-stderr");
-    await instance.adapter.sendTurn({ threadId: "t-noisy-stderr", text: "fixture only" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-noisy-stderr", text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "exit_before_result" });
     const error = recorder.events.find(event => event.type === "runtime.error");
     if (error?.type !== "runtime.error") throw new Error("Expected runtime failure");
@@ -2480,7 +2515,7 @@ createInterface({ input: process.stdin }).on("line", line => {
 
   it("an exit before result becomes runtime.error + failed turn", async () => {
     await create(GrokAgentDriver, "exit-early");
-    await instance.adapter.sendTurn({ threadId: "t-crash", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-crash", text: "go" });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: false });
     expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(true);
@@ -2488,19 +2523,29 @@ createInterface({ input: process.stdin }).on("line", line => {
 
   it("preserves ACP error codes for provider setup classification", async () => {
     await create(ClassifiedErrorDriver, "auth-required");
-    await instance.adapter.sendTurn({ threadId: "t-auth-required", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-auth-required", text: "go" });
     const done = await recorder.until((e) => e.type === "turn.completed");
 
     expect(done).toMatchObject({ ok: false, stopReason: "auth_required" });
     expect(recorder.events.find((e) => e.type === "runtime.error")).toMatchObject({ setup: true });
   });
 
+  for (const code of ["key_budget_reached", "premium_locked"]) for (const shape of ["flat", "nested"]) it(`ACP keeps typed Flux ${code} ${shape}`, async () => {
+    const driver = createAcpDriver({ ...SELECT_MODEL_SUPPORT, driverKind: "fuigoAgent", reachesFlux: () => true });
+    await create(driver, `flux-refusal:${code}:${shape}`);
+    await instance.adapter.sendTurn({ threadId: "t-flux-typed", text: "fixture only" });
+    await recorder.until(event => event.type === "turn.completed");
+    const error = recorder.events.find(event => event.type === "runtime.error");
+    expect(error?.providerError?.fluxBudget).toBe(code === "key_budget_reached" ? true : undefined);
+  });
+
   it("explains nested credit exhaustion without exposing provider data", async () => {
     await create(GrokAgentDriver, "credit-exhausted");
-    await instance.adapter.sendTurn({ threadId: "t-credit-exhausted", text: "fixture only" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-credit-exhausted", text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
-    expect(recorder.events.find(event => event.type === "runtime.error")).toMatchObject({ message: "Your AI service says the account is out of credit. Add credit with your AI service, then try again, or pick another AI.", providerError: { kind: "credits", httpStatus: 402 }, details: expect.stringContaining("Provider response: HTTP 402") });
-    expect(JSON.stringify(recorder.events)).not.toMatch(/fake-secret-canary|billing\.invalid/);
+    expect(recorder.events.find(event => event.type === "runtime.error")).toMatchObject({ message: "Your AI service says the account is out of credit. Add credit with your AI service, then try again, or pick another AI.", providerError: { kind: "credits", httpStatus: 402, providerSaid: "Your credit balance is exhausted." }, details: expect.stringContaining("Provider response: HTTP 402") });
+    // Every event in full, raw payloads included: the sentence is reworded, and unknown prose and the link never travel.
+    expect(JSON.stringify(recorder.events)).not.toMatch(/fake-secret-canary|billing\.invalid|FIXTURE_PROVIDER_PROSE_CANARY|team's credit balance/);
   });
 
   it("retains only safe ACP diagnostic facts for customer error details", () => {
@@ -2511,7 +2556,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   it.each(["missing","private","flux-url"])("classifies payment-required %s without exhaustion claims, setup or replay",async variant=>{
     await create(GrokAgentDriver,`payment-required:${variant}`);
     const threadId=`t-payment-${variant}`;
-    const {turnId}=await instance.adapter.sendTurn({threadId,text:"fixture only"});
+    const {turnId}=await instance.adapter.sendTurn({cwd: fixtureBotFolder(),threadId,text:"fixture only"});
     expect(await recorder.until(event=>event.type==="turn.completed")).toMatchObject({ok:false,stopReason:"rpc_error"});
     await expect(instance.adapter.awaitTurnTeardown!(threadId,turnId)).resolves.toEqual({closeConfirmed:true});
     const errors=recorder.events.filter(event=>event.type==="runtime.error");expect(errors).toHaveLength(1);
@@ -2532,7 +2577,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     const dump = join(scratch, "fuigo18.json");
     process.env.FAKE_ACP_DUMP = dump;
     await create(FuigoDiagnosticDriver, `fuigo18-contract:${variant}`);
-    const { turnId } = await instance.adapter.sendTurn({ threadId: `fuigo18-${variant}`, text: "fixture only" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `fuigo18-${variant}`, text: "fixture only" });
     const completed = await recorder.until(event => event.type === "turn.completed" && event.turnId === turnId);
     expect(completed).toMatchObject({ ok: variant === "success" });
     expect(recorder.events.filter(event => event.type === "content.delta" && event.streamKind === "reasoning_text")).toHaveLength(2);
@@ -2563,7 +2608,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   });
   it.each(["valid", "terminal", "foreign", "replay", "old", "missing-time", "future", "malformed", "unbounded", "unknown", "retry", "wrong-source"])("Fuigo diagnostic wire safely handles %s", async variant => {
     await create(variant === "wrong-source" ? GrokAgentDriver : FuigoDiagnosticDriver, `fuigo-diagnostic:${variant}`);
-    const {turnId}=await instance.adapter.sendTurn({ threadId: "t-fuigo-diagnostic", text: "fixture only" });
+    const {turnId}=await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fuigo-diagnostic", text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
     await expect(instance.adapter.awaitTurnTeardown!("t-fuigo-diagnostic",turnId)).resolves.toEqual({closeConfirmed:true});
     const errors = recorder.events.filter(event => event.type === "runtime.error");
@@ -2585,7 +2630,7 @@ createInterface({ input: process.stdin }).on("line", line => {
 
   it("a Fuigo retry resets the streamed text so only the last attempt is kept", async () => {
     await create(FuigoDiagnosticDriver, "fuigo-retry:restream");
-    await instance.adapter.sendTurn({ threadId: "t-fuigo-restream", text: "fixture only" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fuigo-restream", text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: true });
     const shape = recorder.events.flatMap(event =>
       event.type === "content.delta" ? [`d:${event.delta}`] : event.type === "content.reset" ? ["reset"]
@@ -2595,7 +2640,7 @@ createInterface({ input: process.stdin }).on("line", line => {
 
   it("a Fuigo retry keeps the tool row and the text before it, dropping only the failed attempt's text after it", async () => {
     await create(FuigoDiagnosticDriver, "fuigo-retry:tool");
-    await instance.adapter.sendTurn({ threadId: "t-fuigo-retool", text: "fixture only" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fuigo-retool", text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: true });
     const shape = recorder.events.flatMap(event =>
       event.type === "content.reset" ? ["reset"] : event.type === "item.started" && event.itemType === "tool" ? ["tool:started"]
@@ -2606,7 +2651,7 @@ createInterface({ input: process.stdin }).on("line", line => {
 
   it("after a retry, what the server persists and the memory capture reads is the final attempt's text plus the tool row", async () => {
     await create(FuigoDiagnosticDriver, "fuigo-retry:tool");
-    await instance.adapter.sendTurn({ threadId: "t-fuigo-persist", text: "fixture only" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fuigo-persist", text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: true });
     // The same rule server/index.ts applies: only item.completed assistant_text
     // is persisted or handed to capture; content.delta never is.
@@ -2620,7 +2665,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   describe("Fuigo 1.0.22 retryDiscard", () => {
     const run = async (variant: string) => {
       await create(FuigoDiagnosticDriver, `fuigo-retry:disc-${variant}`);
-      await instance.adapter.sendTurn({ threadId: `t-fuigo-disc-${variant}`, text: "fixture only" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-fuigo-disc-${variant}`, text: "fixture only" });
       expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: true });
       return recorder.events.flatMap(event =>
         event.type === "content.delta" ? [`${event.streamKind === "reasoning_text" ? "r" : "d"}:${event.delta}`]
@@ -2733,7 +2778,7 @@ createInterface({ input: process.stdin }).on("line", line => {
 
   it("a normal Fuigo turn streams and completes with no reset", async () => {
     await create(FuigoDiagnosticDriver);
-    await instance.adapter.sendTurn({ threadId: "t-fuigo-normal", text: "hello" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fuigo-normal", text: "hello" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: true });
     expect(recorder.events.some(event => event.type === "content.reset")).toBe(false);
     expect(recorder.events.some(event => event.type === "item.completed" && event.itemType === "assistant_text")).toBe(true);
@@ -2741,7 +2786,7 @@ createInterface({ input: process.stdin }).on("line", line => {
 
   it.each(["success", "unmatched"])("Fuigo observations never turn %s into a terminal error", async variant => {
     await create(FuigoDiagnosticDriver, `fuigo-diagnostic:${variant}`);
-    await instance.adapter.sendTurn({ threadId: "t-fuigo-observation", text: "fixture only" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fuigo-observation", text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: true });
     expect(recorder.events.some(event => event.type === "runtime.error")).toBe(false);
   });
@@ -3140,7 +3185,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     ["string", "No response from model for 90s — the model may be stuck", "ACP request: session/prompt\nEngine error code: -32603"],
   ])("shows the engine's %s error data as the failure message", async (shape, message, details) => {
     await create(GrokAgentDriver, `engine-error-data:${shape}`);
-    await instance.adapter.sendTurn({ threadId: `t-engine-error-${shape}`, text: "fixture only" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-engine-error-${shape}`, text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
     expect(recorder.events.filter(event => event.type === "runtime.error")).toEqual([expect.objectContaining({ message, details })]);
   });
@@ -3150,14 +3195,14 @@ createInterface({ input: process.stdin }).on("line", line => {
   // engine wrote, so an engine cannot name a kind in prose and be believed.
   it("reports the engine's typed kind as its own event field, and none for a malformed one", async () => {
     await create(GrokAgentDriver, "engine-error-data:object");
-    await instance.adapter.sendTurn({ threadId: "t-engine-error-kind", text: "fixture only" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-engine-error-kind", text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
     expect(recorder.events.filter(event => event.type === "runtime.error")).toEqual([expect.objectContaining({ errorKind: "empty_response" })]);
   });
 
   it("sanitises hostile engine error data before it reaches the transcript", async () => {
     await create(GrokAgentDriver, "engine-error-data:hostile");
-    await instance.adapter.sendTurn({ threadId: "t-engine-error-hostile", text: "fixture only" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-engine-error-hostile", text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
     const errors = recorder.events.filter(event => event.type === "runtime.error");
     expect(errors).toHaveLength(1);
@@ -3174,7 +3219,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   // failure line must read exactly as it did.
   it("sanitises the engine's JSON-RPC error message the same way as its error data", async () => {
     await create(GrokAgentDriver, "engine-error-message:hostile");
-    await instance.adapter.sendTurn({ threadId: "t-engine-error-message", text: "fixture only" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-engine-error-message", text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
     const errors = recorder.events.filter(event => event.type === "runtime.error");
     expect(errors).toHaveLength(1);
@@ -3185,7 +3230,7 @@ createInterface({ input: process.stdin }).on("line", line => {
 
   it("leaves an ordinary engine failure line exactly as the engine wrote it", async () => {
     await create(GrokAgentDriver, "engine-error-message:plain");
-    await instance.adapter.sendTurn({ threadId: "t-engine-error-plain", text: "fixture only" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-engine-error-plain", text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
     expect(recorder.events.filter(event => event.type === "runtime.error"))
       .toEqual([expect.objectContaining({ message: "fixture provider rejected the request" })]);
@@ -3193,7 +3238,7 @@ createInterface({ input: process.stdin }).on("line", line => {
 
   it.each(["initialize", "session/new", "session/prompt"])("correlates failed %s through the CLI without exposing provider data", async (method) => {
     await create(GrokAgentDriver, `rpc-error:${method}`);
-    await instance.adapter.sendTurn({ threadId: "t-rpc-diagnostics", text: "fake-private-request" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-rpc-diagnostics", text: "fake-private-request" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
     const errors = recorder.events.filter(event => event.type === "runtime.error");
     expect(errors).toHaveLength(1);
@@ -3204,7 +3249,7 @@ createInterface({ input: process.stdin }).on("line", line => {
 
   it("ignores an unmatched RPC error without attributing it to the pending prompt", async () => {
     await create(GrokAgentDriver, "unknown-rpc-error");
-    await instance.adapter.sendTurn({ threadId: "t-unknown-rpc-error", text: "fixture only" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-unknown-rpc-error", text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: true });
     expect(recorder.events.some(event => event.type === "runtime.error")).toBe(false);
     expect(JSON.stringify(recorder.events)).not.toContain("fake-secret-canary");
@@ -3243,7 +3288,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("reports the file an edit permission names, so the own-workspace check can see it", async () => {
     process.env.FAKE_ACP_PERMISSION_FILE = "/data/workspaces/bot-a/MEMORY.md";
     await create(GrokAgentDriver, "permission-edit-file");
-    await instance.adapter.sendTurn({ threadId: "t-perm-file", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-perm-file", text: "go" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({ requestType: "permission", tool: "edit" });
     expect((opened as any).filePaths).toEqual(["/data/workspaces/bot-a/MEMORY.md", "/data/workspaces/bot-a/MEMORY.md"]);
@@ -3254,7 +3299,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("selectModel confirms the requested model before prompting", async () => {
     process.env.FAKE_ACP_MODELS = "m-one,m-two";
     await create(SelectModelDriver);
-    await instance.adapter.sendTurn({ threadId: "t-model", text: "go", model: "m-two" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-model", text: "go", model: "m-two" });
 
     const started = await recorder.until((e) => e.type === "session.started");
     expect(started).toMatchObject({ model: "m-two" });
@@ -3265,7 +3310,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("a model the session does not advertise fails the turn instead of running another", async () => {
     process.env.FAKE_ACP_MODELS = "m-one,m-two";
     await create(SelectModelDriver);
-    await instance.adapter.sendTurn({ threadId: "t-bad-model", text: "go", model: "m-nope" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-bad-model", text: "go", model: "m-nope" });
 
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: false });
@@ -3283,7 +3328,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     process.env.FAKE_ACP_MODELS = "m-one,m-two";
     process.env.FAKE_ACP_MODEL_STICKS = "1";
     await create(SelectModelDriver);
-    await instance.adapter.sendTurn({ threadId: "t-stuck-model", text: "go", model: "m-two" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stuck-model", text: "go", model: "m-two" });
 
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: false });
@@ -3298,7 +3343,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("selects the model on a resumed session too, not just a new one", async () => {
     process.env.FAKE_ACP_MODELS = "m-one,m-two";
     await create(SelectModelDriver);
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-resume-model",
       text: "go",
       model: "m-two",
@@ -3324,7 +3369,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("falls through to session/new when session/load answers null", async () => {
     process.env.FAKE_ACP_LOAD_NULL = "1";
     await create(GrokAgentDriver);
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-resume-null",
       text: "go",
       resumeCursor: "gone-cursor",
@@ -3347,7 +3392,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     const promptDump = join(scratch, "replayed-prompt.json");
     process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
     await create(GeminiAgentDriver);
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-resume-history",
       text: "What did I say?",
       resumeCursor: "missing-cursor",
@@ -3371,7 +3416,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     const rpcFile = join(scratch, "refused-load.json");
     process.env.FAKE_ACP_RPC_DUMP = rpcFile;
     await create(ClassifiedErrorDriver);
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-load-refused", text: "Continue", resumeCursor: "saved-session",
       transcript: [{ role: "user", text: "Prior message" }],
     });
@@ -3409,7 +3454,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     const rpcFile = join(scratch, "r3-rpc.json");
     process.env.FAKE_ACP_RPC_DUMP = rpcFile;
     await create(GeminiAgentDriver);
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: `t-r3-${String(_engine).replace(/\W/g, "")}`,
       text: "What did I say?",
       resumeCursor: "old-root-cursor",
@@ -3433,7 +3478,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     const promptDump = join(scratch, "r4-loop-prompt.json");
     process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
     await create(GeminiAgentDriver);
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-r4-loop", text: "Continue", resumeCursor: "stuck-cursor",
       transcript: [{ role: "user", text: "Remember BRAVO." }],
     });
@@ -3471,7 +3516,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     });
     recorder = recordEvents(instance.adapter);
 
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-turn-env",
       text: "go",
       model: "ollama::ornith:35b-bf16",
@@ -3495,7 +3540,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     });
     recorder = recordEvents(instance.adapter);
 
-    await instance.adapter.sendTurn({ threadId: "t-policy", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-policy", text: "go" });
     await recorder.until((e) => e.type === "turn.completed");
 
     expect(JSON.parse(readFileSync(dump, "utf8")).env.TEST_POLICY).toBe("auto");
@@ -3516,7 +3561,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     const withEffort = join(scratch, "grok-effort.json");
     await create(GrokAgentDriver);
     process.env.FAKE_ACP_DUMP = withEffort;
-    await instance.adapter.sendTurn({ threadId: "t-effort", text: "hi", effort: "high" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-effort", text: "hi", effort: "high" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(withEffort, "utf8"));
@@ -3526,7 +3571,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     const without = join(scratch, "grok-no-effort.json");
     await create(GrokAgentDriver);
     process.env.FAKE_ACP_DUMP = without;
-    await instance.adapter.sendTurn({ threadId: "t-no-effort", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-no-effort", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
 
     expect(JSON.parse(readFileSync(without, "utf8")).argv).not.toContain("--reasoning-effort");
@@ -3536,7 +3581,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     const dump = join(scratch, "grok-argv-order.json");
     await create(GrokAgentDriver);
     process.env.FAKE_ACP_DUMP = dump;
-    await instance.adapter.sendTurn({ threadId: "t-argv", text: "hi", model: "grok-4.5", effort: "high" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-argv", text: "hi", model: "grok-4.5", effort: "high" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const argv = JSON.parse(readFileSync(dump, "utf8")).argv as string[];
@@ -3571,7 +3616,7 @@ describe("ACP snapshot", () => {
     const kimiHome = join(scratch, "custom-kimi-home");
     const childHome = join(scratch, "child-home");
     mkdirSync(join(childHome, ".kimi-code", "credentials"), { recursive: true });
-    writeFileSync(join(childHome, ".kimi-code", "credentials", "kimi-code.json"), "{}");
+    writeFileSync(join(childHome, ".kimi-code", "credentials", "kimi-code.json"), '{"access_token":"fixture-access-token"}');
 
     const instance = await KimiAgentDriver.create({
       instanceId: "kimi-custom-home",
@@ -3583,12 +3628,202 @@ describe("ACP snapshot", () => {
     try {
       expect((await instance.snapshot()).authenticated).toBe(false);
       mkdirSync(join(kimiHome, "credentials"), { recursive: true });
-      writeFileSync(join(kimiHome, "credentials", "kimi-code.json"), "{}");
+      writeFileSync(join(kimiHome, "credentials", "kimi-code.json"), '{"access_token":"fixture-access-token"}');
       expect((await instance.snapshot()).authenticated).toBe(true);
     } finally {
       await instance.dispose();
       await removeTempDir(scratch);
     }
+  });
+
+  describe("kimi sign-in check (KIMI-SIGNIN-1020)", () => {
+    const FAKE_TOKENS = ["fake-access-kimi", "fake-refresh-kimi"];
+    const HELD = JSON.stringify({ access_token: FAKE_TOKENS[0], refresh_token: FAKE_TOKENS[1], expires_at: 1 });
+    const TOMBSTONE = JSON.stringify({ access_token: "", refresh_token: "" });
+    const ENV_NAME = "kimi-code-env-0123456789abcdef.json";
+    const asRoot = typeof process.getuid === "function" && process.getuid() === 0;
+    let scratch: string;
+    let logSpies: ReturnType<typeof vi.spyOn>[];
+
+    beforeEach(() => {
+      scratch = mkdtempSync(join(tmpdir(), "murage-kimi-signin-"));
+      logSpies = (["log", "info", "warn", "error", "debug"] as const).map((m) => vi.spyOn(console, m));
+    });
+    afterEach(async () => {
+      vi.unstubAllEnvs();
+      // Leak check over logs: no fake token value reached any console call.
+      const logged = JSON.stringify(logSpies.flatMap((s) => s.mock.calls));
+      for (const t of FAKE_TOKENS) expect(logged).not.toContain(t);
+      for (const s of logSpies) s.mockRestore();
+      try { chmodSync(join(scratch, "home", "credentials"), 0o700); } catch { /* not created */ }
+      await removeTempDir(scratch);
+    });
+
+    function credDir(): string {
+      const dir = join(scratch, "home", "credentials");
+      mkdirSync(dir, { recursive: true });
+      return dir;
+    }
+
+    async function kimiSnap(env: Record<string, string> = { KIMI_CODE_HOME: join(scratch, "home"), HOME: join(scratch, "child") }) {
+      const instance = await KimiAgentDriver.create({
+        instanceId: `kimi-signin-${Math.random().toString(16).slice(2)}`,
+        displayName: undefined,
+        environment: env,
+        enabled: true,
+        config: { cli: FAKE_CLI, fullAuto: false },
+      });
+      try {
+        const snap = await instance.snapshot();
+        // Leak check over the snapshot: the check reports a state, never a token.
+        const json = JSON.stringify(snap);
+        for (const t of FAKE_TOKENS) expect(json).not.toContain(t);
+        return snap;
+      } finally {
+        await instance.dispose();
+      }
+    }
+
+    // Regressions (fail on base 3b1624a57).
+    it("a kimi.ai login (kimi-code-env-<16 hex>.json, the default region) is signed in", async () => {
+      writeFileSync(join(credDir(), ENV_NAME), HELD);
+      expect((await kimiSnap()).authenticated).toBe(true);
+    });
+
+    it("a kimi.ai login under the child HOME is signed in (default data root)", async () => {
+      vi.stubEnv("KIMI_CODE_HOME", undefined);
+      const dir = join(scratch, "child", ".kimi-code", "credentials");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, ENV_NAME), HELD);
+      expect((await kimiSnap({ HOME: join(scratch, "child"), USERPROFILE: join(scratch, "child") })).authenticated).toBe(true);
+    });
+
+    it("a revoked tombstone is signed out, and so is an all-tombstone folder", async () => {
+      const dir = credDir();
+      writeFileSync(join(dir, "kimi-code.json"), TOMBSTONE);
+      expect((await kimiSnap()).authenticated).toBe(false);
+      writeFileSync(join(dir, ENV_NAME), TOMBSTONE);
+      expect((await kimiSnap()).authenticated).toBe(false);
+    });
+
+    it("a tombstoned kimi-code.json next to a held env file is signed in", async () => {
+      const dir = credDir();
+      writeFileSync(join(dir, "kimi-code.json"), TOMBSTONE);
+      writeFileSync(join(dir, ENV_NAME), HELD);
+      expect((await kimiSnap()).authenticated).toBe(true);
+    });
+
+    it.each(["not json", "null", "[]", "42", "\"text\""])("an unparseable or non-object file (%s) is signed out", async (body) => {
+      writeFileSync(join(credDir(), "kimi-code.json"), body);
+      expect((await kimiSnap()).authenticated).toBe(false);
+    });
+
+    it.skipIf(process.platform === "win32")("a symlinked candidate or a symlinked credentials folder is signed out", async () => {
+      const outside = join(scratch, "outside");
+      mkdirSync(outside, { recursive: true });
+      writeFileSync(join(outside, "kimi-code.json"), HELD);
+      execFileSync("ln", ["-s", join(outside, "kimi-code.json"), join(credDir(), "kimi-code.json")]);
+      expect((await kimiSnap()).authenticated).toBe(false);
+
+      const root2 = join(scratch, "root2");
+      mkdirSync(root2, { recursive: true });
+      execFileSync("ln", ["-s", outside, join(root2, "credentials")]);
+      expect((await kimiSnap({ KIMI_CODE_HOME: root2, HOME: join(scratch, "child") })).authenticated).toBe(false);
+    });
+
+    it.skipIf(process.platform === "win32")("a FIFO named kimi-code.json is signed out and does not block", async () => {
+      execFileSync("mkfifo", [join(credDir(), "kimi-code.json")]);
+      const started = Date.now();
+      expect((await kimiSnap()).authenticated).toBe(false);
+      expect(Date.now() - started).toBeLessThan(1900);
+    });
+
+    it("a folder named kimi-code.json is signed out", async () => {
+      mkdirSync(join(credDir(), "kimi-code.json"));
+      expect((await kimiSnap()).authenticated).toBe(false);
+    });
+
+    it.skipIf(process.platform === "win32")("a hard-linked candidate (nlink > 1) is signed out", async () => {
+      const outside = join(scratch, "outside-held.json");
+      writeFileSync(outside, HELD);
+      execFileSync("ln", [outside, join(credDir(), "kimi-code.json")]);
+      expect((await kimiSnap()).authenticated).toBe(false);
+    });
+
+    it("a file over 64 KiB is signed out; exactly 64 KiB padded is signed in", async () => {
+      const dir = credDir();
+      writeFileSync(join(dir, "kimi-code.json"), HELD + " ".repeat(64 * 1024 + 1 - HELD.length));
+      expect((await kimiSnap()).authenticated).toBe(false);
+      writeFileSync(join(dir, "kimi-code.json"), HELD + " ".repeat(64 * 1024 - HELD.length));
+      expect((await kimiSnap()).authenticated).toBe(true);
+    });
+
+    it("33 tombstone candidates hit the open cap and show unverified, not signed out", async () => {
+      const dir = credDir();
+      writeFileSync(join(dir, "kimi-code.json"), TOMBSTONE);
+      for (let i = 0; i < 32; i++) writeFileSync(join(dir, `kimi-code-env-${i.toString(16).padStart(16, "0")}.json`), TOMBSTONE);
+      const snap = await kimiSnap();
+      expect(snap.authenticated).toBeUndefined();
+      expect(snap.authUnverified).toBe(true);
+    });
+
+    it("more than 256 folder entries with no held login show unverified", async () => {
+      const dir = credDir();
+      for (let i = 0; i < 257; i++) writeFileSync(join(dir, `other-${i}.txt`), "x");
+      const snap = await kimiSnap();
+      expect(snap.authenticated).toBeUndefined();
+      expect(snap.authUnverified).toBe(true);
+    });
+
+    it.skipIf(asRoot || process.platform === "win32")("an unreadable candidate makes the scan unverified", async () => {
+      const dir = credDir();
+      writeFileSync(join(dir, "kimi-code.json"), HELD);
+      chmodSync(join(dir, "kimi-code.json"), 0o000);
+      writeFileSync(join(dir, ENV_NAME), HELD);
+      expect((await kimiSnap()).authenticated).toBeUndefined();
+    });
+
+    it.skipIf(asRoot || process.platform === "win32")("an unreadable credentials folder shows unverified", async () => {
+      const dir = credDir();
+      writeFileSync(join(dir, "kimi-code.json"), HELD);
+      chmodSync(dir, 0o000);
+      const snap = await kimiSnap();
+      expect(snap.authenticated).toBeUndefined();
+      expect(snap.authUnverified).toBe(true);
+    });
+
+    it.skipIf(process.platform === "win32")("the folder recheck refuses a credentials folder swapped after it was pinned", async () => {
+      const dir = credDir();
+      writeFileSync(join(dir, "kimi-code.json"), HELD);
+      const other = join(scratch, "home", "credentials-other");
+      mkdirSync(other);
+      writeFileSync(join(other, "kimi-code.json"), HELD);
+      let calls = 0;
+      const env = { KIMI_CODE_HOME: join(scratch, "home") };
+      const answer = await kimiSignedIn(env, {
+        pause: async () => {
+          // Swap the folder right after it was pinned (second pause point).
+          if (++calls === 2) {
+            execFileSync("mv", [dir, `${dir}-old`]);
+            execFileSync("mv", [other, dir]);
+          }
+        },
+      });
+      expect(answer).toBeUndefined();
+    });
+
+    // Compatibility (pass on base and head).
+    it("an expired access token with a refresh token stays signed in (the CLI refreshes)", async () => {
+      writeFileSync(join(credDir(), "kimi-code.json"), JSON.stringify({ access_token: FAKE_TOKENS[0], refresh_token: FAKE_TOKENS[1], expires_at: 0 }));
+      expect((await kimiSnap()).authenticated).toBe(true);
+    });
+
+    it("only non-matching names is signed out", async () => {
+      const dir = credDir();
+      writeFileSync(join(dir, "other.json"), HELD);
+      writeFileSync(join(dir, "kimi-code-env-XYZ.json"), HELD);
+      expect((await kimiSnap()).authenticated).toBe(false);
+    });
   });
 
   it("droid resolves the signed-in CLI before falling back to FACTORY_API_KEY", async () => {
@@ -3712,21 +3947,23 @@ describe("ACP snapshot", () => {
   });
 
   it("kimi resolves default credentials from the child HOME", async () => {
+    vi.stubEnv("KIMI_CODE_HOME", undefined);
     const scratch = mkdtempSync(join(tmpdir(), "murage-kimi-home-"));
     const credentialDir = join(scratch, ".kimi-code", "credentials");
     mkdirSync(credentialDir, { recursive: true });
-    writeFileSync(join(credentialDir, "kimi-code.json"), "{}");
+    writeFileSync(join(credentialDir, "kimi-code.json"), '{"access_token":"fixture-access-token"}');
 
     const instance = await KimiAgentDriver.create({
       instanceId: "kimi-child-home",
       displayName: undefined,
-      environment: { HOME: scratch },
+      environment: { HOME: scratch, USERPROFILE: scratch },
       enabled: true,
       config: { cli: FAKE_CLI, fullAuto: false },
     });
     try {
       expect((await instance.snapshot()).authenticated).toBe(true);
     } finally {
+      vi.unstubAllEnvs();
       await instance.dispose();
       await removeTempDir(scratch);
     }
@@ -3785,8 +4022,8 @@ describe("ACP bounded ingress (A4)", () => {
 
   it("fails only the turn whose frame is over the limit, even when a clean result follows it", async () => {
     await create();
-    const oversized = await instance.adapter.sendTurn({ threadId: "t-oversize", text: "__fixture_oversize_frame__" });
-    const ordinary = await instance.adapter.sendTurn({ threadId: "t-ordinary", text: "hi" });
+    const oversized = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oversize", text: "__fixture_oversize_frame__" });
+    const ordinary = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-ordinary", text: "hi" });
     const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === oversized.turnId);
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === ordinary.turnId);
 
@@ -3806,7 +4043,7 @@ describe("ACP bounded ingress (A4)", () => {
     const pidFile = join(scratch, "pid");
     process.env.FAKE_ACP_PID_FILE = pidFile;
     await create();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-open", text: "__fixture_oversize_open_frame__" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-open", text: "__fixture_oversize_open_frame__" });
     const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
 
     expect(failed).toMatchObject({ ok: false, stopReason: "frame_too_large" });
@@ -3817,7 +4054,7 @@ describe("ACP bounded ingress (A4)", () => {
 
   it("still carries a valid image frame at the 10 MiB image cap", async () => {
     await create();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-large", text: "__fixture_large_frame__" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-large", text: "__fixture_large_frame__" });
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
 
     expect(done).toMatchObject({ ok: true });

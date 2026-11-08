@@ -109,3 +109,13 @@ it("round trips actual manager-produced schedules and acknowledgements with no p
     for (const [path, bytes] of before) expect(readFileSync(join(data, path), "utf8")).toBe(bytes);
   } finally { routines.stop(); calendar.stop(); }
 });
+
+it.each([
+  { schema: 2, root: "/source", previous: [] },
+  { schema: 1, root: "relative", previous: [] },
+  { schema: 1, root: "/source", previous: Array(5).fill({ root: "/old", at: "now", source: "start" }) },
+  { schema: 1, root: "/source", previous: [{ root: "/old", at: "now", source: "guess" }] },
+  { schema: 1, root: "/source", previous: [], linkedRoots: { workspaces: { target: "relative", dev: 1, ino: 2, at: "now" } } },
+])("D17 refuses malformed root provenance %#", value => {
+  expect(() => assertInstallationRecords(".murage-root.json", value)).toThrowError(expect.objectContaining({ code: "INVALID_INSTALLATION_RECORDS" }));
+});

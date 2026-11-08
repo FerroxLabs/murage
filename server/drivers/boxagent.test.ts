@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Box agent contract tests against a scripted fake of ascii.dev's box HTTP
 // API. The driver polls events + prompt status; the fake advances one poll
 // per GET so we can assert message → tool → message order without sleeping.
@@ -428,3 +429,6 @@ describe("BoxAgentDriver turns (fake API)", () => {
     expect(JSON.stringify(recorder.events)).not.toContain("late events text");
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

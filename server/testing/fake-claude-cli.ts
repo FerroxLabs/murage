@@ -41,6 +41,7 @@
 //   FAKE_CLAUDE_REPLY_STATE Optional counter file shared by fresh CLI
 //                      processes so scripted replies keep their order.
 //   FAKE_CLAUDE_REPLY_GATE Optional file whose creation releases slow replies.
+//   FAKE_CLAUDE_SIGTERM_GATE With SIGTERM_DELAY_MS, hold termination until this file exists.
 //   FAKE_CLAUDE_SLOW_REPLY_LAST=1 slow mode adds no closing "reply to:" text
 //                      after the scripted reply unless a steer was folded in.
 //   FAKE_CLAUDE_HOLD_MARKER / FAKE_CLAUDE_HOLD_GATE a turn whose prompt contains
@@ -60,6 +61,7 @@
 //                      reply that @mentions teammates).
 //   FAKE_CLAUDE_AUTH   in (default) | out | unsupported | malformed |
 //                      inherited-api-key — what `auth status` reports
+//   FAKE_CLAUDE_AUTH_GATE path: auth status waits for this file before answering.
 //   FAKE_CLAUDE_AUTH_METHOD the signed-in `authMethod` (default claude.ai); "omit" leaves the field out
 //   FAKE_CLAUDE_VERSION what `--version` prints before " (Claude Code)" (default 2.1.295)
 //   FAKE_CLAUDE_ONE_SHOT_FAIL after-init — a one-shot helper starts (`init`), then exits 1 with a
@@ -233,6 +235,7 @@ if (authAt > 0 && argv[authAt + 1] === "status") {
   argv.splice(0, authAt);
 }
 if (argv[0] === "auth" && argv[1] === "status") {
+  while (process.env.FAKE_CLAUDE_AUTH_GATE && !existsSync(process.env.FAKE_CLAUDE_AUTH_GATE)) await new Promise(resolve => setTimeout(resolve, 10));
   const auth = process.env.FAKE_CLAUDE_AUTH ?? "in";
   if (auth === "unsupported") {
     process.stderr.write("error: unknown command 'auth'\n");
@@ -1041,6 +1044,20 @@ const playTurn = (prompt: JsonValue) => {
   if ((mode === "hang" && !finishNow) || fixtureRequested(promptText(prompt), "__fixture_hold_authority__")) {
     // stay alive until killed — lets tests exercise interrupt + the
     // permission broker while a turn is officially in flight
+    // V5 stall test: write this call's tool_use to stdout once the test touches the file, then note when it was written.
+    const itemWhen = process.env.FAKE_CLAUDE_ITEM_WHEN_FILE;
+    if (itemWhen) {
+      const poll = setInterval(() => {
+        if (!existsSync(itemWhen)) return;
+        clearInterval(poll);
+        const input = JSON.parse(process.env.FAKE_CLAUDE_PERM_INPUT ?? "{}") as Record<string, unknown>;
+        // FAKE_CLAUDE_ITEM_DELAY_MS: write the item this long after the test touched the file (a CLI that reports late)
+        setTimeout(() => {
+          out({ type: "assistant", message: { content: [{ type: "tool_use", id: `toolu_fake_stall_${process.pid}`, name: process.env.FAKE_CLAUDE_PERM_TOOL ?? "Bash", input }] } });
+          writeFileSync(`${itemWhen}.written`, String(Date.now()));
+        }, Number(process.env.FAKE_CLAUDE_ITEM_DELAY_MS ?? 0));
+      }, 10);
+    }
     if (promptText(prompt).includes("__fixture_error_result_on_stop__")) {
       // A CLI that reports its own interruption: on SIGTERM it writes an
       // error result for the running turn, then exits.
@@ -1241,7 +1258,18 @@ const playTurn = (prompt: JsonValue) => {
 // handler exits at once, as before.
 const sigtermDelayMs = Number(process.env.FAKE_CLAUDE_SIGTERM_DELAY_MS);
 if (Number.isFinite(sigtermDelayMs) && sigtermDelayMs > 0) {
-  process.on("SIGTERM", () => { setTimeout(() => process.exit(143), sigtermDelayMs); });
+  process.on("SIGTERM", () => {
+    const gate = process.env.FAKE_CLAUDE_SIGTERM_GATE;
+    if (!gate || existsSync(gate)) setTimeout(() => process.exit(143), sigtermDelayMs);
+    else {
+      const timer = setInterval(() => {
+        if (existsSync(gate)) {
+          clearInterval(timer);
+          setTimeout(() => process.exit(143), sigtermDelayMs);
+        }
+      }, 10);
+    }
+  });
 }
 // A wedged CLI: SIGTERM and stdin EOF are both ignored, so only SIGKILL ends
 // it.

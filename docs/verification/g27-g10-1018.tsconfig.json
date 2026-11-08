@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"]
+  },
+  "include": [
+    "../../src/e2e/stop-state.human.spec.ts",
+    "../../src/e2e/edit-view.human.spec.ts",
+    "../../src/e2e/phone-keyboard-chat.human.spec.ts"
+  ],
+  "exclude": []
+}

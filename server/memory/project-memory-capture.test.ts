@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -234,3 +235,5 @@ it("excludes Fuigo notices and Murage held queues from capture, action admission
   expect(admissibleActionSources(db, "finch", { threadId }).map(source => source.messageId)).toEqual([completed.id]);
   expect(checkReplyActions({ reply, path: [completed, reply] }).state).toBe("recorded");
 });
+
+useOutsideStoreFixture();

@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// One way to move between the shell's places (handoffs/HANDOFF-1013-UX-L2A.md).
+// One way to move between the shell's places (HANDOFF-1013-UX-L2A.md).
 // Lanes call these instead of dispatching raw actions, so a door's behaviour
 // has one definition.
 import { useMemo, useRef } from "react";

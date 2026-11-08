@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 import { isRestoreHeld, releaseHeldContinuation, runnableContinuation } from "./restore-fence.ts";
 import { heldScanYield } from "./held-scan.ts";
 import { createHash } from "node:crypto";
@@ -63,10 +64,12 @@ function foldFixture() {
   const noop = () => undefined;
   const scope: Record<string, unknown> = {
     ...productionImports,
+    // callSpeech: D24's call speech coordinator; no call is live, so no provider turn feeds call speech here
+    callSpeech: { provider: () => undefined },
     store, toolAction, startedToolAction, completedToolAction, engineStamp, plainConnectedAppMessage: (row: unknown) => row,
     internalCapabilities: { activeGeneration: () => undefined },
     // what index.ts imports for every permission event (engine-env.ts Rule 74a, shared/exact-command.ts): the real ones, as in production
-    noteStartupFileEvent, handedPinsOf, promptFactsOf, commandCwdFromToolInput, commandFromToolInput, turnCwdByThread: new Map(), routineCardFields, grantRequestFor,
+    noteStartupFileEvent, handedPinsOf, promptFactsOf, commandCwdFromToolInput, commandFromToolInput, turnCwdByThread: new Map(), turnDriverByThread: new Map(), routineCardFields, grantRequestFor,
     // the window's copy of every runtime event (runtime-event-out.ts), the real one, as in production
     windowRuntimeEvent,
     // turns that started a tool (OPENAI-TOOLS-109 s5.2: never rebuilt after a late memory refusal)
@@ -482,14 +485,14 @@ describe("provider reload retires hosted-row anchors", () => {
     const run = { threadId: "scoped-thread", botId: "bot", snapshot: { modelSelection: { instanceId: "off" } } };
     const given: Record<string, unknown> = {
       toolRowByItem: anchors, providerFleetReady: true, browserSetup: undefined, browserExtension: undefined, cfg: {},
-      store: { bots: [{ id: "bot", threadId: "room-thread", busy: false }] },
+      store: { bots: [{ id: "bot", threadId: "room-thread", busy: false }], retireFuigoResumeState: () => undefined }, // S5 site 26: a reload retires the Fuigo resume state of an instance it removed
       directRuns: { forBot: () => [run], current: () => false },
       directRunInstanceId: (entry: typeof run) => entry.snapshot.modelSelection.instanceId,
       projectTurnLeases: { generations: () => [], generationsForThreads: () => [], disposed: () => undefined, threadIds: () => [] },
       // rev 5, H2: no engine left a child open here, so nothing is retained
       unconfirmedCloses: async () => new Map(), reloadRetained: new RetainedCloses(), threadsWithWorkInFlight: () => new Map(), localVmThreadTargets: new Map(), Map,
       bus: { detachAll: () => undefined, detach: () => undefined, attach: () => undefined },
-      registry: { disposeAll: async () => undefined, load: async () => undefined, reload: scopedReload, instances: () => [] },
+      registry: { disposeAll: async () => undefined, load: async () => undefined, reload: scopedReload, instances: () => [], get: () => undefined },
       scopedReloadUnsafe: () => false, Set, Promise,
     };
     const context = new Proxy(given, {
@@ -666,3 +669,18 @@ describe("replyForStagedImages (a widget row never takes the turn's images)", ()
     expect(replyForStagedImages([row("a", "t0"), row("w", "t1", true)], "t1")).toBeUndefined();
   });
 });
+
+it.each(["direct", "room"])("OpenCode quiet notice persists in a %s thread without engine output", (kind) => {
+  const { fold, store, bot, scope } = foldFixture();
+  const threadId = kind === "room" ? store.createGroup("Quiet room", [bot.id]).threadId : bot.threadId;
+  if (kind === "room") (scope.groupSpeakers as Map<string, unknown>).set(threadId, { botId: bot.id, name: bot.name });
+  fold({ threadId, turnId: "quiet-turn", eventId: "quiet", type: "turn.diagnostic", category: "rate_limit", quietMs: 60000 });
+  const row = store.activePath(threadId).find(row => row.tool?.name === "OpenCode reported a rate limit. No reply for 60 seconds.");
+  expect(row).toBeDefined();
+  expect(row?.murageLine).toBe(true);
+  expect(row?.tool?.ok).toBe(true);
+  expect(isEngineOutput(row!)).toBe(false);
+});
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

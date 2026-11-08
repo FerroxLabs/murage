@@ -1,3 +1,4 @@
+import { botFolderOrThrow } from "../bot-folder.ts";
 import { oneShots } from "../engine-one-shots.ts";
 import { cloudTurnBot, cloudTurnEnvironment } from "../cloud-home/turn-process.ts";
 import { NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
@@ -409,13 +410,14 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     const env = antigravityEnvironment(input.environment);
     const catalogEnv: Record<string, string | undefined> = env;
     let models = STATIC_ANTIGRAVITY_MODELS;
-    const refreshModels = async () => {
+    let lastListed: ModelCatalog | undefined;
+    let pendingCatalog: Promise<void> | undefined;
+    const loadModels = async () => {
       try {
         // No local server rows (0.1.52 spec E3): agy takes only `--model <id>`
         // and has no base-URL or key input, so a local pick never reached the
         // local host. Hidden rather than listed and failing later.
         const resolved = readAntigravityModelCatalog(catalogEnv);
-        if (resolved.options.length) models = resolved;
         // The installed agy's own list wins: ids it no longer accepts must not stay selectable.
         const listed = await new Promise<string>((resolve) => {
           try {
@@ -423,15 +425,21 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           } catch { resolve(""); }
         });
         const live = parseAntigravityModelsOutput(listed);
-        if (live.length) {
-          const fromAgy = catalogFromAgyList(live);
+        if (live.length) lastListed = catalogFromAgyList(live);
+        if (lastListed) {
+          const fromAgy = lastListed;
           const seen = new Set(fromAgy.options.map((option) => option.id));
           const custom = resolved.options.filter((option) => option.custom && !seen.has(option.id));
-          models = { default: fromAgy.default, options: [...fromAgy.options, ...custom], source: "live" };
-        }
+          models = { default: fromAgy.default, options: [...fromAgy.options, ...custom], source: live.length ? "live" : "static" };
+        } else if (resolved.options.length) models = resolved;
       } catch {
         // Keep the last usable catalog when settings.json is unreadable.
+        models = { ...models, source: "static" };
       }
+    };
+    const refreshModels = (): Promise<void> => {
+      pendingCatalog ??= loadModels().finally(() => { pendingCatalog = undefined; });
+      return pendingCatalog;
     };
     await refreshModels();
     // Versions before 1.0.2 mounted Murage's tools in the owner's own global
@@ -505,6 +513,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     });
 
     const sendTurn = async (turn: SendTurnInput) => {
+      turn = { ...turn, cwd: botFolderOrThrow(turn) };
       // Murage's Full access still stops before deleting outside its folder,
       // paying and messaging someone new (server/stop-line.ts). Print mode has
       // no way to ask, so agy's own permissions are skipped on a bot turn only
@@ -560,25 +569,8 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         return { turnId };
       }
 
-      // Default cwd to a per-thread workspace under DATA_DIR — deliberately
-      // NOT homedir(): a bot running unattended should not get the whole home
-      // as its default sandbox. `--add-dir` grants agy access to that dir.
-      // strip filesystem-unsafe chars only — never truncate: a 36-char UUID
-      // sliced to 32 would collide two threads sharing the first 32 chars onto
-      // one workspace dir. replace() already keeps a UUID unique and safe.
-      // A turn that names its own folder (the Chief's proposal turn) gets no
-      // per-thread workspace: it would stay behind, empty, after every run.
       const tag = threadId.replace(/[^\w-]/g, "");
-      const workspace = join(DATA_DIR, "workspaces", tag);
-      if (!turn.cwd) {
-        try {
-          mkdirSync(workspace, { recursive: true });
-        } catch (error) {
-          pending.delete(threadId);
-          throw error;
-        }
-      }
-      const cwd = turn.cwd ?? workspace;
+      const cwd = botFolderOrThrow(turn);
       // agy loads the workspace's own hooks (<cwd>/.agents/hooks.json and the rest, every turn) beside Murage's relay
       // hook, and nothing turns that off: one could answer or run on its own. Checked at every turn start; a turn that
       // finds one runs as at Ask, with a line that names the file.
@@ -770,7 +762,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           cwd,
           env: turnEnv,
           stdio: ["pipe", "pipe", "pipe"],
-        }, engineJob());
+        }, engineJob(), undefined, threadId);
       } catch (error) {
         restoreMcp();
         pending.delete(threadId);
@@ -1108,8 +1100,12 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     };
 
     // A background run of the engine: a conversation deletion pauses these, and one it stopped starts again afterwards (engine-one-shots.ts).
-    const generateText = (prompt: string, botId?: string): Promise<string> => oneShots.run("antigravity", undefined, (signal) => generateTextNow(prompt, signal, botId), true);
-    const generateTextNow = async (prompt: string, signal: AbortSignal, botId?: string): Promise<string> => {
+    const generateText = async (prompt: string, botId?: string, cwd?: string): Promise<string> => {
+      const folder = botFolderOrThrow({ cwd });
+      return oneShots.run("antigravity", undefined, (signal) => generateTextNow(prompt, signal, botId, folder), true);
+    };
+    const generateTextNow = async (prompt: string, signal: AbortSignal, botId?: string, folder?: string): Promise<string> => {
+      const cwd = botFolderOrThrow({ cwd: folder });
       const version = await versionForTurn();
       if (!supportsAntigravityStreamInput(version)) {
         throw new Error(
@@ -1141,7 +1137,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
               "--model", "gemini-3.8-flash-low",
             ],
             // This call's copy of the scoped text environment names the bot it is made for.
-            { env: (() => { const callEnv: NodeJS.ProcessEnv = { ...textEnv }; cloudTurnBot(callEnv, botId); return callEnv; })(), stdio: ["pipe", "pipe", "pipe"] },
+            { cwd, env: (() => { const callEnv: NodeJS.ProcessEnv = { ...textEnv }; cloudTurnBot(callEnv, botId); return callEnv; })(), stdio: ["pipe", "pipe", "pipe"] },
             // S4 power (design sections 1 and 7): the helper prompt is an engine spawn on every OS.
             engineJob(),
           );

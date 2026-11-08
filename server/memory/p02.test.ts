@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -289,3 +290,5 @@ it.each(["private-alias","room-alias","membership","section","principal","existi
   persistMemoryRoster(next,()=>Object.assign(f.roster,next));
   expect(memoryState().policyRevision).toBeGreaterThan(before);expect(()=>assertMemoryAccess(f.access)).toThrow(change==="principal"?"MEMORY_UNAUTHORIZED":"MEMORY_CONTEXT_REVOKED");
 });
+
+useOutsideStoreFixture();

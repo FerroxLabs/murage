@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Antigravity driver contract tests, run against the scripted fake `agy` CLI
 // in server/testing/fake-agy-cli.ts: normalize the print-mode stream-json turn
 // into canonical events, and report availability from `agy --version`.
@@ -163,14 +165,14 @@ describe("Antigravity turns (fake CLI)", () => {
 
   it("reports exactly one usage total for each of two turns",async()=>{
     await create();
-    for(let n=0;n<2;n++){const sent=await instance.adapter.sendTurn({threadId:"usage-two",text:"hi",model:"gemini-3.1-pro-high"});await recorder.until(e=>e.type==="turn.completed"&&e.turnId===sent.turnId);}
+    for(let n=0;n<2;n++){const sent=await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),threadId:"usage-two",text:"hi",model:"gemini-3.1-pro-high"});await recorder.until(e=>e.type==="turn.completed"&&e.turnId===sent.turnId);}
     const completed=recorder.events.filter(e=>e.type==="turn.completed");expect(completed).toHaveLength(2);
     for(const event of completed)expect(event).toMatchObject({ok:true,usage:{input:105,output:20}});
   });
 
   it("normalizes a full print-mode turn into the canonical event sequence", async () => {
     await create();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-happy", text: "hi", model: "gemini-3.1-pro-high" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-happy", text: "hi", model: "gemini-3.1-pro-high" });
     await recorder.until((e) => e.type === "turn.completed");
     expect(jobProbe.issued.length).toBeGreaterThan(0);
     expect(jobProbe.jobs).toContainEqual(jobProbe.issued.at(-1)); // the turn CLI was started in the engine job
@@ -219,7 +221,7 @@ describe("Antigravity turns (fake CLI)", () => {
     });
     recorder = recordEvents(instance.adapter);
     try {
-      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-stop", text: "hold" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stop", text: "hold" });
       await expect.poll(() => existsSync(readyFile), { timeout: 2_000 }).toBe(true);
       await instance.adapter.interruptTurn("t-stop");
       const done = await recorder.until((e) => e.type === "turn.completed");
@@ -245,7 +247,7 @@ describe("Antigravity turns (fake CLI)", () => {
       });
       recorder = recordEvents(instance.adapter);
       try {
-        const { turnId } = await instance.adapter.sendTurn({ threadId: "t-close", text: "hold" });
+        const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-close", text: "hold" });
         await expect.poll(() => existsSync(readyFile), { timeout: 2_000 }).toBe(true);
         if (stopFirst) await instance.adapter.interruptTurn("t-close");
         await instance.dispose();
@@ -276,7 +278,7 @@ describe("Antigravity turns (fake CLI)", () => {
     });
     recorder = recordEvents(instance.adapter);
     try {
-      await instance.adapter.sendTurn({ threadId: "t-crash", text: "go" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-crash", text: "go" });
       const done = await recorder.until((e) => e.type === "turn.completed");
       expect(done).toMatchObject({ type: "turn.completed", ok: false, stopReason: "exit_before_result" });
       const errors = recorder.events.filter((e) => e.type === "runtime.error").map((e) => (e as any).message as string);
@@ -302,7 +304,7 @@ describe("Antigravity turns (fake CLI)", () => {
         if (fullAuto) { recorder.stop(); await instance.dispose(); }
         await create(fullAuto);
         for (const [turn, enforced] of [false, true, false].entries()) {
-          const sent = await instance.adapter.sendTurn({
+          const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
             threadId: `t-enforce-${fullAuto}-${turn}`, text: "hi",
             ...(enforced ? { routeAsks: true as const } : {}),
           });
@@ -322,7 +324,7 @@ describe("Antigravity turns (fake CLI)", () => {
     process.env.FAKE_AGY_DUMP = dump;
     await create();
     try {
-      await instance.adapter.sendTurn({ threadId: `t-stop-line-${stopLine}`, text: "go", ...(stopLine ? { stopLine: true as const } : {}) });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-stop-line-${stopLine}`, text: "go", ...(stopLine ? { stopLine: true as const } : {}) });
       await recorder.until((event) => event.type === "turn.completed");
       const seen = JSON.parse(readFileSync(dump, "utf8"));
       expect(seen.argv).toContain("--dangerously-skip-permissions");
@@ -338,12 +340,12 @@ describe("Antigravity turns (fake CLI)", () => {
     process.env.FAKE_AGY_DUMP = dump;
     await create();
     try {
-      await instance.adapter.sendTurn({ threadId: "t-route-asks", text: "go", routeAsks: true, askLevel: true });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-route-asks", text: "go", routeAsks: true, askLevel: true });
       await recorder.until((event) => event.type === "turn.completed" && event.threadId === "t-route-asks");
       const ask = JSON.parse(readFileSync(dump, "utf8"));
       expect(ask.argv).toContain("accept-edits");
       expect(ask.argv).not.toContain("--dangerously-skip-permissions");
-      await instance.adapter.sendTurn({ threadId: "t-route-auto", text: "go", routeAsks: true });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-route-auto", text: "go", routeAsks: true });
       await recorder.until((event) => event.type === "turn.completed" && event.threadId === "t-route-auto");
       const auto = JSON.parse(readFileSync(dump, "utf8"));
       expect(auto.argv).toContain("--dangerously-skip-permissions");
@@ -360,7 +362,7 @@ describe("Antigravity turns (fake CLI)", () => {
     await create();
     const system = `room instructions\n${"context-0123456789".repeat(8_000)}`;
     try {
-      await instance.adapter.sendTurn({
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
         threadId: "t-long-prompt",
         text: "review the video",
         system,
@@ -386,7 +388,7 @@ describe("Antigravity turns (fake CLI)", () => {
     await create();
     const timers = vi.spyOn(globalThis, "setTimeout");
     try {
-      await instance.adapter.sendTurn({ threadId: "t-no-cap", text: "go" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-no-cap", text: "go" });
       await recorder.until((event) => event.type === "turn.completed");
       const seen = JSON.parse(readFileSync(dump, "utf8"));
       const at = seen.argv.indexOf("--print-timeout");
@@ -407,7 +409,7 @@ describe("Antigravity turns (fake CLI)", () => {
     process.env.FAKE_AGY_EXTRA_STEPS = "1";
     try {
       await create();
-      await instance.adapter.sendTurn({ threadId: "t-live", text: "go" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-live", text: "go" });
       await recorder.until((event) => event.type === "turn.completed");
       // planner, the response step, then two growths of it; repeats add nothing
       expect(recorder.events.filter((e) => e.type === "item.updated")).toHaveLength(4);
@@ -421,7 +423,7 @@ describe("Antigravity turns (fake CLI)", () => {
     process.env.FAKE_AGY_POST_RESULT_STEP = "1";
     try {
       await create();
-      await instance.adapter.sendTurn({ threadId: "t-after", text: "go" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-after", text: "go" });
       await recorder.until((event) => event.type === "turn.completed");
       await new Promise((resolve) => setTimeout(resolve, 300));
       const done = recorder.events.findIndex((event) => event.type === "turn.completed");
@@ -440,7 +442,7 @@ describe("Antigravity turns (fake CLI)", () => {
       config: { cli: FAKE_CLI, fullAuto: true },
     });
     recorder = recordEvents(instance.adapter);
-    const sent = instance.adapter.sendTurn({ threadId: "t-early", text: "go" });
+    const sent = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-early", text: "go" });
     await new Promise((resolve) => setTimeout(resolve, 100));
     await instance.adapter.interruptTurn("t-early");
     const { turnId } = await sent;
@@ -467,7 +469,7 @@ describe("Antigravity turns (fake CLI)", () => {
     process.env.FAKE_AGY_DUMP = dump;
     try {
       await create();
-      await instance.adapter.sendTurn({ threadId: "t-routing", text: "hi" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-routing", text: "hi" });
       await recorder.until((event) => event.type === "turn.completed");
 
       const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -489,7 +491,7 @@ describe("Antigravity turns (fake CLI)", () => {
   it("explains how to update an agy version that cannot receive prompts safely", async () => {
     process.env.FAKE_AGY_VERSION = "1.1.14";
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-old-agy", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-old-agy", text: "hi" });
     await recorder.until((event) => event.type === "turn.completed");
     expect(recorder.events).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -602,7 +604,7 @@ describe("Antigravity snapshot", () => {
       await instance.snapshot();
       for (const name of names) expect(JSON.parse(readFileSync(dump, "utf8")).env[name]).toBeUndefined();
 
-      await instance.generateText?.("summarize safely");
+      await instance.generateText?.("summarize safely", undefined, fixtureBotFolder());
       for (const name of names) expect(JSON.parse(readFileSync(dump, "utf8")).env[name]).toBeUndefined();
     } finally {
       await instance.dispose();
@@ -627,7 +629,7 @@ describe("Antigravity snapshot", () => {
     });
     const prompt = `summarize\n${"helper-context-0123456789".repeat(6_000)}`;
     try {
-      await expect(instance.generateText?.(prompt)).resolves.toBe("done from fake agy");
+      await expect(instance.generateText?.(prompt, undefined, fixtureBotFolder())).resolves.toBe("done from fake agy");
       const seen = JSON.parse(readFileSync(dump, "utf8"));
       expect(seen.prompt).toBe(prompt);
       expect(seen.argv).toContain("--input-format");
@@ -778,7 +780,7 @@ describe("Antigravity Murage MCP config", () => {
     });
     const recorder = recordEvents(instance.adapter);
     try {
-      await instance.adapter.sendTurn({ threadId: "t-custom-off", text: "no tools", integrations: customIntegrations() });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-custom-off", text: "no tools", integrations: customIntegrations() });
       await recorder.until((event) => event.type === "turn.completed");
       const atSpawn = JSON.parse(readFileSync(dump, "utf8"));
       expect(JSON.stringify(atSpawn)).not.toContain("turn-tok");
@@ -804,7 +806,7 @@ describe("Antigravity Murage MCP config", () => {
     });
     const recorder = recordEvents(instance.adapter);
     try {
-      await instance.adapter.sendTurn({
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
         threadId: "t-mcp-safe",
         text: "do not expose tools",
         integrations: { ...boxIntegrations, ...agentsIntegrations("must-not-leak") },
@@ -822,3 +824,6 @@ describe("Antigravity Murage MCP config", () => {
     }
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

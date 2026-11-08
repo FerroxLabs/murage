@@ -808,3 +808,59 @@ describe("r16: symlinks are verified in every mode; generated files come only fr
     expect(thrown(() => scopedHome.currentScopeHome("unknown-kind", unknown)).busy).toBe(true);
   });
 });
+
+
+import { DATA_DIR } from "../config.ts";
+import { dataRoots } from "../data-roots.ts";
+import { readlinkSync, linkSync } from "node:fs";
+import { setRelinkNotice } from "../link-removal.ts";
+it("S5 site 11 rebases login symlinks through LinkIo", () => {
+  mkdirSync(DATA_DIR, { recursive: true });
+  const dir = mkdtempSync(join(DATA_DIR, "prefix-login-"));
+  try {
+    const target = join(dir, "login"), scoped = join(dir, "scoped"), old = join(dir, "old");
+    writeFileSync(target, "fixture");
+    symlinkSync(old + target.slice(DATA_DIR.length), scoped);
+    const roots = vi.spyOn(dataRoots(), "previousRoots").mockReturnValue([old]);
+    const create = vi.fn(nodeLinkIo.symlinkSync);
+    try {
+      expect(sharesFile(target, scoped, { ...nodeLinkIo, symlinkSync: create })).toBe(true);
+      expect(readlinkSync(scoped)).toBe(target);
+      expect(create).toHaveBeenCalledOnce();
+    } finally { roots.mockRestore(); }
+  } finally { removeTempDirSync(dir); }
+});
+it("S5 site 11 hardlink inode and nlink stay unchanged (control)", () => {
+  mkdirSync(DATA_DIR, { recursive: true });
+  const dir = mkdtempSync(join(DATA_DIR, "prefix-hardlink-"));
+  const lines: string[] = []; setRelinkNotice(line => lines.push(line));
+  try {
+    const target = join(dir, "login"), scoped = join(dir, "scoped");
+    writeFileSync(target, "fixture"); linkSync(target, scoped);
+    const before = lstatSync(scoped);
+    expect(sharesFile(target, scoped)).toBe(true);
+    expect(lstatSync(scoped).ino).toBe(before.ino);
+    expect(lstatSync(scoped).nlink).toBe(before.nlink);
+    expect(lines).toEqual([]);
+  } finally { setRelinkNotice(line => console.warn(line)); removeTempDirSync(dir); }
+});
+
+it("S5 site 11 launch verification rebases a login without rotating generations", () => {
+  ensureDirs();
+  const dir = mkdtempSync(join(DATA_DIR, "prefix-verify-"));
+  try {
+    const owner = join(dir, "owner"), root = join(dir, "scope");
+    mkdirSync(owner); mkdirSync(root);
+    const target = join(owner, "login"), scoped = join(root, "login"), old = join(dir, "old");
+    writeFileSync(target, "fixture");
+    symlinkSync(old + target.slice(DATA_DIR.length), scoped);
+    writeFileSync(join(root, scopedHome.SCOPE_MARKER), JSON.stringify({
+      contract: scopedHome.SESSION_CONTRACT, realHome: owner, share: ["login"], shareMode: { login: "symlink" }, launched: true,
+    }));
+    const roots = vi.spyOn(dataRoots(), "previousRoots").mockReturnValue([old]);
+    try {
+      expect(scopedHome.verifyScopeLogins(root)).toBe(root);
+      expect(readlinkSync(scoped)).toBe(target);
+    } finally { roots.mockRestore(); }
+  } finally { removeTempDirSync(dir); }
+});
