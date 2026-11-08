@@ -1,4 +1,6 @@
-export const CLOUD_ROUTINE_NOT_YET = "Cloud runs begin when Cloud approvals arrive. Run this routine on this computer for now.";
+export const CLOUD_ROUTINE_NOT_YET = "Cloud runs will be available when Cloud approvals are supported. Run this routine on this computer for now.";
+/** The same line as saved on runs from earlier versions; those runs keep showing it in the reader's language. */
+export const CLOUD_ROUTINE_NOT_YET_EARLIER = "Cloud runs begin when Cloud approvals arrive. Run this routine on this computer for now.";
 /** A project routine whose project is closed or ended (F2, 1.0.4): Run now answers it, and a queued run fails with it. */
 export const PROJECT_CLOSED_COPY = "This project is closed. Reopen it to run its routines.";
 

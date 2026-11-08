@@ -334,7 +334,7 @@ test("reports an engine list that could not refresh, without greying the section
   // did not refresh and the buttons are not greyed.
   await expect(section.getByText("Work", { exact: true })).toBeVisible();
   await expect(section.getByRole("status")).toContainText("Sign in explicitly");
-  await expect(section.getByRole("alert")).toHaveText("Saved, but the engine list could not refresh. Switch to another window and back to probe the engines again.");
+  await expect(section.getByRole("alert")).toHaveText("Saved, but the engine list could not refresh. Switch to another window and back to check the engines again.");
   expect(failed).toBe(1);
   await expect(add).toBeEnabled();
   await expect(section.getByRole("button", { name: "Edit Work account", exact: true })).toBeEnabled();

@@ -34,10 +34,11 @@
 import { inProjectCheck } from "../shared/in-project.ts";
 import { executionStore, threadPartition, partitionRoots, isHomePartition } from "./execution-audience.ts";
 import { lstatSync } from "node:fs";
-import { dirname, isAbsolute } from "node:path";
+import { isAbsolute } from "node:path";
 
 import { artifactWorkspaceIdentity } from "./artifacts.ts";
 import { botWorkspacePath, taskWorkspacePath } from "./workspace.ts";
+import { rootsFor } from "./data-roots.ts";
 
 /** Argument names an engine uses for "the file this call acts on", read only
  * at the top level of the tool's input. Nothing nested is read: an
@@ -137,15 +138,31 @@ export function within(rootPath: string, candidate: unknown, refused: boolean | 
  * Those components are checked directly, the same way server/memory/import.ts
  * refuses an import through a linked workspace. */
 export function managedPathIsLinked(dataDir: string, botId: string): boolean {
-  let components: string[];
-  // the workspaces folder is the bot folder's parent, by server/workspace.ts's own derivation
-  try { const bot = botWorkspacePath(dataDir, botId); components = [dataDir, dirname(bot), bot]; }
-  catch { return true; }
-  for (const path of components) {
-    try { if (lstatSync(path).isSymbolicLink()) return true; }
-    catch { /* a component that is not there cannot be a link */ }
-  }
+  let bot: string;
+  try { bot = botWorkspacePath(dataDir, botId); } catch { return true; }
+  try { if (lstatSync(dataDir).isSymbolicLink()) return true; } catch { /* a data folder that is not there holds no link */ }
+  // C7 (S5-DATADIR-PATHS r4.1): a linked `workspaces` root is admitted by DR2/DR3 only off `/`, HOME and the data
+  // folder (the refusal list), so it can no longer make "the bot's own folder" the whole disk. The root must be ok
+  // (absent holds nothing), and any link strictly below its canonical target down to the bot folder is refused.
+  try {
+    const roots = rootsFor(dataDir);
+    const snapshot = roots.rootFor("workspaces");
+    if (snapshot.state === "absent") return false;
+    roots.ownedPath(bot, { create: false, snapshot });
+  } catch { return true; }
   return false;
+}
+
+/** C7: a managed root (a bot, thread or partition folder) walked from the workspaces root's canonical target by the
+ * one walker (DR4). A link anywhere below the root, or a root that is not ok, counts as linked. */
+export function managedRootIsLinked(dataDir: string, root: string): boolean {
+  try {
+    const roots = rootsFor(dataDir);
+    const snapshot = roots.rootFor("workspaces");
+    if (snapshot.state === "absent") return false;
+    roots.ownedPath(root, { create: false, snapshot });
+    return false;
+  } catch { return true; }
 }
 
 export interface OwnWorkspaceScope {

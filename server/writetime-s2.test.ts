@@ -114,7 +114,8 @@ function access(botId: string, thread: string) {
   return M.memoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => roster);
 }
 function ownerFact(thread: string, text: string, key: string) {
-  M.captureSource(M.database(), { id: `message:${thread}:${key}`, threadId: thread, messageId: key, kind: "text", speaker: "owner", outcome: "recorded", text });
+  say(thread, text, { id: key, role: "user", from: undefined });
+  // say persists and captures the owner message in the same write.
   const id = M.saveMemoryCandidate(text, [{ sourceId: `message:${thread}:${key}`, revision: 1, startByte: 0, endByte: Buffer.byteLength(text) }], key, access("dax", thread));
   M.database().prepare("UPDATE memory_records SET state='active' WHERE id=?").run(id);
   return id;

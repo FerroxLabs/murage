@@ -11,7 +11,7 @@ import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
-import { captureMessage } from "./capture.ts";
+import { captureStoredMessage } from "./testing/captured-message.ts";
 import { setMemoryCaptureRoster } from "./capture-scope.ts";
 import { setMemoryMode } from "./repository.ts";
 import { forgetMemory } from "./forget.ts";
@@ -39,8 +39,8 @@ afterEach(() => { setMemoryCaptureRoster(null); gate.wait = null; });
 it("a forget while the HTTP adapter awaits its address check: fetch is never called, the family is pending, one read move, no attempt charged", async () => {
   const db = database();
   for (let i = 1; i <= 3; i++) {
-    captureMessage(db, "private", { id: `o${i}`, at: T0 + i * MIN, role: "user", kind: "text", text: `Secret ${i}.`, origin: "desktop" } as never);
-    captureMessage(db, "private", { id: `b${i}`, at: T0 + i * MIN + 1000, role: "bot", kind: "text", text: "Sure.", turnTerminal: true, from: { botId: "moss" } } as never);
+    captureStoredMessage(db, "private", { id: `o${i}`, at: T0 + i * MIN, role: "user", kind: "text", text: `Secret ${i}.`, origin: "desktop" } as never);
+    captureStoredMessage(db, "private", { id: `b${i}`, at: T0 + i * MIN + 1000, role: "bot", kind: "text", text: "Sure.", turnTerminal: true, from: { botId: "moss" } } as never);
   }
   db.exec("UPDATE memory_jobs SET status='complete',cursor=100");
   const fetchImpl = vi.fn(async () => new Response("{}")) as unknown as typeof fetch;
@@ -69,8 +69,8 @@ it("a forget while the HTTP adapter awaits its address check: fetch is never cal
 it("a source retired by another connection between the fence and the dispatch: the result is never published, the row never stored, the next request omits it", async () => {
   const db = database();
   for (let i = 1; i <= 3; i++) {
-    captureMessage(db, "private", { id: `o${i}`, at: T0 + i * MIN, role: "user", kind: "text", text: `Secret ${i}.`, origin: "desktop" } as never);
-    captureMessage(db, "private", { id: `b${i}`, at: T0 + i * MIN + 1000, role: "bot", kind: "text", text: "Sure.", turnTerminal: true, from: { botId: "moss" } } as never);
+    captureStoredMessage(db, "private", { id: `o${i}`, at: T0 + i * MIN, role: "user", kind: "text", text: `Secret ${i}.`, origin: "desktop" } as never);
+    captureStoredMessage(db, "private", { id: `b${i}`, at: T0 + i * MIN + 1000, role: "bot", kind: "text", text: "Sure.", turnTerminal: true, from: { botId: "moss" } } as never);
   }
   db.exec("UPDATE memory_jobs SET status='complete',cursor=100");
   const { DatabaseSync } = await import("node:sqlite");
@@ -113,8 +113,8 @@ it("a source retired by another connection between the fence and the dispatch: t
 it("a conversation deleted by another connection between the fence and the dispatch: the result is never published or stored, the run is cleared", async () => {
   const db = database();
   for (let i = 1; i <= 3; i++) {
-    captureMessage(db, "private", { id: `o${i}`, at: T0 + i * MIN, role: "user", kind: "text", text: `Secret ${i}.`, origin: "desktop" } as never);
-    captureMessage(db, "private", { id: `b${i}`, at: T0 + i * MIN + 1000, role: "bot", kind: "text", text: "Sure.", turnTerminal: true, from: { botId: "moss" } } as never);
+    captureStoredMessage(db, "private", { id: `o${i}`, at: T0 + i * MIN, role: "user", kind: "text", text: `Secret ${i}.`, origin: "desktop" } as never);
+    captureStoredMessage(db, "private", { id: `b${i}`, at: T0 + i * MIN + 1000, role: "bot", kind: "text", text: "Sure.", turnTerminal: true, from: { botId: "moss" } } as never);
   }
   db.exec("UPDATE memory_jobs SET status='complete',cursor=100");
   const { DatabaseSync } = await import("node:sqlite");
@@ -157,8 +157,8 @@ it("an owner edit of a shown commitment while the HTTP adapter waits: fetch is n
     reconcileMemoryRoster(roster); setMemoryMode("active");
     const db = database();
     for (let i = 1; i <= 3; i++) {
-      captureMessage(db, "private", { id: `o${i}`, at: T0 + i * MIN, role: "user", kind: "text", text: `Plan ${i}.`, origin: "desktop" } as never);
-      captureMessage(db, "private", { id: `b${i}`, at: T0 + i * MIN + 1000, role: "bot", kind: "text", text: "Sure.", turnTerminal: true, from: { botId: "moss" } } as never);
+      captureStoredMessage(db, "private", { id: `o${i}`, at: T0 + i * MIN, role: "user", kind: "text", text: `Plan ${i}.`, origin: "desktop" } as never);
+      captureStoredMessage(db, "private", { id: `b${i}`, at: T0 + i * MIN + 1000, role: "bot", kind: "text", text: "Sure.", turnTerminal: true, from: { botId: "moss" } } as never);
     }
     db.exec("UPDATE memory_jobs SET status='complete',cursor=100");
     const scope = ensureScope("bot", "moss");

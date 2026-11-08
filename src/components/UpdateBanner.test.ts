@@ -49,6 +49,15 @@ it("the card is a modal dialog that owns its keys and hands focus back",()=>{
  const html=renderToStaticMarkup(createElement(UpdateBanner));
  expect(html).toContain('role="dialog"');expect(html).toContain('aria-modal="true"');
  const source=readFileSync(new URL("./UpdateBanner.tsx",import.meta.url),"utf8");
- expect(source).toContain("onKeyDown={onCardKeyDown}");expect(source).not.toContain('document.addEventListener("keydown"');
+ expect(source).toContain('name: "update-card"');expect(source).not.toContain('document.addEventListener("keydown"');
  expect(source).toContain('[data-testid="update-indicator"]');
+});
+it("Mac installer offer gives calm next steps in both update surfaces",()=>{
+ vi.stubGlobal("window",{muragebox:{updater:{},openExternal:vi.fn()}});
+ current.value={status:"error",version:"1.0.18",action:"download-installer",downloadUrl:"https://github.com/FerroxLabs/murage-releases/releases/download/v1.0.18/Murage-1.0.18-arm64.dmg"};
+ for(const Component of [UpdateBanner,UpdatesRow]){
+  const html=renderToStaticMarkup(createElement(Component));
+  expect(html).toContain("Download Murage 1.0.18, then drag it into Applications. Your chats and settings stay.");
+  expect(html).toContain("Download Murage 1.0.18");expect(html).not.toContain("Try again");
+ }
 });

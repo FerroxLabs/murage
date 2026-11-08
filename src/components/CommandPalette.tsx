@@ -1,12 +1,15 @@
+// Copyright 2026 Ferrox Labs
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import { useChatResource, type HitsPage } from "@/lib/chat-previews";
 // ⌘K switcher: bots and rooms from local state, transcript hits from
 // /api/search, and (0.1.62) the Settings pages whose words match, so
-// "images" jumps straight to Settings > Images. Self-contained — owns its
-// open state and its global chord, so App.tsx only mounts it. The sidebar's
-// search field opens it through lib/app-events.ts.
+// "images" jumps straight to Settings > Images. The host owns each request.
 import { useEffect, useRef, useState } from "react";
 import { Bot as BotIcon, MessageSquare, Search, Settings as SettingsIcon, Users } from "lucide-react";
-import { api, useStore, type AppSettingsSection, type Bot, type Group } from "@/state/store";
-import { OPEN_PALETTE_EVENT } from "@/lib/app-events";
+import { useStore, type AppSettingsSection, type Bot, type Group } from "@/state/store";
+import type { PaletteRequest } from "./CommandPaletteHost";
+import { useLayerContainer } from "./LayerSlot";
+import { LayerSurface } from "./LayerSurface";
 import { SETTINGS_SECTIONS, sectionsForSurface, settingsGroupLabel, settingsSectionLabel } from "@/lib/settings-sections";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { t } from "@/lib/i18n";
@@ -15,6 +18,7 @@ import { cn } from "@/lib/cn";
 import { BOX_FRAME, BoxBody, BoxHead } from "./ui/BoxShell";
 import type { SearchHit } from "@/lib/search-hit";
 import { landOnSearchHit } from "@/lib/focus-message";
+import { imeComposing } from "@/lib/composer-enter";
 
 type PaletteEntry =
   | { kind: "bot"; bot: Bot }
@@ -25,97 +29,42 @@ type PaletteEntry =
 /** At most this many Settings pages, after the bots and channels. */
 const SETTINGS_LIMIT = 4;
 
-/** `initialOpen`/`initialQuery`: the request that loaded this chunk
- * (CommandPaletteHost), answered on mount. */
-export function CommandPalette({ onOpenChange, initialOpen = false, initialQuery = "" }: { onOpenChange?: (open: boolean) => void; initialOpen?: boolean; initialQuery?: string }) {
+export interface CommandPaletteProps {
+  request: PaletteRequest;
+  isCurrent: () => boolean;
+  onClose: () => void;
+}
+export function CommandPalette({ request, isCurrent, onClose }: CommandPaletteProps) {
   const { state, dispatch } = useStore();
   const desktop = useDesktopSurface();
-  const [open, setOpen] = useState(initialOpen);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const layer = useLayerContainer(dialogRef, { initialFocus: "input", onEscape: onClose });
   // The Settings words load with the first open, not with the first paint.
   const [settingsSearch, setSettingsSearch] = useState<typeof import("@/lib/settings-search") | null>(null);
-  const handedQuery = useRef(initialQuery);
-  const [query, setQuery] = useState("");
-  const [messageHits, setMessageHits] = useState<SearchHit[]>([]);
+  const [query, setQuery] = useState(request.query);
   const [cursor, setCursor] = useState(0);
   const selectedRef = useRef<HTMLButtonElement>(null);
 
-  // The chord fires from anywhere — Shell's app-wide shortcuts (⌘N, ⌘1–9)
-  // set the precedent of not guarding against focused inputs, and a
-  // modifier chord never collides with typing.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k" && !e.shiftKey && !e.altKey) {
-        e.preventDefault();
-        setOpen((o) => !o);
-      }
-    };
-    const openFromSidebar = (event: Event) => {
-      const query = (event as CustomEvent<{ query?: unknown } | undefined>).detail?.query;
-      handedQuery.current = typeof query === "string" ? query.slice(0, 200) : "";
-      setOpen(true);
-    };
-    window.addEventListener("keydown", onKey);
-    window.addEventListener(OPEN_PALETTE_EVENT, openFromSidebar);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener(OPEN_PALETTE_EVENT, openFromSidebar);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!open || settingsSearch) return;
+    if (settingsSearch) return;
     let live = true;
     import("@/lib/settings-search").then((module) => live && setSettingsSearch(module)).catch(() => {});
     return () => {
       live = false;
     };
-  }, [open, settingsSearch]);
-
-  // fresh palette every open; stale queries from last time would flash
-  useEffect(() => {
-    if (!open) return;
-    setQuery(handedQuery.current);
-    handedQuery.current = "";
-    setMessageHits([]);
-    setCursor(0);
-  }, [open]);
-
-  useEffect(() => {
-    onOpenChange?.(open);
-  }, [onOpenChange, open]);
+  }, [settingsSearch]);
 
   const q = query.trim().toLowerCase();
 
-  // Same debounce pattern as the sidebar search: names answer instantly
-  // from local state, transcript hits arrive a beat later, and a stale
-  // response for an outdated query is dropped.
-  useEffect(() => {
-    if (!open || !q) {
-      setMessageHits([]);
-      return;
-    }
-    // Results for the previous query must not remain clickable while the
-    // debounce and request for this query are pending.
-    setMessageHits([]);
-    let alive = true;
-    const timer = setTimeout(() => {
-      api(`/api/search?q=${encodeURIComponent(q)}&limit=12`)
-        .then((result: { hits?: SearchHit[] }) => alive && setMessageHits(result.hits ?? []))
-        .catch(() => alive && setMessageHits([]));
-    }, 150);
-    return () => {
-      alive = false;
-      clearTimeout(timer);
-    };
-  }, [open, q]);
+  const messages = useChatResource<HitsPage>(q ? `/api/search?q=${encodeURIComponent(q)}&limit=12` : null, undefined, 150);
+  const messageHits = messages.eligible ? messages.data?.hits ?? [] : [];
 
   useEffect(() => setCursor(0), [q]);
 
   useEffect(() => {
-    selectedRef.current?.scrollIntoView({ block: "nearest" });
+    selectedRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [cursor, messageHits]);
 
-  if (!open) return null;
 
   const bots = rankByName(state.bots.filter((b) => !b.hidden), q);
   const rooms = rankByName(state.groups, q);
@@ -134,28 +83,26 @@ export function CommandPalette({ onOpenChange, initialOpen = false, initialQuery
   const selected = entries.length ? Math.min(cursor, entries.length - 1) : 0;
 
   const activate = async (entry: PaletteEntry) => {
+    if (!isCurrent() || !layer?.active) return;
+    const originatingLayer = layer;
     if (entry.kind === "setting") {
       dispatch({ type: "toggleAppSettings", open: true, section: entry.section });
     } else if (entry.kind === "message") {
       const hit = entry.hit;
       try {
-        await landOnSearchHit(hit, state, dispatch);
+        await landOnSearchHit(hit, state, dispatch, messages.listGen, () => isCurrent() && originatingLayer.active);
       } catch (error) {
-        dispatch({ type: "error", message: error instanceof Error ? error.message : String(error) });
+        if (isCurrent()) dispatch({ type: "error", message: error instanceof Error ? error.message : String(error) });
       }
     } else {
       dispatch({ type: "select", id: entry.kind === "bot" ? entry.bot.id : entry.group.id });
     }
-    setOpen(false);
+    if (isCurrent()) { originatingLayer.keepFocusOnClose(); onClose(); }
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      // shield the window listeners other modals hang their own Esc on
-      e.stopPropagation();
-      setOpen(false);
-    } else if (e.key === "ArrowDown") {
+    if (imeComposing(e.nativeEvent)) return;
+    if (e.key === "ArrowDown") {
       e.preventDefault();
       setCursor(entries.length ? (selected + 1) % entries.length : 0);
     } else if (e.key === "ArrowUp") {
@@ -192,12 +139,13 @@ export function CommandPalette({ onOpenChange, initialOpen = false, initialQuery
   );
 
   return (
-    <div
-      className="overlay-inset fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-start justify-center bg-black/50 p-6 pt-[calc(0.14*var(--vvh,100dvh))]"
-      onMouseDown={(e) => e.target === e.currentTarget && setOpen(false)}
+    <LayerSurface><div
+      className="overlay-inset fixed inset-x-0 top-0 flex h-[var(--vvh,100dvh)] items-start justify-center bg-black/50 p-6 pt-[calc(0.14*var(--vvh,100dvh))]"
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
       onKeyDown={onKeyDown}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
@@ -206,7 +154,6 @@ export function CommandPalette({ onOpenChange, initialOpen = false, initialQuery
         <BoxHead className="justify-start border-b border-hairline/40 px-4 py-3">
           <Search size={16} className="shrink-0 text-ink-secondary" />
           <input
-            autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t("palette.placeholder")}
@@ -304,6 +251,6 @@ export function CommandPalette({ onOpenChange, initialOpen = false, initialQuery
             })}
         </BoxBody>
       </div>
-    </div>
+    </div></LayerSurface>
   );
 }

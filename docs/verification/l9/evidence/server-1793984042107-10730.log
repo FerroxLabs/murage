@@ -1,0 +1,27 @@
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS messages ( thread_id TEXT NOT NULL, id TEXT NOT ms=53 source=exec:CREATE TABLE IF NOT EXISTS messages ( th
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS open_card(thread_id TEXT NOT NULL, id TEXT NOT  ms=85 source=exec:CREATE TABLE IF NOT EXISTS open_card(thr
+[sqlite] slow op=exec: COMMIT ms=150 source=exec:COMMIT
+[sqlite] slow op=INSERT OR REPLACE INTO transcript_index_state(name, done, cursor, skipped) VALUE ms=159 source=caller:transcript-backfill.ts:39<message-search-index.ts:210
+[sqlite] slow op=exec: INSERT INTO messages_fts(messages_fts, rank) VALUES(?, ?) ms=174 source=exec:INSERT INTO messages_fts(messages_fts, r
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS pending_delegations (id TEXT PRIMARY KEY NOT NU ms=67 source=exec:CREATE TABLE IF NOT EXISTS pending_deleg
+[memory] index build before listen name=memory_records_pinned ms=2
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS push_bindings ( binding_id TEXT PRIMARY KEY, de ms=143 source=exec:CREATE TABLE IF NOT EXISTS push_bindings
+[sqlite] slow op=exec: ALTER TABLE push_bindings ADD COLUMN preview_content INTEGER NOT NULL DEFA ms=97 source=exec:ALTER TABLE push_bindings ADD COLUMN pre
+[sqlite] slow op=exec: ALTER TABLE push_decisions ADD COLUMN outcome TEXT ms=68 source=exec:ALTER TABLE push_decisions ADD COLUMN ou
+[sqlite] slow op=exec: ALTER TABLE push_bindings ADD COLUMN token_expires_at INTEGER ms=85 source=exec:ALTER TABLE push_bindings ADD COLUMN tok
+[sqlite] slow op=exec: ALTER TABLE push_events ADD COLUMN phone_used INTEGER ms=63 source=exec:ALTER TABLE push_events ADD COLUMN phone
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS app_trigger_bindings ( trigger_id TEXT PRIMARY  ms=115 source=exec:CREATE TABLE IF NOT EXISTS app_trigger_b
+[sqlite] storage file=1 wal=1 freelist=0
+[folder-trust] recorded 0 folders bots were already working in as trusted (chosen before 0.1.52; Forget in the picker asks again)
+murage webhook receiver on http://127.0.0.1:20960
+murage server on http://127.0.0.1:20959
+[startup] writes before first health=0
+[sqlite] slow op=INSERT INTO bot_call_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPD ms=82 source=startup
+[memory] keep-all repair: owner-chat session marks removed=0 threads=0 open-jobs=0 cursors-cleared=0
+Murage: PID 1 (MainThread) does not reap orphaned processes. Engine stops cannot be confirmed and warm engines will not be reused. Run the container with --init or tini.
+[memory] index build start name=memory_records_canon
+[memory] index build done name=memory_records_canon ms=45
+[memory] index build start name=memory_details_identity
+[memory] index build done name=memory_details_identity ms=29
+[memory] index build start name=memory_records_waiting_review
+[memory] index build done name=memory_records_waiting_review ms=118

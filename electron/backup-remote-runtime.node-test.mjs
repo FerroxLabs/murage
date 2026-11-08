@@ -56,5 +56,5 @@ test("actual automatic polling owns work, skips busy/recovery/shutdown and stops
  vm.runInContext("pollAutomaticRemoteBackup()",context);context.desktopShutdownStarted=true;await Promise.allSettled([...operations]);await Promise.resolve();assert.equal(calls,1);
  vm.runInContext("stopAutomaticRemoteBackups();startAutomaticRemoteBackups()",context);assert.equal(created,1);assert.equal(cleared,1);
  context.desktopShutdownStarted=false;context.desktopRecoveryMode=true;vm.runInContext("startAutomaticRemoteBackups();pollAutomaticRemoteBackup()",context);assert.equal(created,1);assert.equal(operations.size,0);
- assert.ok(source.indexOf('stopAutomaticRemoteBackups();',source.indexOf('function cleanupDesktopForExit()'))<source.indexOf('Promise.allSettled([...backupRemoteOperations])'));
+ assert.ok(source.indexOf('stopAutomaticRemoteBackups();',source.indexOf('function cleanupDesktopForExit('))<source.indexOf('Promise.allSettled([...backupRemoteOperations])'));
 });

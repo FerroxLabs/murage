@@ -31,8 +31,8 @@ describe("Backups settings section", () => {
 
   it("General no longer renders backups, and the Backups pane is surface-gated", () => {
     expect(generalPane(modal)).not.toContain("BackupSettings");
-    // 1.0.3 attachment-cap: the Backups page also carries the Storage card; both sit behind the same desktop gate
-    expect(modal).toMatch(/desktop === true && section === "backups" && <div className="space-y-4"><BackupSettings \/><div id="storage-heading"><StorageSettings \/><\/div><\/div>/);
+    // 1.0.3 attachment-cap: the Backups page also carries the Storage card; S5 DR7 puts the Data folder card first; all sit behind the same desktop gate
+    expect(modal).toMatch(/desktop === true && section === "backups" && <div className="space-y-4"><DataFolderSettings \/><BackupSettings \/><div id="storage-heading"><StorageSettings \/><\/div><\/div>/);
     expect(modal.match(/<BackupSettings \/>/g)).toHaveLength(1);
   });
 

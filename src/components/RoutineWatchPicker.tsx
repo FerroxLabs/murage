@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { api, useStore, type Bot } from "@/state/store";
-import { BOX_DIALOG, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
+import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
+
+import { LayerSurface } from "./LayerSurface";
+import { useCalendarLayer, type CalendarLayerProps } from "./CalendarLayer";
 
 type FileChoice = { relativePath: string; name: string; directory: boolean };
 /** A bounded file choice inside an existing working folder. This only proposes
  * a routine; the existing conversation card owns final confirmation. */
-export function RoutineWatchPicker({ bots, onClose }: { bots: Bot[]; onClose: () => void }) {
+export function RoutineWatchPicker({ bots, onClose, lifecycle }: { bots: Bot[]; onClose: () => void } & CalendarLayerProps) {
   const { dispatch } = useStore();
-  const dialog = useRef<HTMLDialogElement>(null);
+  const dialog = useRef<HTMLDivElement>(null);
   const submitGate = useRef(false);
   const [botId, setBotId] = useState(bots[0]?.id ?? "");
   const [directory, setDirectory] = useState("");
@@ -20,7 +23,7 @@ export function RoutineWatchPicker({ bots, onClose }: { bots: Bot[]; onClose: ()
   const [loading, setLoading] = useState(false);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
-  useEffect(() => { dialog.current?.showModal(); }, []);
+  const layer = useCalendarLayer(dialog, "routine-watch", onClose, lifecycle, "select");
   useEffect(() => {
     let active = true;
     setChoices([]); setSelected(""); setError(""); setLoading(true);
@@ -38,6 +41,7 @@ export function RoutineWatchPicker({ bots, onClose }: { bots: Bot[]; onClose: ()
       const result = await api(`/api/bots/${encodeURIComponent(botId)}/watch-proposal`, { method: "POST", body: JSON.stringify({
         relativePath: selected, everyMinutes, expiresAt: new Date(Date.now() + days * 86400000).toISOString(), maxChecks,
       }) });
+      layer?.keepFocusOnClose();
       dispatch({ type: "select", id: result.botId, threadId: result.threadId });
       dispatch({ type: "focusMessage", threadId: result.threadId, messageId: result.messageId });
       onClose();
@@ -45,14 +49,14 @@ export function RoutineWatchPicker({ bots, onClose }: { bots: Bot[]; onClose: ()
     finally { submitGate.current = false; setWorking(false); }
   };
   const field = "min-h-11 w-full rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
-  return <dialog ref={dialog} aria-labelledby="watch-picker-title" onCancel={onClose} onClose={onClose}
-    className={`${BOX_DIALOG} m-auto w-[min(540px,calc(100vw-24px))] rounded-2xl border border-hairline bg-panel text-ink shadow-2xl backdrop:bg-black/60`}>
+  return <LayerSurface handle={layer}><div className="overlay-inset fixed inset-0 flex items-center justify-center bg-black/60 p-3"><div ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="watch-picker-title"
+    className={`${BOX_FRAME} max-h-[calc(var(--vvh,100dvh)-24px)] w-[min(540px,calc(100vw-24px))] rounded-2xl border border-hairline bg-panel text-ink shadow-2xl`}>
     <BoxHead className="border-b border-hairline/40 px-5 py-4"><h2 id="watch-picker-title" className="text-[18px] font-semibold">Watch a file</h2></BoxHead>
     <BoxBody className="p-5">
     <p className="text-[13px] text-ink-secondary">Choose a file in a bot’s working folder. Review and confirm the watch in chat before checks begin.</p>
     <form id="routine-watch-form" className="mt-4 space-y-4" onSubmit={event => { event.preventDefault(); void propose(); }}>
       <label className="block text-[13px]">Working folder for
-        <select autoFocus className={`${field} mt-1`} value={botId} disabled={working} onChange={event => { setBotId(event.target.value); setDirectory(""); }}>
+        <select className={`${field} mt-1`} value={botId} disabled={working} onChange={event => { setBotId(event.target.value); setDirectory(""); }}>
           {bots.map(bot => <option key={bot.id} value={bot.id}>{bot.name}</option>)}
         </select>
       </label>
@@ -77,5 +81,5 @@ export function RoutineWatchPicker({ bots, onClose }: { bots: Bot[]; onClose: ()
     </form>
     </BoxBody>
     <BoxFoot className="flex-wrap border-t border-hairline/40 px-5 py-4">{error && <p role="alert" className="w-full text-[13px] text-danger">{error}</p>}<button type="button" onClick={onClose} className="min-h-11 rounded-lg border border-hairline/50 px-4 text-[13px]">Cancel</button><button type="submit" form="routine-watch-form" disabled={!selected || loading || working} className="min-h-11 rounded-lg bg-accent px-4 text-[13px] font-medium text-white disabled:opacity-50">{working ? "Preparing…" : "Review in chat"}</button></BoxFoot>
-  </dialog>;
+  </div></div></LayerSurface>;
 }

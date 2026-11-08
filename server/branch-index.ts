@@ -448,7 +448,9 @@ export function fillSlice(db: DatabaseSync, threadId: string, maxRows: number, b
       CASE WHEN kind = 'activity' OR (role = 'user' AND (text IS NULL OR text = '')) OR instr(json, '"copyOf"') > 0 OR instr(json, '"comm"') > 0 OR instr(json, '"artifactIds"') > 0 OR instr(json, '"attachments"') > 0 OR instr(json, '<attached-image') > 0
         OR (kind = 'options' AND instr(json, '"requestId"') > 0) OR instr(json, '"steerUnconfirmed"') > 0 OR instr(json, '"setupEcho"') > 0 OR instr(json, '"routineRunPrompt"') > 0 OR instr(json, '"digestDay"') > 0 THEN json END AS body
      FROM messages WHERE thread_id = ? AND rowid > ? ORDER BY rowid LIMIT ?`,
-  ).all(threadId, tk.cursor, maxRows) as unknown as FillRow[];
+  ).iterate(threadId, tk.cursor, maxRows) as unknown as Iterable<FillRow>;
+  // (iterated, not read whole: each row's JSON is parsed when the loop reaches it, so a slice that stops at its budget never paid for the rows
+  // it did not get to. Read as one array of `maxRows`, a long thread of large rows spent the whole budget on the read and filled one row per slice.)
   const pendingOn = db.prepare("SELECT mrow FROM fill_pending WHERE key = ? AND parent = ? ORDER BY mrow");
   const unwait = db.prepare("DELETE FROM fill_pending WHERE key = ? AND parent = ? AND mrow = ?");
   const waitInsert = db.prepare("INSERT OR IGNORE INTO fill_pending(key, parent, mrow) VALUES (?, ?, ?)");

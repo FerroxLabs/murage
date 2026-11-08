@@ -62,6 +62,35 @@ describe("RoomHostMemory: each member's own history and hand-downs; the others' 
     expect(m.heardBy("sable")).toEqual([{ member: "Moss", owner: "how did the quarter go?", reply: "Revenue is up four percent." }]);
     expect(m.heardBy("moss")).toEqual([{ member: "Sable", owner: "draft the note", reply: "On it." }]);
   });
+  it("keeps what the owner heard of a host reply cut off part-way, in history and for the room", () => {
+    const m = new RoomHostMemory();
+    const cut = m.record(members[0], "how did the quarter go?", { role: "host", text: "Revenue is up four percent. Costs fell too." });
+    m.heardReply(members[0].id, cut, "Revenue is up four percent. Costs fell…");
+    expect(m.history(members[0].id).at(-1)).toEqual({ role: "host", text: "Revenue is up four percent. Costs fell…" });
+    expect(m.heardBy(members[1].id)).toEqual([{ member: members[0].name, owner: "how did the quarter go?", reply: "Revenue is up four percent. Costs fell…" }]);
+    // nothing heard at all (its audio job discarded before it played): no host line and nothing for the room
+    const unheard = m.record(members[0], "and next quarter?", { role: "host", text: "Flat, most likely." });
+    m.heardReply(members[0].id, unheard, "");
+    expect(m.history(members[0].id).at(-1)).toEqual({ role: "owner", text: "and next quarter?" });
+    expect(m.heardBy(members[1].id).map((entry) => entry.reply)).toEqual(["Revenue is up four percent. Costs fell…"]);
+  });
+  it("corrects only the exchange it was given: a repeated question, a later record, a hand-down", () => {
+    const m = new RoomHostMemory();
+    const first = m.record(members[0], "status?", { role: "host", text: "All green." });
+    m.record(members[0], "status?", { role: "host", text: "Still green." });
+    // the first reply's late playback result lands after the second exchange was recorded
+    m.heardReply(members[0].id, first, "All…");
+    expect(m.history(members[0].id)).toEqual([{ role: "owner", text: "status?" }, { role: "host", text: "All…" }, { role: "owner", text: "status?" }, { role: "host", text: "Still green." }]);
+    expect(m.heardBy(members[1].id).map((entry) => entry.reply)).toEqual(["All…", "Still green."]);
+    // a hand-down keeps its entry (with nothing said) when nothing of the reply was heard
+    const handed = m.record(members[0], "draft it", { role: "host", text: "On it.", handDown: { id: "h2", request: "@Moss draft it" } });
+    m.heardReply(members[0].id, handed, "");
+    expect(m.history(members[0].id).at(-1)).toEqual({ role: "host", text: "", handDown: { id: "h2", request: "@Moss draft it" } });
+    // a record with no host line (an empty reply) has nothing to correct
+    const empty = m.record(members[0], "hm?", { role: "host", text: "" });
+    m.heardReply(members[0].id, empty, "x");
+    expect(m.history(members[0].id).at(-1)).toEqual({ role: "owner", text: "hm?" });
+  });
   it("drops an empty host line from history, and caps history at 12 and heard at 6", () => {
     const m = new RoomHostMemory();
     m.record(members[0], "hm?", { role: "host", text: "" });

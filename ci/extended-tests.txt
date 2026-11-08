@@ -282,6 +282,7 @@ server/drivers/headless-text-only.windows.test.ts	extended
 server/drivers/http-text-only.audit2.test.ts	extended
 server/drivers/http-text-only.test.ts	extended
 server/drivers/isolation-cache.test.ts	extended
+server/drivers/lmstudio-native-catalog.test.ts	extended
 server/drivers/local-inject-probe.test.ts	extended
 server/drivers/memory-proxy.test.ts	extended
 server/drivers/minimax.test.ts	extended
@@ -384,6 +385,7 @@ server/index-bots-roster.test.ts	extended
 server/index-bots-task-window.test.ts	extended
 server/installed-playbooks.test.ts	extended
 server/intake-turn.test.ts	extended
+server/io-budget-win-counter.test.ts	extended
 server/io-budget.test.ts	extended
 server/launch-no-tty.structure.test.ts	extended
 server/leadership-admission.test.ts	extended
@@ -406,7 +408,6 @@ server/mcp-signin-card-api.test.ts	extended
 server/mcp-signin-card.test.ts	extended
 server/mcp-tool-images.test.ts	extended
 server/mcp-tool-schema.test.ts	extended
-server/media-assets.test.ts	extended
 server/member-turn.test.ts	extended
 server/memory-pin-failure-line-api.test.ts	extended
 server/memory/age-order.perf.test.ts	extended
@@ -559,6 +560,7 @@ server/memory/revoke-thread-drain-bench.test.ts	extended
 server/memory/revoke-fold-bench.test.ts	extended
 server/memory/revoke-deletion-cover-bench.test.ts	extended
 server/drivers/acp/fuigo-windows-real.test.ts	extended
+server/drivers/acp/fuigo-policy-live.test.ts	extended
 server/memory/root-set-bench.test.ts	extended
 server/memory/root-set-reclaim-owner.test.ts	extended
 server/memory/schema-assertion-marker.test.ts	extended
@@ -694,7 +696,6 @@ server/project-turn-engine-api.test.ts	extended
 server/provider-bank-fence.test.ts	extended
 server/provider-picker.test.ts	extended
 server/provider-selection-errors.test.ts	extended
-server/proxy-paths.test.ts	extended
 server/publish/connect-route.test.ts	extended
 server/publish/connect.test.ts	extended
 server/publish/netlify.test.ts	extended
@@ -851,6 +852,7 @@ server/vps-computer.test.ts	extended
 server/vps-container-mcp.test.ts	extended
 server/vps-routing.test.ts	extended
 server/wait-caller-bundle.test.ts	extended
+server/warm-scale-retired.test.ts	extended
 server/wayland-library.integration.test.ts	extended
 server/website-publisher.test.ts	extended
 server/whats-new-api.test.ts	extended
@@ -892,6 +894,7 @@ shared/message-limits.test.ts	extended
 shared/model-label.test.ts	extended
 shared/outcome-choices.test.ts	extended
 shared/plain-engine-error.test.ts	extended
+shared/plain-time-zone.test.ts	extended
 shared/provider-error.test.ts	extended
 shared/publish-card.test.ts	extended
 shared/reply-markers.test.ts	extended
@@ -950,7 +953,7 @@ src/components/CallAvatar.test.ts	extended
 src/components/CallCaption.test.ts	extended
 src/components/CallView.test.ts	extended
 src/components/ChatHeader.test.ts	extended
-src/components/ChatMarkdown.test.ts	extended
+src/components/ChatMarkdown.render-once.test.ts	extended
 src/components/ChatView.test.ts	delete (pending review; runs here until then)
 src/components/ClaudeUpdatePrompt.test.ts	extended
 src/components/CollapsibleText.test.ts	extended
@@ -975,6 +978,7 @@ src/components/DesktopStopControl.test.ts	extended
 src/components/DiagnosticDetails.test.ts	extended
 src/components/EngineFolderFailureCard.test.ts	extended
 src/components/EngineLoginTerminal.test.ts	extended
+src/components/EnginesSettings.hidden.test.ts	extended
 src/components/EnginesSettings.test.ts	extended
 src/components/Files.test.ts	extended
 src/components/FirstRunBackups.test.ts	extended
@@ -989,7 +993,6 @@ src/components/GroupView.sender-label.test.ts	extended
 src/components/HeldAfterRestore.test.ts	extended
 src/components/HermesImport.test.ts	extended
 src/components/HouseRulesSettings.test.ts	extended
-src/components/ImageMedia.test.ts	extended
 src/components/ImageRecordRow.test.ts	extended
 src/components/ImageSettings.test.ts	extended
 src/components/ImagesLeftOutRow.test.ts	extended
@@ -1003,6 +1006,7 @@ src/components/LearnedChip.test.ts	extended
 src/components/LearningOverviewLine.test.ts	extended
 src/components/LearningPausedCard.test.ts	extended
 src/components/LearningSettings.test.ts	extended
+src/components/LimitBackupModel.test.ts	extended
 src/components/LivePlanCard.test.ts	extended
 src/components/LiveThinking.test.ts	extended
 src/components/LocalComputerAutoWarning.test.ts	extended
@@ -1010,7 +1014,6 @@ src/components/LocalModelsSettings.test.ts	extended
 src/components/MarkdownEditor.test.ts	extended
 src/components/McpServersPanel.test.ts	extended
 src/components/McpSignInCard.test.ts	extended
-src/components/MediaPlayer.test.ts	extended
 src/components/MemoryEvolutionControls.test.ts	extended
 src/components/MemoryLearningControls.test.ts	extended
 src/components/MemoryNeedsYou.test.ts	extended
@@ -1038,10 +1041,12 @@ src/components/ProjectInboxRows.test.ts	extended
 src/components/ProjectLifecycle.test.ts	extended
 src/components/ProjectParallelSetting.test.ts	extended
 src/components/ProjectWorkSettings.test.ts	extended
+src/components/ProviderIcons.instance.test.ts	extended
 src/components/ProviderIcons.test.ts	extended
 src/components/PublishCard.test.ts	extended
 src/components/PushToTalk.test.ts	extended
 src/components/QuestionCard.onetap.test.ts	extended
+src/components/RailBotList.test.ts	extended
 src/components/RemoteConnectionBanner.test.ts	extended
 src/components/RemoteSignOut.test.ts	extended
 src/components/RemoteSurface.test.ts	extended
@@ -1087,6 +1092,7 @@ src/components/TranscriptWidth.test.ts	delete (pending review; runs here until t
 src/components/UnifiedBrowserPanel.test.ts	extended
 src/components/UpdateDot.test.ts	extended
 src/components/UsagePopover.test.ts	extended
+src/components/UsageSection.cache-note.test.ts	extended
 src/components/UseAsReferenceButton.test.ts	extended
 src/components/VirtualRows.test.ts	extended
 src/components/VirtualTranscript.test.ts	extended
@@ -1143,7 +1149,6 @@ src/e2e/fake-llama-completion.test.ts	delete (pending review; runs here until th
 src/first-paint.test.ts	extended
 src/font-smoothing.test.ts	extended
 src/hooks/use-dirty-baseline.test.ts	extended
-src/hooks/use-modal-dialog.test.ts	extended
 src/hooks/use-native-view-obscured.test.ts	extended
 src/hooks/use-warm-intent.test.ts	extended
 src/hooks/use-window-drag.test.ts	extended
@@ -1253,6 +1258,7 @@ src/lib/local-computer.test.ts	extended
 src/lib/local-models-view.test.ts	extended
 src/lib/local-vm-workspace.test.ts	extended
 src/lib/markdown-plain-characters.test.ts	extended
+src/lib/markdown-render-cache.test.ts	extended
 src/lib/mascot.test.ts	extended
 src/lib/media-resolve.harness.test.ts	extended
 src/lib/memory-evolution-controls.test.ts	extended
@@ -1264,6 +1270,7 @@ src/lib/mentions.test.ts	extended
 src/lib/menu-placement.test.ts	extended
 src/lib/model-metadata-failure.test.ts	extended
 src/lib/model-metadata-lazy.test.ts	extended
+src/lib/model-metadata-pending.test.ts	extended
 src/lib/model-metadata.test.ts	extended
 src/lib/native-action-error.test.ts	extended
 src/lib/native-contract.test.ts	extended
@@ -1392,6 +1399,7 @@ src/lib/tts/voicefast.test.ts	extended
 src/lib/turn-tail.test.ts	extended
 src/lib/unloadable-routines.test.ts	extended
 src/lib/usage-card.test.ts	extended
+src/lib/usage-routines.test.ts	extended
 src/lib/usage.test.ts	extended
 src/lib/use-action.test.ts	extended
 src/lib/use-active-skin.test.ts	extended
@@ -1464,9 +1472,35 @@ src/components/WorkspaceFeatureRow.test.ts	extended
 src/lib/bot-calls.test.ts	extended
 src/lib/bot-email.test.ts	extended
 server/drivers/openai-chat-tools-real.test.ts	extended
+src/components/routines/RoutineSheet.test.ts	extended
 src/lib/clock-format.test.ts	extended
 src/components/ChatReadingPolish.test.ts	extended
 src/components/RoomsA11yPolish.test.ts	extended
 src/lib/calendar-card-layout.test.ts	extended
 src/state/new-task-once.test.ts	extended
+src/lib/routine-sheet-model.test.ts	extended
+src/lib/schedule-words.test.ts	extended
+server/routine-sheet-run-now.e2e.test.ts	extended
 src/components/BrowserApprovedSites.activity-label.test.ts	extended
+shared/bot-access-presets.test.ts	extended
+src/components/BotAccessSettings.presets.test.ts	extended
+server/grok-image-repro.test.ts	extended
+src/lib/chats-previews-browser.test.ts	extended
+server/chats-expansion-browser.test.ts	extended
+server/io-budget-revoke-bounds.test.ts	extended
+server/io-budget-revoke-pace.test.ts	extended
+server/memory/index-wal-ldpreload.test.ts	extended
+server/memory/index-wal-t14f.test.ts	extended
+src/components/DataFolderSettings.test.tsx	extended
+server/memory/lineage-hooks-r14.test.ts	extended
+server/memory/turnstart-r14-confirm.test.ts	extended
+server/memory/turnstart-r14-gate.test.ts	extended
+server/memory/turnstart-r14-l3.test.ts	extended
+server/memory/turnstart-r14-real-entry.test.ts	extended
+server/memory/turnstart-r14-structure.test.ts	extended
+server/memory/turnstart-r15-l2b.test.ts	extended
+server/memory/turnstart-r15-l2c3.test.ts	extended
+server/memory/turnstart-r15-preconditions.test.ts	extended
+server/memory/turnstart-r15-s1s2.test.ts	extended
+server/memory/turnstart-r15.test.ts	extended
+server/memory/verdict-store-r15.test.ts	extended

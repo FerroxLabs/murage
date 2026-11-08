@@ -1,0 +1,30 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+ ❯ src/lib/chats-previews-browser.test.ts (43 tests | 1 failed | 42 skipped) 1661ms
+   × RULE all-page merge rejects a page captured before generation change 1248ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE all-page merge rejects a page captured before generation change
+AssertionError: expected 'Update storeBackAll chatsBotAnyProjec…' not to contain 'wrong append'
+
+Expected: "wrong append"
+Received: "Update storeBackAll chatsBotAnyProject or channelAnyDirect chats onlyDateAnyTodayPast weekPast monthCustom rangePinnedUnreadArchivedInclude routine runsMatches in messages · 1 chat#A removed bot·Chatwrong append · 2 matchesJan 1, 1970Chat titlesLooking through your chat titles…"
+
+ ❯ src/lib/chats-previews-browser.test.ts:465:56
+    463|   await page.evaluate(gen=>(window as any).fixture.frame(gen),next);
+    464|   await rawAnswer(page,'before=cursor',{gen:next,hits:[{...hit,message…
+    465|   expect(await page.locator('body').textContent()).not.toContain('wron…
+       |                                                        ^
+    466|   expect(await page.locator('body').textContent()).not.toContain('page…
+    467|   await rawAnswer(page,'/api/search',{gen:next,hits:[{...hit,snippet:'…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 42 skipped (43)
+   Start at  21:39:42
+   Duration  7.55s (transform 4.34s, setup 5.41s, import 360ms, tests 1.66s, environment 0ms)
+

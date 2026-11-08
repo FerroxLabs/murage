@@ -1,5 +1,10 @@
+import { DATA_DIR } from "./config.ts";
+import { comparable, dataRoots, ownedPath } from "./data-roots.ts";
+import { managedCliConstructors } from "./config-paths.ts";
+import { rebaseStoredPath } from "./stored-paths.ts";
+import { writeFileAtomic } from "./atomic.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { createFuigoIsolation, type FuigoIsolation } from "./fuigo-probe-isolation.ts";
@@ -40,7 +45,7 @@ export function supportedFuigoVersion(version: string): boolean {
  * can change the ACP contract Murage speaks (Fuigo 1.0.35 asks for every command
  * in a folder trusted under folderTrust v1). An owner already on a newer
  * release is left on it: receipts, rollback and status still accept it. */
-export const QUALIFIED_FUIGO_VERSION = "1.0.39";
+export const QUALIFIED_FUIGO_VERSION = "1.0.40";
 function parts(version: string): number[] { return version.split(".").map(Number); }
 /** True when `a` is a later release than `b` (both x.y.z). */
 export function fuigoVersionNewer(a: string, b: string): boolean {
@@ -238,6 +243,21 @@ export const probeNativeFuigo: FuigoProbe = async (cli, expectedVersion, scratch
   if (!proof) throw Object.assign(new Error("Fuigo compatibility could not be verified."), { code: "FUIGO_INCOMPATIBLE" });
   return proof;
 };
+/** The folder is its own realpath. Spelling may differ only by what comparable() folds (the win32 case, darwin NFC), and then every
+ * component must also be the same object as its real folder: not a link or junction, and the same dev/ino (a link 1.0.9-abc ->
+ * sibling 1.0.9-ABC on a case-sensitive Windows directory case-folds equal but is another folder). */
+async function sameFolder(folder: string): Promise<boolean> {
+  const real = await realpath(folder);
+  if (real === folder) return true;
+  if (comparable(real) !== comparable(folder)) return false;
+  for (let current = folder; ; current = dirname(current)) {
+    const own = await lstat(current, { bigint: true });
+    if (own.isSymbolicLink()) return false;
+    if (dirname(current) === current) return true;
+    const target = await stat(current === folder ? real : await realpath(current), { bigint: true });
+    if (own.dev !== target.dev || own.ino !== target.ino) return false;
+  }
+}
 export async function managedFuigoReceipt(root: string, id: string, cli?: string): Promise<FuigoReceipt | null> {
   if (!cli || !/^[A-Za-z0-9][\w.-]{0,79}$/.test(id)) return null;
   try {
@@ -245,11 +265,26 @@ export async function managedFuigoReceipt(root: string, id: string, cli?: string
     const parts = relative(parent, path).split(sep);
     if (parts.length !== 2 || !/^\d+\.\d+\.\d+-[0-9a-f-]+$/.test(parts[0]!) || !/^fuigo(?:\.exe)?$/.test(parts[1]!)) return null;
     const stat = await lstat(path);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_BINARY || await realpath(dirname(path)) !== dirname(path)) return null;
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_BINARY || !(await sameFolder(dirname(path)))) return null;
     const manifestPath = join(dirname(path), "manifest.json"), manifestStat = await lstat(manifestPath);
     if (!manifestStat.isFile() || manifestStat.isSymbolicLink() || manifestStat.size > 65536) return null;
     const value = JSON.parse(await readFile(manifestPath, "utf8")) as FuigoReceipt;
     if (value.schema !== 1 || value.instanceId !== id || !supportedFuigoVersion(value.version) || !/^[a-f0-9]{64}$/.test(value.binarySha256) || value.proof?.version !== value.version || value.proof.protocolVersion !== 1 || !value.proof.loadSession || !value.proof.sessionCreated) return null;
+    if (typeof value.previousManagedCli === "string") {
+      const previous = dataRoots().previousRoots();
+      const result = rebaseStoredPath(value.previousManagedCli, managedCliConstructors(value.previousManagedCli, id, previous), { previous });
+      // A refused rollback target is unavailable in memory; the receipt stays byte-identical.
+      if ("refused" in result) { const { previousManagedCli: _previous, ...rest } = value; return rest; }
+      if ("path" in result) {
+        // Only the application's managed store may be migrated, through DR4 and an atomic replacement.
+        if (resolve(root) !== join(DATA_DIR, "managed-engines")) return null;
+        const checked = ownedPath(dirname(manifestPath), { create: false });
+        const next = { ...value, previousManagedCli: result.path };
+        writeFileAtomic(join(checked.canonical, "manifest.json"), JSON.stringify(next, null, 2), { mode: 0o600 });
+        console.warn("data-dir-rebase kind=cli count=1");
+        return next;
+      }
+    }
     return value;
   } catch { return null; }
 }
