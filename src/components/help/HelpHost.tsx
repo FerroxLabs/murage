@@ -13,9 +13,12 @@ import { X } from "lucide-react";
 import { LazyBoundary, retryableLazy } from "@/components/LazyBoundary";
 import { focusableWithin, type TrapContainer, type TrapElement } from "@/lib/focus-trap";
 import { wrapTabTarget } from "@/lib/focus-wrap";
+import { openModalWindow, watchModalWindow } from "@/lib/modal-window";
 import type { FeedbackSurface } from "@/lib/feedback-surface";
 import type { HelpScreenInput } from "@/lib/screen-envelope";
-import { hx } from "./help-copy";
+// Main-pack words only: this part is in the first paint, so it never imports
+// the help copy store or hx (src/first-paint.test.ts).
+import { t } from "@/lib/i18n";
 
 // ── keys ─────────────────────────────────────────────────────────────────
 
@@ -153,7 +156,7 @@ export function HelpLauncher({ onOpen }: { onOpen: () => void }) {
     <button
       type="button"
       data-help-launcher
-      aria-label={hx("ux.l4a.panel.open")}
+      aria-label={t("ux.l4a.panel.open")}
       onClick={onOpen}
       className="fixed right-0 top-1/2 z-[80] flex size-11 -translate-y-1/2 items-center justify-center rounded-l-lg border border-r-0 border-hairline/50 bg-panel text-[16px] font-semibold text-ink-secondary shadow-xl hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-border"
     >
@@ -169,45 +172,9 @@ export function HelpLauncher({ onOpen }: { onOpen: () => void }) {
 // open, the tab and the panel are drawn inside it instead (a portal), which
 // keeps them usable and in that window's Tab order; help is still not a
 // modal of its own.
-export function openModalWindow(root: Pick<Document, "querySelectorAll"> = document): HTMLElement | null {
-  let found: HTMLElement[] = [];
-  try {
-    found = [...root.querySelectorAll<HTMLElement>("dialog:modal")];
-  } catch {
-    found = [...root.querySelectorAll<HTMLElement>("dialog[open]")];
-  }
-  return found.at(-1) ?? null;
-}
-type ObserverLike = Pick<MutationObserver, "observe" | "disconnect">;
-type ObserverMaker = new (callback: () => void) => ObserverLike;
-/** Calls `onChange` with the open modal window, now and whenever that changes:
- *  one watch on `open` attributes for the whole page (showModal and close set
- *  and clear it), plus, only while a window is held, a watch for that window
- *  being taken out of the page. Returns the stop. */
-export function watchModalWindow(
-  onChange: (host: HTMLElement | null) => void,
-  doc: Pick<Document, "querySelectorAll" | "body"> = document,
-  Observer: ObserverMaker = MutationObserver,
-): () => void {
-  let host: HTMLElement | null = null;
-  let removal: ObserverLike | null = null;
-  let first = true;
-  const update = () => {
-    const next = openModalWindow(doc);
-    if (next !== host || first) { host = next; first = false; onChange(host); }
-    if (host && !removal) {
-      removal = new Observer(() => { if (host && !host.isConnected) update(); });
-      removal.observe(doc.body, { childList: true, subtree: true });
-    } else if (!host && removal) {
-      removal.disconnect();
-      removal = null;
-    }
-  };
-  const opens = new Observer(update);
-  opens.observe(doc.body, { subtree: true, attributes: true, attributeFilter: ["open"] });
-  update();
-  return () => { opens.disconnect(); removal?.disconnect(); removal = null; };
-}
+// The watch itself is shared with the update pop-up (lib/modal-window.ts):
+// the top window is the one opened last, not the last in the page.
+export { openModalWindow, watchModalWindow };
 function useModalWindow(): HTMLElement | null {
   const [host, setHost] = useState<HTMLElement | null>(null);
   // Always watched, open or closed: the "?" tab has to be inside the window too.
@@ -225,6 +192,13 @@ function useModalWindow(): HTMLElement | null {
 export const loadHelpPanel = () => import("./HelpPanel");
 export const HelpOpenChunk = retryableLazy(() => loadHelpPanel().then((module) => ({ default: module.HelpOpen })));
 
+/** Help's words for its LazyBoundary, in the app's language: a chunk that
+ *  could not load and a panel that threw while drawing both say "Help could
+ *  not load." with Try again and Close help, never the global English lines. */
+export function helpBoundaryLabels(): { errorLabel: string; retryLabel: string; closeLabel: string } {
+  return { errorLabel: t("ux.l4a.panel.loadFailed"), retryLabel: t("ux.l4a.panel.retry"), closeLabel: t("ux.l4a.panel.close") };
+}
+
 /** Help's frame while the panel is loading or could not load: where the panel
  *  goes, with its Close, holding one line. data-help-panel keeps Esc and Tab
  *  help's here too, so Esc closes it. */
@@ -236,14 +210,14 @@ export function HelpFrame({ onClose, children }: { onClose: () => void; children
     <aside
       ref={frameRef}
       tabIndex={-1}
-      aria-label={hx("ux.l4a.panel.label")}
+      aria-label={t("ux.l4a.panel.label")}
       data-help-panel
       data-help-frame
       className="fixed outline-none inset-x-0 bottom-0 z-[80] flex flex-col rounded-t-2xl border-t border-hairline/50 bg-panel text-ink shadow-2xl min-[600px]:inset-x-auto min-[600px]:right-0 min-[600px]:top-0 min-[600px]:h-[var(--vvh,100%)] min-[600px]:w-[360px] min-[600px]:rounded-none min-[600px]:border-l min-[600px]:border-t-0"
     >
       <div className="flex min-h-14 items-center gap-2 border-b border-hairline/40 px-5">
-        <p className="min-w-0 flex-1 truncate text-[15px] font-semibold">{hx("ux.l4a.panel.label")}</p>
-        <button type="button" aria-label={hx("ux.l4a.panel.close")} onClick={onClose}
+        <p className="min-w-0 flex-1 truncate text-[15px] font-semibold">{t("ux.l4a.panel.label")}</p>
+        <button type="button" aria-label={t("ux.l4a.panel.close")} onClick={onClose}
           className="flex size-11 items-center justify-center rounded-lg text-ink-secondary hover:bg-app focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-border">
           <X size={16} aria-hidden />
         </button>
@@ -290,8 +264,8 @@ export function HelpHost({ surface, noEngines, enginesOff, firstRun, askSlot }: 
   // closed help never asks for it and never triggers chunk-reload.ts.
 
   const entry = !open ? <HelpLauncher onOpen={openPanel} /> : (
-    <LazyBoundary inline onRetry={HelpOpenChunk.retry} onDismiss={close} frame={(alert) => <HelpFrame onClose={close}>{alert}</HelpFrame>}>
-      <Suspense fallback={<HelpFrame onClose={close}><p role="status" data-help-loading className="text-ink-secondary">{hx("ux.l4a.panel.loading")}</p></HelpFrame>}>
+    <LazyBoundary inline onRetry={HelpOpenChunk.retry} onDismiss={close} frame={(alert) => <HelpFrame onClose={close}>{alert}</HelpFrame>} {...helpBoundaryLabels()}>
+      <Suspense fallback={<HelpFrame onClose={close}><p role="status" data-help-loading className="text-ink-secondary">{t("ux.l4a.panel.loading")}</p></HelpFrame>}>
         <HelpOpenChunk.Component surface={surface} noEngines={noEngines} enginesOff={enginesOff} firstRun={firstRun} askSlot={askSlot} onClose={close} onDismiss={dismiss} />
       </Suspense>
     </LazyBoundary>

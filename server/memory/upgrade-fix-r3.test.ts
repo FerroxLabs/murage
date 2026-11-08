@@ -414,7 +414,8 @@ it("R2-06: every connection that opens messages.db for writing installs the revi
   // memory/provenance-stamp.ts: its worker connection only reads (one BEGIN, one SELECT, COMMIT: the identity snapshot)
   // memory/optional-index.ts: its worker connection runs one CREATE INDEX (schema only, no row is written, so no revision moves)
   // memory/age-index.ts: opens memory-index.db only (the downgrade step's index-file half), never messages.db
-  const otherFiles = new Set(["memory/age-index.ts", "engine-fs.ts", "engine-structure-check.ts", "memory/cold-index-build.ts", "memory/optional-index.ts", "memory/provenance-stamp.ts", "wal-maintenance.ts", "memory/postings.ts", "inbox-fill-worker.ts", "send-store.ts", "skill-search.ts", "memory/schema.ts", "memory/testdata/v0161-schema.ts", "memory/index.ts", "installation-database-snapshot.ts", "connected-app-journal.ts", "conversation-deletion.ts", "engine-history-deletion.ts", "memory/root-set-compaction.ts", "memory/root-set-reclaim.ts", "memory/upgrade-counts.ts", "memory/eligibility.ts", "memory/index-reader.ts", "memory/owner-list.ts", "installation-activation.ts", "folder-trust.ts", "memory/revocation-index.bench.mjs"]);
+  // memory/index-wal.ts: the checked write path of memory-index.db only (MEMW WP1), never messages.db, so no revision trigger or epoch applies
+  const otherFiles = new Set(["memory/age-index.ts", "memory/index-wal.ts", "engine-fs.ts", "engine-structure-check.ts", "memory/cold-index-build.ts", "memory/optional-index.ts", "memory/provenance-stamp.ts", "wal-maintenance.ts", "memory/postings.ts", "inbox-fill-worker.ts", "send-store.ts", "skill-search.ts", "memory/schema.ts", "memory/testdata/v0161-schema.ts", "memory/index.ts", "installation-database-snapshot.ts", "connected-app-journal.ts", "conversation-deletion.ts", "engine-history-deletion.ts", "memory/root-set-compaction.ts", "memory/root-set-reclaim.ts", "memory/upgrade-counts.ts", "memory/eligibility.ts", "memory/index-reader.ts", "memory/owner-list.ts", "installation-activation.ts", "folder-trust.ts", "memory/revocation-index.bench.mjs"]);
   const found = files.map(path => ({ file: path.slice(root.length + 1).split("\\").join("/"), text: readFileSync(path, "utf8") })).filter(item => /new DatabaseSync\(/.test(item.text));
   // 1.0.9 Sentinel (GAP-SENTINEL-109): health files open only their own databases, never messages.db, so no revision can move.
   // health/stats-publisher.ts: its build worker creates a NEW db-stats-<generation>.sqlite inside health/ from observed figures
@@ -427,6 +428,9 @@ it("R2-06: every connection that opens messages.db for writing installs the revi
   // revision can move. transcript-read-worker.ts (rc11-prune, 2c42e8927) is the event-log prune's forgotten-message lookup off the main thread.
   // memory/worker.ts (1.0.3 lane 2): the memory helper's handle on the key table for the age fill of the search index.
   const readOnlyOpeners = new Set(["transcript-read-worker.ts", "memory/worker.ts"]);
+  // settle-copy.ts (SMOOTH-FTS-MERGE, 1.0.16) writes only PRIVATE copies of messages.db (a partial being settled, never the live file);
+  // each copy site that later replaces or restores messages.db from one already writes its own epoch.
+  otherFiles.add("settle-copy.ts");
   for (const { file, text } of found) {
     if (otherFiles.has(file)) continue;
     if (healthOwnFiles.has(file)) {

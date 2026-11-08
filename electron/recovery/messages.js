@@ -90,13 +90,28 @@
     [NOT_WRITABLE, ["BACKUP_FOLDER_NOT_WRITABLE"]],
     [IN_USE, ["BACKUP_FILE_IN_USE"]],
     [FOLDER_UNUSABLE, ["BACKUP_FOLDER_UNUSABLE"]],
-    ["You still have messages waiting to send or restore. Send or cancel them, then try again.", ["DOWNGRADE_WORK_PENDING"]],
+    ["Some phone calls are unfinished or their status is unknown. Reopen this version of Murage, finish or cancel them in Phone calls settings, then try again.", ["PHONE_CALLS_PENDING"]],
+    ["Murage could not read your phone call history. Keep this version installed and repair or restore the data before trying again.", ["PHONE_CALLS_UNREADABLE"]],
+    // The same code refuses for messages and restore holds, a held or posting bot Post (296e04a04), a teammate's reply still
+    // on its way and an edited conversation still being finished, so the sentence names every way out: act on it, or let it finish.
+    ["Some messages, bot posts or other work are still waiting. Open Murage, send, post or decline what is waiting, let the rest finish, then try again.", ["DOWNGRADE_WORK_PENDING"]],
     ["Some hand-offs are waiting for you. Send again or dismiss them, then try going back to the earlier version.", ["DOWNGRADE_HANDOFFS_HELD"]],
+    ["Murage could not finish clearing deleted conversations from search before going back to the earlier version. Your conversations are kept. Try going back to the earlier version again.", ["SEARCH_INDEX_NOT_SETTLED"]],
+    ["Murage could not finish writing your conversations database before going back to the earlier version. Your conversations are kept. Close anything else using Murage's data, then try going back to the earlier version again.", ["WAL_CHECKPOINT_INCOMPLETE"]],
     [CANCELLED, ["RECOVERY_CAPTURE_CANCELLED", "SNAPSHOT_CANCELLED"]],
     [EXPIRED, ["RECOVERY_SELECTION_EXPIRED"]],
     [CAPTURE_WINDOWS, ["RECOVERY_CAPTURE_UNAVAILABLE", "RECOVERY_CAPTURE_FAILED", "INVALID_RECOVERY_CAPTURE", "INVALID_RECOVERY_CAPTURE_RESULT"]],
   ];
-  const messages = {};
+  const messages = {
+  "BACKUP_UPGRADE_STAGED": "Murage is still installing the update. If this takes more than a few minutes, quit Murage, open Activity Monitor, select the process named ShipIt for Murage, and choose Force Quit. Then open Murage again. Your backup is kept.",
+  "BACKUP_UPGRADE_REVIEW_REQUIRED": "This check stopped without changing anything, because the update may still be installing. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+  "landed-not-running": "The updated app is on disk, but this copy is still running the older version. Choose Return to workspace to try opening the updated app once more, or quit and open the updated copy. Your backup is kept.",
+  "BACKUP_UPGRADE_CLEANUP_FAILED": "Murage could not finish closing its background work. Your backup is kept. Try again, or open the diagnostics folder for help.",
+  "return-unconfirmed": "The update was set aside and your backup was kept. Choose Return to workspace to try opening your workspace again.",
+  "BACKUP_UPGRADE_ACTION_UNAVAILABLE": "This update is paused. Choose Return to workspace or open diagnostics. Your backup is kept.",
+  "return-revoked": "Try Quit again, then open Murage. Your backup is kept.",
+  "installer-wait": "Murage is installing the update. Please wait. Your backup is kept."
+};
   for (const [sentence, codes] of groups) for (const code of codes) messages[code] = sentence;
 
   // Making a backup (Save an older-style .zip recovery file, Make a backup
@@ -132,6 +147,9 @@
    * `context.backupMode` whether this is the Backup mode page, and
    * `context.path` the item inside the data folder it was about. */
   const sentence = (code, context = {}) => {
+    // a voice reply still finishing (prepare-voice-finishing.mjs): the minutes left ride in the code
+    const voice = typeof code === "string" ? /^DOWNGRADE_VOICE_FINISHING_([1-9][0-9]?)$/.exec(code) : null;
+    if (voice) return `Murage is finishing a voice reply. Try again in about ${voice[1]} min. Your chats and memories are as they were.`;
     const capture = CAPTURE_ACTIONS.has(context.action);
     let text = (capture && captureMessages[code]) || messages[code] || DEFAULT;
     if (code === "RECOVERY_OWNERSHIP_REQUIRED" && context.backupMode) text = OWNER_BACKUP_MODE;

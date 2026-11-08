@@ -113,7 +113,9 @@ describe("the dialog, by state", () => {
   it("finishing", () => { expect(body({ phase: "finishing" })).toContain("Finishing"); });
   it("signed in says so and offers nothing else", () => {
     const out = body({ phase: "closed", result: "signed-in" });
-    expect(out).toContain("Signed in to Claude.");
+    expect(out).toContain("Sign-in checked for Claude.");
+    expect(out).toContain("use Check to try a reply");
+    expect(out).not.toContain("Signed in to Claude.");
     expect(out).not.toContain("<button");
   });
   it("not finished keeps Terminal as a choice, and an engine's own line comes first", () => {

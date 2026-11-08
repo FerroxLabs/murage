@@ -1,4 +1,6 @@
 import { ThreadLinkProvider } from "@/components/ThreadLinkMenu";
+import { DoneWhenLine } from "./DoneWhenLine";
+import { hasDoneWhenLine } from "@/lib/done-when-line";
 import { EmailSendCard, EmailTrustOfferCard } from "./EmailSendCard";
 import { BrowserSetupCard, McpEnableCard, McpSignInCard, PublishCard } from "./LazyChatCards";
 import { bubbleWidth } from "@/lib/reply-width";
@@ -19,6 +21,7 @@ import {
   Copy,
   ListTree,
   MessageSquareReply,
+  Minus,
   Pencil,
   Pin,
   PinOff,
@@ -60,6 +63,7 @@ import { claudeUpdateTarget } from "@/lib/claude-update";
 import { hermesPinNoteProfile, hermesPinNoteText } from "../../shared/hermes-pin-note";
 import { ProviderErrorCard } from "./ProviderErrorCard";
 import { RuntimeErrorCard } from "./RuntimeErrorCard";
+import { GatewayBusyCard, gatewayBusyReason } from "./GatewayBusyCard";
 import type { ProviderErrorInfo } from "../../shared/provider-error";
 import type { IncidentMessageSelection } from "./DiagnosticDetails";
 import { BotAvatar } from "./Avatar";
@@ -128,7 +132,7 @@ import { registerCallSlot } from "@/lib/call-slot";
 import { CallBarStrip } from "./CallControls";
 import { BotCallCard } from "./BotCallCard";
 import { speaker } from "@/lib/tts";
-import { useSpeech } from "@/lib/tts/useSpeech";
+import { useReadAloudSpeech } from "@/lib/tts/reply-speech";
 import { cn } from "@/lib/cn";
 import { useThreadOutcomes } from "@/lib/outcomes";
 import { useThreadChips } from "@/lib/learned-chips";
@@ -187,7 +191,7 @@ import { findTask, isTruncated } from "@/lib/task-window";
 import { holdChatError, raiseTransientError } from "@/state/chat-error";
 import { plainError } from "@/lib/plain-error";
 import { JumpToLatestButton } from "./JumpToLatestButton";
-import { canScroll, describeKeyTarget, jumpScrollBehavior, jumpToLatestVisible, keyBreaksFollow, useCanScroll } from "@/lib/transcript-viewport";
+import { canScroll, describeKeyTarget, jumpScrollBehavior, jumpToLatestVisible, keyBreaksFollow, shortTranscriptReveal, useCanScroll } from "@/lib/transcript-viewport";
 import { t } from "@/lib/i18n";
 import { copyOrReport, useCopyFeedback } from "@/lib/copy-text";
 
@@ -228,6 +232,8 @@ function TaskTimeline({ messages, busy }: { messages: Message[]; busy: boolean }
   const events = useMemo(() => timelineEvents(messages), [messages]);
   if (events.length === 0) return null;
   const recent = events.slice(-8);
+  // 1.0.18 U6 E15: steps whose turn ended with no recorded end, counted over the whole log
+  const noResult = events.filter((event) => event.state === "unrecorded").length;
   return (
     <div className="w-full px-5 pt-1">
       <button
@@ -236,7 +242,7 @@ function TaskTimeline({ messages, busy }: { messages: Message[]; busy: boolean }
         aria-expanded={open}
         className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[12.5px] text-ink-secondary hover:bg-raised/50 hover:text-ink"
       >
-        <span className="flex items-center gap-1.5"><ListTree size={14} /> Execution timeline{busy ? " · running" : ""}</span>
+        <span className="flex items-center gap-1.5"><ListTree size={14} /> Execution timeline{busy ? " · running" : ""}{noResult > 0 ? ` · ${t("timeline.noResultCount", { count: noResult })}` : ""}</span>
         <ChevronDown size={14} className={cn("transition-transform", open && "rotate-180")} />
       </button>
       {open && (
@@ -253,11 +259,14 @@ function TaskTimeline({ messages, busy }: { messages: Message[]; busy: boolean }
                       ? "bg-success"
                       : event.state === "running"
                         ? "animate-status-pulse bg-accent"
-                        : "bg-ink-secondary",
+                        : event.state === "unrecorded"
+                          ? "bg-ink-secondary/50"
+                          : "bg-ink-secondary",
                 )}
               />
-              <span className="sr-only">{event.state}: </span>
+              <span className="sr-only">{event.state === "unrecorded" ? t("toolChip.noResult") : event.state}: </span>
               <span className="truncate">{event.label}</span>
+              {event.state === "unrecorded" && <span data-testid="timeline-no-result" className="shrink-0">{t("toolChip.noResult")}</span>}
               <time className="ml-auto shrink-0 text-[11px] text-ink-secondary/70">{formatTime(event.at)}</time>
             </li>
           ))}
@@ -419,7 +428,7 @@ export function ErrorRow({ message, details, errorKind, localFailure, localFailu
   authRequired?: boolean; providerError?: ProviderErrorInfo; diagnostic?: unknown; turnId?: string; incident?:IncidentMessageSelection; onOpenProviderSettings: () => void;
 }) {
   const [authRecovered, setAuthRecovered] = useState(false);
-  if (providerError) return <ProviderErrorCard info={providerError} details={details} diagnostic={diagnostic} turnId={turnId} incident={incident} onRetry={onRetry} retryLabel={retryLabel} onOpenProviderSettings={onOpenProviderSettings} />;
+  if (providerError) return <ProviderErrorCard info={providerError} details={details} diagnostic={diagnostic} turnId={turnId} incident={incident} onRetry={onRetry} retryLabel={retryLabel} onOpenProviderSettings={onOpenProviderSettings} fuigoWall={fuigoWall} botName={botName} />;
   const forceSignIn = authRequired && !authRecovered;
   const needsSetup = setupInstance && (forceSignIn || !(setupInstance.snapshot.state === "available" && setupInstance.snapshot.authenticated !== false));
   if (claudeUpdateInstance) {
@@ -583,7 +592,7 @@ function Bubble({
   const user = message.role === "user";
   const [expanded, setExpanded] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
-  const speech = useSpeech();
+  const speech = useReadAloudSpeech();
   const text = message.text ?? "";
   // The webhook parser loads on first use (webhook-message-lazy.ts). Until it is
   // here, or if it cannot load, a message that may be a webhook run is held: it
@@ -622,7 +631,7 @@ function Bubble({
   // from the same predicates the rail is.
   const tts = state.config?.tts;
   const speakReady = Boolean(bot.voice || tts?.voice);
-  const speaking = isReading(speech, message.id);
+  const speaking = isReading(speech, message.id, bot.threadId);
   const actions: MessageAction[] = user
     ? [
         ...(webhookHeld
@@ -643,7 +652,7 @@ function Bubble({
               label: readAloudLabel({ playing: speaking, ready: speakReady }),
               icon: speaking ? <Square size={18} className="fill-current" /> : <Volume2 size={18} />,
               disabled: !speakReady && !speaking,
-              onSelect: () => toggleReadAloud(speaker, { text, botId: bot.id, messageId: message.id, voiceId: bot.voice }),
+              onSelect: () => toggleReadAloud(speaker, { text, threadId: bot.threadId, botId: bot.id, messageId: message.id, voiceId: bot.voice }),
             }]
           : []),
         ...(isLastBotText && !bot.busy && onRegenerate
@@ -855,7 +864,7 @@ function Bubble({
             <div className="flex flex-col gap-0.5 self-end pb-0.5">
               {text && <CopyButton text={text} />}
               {message.kind === "text" && text && (
-                <SpeakButton text={text} botId={bot.id} messageId={message.id} voiceId={bot.voice} />
+                <SpeakButton threadId={bot.threadId} text={text} botId={bot.id} messageId={message.id} voiceId={bot.voice} />
               )}
               <OutcomeRailButtons bot={bot} messageId={message.id} message={message} />
               {isLastBotText && !bot.busy && onRegenerate && (
@@ -987,6 +996,9 @@ function ActivityChip({ message, botName }: { message: Message; botName: string 
     );
   }
   const failed = tool.ok === false;
+  // 1.0.18 U6 E15: the turn ended with this step still open. A static icon and plain words, never the spinner; only the
+  // server's mark says so, so a live step (no mark) keeps its dots.
+  const noResult = tool.ok === undefined && tool.unrecorded === true;
   // The engine's own reason for the failure. Its first line reads as the
   // explanation; anything longer goes in Technical details, the same place
   // every other failure in the transcript keeps it.
@@ -1000,7 +1012,9 @@ function ActivityChip({ message, botName }: { message: Message; botName: string 
           className={cn(CHIP, failed ? "text-danger" : "text-ink-secondary")}
         >
           <span className="shrink-0">
-            {tool.ok === undefined ? (
+            {noResult ? (
+              <Minus size={13} aria-hidden="true" data-testid="tool-chip-no-result-icon" />
+            ) : tool.ok === undefined ? (
               <WorkingDots size={3.5} />
             ) : failed ? (
               <X size={13} />
@@ -1009,6 +1023,7 @@ function ActivityChip({ message, botName }: { message: Message; botName: string 
             )}
           </span>
           <span data-testid="tool-chip-name" className={cn(CHIP_NAME, "font-mono")}>{loopNoticeLabel(tool.name) ?? tool.name}</span>
+          {noResult && <span data-testid="tool-chip-no-result" className="shrink-0">{t("toolChip.noResult")}</span>}
           {/* not mono: the argument reads as prose beside the tool's name, and
               inherits the chip's colour so a failed call stays one piece */}
           {tool.summary && (
@@ -1017,6 +1032,7 @@ function ActivityChip({ message, botName }: { message: Message; botName: string 
             </span>
           )}
         </div>
+        <DoneWhenLine text={tool.doneWhen} />
         {reason && (
           <div className="min-w-0 max-w-full px-1 text-[12px] leading-relaxed text-ink-secondary">
             <p data-testid="tool-chip-reason" className="whitespace-pre-wrap break-words">{reason}</p>
@@ -1143,6 +1159,7 @@ const MessagesList = memo(function MessagesList({
         <div className="flex flex-1 flex-col items-center justify-center gap-3 py-24 text-center">
           <BotAvatar bot={bot} state="idle" size={64} motion="none" motionKey={0} />
           <RenameTitle
+            key={bot.id}
             value={bot.name}
             onCommit={(name) => dispatch({ type: "updateBot", botId: bot.id, patch: { name } })}
             className="text-[17px] font-semibold text-ink"
@@ -1354,6 +1371,9 @@ const MessagesList = memo(function MessagesList({
               const leftOut = imagesNotSent(m.tool?.name);
               if (leftOut) return <ImagesNotSentRow counts={leftOut} />;
               if (m.tool?.name.startsWith("error:")) {
+                // 1.0.18: a Fuigo / Flux refusal that is not a limit is ONE card (GatewayBusyCard), never a problem card plus a limit card.
+                const busyReason = gatewayBusyReason(m.tool.busy?.reason);
+                if (m.tool.busy && busyReason) return <GatewayBusyCard engine={m.tool.busy.engine} reason={busyReason} resetsAt={m.tool.busy.resetsAt} onRetry={m.id === messages.at(-1)?.id && canRetryLast ? onRegenerate : undefined} />;
                 return (
                   <ErrorRow
                     message={m.tool.name.slice(6).trim()}
@@ -1375,7 +1395,7 @@ const MessagesList = memo(function MessagesList({
                   />
                 );
               }
-              if (!showToolCalls && !m.comm) return null;
+              if (!showToolCalls && !m.comm && !hasDoneWhenLine(m.tool?.doneWhen)) return null;
               return <ActivityChip message={m} botName={bot.name} />;
             }
             case "screen":
@@ -1658,7 +1678,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   // shown: lib/stream-paint.ts); the stored message replaces it in place.
   const liveReply = useStreamPaint(streamPaintText(streaming, { busy: Boolean(bot.busy) }));
   const lastMessage = messages.at(-1);
-  const toolInFlight = lastMessage?.kind === "activity" && lastMessage.tool?.ok === undefined;
+  const toolInFlight = lastMessage?.kind === "activity" && lastMessage.tool?.ok === undefined && lastMessage.tool?.unrecorded !== true;
   // A turn queued behind another thread's folder, computer or browser says
   // what it is waiting for instead of "Thinking".
   const resourceWait = findTask(profile, bot.threadId)?.waitingFor;
@@ -1874,6 +1894,12 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
     if (hiddenCount > 0) showEarlier();
     else if (bot.hasMore) loadOlder();
   };
+  // An upward gesture over rows too short to scroll never fires onScroll: read back from here instead.
+  const revealWhenShort = () => {
+    const reveal = shortTranscriptReveal(scrollRef.current, hiddenCount, Boolean(bot.hasMore));
+    if (reveal === "showEarlier") showEarlier();
+    else if (reveal === "loadOlder") loadOlder();
+  };
 
   const showLater = () => {
     captureAnchor("last");
@@ -1998,13 +2024,13 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
           if (el && e.target === el && e.nativeEvent.offsetX >= el.clientWidth) setBottomFollow(false);
         }}
         onWheel={(e) => {
-          if (e.deltaY < 0) { if (canScroll(scrollRef.current) || !atLiveTail) setBottomFollow(false); }
+          if (e.deltaY < 0) { if (canScroll(scrollRef.current) || !atLiveTail) setBottomFollow(false); revealWhenShort(); }
           else if (atEnd()) setBottomFollow(true);
         }}
         onTouchStart={(e) => (touchY.current = e.touches[0]?.clientY ?? 0)}
         onTouchMove={(e) => {
           const y = e.touches[0]?.clientY ?? 0;
-          if (y > touchY.current + 4) { if (canScroll(scrollRef.current) || !atLiveTail) setBottomFollow(false); }
+          if (y > touchY.current + 4) { if (canScroll(scrollRef.current) || !atLiveTail) setBottomFollow(false); revealWhenShort(); }
           else if (atEnd()) setBottomFollow(true);
         }}
         onScroll={() => {
@@ -2118,7 +2144,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
             since={busySince}
           >
             {popping ? (
-              <div className="w-fit max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] max-md:max-w-full rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
+              <div className={cn(bubbleWidth(popping.text, false), "max-md:max-w-full rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink")}>
                 <MessageBoundary fallbackText={popping.text || "Generated image"}>
                   {poppingMessage?.attachments?.length ? (
                     <AttachedImageGallery

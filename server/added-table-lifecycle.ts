@@ -1,3 +1,4 @@
+import { THREAD_SUMMARY_TABLE, CHATS_GEN_TABLE } from "./thread-summary.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -9,6 +10,7 @@
 //     `sweepAddedOrphans` removes what the cascade cannot reach (a connection with foreign keys off, a restored file);
 //   - retained: rows are kept on purpose and pruned by the named function;
 //   - marker: derived data, a flag or a record with no growth, or rows removed by a trigger, with the reason.
+import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
 import type { DatabaseSync } from "node:sqlite";
 
 export type Lifecycle =
@@ -20,6 +22,8 @@ const derived = (what: string): Lifecycle => ({ kind: "marker", reason: `derived
 const trigger = (name: string): Lifecycle => ({ kind: "marker", reason: `rows are kept and removed by the ${name} triggers with the request they follow` });
 
 export const ADDED_TABLE_LIFECYCLE: Readonly<Record<string, Lifecycle>> = {
+  [THREAD_SUMMARY_TABLE]: { kind: "marker", reason: "one preview row per chat, rebuilt from the newest visible line when a line is forgotten" },
+  [CHATS_GEN_TABLE]: { kind: "marker", reason: "the single generation row; epoch and rev fence preview data across changes and restore" },
   // the branch index, the line index and the keyed indexes (branch-index.ts, keyed-cards.ts, message-image-paths.ts): small tables the message writers keep and a thread's fill builds
   thread_key: derived("branch index (a number per thread and how far its fill has got)"),
   seg: derived("branch index (segments of a thread's branches)"),
@@ -62,6 +66,19 @@ export const ADDED_TABLE_LIFECYCLE: Readonly<Record<string, Lifecycle>> = {
   shared_drain_sweep: { kind: "marker", reason: "one row: where the sweep of waiting teams goes on from" },
   // bot email (server/email/email-store.ts), 1.0.9: created only when email is in use
   email_bindings: { kind: "marker", reason: "one row per bot with an email address; replaced by a tombstone when the address is removed" },
+  venue_posts: { kind: "marker", reason: "one row per held Post in… post a bot made at Ask or Auto; the card is a view of it, a few small rows per owner answer" },
+  room_shares: { kind: "marker", reason: "one row per share card a bot offered a room (CROSS-CHAT-READ); the card is a view of it, and expireRoomShares empties the excerpts of a card left unanswered" },
+  // spoken replies (server/tts/reply-schema.ts), 1.0.18: metadata only, never source text, audio or a credential
+  speech_clock: { kind: "marker", reason: "the single monotonic clock row the spoken-reply state reads and advances" },
+  speech_threads: { kind: "marker", reason: "one revision counter row per conversation that has had an owner turn" },
+  speech_accounts: { kind: "marker", reason: "one row per speech provider binding and credential version, with its hold time" },
+  speech_plans: { kind: "marker", reason: "one row per speech account and plan fingerprint" },
+  speech_prompts: { kind: "marker", reason: "one row per owner prompt accepted in a direct chat or a room (tts/reply-state.ts acceptPrompt, prompt); nothing prunes it yet: open finding D24-SPEECH-RETENTION, owner MurageMain, 1.0.18" },
+  speech_generations: { kind: "marker", reason: "one row per eligible bot dispatch to the owner, direct or room (index.ts replyState.begin); nothing prunes it yet: open finding D24-SPEECH-RETENTION, owner MurageMain, 1.0.18" },
+  speech_settlements: { kind: "marker", reason: "one row per generation that completed with a reply message (tts/reply-state.ts settle); nothing prunes it yet: open finding D24-SPEECH-RETENTION, owner MurageMain, 1.0.18" },
+  speech_sessions: { kind: "marker", reason: "one row per spoken-reply session opened, a replacement on the same connection included; every start closes them all; nothing prunes it yet: open finding D24-SPEECH-RETENTION, owner MurageMain, 1.0.18" },
+  speech_attempts: { kind: "marker", reason: "one row per admitted speech attempt (a refusal before admission writes none); nothing prunes it yet: open finding D24-SPEECH-RETENTION, owner MurageMain, 1.0.18" },
+  speech_commands: { kind: "marker", reason: "one row per admitted or cancelled client command, kept so a repeat gets the same answer; nothing prunes it yet: open finding D24-SPEECH-RETENTION, owner MurageMain, 1.0.18" },
   email_sends: { kind: "marker", reason: "one row per email a bot wrote; settled rows are pruned by EmailStore.pruneSettledSends, open rows never" },
   email_payloads: { kind: "marker", reason: "the frozen bytes of an email, removed by EmailStore.pruneSettledSends 30 days after the send settles" },
   email_events: { kind: "marker", reason: "a cache of Flux email events for dedupe and reconcile, pruned by EmailStore.pruneEvents" },
@@ -101,7 +118,7 @@ export function ensureChildTable(db: DatabaseSync, name: string): void {
   if (/REFERENCES\s+room_requests/i.test(current)) return;
   // the parent may be absent in a database that never had projects: nothing then belongs to a request
   const keep = hasTable(db, entry.parent) ? ` WHERE EXISTS (SELECT 1 FROM ${entry.parent} p WHERE p.id=o.${entry.column})` : " WHERE 0";
-  db.exec("SAVEPOINT child_table_rebuild");
+  beginWrite(db, "child_table_rebuild");
   try {
     const old = `${name}__old`;
     db.exec(`ALTER TABLE ${quote(name)} RENAME TO ${quote(old)}`);
@@ -109,8 +126,8 @@ export function ensureChildTable(db: DatabaseSync, name: string): void {
     const columns = (db.prepare(`PRAGMA table_info(${quote(name)})`).all() as Array<{ name: string }>).map(column => quote(column.name));
     db.exec(`INSERT INTO ${quote(name)}(${columns.join(",")}) SELECT ${columns.map(column => `o.${column}`).join(",")} FROM ${quote(old)} o${keep}`);
     db.exec(`DROP TABLE ${quote(old)}`);
-    db.exec("RELEASE child_table_rebuild");
-  } catch (error) { db.exec("ROLLBACK TO child_table_rebuild"); db.exec("RELEASE child_table_rebuild"); throw error; }
+    endWrite(db, "child_table_rebuild");
+  } catch (error) { undoWrite(db, "child_table_rebuild"); throw error; }
 }
 
 /** Removes the rows of every child table whose request is gone. The cascade does this on a connection with foreign keys on; this is for the

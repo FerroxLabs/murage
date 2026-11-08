@@ -23,6 +23,7 @@
 // Ids live in memory_revocation_targets (job, kind, id, rev), paged by key: the job row (memory_scope_bindings, subject
 // 'system'/'memory-revocation') carries only the phase and a scalar cursor, so it stays under 1 KB and resumes after a restart
 // or any error; only completion removes it. When no job row waits, the runner fills the two late lookup tables instead.
+import { syncThreadSummary, bumpChatsGen } from "../thread-summary.ts";
 import { holdForgottenSources } from "../turn-source-holds.ts";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync, StatementSync } from "node:sqlite";
@@ -32,8 +33,8 @@ import { scrubWalAfterDelete } from "../wal-maintenance.ts";
 import { noteRevocation, revocationIndexReady, RECORD_REVOCATION_SCAN_SQL, RECORD_TOMBSTONE_AFFECTED, RECORD_TOMBSTONE_REVOCATION_SCAN_TAIL } from "./revocation.ts";
 import { newLearningPurgeCursor, purgeLearningStep, purgeEvolutionBinding, EVOLUTION_BINDING_SUBJECTS, type LearningPurgeCursor, type LearningLookup } from "./evolution-forgetting.ts";
 import { reconcilePipStances } from "./pip-stance.ts";
-import { beginRevokeMeasure, budgetedMarkerSlice, endRevokeMeasure, revokeSliceNeed, revokeWriteWaitMs } from "./revoke-budget.ts";
-import { enqueueReceipts, markerSlice, markerWorkPending, releaseHold } from "./revoke-marker.ts";
+import { beginRevokeMeasure, budgetedMarkerSlice, chargeRevokeRows, endRevokeMeasure, revokePaceNeed, revokePaceRows, revokePaceWaitMs, revokeSliceNeed, revokeWriteWaitMs } from "./revoke-budget.ts";
+import { enqueueReceipts, markerSlice, markerWorkPending, releaseHold, totalChanges } from "./revoke-marker.ts";
 import { setFlipWake } from "./receipt-outputs.ts";
 import { setSendFenceDeps } from "./send-fence.ts";
 import { MARKER_SLICE_ROWS } from "./lineage-types.ts";
@@ -70,11 +71,22 @@ export type ForgottenMessagesHook = (db: DatabaseSync, messageIds: string[], thr
 let forgottenMessagesHook: ForgottenMessagesHook | null = null;
 export function setForgottenMessagesHook(hook: ForgottenMessagesHook | null): void { forgottenMessagesHook = hook; }
 export function forgottenMessages(db: DatabaseSync, sourceIds: readonly string[]): void {
-  if (!forgottenMessagesHook || !sourceIds.length) return;
+  if (!sourceIds.length) return;
   const read = st(db, "SELECT message_id,thread_id FROM memory_sources WHERE id=?");
   const threadOf = new Map<string, string>();
   for (const id of sourceIds) { const row = read.get(id); if (typeof row?.message_id === "string" && typeof row.thread_id === "string" && row.message_id) threadOf.set(row.message_id, row.thread_id); }
-  if (threadOf.size) forgottenMessagesHook(db, [...threadOf.keys()], threadOf);
+  endedLines(db, sourceIds);
+  if (threadOf.size) forgottenMessagesHook?.(db, [...threadOf.keys()], threadOf);
+}
+
+/** Any ended or forgotten source line leaves its chat's All chats preview in the same transaction (thread_summary). */
+function endedLines(db: DatabaseSync, sourceIds: readonly string[]): void {
+  if (!sourceIds.length || !db.prepare("SELECT 1 FROM sqlite_schema WHERE name='thread_summary'").get()) return;
+  const threadOf = st(db, "SELECT thread_id FROM memory_sources WHERE id=?");
+  const threads = new Set<string>();
+  for (const id of sourceIds) { const t = threadOf.get(id)?.thread_id; if (typeof t === "string" && t) threads.add(t); }
+  for (const threadId of threads) syncThreadSummary(db, threadId);
+  if (threads.size) bumpChatsGen(db);
 }
 
 export type RevocationTarget = { id: string; rev: number | null };
@@ -341,6 +353,7 @@ function importsStep(db: DatabaseSync, job: RevocationJob, budget: Budget): bool
  * revoke's pending scope rows held them "checking" until here (the hold). */
 function importWindowStep(db: DatabaseSync, job: RevocationJob, c: Record<string, any>, budget: Budget): boolean {
   const target = job.imports!, n = heavy(budget);
+  const ended: string[] = [];
   const rows = st(db, "SELECT rowid AS rid,id,scope_id,content_hash,state FROM memory_sources WHERE rowid>? ORDER BY rowid LIMIT ?").all(Number(c.rid), n) as Array<{ rid: number; id: string; scope_id: string; content_hash: string; state: string }>;
   for (const row of rows) {
     if (row.scope_id !== target.scope || row.id === target.id || row.state === "deleted") continue;
@@ -348,7 +361,10 @@ function importWindowStep(db: DatabaseSync, job: RevocationJob, c: Record<string
     if (!st(db, "SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND revision IS NULL").get(row.id))
       st(db, "INSERT INTO memory_tombstones VALUES(?,'source',?,NULL,NULL,?,'forgotten-original',?)").run(randomUUID(), row.id, Number(st(db, "SELECT deletion_epoch FROM memory_meta WHERE id=1").get()!.deletion_epoch), Date.now());
     endSource(db, job, row.id, null);
+    ended.push(row.id);
   }
+  // A forgotten original's line leaves the All chats preview in the same step that ends it.
+  endedLines(db, ended);
   spend(budget, rows.length);
   if (rows.length === n) { c.rid = Number(rows[rows.length - 1]!.rid); return false; }
   if (job.revokeId) releaseHold(db, job.revokeId, job.id);
@@ -375,6 +391,7 @@ function threadStep(db: DatabaseSync, job: RevocationJob, budget: Budget): boole
     : st(db, "SELECT id,message_id FROM memory_sources WHERE thread_id=? AND message_id>? ORDER BY message_id LIMIT ?").all(job.thread!, c.message, n)) as Array<{ id: string; message_id?: string }>;
   const payload = JSON.stringify({ deleted: "thread-deleted" });
   for (const row of rows) endPlacedSource(db, job, String(row.id), "thread-deleted", payload);
+  endedLines(db, rows.map(row => String(row.id)));
   spend(budget, rows.length);
   if (rows.length === n) { if (c.tail) c.none = String(rows[rows.length - 1]!.id); else c.message = String(rows[rows.length - 1]!.message_id); return false; }
   if (!c.tail) { c.tail = true; return false; }
@@ -388,7 +405,10 @@ function scopeStep(db: DatabaseSync, job: RevocationJob, budget: Budget): boolea
   if (c.table === "sources") {
     const rows = st(db, "SELECT id,scope_id FROM memory_sources WHERE id>? ORDER BY id LIMIT ?").all(c.after, n);
     const payload = JSON.stringify({ deleted: "bot-deleted" });
-    for (const row of rows) if (scopes.has(String(row.scope_id))) endPlacedSource(db, job, String(row.id), "bot-deleted", payload);
+    const ended = rows.filter(row => scopes.has(String(row.scope_id))).map(row => String(row.id));
+    for (const id of ended) endPlacedSource(db, job, id, "bot-deleted", payload);
+    // a deleted bot's lines in rooms it shared leave those rooms' previews in this step
+    endedLines(db, ended);
     spend(budget, rows.length);
     if (rows.length === n) c.after = String(rows[rows.length - 1]!.id); else c.table = "records";
     return false;
@@ -993,6 +1013,9 @@ async function tick(): Promise<void> {
     // rather than stopping: a window the walk holds open reads "checking" to every turn until the walk is done (SELF-OVERLOAD-105 item 1c)
     const live = options.busy?.() === true;
     let marker = false;
+    // the pace (revoke-budget.ts r3.5) holds every transaction of the runner, job steps and late builds too: none starts while its minute is full
+    const paceWait = revokePaceWaitMs(revokePaceNeed(db));
+    if (paceWait > 0) { memoryRevocationStats.budgetWaits++; schedule(paceWait); return; }
     if (markerWorkPending(db)) {
       const wait = revokeWriteWaitMs(revokeSliceNeed(db));
       if (wait > 0) { memoryRevocationStats.budgetWaits++; schedule(wait); return; }
@@ -1017,16 +1040,28 @@ async function tick(): Promise<void> {
       // the runner wakes when the minute has room, never stops here
       if (moved === "budget" && !row) { budgetWait = true; more = true; }
       else if (row === null) { more = true; memoryRevocationStats.markerSlices++; }
-      else if (row) {
-        if (stepJobRow(db, row, rowsPerSlice, budget).done) jobEnded = true;
-        more = true;
-      } else if (lateBuildStep(db, rowsPerSlice)) { more = true; memoryRevocationStats.lateSlices++; }
+      else {
+        // a runner job step or a late build (r3.6, H4): its input rows are what the transaction has left of the commit cap; it is charged
+        // rows x C at once and measured into the pace at the COMMIT (an input row that fans out is bounded per input row; the next step waits)
+        const cap = revokePaceRows(db);
+        if (cap === 0) { budgetWait = true; more = true; }
+        else {
+          const before = totalChanges(db);
+          try {
+            if (row) {
+              if (stepJobRow(db, row, Math.min(rowsPerSlice, cap), budget).done) jobEnded = true;
+              more = true;
+            } else if (lateBuildStep(db, Math.min(rowsPerSlice, cap))) { more = true; memoryRevocationStats.lateSlices++; }
+          } finally { chargeRevokeRows(db, totalChanges(db) - before); }
+        }
+      }
       memoryRevocationStats.maxWorkMs = Math.max(memoryRevocationStats.maxWorkMs, performance.now() - t0);
       db.exec("COMMIT");
+      // measured right after its COMMIT, before anything else runs on this thread: for the pace always (whatever it held), and into C and
+      // admission only when it held the marker's slice and nothing else (a job step or a late build ran otherwise)
+      endRevokeMeasure(db, measure, moved === true);
       if (queueEmpty) noteRevocationQueueEmpty(); else if (jobEnded) noteRevocationJobEnded();
-      // measured only when the transaction held the marker's slice and nothing else (a job step or a late build ran otherwise)
-      if (moved === true) endRevokeMeasure(db, measure);
-    } catch (error) { if (db.isTransaction) { try { db.exec("ROLLBACK"); } catch { /* already rolled back */ } } throw error; }
+    } catch (error) { if (db.isTransaction) { try { db.exec("ROLLBACK"); } catch { /* already rolled back */ } } endRevokeMeasure(db, measure, false, false); throw error; }
     const ms = performance.now() - t0;
     if (!more) { running = false; wakeAll(); ranOut(); return; }
     if (budgetWait) { memoryRevocationStats.budgetWaits++; schedule(Math.max(1, revokeWriteWaitMs(revokeSliceNeed(db)))); return; }
@@ -1101,6 +1136,7 @@ export function drainRevokeMarkerBounded(db: DatabaseSync, budget: { rows: numbe
   const deadline = performance.now() + budget.ms;
   let rows = budget.rows;
   while (rows > 0 && performance.now() < deadline) {
+    revokePaceNeed(db); // the drain's outstanding copies are settled outside its transaction first: its own copy (revoke-budget.ts r3.6c)
     // the upgrade's slices take the background budget; the send fence (an owner's send is waiting) keeps the handle's owner wait
     if (options.background) beginBackground(db, "revoke-marker"); else db.exec("BEGIN IMMEDIATE");
     const measure = beginRevokeMeasure(db); // this drain's own transaction: its commit is measured into the cost estimate (revoke-budget.ts S2)
@@ -1109,6 +1145,7 @@ export function drainRevokeMarkerBounded(db: DatabaseSync, budget: { rows: numbe
     try { moved = budgetedMarkerSlice(db, Math.min(rows, MARKER_SLICE_ROWS), Math.max(1, deadline - performance.now()), lateBuildStep); db.exec("COMMIT"); endRevokeMeasure(db, measure); }
     catch (error) {
       if (db.isTransaction) { try { db.exec("ROLLBACK"); } catch { /* rolled back */ } }
+      endRevokeMeasure(db, measure, false, false);
       if (error instanceof Error && error.message === "MEMORY_REVOKE_NODE_UNREADABLE") return true;
       throw error;
     }

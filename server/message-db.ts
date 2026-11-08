@@ -1,3 +1,6 @@
+import { DATA_DIR } from "./config.ts";
+import { dataRoots, ownedPath } from "./data-roots.ts";
+import { rebaseAttachmentRecord } from "./attachment-paths.ts";
 // SQLite persistence for thread transcripts.
 //
 // messages-<threadId>.json rewrote the WHOLE thread file on every append —
@@ -11,6 +14,7 @@
 // no rows pulls the old file in, after which the DB is the source of
 // truth (the JSON file is left behind as a one-time backup).
 import { stampEmailDerived } from "./email/external-marks.ts";
+import { syncThreadSummary } from "./thread-summary.ts";
 import { noteThreadChanged, threadActivitySeq, threadsChangedSince } from "./thread-activity.ts";
 import { bumpForMessage, bumpMessagesVersion } from "./inbox-version.ts";
 import { initializeOwnerSends } from "./send-store.ts";
@@ -25,6 +29,7 @@ import { isOpenCardJson } from "./message-tables.ts";
 import { prioritizeThread, threadCardsReady, readIndexState, writeIndexState, attachmentNamesIn, keyedCardsOf, mayBeKeyed, startTranscriptBackfill, stepUpRow, type KeyedFamily } from "./transcript-backfill.ts";
 
 import { SEQ_INDEX, newestSeqOf, nextSeq, rowToMessage, seqOfRow, storedJson, threadNumbered } from "./transcript-seq.ts";
+import { checkStoredRow } from "./stored-row-check.ts";
 import { database as db, databaseGeneration, closeDatabase, transaction, withBusyBudget, BACKGROUND_BUSY_MS, isDatabaseBusy } from "./database.ts";
 import { browserCheckIndexExists, isPendingBrowserCheck } from "./message-tables.ts";
 import type { Message } from "./store.ts";
@@ -352,7 +357,7 @@ export function* branchLinesNewest(threadId: string, leafId: string | null, cls:
     if (!page.length) return;
     for (const row of page) {
       before = row.mrow;
-      if (branch.contains(row.mrow)) yield { mrow: row.mrow, message: row.message, after: (other) => branch.after(row.mrow, other) };
+      if (branch.contains(row.mrow) === true) yield { mrow: row.mrow, message: row.message, after: (other) => branch.after(row.mrow, other) };
     }
   }
 }
@@ -386,7 +391,9 @@ export function topRowsOnBranch(threadId: string, leafId: string | null, cls: nu
     if (!page.length) break;
     for (const row of page) {
       before = row.mrow;
-      if (!branch.contains(row.mrow) || !accept(row.message)) continue;
+      const onBranch = branch.contains(row.mrow);
+      if (onBranch === undefined) { more = true; continue; }
+      if (!onBranch || !accept(row.message)) continue;
       if (plain >= n) { more = true; break scan; } // an older one exists beyond the n plain rows in hand
       collected.push(row);
       if (branch.plain(row.mrow)) plain++;
@@ -399,7 +406,7 @@ export function topRowsOnBranch(threadId: string, leafId: string | null, cls: nu
 /** A row's place on the branch ending at `leafId`, for ordering it against another row of the branch (by the rowid it was found at). */
 export function rowPlace(threadId: string, leafId: string | null, mrow: number, message: Message): { message: Message; position: number; after: (other: number) => boolean } {
   const branch = branchRows(threadId, leafId);
-  return { message, position: mrow, after: (other) => branch.after(mrow, other) };
+  return { message, position: mrow, after: (other) => branch.contains(mrow) === true && branch.contains(other) === true && branch.after(mrow, other) };
 }
 
 /** The newest `limit` text lines of the branch ending at `leafId`, oldest first, and whether the branch has older ones. */
@@ -607,15 +614,17 @@ export function openRequestCards(threadId: string, limit: number): Array<{ messa
 /** One step up a branch (transcript-backfill.stepUpRow) as a Message. */
 function stepUp(threadId: string, id: string): { position: number; message: Message; parent: string | null } | null {
   const step = stepUpRow(db(), threadId, id);
-  return step ? { position: step.position, message: step.message as unknown as Message, parent: step.parent } : null;
+  return step && !("damaged" in step) ? { position: step.position, message: step.message as unknown as Message, parent: step.parent } : null;
 }
 
 /** Text lines of the branch ending at `leafId`, outward from `anchorId` in the branch's own order (what is older than the anchor for
  * "before", newer for "after"; nearest first), and whether the branch goes on past `need` of them. Order is the branch's, never storage
- * rowid, so a spliced row sits where the branch puts it. `anchorOnBranch` is false when the anchor is not on that branch at all. At most
+ * rowid, so a spliced row sits where the branch puts it. `anchorOnBranch` is false when the anchor is not on that branch, or `unknown`
+ * is true when an incomplete walk cannot place it. At most
  * `steps` rows of any kind are looked at; a stretch left unread says `more`. */
-export function textLinesAlongBranch(threadId: string, leafId: string | null, anchorId: string, direction: "before" | "after", need: number, steps = 480): { anchorOnBranch: boolean; rows: Message[]; more: boolean } {
+export function textLinesAlongBranch(threadId: string, leafId: string | null, anchorId: string, direction: "before" | "after", need: number, steps = 480): { anchorOnBranch: boolean; unknown?: boolean; rows: Message[]; more: boolean } {
   const gone = { anchorOnBranch: false, rows: [] as Message[], more: false };
+  const unknown = { ...gone, unknown: true, more: true };
   if (leafId === null) return gone;
   const anchor = messageRowid(threadId, anchorId);
   if (anchor === null) return gone;
@@ -627,13 +636,15 @@ export function textLinesAlongBranch(threadId: string, leafId: string | null, an
     // not prepared: the bounded walk up from the leaf, never a fill (the thread is queued for the background pass)
     const walk = boundedBranchWalk(threadId, leafId);
     const at = walk.rows.findIndex((row) => row.mrow === anchor);
-    if (at < 0) return gone;
+    if (at < 0) return walk.complete ? gone : unknown;
     const order = direction === "before" ? walk.rows.slice(at + 1) : walk.rows.slice(0, at).reverse();
     for (const row of order) if (add(rowToMessage(row))) return { anchorOnBranch: true, rows, more: true };
     return { anchorOnBranch: true, rows, more: direction === "before" && !walk.complete };
   }
   const branch = branchRows(threadId, leafId);
-  if (!branch.contains(anchor)) return gone;
+  const onBranch = branch.contains(anchor);
+  if (onBranch === undefined) return unknown;
+  if (!onBranch) return gone;
   if (direction === "before") {
     let cursor: string | null = stepUp(threadId, anchorId)?.parent ?? null, looked = 0;
     while (cursor !== null) {
@@ -742,6 +753,16 @@ function importLegacy(threadId: string, legacyFile: string): ThreadRows {
   // Re-sequenced: a legacy file is appended to in the order things happened, but a hand-edited or merged one may not be. Every imported line
   // takes its lsn (and its rowid) in time order, so a positional range written later (a forget of an early line) reads the thread as it was.
   // A stable sort: lines with the same time, or none, keep their place in the file.
+  // U4 S3: every line of the file passes the stored-row check before it is inserted, recorded or returned (a hand-edited or old file included)
+  messages = messages.map((message) => checkStoredRow(message));
+  messages = messages.map(message => {
+    const next = rebaseAttachmentRecord(message);
+    if (next !== message) {
+      ownedPath(DATA_DIR, { create: false });
+      console.warn("data-dir-rebase kind=attachment count=1");
+    }
+    return next;
+  });
   messages = messages.map((message, place) => ({ message, place })).sort((a, b) => (Number.isFinite(a.message.at) && Number.isFinite(b.message.at) ? a.message.at - b.message.at : 0) || a.place - b.place).map(item => item.message);
   const insert = db().prepare(
     "INSERT OR REPLACE INTO messages (thread_id, id, at, role, kind, text, json, seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -783,7 +804,7 @@ function importLegacy(threadId: string, legacyFile: string): ThreadRows {
  * The row's number (r7 R1): a REPLACE keeps the held key's number (bound explicitly); else a numbered thread (one with no rows
  * included) takes MAX(seq)+1 in this same write transaction; else NULL, and the walk numbers it at its rowid. `message.seq` is
  * set to what was stored (removed for NULL): every delivery path hands this same object on. The JSON never holds it. */
-function replaceRow(insert: StatementSync, threadId: string, message: Message, structure: "append" | "none" = "append"): void {
+function replaceRow(insert: StatementSync, threadId: string, message: Message, structure: "append" | "none" = "append", preview: "sync" | "defer" = "sync"): void {
   const prior = db().prepare("SELECT rowid AS position, seq FROM messages WHERE thread_id = ? AND id = ?").get(threadId, message.id) as
     | { position: number; seq: number | null }
     | undefined;
@@ -794,7 +815,7 @@ function replaceRow(insert: StatementSync, threadId: string, message: Message, s
   trackOpenCard(db(), threadId, message);
   trackBrowserCheck(db(), threadId, message);
   trackKeyedCards(db(), threadId, message, Boolean(prior));
-  afterInsert(db(), threadId, message, Number(result.lastInsertRowid), prior?.position, structure);
+  afterInsert(db(), threadId, message, Number(result.lastInsertRowid), prior?.position, structure, preview);
   trackImages(db(), threadId, message);
   trackAttachmentNames(db(), threadId, message);
   if (message.turnId) trackTurnFirst(threadId, message, Number(result.lastInsertRowid));
@@ -1000,7 +1021,7 @@ function recordLineage(threadId: string, message: Message, extra: readonly Linea
 
 /** Every message write goes through here with its lineage token (writeLineage, same transaction): a message cannot be stored without
  * it. A token with lsn 0 means no row was written, and the line reads "checking" (withheld) until one is. */
-function writeMessage(threadId: string, message: Message, lineage: LineageToken, reply?: ProviderReply, structure: "append" | "none" = "append"): void {
+function writeMessage(threadId: string, message: Message, lineage: LineageToken, reply?: ProviderReply, structure: "append" | "none" = "append", preview: "sync" | "defer" = "sync"): void {
   if (lineage.threadId !== threadId || lineage.messageId !== message.id) throw new Error("LINEAGE_TOKEN_MISMATCH: the lineage token names another line");
   setupFactsCache(db()).touch(threadId);
   // the chat's "left out of memory" line under an export paste: the server's mark, written with the row (capture.ts exportPasteNoted).
@@ -1014,6 +1035,7 @@ function writeMessage(threadId: string, message: Message, lineage: LineageToken,
     threadId,
     message,
     structure,
+    preview,
   );
   // the Flux Memory number hold, before capture and whatever the memory mode (flux-capture-hold.ts)
   noteFluxCaptureHold(db(), threadId, message);
@@ -1078,7 +1100,7 @@ export function appendMessage(threadId: string, message: Message, within?: () =>
   assertStillClassified(db(), threadId, message);
   transaction(() => {
     const previous = db().prepare("SELECT active_leaf_id FROM thread_state WHERE thread_id=?").get(threadId)?.active_leaf_id;
-    writeMessage(threadId, message, recordLineage(threadId, message, lineage), reply);
+    writeMessage(threadId, message, recordLineage(threadId, message, lineage), reply, "append", "defer");
     writeActiveLeaf(threadId, message.id);
     if ((message.parentId ?? null) !== (previous ?? null)) {
       captureBranchChange(db(), threadId, message.id, (previous as string | null | undefined) ?? null);
@@ -1136,7 +1158,7 @@ export function updateMessage(threadId: string, message: Message, within?: () =>
     trackOpenCard(database, threadId, message);
     trackBrowserCheck(database, threadId, message);
     trackKeyedCards(database, threadId, message, prior?.kind === "options" || mayBeKeyed(message));
-    if (prior) afterUpdate(database, threadId, message, prior.position, (prior.parent_type === null ? undefined : prior.parent) !== message.parentId, splicing);
+    if (prior) afterUpdate(database, threadId, message, prior.position, (prior.parent_type === null ? undefined : prior.parent) !== message.parentId, splicing, prior.kind);
     trackImages(database, threadId, message);
     trackAttachmentNames(database, threadId, message);
     noteFluxCaptureHold(database,threadId,message);
@@ -1430,6 +1452,7 @@ function writeActiveLeaf(threadId: string, leafId: string | null): void {
         "ON CONFLICT(thread_id) DO UPDATE SET active_leaf_id = excluded.active_leaf_id",
     )
     .run(threadId, leafId);
+  syncThreadSummary(db(), threadId);
   // A direct turn is in flight while the visible end of its thread is the person's own message (written when the turn is admitted, removed when anything
   // answers it): the boot sweep for interrupted turns reads this table alone.
   db().prepare("DELETE FROM direct_turn_inflight WHERE thread_id = ?").run(threadId);
@@ -1480,6 +1503,7 @@ export function deleteThread(threadId: string): void {
 }
 
 export interface SearchHit {
+  cursor?: string;
   threadId: string;
   messageId: string;
   at: number;
@@ -1579,12 +1603,13 @@ interface SearchRow {
  * shown a row the owner withheld from bots, and that is the default. */
 export interface SearchAudience {
   owner?: boolean;
+  /** Applied before LIMIT so hidden rows never consume a hit. */
+  rendered?: (threadId: string, message: Message) => boolean;
   /** "door": the caller applies the reader door's own verdict to every row, so the withheld-from-bots clause is dropped here and only text rows are
    * candidates. */
   judge?: "door";
   /** All chats and the bot chat pop-up (CHATS-FINDABILITY-DESIGN 3.5): a line the owner forgot is never a hit there, the owner included. A
-   * forgotten line is one stamped `withheldFromBots: "forgotten"`, or one whose message source the owner forgot (an owner-forget or
-   * forgotten-supporting-source tombstone) or whose source is deleted. Checked inside the verify, so LIMIT counts rows this view may show.
+   * forgotten line is one stamped `withheldFromBots: "forgotten"`, or one whose message source has any tombstone or is deleted. Checked inside the verify, so LIMIT counts rows this view may show.
    * Every other caller leaves it unset and is answered as before. */
   excludeForgotten?: boolean;
 }
@@ -1607,6 +1632,8 @@ export function searchMessagesWithMeta(
   threads?: string | readonly string[],
   audience: SearchAudience = {},
   before?: number,
+  beforeRowid?: number,
+  groupedWalk?: { budget: number; walked: number; position?: { at: number; rowid: number } },
 ): { hits: SearchHit[]; partial: boolean } {
   let partial = false;
   const needle = query.trim().toLowerCase();
@@ -1625,10 +1652,10 @@ export function searchMessagesWithMeta(
   const withheld = audience.owner || audience.judge === "door" ? "" : ` AND COALESCE(NULLIF(json_extract(m.json, '$.withheldFromBots'), 'checking'), 0) = 0 AND NOT ${murageVoiceSql("m")}`;
   // The forgotten-line exclusion (SearchAudience.excludeForgotten): after the LIKE, so only a matching row's JSON and its source are probed
   // (one primary-key probe of memory_sources, one range seek of memory_tombstones' target index per verified row).
-  const forgotten = audience.excludeForgotten
+  const forgotten = audience.excludeForgotten || (!audience.owner && audience.judge !== "door")
     ? " AND COALESCE(json_extract(m.json, '$.withheldFromBots'), '') IS NOT 'forgotten'" +
-      " AND NOT EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.target_type = 'source' AND t.target_id = 'message:' || m.thread_id || ':' || m.id" +
-      " AND t.reason IN ('owner-forget', 'forgotten-supporting-source'))" +
+      // any source tombstone ends the line here, whatever its reason (as replay-lineage.ts treats it): at worst an older line is shown
+      " AND NOT EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.target_type = 'source' AND t.target_id = 'message:' || m.thread_id || ':' || m.id)" +
       " AND NOT EXISTS (SELECT 1 FROM memory_sources s WHERE s.id = 'message:' || m.thread_id || ':' || m.id AND s.state = 'deleted')"
     : "";
   const doorOnly = audience.judge === "door";
@@ -1637,9 +1664,9 @@ export function searchMessagesWithMeta(
     : "((m.kind = 'text' AND m.text IS NOT NULL AND m.text LIKE ? ESCAPE '\\') " +
       "OR (m.kind = 'activity' AND json_extract(m.json, '$.tool.name') LIKE ? ESCAPE '\\'))";
   const verifyParams = (): string[] => (doorOnly ? [pattern] : [pattern, pattern]);
-  // `before` is a walk start and a final filter, never text in a walk's predicate: a row at exactly `before` is on no path.
-  const beforeSql = before === undefined ? "" : " AND m.at < ?";
-  const beforeParams: number[] = before === undefined ? [] : [before];
+  // `before` is a walk start and a final filter. A numeric cutoff excludes its timestamp; a page cursor also carries the rowid for ties.
+  const beforeSql = before === undefined ? "" : beforeRowid === undefined ? " AND m.at < ?" : " AND (m.at < ? OR (m.at = ? AND m.rowid < ?))";
+  const beforeParams: number[] = before === undefined ? [] : beforeRowid === undefined ? [before] : [before, before, beforeRowid];
   const handle = db();
   const scopeParams = threadIds ? [JSON.stringify([...threadIds])] : [];
   // Each chunk of candidate rowids is its own statement: the loop is held for at most one chunk, and the search stops as soon as it holds one
@@ -1656,12 +1683,13 @@ export function searchMessagesWithMeta(
     if (ids.length === 0) return [];
     const rows = handle.prepare(
       "SELECT m.thread_id, m.id, m.at, m.role, m.kind, m.text, json_extract(m.json, '$.tool.name') AS tool_name, json_extract(m.json, '$.from.name') AS from_name, m.rowid AS rid" +
-      `${audience.owner ? "" : ", m.json AS json"} FROM json_each(?) c CROSS JOIN messages m ON m.rowid = c.value WHERE ${scope}${verify}${withheld}${forgotten}${beforeSql}`,
-    ).all(JSON.stringify(ids), ...scopeParams, ...verifyParams(), ...beforeParams) as unknown as Array<SearchRow & { json?: string }>;
+      `${audience.owner && !audience.rendered ? "" : ", m.seq AS seq, m.json AS json"} FROM json_each(?) c CROSS JOIN messages m ON m.rowid = c.value WHERE ${scope}${verify}${withheld}${forgotten}${beforeSql}`,
+    ).all(JSON.stringify(ids), ...scopeParams, ...verifyParams(), ...beforeParams) as unknown as Array<SearchRow & { seq?: number | null; json?: string }>;
     // a `judge: "door"` caller (thread recall) runs the same door over every hit itself, so it can count what it holds back (checking,
     // could not be judged, partial); judged here too, those rows would vanish uncounted
-    if (audience.owner || doorOnly) return rows;
-    return searchDoor(handle, rows);
+    const visible = audience.rendered ? rows.filter(row => audience.rendered!(row.thread_id, { ...rowToMessage({ seq: row.seq, json: row.json! }), id: row.id, at: row.at, kind: row.kind } as Message)) : rows;
+    if (audience.owner || doorOnly) return visible;
+    return searchDoor(handle, visible);
   };
   const verified: SearchRow[] = [];
   /** One more than the page: holding it proves matches exist beyond what is returned. */
@@ -1669,7 +1697,19 @@ export function searchMessagesWithMeta(
   /** Newest hits first, one page. Chunks arrive newest-first, so a later chunk only fills the page when earlier ones could not. */
   const page = (): SearchRow[] => verified.sort((x, y) => y.at - x.at || (y.rid ?? 0) - (x.rid ?? 0)).slice(0, limit);
   const perThread = threadIds && threadIds.length <= SCOPED_WINDOW_THREADS ? [...threadIds] : null;
-  if ([...needle].length >= MIN_INDEXED_QUERY_CODEPOINTS && messageSearchIndexReady(handle)) {
+  if (groupedWalk) {
+    const budget = Math.max(1, Math.min(GROUPED_THREAD_ROWS, groupedWalk.budget));
+    const size = Math.min(SEARCH_CHUNK, budget);
+    const walk = mergeNewestFirst(["text", "activity"].map(kind =>
+      newestFirst(handle, "messages m", "m.kind = ? AND m.thread_id = ? AND ", [kind, threadIds![0]!], size, before, beforeRowid)));
+    while (groupedWalk.walked < budget) {
+      const got = walk.take(Math.min(size, budget - groupedWalk.walked));
+      groupedWalk.walked += got.length;
+      if (got.length) groupedWalk.position = got[got.length - 1];
+      verified.push(...verifyChunk(got.map(row => row.rowid)));
+      if (verified.length || !got.length || groupedWalk.walked === budget) { partial = walk.more(); break; }
+    }
+  } else if ([...needle].length >= MIN_INDEXED_QUERY_CODEPOINTS && messageSearchIndexReady(handle)) {
     // The trigram index names the candidates (code points, not UTF-16 units); they are verified in RESULT order, (at DESC, rowid DESC), because rowid is
     // insertion order and an import gives old messages new rowids.
     try {
@@ -1701,7 +1741,7 @@ export function searchMessagesWithMeta(
           walkWindow(perThread);
         } else {
           if (capped) { examined.length = TRIGRAM_CANDIDATE_CAP; partial = true; }
-          const all = examined.filter((row): row is { rowid: number; at: number; ok: number } => row.at !== null && Boolean(row.ok) && (before === undefined || row.at < before));
+          const all = examined.filter((row): row is { rowid: number; at: number; ok: number } => row.at !== null && Boolean(row.ok) && (before === undefined || row.at < before || row.at === before && beforeRowid !== undefined && row.rowid < beforeRowid));
           all.sort((x, y) => y.at - x.at || y.rowid - x.rowid);
           for (let i = 0; i < all.length && !enough(); i += SEARCH_CHUNK) verified.push(...verifyChunk(all.slice(i, i + SEARCH_CHUNK).map((row) => row.rowid)));
         }
@@ -1719,7 +1759,7 @@ export function searchMessagesWithMeta(
   function verifyNewestCandidates(candidates: number[]): void {
     if (candidates.length <= SEARCH_CHUNK) { verified.push(...verifyChunk(candidates)); return; }
     const unseen = new Set(candidates);
-    const walk = mergeNewestFirst([newestFirst(handle, "messages m INDEXED BY messages_at", "", [], WINDOW_CHUNK, before)]);
+    const walk = mergeNewestFirst([newestFirst(handle, "messages m INDEXED BY messages_at", "", [], WINDOW_CHUNK, before, beforeRowid)]);
     const pending: number[] = [];
     // verify what the walk has picked out once it can fill the rest of the page, a chunk at a time
     const flush = (all: boolean) => {
@@ -1752,8 +1792,8 @@ export function searchMessagesWithMeta(
   function walkWindow(threadsToWalk: string[] | null): void {
     const next = threadsToWalk
       ? mergeNewestFirst(threadsToWalk.flatMap((threadId) => (doorOnly ? ["text"] : ["text", "activity"]).map((kind) =>
-          newestFirst(handle, "messages m", "m.kind = ? AND m.thread_id = ? AND ", [kind, threadId], WINDOW_CHUNK, before))))
-      : mergeNewestFirst([newestFirst(handle, "messages m INDEXED BY messages_at", "", [], WINDOW_CHUNK, before)]);
+          newestFirst(handle, "messages m", "m.kind = ? AND m.thread_id = ? AND ", [kind, threadId], WINDOW_CHUNK, before, beforeRowid))))
+      : mergeNewestFirst([newestFirst(handle, "messages m INDEXED BY messages_at", "", [], WINDOW_CHUNK, before, beforeRowid)]);
     let looked = 0;
     for (;;) {
       const got = next.take(WINDOW_CHUNK);
@@ -1778,6 +1818,7 @@ export function searchMessagesWithMeta(
     const folded = needle.replace(/\s+/g, " ");
     const matchStart = snippet.toLowerCase().indexOf(folded);
     return {
+      cursor: `${row.at}:${row.rid}`,
       threadId: row.thread_id,
       messageId: row.id,
       at: row.at,
@@ -1806,10 +1847,10 @@ const newerFirst = (x: RowPosition, y: RowPosition) => y.at - x.at || y.rowid - 
  *  - `at = ? AND rowid < ? ORDER BY rowid DESC LIMIT n` then walks that one timestamp's rows, n at a time, backwards through the same index.
  * Each statement reads at most n index entries, so a walk's cost follows the rows it hands out, whatever the timestamps. `from` names the table
  * (and any INDEXED BY); `prefix` is the equality prefix of the index ("m.kind = ? AND m.thread_id = ? AND ", or ""). */
-function newestFirst(handle: DatabaseSync, from: string, prefix: string, prefixParams: readonly SQLInputValue[], size = WINDOW_CHUNK, below?: number): () => RowPosition[] {
+function newestFirst(handle: DatabaseSync, from: string, prefix: string, prefixParams: readonly SQLInputValue[], size = WINDOW_CHUNK, below?: number, belowRowid?: number): () => RowPosition[] {
   const older = handle.prepare(`SELECT m.rowid AS rowid, m.at AS at FROM ${from} WHERE ${prefix}m.at < ? ORDER BY m.at DESC LIMIT ?`);
   const tied = handle.prepare(`SELECT m.rowid AS rowid, m.at AS at FROM ${from} WHERE ${prefix}m.at = ? AND m.rowid < ? ORDER BY m.rowid DESC LIMIT ?`);
-  let at = below ?? Number.MAX_SAFE_INTEGER, tieBelow: number | null = null, done = false;
+  let at = below ?? Number.MAX_SAFE_INTEGER, tieBelow: number | null = belowRowid ?? null, done = false;
   return () => {
     while (!done) {
       if (tieBelow !== null) {
@@ -1886,4 +1927,39 @@ export function storedMessage(threadId: string, id: string): Message | null {
   const row = db().prepare("SELECT seq, json FROM messages WHERE thread_id=? AND id=?").get(threadId, id) as { seq: number | null; json?: string } | undefined;
   if (!row?.json) return null;
   try { return rowToMessage({ seq: row.seq, json: row.json }); } catch { return null; }
+}
+
+export const GROUPED_THREAD_ROWS = 4_000;
+export const GROUPED_WALK_ROWS = 20_000;
+export const groupedSearchWork = { rows: 0 };
+/** A bounded continuation walk sharing search's exact verification predicates. */
+export function newestVisibleHit(query: string, thread: string, budget: number, before?: { at: number; rowid: number }, rendered?: SearchAudience["rendered"]) {
+  const walk = { budget, walked: 0, position: before };
+  const result = searchMessagesWithMeta(query, SEARCH_CHUNK, [thread], { owner: true, excludeForgotten: true, rendered }, before?.at, before?.rowid, walk);
+  groupedSearchWork.rows += walk.walked;
+  return { hit: result.hits[0], hits: result.hits.length, countComplete: !result.partial, cut: !result.hits.length && result.partial, walked: walk.walked, position: walk.position };
+}
+
+/** Site 14: run before Store caches any transcript. JSON and the path/name indices commit together. */
+export function rebaseMessageAttachmentPaths(): number {
+  if (!dataRoots().previousRoots().length) return 0;
+  ownedPath(DATA_DIR, { create: false });
+  const count = transaction(database => {
+    let changed = 0;
+    const rows = database.prepare("SELECT thread_id, id, json FROM messages WHERE json_valid(json) AND json_type(json, '$.attachments') = 'array'").all() as Array<{ thread_id: string; id: string; json: string }>;
+    const update = database.prepare("UPDATE messages SET json=? WHERE thread_id=? AND id=?");
+    for (const row of rows) {
+      // the one decoder and the one encoder of a stored row (stored-row-check.test.ts, transcript-seq.server.test.ts)
+      const message = rowToMessage({ json: row.json });
+      const next = rebaseAttachmentRecord(message);
+      if (next === message) continue;
+      update.run(storedJson(next), row.thread_id, row.id);
+      trackImages(database, row.thread_id, next);
+      trackAttachmentNames(database, row.thread_id, next);
+      changed++;
+    }
+    return changed;
+  });
+  if (count) console.warn(`data-dir-rebase kind=attachment count=${count}`);
+  return count;
 }

@@ -21,6 +21,7 @@
 // lists outgrew a whole-thread budget). Past the node and receipt budgets a
 // caller that asks for failClosed gets the message withheld instead of an
 // error, so a turn never fails and never shows what it could not check.
+import { beginWrite, endWrite, undoWrite } from "../write-tx.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { ancestryUnrepaired, connectionId, database } from "../database.ts";
 import { memoryGate } from "./memory-gate.ts";
@@ -28,7 +29,7 @@ import { setMemoryCheckingSource } from "./integrity-flags.ts";
 import { authorityParts } from "./authority-epoch.ts";
 import { statementReusePassId, withStatementReuse, writeStamp } from "../io-budget.ts";
 import { supersededThreadCheckpoint, threadCheckpointId } from "./checkpoints.ts";
-import { ancestryThreadRepaired } from "./schema.ts";
+import { ancestryThreadRepaired, TOMBSTONE_FORGETS_INDEX } from "./schema.ts";
 import { allowanceHooks, LineageAllowance, ROWS_PER_NODE, TURN_LINEAGE_NODES, setTurnLineageNodesForTest } from "./lineage-allowance.ts";
 import { forgetRootSetHandles, handleFor, handleKeys, layeredOf, LayeredRoots, storeLayered, type Handle, type HandleCache, type ReadMeter, type RootView } from "./root-set-handles.ts";
 import { heldStep } from "../observe.ts";
@@ -220,6 +221,8 @@ export function forgottenMessageSources(threadId: string, messageIds: readonly s
   if (!messageIds.length) return out;
   const db = database(), prefix = `message:${threadId}:`;
   for (const id of messageIds) dep("s", `${prefix}${id}`);
+  // the thread's branch-change fence (deny.ts BRANCH_CHANGE_PENDING), which no source row change announces
+  dep("b", threadId);
   for (let at = 0; at < messageIds.length; at += 500) {
     const ids = JSON.stringify(messageIds.slice(at, at + 500).map(id => `${prefix}${id}`));
     for (const row of stmt(db, `SELECT value AS id FROM json_each(?1) WHERE EXISTS (SELECT 1 FROM memory_deny WHERE kind='thread' AND id=?2)
@@ -230,7 +233,7 @@ export function forgottenMessageSources(threadId: string, messageIds: readonly s
 }
 export function messageSourceForgotten(threadId: string, messageId: string): boolean {
   const db = database(), sourceId = `message:${threadId}:${messageId}`;
-  dep("s", sourceId);
+  dep("s", sourceId); dep("b", threadId);
   // deleted, or in a deleted conversation or bot (deny.ts) before the job marks it; a deleted conversation's uncaptured lines too
   const source = stmt(db, `SELECT (SELECT s.state FROM memory_sources s WHERE s.id=?1) AS state,
     EXISTS(SELECT 1 FROM memory_sources s WHERE s.id=?1 AND ${DENIED_SOURCE("s")}) OR EXISTS(SELECT 1 FROM memory_deny WHERE kind='thread' AND id=?2) AS denied`).get(sourceId, threadId);
@@ -238,29 +241,85 @@ export function messageSourceForgotten(threadId: string, messageId: string): boo
 }
 
 /** The forgotten message lines of a thread, with when each was written and forgotten (positionalWithheld). One range seek on the
- * tombstones' unique index over the thread's message source ids, at most 256 (past that: "many"), then a primary-key read of each
- * line; kept per thread until a forget moves the epoch or a tombstone is written. */
-const threadForgetsCache = new Map<string, { key: string; pass?: unknown; writes?: unknown; db?: object; forgets: Array<{ at: number; forgetAt: number; id: string }> | "many" }>();
-function threadForgets(db: DatabaseLike, threadId: string): Array<{ at: number; forgetAt: number; id: string }> | "many" {
-  // inside one synchronous pass with no write since, the list has not moved (the same reuse rule as lineageStamp)
+ * owner's forgets (TOMBSTONE_FORGETS_INDEX, else the thread's range of the unique index), at most FORGET_SCAN_MAX rows (past that, or past 256
+ * lines: "many"), then a primary-key read of each listed line: the cost is bounded, whatever the thread's history. It is read afresh on every call, and kept only inside one
+ * synchronous pass with no write through this connection since and no transaction open (TURNCACHE-FAILOPEN r3, MurageMain: a list kept
+ * across calls under a counter key twice failed open, Astra TCFO r1 H1 / r2 H1-H2, so there is none). */
+const threadForgetsPass = new Map<string, { pass: number; writes: number; db: object; forgets: Array<{ at: number; forgetAt: number; id: string }> | "many" }>();
+const threadForgetsWork = { seeks: 0, lines: 0, rows: 0, reads: 0 };
+/** The rows sourcesBad's positional meter charged (test hook: it equals the rows read). */
+const positionalWork = { paid: 0 };
+export function positionalPaidForTest(): number { return positionalWork.paid; }
+/** The most tombstone rows one forget-list read visits. */
+const FORGET_SCAN_MAX = 1024;
+/** The first page of a metered forget-list read: one node's rows (lineage-allowance.ts ROWS_PER_NODE). */
+const FORGET_FIRST_PAGE = ROWS_PER_NODE;
+/** Test hook: the forget-list range seeks, tombstone rows visited, listed-line key reads and positional row reads (cited line, turn_first,
+ * parent) executed so far. */
+export function threadForgetsWorkForTest(): { seeks: number; lines: number; rows: number; reads: number } { return { ...threadForgetsWork }; }
+/** Whether the forget-list index is absent from the schema (not built yet, or dropped by a downgrade): asked only after the indexed read
+ * failed, so the fallback is taken for a missing index and nothing else (Grok tcfo5 L). */
+export function forgetIndexMissing(db: DatabaseLike): boolean {
+  return !stmt(db, "SELECT 1 FROM sqlite_schema WHERE type='index' AND name=?").get(TOMBSTONE_FORGETS_INDEX);
+}
+/** (TCFO-METER) A meter on the allowance itself, for a caller outside a judge: a bounded read is reserved (allowance.reserveRows) and the
+ * rows read are paid (allowance.spendRows), so no positional row is read past the allowance (Grok tcfo5 M). */
+export function allowanceMeter(allowance: LineageAllowance, threadId: string): PositionalMeter {
+  return { reserve: rows => allowance.reserveRows(threadId, rows), pay: rows => { if (rows > 0) allowance.spendRows(threadId, rows); } };
+}
+/** How a metered caller pays for positionalWithheld's reads: `reserve` stops (throws) unless up to `rows` rows can be paid for, before a
+ * bounded read; `pay` charges rows actually read (or about to be read, when the count is known). TCFO-METER. */
+export interface PositionalMeter { reserve(rows: number): void; pay(rows: number): void }
+function threadForgets(db: DatabaseLike, threadId: string, meter?: PositionalMeter): Array<{ at: number; forgetAt: number; id: string }> | "many" {
   const pass = statementReusePassId(), writes = writeStamp(db as never);
-  const kept = threadForgetsCache.get(threadId);
-  if (kept && pass && writes !== undefined && kept.pass === pass && kept.writes === writes && kept.db === db) return kept.forgets;
-  const stamp = stmt(db, "SELECT (SELECT deletion_epoch FROM memory_meta WHERE id=1) AS e,(SELECT max(rowid) FROM memory_tombstones) AS t").get();
-  const key = `${stamp?.e}:${stamp?.t}`;
-  if (kept && kept.key === key) { Object.assign(kept, { pass, writes, db }); return kept.forgets; }
+  const reusable = pass !== 0 && writes !== undefined && !(db as { isTransaction?: boolean }).isTransaction;
+  const kept = reusable ? threadForgetsPass.get(threadId) : undefined;
+  if (kept && kept.pass === pass && kept.writes === writes && kept.db === db) return kept.forgets;
   const prefix = `message:${threadId}:`;
   // what the owner forgot (a line, or a memory resting on it), not a deleted bot's or conversation's bookkeeping
-  const rows = stmt(db, "SELECT target_id,min(created_at) AS f FROM memory_tombstones WHERE target_type='source' AND target_id>=? AND target_id<? AND reason IN ('owner-forget','forgotten-supporting-source') GROUP BY target_id LIMIT 257").all(prefix, `message:${threadId};`);
+  threadForgetsWork.seeks++;
+  // (Astra TCFO r3 H2) at most FORGET_SCAN_MAX tombstone rows are visited: by the forgets index when it is built (only the owner's forgets),
+  // else by the thread's range of the unique index (any reason). Past the bound the list is "many" (every generated line withheld: fail closed).
+  // (the index is asked for by using it: one statement per read, not a schema probe first; until it is built, or once a downgrade dropped it,
+  // the read turns to the bounded range scan. Which it is, the schema says (forgetIndexMissing), not the error's wording: an error with the
+  // index there is thrown on.)
+  const read = (limit: number): Array<Record<string, unknown>> => {
+    try {
+      return stmt(db, `SELECT target_id,created_at,1 AS kept FROM memory_tombstones INDEXED BY ${TOMBSTONE_FORGETS_INDEX} WHERE target_type='source' AND reason IN ('owner-forget','forgotten-supporting-source') AND target_id>=?1 AND target_id<?2 ORDER BY target_id LIMIT ?3`).all(prefix, `message:${threadId};`, limit);
+    } catch (error) {
+      if (!forgetIndexMissing(db)) throw error;
+      return stmt(db, `SELECT target_id,created_at,reason IN ('owner-forget','forgotten-supporting-source') AS kept FROM memory_tombstones WHERE target_type='source' AND target_id>=?1 AND target_id<?2 LIMIT ?3`).all(prefix, `message:${threadId};`, limit);
+    }
+  };
+  // (TCFO-METER) a metered caller reserves each bounded read before it is made and is charged the rows it read: a first page the size of one
+  // node, and only when that is full the whole bound (its first rows read again, and paid again). A reservation that cannot be made throws
+  // (the caller's limit), so nothing is read unpaid and the line is withheld unproven.
+  meter?.reserve(FORGET_FIRST_PAGE);
+  let raw = read(FORGET_FIRST_PAGE);
+  threadForgetsWork.rows += raw.length; meter?.pay(raw.length);
+  if (raw.length >= FORGET_FIRST_PAGE) {
+    meter?.reserve(FORGET_SCAN_MAX + 1);
+    raw = read(FORGET_SCAN_MAX + 1);
+    threadForgetsWork.rows += raw.length; meter?.pay(raw.length);
+  }
+  const first = new Map<string, number>();
+  for (const row of raw) if (row.kept) { const id = String(row.target_id), at = Number(row.created_at); if (!first.has(id) || at < first.get(id)!) first.set(id, at); }
+  const rows = [...first].map(([target_id, f]) => ({ target_id, f }));
   let forgets: Array<{ at: number; forgetAt: number; id: string }> | "many" = [];
-  if (rows.length > 256) forgets = "many";
-  else for (const row of rows) {
+  if (raw.length > FORGET_SCAN_MAX || rows.length > 256) forgets = "many";
+  else if (rows.length) meter?.pay(rows.length);
+  if (forgets !== "many") for (const row of rows) {
+    threadForgetsWork.lines++;
     const id = String(row.target_id).slice(prefix.length);
     const line = stmt(db, "SELECT at FROM messages WHERE thread_id=? AND id=?").get(threadId, id);
-    if (line) forgets.push({ at: Number(line.at), forgetAt: Number(row.f), id });
+    // a forgotten line with no row yet is listed too (NaN orders before nothing): a verdict depends on its row arriving (TURNCACHE-FAILOPEN)
+    forgets.push({ at: line ? Number(line.at) : NaN, forgetAt: Number(row.f), id });
   }
-  if (threadForgetsCache.size >= 256) threadForgetsCache.delete(threadForgetsCache.keys().next().value!);
-  threadForgetsCache.set(threadId, { key, pass, writes, db, forgets });
+  if (!reusable) return forgets;
+  // one pass's lists only: a list from an earlier pass is never read again
+  for (const [thread, entry] of threadForgetsPass) if (entry.pass !== pass) threadForgetsPass.delete(thread);
+  if (threadForgetsPass.size >= 256) threadForgetsPass.delete(threadForgetsPass.keys().next().value!);
+  threadForgetsPass.set(threadId, { pass, writes: writes!, db, forgets });
   return forgets;
 }
 /** Generated lines of a thread written after a line the owner forgot, by a turn that began before that forget: the reply may
@@ -269,15 +328,25 @@ function threadForgets(db: DatabaseLike, threadId: string): Array<{ at: number; 
  * a forget made while the turn ran still covers its reply. Owner and person lines are never withheld this way. Past 256 forgotten
  * lines in one thread every generated line counts (fail closed). Bounded: the cached forget list plus a few primary-key reads per
  * line, nothing when the thread has no forgotten line. */
-export function positionalWithheld(threadId: string, messageIds: Iterable<string>): Set<string> {
-  const out = new Set<string>();
+export function positionalWithheld(threadId: string, messageIds: Iterable<string>, meter?: PositionalMeter): Set<string> {
+  const out = new Set<string>(), ids = [...messageIds];
+  if (!ids.length) return out;
   const db = database();
-  const forgets = threadForgets(db, threadId);
+  // (TCFO-METER) `meter`, when given, pays for each read before it is made (and throws when it cannot: fail closed)
+  const pay = (rows: number) => meter?.pay(rows);
+  const done = <T>(value: T): T => { threadForgetsWork.reads++; return value; };
+  // What a kept verdict read here (TURNCACHE-FAILOPEN): the thread's forget list ("p", moved by any source tombstone of the thread),
+  // each line's own row and the rows it is timed by ("m": at, role, turnId, parentId, the row arriving), and the turn's first row ("f").
+  dep("p", threadId);
+  const forgets = threadForgets(db, threadId, meter);
   if (forgets !== "many" && !forgets.length) return out;
+  if (forgets !== "many") for (const forget of forgets) dep("m", threadId, forget.id);
   const line = stmt(db, "SELECT at,role,json_extract(json,'$.turnId') AS turn,json_extract(json,'$.parentId') AS parent FROM messages WHERE thread_id=? AND id=?");
-  const atOf = (id: unknown) => typeof id === "string" ? stmt(db, "SELECT at FROM messages WHERE thread_id=? AND id=?").get(threadId, id)?.at : undefined;
-  for (const id of messageIds) {
-    const row = line.get(threadId, id);
+  const atOf = (id: unknown) => { if (typeof id !== "string") return undefined; dep("m", threadId, id); pay(1); return done(stmt(db, "SELECT at FROM messages WHERE thread_id=? AND id=?").get(threadId, id))?.at; };
+  for (const id of ids) {
+    dep("m", threadId, id);
+    pay(1);
+    const row = done(line.get(threadId, id));
     if (!row || row.role === "user") continue;
     if (forgets === "many") { out.add(id); continue; }
     const at = Number(row.at);
@@ -287,7 +356,10 @@ export function positionalWithheld(threadId: string, messageIds: Iterable<string
       if (at < forget.forgetAt) { out.add(id); break; }
       if (start === undefined) {
         // the turn's first row (turn_first), else this line: its parent was there when the turn was put together
-        const first = typeof row.turn === "string" ? stmt(db, "SELECT json_extract(m.json,'$.parentId') AS parent FROM turn_first f JOIN messages m ON m.rowid=f.first_rowid WHERE f.thread_id=? AND f.turn_id=?").get(threadId, row.turn) : undefined;
+        if (typeof row.turn === "string") { dep("f", threadId, row.turn); pay(1); }
+        const first = typeof row.turn === "string" ? done(stmt(db, "SELECT m.thread_id AS thread,m.id AS id,json_extract(m.json,'$.parentId') AS parent FROM turn_first f JOIN messages m ON m.rowid=f.first_rowid WHERE f.thread_id=? AND f.turn_id=?").get(threadId, row.turn)) : undefined;
+        // its parent is read from it: a change to that row is a change to this verdict (Astra TCFO r1 H2)
+        if (first) dep("m", String(first.thread), String(first.id));
         const parentAt = atOf(first ? first.parent : row.parent);
         start = parentAt === undefined || parentAt === null ? at : Number(parentAt);
       }
@@ -396,7 +468,14 @@ export function contentRevoked(allowance: LineageAllowance, row: Disclosure, thr
     for (const source of sources) {
       dep("s", source.id);
       const bad = once(`s\u0000${source.id}\u0000${source.revision}`, () => {
-        const current = stmt(db, `SELECT s.state,s.revision,${DENIED_SOURCE("s")} AS denied FROM memory_sources s WHERE s.id=?`).get(source.id);
+        const current = stmt(db, `SELECT s.state,s.revision,s.thread_id,s.kind,${DENIED_SOURCE("s")} AS denied FROM memory_sources s WHERE s.id=?`).get(source.id);
+        // its conversation's branch-change fence (deny.ts BRANCH_CHANGE_PENDING): read in the same memo scope as recordDep's keys
+        if (typeof current?.thread_id === "string") dep("b", current.thread_id);
+        // a bring-in copy is denied by its origins too (deny.ts DENIED_SOURCE): each origin its current payload names is read, so its "s" key
+        // (state, revision, scope, tombstones) reaches this verdict (Astra TCFO r1 H4). Only bring-ins pay for it.
+        if (current?.kind === "bring-in") for (const origin of stmt(db, "SELECT DISTINCT json_extract(oj.value,'$.id') AS id FROM memory_source_versions ov, json_each(ov.payload,'$.broughtFrom.sources') oj WHERE ov.source_id=? AND ov.revision=?").all(source.id, current.revision)) {
+          if (typeof origin.id === "string") dep("s", origin.id);
+        }
         return !current || current.state!=="active" || current.revision!==source.revision || Boolean(current.denied) || Boolean(stmt(db, "SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(source.id,source.revision));
       });
       if (bad) return true;
@@ -545,6 +624,24 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
     checkBase = null; checkKept = null;
   };
   const charge = (count=1) => { nodes+=count; rowsRead+=count; spend(count); if(nodes>(nodeBudgetOverride ?? REPLAY_NODE_BUDGET)) throw limit(); };
+  /** (TCFO-METER) positionalWithheld's reads paid from this judge's own charge: a bounded read is reserved first (the judge's node budget and
+   * the allowance's room), and the rows read are charged, ROWS_PER_NODE to a node rounded up. Past what it can pay the check cannot finish
+   * (MEMORY_REPLAY_LIMIT), so the line is withheld unproven, never shown unread. One meter per call. */
+  const judgeMeter = (): PositionalMeter => {
+    let positionalRows = 0, positionalNodes = 0;
+    const owedFor = (rows: number) => Math.ceil((positionalRows + rows) / ROWS_PER_NODE) - positionalNodes;
+    return {
+      reserve: rows => {
+        if (nodes + Math.max(0, owedFor(rows)) > (nodeBudgetOverride ?? REPLAY_NODE_BUDGET)) throw limit();
+        try { allowance.reserveRows(threadId, rows); } catch (error) { exhausted = true; throw error; }
+      },
+      pay: rows => {
+        const owed = owedFor(rows);
+        positionalRows += rows; positionalWork.paid += rows;
+        if (owed > 0) { charge(owed); positionalNodes += owed; }
+      },
+    };
+  };
   const READ_FREE_ROWS = 64;
   /** Index rows read, paid for ROWS_PER_NODE to a node (a share of a node each, never free: a history-sized read is paid for by its rows). */
   let readDebt = 0;
@@ -1145,6 +1242,11 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
         }
         messages = unjudged;
       }
+      // (Astra TCFO r3 H1) a cited reply judged here (not through a kept verdict) is timed against its conversation's forgets as its own
+      // verdict would be (badRoots, capturedMessageVerdicts): written after a line the owner forgot, by a turn begun before the forget, it may
+      // repeat the forgotten words. Its keys ("p", "m", "f") are this verdict's too.
+      // (TCFO-METER) paid from this check's own charge (judgeMeter)
+      if (positionalWithheld(thread, messages, judgeMeter()).size) return true;
       if (anyProducerBad(thread, messages, depth+1)) return true;
       for (const message of messages) {
         // a reply made without a receipt rests on the replies its context carried
@@ -1170,6 +1272,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
     if (pending.length) {
       const ids = JSON.stringify(pending.map(message => `message:${thread}:${message}`));
       for (const message of pending) dep("s", `message:${thread}:${message}`);
+      dep("b", thread);
       rowsRead += pending.length;
       const forgotten = new Set([
         ...stmt(db, `SELECT s.id FROM memory_sources s WHERE s.id IN (SELECT value FROM json_each(?)) AND (s.state='deleted' OR ${DENIED_SOURCE("s")})`).all(ids).map(row => String(row.id)),
@@ -1178,7 +1281,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
       // a deleted conversation's lines, and a line written after one the owner forgot (1.0.2 revoke-bounded r3)
       let deniedThread = threadDeny.get(thread);
       if (deniedThread === undefined) { deniedThread = Boolean(stmt(db, "SELECT 1 FROM memory_deny WHERE kind='thread' AND id=?").get(thread)); threadDeny.set(thread, deniedThread); }
-      const positional = deniedThread ? new Set<string>() : positionalWithheld(thread, pending);
+      const positional = deniedThread ? new Set<string>() : positionalWithheld(thread, pending, judgeMeter());
       const rest: string[] = [];
       for (const message of pending) {
         if (deniedThread || positional.has(message) || forgotten.has(`message:${thread}:${message}`)) rootVerdicts.set(rootKey(thread, message), true); else rest.push(message);
@@ -1371,7 +1474,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
     }
     return false;
   };
-  return { settle, verdicts, producers, listingAny, session, sessionProven, groupBad, originBad, rootsBad, badSets, chunkBad };
+  return { settle, judgeMeter, verdicts, producers, listingAny, session, sessionProven, groupBad, originBad, rootsBad, badSets, chunkBad };
 }
 
 /** The ids among `messages` a reader may no longer be shown. `audience` null:
@@ -1394,7 +1497,19 @@ function replayExclusionsWork(allowance: LineageAllowance, threadId: string, mes
     // revoke-bounded r3). Bounded reads outside the kept verdicts (the stricter reader layer the write-time slices replace).
     for (const id of forgottenMessageSources(threadId, messages.filter(message => !excluded.has(message.id)).map(message => message.id))) { excluded.add(id); options.checking?.delete(id); }
     // (retired: the positional rule is deny_range, written at the forget's commit)
-    if (!retired) for (const id of positionalWithheld(threadId, messages.filter(message => !excluded.has(message.id)).map(message => message.id))) excluded.add(id);
+    // (TCFO-METER) paid on the allowance; one it cannot pay withholds every generated line left (fail closed, "still being checked")
+    if (!retired) {
+      const left = messages.filter(message => !excluded.has(message.id));
+      let positional: Set<string>;
+      try { positional = positionalWithheld(threadId, left.map(message => message.id), allowanceMeter(allowance, threadId)); }
+      catch (error) {
+        if (!options.failClosed || !isLineageLimit(error)) throw error;
+        noteWithheldOnError(error);
+        positional = new Set(left.filter(message => message.role !== "user").map(message => message.id));
+        for (const id of positional) options.checking?.add(id);
+      }
+      for (const id of positional) excluded.add(id);
+    }
     return excluded;
   }));
 }
@@ -1767,11 +1882,31 @@ const NOTE = (key: string) => `INSERT INTO lineage_dirty VALUES(${key})`;
 const BUMP = "UPDATE lineage_epoch SET n=n+1";
 /** The root-set handles (root-set-handles.ts) are immutable data of immutable set rows: only a change to those rows can make one stale. */
 const STRUCT = "UPDATE lineage_structure SET n=n+1";
-const TOMBSTONE_NOTE = (row: "NEW" | "OLD") => `INSERT INTO lineage_dirty SELECT (CASE ${row}.target_type WHEN 'source' THEN 's' ELSE 'q' END)||char(31)||${row}.target_id;
+// A tombstone on a message source ("message:<thread>:<line>") also moves that conversation's forget list (threadForgets, read by
+// positionalWithheld under the "p" key). The trigger notes the target itself ("P"); drainDirty turns it into the "p" key of every thread
+// whose forget-list range holds it, read from the id alone, so a source with no row yet is covered and an unrelated thread keeps its
+// verdicts. TURNCACHE-FAILOPEN.
+const TOMBSTONE_NOTE = (row: "NEW" | "OLD") => `INSERT INTO lineage_dirty SELECT 's'||char(31)||${row}.target_id WHERE ${row}.target_type='source';
+ INSERT INTO lineage_dirty SELECT 'q'||char(31)||${row}.target_id WHERE ${row}.target_type IS NOT 'source';
+ INSERT INTO lineage_dirty SELECT 'P'||char(31)||${row}.target_id WHERE ${row}.target_type='source' AND substr(${row}.target_id,1,8)='message:';
  UPDATE lineage_epoch SET n=n+1 WHERE ${row}.target_type NOT IN ('source','record')`;
-const RECORD_CHANGED = "OLD.state IS NOT NEW.state OR OLD.owner_pinned IS NOT NEW.owner_pinned OR OLD.assertion IS NOT NEW.assertion OR OLD.supersedes_id IS NOT NEW.supersedes_id OR OLD.kind IS NOT NEW.kind";
+/** The thread ids whose forget list (threadForgets: target_id >= 'message:<thread>:' AND < 'message:<thread>;') holds a source tombstone
+ * target: one for every ':' after the prefix, since a thread id may hold ':' itself. */
+export function forgetListThreads(target: string): string[] {
+  const out: string[] = [];
+  if (!target.startsWith(FORGET_PREFIX)) return out;
+  for (let at = target.indexOf(":", FORGET_PREFIX.length); at !== -1; at = target.indexOf(":", at + 1)) out.push(target.slice(FORGET_PREFIX.length, at));
+  return out;
+}
+const FORGET_PREFIX = "message:";
+// scope_id: a record or source moved into a denied scope is refused from then on (deny.ts DENIED_RECORD_SCOPE, DENIED_PLACE).
+const RECORD_CHANGED = "OLD.state IS NOT NEW.state OR OLD.owner_pinned IS NOT NEW.owner_pinned OR OLD.assertion IS NOT NEW.assertion OR OLD.supersedes_id IS NOT NEW.supersedes_id OR OLD.kind IS NOT NEW.kind OR OLD.scope_id IS NOT NEW.scope_id";
 // A checkpoint version archived by its roll, nothing else about it changed (authority-epoch.ts treats the same transition).
-const CHECKPOINT_ROLL = "OLD.kind='checkpoint' AND NEW.kind='checkpoint' AND OLD.state='active' AND NEW.state='archived' AND OLD.owner_pinned=0 AND NEW.owner_pinned=0 AND OLD.assertion IS NEW.assertion AND OLD.supersedes_id IS NEW.supersedes_id";
+const CHECKPOINT_ROLL = "OLD.kind='checkpoint' AND NEW.kind='checkpoint' AND OLD.state='active' AND NEW.state='archived' AND OLD.owner_pinned=0 AND NEW.owner_pinned=0 AND OLD.assertion IS NEW.assertion AND OLD.supersedes_id IS NEW.supersedes_id AND OLD.scope_id IS NEW.scope_id";
+/** The fields of a stored line positionalWithheld times it by: when it was written, who wrote it, its turn and its parent. A text that is
+ * not JSON counts as a change (as copyFieldsChanged). */
+const POSITION_CHANGED = (o: string, n: string) => `(${o}.at IS NOT ${n}.at OR ${o}.role IS NOT ${n}.role OR (${o}.json IS NOT ${n}.json AND CASE WHEN json_valid(${o}.json) AND json_valid(${n}.json)
+   THEN json_extract(${o}.json,'$.turnId') IS NOT json_extract(${n}.json,'$.turnId') OR json_extract(${o}.json,'$.parentId') IS NOT json_extract(${n}.json,'$.parentId') ELSE 1 END))`;
 const EPOCH_SCHEMA = `
 CREATE TEMP TABLE IF NOT EXISTS lineage_epoch(id INTEGER PRIMARY KEY CHECK(id=1), n INTEGER NOT NULL);
 INSERT OR IGNORE INTO temp.lineage_epoch VALUES(1,0);
@@ -1782,7 +1917,7 @@ CREATE TEMP TRIGGER IF NOT EXISTS lineage_sources_u AFTER UPDATE ON main.memory_
  WHEN OLD.speaker IS NOT NEW.speaker OR OLD.thread_id IS NOT NEW.thread_id OR OLD.message_id IS NOT NEW.message_id
  BEGIN ${BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_sources_s AFTER UPDATE ON main.memory_sources
- WHEN (OLD.state IS NOT NEW.state OR OLD.revision IS NOT NEW.revision OR OLD.content_hash IS NOT NEW.content_hash) AND NOT (OLD.speaker IS NOT NEW.speaker OR OLD.thread_id IS NOT NEW.thread_id OR OLD.message_id IS NOT NEW.message_id)
+ WHEN (OLD.state IS NOT NEW.state OR OLD.revision IS NOT NEW.revision OR OLD.content_hash IS NOT NEW.content_hash OR OLD.scope_id IS NOT NEW.scope_id) AND NOT (OLD.speaker IS NOT NEW.speaker OR OLD.thread_id IS NOT NEW.thread_id OR OLD.message_id IS NOT NEW.message_id)
  BEGIN ${NOTE("'s'||char(31)||OLD.id")}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_sources_d AFTER DELETE ON main.memory_sources BEGIN ${BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_records_u AFTER UPDATE ON main.memory_records WHEN (${RECORD_CHANGED}) AND NOT (${CHECKPOINT_ROLL})
@@ -1809,6 +1944,9 @@ CREATE TEMP TRIGGER IF NOT EXISTS lineage_derivations_u AFTER UPDATE ON main.mem
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_derivations_d AFTER DELETE ON main.memory_derivations BEGIN ${BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_evidence_u AFTER UPDATE ON main.memory_evidence BEGIN ${BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_evidence_d AFTER DELETE ON main.memory_evidence BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_deny_i AFTER INSERT ON main.memory_deny BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_deny_u AFTER UPDATE ON main.memory_deny BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_deny_d AFTER DELETE ON main.memory_deny BEGIN ${BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_meta_u AFTER UPDATE ON main.memory_meta
  WHEN OLD.policy_revision IS NOT NEW.policy_revision OR OLD.deletion_epoch IS NOT NEW.deletion_epoch OR OLD.mode IS NOT NEW.mode BEGIN ${BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_outputs_i AFTER INSERT ON main.memory_disclosure_outputs BEGIN ${NOTE("'m'||char(31)||NEW.thread_id||char(31)||NEW.message_id")}; END;
@@ -1824,6 +1962,13 @@ CREATE TEMP TRIGGER IF NOT EXISTS lineage_root_set_rows_d AFTER DELETE ON main.m
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_root_set_rows_u AFTER UPDATE ON main.memory_root_sets BEGIN ${NOTE("'x'||char(31)||OLD.set_id")}; ${NOTE("'x'||char(31)||NEW.set_id")}; ${STRUCT}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_root_parents_d AFTER DELETE ON main.memory_root_set_parents BEGIN ${NOTE("'x'||char(31)||OLD.set_id")}; ${STRUCT}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_root_parents_u AFTER UPDATE ON main.memory_root_set_parents BEGIN ${NOTE("'x'||char(31)||OLD.set_id")}; ${NOTE("'x'||char(31)||NEW.set_id")}; ${STRUCT}; END;
+-- (TURNCACHE-FAILOPEN) a member row changed in place, and a member or parent link added to a set that may already be read (compaction
+-- adds parent links to existing sets; the parent statements are INSERT OR REPLACE): the set's "x" key. A set whose row is already stored
+-- is complete and may hold a handle (writers store the row last: schema.ts chainStore), so the handles go too (Astra TCFO r1 H3); a set
+-- still being written has no row, no handle and no verdict, and costs one primary-key probe.
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_root_sets_u AFTER UPDATE ON main.memory_root_set_members BEGIN ${NOTE("'x'||char(31)||OLD.set_id")}; ${NOTE("'x'||char(31)||NEW.set_id")}; ${STRUCT}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_root_sets_i AFTER INSERT ON main.memory_root_set_members BEGIN ${NOTE("'x'||char(31)||NEW.set_id")}; UPDATE lineage_structure SET n=n+1 WHERE EXISTS (SELECT 1 FROM main.memory_root_sets r WHERE r.set_id=NEW.set_id); END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_root_parents_i AFTER INSERT ON main.memory_root_set_parents BEGIN ${NOTE("'x'||char(31)||NEW.set_id")}; UPDATE lineage_structure SET n=n+1 WHERE EXISTS (SELECT 1 FROM main.memory_root_sets r WHERE r.set_id=NEW.set_id); END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_receipts_u AFTER UPDATE ON main.memory_disclosures WHEN OLD.record_versions IS NOT NEW.record_versions OR OLD.source_versions IS NOT NEW.source_versions OR OLD.native_session IS NOT NEW.native_session
  BEGIN INSERT INTO lineage_dirty SELECT 'm'||char(31)||thread_id||char(31)||message_id FROM main.memory_disclosure_outputs WHERE bundle_id=NEW.bundle_id;
  INSERT INTO lineage_dirty SELECT 'm'||char(31)||o.thread_id||char(31)||o.message_id FROM main.memory_disclosures l JOIN main.memory_disclosure_outputs o ON o.bundle_id=l.bundle_id
@@ -1839,15 +1984,66 @@ CREATE TEMP TRIGGER IF NOT EXISTS lineage_receipts_g AFTER UPDATE ON main.memory
  WHEN OLD.record_versions IS NOT NEW.record_versions OR OLD.source_versions IS NOT NEW.source_versions OR OLD.thread_id IS NOT NEW.thread_id OR OLD.bundle_id IS NOT NEW.bundle_id
  BEGIN ${NOTE("'d'||char(31)||OLD.thread_id")}; ${NOTE("'d'||char(31)||NEW.thread_id")}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_receipts_gd AFTER DELETE ON main.memory_disclosures BEGIN ${NOTE("'d'||char(31)||OLD.thread_id")}; END;
-CREATE TEMP TRIGGER IF NOT EXISTS lineage_messages_u AFTER UPDATE ON main.messages WHEN ${copyFieldsChanged("OLD.json", "NEW.json")}
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_messages_u AFTER UPDATE ON main.messages WHEN ${copyFieldsChanged("OLD.json", "NEW.json")} OR ${POSITION_CHANGED("OLD", "NEW")}
  BEGIN ${NOTE("'m'||char(31)||NEW.thread_id||char(31)||NEW.id")}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_messages_d AFTER DELETE ON main.messages BEGIN ${BUMP}; END;
 -- INSERT OR REPLACE (writeMessage) deletes and re-inserts without firing the UPDATE or DELETE triggers (recursive triggers are off): the
 -- replaced row is looked at before it goes, the same condition as lineage_messages_u.
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_messages_r BEFORE INSERT ON main.messages
- WHEN EXISTS (SELECT 1 FROM main.messages o WHERE o.thread_id=NEW.thread_id AND o.id=NEW.id AND ${copyFieldsChanged("o.json", "NEW.json")})
+ WHEN EXISTS (SELECT 1 FROM main.messages o WHERE o.thread_id=NEW.thread_id AND o.id=NEW.id AND (${copyFieldsChanged("o.json", "NEW.json")} OR ${POSITION_CHANGED("o", "NEW")}))
  BEGIN ${NOTE("'m'||char(31)||NEW.thread_id||char(31)||NEW.id")}; END;
+-- (TURNCACHE-FAILOPEN, Astra r12 E4) a line judged while its row was missing (a receipt's output can be written before its message): the
+-- row arriving is a change. One primary-key probe and at most one dirty row per new line.
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_messages_i BEFORE INSERT ON main.messages
+ WHEN NOT EXISTS (SELECT 1 FROM main.messages o WHERE o.thread_id=NEW.thread_id AND o.id=NEW.id)
+ BEGIN ${NOTE("'m'||char(31)||NEW.thread_id||char(31)||NEW.id")}; END;
+-- (TURNCACHE-FAILOPEN) the turn index (branch-fill.ts fills it in slices, branch-index.ts resets it): a turn's start moves ("f" key)
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_turn_first_i AFTER INSERT ON main.turn_first BEGIN ${NOTE("'f'||char(31)||NEW.thread_id||char(31)||NEW.turn_id")}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_turn_first_u AFTER UPDATE ON main.turn_first BEGIN ${NOTE("'f'||char(31)||OLD.thread_id||char(31)||OLD.turn_id")}; ${NOTE("'f'||char(31)||NEW.thread_id||char(31)||NEW.turn_id")}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_turn_first_d AFTER DELETE ON main.turn_first BEGIN ${NOTE("'f'||char(31)||OLD.thread_id||char(31)||OLD.turn_id")}; END;
+-- (TURNCACHE-FAILOPEN) a pending branch change withholds its conversation's sources until it is flipped (deny.ts BRANCH_CHANGE_PENDING):
+-- the fence being stored, moved or cleared reaches every kept verdict that read a source of that conversation ("b" key)
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_branch_change_i AFTER INSERT ON main.branch_change BEGIN ${NOTE("'b'||char(31)||NEW.thread_id")}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_branch_change_u AFTER UPDATE ON main.branch_change WHEN OLD.thread_id IS NOT NEW.thread_id BEGIN ${NOTE("'b'||char(31)||OLD.thread_id")}; ${NOTE("'b'||char(31)||NEW.thread_id")}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_branch_change_d AFTER DELETE ON main.branch_change BEGIN ${NOTE("'b'||char(31)||OLD.thread_id")}; END;
+-- (TURNCACHE-FAILOPEN) a source version's payload names a bring-in's origins (deny.ts DENIED_SOURCE): any change to a version row is a
+-- change to its source ("s" key)
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_source_versions_i AFTER INSERT ON main.memory_source_versions
+ WHEN EXISTS (SELECT 1 FROM main.memory_sources s WHERE s.id=NEW.source_id AND s.revision=NEW.revision) BEGIN ${NOTE("'s'||char(31)||NEW.source_id")}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_source_versions_u AFTER UPDATE ON main.memory_source_versions
+ WHEN EXISTS (SELECT 1 FROM main.memory_sources s WHERE (s.id=OLD.source_id AND s.revision=OLD.revision) OR (s.id=NEW.source_id AND s.revision=NEW.revision))
+ BEGIN ${NOTE("'s'||char(31)||OLD.source_id")}; ${NOTE("'s'||char(31)||NEW.source_id")}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_source_versions_d AFTER DELETE ON main.memory_source_versions
+ WHEN EXISTS (SELECT 1 FROM main.memory_sources s WHERE s.id=OLD.source_id AND s.revision=OLD.revision) BEGIN ${NOTE("'s'||char(31)||OLD.source_id")}; END;
 `;
+/** One row per (trigger, key kind) of the lineage cache triggers above: what each write invalidates. kind is a dirty-key letter (see
+ * drainDirty; "P" expands to "p" keys), "epoch" (the whole cache) or "structure" (the stored root-set handles). rows says which row the
+ * key is read from. Read from EPOCH_SCHEMA itself, so it cannot drift from what is installed (TURNCACHE-FAILOPEN; TURNSTART r14 T11(f)
+ * and T12 read it). A (table, op, kind) can have more than one trigger (memory_records UPDATE "c", messages INSERT "m"): key on trigger. */
+export interface InvalidationRow { readonly trigger: string; readonly timing: "BEFORE" | "AFTER"; readonly op: "INSERT" | "UPDATE" | "DELETE"; readonly table: string; readonly kind: string; readonly rows: "OLD" | "NEW" | "OLD+NEW"; readonly when: string | null }
+function invalidationSet(schema: string): readonly InvalidationRow[] {
+  const out: InvalidationRow[] = [];
+  const trigger = /CREATE TEMP TRIGGER IF NOT EXISTS (\w+) (BEFORE|AFTER) (INSERT|UPDATE|DELETE) ON main\.(\w+)([\s\S]*?)\bBEGIN\b([\s\S]*?)\bEND;/g;
+  for (const match of schema.matchAll(trigger)) {
+    const [, name, timing, op, table, head, body] = match;
+    const when = head.trim().replace(/^WHEN\s+/, "").replace(/\s+/g, " ") || null;
+    const kinds = new Map<string, Set<string>>();
+    for (const statement of body.split(";")) {
+      const found = [...statement.matchAll(/'(\w)'\|\|char\(31\)/g)].map(m => m[1]);
+      if (/UPDATE lineage_epoch SET n=n\+1/.test(statement)) found.push("epoch");
+      if (/UPDATE lineage_structure SET n=n\+1/.test(statement)) found.push("structure");
+      const refs = [/\bOLD\./.test(statement) && "OLD", /\bNEW\./.test(statement) && "NEW"].filter(Boolean) as string[];
+      for (const kind of found) { const set = kinds.get(kind) ?? new Set<string>(); for (const ref of refs) set.add(ref); kinds.set(kind, set); }
+    }
+    for (const [kind, refs] of kinds) {
+      const rows = refs.size === 2 ? "OLD+NEW" : refs.has("OLD") ? "OLD" : refs.has("NEW") ? "NEW" : op === "INSERT" ? "NEW" : op === "DELETE" ? "OLD" : "OLD+NEW";
+      out.push(Object.freeze({ trigger: name, timing: timing as InvalidationRow["timing"], op: op as InvalidationRow["op"], table, kind, rows, when }));
+    }
+  }
+  return Object.freeze(out);
+}
+/** What every lineage cache trigger invalidates (see InvalidationRow). */
+export const INVALIDATION_SET: readonly InvalidationRow[] = invalidationSet(EPOCH_SCHEMA);
 const epochReady = new WeakMap<object, boolean>();
 function installEpoch(db: ReturnType<typeof database>): boolean {
   let ready = epochReady.get(db);
@@ -1874,6 +2070,8 @@ function drainDirty(db: ReturnType<typeof database>): void {
     const key = String(row.k);
     // a receipt of this thread was changed or removed: the kept groups of the thread are read afresh
     if (key.startsWith(`d${SEP}`)) { threadGroupStore.delete(key.slice(2)); continue; }
+    // a source tombstone's target: the forget list of each thread whose range holds it (TURNCACHE-FAILOPEN)
+    if (key.startsWith(`P${SEP}`)) { for (const thread of forgetListThreads(key.slice(2))) keys.add(`p${SEP}${thread}`); continue; }
     // a checkpoint that was rolled still has an active newer version: nothing about its tolerance changed
     if (key.startsWith(`c${SEP}`) && stmt(db, "SELECT 1 FROM memory_records WHERE id=? AND state='active' LIMIT 1").get(key.slice(2))) continue;
     // a version rolled: only verdicts that read it as an ordinary record ("r") move; one read as its thread's own checkpoint ("t") holds
@@ -2033,13 +2231,11 @@ const keepRefused = (): boolean => txnTainted && database().isTransaction;
  * used was forgotten, deleted or changed, or it is a copy of a message that
  * is. Checks it cannot finish withhold it. */
 export function capturedMessageWithheld(allowance: LineageAllowance, threadId: string, messageId: string): boolean {
-  return (!readTimeRetired(database()) && positionalWithheld(threadId, [messageId]).has(messageId)) || capturedMessageVerdicts(allowance, threadId, [messageId]).get(messageId)!.withheld;
+  return capturedMessageVerdicts(allowance, threadId, [messageId]).get(messageId)!.withheld;
 }
 /** The same answer with why: `unproven` when it is withheld only because the check could not finish (shown as "still being checked",
  * never as deleted or changed). */
 export function capturedMessageVerdict(allowance: LineageAllowance, threadId: string, messageId: string): { withheld: boolean; unproven: boolean } {
-  // a line written after one the owner forgot, by a turn begun before that forget (1.0.2 revoke-bounded r3): withheld, proven
-  if (!readTimeRetired(database()) && positionalWithheld(threadId, [messageId]).has(messageId)) return { withheld: true, unproven: false };
   const verdict = capturedMessageVerdicts(allowance, threadId, [messageId]).get(messageId)!;
   return { withheld: verdict.withheld, unproven: verdict.withheld && verdict.unproven };
 }
@@ -2151,13 +2347,24 @@ function judgeCapturedMessages(allowance: LineageAllowance, threadId: string, me
   if (nesting >= NEST_LIMIT) throw new LineageDeferred(threadId, pending);
   yieldIfLate();
   cacheMisses += pending.length;
-  let excluded = new Set<string>(), failed = false, split = false;
+  let excluded = new Set<string>(), positional = new Set<string>(), failed = false, split = false;
   const outer = collected, cyclesBefore = cycles, unfinishedBefore = unfinished, limitsBefore = limitHits, boxedBefore = boxDeferred, batch = ++batches;
   collected = new Set<string>();
   const consulted = collected;
   nesting++; for (const key of keys) judging.set(key, { batch, size: keys.length });
   try {
-    excluded = replayExclusions(allowance, threadId, pending.map(messageId => { dirtyMessage(threadId, messageId); const copy = messageCopy(threadId, messageId); return { id: messageId, ...(copy ? { copyOf: copy } : {}) }; }), null, { failClosed: true });
+    excluded = heldStep("memory.replay-exclusions", () => withStatementReuse(() => {
+      const judge = lineageJudge(allowance, threadId, null);
+      try {
+        // The line's own positional answer belongs to its kept verdict, with p/m/f dependencies and paid judge reads.
+        positional = positionalWithheld(threadId, pending, judge.judgeMeter());
+        const messages = pending.filter(id => !positional.has(id)).map(messageId => { dirtyMessage(threadId, messageId); const copy = messageCopy(threadId, messageId); return { id: messageId, ...(copy ? { copyOf: copy } : {}) }; });
+        const result = replayExclusionsWith(judge, threadId, messages, null, { failClosed: true });
+        for (const id of forgottenMessageSources(threadId, messages.filter(message => !result.has(message.id)).map(message => message.id))) result.add(id);
+        for (const id of positional) result.add(id);
+        return result;
+      } finally { judge.settle(); }
+    }));
   } catch (error) {
     if (error instanceof LineageSplit && error.batch === batch) split = true;
     else if (error instanceof LineageControl) throw error;
@@ -2173,11 +2380,11 @@ function judgeCapturedMessages(allowance: LineageAllowance, threadId: string, me
   // shared cache. (A cycle through a group that lists none of the lines judged is passed over, and changes nothing.)
   // (a budget that ran out inside may have cut a verdict short: none of this batch's is kept; the sub-proofs it finished are)
   // nor one a background slice deferred for its time box alone: a turn would have judged that set itself
-  const kept = cache !== undefined && consulted.size <= 4000 && cycles === cyclesBefore && limitHits === limitsBefore && boxDeferred === boxedBefore;
+  const kept = !unproven && cache !== undefined && consulted.size <= 4000 && cycles === cyclesBefore && limitHits === limitsBefore && boxDeferred === boxedBefore;
   pending.forEach((messageId, index) => {
-    const withheld = excluded.has(messageId), entry: Verdict = { withheld, unproven: withheld && unproven, deps: consulted };
+    const withheld = excluded.has(messageId), entry: Verdict = { withheld, unproven: withheld && !positional.has(messageId) && unproven, deps: consulted };
     // (a check that ran out of room is not an unkeepable one: the warmer gives it more room, or goes on from what it kept)
-    if (!kept && limitHits === limitsBefore && boxDeferred === boxedBefore) noteUnkept(`reply ${cache === undefined ? "no cache" : consulted.size > 4000 ? `basis ${consulted.size}` : "cycle"}`);
+    if (!kept && !unproven && limitHits === limitsBefore && boxDeferred === boxedBefore) noteUnkept(`reply ${cache === undefined ? "no cache" : consulted.size > 4000 ? `basis ${consulted.size}` : "cycle"}`);
     const stored = kept && keepVerdict(keys[index]!, entry);
     scratch?.set(keys[index]!, entry);
     if (outer) { if (stored) outer.add(`v${SEP}${keys[index]}`); else for (const d of consulted) outer.add(d); }
@@ -2367,9 +2574,9 @@ export interface OutputRoots {
 const rootKey = (thread: string, message: string) => `${thread}\u0000${message}`;
 /** One commit for a set and the row that points at it. */
 function atomically(db: ReturnType<typeof database>, work: () => void): void {
-  db.exec("SAVEPOINT memory_root_pointer");
-  try { work(); db.exec("RELEASE memory_root_pointer"); }
-  catch (error) { db.exec("ROLLBACK TO memory_root_pointer; RELEASE memory_root_pointer"); throw error; }
+  beginWrite(db, "memory_root_pointer");
+  try { work(); endWrite(db, "memory_root_pointer"); }
+  catch (error) { undoWrite(db, "memory_root_pointer"); throw error; }
 }
 /** The stored sets read so far, kept while the lineage cache is (a set is immutable under its id; every removal or change
  * of a set row moves the lineage epoch, which drops them with the verdicts). Where no cache can be kept (inside a
@@ -2553,13 +2760,13 @@ function flatRootsBad(allowance: LineageAllowance, keys: Iterable<string>): bool
   const db = database();
   for (const [thread, messages] of byThread) {
     // a deleted conversation, or a root written after a line the owner forgot (positionalWithheld)
-    if (stmt(db, "SELECT 1 FROM memory_deny WHERE kind='thread' AND id=?").get(thread) || positionalWithheld(thread, messages).size) return true;
+    if (stmt(db, "SELECT 1 FROM memory_deny WHERE kind='thread' AND id=?").get(thread) || positionalWithheld(thread, messages, allowanceMeter(allowance, thread)).size) return true;
     // forgotten roots, read in batches rather than one query per root
     for (let at = 0; at < messages.length; at += ROOT_BATCH) {
       const batch = messages.slice(at, at + ROOT_BATCH);
       // the rows of the two lookups below are paid for from the turn before they are read
       allowance.spendRows(thread, batch.length * 2);
-      if (collected) for (const message of batch) collected.add(`s${SEP}message:${thread}:${message}`);
+      if (collected) { for (const message of batch) collected.add(`s${SEP}message:${thread}:${message}`); collected.add(`b${SEP}${thread}`); }
       const ids = JSON.stringify(batch.map(message => `message:${thread}:${message}`));
       if (stmt(db, `SELECT 1 FROM memory_sources s WHERE s.id IN (SELECT value FROM json_each(?)) AND (s.state='deleted' OR ${DENIED_SOURCE("s")}) LIMIT 1`).get(ids)
         || stmt(db, "SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id IN (SELECT value FROM json_each(?)) LIMIT 1").get(ids)) return true;

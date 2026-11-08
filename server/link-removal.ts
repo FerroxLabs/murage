@@ -28,10 +28,10 @@
 // (a path walk can only check, then act on a path someone else may change in
 // between). Only when the addon is missing does the path walk below run, and
 // that is logged.
-import fs, { chmodSync, lstatSync, readdirSync, rmdirSync, symlinkSync, unlinkSync } from "node:fs";
+import fs, { chmodSync, lstatSync, readdirSync, readlinkSync, rmdirSync, symlinkSync, unlinkSync } from "node:fs";
 import type { PathLike, RmOptions } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
-import { join, resolve } from "node:path";
+import { join, resolve, sep, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadExclusionAddon } from "./engine-exclusion.ts";
 
@@ -125,6 +125,218 @@ export function removeLinkWithRetry(path: string, io: LinkFs = nodeLinkFs, platf
   }
 }
 
+
+/** Lexical only: never follows the old link, including intermediate links. */
+export function ownLinkTail(text: string, options: {threadId: string; name: string; target: string; platform?: NodeJS.Platform}): "current" | "ours" | "foreign" {
+  const platform = options.platform ?? process.platform;
+  const parse = (value: string): {root: string; parts: string[]} | undefined => {
+    let root: string, rest: string;
+    if (platform === "win32") {
+      const normalized = value.replace(/\//g, "\\");
+      const match = /^(?:\\\\\?\\UNC\\[^\\]+\\[^\\]+\\|\\\?\?\\UNC\\[^\\]+\\[^\\]+\\|\\\\\?\\[A-Za-z]:\\|\\\?\?\\[A-Za-z]:\\|[A-Za-z]:\\|\\\\(?![?.]\\)[^\\]+\\[^\\]+\\)/i.exec(normalized);
+      if (!match) return;
+      root = match[0].replace(/^\\\\\?\\UNC\\/i,"\\\\").replace(/^\\\?\?\\UNC\\/i,"\\\\").replace(/^\\\\\?\\|^\\\?\?\\/,"");
+      rest = normalized.slice(match[0].length);
+    } else {
+      if (!value.startsWith("/")) return;
+      root = "/"; rest = value.slice(1);
+    }
+    const parts = rest.split(/[\\/]/);
+    if (parts.some(part => !part || part === "." || part === ".." || part.includes("\0")) || root.includes("\0")) return;
+    return {root, parts};
+  };
+  const parsed = parse(text);
+  if (!parsed) return "foreign";
+  const current = parse(options.target);
+  const comparable = (p: {root: string; parts: string[]}) => {
+    const value = p.root + p.parts.join("/");
+    return platform === "win32" ? value.toLowerCase() : value;
+  };
+  if (current && comparable(current) === comparable(parsed)) return "current";
+  const tail = parsed.parts.slice(-6);
+  return tail.length === 6 && tail[0] === "threads" && tail[1] === options.threadId && tail[2] === ".murage-procedures" &&
+    /^[a-f0-9]{64}$/.test(tail[3]!) && tail[4] === "skills" && tail[5] === options.name ? "ours" : "foreign";
+}
+
+/** Injectable operations for replacement failures and a simulated process interruption. */
+export const prefixRebaseSeams = {
+  platform: (): NodeJS.Platform => process.platform,
+  rename: (from: string, to: string): void => fs.renameSync(from, to),
+  // Tests throw here to model process death: deliberately outside the recovery catch.
+  afterCreate: (_sibling: string): void => {},
+};
+let relinkNotice: (line: string) => void = line => console.warn(line);
+export function setRelinkNotice(sink: (line: string) => void): void { relinkNotice = sink; }
+let relinkCounter = 0;
+interface PrefixRebaseIo {
+  readlinkSync(path: string): string;
+  lstatSync(path: string): { isSymbolicLink(): boolean; isFile(): boolean; isDirectory?(): boolean };
+  renameSync(from: string, to: string): void;
+  unlinkSync(path: string): void;
+}
+interface PrefixRebaseOptions {
+  site: 4 | 10 | 11;
+  dataDir: string;
+  previousRoots: readonly string[];
+  kind: "dir" | "file" | "new-target";
+  create(target: string, path: string, kind: "dir" | "file"): void;
+  io?: PrefixRebaseIo;
+}
+/** One prefix-rebase helper for discovery links, carry links and login leaves. No old target is inspected. */
+export const prefixRebaseLinks = {
+  relink(link: string, options: PrefixRebaseOptions): void {
+    if (!options.previousRoots.length) return;
+    const platform = prefixRebaseSeams.platform();
+    const io: PrefixRebaseIo = options.io ?? {
+      readlinkSync, lstatSync, renameSync: prefixRebaseSeams.rename, unlinkSync,
+    };
+    const notice = (reason: string) => relinkNotice(`relink-skipped site=${options.site} reason=${reason}`);
+    // Same lexical comparison as data-roots comparable(). Kept independent of config's startup import cycle.
+    const strip = (value: string) => value.startsWith("\\\\?\\UNC\\") ? `\\\\${value.slice(8)}` : value.replace(/^\\\\\?\\/, "");
+    const comparable = (value: string) => {
+      value = strip(value);
+      return platform === "win32" ? value.replace(/\//g, "\\").toLowerCase() : platform === "darwin" ? value.normalize("NFC") : value;
+    };
+    let text: string;
+    try {
+      if (!io.lstatSync(link).isSymbolicLink()) return;
+      text = io.readlinkSync(link);
+    } catch { return; }
+    if (!(platform === "win32" ? win32.isAbsolute(text) : text.startsWith("/"))) return;
+    // Find the boundary in the ORIGINAL spelling: NFC and long-prefix stripping can change string length.
+    let rel: string | undefined;
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] !== "/" && (platform !== "win32" || text[i] !== "\\")) continue;
+      if (options.previousRoots.some(root => comparable(root) === comparable(text.slice(0, i)))) {
+        rel = text.slice(i + 1); break;
+      }
+    }
+    if (rel === undefined) return;
+    if (rel.split(/[\\/]/).some(part => !part || part === "." || part === ".." || part.includes("\0"))) { notice("outside"); return; }
+    let target = options.dataDir + sep + rel;
+    let targetStat: ReturnType<PrefixRebaseIo["lstatSync"]>;
+    try { targetStat = io.lstatSync(target); } catch { notice("missing"); return; }
+    // Site 10 mirrors carryEntry's one-hop lexical resolution, restricted to DATA_DIR.
+    if (options.site === 10 && options.kind === "new-target" && targetStat.isSymbolicLink()) {
+      try {
+        const next = io.readlinkSync(target);
+        let tail: string | undefined;
+        for (let i = 0; i < next.length; i++) {
+          if (next[i] !== "/" && (platform !== "win32" || next[i] !== "\\")) continue;
+          const prefix = next.slice(0, i);
+          if (platform === "win32" ? comparable(prefix) === comparable(options.dataDir) : prefix === options.dataDir) {
+            tail = next.slice(i + 1); break;
+          }
+        }
+        if (tail === undefined || tail.split(/[\\/]/).some(part => !part || part === "." || part === ".." || part.includes("\0"))) {
+          notice("kind"); return;
+        }
+        target = options.dataDir + sep + tail;
+        targetStat = io.lstatSync(target);
+      } catch { notice("kind"); return; }
+    }
+    const kind = options.kind === "new-target" ? (targetStat.isDirectory?.() ? "dir" : "file") : options.kind;
+    if (targetStat.isSymbolicLink() || !(kind === "dir" ? targetStat.isDirectory?.() : targetStat.isFile())) { notice("kind"); return; }
+    const sibling = `${link}.murage-relink-${process.pid}-${++relinkCounter}`;
+    const cleanup = () => {
+      try {
+        removeLink(sibling, { ...nodeLinkFs, lstat: io.lstatSync, unlink: io.unlinkSync,
+          rmdir: options.io ? path => io.unlinkSync(path) : nodeLinkFs.rmdir }, platform);
+      } catch { /* link-only best effort; a later scan retries */ }
+    };
+    let identity: LinkIdentity | undefined;
+    try {
+      if (platform === "win32" && kind === "dir") identity = readLinkIdentity(link);
+      options.create(target, sibling, kind);
+    } catch { cleanup(); notice("replace"); return; }
+    prefixRebaseSeams.afterCreate(sibling);
+    try { io.renameSync(sibling, link); return; }
+    catch (error) {
+      if (!identity || !["EPERM", "EACCES", "EEXIST", "ENOTEMPTY"].includes(codeOf(error) ?? "")) {
+        cleanup(); notice("replace"); return;
+      }
+    }
+    // non-atomic, link-only window: same residual as S5-RELINK r3 section 6/10c
+    try { assertLinkIdentity(link, identity); }
+    catch { cleanup(); notice("changed"); return; }
+    try { removeLinkChecked(link, identity); }
+    catch (error) { cleanup(); notice(error instanceof LinkIdentityError ? "changed" : "replace"); return; }
+    try { io.renameSync(sibling, link); }
+    catch {
+      try { options.create(identity.text, link, kind); notice("replace"); }
+      catch { relinkNotice(`relink-failed site=${options.site} reason=restore`); }
+      cleanup();
+    }
+  },
+  /** Only this discovery directory, never a recursive or boot walk. */
+  sweep(directory: string, now = Date.now()): void {
+    try {
+      for (const name of readdirSync(directory)) {
+        if (!/^.+\.murage-relink-.+$/.test(name)) continue;
+        const path = join(directory, name);
+        try {
+          const stat = lstatSync(path);
+          if (stat.isSymbolicLink() && now - stat.mtimeMs > 10 * 60_000) removeLink(path);
+        } catch { /* missing, changed, or busy: discovery keeps going */ }
+      }
+    } catch { /* directory absent or unreadable: the caller keeps its existing behavior */ }
+  },
+};
+
+const longLinkPath = (path: string): string => {
+  if (process.platform !== "win32" || path.startsWith("\\\\?\\")) return path;
+  if (/^[A-Za-z]:[\\/]/.test(path)) return `\\\\?\\${path.replace(/\//g,"\\")}`;
+  if (/^[\\/]{2}[^\\/]/.test(path)) return `\\\\?\\UNC\\${path.slice(2).replace(/\//g,"\\")}`;
+  return path;
+};
+/** The addon can be unavailable on any OS (missing, damaged, blocked or incompatible). No copy or rename fallback. */
+export const linkMoves = {
+  available: (): boolean => loadExclusionAddon() !== null,
+  moveNoReplace(from: string, to: string): "ok" | "exists" | "unsupported" {
+    const addon = loadExclusionAddon();
+    if (!addon) return "unsupported";
+    const result = addon.renameNoReplace(longLinkPath(from), longLinkPath(to));
+    return result === 0 ? "ok" : result === 1 ? "exists" : "unsupported";
+  },
+};
+export interface LinkIdentity { dev: number; ino: number; size: number; mtimeMs: number; isSymbolicLink: boolean; text: string }
+export class LinkIdentityError extends Error {
+  constructor(options?: {cause?: unknown}) { super("The skill link changed while it was being checked", options); }
+}
+export function readLinkIdentity(path: string): LinkIdentity {
+  const stat = lstatSync(path);
+  if (!stat.isSymbolicLink()) throw new LinkIdentityError();
+  return {dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs, isSymbolicLink: true, text: readlinkSync(path)};
+}
+export function sameLinkIdentity(a: LinkIdentity, b: LinkIdentity): boolean {
+  return a.isSymbolicLink && b.isSymbolicLink && a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs && a.text === b.text;
+}
+export function assertLinkIdentity(path: string, expected: LinkIdentity, read = readLinkIdentity): void {
+  try { if (!sameLinkIdentity(expected, read(path))) throw new LinkIdentityError(); }
+  catch (cause) { throw new LinkIdentityError({cause}); }
+}
+/** Identity re-read is inside every retry, immediately before removeLink. A successful removal leaves nothing to remove on retry. */
+export function relinkDirectoryChecked(link: string, target: string, expected: LinkIdentity | undefined, read = readLinkIdentity, io: LinkFs = nodeLinkFs, platform: NodeJS.Platform = process.platform): void {
+  let removed = !expected;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      if (!removed) { assertLinkIdentity(link, expected!, read); removeLink(link, io, platform); removed = true; }
+      io.symlink(target, link, platform === "win32" ? "junction" : "dir");
+      return;
+    } catch (error) {
+      if (error instanceof LinkIdentityError || error instanceof NotALinkError || codeOf(error) === "EEXIST" || attempt >= 1) throw error;
+      // Retrying creation is allowed only while the name is still empty.
+      if (removed) { try { io.lstat(link); throw new LinkIdentityError(); } catch (check) { if (codeOf(check) !== "ENOENT") throw check; } }
+    }
+  }
+}
+export function removeLinkChecked(path: string, expected: LinkIdentity, retry = false, read = readLinkIdentity, io: LinkFs = nodeLinkFs): void {
+  for (let attempt = 0; ; attempt++) {
+    assertLinkIdentity(path, expected, read);
+    try { removeLink(path, io); return; }
+    catch (error) { if (error instanceof NotALinkError) throw new LinkIdentityError({cause:error}); if (!retry || attempt >= 1) throw error; }
+  }
+}
 
 /** What the walk reads of an entry: its kind, and its identity to notice a swap. */
 export interface EntryStat { isSymbolicLink(): boolean; isDirectory(): boolean; dev?: number; ino?: number }

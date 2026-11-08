@@ -8,7 +8,7 @@ import { Suspense, useEffect, useId, useLayoutEffect, useMemo, useRef, useState 
 import { Phone, PhoneOff } from "lucide-react";
 
 import { useStore, viewedTaskBot, type Bot, type Group } from "@/state/store";
-import { endCall, startCall, takeCallRequest, useCallRequest, useOnCall } from "@/lib/call";
+import { useCallBudgetEnded, dismissCallBudgetEnded, endCall, startCall, takeCallRequest, useCallRequest, useOnCall } from "@/lib/call";
 import { useCallBarState } from "@/lib/call-bar";
 import { CallBarContent } from "./CallBarContent";
 import { cn } from "@/lib/cn";
@@ -299,6 +299,7 @@ export function CallOverlaySlot({
   uncoverCallTarget?: (id: string) => void;
 }) {
   const activeCallId = useOnCall();
+  const budgetEnded = useCallBudgetEnded();
   const activeCallGroup = activeCallId ? state.groups.find((g) => g.id === activeCallId) : undefined;
   const activeCallBotRaw = !activeCallGroup && activeCallId ? state.bots.find((b) => b.id === activeCallId) : undefined;
   // Projected through the same task-thread view ChatView gives every other
@@ -339,6 +340,7 @@ export function CallOverlaySlot({
   };
   return (
     <>
+      {budgetEnded && !activeCallId && <div role="status" className="fixed bottom-4 left-4 right-4 z-50 rounded-xl bg-card p-4 text-ink">{t("call.budgetStop")} <button type="button" onClick={dismissCallBudgetEnded}>{t("composer.dismissNotice")}</button></div>}
       {activeCallBot && (
         <CallOverlay key={activeCallId} bot={activeCallBot} collapsed={!callIsSelected} onExpand={returnToCall} />
       )}

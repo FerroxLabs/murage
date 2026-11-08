@@ -142,11 +142,18 @@ describe("own-file reads: still ask", () => {
     expect(reads({ tool: "Bash", command: "cat secret.txt", cwd: `${join(botDir, "skills", "out-dir")}/..` })).toBe(false);
     expect(reads({ tool: "Bash", command: "cat SOUL.md", cwd: "threads" })).toBe(false);
   });
-  it("a linked workspaces folder answers nothing", () => {
+  it("C7 (S5-DATADIR-PATHS r4.1): a linked workspaces folder answers from its admitted target; a link below it still answers nothing", () => {
     const linkedData = join(fixture, "linked-data");
     mkdirSync(linkedData, { recursive: true });
     symlinkSync(join(dataDir, "workspaces"), join(linkedData, "workspaces"));
-    expect(isOwnFileRead({ dataDir: linkedData, botId: BOT, threadId: THREAD, tool: "Read", filePaths: [join(linkedData, "workspaces", BOT, "SOUL.md")] })).toBe(false);
+    expect(isOwnFileRead({ dataDir: linkedData, botId: BOT, threadId: THREAD, tool: "Read", filePaths: [join(linkedData, "workspaces", BOT, "SOUL.md")] })).toBe(true);
+    expect(isOwnFileRead({ dataDir: linkedData, botId: BOT, threadId: "thread-linked", tool: "Read", filePaths: [join(linkedData, "workspaces", BOT, "threads", "thread-linked", "secret.txt")] })).toBe(false);
+  });
+  it("C7: a workspaces folder linked to the filesystem root is refused (DR2 refusal list) and answers nothing", () => {
+    const rootData = join(fixture, "root-linked-data");
+    mkdirSync(rootData, { recursive: true });
+    symlinkSync("/", join(rootData, "workspaces"));
+    expect(isOwnFileRead({ dataDir: rootData, botId: "etc", threadId: THREAD, tool: "Read", filePaths: ["/etc/hostname"] })).toBe(false);
   });
   it("an id this installation could not have made a folder for", () => {
     expect(isOwnFileRead({ dataDir, botId: "../x", threadId: THREAD, tool: "Read", filePaths: [join(botDir, "SOUL.md")] })).toBe(false);

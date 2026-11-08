@@ -45,6 +45,7 @@
 // Downgrade: a release that still keeps runs inside routines.json reads
 // `runs: []` as an empty history and leaves this folder untouched, so
 // upgrading again restores the history from here.
+import { rebaseAttachmentRecord } from "./attachment-paths.ts";
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, unlinkSync, writeSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
@@ -108,7 +109,7 @@ export function readRoutineRuns(dataDir: string, committed?: number): unknown[] 
   const dir = routineRunsDir(dataDir);
   const all: unknown[] = [];
   for (const name of journalNames(dir)) {
-    try { all.push(...parseJournal(readFileSync(join(dir, name), "utf8"), committed).runs.values()); } catch { /* unreadable file: skipped */ }
+    try { all.push(...[...parseJournal(readFileSync(join(dir, name), "utf8"), committed).runs.values()].map(run => rebaseAttachmentRecord(run))); } catch { /* unreadable file: skipped */ }
   }
   return all;
 }
@@ -119,7 +120,7 @@ export function readRoutineStates(dataDir: string, committed: number | undefined
   if (typeof generation !== "string") return states;
   const dir = routineRunsDir(dataDir);
   for (const name of journalNames(dir)) {
-    try { for (const [id, entry] of parseJournal(readFileSync(join(dir, name), "utf8"), committed).routines) if (entry.gen === generation) states.set(id, entry.routine); } catch { /* unreadable file: skipped */ }
+    try { for (const [id, entry] of parseJournal(readFileSync(join(dir, name), "utf8"), committed).routines) if (entry.gen === generation) states.set(id, rebaseAttachmentRecord(entry.routine)); } catch { /* unreadable file: skipped */ }
   }
   return states;
 }
@@ -159,7 +160,7 @@ export class RoutineRunsJournal {
       const parsed = parseJournal(text, committed);
       for (const [id, entry] of parsed.routines) {
         if (generation === undefined || entry.gen !== generation) continue;
-        this.routineStates.set(id, entry.routine);
+        this.routineStates.set(id, rebaseAttachmentRecord(entry.routine));
         this.routineLines.set(id, routineLine(JSON.stringify(entry.routine), generation));
       }
       const stateLines = [...parsed.routines.values()].filter(entry => generation !== undefined && entry.gen === generation).length;
@@ -173,7 +174,8 @@ export class RoutineRunsJournal {
         this.files.set(name, { lines: parsed.lines, live: parsed.runs.size + stateLines, clean: parsed.clean });
       }
       for (const [id, run] of parsed.runs) {
-        all.push(run);
+        // Rebase only the returned snapshot; raw lines remain the journal's change-tracking baseline.
+        all.push(rebaseAttachmentRecord(run));
         this.persisted.set(id, { routineId: String(run.routineId ?? ""), line: JSON.stringify(run) });
       }
     }

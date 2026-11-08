@@ -33,7 +33,7 @@ export function InboxMemoryWaiting({ rows, onSettled, onOpenMemory }: { rows: re
     try {
       const list = await memoryAction(api, { action: "waiting-list", subjectType: row.kind, subjectId: row.id, tab: "waiting" });
       const targets = keepAllTargets(list.items);
-      if (!targets.length) { if (mounted.current) setSaid(current => ({ ...current, [key]: { message: "Each of these needs you one by one." } })); return; }
+      if (!targets.length) { if (mounted.current) setSaid(current => ({ ...current, [key]: { message: "Review each of these individually." } })); return; }
       const actionId = newActionId();
       const done = await memoryAction(api, { action: "review-keep-all", actionId, items: targets });
       applyWaitingSummary(done.summary);
