@@ -1,3 +1,4 @@
+import { learningDeletionEpoch } from "./deny.ts";
 import { randomUUID } from "node:crypto";
 import { database, transaction } from "../database.ts";
 import { gepaCallNotStarted } from "../gepa-worker.ts";
@@ -38,7 +39,7 @@ const targetKey=(target:ProcedureReviewTarget)=>hash([target.kind,target.scopeId
 export function createProcedureEvaluator(options:ProcedureEvaluatorBridgeOptions){
   const corpus=procedureOutcomeCorpus(),corpusDigest=hash(corpus);
   const model=()=>options.modelIdentity();
-  const fences=()=>({policyRevision:memoryState().policyRevision,deletionEpoch:memoryState().deletionEpoch,learningRevision:readMemoryLearning(database()).revision});
+  const fences=()=>({policyRevision:memoryState().policyRevision,deletionEpoch:learningDeletionEpoch(database()),learningRevision:readMemoryLearning(database()).revision});
   const seed=(snapshot:ProcedureReviewSnapshot)=>{const instruction=options.readInstruction(snapshot.target);if(snapshot.target.kind==="memory-policy"||!instruction.trim()||instruction.length>20000)throw Error("PROCEDURE_INSTRUCTION_UNAVAILABLE");procedureFrozenSections(instruction,snapshot.target.kind);return instruction;};
   const grantFor=(snapshot:ProcedureReviewSnapshot,instruction:string):Grant|undefined=>{
     const row=database().prepare("SELECT id FROM memory_scope_bindings WHERE subject_type='system' AND subject_id=? AND scope_id=? AND state='granted' AND json_extract(intent,'$.targetKey')=? ORDER BY rowid DESC LIMIT 1").get(GRANT,snapshot.target.scopeId,targetKey(snapshot.target));

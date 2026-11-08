@@ -374,7 +374,12 @@ describe("each FluxRouter key problem gets its own sentence", () => {
   });
 
   it("points the budget case at the billing page rather than at settings", () => {
-    expect(FLUXROUTER_BILLING_URL).toBe("https://fluxrouter.ai/dashboard/billing");
+    expect(FLUXROUTER_BILLING_URL).toBe("https://fluxrouter.ai/auth/sign-in?return_to=%2Fdashboard%2Fbilling");
+  });
+
+  it("opens the billing page through openExternalPage, so desktop, Cloud and phone reach the system browser", () => {
+    expect(panel).toMatch(/action === "billing"\) \{[\s\S]*?void openExternalPage\(FLUXROUTER_BILLING_URL, t\("modelSignIn.error.browser"\)\)\s*\.catch\(\(\) => setError\(t\("modelSignIn.error.browser"\)\)\)/);
+    expect(panel).not.toMatch(/window\.open\(FLUXROUTER_BILLING_URL/);
   });
 });
 
@@ -663,7 +668,7 @@ describe("the connected-apps lock", () => {
     expect(panel).toMatch(/const addFluxKey = useCallback[\s\S]*?section: "models" \}\);\n\s+focusSettingsField\(FLUX_KEY_FIELD_SELECTOR\);/);
     expect(panel).not.toContain("addOwnKey");
     // The lock's button is the first thing the keyboard reaches.
-    expect(panel).toContain('dialog?.querySelector<HTMLElement>("[data-connected-apps-lock-primary]")');
+    expect(panel).toContain('initialFocus: lockState === "locked" ? "[data-connected-apps-lock-primary]" : "input"');
   });
 
   it("focuses a field that already exists, and gives up quietly where there is no document", () => {

@@ -21,7 +21,7 @@
 //                restorable stage; reported "missing" when absent
 //   owner-file   optional owner file copied into the restorable stage
 //   owner-folder folder of owner work copied into the restorable stage
-//   database     messages.db and connected-app-ledger.db, captured through a consistent SQLite snapshot
+//   database     messages.db, connected-app-ledger.db and phone-calls.db, captured through a consistent SQLite snapshot
 //   sidecar      SQLite -wal/-shm files covered by their database's snapshot
 //   retained     kept in the encrypted backup but never restored by itself
 //   excluded     runtime, cache, rebuildable, trust or credential state;
@@ -57,6 +57,7 @@ const excluded = (why: string): DataDirEntry => ({ backup: "excluded", why });
 
 export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.freeze({
   // Required records (store.ts, routines.ts, config.ts and friends).
+  ".murage-root.json": record(),
   "config.json": record(), "bots.json": record(), "groups.json": record(), "routines.json": record(),
   "calendar-calls.json": record(), "webhooks.json": record(), "delegations.json": record(),
   "delegation-receipts.json": record(), "section-contexts.json": record(), "browser-cleanups.json": record(),
@@ -140,12 +141,19 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "connected-app-ledger.db-wal": { backup: "sidecar", why: APPLICATION },
   "connected-app-ledger.db-shm": { backup: "sidecar", why: APPLICATION },
   "connected-app-ledger.db-journal": { backup: "sidecar", why: APPLICATION },
+  // Bot phone calls (BOT-CALLS-1020 item 4): the owner's call history, owner-only transcripts and the caller settings revisions. Kept
+  // in its own file so messages.db's schema stays as it is; captured through the same consistent SQLite snapshot.
+  "phone-calls.db": { backup: "database", why: "The owner's phone call history, call transcripts and caller settings, so a restored computer keeps them" },
+  "phone-calls.db-wal": { backup: "sidecar", why: APPLICATION },
+  "phone-calls.db-shm": { backup: "sidecar", why: APPLICATION },
+  "phone-calls.db-journal": { backup: "sidecar", why: APPLICATION },
   "memory-index.db-wal": { backup: "sidecar", why: APPLICATION },
   "memory-index.db-shm": { backup: "sidecar", why: APPLICATION },
 
   // Retained encrypted, never restored by themselves.
   "memory-index.db": { backup: "retained", why: "Consistent memory search projection retained encrypted only; rebuild from paused messages.db authority after review" },
   "channels": { backup: "retained", why: "Channel bindings and receipt history retained encrypted only; re-pairing required before use" },
+  "highlevel": excluded("HighLevel connection record (ids, location name and a token fingerprint, never the token) and change journal; not in a backup: the token is added again and the location checked again on the restored computer"),
   "startup-background.json": { backup: "retained", why: "Startup preferences retained encrypted only; automatic startup is not restored" },
   "owner.json": { backup: "retained", why: "Cloud owner timezone preferences retained encrypted; review and apply them on the restored home" },
   "cloud-browser-profile-usage.json": excluded(TRUST),
@@ -322,7 +330,7 @@ export const DATA_DIR_PATTERNS: ReadonlyArray<{ pattern: RegExp; entry: DataDirE
   // A pre-upgrade copy still being written (memory/schema.ts renames it to its
   // final name only when whole; a killed start leaves this behind and the next
   // start deletes it), and the status note's own temp file.
-  { pattern: /^messages\.pre-memory-v[234]\.db\.partial(?:-journal|-wal|-shm)?$/, entry: excluded(LEFTOVER), example: "messages.pre-memory-v3.db.partial-journal" },
+  { pattern: /^messages\.pre-memory-v[234]\.db\.partial(?:-settle)?(?:-journal|-wal|-shm)?$/, entry: excluded(LEFTOVER), example: "messages.pre-memory-v3.db.partial-journal" },
   { pattern: /^memory-upgrade-(?:overall|counts)\.json\.\d+\.tmp$/, entry: excluded(LEFTOVER), example: "memory-upgrade-overall.json.4242.tmp" },
   { pattern: /^memory-upgrade-status\.json\.\d+\.tmp$/, entry: excluded(LEFTOVER), example: "memory-upgrade-status.json.4242.tmp" },
   // A skill index build stopped before its rename (skill-search.ts).
@@ -330,6 +338,8 @@ export const DATA_DIR_PATTERNS: ReadonlyArray<{ pattern: RegExp; entry: DataDirE
   // writeFileAtomic (atomic.ts) writes `<name>.<pid>.<uuid>.tmp` beside the
   // file and renames it over; a crash between the two leaves it behind.
   { pattern: new RegExp(`^[^/\\\\]+\\.\\d+\\.${UUID}\\.tmp$`), entry: excluded(LEFTOVER), example: "about-me.md.4242.0f8e2b1a-3c4d-4e5f-8a9b-0c1d2e3f4a5b.tmp" },
+  // S5 data-roots.ts writeRecord: `.murage-root.json.<uuid>.tmp` beside the root record, renamed over it (no pid in the name)
+  { pattern: new RegExp(`^\\.murage-root\\.json\\.${UUID}\\.tmp$`), entry: excluded(LEFTOVER), example: ".murage-root.json.0f8e2b1a-3c4d-4e5f-8a9b-0c1d2e3f4a5b.tmp" },
   // The desktop app saves config.json (secureComposioConfig,
   // secureWorkspaceConfig) and the startup settings (savePreferences) through
   // `<name>.<pid>.tmp` and a rename (electron/main.mjs). A crash between the
@@ -346,8 +356,10 @@ export const DATA_DIR_PATTERNS: ReadonlyArray<{ pattern: RegExp; entry: DataDirE
   { pattern: /^coordination-roots\.json\.invalid-\d+$/, entry: excluded("Unreadable handoff-budget file set aside; not restored"), example: "coordination-roots.json.invalid-1790000000000" },
   // A consistent copy of messages.db taken before the boot-time project-row
   // prune (project-migration.ts). Kept for a manual rollback only; the live
-  // messages.db is the backed-up authority.
-  { pattern: /^project-rows-before-prune-\w+\.db$/, entry: excluded("Copy of messages.db taken before the start-up project-row prune; kept for manual rollback only, not restored"), example: "project-rows-before-prune-1790000000000.db" },
+  // messages.db is the backed-up authority. Its side files are the same copy's.
+  { pattern: /^project-rows-before-prune-\w+\.db(?:-journal|-wal|-shm)?$/, entry: excluded("Copy of messages.db taken before the start-up project-row prune; kept for manual rollback only, not restored"), example: "project-rows-before-prune-1790000000000.db" },
+  // That copy still being settled (settle-copy.ts) before its rename; a killed start leaves it and the next start deletes it.
+  { pattern: /^project-rows-before-prune-\w+\.db\.partial(?:-settle)?(?:-journal|-wal|-shm)?$/, entry: excluded(LEFTOVER), example: "project-rows-before-prune-1790000000000.db.partial-journal" },
 ]);
 
 /** What a backup does with this top-level data-folder name; undefined when unknown. */

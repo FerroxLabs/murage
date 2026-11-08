@@ -109,6 +109,7 @@ const STATUS_FOR: Record<TranscriptionFailure, number> = {
   key: 409,
   unavailable: 409,
   premium: 402,
+  budget: 402,
   auth: 401,
   too_large: 413,
   rate_limit: 429,

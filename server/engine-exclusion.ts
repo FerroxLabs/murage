@@ -55,6 +55,9 @@ export interface ExclusionAddon {
    * it was: "full", or "fallback" (macOS: the file system refuses F_FULLFSYNC, as Apple documents for one without it; plain fsync). */
   fullSync?(fd: number): Barrier;
   version(): number;
+  /** macOS (IO-IDLE r3.6): this process's cumulative bytes written to storage (proc_pid_rusage ri_diskio_byteswritten), null when
+   *  unreadable; absent elsewhere. The io watchdog's OS floor on macOS (os-disk-written.ts): missing or null is UNKNOWN, never 0. */
+  diskWritten?(): number | null;
   /** macOS: this boot of the system's own id (kern.bootsessionuuid); null elsewhere or when it cannot be read. Absent in an older build. */
   bootId?(): string | null;
   /** Windows: WinVerifyTrust's answer for a file's Authenticode signature, on a worker thread: { status (Get-AuthenticodeSignature's

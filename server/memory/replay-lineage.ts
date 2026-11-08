@@ -21,6 +21,7 @@
 // lists outgrew a whole-thread budget). Past the node and receipt budgets a
 // caller that asks for failClosed gets the message withheld instead of an
 // error, so a turn never fails and never shows what it could not check.
+import { beginWrite, endWrite, undoWrite } from "../write-tx.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { ancestryUnrepaired, connectionId, database } from "../database.ts";
 import { memoryGate } from "./memory-gate.ts";
@@ -28,9 +29,9 @@ import { setMemoryCheckingSource } from "./integrity-flags.ts";
 import { authorityParts } from "./authority-epoch.ts";
 import { statementReusePassId, withStatementReuse, writeStamp } from "../io-budget.ts";
 import { supersededThreadCheckpoint, threadCheckpointId } from "./checkpoints.ts";
-import { ancestryThreadRepaired } from "./schema.ts";
+import { ancestryThreadRepaired, TOMBSTONE_FORGETS_INDEX } from "./schema.ts";
 import { allowanceHooks, LineageAllowance, ROWS_PER_NODE, TURN_LINEAGE_NODES, setTurnLineageNodesForTest } from "./lineage-allowance.ts";
-import { forgetRootSetHandles, handleFor, handleKeys, layeredOf, LayeredRoots, storeLayered, type Handle, type HandleCache, type ReadMeter, type RootView } from "./root-set-handles.ts";
+import { forgetRootSetHandles, handleFor, handleKeys, layeredOf, LayeredRoots, onHandlesForgotten, setHandleGrowthGuard, storeLayered, type Handle, type HandleCache, type ReadMeter, type RootView } from "./root-set-handles.ts";
 import { heldStep } from "../observe.ts";
 import { copyFieldsChanged } from "../message-copy-fields.ts";
 import { DENIED_RECORD_SCOPE, DENIED_SOURCE } from "./deny.ts";
@@ -39,6 +40,11 @@ import { chainJudge } from "../bot-read.ts";
 import type { Message } from "../store.ts";
 import { readTimeRetired, withoutDroppedTableTriggers } from "./read-time-retired.ts";
 import { FOOTPRINT_STAR, memoryRefKey } from "./lineage-types.ts";
+import { bumpHandleEpoch, proofBucket, verdictStore as store, type ConfirmCounters, type Owner, type Verdict, type VerdictReads } from "./verdict-store.ts";
+// TURNSTART r14 S6 / r15 epoch split: every handle-layer clear in root-set-handles.ts moves the store's handleEpoch
+onHandlesForgotten(why => bumpHandleEpoch(`handles:${why}`));
+// TURNSTART r14.1 X4 / flagfold F7: a backfill slice never grows the handle cache past half of its capacity
+setHandleGrowthGuard((size, max) => store.backfillRefuses("handles", size, max));
 type DatabaseLike = ReturnType<typeof database>;
 
 // One prepared statement per SQL text, kept for the life of the connection. The checks here run
@@ -220,6 +226,8 @@ export function forgottenMessageSources(threadId: string, messageIds: readonly s
   if (!messageIds.length) return out;
   const db = database(), prefix = `message:${threadId}:`;
   for (const id of messageIds) dep("s", `${prefix}${id}`);
+  // the thread's branch-change fence (deny.ts BRANCH_CHANGE_PENDING), which no source row change announces
+  dep("b", threadId);
   for (let at = 0; at < messageIds.length; at += 500) {
     const ids = JSON.stringify(messageIds.slice(at, at + 500).map(id => `${prefix}${id}`));
     for (const row of stmt(db, `SELECT value AS id FROM json_each(?1) WHERE EXISTS (SELECT 1 FROM memory_deny WHERE kind='thread' AND id=?2)
@@ -230,7 +238,7 @@ export function forgottenMessageSources(threadId: string, messageIds: readonly s
 }
 export function messageSourceForgotten(threadId: string, messageId: string): boolean {
   const db = database(), sourceId = `message:${threadId}:${messageId}`;
-  dep("s", sourceId);
+  dep("s", sourceId); dep("b", threadId);
   // deleted, or in a deleted conversation or bot (deny.ts) before the job marks it; a deleted conversation's uncaptured lines too
   const source = stmt(db, `SELECT (SELECT s.state FROM memory_sources s WHERE s.id=?1) AS state,
     EXISTS(SELECT 1 FROM memory_sources s WHERE s.id=?1 AND ${DENIED_SOURCE("s")}) OR EXISTS(SELECT 1 FROM memory_deny WHERE kind='thread' AND id=?2) AS denied`).get(sourceId, threadId);
@@ -238,29 +246,85 @@ export function messageSourceForgotten(threadId: string, messageId: string): boo
 }
 
 /** The forgotten message lines of a thread, with when each was written and forgotten (positionalWithheld). One range seek on the
- * tombstones' unique index over the thread's message source ids, at most 256 (past that: "many"), then a primary-key read of each
- * line; kept per thread until a forget moves the epoch or a tombstone is written. */
-const threadForgetsCache = new Map<string, { key: string; pass?: unknown; writes?: unknown; db?: object; forgets: Array<{ at: number; forgetAt: number; id: string }> | "many" }>();
-function threadForgets(db: DatabaseLike, threadId: string): Array<{ at: number; forgetAt: number; id: string }> | "many" {
-  // inside one synchronous pass with no write since, the list has not moved (the same reuse rule as lineageStamp)
+ * owner's forgets (TOMBSTONE_FORGETS_INDEX, else the thread's range of the unique index), at most FORGET_SCAN_MAX rows (past that, or past 256
+ * lines: "many"), then a primary-key read of each listed line: the cost is bounded, whatever the thread's history. It is read afresh on every call, and kept only inside one
+ * synchronous pass with no write through this connection since and no transaction open (TURNCACHE-FAILOPEN r3, MurageMain: a list kept
+ * across calls under a counter key twice failed open, Astra TCFO r1 H1 / r2 H1-H2, so there is none). */
+const threadForgetsPass = new Map<string, { pass: number; writes: number; db: object; forgets: Array<{ at: number; forgetAt: number; id: string }> | "many" }>();
+const threadForgetsWork = { seeks: 0, lines: 0, rows: 0, reads: 0 };
+/** The rows sourcesBad's positional meter charged (test hook: it equals the rows read). */
+const positionalWork = { paid: 0 };
+export function positionalPaidForTest(): number { return positionalWork.paid; }
+/** The most tombstone rows one forget-list read visits. */
+const FORGET_SCAN_MAX = 1024;
+/** The first page of a metered forget-list read: one node's rows (lineage-allowance.ts ROWS_PER_NODE). */
+const FORGET_FIRST_PAGE = ROWS_PER_NODE;
+/** Test hook: the forget-list range seeks, tombstone rows visited, listed-line key reads and positional row reads (cited line, turn_first,
+ * parent) executed so far. */
+export function threadForgetsWorkForTest(): { seeks: number; lines: number; rows: number; reads: number } { return { ...threadForgetsWork }; }
+/** Whether the forget-list index is absent from the schema (not built yet, or dropped by a downgrade): asked only after the indexed read
+ * failed, so the fallback is taken for a missing index and nothing else (Grok tcfo5 L). */
+export function forgetIndexMissing(db: DatabaseLike): boolean {
+  return !stmt(db, "SELECT 1 FROM sqlite_schema WHERE type='index' AND name=?").get(TOMBSTONE_FORGETS_INDEX);
+}
+/** (TCFO-METER) A meter on the allowance itself, for a caller outside a judge: a bounded read is reserved (allowance.reserveRows) and the
+ * rows read are paid (allowance.spendRows), so no positional row is read past the allowance (Grok tcfo5 M). */
+export function allowanceMeter(allowance: LineageAllowance, threadId: string): PositionalMeter {
+  return { reserve: rows => allowance.reserveRows(threadId, rows), pay: rows => { if (rows > 0) allowance.spendRows(threadId, rows); } };
+}
+/** How a metered caller pays for positionalWithheld's reads: `reserve` stops (throws) unless up to `rows` rows can be paid for, before a
+ * bounded read; `pay` charges rows actually read (or about to be read, when the count is known). TCFO-METER. */
+export interface PositionalMeter { reserve(rows: number): void; pay(rows: number): void }
+function threadForgets(db: DatabaseLike, threadId: string, meter?: PositionalMeter): Array<{ at: number; forgetAt: number; id: string }> | "many" {
   const pass = statementReusePassId(), writes = writeStamp(db as never);
-  const kept = threadForgetsCache.get(threadId);
-  if (kept && pass && writes !== undefined && kept.pass === pass && kept.writes === writes && kept.db === db) return kept.forgets;
-  const stamp = stmt(db, "SELECT (SELECT deletion_epoch FROM memory_meta WHERE id=1) AS e,(SELECT max(rowid) FROM memory_tombstones) AS t").get();
-  const key = `${stamp?.e}:${stamp?.t}`;
-  if (kept && kept.key === key) { Object.assign(kept, { pass, writes, db }); return kept.forgets; }
+  const reusable = pass !== 0 && writes !== undefined && !(db as { isTransaction?: boolean }).isTransaction;
+  const kept = reusable ? threadForgetsPass.get(threadId) : undefined;
+  if (kept && kept.pass === pass && kept.writes === writes && kept.db === db) return kept.forgets;
   const prefix = `message:${threadId}:`;
   // what the owner forgot (a line, or a memory resting on it), not a deleted bot's or conversation's bookkeeping
-  const rows = stmt(db, "SELECT target_id,min(created_at) AS f FROM memory_tombstones WHERE target_type='source' AND target_id>=? AND target_id<? AND reason IN ('owner-forget','forgotten-supporting-source') GROUP BY target_id LIMIT 257").all(prefix, `message:${threadId};`);
+  threadForgetsWork.seeks++;
+  // (Astra TCFO r3 H2) at most FORGET_SCAN_MAX tombstone rows are visited: by the forgets index when it is built (only the owner's forgets),
+  // else by the thread's range of the unique index (any reason). Past the bound the list is "many" (every generated line withheld: fail closed).
+  // (the index is asked for by using it: one statement per read, not a schema probe first; until it is built, or once a downgrade dropped it,
+  // the read turns to the bounded range scan. Which it is, the schema says (forgetIndexMissing), not the error's wording: an error with the
+  // index there is thrown on.)
+  const read = (limit: number): Array<Record<string, unknown>> => {
+    try {
+      return stmt(db, `SELECT target_id,created_at,1 AS kept FROM memory_tombstones INDEXED BY ${TOMBSTONE_FORGETS_INDEX} WHERE target_type='source' AND reason IN ('owner-forget','forgotten-supporting-source') AND target_id>=?1 AND target_id<?2 ORDER BY target_id LIMIT ?3`).all(prefix, `message:${threadId};`, limit);
+    } catch (error) {
+      if (!forgetIndexMissing(db)) throw error;
+      return stmt(db, `SELECT target_id,created_at,reason IN ('owner-forget','forgotten-supporting-source') AS kept FROM memory_tombstones WHERE target_type='source' AND target_id>=?1 AND target_id<?2 LIMIT ?3`).all(prefix, `message:${threadId};`, limit);
+    }
+  };
+  // (TCFO-METER) a metered caller reserves each bounded read before it is made and is charged the rows it read: a first page the size of one
+  // node, and only when that is full the whole bound (its first rows read again, and paid again). A reservation that cannot be made throws
+  // (the caller's limit), so nothing is read unpaid and the line is withheld unproven.
+  meter?.reserve(FORGET_FIRST_PAGE);
+  let raw = read(FORGET_FIRST_PAGE);
+  threadForgetsWork.rows += raw.length; meter?.pay(raw.length);
+  if (raw.length >= FORGET_FIRST_PAGE) {
+    meter?.reserve(FORGET_SCAN_MAX + 1);
+    raw = read(FORGET_SCAN_MAX + 1);
+    threadForgetsWork.rows += raw.length; meter?.pay(raw.length);
+  }
+  const first = new Map<string, number>();
+  for (const row of raw) if (row.kept) { const id = String(row.target_id), at = Number(row.created_at); if (!first.has(id) || at < first.get(id)!) first.set(id, at); }
+  const rows = [...first].map(([target_id, f]) => ({ target_id, f }));
   let forgets: Array<{ at: number; forgetAt: number; id: string }> | "many" = [];
-  if (rows.length > 256) forgets = "many";
-  else for (const row of rows) {
+  if (raw.length > FORGET_SCAN_MAX || rows.length > 256) forgets = "many";
+  else if (rows.length) meter?.pay(rows.length);
+  if (forgets !== "many") for (const row of rows) {
+    threadForgetsWork.lines++;
     const id = String(row.target_id).slice(prefix.length);
     const line = stmt(db, "SELECT at FROM messages WHERE thread_id=? AND id=?").get(threadId, id);
-    if (line) forgets.push({ at: Number(line.at), forgetAt: Number(row.f), id });
+    // a forgotten line with no row yet is listed too (NaN orders before nothing): a verdict depends on its row arriving (TURNCACHE-FAILOPEN)
+    forgets.push({ at: line ? Number(line.at) : NaN, forgetAt: Number(row.f), id });
   }
-  if (threadForgetsCache.size >= 256) threadForgetsCache.delete(threadForgetsCache.keys().next().value!);
-  threadForgetsCache.set(threadId, { key, pass, writes, db, forgets });
+  if (!reusable) return forgets;
+  // one pass's lists only: a list from an earlier pass is never read again
+  for (const [thread, entry] of threadForgetsPass) if (entry.pass !== pass) threadForgetsPass.delete(thread);
+  if (threadForgetsPass.size >= 256) threadForgetsPass.delete(threadForgetsPass.keys().next().value!);
+  threadForgetsPass.set(threadId, { pass, writes: writes!, db, forgets });
   return forgets;
 }
 /** Generated lines of a thread written after a line the owner forgot, by a turn that began before that forget: the reply may
@@ -269,15 +333,25 @@ function threadForgets(db: DatabaseLike, threadId: string): Array<{ at: number; 
  * a forget made while the turn ran still covers its reply. Owner and person lines are never withheld this way. Past 256 forgotten
  * lines in one thread every generated line counts (fail closed). Bounded: the cached forget list plus a few primary-key reads per
  * line, nothing when the thread has no forgotten line. */
-export function positionalWithheld(threadId: string, messageIds: Iterable<string>): Set<string> {
-  const out = new Set<string>();
+export function positionalWithheld(threadId: string, messageIds: Iterable<string>, meter?: PositionalMeter): Set<string> {
+  const out = new Set<string>(), ids = [...messageIds];
+  if (!ids.length) return out;
   const db = database();
-  const forgets = threadForgets(db, threadId);
+  // (TCFO-METER) `meter`, when given, pays for each read before it is made (and throws when it cannot: fail closed)
+  const pay = (rows: number) => meter?.pay(rows);
+  const done = <T>(value: T): T => { threadForgetsWork.reads++; return value; };
+  // What a kept verdict read here (TURNCACHE-FAILOPEN): the thread's forget list ("p", moved by any source tombstone of the thread),
+  // each line's own row and the rows it is timed by ("m": at, role, turnId, parentId, the row arriving), and the turn's first row ("f").
+  dep("p", threadId);
+  const forgets = threadForgets(db, threadId, meter);
   if (forgets !== "many" && !forgets.length) return out;
+  if (forgets !== "many") for (const forget of forgets) dep("m", threadId, forget.id);
   const line = stmt(db, "SELECT at,role,json_extract(json,'$.turnId') AS turn,json_extract(json,'$.parentId') AS parent FROM messages WHERE thread_id=? AND id=?");
-  const atOf = (id: unknown) => typeof id === "string" ? stmt(db, "SELECT at FROM messages WHERE thread_id=? AND id=?").get(threadId, id)?.at : undefined;
-  for (const id of messageIds) {
-    const row = line.get(threadId, id);
+  const atOf = (id: unknown) => { if (typeof id !== "string") return undefined; dep("m", threadId, id); pay(1); return done(stmt(db, "SELECT at FROM messages WHERE thread_id=? AND id=?").get(threadId, id))?.at; };
+  for (const id of ids) {
+    dep("m", threadId, id);
+    pay(1);
+    const row = done(line.get(threadId, id));
     if (!row || row.role === "user") continue;
     if (forgets === "many") { out.add(id); continue; }
     const at = Number(row.at);
@@ -287,7 +361,10 @@ export function positionalWithheld(threadId: string, messageIds: Iterable<string
       if (at < forget.forgetAt) { out.add(id); break; }
       if (start === undefined) {
         // the turn's first row (turn_first), else this line: its parent was there when the turn was put together
-        const first = typeof row.turn === "string" ? stmt(db, "SELECT json_extract(m.json,'$.parentId') AS parent FROM turn_first f JOIN messages m ON m.rowid=f.first_rowid WHERE f.thread_id=? AND f.turn_id=?").get(threadId, row.turn) : undefined;
+        if (typeof row.turn === "string") { dep("f", threadId, row.turn); pay(1); }
+        const first = typeof row.turn === "string" ? done(stmt(db, "SELECT m.thread_id AS thread,m.id AS id,json_extract(m.json,'$.parentId') AS parent FROM turn_first f JOIN messages m ON m.rowid=f.first_rowid WHERE f.thread_id=? AND f.turn_id=?").get(threadId, row.turn)) : undefined;
+        // its parent is read from it: a change to that row is a change to this verdict (Astra TCFO r1 H2)
+        if (first) dep("m", String(first.thread), String(first.id));
         const parentAt = atOf(first ? first.parent : row.parent);
         start = parentAt === undefined || parentAt === null ? at : Number(parentAt);
       }
@@ -396,7 +473,14 @@ export function contentRevoked(allowance: LineageAllowance, row: Disclosure, thr
     for (const source of sources) {
       dep("s", source.id);
       const bad = once(`s\u0000${source.id}\u0000${source.revision}`, () => {
-        const current = stmt(db, `SELECT s.state,s.revision,${DENIED_SOURCE("s")} AS denied FROM memory_sources s WHERE s.id=?`).get(source.id);
+        const current = stmt(db, `SELECT s.state,s.revision,s.thread_id,s.kind,${DENIED_SOURCE("s")} AS denied FROM memory_sources s WHERE s.id=?`).get(source.id);
+        // its conversation's branch-change fence (deny.ts BRANCH_CHANGE_PENDING): read in the same memo scope as recordDep's keys
+        if (typeof current?.thread_id === "string") dep("b", current.thread_id);
+        // a bring-in copy is denied by its origins too (deny.ts DENIED_SOURCE): each origin its current payload names is read, so its "s" key
+        // (state, revision, scope, tombstones) reaches this verdict (Astra TCFO r1 H4). Only bring-ins pay for it.
+        if (current?.kind === "bring-in") for (const origin of stmt(db, "SELECT DISTINCT json_extract(oj.value,'$.id') AS id FROM memory_source_versions ov, json_each(ov.payload,'$.broughtFrom.sources') oj WHERE ov.source_id=? AND ov.revision=?").all(source.id, current.revision)) {
+          if (typeof origin.id === "string") dep("s", origin.id);
+        }
         return !current || current.state!=="active" || current.revision!==source.revision || Boolean(current.denied) || Boolean(stmt(db, "SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(source.id,source.revision));
       });
       if (bad) return true;
@@ -545,6 +629,24 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
     checkBase = null; checkKept = null;
   };
   const charge = (count=1) => { nodes+=count; rowsRead+=count; spend(count); if(nodes>(nodeBudgetOverride ?? REPLAY_NODE_BUDGET)) throw limit(); };
+  /** (TCFO-METER) positionalWithheld's reads paid from this judge's own charge: a bounded read is reserved first (the judge's node budget and
+   * the allowance's room), and the rows read are charged, ROWS_PER_NODE to a node rounded up. Past what it can pay the check cannot finish
+   * (MEMORY_REPLAY_LIMIT), so the line is withheld unproven, never shown unread. One meter per call. */
+  const judgeMeter = (): PositionalMeter => {
+    let positionalRows = 0, positionalNodes = 0;
+    const owedFor = (rows: number) => Math.ceil((positionalRows + rows) / ROWS_PER_NODE) - positionalNodes;
+    return {
+      reserve: rows => {
+        if (nodes + Math.max(0, owedFor(rows)) > (nodeBudgetOverride ?? REPLAY_NODE_BUDGET)) throw limit();
+        try { allowance.reserveRows(threadId, rows); } catch (error) { exhausted = true; throw error; }
+      },
+      pay: rows => {
+        const owed = owedFor(rows);
+        positionalRows += rows; positionalWork.paid += rows;
+        if (owed > 0) { charge(owed); positionalNodes += owed; }
+      },
+    };
+  };
   const READ_FREE_ROWS = 64;
   /** Index rows read, paid for ROWS_PER_NODE to a node (a share of a node each, never free: a history-sized read is paid for by its rows). */
   let readDebt = 0;
@@ -580,7 +682,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
     return room > 0 && count(rows + 1) <= rows;
   };
   /** The key a group's kept verdict is filed under (see groupBad). */
-  const groupKeyOf = (row: Disclosure): string => `g${SEP}${JSON.stringify([threadId, String(row.thread_id), row.record_versions, row.source_versions])}`;
+  const groupKeyOf = (row: Disclosure): string => groupVerdictKey(threadId, row);
   /** Charges the groups a check has to judge: a group whose verdict is already kept costs a lookup (a small share of a node), not a judgement. */
   const groupsCost = (groups: readonly ReceiptGroup[]): number => {
     const kept = audience === null ? verdictCache() : undefined;
@@ -647,10 +749,10 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
    * verdict, dropped by what the receipts rest on and by a change to any receipt of the session). Returns the kept verdict to rest
    * on (`v` key), "" where the proof serves this call only (the capture transaction is still open: it rests on what it consulted,
    * added to the check being worked out), or null when it is not plainly sound (a bad or unfinished receipt, a cycle, no room). */
-  const provePrefix = (cache: Map<string, Verdict>, thread: string, d: string, ns: string, c: number, depth = 0): string | null => {
-    const sessionKey = JSON.stringify([thread, d, ns]);
-    let held = sessionSound.get(sessionKey);
-    if (held && !cache.has(held.key)) { sessionSound.delete(sessionKey); held = undefined; }
+  const provePrefix = (cache: VerdictReads, thread: string, d: string, ns: string, c: number, depth = 0): string | null => {
+    const sessionKey = sessionSoundKey(thread, d, ns);
+    let held = store.getSession(sessionKey);
+    if (held && !cache.has(held.key)) { store.loseSession(sessionKey, "stale"); held = undefined; }
     if (held && held.upTo >= c) return `v${SEP}${held.key}`;
     const lo = held?.upTo ?? 0;
     const sessionDep = `a${SEP}${thread}${SEP}${d}${SEP}${ns}`;
@@ -710,10 +812,10 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
         sound = false;
       }
       if (!sound || consulted.size > 4000) return null;
-      const key = `a${SEP}${JSON.stringify([thread, d, ns, high])}`;
+      const key = sessionProofKey(thread, d, ns, high);
       if (!keep(key, { withheld: false, unproven: false, deps: consulted })) return null;
-      if (sessionSound.size > 4096) sessionSound.clear();
-      sessionSound.set(sessionKey, { upTo: high, key });
+      if (store.sessionCount() > 4096) store.clearSessions("session-clear");
+      if (!store.backfillRefuses("sessionSound")) store.setSession(sessionKey, { upTo: high, key });
       previous = key; upTo = high;
       if (high >= c) break;
     }
@@ -814,15 +916,15 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
     const pairs = Number(stmt(db, pairSql).get(thread, JSON.stringify(messageIds), pairCap+1)?.n ?? 0);
     chargeRead(pairs);
     charge();
-    if (pairs <= pairCap) { needRoom(() => pairs); return { groups: listing(thread, messageIds, depth), exact: true }; }
-    if (receipts <= THREAD_RECEIPT_LIMIT) return { groups: threadGroups(thread), exact: false };
+    if (pairs <= pairCap) { needRoom(() => pairs); producerBranch(thread, "pairs"); return { groups: listing(thread, messageIds, depth), exact: true }; }
+    if (receipts <= THREAD_RECEIPT_LIMIT) { const groups = threadGroups(thread); producerBranch(thread, "groups"); return { groups, exact: false }; }
     // Too many receipts to read whole (found on an earlier call): list.
     if (!threadTooLong.has(thread)) {
       // A thread the turn cannot afford to read whole is listed, without trying (a refused read is not a check that ran out)
       if (!roomFits(rows => Number(stmt(db, "SELECT count(*) AS n FROM (SELECT 1 FROM memory_disclosures WHERE thread_id=? LIMIT ?)").get(thread, rows)?.n ?? 0))) threadTooLong.add(thread);
       else {
         const spent = nodes, wasExhausted = exhausted, wasUnfinished = unfinished, wasHits = limitHits, wasHit = allowance.hit;
-        try { return { groups: threadGroups(thread, true), exact: false }; }
+        try { const groups = threadGroups(thread, true); producerBranch(thread, "groups"); return { groups, exact: false }; }
         catch (error) {
           if (!(error instanceof Error && error.message === "MEMORY_REPLAY_LIMIT")) throw error;
           // a turn whose allowance ran out lists nothing further
@@ -835,7 +937,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
     needRoom(() => 0);
     const all = Number(stmt(db, pairSql).get(thread, JSON.stringify(messageIds), PAIR_LIMIT+1)?.n ?? 0);
     chargeRead(all);
-    if (all <= PAIR_LIMIT) { needRoom(() => all); return { groups: listing(thread, messageIds, depth), exact: true }; }
+    if (all <= PAIR_LIMIT) { needRoom(() => all); producerBranch(thread, "listing"); return { groups: listing(thread, messageIds, depth), exact: true }; }
     throw limit();
   };
   /** Of `messageIds`, the ones one of `bundles` lists (`first`: stop at
@@ -1145,6 +1247,11 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
         }
         messages = unjudged;
       }
+      // (Astra TCFO r3 H1) a cited reply judged here (not through a kept verdict) is timed against its conversation's forgets as its own
+      // verdict would be (badRoots, capturedMessageVerdicts): written after a line the owner forgot, by a turn begun before the forget, it may
+      // repeat the forgotten words. Its keys ("p", "m", "f") are this verdict's too.
+      // (TCFO-METER) paid from this check's own charge (judgeMeter)
+      if (positionalWithheld(thread, messages, judgeMeter()).size) return true;
       if (anyProducerBad(thread, messages, depth+1)) return true;
       for (const message of messages) {
         // a reply made without a receipt rests on the replies its context carried
@@ -1170,6 +1277,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
     if (pending.length) {
       const ids = JSON.stringify(pending.map(message => `message:${thread}:${message}`));
       for (const message of pending) dep("s", `message:${thread}:${message}`);
+      dep("b", thread);
       rowsRead += pending.length;
       const forgotten = new Set([
         ...stmt(db, `SELECT s.id FROM memory_sources s WHERE s.id IN (SELECT value FROM json_each(?)) AND (s.state='deleted' OR ${DENIED_SOURCE("s")})`).all(ids).map(row => String(row.id)),
@@ -1178,7 +1286,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
       // a deleted conversation's lines, and a line written after one the owner forgot (1.0.2 revoke-bounded r3)
       let deniedThread = threadDeny.get(thread);
       if (deniedThread === undefined) { deniedThread = Boolean(stmt(db, "SELECT 1 FROM memory_deny WHERE kind='thread' AND id=?").get(thread)); threadDeny.set(thread, deniedThread); }
-      const positional = deniedThread ? new Set<string>() : positionalWithheld(thread, pending);
+      const positional = deniedThread ? new Set<string>() : positionalWithheld(thread, pending, judgeMeter());
       const rest: string[] = [];
       for (const message of pending) {
         if (deniedThread || positional.has(message) || forgotten.has(`message:${thread}:${message}`)) rootVerdicts.set(rootKey(thread, message), true); else rest.push(message);
@@ -1279,13 +1387,14 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
    * (bad, unfinished); the verdict being worked out rests on the proof's completion. `boxed`: deferred only for a background slice's time box. */
   const deferSet = (id: string, boxed: boolean): true => {
     const asked = requestProof(id, readerKey && audience ? { key: readerKey, thread: threadId, audience } : null);
-    deferredLarge++; unfinished++;
+    // the deferral is the only reason this check is unfinished: counted apart too, so the warmer can tell DEFERRED-ONLY from WORK (F6)
+    deferredLarge++; unfinished++; deferredUnfinished++;
     if (boxed) boxDeferred++;
     collected?.add(awaitedKey(asked));
     return true;
   };
-  const replaySetBad = (kept: Map<string, Verdict>, handle: Handle, depth: number, keepEntry: (key: string, entry: Verdict) => boolean = keep): boolean => {
-    const keyOf = (node: Handle) => readerKey ? `R${SEP}${readerKey}${SEP}${node.id}` : `R${SEP}${node.id}`;
+  const replaySetBad = (kept: VerdictReads, handle: Handle, depth: number, keepEntry: (key: string, entry: Verdict) => boolean = keep): boolean => {
+    const keyOf = (node: Handle) => replaySetKey(readerKey, node.id);
     // a set the scheduler proved (whole, for content or for this reader) counts as one judged here
     const provenAs = (node: Handle): string | null => kept.has(keyOf(node)) ? keyOf(node) : kept.has(wholeProofKey(node.id, readerKey)) ? wholeProofKey(node.id, readerKey) : null;
     const top = provenAs(handle);
@@ -1371,7 +1480,7 @@ function lineageJudge(allowance: LineageAllowance, threadId: string, audience: R
     }
     return false;
   };
-  return { settle, verdicts, producers, listingAny, session, sessionProven, groupBad, originBad, rootsBad, badSets, chunkBad };
+  return { settle, judgeMeter, verdicts, producers, listingAny, session, sessionProven, groupBad, originBad, rootsBad, badSets, chunkBad };
 }
 
 /** The ids among `messages` a reader may no longer be shown. `audience` null:
@@ -1394,7 +1503,19 @@ function replayExclusionsWork(allowance: LineageAllowance, threadId: string, mes
     // revoke-bounded r3). Bounded reads outside the kept verdicts (the stricter reader layer the write-time slices replace).
     for (const id of forgottenMessageSources(threadId, messages.filter(message => !excluded.has(message.id)).map(message => message.id))) { excluded.add(id); options.checking?.delete(id); }
     // (retired: the positional rule is deny_range, written at the forget's commit)
-    if (!retired) for (const id of positionalWithheld(threadId, messages.filter(message => !excluded.has(message.id)).map(message => message.id))) excluded.add(id);
+    // (TCFO-METER) paid on the allowance; one it cannot pay withholds every generated line left (fail closed, "still being checked")
+    if (!retired) {
+      const left = messages.filter(message => !excluded.has(message.id));
+      let positional: Set<string>;
+      try { positional = positionalWithheld(threadId, left.map(message => message.id), allowanceMeter(allowance, threadId)); }
+      catch (error) {
+        if (!options.failClosed || !isLineageLimit(error)) throw error;
+        noteWithheldOnError(error);
+        positional = new Set(left.filter(message => message.role !== "user").map(message => message.id));
+        for (const id of positional) options.checking?.add(id);
+      }
+      for (const id of positional) excluded.add(id);
+    }
     return excluded;
   }));
 }
@@ -1580,83 +1701,134 @@ function generatedSpeaker(speaker: unknown): boolean {
 // A write that touches none of these (a new message, a new receipt with no outputs, a
 // checkpoint version added, a notebook poll, a data_revision bump) flushes nothing.
 const SEP = "\u001f";
-/** A cached verdict: withheld or not, whether it was reached past a check that could not finish, and what it rests on. */
-interface Verdict { withheld: boolean; unproven: boolean; deps: Set<string> }
-const verdicts = new Map<string,Verdict>();
+// TURNSTART r14 L1 test hooks (L2's lineage-warm-surface.ts): the verdict-key builders, hoisted out of the judge's closures unchanged so a test
+// builds each key exactly as the judge does (lineageBuilderKeysForTest below). The judge calls these; nothing else changed at the sites.
+const groupVerdictKey = (threadId: string, row: Disclosure): string =>
+  `g${SEP}${JSON.stringify([threadId, String(row.thread_id), row.record_versions, row.source_versions])}`;
+const sessionSoundKey = (thread: string, d: string, ns: string): string => JSON.stringify([thread, d, ns]);
+const sessionProofKey = (thread: string, d: string, ns: string, high: unknown): string => `a${SEP}${JSON.stringify([thread, d, ns, high])}`;
+const replaySetKey = (readerKey: string, id: string): string => readerKey ? `R${SEP}${readerKey}${SEP}${id}` : `R${SEP}${id}`;
+const messageVerdictKey = (threadId: string, messageId: string): string => JSON.stringify([threadId, messageId]);
+/** One key per builder site (b13e RL:585 g, :653 sessionSound, :715 a, :1290 R, :2097/:2128 [t,m], :2611 Q, :2613 S), each made by the real builder,
+ * with the owner the design assigns it (r13 S2 + r14 S2): T11(g) compares it with verdict-store's owner(). Plus awaitedKey (RL:2615, a dependency
+ * key, never a stored key). Test-only. */
+export function lineageBuilderKeysForTest(thread = "t1", message = "m1", setId = "set1", reader = ""): {
+  keys: Array<{ site: string; map: "verdicts" | "sessionSound"; key: string; expected: Owner }>; awaitedKey: string;
+} {
+  const readerKey = reader ? JSON.stringify([thread, reader]) : "";
+  const row = { thread_id: "t2", record_versions: "[]", source_versions: "[]" } as unknown as Disclosure;
+  const bucket: Owner = { kind: "PROOF", bucket: proofBucket(setId) };
+  const threadOwner = (redo: Extract<Owner, { kind: "THREAD" }>["redo"]): Owner => ({ kind: "THREAD", thread, redo });
+  const keys: Array<{ site: string; map: "verdicts" | "sessionSound"; key: string; expected: Owner }> = [
+    { site: "RL:585 g", map: "verdicts", key: groupVerdictKey(thread, row), expected: threadOwner({ kind: "confirm" }) },
+    { site: "RL:653 sessionSound", map: "sessionSound", key: sessionSoundKey(thread, "drv", "sess"), expected: threadOwner({ kind: "s", driver: "drv", session: "sess" }) },
+    { site: "RL:715 a", map: "verdicts", key: sessionProofKey(thread, "drv", "sess", 7), expected: threadOwner({ kind: "s", driver: "drv", session: "sess" }) },
+    { site: "RL:1290 R", map: "verdicts", key: replaySetKey(readerKey, setId), expected: bucket },
+    { site: "RL:2097 [t,m]", map: "verdicts", key: messageVerdictKey(thread, message), expected: threadOwner({ kind: "m", message }) },
+    { site: "RL:2128 [t,m]", map: "verdicts", key: messageVerdictKey(thread, message), expected: threadOwner({ kind: "m", message }) },
+    { site: "RL:2611 Q", map: "verdicts", key: partialKey(setId, 42, readerKey), expected: bucket },
+    { site: "RL:2613 S", map: "verdicts", key: wholeProofKey(setId, readerKey), expected: bucket },
+  ];
+  return { keys, awaitedKey: awaitedKey(replaySetKey(readerKey, setId)) };
+}
+/** TURNSTART r14 L1 test hook (flagfold F2): the producers decision each call took (listing | groups | pairs, RL:822-841), told per thread. */
+type ProducerBranch = "listing" | "groups" | "pairs";
+let producerBranchHook: ((thread: string, branch: ProducerBranch) => void) | null = null;
+export function onProducerBranchForTest(hook: ((thread: string, branch: ProducerBranch) => void) | null): void { producerBranchHook = hook; }
+function producerBranch(thread: string, branch: ProducerBranch): void { producerBranchHook?.(thread, branch); }
+/** TURNSTART r14 L1 test hook (F6 activation budget, L2 proof-restarts): a set id this answers true for restarts its proof at the step's end, as
+ * an unclean step does (RL:2725). Off (null) outside tests. */
+let proofRestartHook: ((setId: string) => boolean) | null = null;
+export function forceProofRestartForTest(hook: ((setId: string) => boolean) | null): void { proofRestartHook = hook; }
+function forcedProofRestart(setId: string): boolean { return proofRestartHook !== null && proofRestartHook(setId); }
+// The kept verdicts (and the maps below) live in the VerdictStore (verdict-store.ts, TURNSTART r14 S1'): every read is recorded while a confirm
+// pass is open, every removal moves its owner's loss counter, and admitted records' keys are pinned against eviction.
 /** Per dependency key, the cached verdicts that consulted it. A verdict that rests on another reply's verdict holds that
  * reply's key ("v"), not a copy of everything that verdict consulted, so a long chain of replies stays small; dropping a
  * verdict drops every verdict resting on it, transitively. A verdict evicted for room keeps its place in this graph (only its
  * answer goes), so a change it rested on still reaches what rests on it: eviction never cuts a kept proof loose and never
  * takes a proof with it. */
-const dependents = new Map<string,Set<string>>();
 /** Verdicts kept at most; past it the oldest eighth goes (what rests on it stays, still reached through the graph), never the
  * whole cache. A session's root set alone reaches tens of thousands of messages (ROOT_SET_CEILING). */
 const VERDICT_LIMIT = 65536;
 let verdictLimit = VERDICT_LIMIT;
 /** Tests lower the capacity to reach eviction; null is the real one. */
-export function setVerdictLimitForTest(limit: number | null): void { verdictLimit = limit ?? VERDICT_LIMIT; }
+export function setVerdictLimitForTest(limit: number | null): void { verdictLimit = limit ?? VERDICT_LIMIT; store.setVerdictLimit(verdictLimit); }
+/** The dependency-edge bound remember() keeps (RL:1622: verdictLimit x 8). Tests (T12 edge-bound op) set it apart from the capacity; null is the real one. */
+let edgeBoundOverride: number | null = null;
+const edgeBound = (): number => edgeBoundOverride ?? verdictLimit * 8;
+export function setEdgeBoundForTest(bound: number | null): void { edgeBoundOverride = bound; }
 /** Drops every kept verdict and root-set handle, so the next check is a fresh one (tests: the cold side of warm-versus-cold). */
-export function forgetKeptLineageForTest(): void { forgetVerdicts(); proving.clear(); }
+export function forgetKeptLineageForTest(): void { forgetVerdicts(true, "test"); proving.clear(); }
 /** Kept verdicts, for tests. */
-export function keptVerdictCount(): number { return verdicts.size; }
+export function keptVerdictCount(): number { return store.verdictCount(); }
 /** Keeps a verdict, or refuses to: one that rests on another kept verdict ("v") is kept only while that verdict is still
  * there once room has been made, since a verdict dropped for room takes its dependents with it only if they are already
  * registered. Refused, the verdict serves the call that reached it, and so does whatever rests on it (the caller lists what it
  * consulted instead of its key). Returns whether it was kept. */
 function remember(key: string, entry: Verdict): boolean {
   if (keepRefused()) return false;
-  if (verdicts.size >= verdictLimit && !verdicts.has(key)) {
-    // The oldest eighth goes, never a proof of a large set (S, Q): a cold turn of a long conversation keeps about one verdict per root, and evicting the
-    // proof the scheduler is building would start it again from nothing on every turn (r8 Fable #2). Only a cache that holds nothing else gives a proof up.
-    const oldest: string[] = [], proofs: string[] = [];
-    for (const kept of verdicts.keys()) {
-      if (isProofKey(kept)) { if (proofs.length < verdictLimit / 8) proofs.push(kept); continue; }
-      oldest.push(kept); if (oldest.length >= verdictLimit / 8) break;
-    }
-    for (const kept of oldest.length ? oldest : proofs) verdicts.delete(kept);
-  }
+  // a backfill slice (C7) keeps nothing that would cross its room thresholds (r14.1 X4)
+  if (store.backfillRefuses("verdicts") || store.backfillRefuses("dependents")) return false;
+  store.noteRemember();
+  // The oldest eighth goes, never a proof of a large set (S, Q): a cold turn of a long conversation keeps about one verdict per root, and evicting the
+  // proof the scheduler is building would start it again from nothing on every turn (r8 Fable #2). Only a cache that holds nothing else gives a proof up.
+  // Pinned keys (admitted warm records, TURNSTART r14 S4) are skipped.
+  if (store.verdictCount() >= verdictLimit && !store.peekVerdict(key)) store.evictVerdicts(verdictLimit, isProofKey);
   // dependency lists of verdicts long gone are cleared only when their key moves: bound them, keeping every edge a kept verdict still needs (so the
   // proofs survive), and only past that start over
-  if (dependents.size > verdictLimit * 8) {
+  if (store.dependentsCount() > edgeBound()) {
     collectDependents();
-    if (dependents.size > verdictLimit * 8) {
-      // what is kept needs more edges than the bound: the older half of what is not a proof goes and the edges are collected again; only when the
-      // proofs alone need more does everything go
-      let left = Math.floor(verdicts.size / 2);
-      for (const kept of [...verdicts.keys()]) { if (left <= 0) break; if (!isProofKey(kept)) { verdicts.delete(kept); left--; } }
+    // T10(r) ruling (lead + MurageMain, 11-07, narrowed after Astra/Fable 4023216b1): in a confirm pass (a trace is open) there is NO
+    // edge-pressure drop or clear: the bound is checked before the half drop below and before any forgetVerdicts("edges"), and the pass refuses
+    // up front: the verdict serves its call unkept, the pass is unclean (its remember counted) and the warmer reads the refusal (OVERSIZE "edges"
+    // with C-EDGES on; a work slice, marked warming, does the dropping otherwise). The collectDependents() above is a compaction (it prunes
+    // reverse-index entries no kept verdict needs), not a drop or a clear; the ordinary capacity eviction above (unpinned, non-proof keys) may run.
+    const confirming = store.currentTrace();
+    // MUTANT:confirm-clears-first
+    if (confirming && store.dependentsCount() > edgeBound()) { confirming.edgesRefused = true; return false; }
+    if (store.dependentsCount() > edgeBound()) {
+      // what is kept needs more edges than the bound: the older half of what is not a proof (nor pinned, S4) goes and the edges are collected
+      // again; only when the proofs alone need more does everything go
+      let left = Math.floor(store.verdictCount() / 2);
+      for (const kept of [...store.verdictKeys()]) {
+        if (left <= 0) break;
+        // MUTANT:half-drop-takes-pinned
+        if (!isProofKey(kept) && !store.pinned(kept)) { store.loseVerdict(kept, "half-drop"); left--; }
+      }
       collectDependents();
-      if (dependents.size > verdictLimit * 8) forgetVerdicts();
+      if (store.dependentsCount() > edgeBound()) forgetVerdicts(true, "edges");
     }
   }
-  for (const d of entry.deps) if (d.startsWith(`v${SEP}`) && !verdicts.has(d.slice(2))) return false;
-  // a key kept again moves to the newest end, so what is in use is the last to go for room
-  verdicts.delete(key);
-  verdicts.set(key, entry);
+  for (const d of entry.deps) if (d.startsWith(`v${SEP}`) && !store.peekVerdict(d.slice(2))) return false;
+  // a key kept again moves to the newest end, so what is in use is the last to go for room (a different value is a changing write: S1)
+  store.setVerdict(key, entry);
   progressTick++;
-  for (const d of entry.deps) { let held = dependents.get(d); if (!held) dependents.set(d, held = new Set()); held.add(key); }
+  for (const d of entry.deps) store.addDependent(d, key);
   return true;
 }
 /** Drops the dependency edges no kept verdict needs any more: an edge to a verdict still kept, or to one evicted that a kept verdict rests on (through
  * "v" edges, transitively), stays; the rest go. One pass over the edges, run only when the graph has outgrown its bound. */
 function collectDependents(): void {
   const restsOn = new Map<string, string[]>();
-  for (const [d, held] of dependents) {
+  for (const [d, held] of store.dependentEntries()) {
     if (!d.startsWith(`v${SEP}`)) continue;
     const below = d.slice(2);
     for (const key of held) { let list = restsOn.get(key); if (!list) restsOn.set(key, list = []); list.push(below); }
   }
-  const needed = new Set<string>(verdicts.keys()), queue = [...needed];
+  const needed = new Set<string>(store.verdictKeys()), queue = [...needed];
   while (queue.length) for (const below of restsOn.get(queue.pop()!) ?? []) if (!needed.has(below)) { needed.add(below); queue.push(below); }
-  for (const [d, held] of dependents) {
+  for (const [d, held] of [...store.dependentEntries()]) {
     for (const key of held) if (!needed.has(key)) held.delete(key);
-    if (!held.size) dependents.delete(d);
+    if (!held.size) store.deleteDependentsOf(d);
   }
+  store.pruneRestsOn(needed);
 }
 /** A proof of a large set, whole (S) or in progress (Q), for content or for one reader. */
 const isProofKey = (key: string): boolean => key.startsWith(`S${SEP}`) || key.startsWith(`Q${SEP}`);
 /** Drops kept verdicts, and what rests on them. */
 function forgetKept(keys: readonly string[]): void {
-  for (const key of keys) verdicts.delete(key);
+  for (const key of keys) store.loseVerdict(key, "forget");
   dropDependents(keys.map(key => `v${SEP}${key}`));
 }
 /** Per reader (audience key and replay thread): the authority stamp its kept verdicts were judged under, and their keys. A reader's verdicts rest
@@ -1664,36 +1836,36 @@ function forgetKept(keys: readonly string[]): void {
  * which has no key of its own: they hold only while no revocation-relevant write happened (authority-epoch.ts), and go together when one did. */
 const audienceHolds = new Map<string, { hard: string; keys: Set<string> }>();
 const AUDIENCE_HOLDS_MAX = 256;
-function audienceCache(readerKey: string): Map<string, Verdict> | undefined {
+function audienceCache(readerKey: string): VerdictReads | undefined {
   const kept = verdictCache();
   if (!kept) return undefined;
   const parts = authorityParts();
   if (!parts) return undefined;
   const held = audienceHolds.get(readerKey);
   if (held && held.hard === parts.hard) return kept;
-  if (held) { for (const k of held.keys) kept.delete(k); dropDependents([...held.keys].map(k => `v${SEP}${k}`)); }
+  if (held) { for (const k of held.keys) store.loseVerdict(k, "audience"); dropDependents([...held.keys].map(k => `v${SEP}${k}`)); }
   if (audienceHolds.size >= AUDIENCE_HOLDS_MAX) {
-    for (const other of audienceHolds.values()) { for (const k of other.keys) kept.delete(k); dropDependents([...other.keys].map(k => `v${SEP}${k}`)); }
+    for (const other of audienceHolds.values()) { for (const k of other.keys) store.loseVerdict(k, "audience"); dropDependents([...other.keys].map(k => `v${SEP}${k}`)); }
     audienceHolds.clear();
   }
   audienceHolds.set(readerKey, { hard: parts.hard, keys: new Set() });
   return kept;
 }
 /** Per session, the newest receipt up to which its receipts are proven sound, and the kept verdict that says so. */
-const sessionSound = new Map<string, { upTo: number; key: string }>();
 /** Drops every kept verdict. The stored root-set handles are structure, not verdicts, and survive unless asked (see structureStamp). */
-function forgetVerdicts(withHandles = true): void {
-  verdicts.clear(); dependents.clear(); sessionSound.clear(); audienceHolds.clear(); threadGroupStore.clear();
+function forgetVerdicts(withHandles = true, why = "stamp"): void {
+  // one clear of the store (gen++; a clear inside a warmer slice is counted as warmer-caused, r14 S4)
+  store.clearLineage(why); audienceHolds.clear();
   if (withHandles) { forgetRootSetHandles(sharedHandles); handleStamp = ""; }
 }
 function dropDependents(keys: Iterable<string>): void {
   const queue = [...keys];
   while (queue.length) {
-    const d = queue.pop()!, held = dependents.get(d);
+    const d = queue.pop()!, held = store.dependentsOf(d);
     if (!held) continue;
-    dependents.delete(d);
+    store.deleteDependentsOf(d);
     // an evicted verdict passes the change on as a kept one does (its edges outlive its answer)
-    for (const key of held) { verdicts.delete(key); queue.push(`v${SEP}${key}`); }
+    for (const key of held) { store.loseVerdict(key, "dirty"); queue.push(`v${SEP}${key}`); }
   }
 }
 /** Every receipt group of a thread, kept across checks for the content reader (threadGroups): the read is one statement over all
@@ -1701,14 +1873,13 @@ function dropDependents(keys: Iterable<string>): void {
  * from: nothing newer in the table, or only receipts added since (read and merged: a bounded look at the table's newest rows, never at the
  * thread's own history). A change to a receipt's cited lists, its place in a session or its id, a removal or another connection's commit
  * drops it (`d` dirty keys, forgetVerdicts). `top` is the table's newest rowid when the groups were last known to be current. */
-const threadGroupStore = new Map<string, { count: number; top: number; groups: ReceiptGroup[]; at: Map<string, number> }>();
 const THREAD_GROUP_STORE_MAX = 64;
 /** The most receipts written to the table since a kept read that are looked at to bring it up to date: more, and it is read afresh. */
 const THREAD_GROUP_MERGE_MAX = 256;
 function parseGroups(rows: Disclosure[]): ReceiptGroup[] { return rows.map(row => ({ row, bundles: new BundleList(JSON.parse(String(row.bundles)) as string[]) })); }
 const groupShape = (row: Disclosure): string => JSON.stringify([row.thread_id, row.state, row.policy_revision, row.deletion_epoch, row.record_versions, row.source_versions]);
 function currentThreadGroups(db: DatabaseLike, thread: string): ReceiptGroup[] | undefined {
-  const held = threadGroupStore.get(thread);
+  const held = store.getGroups<ReceiptGroup>(thread);
   if (!held) return undefined;
   try {
     const top = Number(stmt(db, "SELECT max(rowid) AS top FROM memory_disclosures").get()?.top ?? 0);
@@ -1730,11 +1901,13 @@ function currentThreadGroups(db: DatabaseLike, thread: string): ReceiptGroup[] |
           into.row.latest = Math.max(Number(into.row.latest), Number(group.row.latest));
         }
         held.count += added; held.top = top;
+        // appending a receipt changes what the kept groups answer (r13 S1: a changing write); top alone is safe metadata
+        store.noteGroupMerge(thread, added);
         return merged;
       }
     }
   } catch { /* read afresh */ }
-  threadGroupStore.delete(thread);
+  store.loseGroups(thread, "stale");
   return undefined;
 }
 function rememberThreadGroups(db: DatabaseLike, thread: string, groups: ReceiptGroup[]): void {
@@ -1744,9 +1917,11 @@ function rememberThreadGroups(db: DatabaseLike, thread: string, groups: ReceiptG
     // only a read that covered every receipt of the thread is kept (the count reads no further than the rows just read)
     const held = Number(stmt(db, "SELECT count(*) AS n FROM (SELECT 1 FROM memory_disclosures WHERE thread_id=? LIMIT ?)").get(thread, receipts + 1)?.n ?? -1);
     if (receipts !== held) return;
-    if (threadGroupStore.size >= THREAD_GROUP_STORE_MAX) threadGroupStore.delete(threadGroupStore.keys().next().value!);
+    if (store.backfillRefuses("threadGroupStore")) return;
+    // the oldest UNPINNED entry goes (TURNSTART r14 S4)
+    if (store.groupCount() >= THREAD_GROUP_STORE_MAX) store.evictOldestGroup();
     const top = Number(stmt(db, "SELECT max(rowid) AS top FROM memory_disclosures").get()?.top ?? 0);
-    threadGroupStore.set(thread, { count: receipts, top, groups, at: new Map(groups.map((group, index) => [groupShape(group.row), index])) });
+    store.setGroups<ReceiptGroup>(thread, { count: receipts, top, groups, at: new Map(groups.map((group, index) => [groupShape(group.row), index])) });
   } catch { /* not kept */ }
 }
 const chains = new Map<string,Array<{thread:string;message:string;generated:boolean}> | "long" | "many">();
@@ -1754,6 +1929,11 @@ let cacheHits = 0, cacheMisses = 0;
 /** How often the session listing fell back to every receipt of the session (and how often inside a transaction), for tests. */
 const listingFallbacks = { all: 0, inTransaction: 0 };
 export function lineageListingFallbacks(): { all: number; inTransaction: number } { return { ...listingFallbacks }; }
+/** TURNSTART r14 C5'(2) / r14.1 X2: every counter a confirm reads as a delta, in one snapshot (judge misses, Pg full listings, deferredLarge,
+ * unfinished, and the VerdictStore's holdWrites, handleMisses, memoMisses, merges, remembers, warmerCausedClears). */
+export function lineageConfirmCounters(): ConfirmCounters {
+  return { ...store.counters(), misses: cacheMisses, listings: listingFallbacks.all, deferred: deferredLarge, unfinished, deferredUnfinished };
+}
 /** Verdict cache hits and misses so far, for the turn trace. */
 export function lineageCacheCounts(): { hits: number; misses: number } { return { hits: cacheHits, misses: cacheMisses }; }
 /** What the verdict being computed has consulted. */
@@ -1767,11 +1947,31 @@ const NOTE = (key: string) => `INSERT INTO lineage_dirty VALUES(${key})`;
 const BUMP = "UPDATE lineage_epoch SET n=n+1";
 /** The root-set handles (root-set-handles.ts) are immutable data of immutable set rows: only a change to those rows can make one stale. */
 const STRUCT = "UPDATE lineage_structure SET n=n+1";
-const TOMBSTONE_NOTE = (row: "NEW" | "OLD") => `INSERT INTO lineage_dirty SELECT (CASE ${row}.target_type WHEN 'source' THEN 's' ELSE 'q' END)||char(31)||${row}.target_id;
+// A tombstone on a message source ("message:<thread>:<line>") also moves that conversation's forget list (threadForgets, read by
+// positionalWithheld under the "p" key). The trigger notes the target itself ("P"); drainDirty turns it into the "p" key of every thread
+// whose forget-list range holds it, read from the id alone, so a source with no row yet is covered and an unrelated thread keeps its
+// verdicts. TURNCACHE-FAILOPEN.
+const TOMBSTONE_NOTE = (row: "NEW" | "OLD") => `INSERT INTO lineage_dirty SELECT 's'||char(31)||${row}.target_id WHERE ${row}.target_type='source';
+ INSERT INTO lineage_dirty SELECT 'q'||char(31)||${row}.target_id WHERE ${row}.target_type IS NOT 'source';
+ INSERT INTO lineage_dirty SELECT 'P'||char(31)||${row}.target_id WHERE ${row}.target_type='source' AND substr(${row}.target_id,1,8)='message:';
  UPDATE lineage_epoch SET n=n+1 WHERE ${row}.target_type NOT IN ('source','record')`;
-const RECORD_CHANGED = "OLD.state IS NOT NEW.state OR OLD.owner_pinned IS NOT NEW.owner_pinned OR OLD.assertion IS NOT NEW.assertion OR OLD.supersedes_id IS NOT NEW.supersedes_id OR OLD.kind IS NOT NEW.kind";
+/** The thread ids whose forget list (threadForgets: target_id >= 'message:<thread>:' AND < 'message:<thread>;') holds a source tombstone
+ * target: one for every ':' after the prefix, since a thread id may hold ':' itself. */
+export function forgetListThreads(target: string): string[] {
+  const out: string[] = [];
+  if (!target.startsWith(FORGET_PREFIX)) return out;
+  for (let at = target.indexOf(":", FORGET_PREFIX.length); at !== -1; at = target.indexOf(":", at + 1)) out.push(target.slice(FORGET_PREFIX.length, at));
+  return out;
+}
+const FORGET_PREFIX = "message:";
+// scope_id: a record or source moved into a denied scope is refused from then on (deny.ts DENIED_RECORD_SCOPE, DENIED_PLACE).
+const RECORD_CHANGED = "OLD.state IS NOT NEW.state OR OLD.owner_pinned IS NOT NEW.owner_pinned OR OLD.assertion IS NOT NEW.assertion OR OLD.supersedes_id IS NOT NEW.supersedes_id OR OLD.kind IS NOT NEW.kind OR OLD.scope_id IS NOT NEW.scope_id";
 // A checkpoint version archived by its roll, nothing else about it changed (authority-epoch.ts treats the same transition).
-const CHECKPOINT_ROLL = "OLD.kind='checkpoint' AND NEW.kind='checkpoint' AND OLD.state='active' AND NEW.state='archived' AND OLD.owner_pinned=0 AND NEW.owner_pinned=0 AND OLD.assertion IS NEW.assertion AND OLD.supersedes_id IS NEW.supersedes_id";
+const CHECKPOINT_ROLL = "OLD.kind='checkpoint' AND NEW.kind='checkpoint' AND OLD.state='active' AND NEW.state='archived' AND OLD.owner_pinned=0 AND NEW.owner_pinned=0 AND OLD.assertion IS NEW.assertion AND OLD.supersedes_id IS NEW.supersedes_id AND OLD.scope_id IS NEW.scope_id";
+/** The fields of a stored line positionalWithheld times it by: when it was written, who wrote it, its turn and its parent. A text that is
+ * not JSON counts as a change (as copyFieldsChanged). */
+const POSITION_CHANGED = (o: string, n: string) => `(${o}.at IS NOT ${n}.at OR ${o}.role IS NOT ${n}.role OR (${o}.json IS NOT ${n}.json AND CASE WHEN json_valid(${o}.json) AND json_valid(${n}.json)
+   THEN json_extract(${o}.json,'$.turnId') IS NOT json_extract(${n}.json,'$.turnId') OR json_extract(${o}.json,'$.parentId') IS NOT json_extract(${n}.json,'$.parentId') ELSE 1 END))`;
 const EPOCH_SCHEMA = `
 CREATE TEMP TABLE IF NOT EXISTS lineage_epoch(id INTEGER PRIMARY KEY CHECK(id=1), n INTEGER NOT NULL);
 INSERT OR IGNORE INTO temp.lineage_epoch VALUES(1,0);
@@ -1782,7 +1982,7 @@ CREATE TEMP TRIGGER IF NOT EXISTS lineage_sources_u AFTER UPDATE ON main.memory_
  WHEN OLD.speaker IS NOT NEW.speaker OR OLD.thread_id IS NOT NEW.thread_id OR OLD.message_id IS NOT NEW.message_id
  BEGIN ${BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_sources_s AFTER UPDATE ON main.memory_sources
- WHEN (OLD.state IS NOT NEW.state OR OLD.revision IS NOT NEW.revision OR OLD.content_hash IS NOT NEW.content_hash) AND NOT (OLD.speaker IS NOT NEW.speaker OR OLD.thread_id IS NOT NEW.thread_id OR OLD.message_id IS NOT NEW.message_id)
+ WHEN (OLD.state IS NOT NEW.state OR OLD.revision IS NOT NEW.revision OR OLD.content_hash IS NOT NEW.content_hash OR OLD.scope_id IS NOT NEW.scope_id) AND NOT (OLD.speaker IS NOT NEW.speaker OR OLD.thread_id IS NOT NEW.thread_id OR OLD.message_id IS NOT NEW.message_id)
  BEGIN ${NOTE("'s'||char(31)||OLD.id")}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_sources_d AFTER DELETE ON main.memory_sources BEGIN ${BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_records_u AFTER UPDATE ON main.memory_records WHEN (${RECORD_CHANGED}) AND NOT (${CHECKPOINT_ROLL})
@@ -1809,13 +2009,16 @@ CREATE TEMP TRIGGER IF NOT EXISTS lineage_derivations_u AFTER UPDATE ON main.mem
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_derivations_d AFTER DELETE ON main.memory_derivations BEGIN ${BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_evidence_u AFTER UPDATE ON main.memory_evidence BEGIN ${BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_evidence_d AFTER DELETE ON main.memory_evidence BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_deny_i AFTER INSERT ON main.memory_deny BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_deny_u AFTER UPDATE ON main.memory_deny BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_deny_d AFTER DELETE ON main.memory_deny BEGIN ${BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_meta_u AFTER UPDATE ON main.memory_meta
  WHEN OLD.policy_revision IS NOT NEW.policy_revision OR OLD.deletion_epoch IS NOT NEW.deletion_epoch OR OLD.mode IS NOT NEW.mode BEGIN ${BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_outputs_i AFTER INSERT ON main.memory_disclosure_outputs BEGIN ${NOTE("'m'||char(31)||NEW.thread_id||char(31)||NEW.message_id")}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_outputs_d AFTER DELETE ON main.memory_disclosure_outputs BEGIN ${NOTE("'m'||char(31)||OLD.thread_id||char(31)||OLD.message_id")}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_roots_i AFTER INSERT ON main.memory_output_roots BEGIN ${NOTE("'m'||char(31)||NEW.thread_id||char(31)||NEW.message_id")}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_roots_d AFTER DELETE ON main.memory_output_roots BEGIN ${NOTE("'m'||char(31)||OLD.thread_id||char(31)||OLD.message_id")}; END;
-CREATE TEMP TRIGGER IF NOT EXISTS lineage_roots_u AFTER UPDATE ON main.memory_output_roots BEGIN ${NOTE("'m'||char(31)||NEW.thread_id||char(31)||NEW.message_id")}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_roots_u AFTER UPDATE ON main.memory_output_roots BEGIN ${NOTE("'m'||char(31)||OLD.thread_id||char(31)||OLD.message_id")}; ${NOTE("'m'||char(31)||NEW.thread_id||char(31)||NEW.message_id")}; END;
 -- A stored set's rows changing (compaction, collection of sets nothing points at) reaches only the verdicts that read that set ("x" key:
 -- every kept set verdict and every reply verdict that read a set holds it), never the whole cache (1.0.2 lineage-cold r3: compaction's deletes
 -- flushed every verdict on the rig). The stored handles go with the structure counter, as before.
@@ -1824,6 +2027,13 @@ CREATE TEMP TRIGGER IF NOT EXISTS lineage_root_set_rows_d AFTER DELETE ON main.m
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_root_set_rows_u AFTER UPDATE ON main.memory_root_sets BEGIN ${NOTE("'x'||char(31)||OLD.set_id")}; ${NOTE("'x'||char(31)||NEW.set_id")}; ${STRUCT}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_root_parents_d AFTER DELETE ON main.memory_root_set_parents BEGIN ${NOTE("'x'||char(31)||OLD.set_id")}; ${STRUCT}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_root_parents_u AFTER UPDATE ON main.memory_root_set_parents BEGIN ${NOTE("'x'||char(31)||OLD.set_id")}; ${NOTE("'x'||char(31)||NEW.set_id")}; ${STRUCT}; END;
+-- (TURNCACHE-FAILOPEN) a member row changed in place, and a member or parent link added to a set that may already be read (compaction
+-- adds parent links to existing sets; the parent statements are INSERT OR REPLACE): the set's "x" key. A set whose row is already stored
+-- is complete and may hold a handle (writers store the row last: schema.ts chainStore), so the handles go too (Astra TCFO r1 H3); a set
+-- still being written has no row, no handle and no verdict, and costs one primary-key probe.
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_root_sets_u AFTER UPDATE ON main.memory_root_set_members BEGIN ${NOTE("'x'||char(31)||OLD.set_id")}; ${NOTE("'x'||char(31)||NEW.set_id")}; ${STRUCT}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_root_sets_i AFTER INSERT ON main.memory_root_set_members BEGIN ${NOTE("'x'||char(31)||NEW.set_id")}; UPDATE lineage_structure SET n=n+1 WHERE EXISTS (SELECT 1 FROM main.memory_root_sets r WHERE r.set_id=NEW.set_id); END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_root_parents_i AFTER INSERT ON main.memory_root_set_parents BEGIN ${NOTE("'x'||char(31)||NEW.set_id")}; UPDATE lineage_structure SET n=n+1 WHERE EXISTS (SELECT 1 FROM main.memory_root_sets r WHERE r.set_id=NEW.set_id); END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_receipts_u AFTER UPDATE ON main.memory_disclosures WHEN OLD.record_versions IS NOT NEW.record_versions OR OLD.source_versions IS NOT NEW.source_versions OR OLD.native_session IS NOT NEW.native_session
  BEGIN INSERT INTO lineage_dirty SELECT 'm'||char(31)||thread_id||char(31)||message_id FROM main.memory_disclosure_outputs WHERE bundle_id=NEW.bundle_id;
  INSERT INTO lineage_dirty SELECT 'm'||char(31)||o.thread_id||char(31)||o.message_id FROM main.memory_disclosures l JOIN main.memory_disclosure_outputs o ON o.bundle_id=l.bundle_id
@@ -1839,15 +2049,67 @@ CREATE TEMP TRIGGER IF NOT EXISTS lineage_receipts_g AFTER UPDATE ON main.memory
  WHEN OLD.record_versions IS NOT NEW.record_versions OR OLD.source_versions IS NOT NEW.source_versions OR OLD.thread_id IS NOT NEW.thread_id OR OLD.bundle_id IS NOT NEW.bundle_id
  BEGIN ${NOTE("'d'||char(31)||OLD.thread_id")}; ${NOTE("'d'||char(31)||NEW.thread_id")}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_receipts_gd AFTER DELETE ON main.memory_disclosures BEGIN ${NOTE("'d'||char(31)||OLD.thread_id")}; END;
-CREATE TEMP TRIGGER IF NOT EXISTS lineage_messages_u AFTER UPDATE ON main.messages WHEN ${copyFieldsChanged("OLD.json", "NEW.json")}
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_messages_u AFTER UPDATE ON main.messages WHEN ${copyFieldsChanged("OLD.json", "NEW.json")} OR ${POSITION_CHANGED("OLD", "NEW")}
  BEGIN ${NOTE("'m'||char(31)||NEW.thread_id||char(31)||NEW.id")}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_messages_d AFTER DELETE ON main.messages BEGIN ${BUMP}; END;
 -- INSERT OR REPLACE (writeMessage) deletes and re-inserts without firing the UPDATE or DELETE triggers (recursive triggers are off): the
 -- replaced row is looked at before it goes, the same condition as lineage_messages_u.
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_messages_r BEFORE INSERT ON main.messages
- WHEN EXISTS (SELECT 1 FROM main.messages o WHERE o.thread_id=NEW.thread_id AND o.id=NEW.id AND ${copyFieldsChanged("o.json", "NEW.json")})
+ WHEN EXISTS (SELECT 1 FROM main.messages o WHERE o.thread_id=NEW.thread_id AND o.id=NEW.id AND (${copyFieldsChanged("o.json", "NEW.json")} OR ${POSITION_CHANGED("o", "NEW")}))
  BEGIN ${NOTE("'m'||char(31)||NEW.thread_id||char(31)||NEW.id")}; END;
+-- (TURNCACHE-FAILOPEN, Astra r12 E4) a line judged while its row was missing (a receipt's output can be written before its message): the
+-- row arriving is a change. One primary-key probe and at most one dirty row per new line.
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_messages_i BEFORE INSERT ON main.messages
+ WHEN NOT EXISTS (SELECT 1 FROM main.messages o WHERE o.thread_id=NEW.thread_id AND o.id=NEW.id)
+ BEGIN ${NOTE("'m'||char(31)||NEW.thread_id||char(31)||NEW.id")}; END;
+-- (TURNCACHE-FAILOPEN) the turn index (branch-fill.ts fills it in slices, branch-index.ts resets it): a turn's start moves ("f" key)
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_turn_first_i AFTER INSERT ON main.turn_first BEGIN ${NOTE("'f'||char(31)||NEW.thread_id||char(31)||NEW.turn_id")}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_turn_first_u AFTER UPDATE ON main.turn_first BEGIN ${NOTE("'f'||char(31)||OLD.thread_id||char(31)||OLD.turn_id")}; ${NOTE("'f'||char(31)||NEW.thread_id||char(31)||NEW.turn_id")}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_turn_first_d AFTER DELETE ON main.turn_first BEGIN ${NOTE("'f'||char(31)||OLD.thread_id||char(31)||OLD.turn_id")}; END;
+-- (TURNCACHE-FAILOPEN) a pending branch change withholds its conversation's sources until it is flipped (deny.ts BRANCH_CHANGE_PENDING):
+-- the fence being stored, moved or cleared reaches every kept verdict that read a source of that conversation ("b" key)
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_branch_change_i AFTER INSERT ON main.branch_change BEGIN ${NOTE("'b'||char(31)||NEW.thread_id")}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_branch_change_u AFTER UPDATE ON main.branch_change WHEN OLD.thread_id IS NOT NEW.thread_id BEGIN ${NOTE("'b'||char(31)||OLD.thread_id")}; ${NOTE("'b'||char(31)||NEW.thread_id")}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_branch_change_d AFTER DELETE ON main.branch_change BEGIN ${NOTE("'b'||char(31)||OLD.thread_id")}; END;
+-- (TURNCACHE-FAILOPEN) a source version's payload names a bring-in's origins (deny.ts DENIED_SOURCE): any change to a version row is a
+-- change to its source ("s" key)
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_source_versions_i AFTER INSERT ON main.memory_source_versions
+ WHEN EXISTS (SELECT 1 FROM main.memory_sources s WHERE s.id=NEW.source_id AND s.revision=NEW.revision) BEGIN ${NOTE("'s'||char(31)||NEW.source_id")}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_source_versions_u AFTER UPDATE ON main.memory_source_versions
+ WHEN EXISTS (SELECT 1 FROM main.memory_sources s WHERE (s.id=OLD.source_id AND s.revision=OLD.revision) OR (s.id=NEW.source_id AND s.revision=NEW.revision))
+ BEGIN ${NOTE("'s'||char(31)||OLD.source_id")}; ${NOTE("'s'||char(31)||NEW.source_id")}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_source_versions_d AFTER DELETE ON main.memory_source_versions
+ WHEN EXISTS (SELECT 1 FROM main.memory_sources s WHERE s.id=OLD.source_id AND s.revision=OLD.revision) BEGIN ${NOTE("'s'||char(31)||OLD.source_id")}; END;
 `;
+/** One row per (trigger, key kind) of the lineage cache triggers above: what each write invalidates. kind is a dirty-key letter (see
+ * drainDirty; "P" expands to "p" keys), "epoch" (the whole cache) or "structure" (the stored root-set handles). rows says which row the
+ * key is read from. Read from EPOCH_SCHEMA itself, so it cannot drift from what is installed (TURNCACHE-FAILOPEN; TURNSTART r14 T11(f)
+ * and T12 read it). A (table, op, kind) can have more than one trigger (memory_records UPDATE "c", messages INSERT "m"): key on trigger. */
+export interface InvalidationRow { readonly trigger: string; readonly timing: "BEFORE" | "AFTER"; readonly op: "INSERT" | "UPDATE" | "DELETE"; readonly table: string; readonly kind: string; readonly rows: "OLD" | "NEW" | "OLD+NEW"; readonly when: string | null }
+function invalidationSet(schema: string): readonly InvalidationRow[] {
+  const out: InvalidationRow[] = [];
+  // built from two pieces so this scanner's own source is never read as a trigger by the source scan in trigger-bodies.test.ts
+  const trigger = new RegExp(["CREATE TEMP", String.raw`TRIGGER IF NOT EXISTS (\w+) (BEFORE|AFTER) (INSERT|UPDATE|DELETE) ON main\.(\w+)([\s\S]*?)\bBEGIN\b([\s\S]*?)\bEND;`].join(" "), "g");
+  for (const match of schema.matchAll(trigger)) {
+    const [, name, timing, op, table, head, body] = match;
+    const when = head.trim().replace(/^WHEN\s+/, "").replace(/\s+/g, " ") || null;
+    const kinds = new Map<string, Set<string>>();
+    for (const statement of body.split(";")) {
+      const found = [...statement.matchAll(/'(\w)'\|\|char\(31\)/g)].map(m => m[1]);
+      if (/UPDATE lineage_epoch SET n=n\+1/.test(statement)) found.push("epoch");
+      if (/UPDATE lineage_structure SET n=n\+1/.test(statement)) found.push("structure");
+      const refs = [/\bOLD\./.test(statement) && "OLD", /\bNEW\./.test(statement) && "NEW"].filter(Boolean) as string[];
+      for (const kind of found) { const set = kinds.get(kind) ?? new Set<string>(); for (const ref of refs) set.add(ref); kinds.set(kind, set); }
+    }
+    for (const [kind, refs] of kinds) {
+      const rows = refs.size === 2 ? "OLD+NEW" : refs.has("OLD") ? "OLD" : refs.has("NEW") ? "NEW" : op === "INSERT" ? "NEW" : op === "DELETE" ? "OLD" : "OLD+NEW";
+      out.push(Object.freeze({ trigger: name, timing: timing as InvalidationRow["timing"], op: op as InvalidationRow["op"], table, kind, rows, when }));
+    }
+  }
+  return Object.freeze(out);
+}
+/** What every lineage cache trigger invalidates (see InvalidationRow). */
+export const INVALIDATION_SET: readonly InvalidationRow[] = invalidationSet(EPOCH_SCHEMA);
 const epochReady = new WeakMap<object, boolean>();
 function installEpoch(db: ReturnType<typeof database>): boolean {
   let ready = epochReady.get(db);
@@ -1873,7 +2135,9 @@ function drainDirty(db: ReturnType<typeof database>): void {
   for (const row of rows) {
     const key = String(row.k);
     // a receipt of this thread was changed or removed: the kept groups of the thread are read afresh
-    if (key.startsWith(`d${SEP}`)) { threadGroupStore.delete(key.slice(2)); continue; }
+    if (key.startsWith(`d${SEP}`)) { store.loseGroups(key.slice(2), "dirty"); continue; }
+    // a source tombstone's target: the forget list of each thread whose range holds it (TURNCACHE-FAILOPEN)
+    if (key.startsWith(`P${SEP}`)) { for (const thread of forgetListThreads(key.slice(2))) keys.add(`p${SEP}${thread}`); continue; }
     // a checkpoint that was rolled still has an active newer version: nothing about its tolerance changed
     if (key.startsWith(`c${SEP}`) && stmt(db, "SELECT 1 FROM memory_records WHERE id=? AND state='active' LIMIT 1").get(key.slice(2))) continue;
     // a version rolled: only verdicts that read it as an ordinary record ("r") move; one read as its thread's own checkpoint ("t") holds
@@ -1963,27 +2227,27 @@ function lineageStamp(): string | undefined {
 // Inside one synchronous pass (the check of a resumed session's receipts) that has written nothing since the cache was last made
 // current, it is still current: the stamp and the dirty list are not asked for again by each of the check's thousands of verdicts.
 // (A commit by another connection inside that one pass is seen by the next pass, which is how it already was for the check as a whole.)
-let passCache: { pass: number; db: object; writes: number; value: typeof verdicts } | null = null;
-function verdictCache(): typeof verdicts | undefined {
+let passCache: { pass: number; db: object; writes: number; value: VerdictReads } | null = null;
+function verdictCache(): VerdictReads | undefined {
   const db = database(), pass = statementReusePassId(), writes = writeStamp(db);
   if (pass && writes !== undefined && passCache && passCache.pass === pass && passCache.db === db && passCache.writes === writes) return passCache.value;
   const value = currentVerdictCache();
   passCache = pass && writes !== undefined && value ? { pass, db, writes, value } : null;
   return value;
 }
-function currentVerdictCache(): typeof verdicts | undefined {
+function currentVerdictCache(): VerdictReads | undefined {
   if (database().isTransaction) return transactionVerdictCache();
   txnTainted = false;
   const stamp = lineageStamp();
   if (stamp === undefined) return undefined;
   const db = database();
   // a different connection (a restore, a data-dir switch) shares nothing with the last
-  if (verdictDb !== db) { verdictDb = db; forgetVerdicts(); chains.clear(); verdictStamp = ""; proving.clear(); }
-  if (stamp !== verdictStamp) { forgetVerdicts(false); chains.clear(); verdictStamp = stamp; if (stamp.startsWith("e")) db.exec("DELETE FROM temp.lineage_dirty"); }
+  if (verdictDb !== db) { verdictDb = db; forgetVerdicts(true, "connection"); chains.clear(); bumpHandleEpoch("chains"); verdictStamp = ""; proving.clear(); }
+  if (stamp !== verdictStamp) { forgetVerdicts(false, "stamp"); chains.clear(); bumpHandleEpoch("chains"); verdictStamp = stamp; if (stamp.startsWith("e")) db.exec("DELETE FROM temp.lineage_dirty"); }
   else if (stamp.startsWith("e")) drainDirty(db);
   keepHandlesCurrent(db);
   if (chains.size > 4096) chains.clear();
-  return verdicts;
+  return store.verdictReads;
 }
 
 /** What the stored root-set handles rest on: the set rows (a change to them moves the structure counter) and other connections' commits.
@@ -2008,7 +2272,7 @@ export function prepareLineageCache(): void { if (!database().isTransaction) ver
  * serves only while the transaction has written nothing a verdict rests on: no dirty key and the counter unmoved since
  * the cache was made current. What it holds is then the committed state, and so is anything judged meanwhile; a write
  * later in the transaction leaves a dirty key that is drained after it commits (or rolls back with it). */
-function transactionVerdictCache(): typeof verdicts | undefined {
+function transactionVerdictCache(): VerdictReads | undefined {
   const db = database();
   if (verdictDb !== db || !verdictStamp.startsWith("e") || !installEpoch(db)) return undefined;
   const row = stmt(db, "SELECT (SELECT n FROM temp.lineage_epoch) AS epoch, (SELECT data_version FROM pragma_data_version) AS version, EXISTS(SELECT 1 FROM temp.lineage_dirty) AS dirty").get();
@@ -2022,7 +2286,7 @@ function transactionVerdictCache(): typeof verdicts | undefined {
     drainDirty(db);
     txnTainted = true;
   }
-  return verdicts;
+  return store.verdictReads;
 }
 /** Set once a transaction has read the cache after writing keys it rests on; cleared at the next look outside a transaction. */
 let txnTainted = false;
@@ -2033,13 +2297,11 @@ const keepRefused = (): boolean => txnTainted && database().isTransaction;
  * used was forgotten, deleted or changed, or it is a copy of a message that
  * is. Checks it cannot finish withhold it. */
 export function capturedMessageWithheld(allowance: LineageAllowance, threadId: string, messageId: string): boolean {
-  return (!readTimeRetired(database()) && positionalWithheld(threadId, [messageId]).has(messageId)) || capturedMessageVerdicts(allowance, threadId, [messageId]).get(messageId)!.withheld;
+  return capturedMessageVerdicts(allowance, threadId, [messageId]).get(messageId)!.withheld;
 }
 /** The same answer with why: `unproven` when it is withheld only because the check could not finish (shown as "still being checked",
  * never as deleted or changed). */
 export function capturedMessageVerdict(allowance: LineageAllowance, threadId: string, messageId: string): { withheld: boolean; unproven: boolean } {
-  // a line written after one the owner forgot, by a turn begun before that forget (1.0.2 revoke-bounded r3): withheld, proven
-  if (!readTimeRetired(database()) && positionalWithheld(threadId, [messageId]).has(messageId)) return { withheld: true, unproven: false };
   const verdict = capturedMessageVerdicts(allowance, threadId, [messageId]).get(messageId)!;
   return { withheld: verdict.withheld, unproven: verdict.withheld && verdict.unproven };
 }
@@ -2088,7 +2350,7 @@ const HANDOFF_DEPTH = 16;
 /** The verdict already kept for a captured message, if any (nothing is judged); one read from the shared cache becomes a
  * dependency of the verdict being worked out. */
 function keptVerdict(threadId: string, messageId: string): Verdict | undefined {
-  const cache = verdictCache(), key = JSON.stringify([threadId, messageId]);
+  const cache = verdictCache(), key = messageVerdictKey(threadId, messageId);
   const cached = cache?.get(key), known = cached ?? scratch?.get(key);
   if (known !== undefined && collected) { if (cached) collected.add(`v${SEP}${key}`); else for (const d of known.deps) collected.add(d); }
   return known;
@@ -2120,7 +2382,7 @@ const judging = new Map<string, { batch: number; size: number }>();
 function judgeCapturedMessages(allowance: LineageAllowance, threadId: string, messageIds: readonly string[]): Map<string, Verdict> {
   const cache = verdictCache(), out = new Map<string, Verdict>(), pending: string[] = [];
   for (const messageId of new Set(messageIds)) {
-    const key = JSON.stringify([threadId, messageId]);
+    const key = messageVerdictKey(threadId, messageId);
     const cached = cache?.get(key), known = cached ?? scratch?.get(key);
     if (known === undefined) { pending.push(messageId); continue; }
     cacheHits++;
@@ -2151,13 +2413,24 @@ function judgeCapturedMessages(allowance: LineageAllowance, threadId: string, me
   if (nesting >= NEST_LIMIT) throw new LineageDeferred(threadId, pending);
   yieldIfLate();
   cacheMisses += pending.length;
-  let excluded = new Set<string>(), failed = false, split = false;
+  let excluded = new Set<string>(), positional = new Set<string>(), failed = false, split = false;
   const outer = collected, cyclesBefore = cycles, unfinishedBefore = unfinished, limitsBefore = limitHits, boxedBefore = boxDeferred, batch = ++batches;
   collected = new Set<string>();
   const consulted = collected;
   nesting++; for (const key of keys) judging.set(key, { batch, size: keys.length });
   try {
-    excluded = replayExclusions(allowance, threadId, pending.map(messageId => { dirtyMessage(threadId, messageId); const copy = messageCopy(threadId, messageId); return { id: messageId, ...(copy ? { copyOf: copy } : {}) }; }), null, { failClosed: true });
+    excluded = heldStep("memory.replay-exclusions", () => withStatementReuse(() => {
+      const judge = lineageJudge(allowance, threadId, null);
+      try {
+        // The line's own positional answer belongs to its kept verdict, with p/m/f dependencies and paid judge reads.
+        positional = positionalWithheld(threadId, pending, judge.judgeMeter());
+        const messages = pending.filter(id => !positional.has(id)).map(messageId => { dirtyMessage(threadId, messageId); const copy = messageCopy(threadId, messageId); return { id: messageId, ...(copy ? { copyOf: copy } : {}) }; });
+        const result = replayExclusionsWith(judge, threadId, messages, null, { failClosed: true });
+        for (const id of forgottenMessageSources(threadId, messages.filter(message => !result.has(message.id)).map(message => message.id))) result.add(id);
+        for (const id of positional) result.add(id);
+        return result;
+      } finally { judge.settle(); }
+    }));
   } catch (error) {
     if (error instanceof LineageSplit && error.batch === batch) split = true;
     else if (error instanceof LineageControl) throw error;
@@ -2173,11 +2446,11 @@ function judgeCapturedMessages(allowance: LineageAllowance, threadId: string, me
   // shared cache. (A cycle through a group that lists none of the lines judged is passed over, and changes nothing.)
   // (a budget that ran out inside may have cut a verdict short: none of this batch's is kept; the sub-proofs it finished are)
   // nor one a background slice deferred for its time box alone: a turn would have judged that set itself
-  const kept = cache !== undefined && consulted.size <= 4000 && cycles === cyclesBefore && limitHits === limitsBefore && boxDeferred === boxedBefore;
+  const kept = !unproven && cache !== undefined && consulted.size <= 4000 && cycles === cyclesBefore && limitHits === limitsBefore && boxDeferred === boxedBefore;
   pending.forEach((messageId, index) => {
-    const withheld = excluded.has(messageId), entry: Verdict = { withheld, unproven: withheld && unproven, deps: consulted };
+    const withheld = excluded.has(messageId), entry: Verdict = { withheld, unproven: withheld && !positional.has(messageId) && unproven, deps: consulted };
     // (a check that ran out of room is not an unkeepable one: the warmer gives it more room, or goes on from what it kept)
-    if (!kept && limitHits === limitsBefore && boxDeferred === boxedBefore) noteUnkept(`reply ${cache === undefined ? "no cache" : consulted.size > 4000 ? `basis ${consulted.size}` : "cycle"}`);
+    if (!kept && !unproven && limitHits === limitsBefore && boxDeferred === boxedBefore) noteUnkept(`reply ${cache === undefined ? "no cache" : consulted.size > 4000 ? `basis ${consulted.size}` : "cycle"}`);
     const stored = kept && keepVerdict(keys[index]!, entry);
     scratch?.set(keys[index]!, entry);
     if (outer) { if (stored) outer.add(`v${SEP}${keys[index]}`); else for (const d of consulted) outer.add(d); }
@@ -2270,8 +2543,10 @@ function recordRestsOnWithheldMessageWork(allowance: LineageAllowance, recordId:
   if (readTimeRetired(db) && memoryLookup(db, [{ kind: "record", id: recordId, version }], { audience: null }).get(memoryRefKey({ kind: "record", id: recordId, version }))?.state !== "shown") return true;
   verdictCache();  // brings the chain cache up to date with the stamp
   const stamp = verdictStamp, chainKey = `${recordId}${SEP}${version}`;
+  // chains is a judge-only memo (r15 sec. 4, Fable L3: OPERATIONAL): a verdict hit never reads it, so reading it marks no handle use on the trace
   let rows = chains.get(chainKey);
   if (rows === undefined) {
+    store.noteHandleMiss();
     const chain = `WITH RECURSIVE chain(id,version) AS (
       SELECT ?,? UNION SELECT d.parent_id,d.parent_version FROM memory_derivations d JOIN chain c ON d.child_id=c.id AND d.child_version=c.version
       LEFT JOIN memory_records child ON child.id=d.child_id AND child.version=d.child_version
@@ -2367,9 +2642,9 @@ export interface OutputRoots {
 const rootKey = (thread: string, message: string) => `${thread}\u0000${message}`;
 /** One commit for a set and the row that points at it. */
 function atomically(db: ReturnType<typeof database>, work: () => void): void {
-  db.exec("SAVEPOINT memory_root_pointer");
-  try { work(); db.exec("RELEASE memory_root_pointer"); }
-  catch (error) { db.exec("ROLLBACK TO memory_root_pointer; RELEASE memory_root_pointer"); throw error; }
+  beginWrite(db, "memory_root_pointer");
+  try { work(); endWrite(db, "memory_root_pointer"); }
+  catch (error) { undoWrite(db, "memory_root_pointer"); throw error; }
 }
 /** The stored sets read so far, kept while the lineage cache is (a set is immutable under its id; every removal or change
  * of a set row moves the lineage epoch, which drops them with the verdicts). Where no cache can be kept (inside a
@@ -2395,8 +2670,10 @@ function addSetMembers(into: OutputRoots & { roots: LayeredRoots }, setId: strin
 /** The handle of a stored set of the size its row says; a kept one of another size is not trusted and is read again. */
 function storedHandle(cache: HandleCache, setId: string, size: number, meter?: ReadMeter): Handle | null {
   const db = database();
+  store.noteHandleUse();
+  if (!cache.has(setId)) store.noteHandleMiss();
   let handle = handleFor(db, cache, setId, meter);
-  if (handle && handle.end !== size) { cache.delete(setId); handle = handleFor(db, cache, setId, meter); }
+  if (handle && handle.end !== size) { cache.delete(setId); bumpHandleEpoch("size"); store.noteHandleMiss(); handle = handleFor(db, cache, setId, meter); }
   return handle && handle.end === size ? handle : null;
 }
 const layeredOutput = (): OutputRoots & { roots: LayeredRoots } => ({ roots: new LayeredRoots(), over: false });
@@ -2553,13 +2830,13 @@ function flatRootsBad(allowance: LineageAllowance, keys: Iterable<string>): bool
   const db = database();
   for (const [thread, messages] of byThread) {
     // a deleted conversation, or a root written after a line the owner forgot (positionalWithheld)
-    if (stmt(db, "SELECT 1 FROM memory_deny WHERE kind='thread' AND id=?").get(thread) || positionalWithheld(thread, messages).size) return true;
+    if (stmt(db, "SELECT 1 FROM memory_deny WHERE kind='thread' AND id=?").get(thread) || positionalWithheld(thread, messages, allowanceMeter(allowance, thread)).size) return true;
     // forgotten roots, read in batches rather than one query per root
     for (let at = 0; at < messages.length; at += ROOT_BATCH) {
       const batch = messages.slice(at, at + ROOT_BATCH);
       // the rows of the two lookups below are paid for from the turn before they are read
       allowance.spendRows(thread, batch.length * 2);
-      if (collected) for (const message of batch) collected.add(`s${SEP}message:${thread}:${message}`);
+      if (collected) { for (const message of batch) collected.add(`s${SEP}message:${thread}:${message}`); collected.add(`b${SEP}${thread}`); }
       const ids = JSON.stringify(batch.map(message => `message:${thread}:${message}`));
       if (stmt(db, `SELECT 1 FROM memory_sources s WHERE s.id IN (SELECT value FROM json_each(?)) AND (s.state='deleted' OR ${DENIED_SOURCE("s")}) LIMIT 1`).get(ids)
         || stmt(db, "SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id IN (SELECT value FROM json_each(?)) LIMIT 1").get(ids)) return true;
@@ -2596,7 +2873,9 @@ interface ProofReader { key: string; thread: string; audience: ReplayAudience }
  * entry that says the members before the cursor are sound (`partial`). Each chunk's entry rests on what the chunk consulted and on the entry before it,
  * so a change to anything an earlier chunk consulted drops that chunk and every later one, and the proof starts again. `waits` counts the slices that
  * met another large set not proven yet (a member's own set): the proof waits for that one instead of calling its own set bad. */
-interface Proving { id: string; reader: ProofReader | null; cursor: number; after: string | undefined; partial: string | null; waits: number }
+interface Proving { id: string; reader: ProofReader | null; cursor: number; after: string | undefined; partial: string | null; waits: number;
+  /** flagfold F6: the warm record this proof was asked for and that record's remaining activations (restarts); null: no record (a turn's) */
+  record: string | null; activations: number | null }
 const proving = new Map<string, Proving>();
 /** The most sets waiting at once; past it the oldest request goes (a turn that needs it asks again). */
 const PROVING_MAX = 64;
@@ -2610,17 +2889,30 @@ const wholeProofKey = (id: string, reader = "") => reader ? `S${SEP}${reader}${S
 const awaitedKey = (key: string) => `q${SEP}${key}`;
 function requestProof(id: string, reader: ProofReader | null = null): string {
   const key = provingKey(id, reader?.key ?? "");
-  if (proving.has(key)) return key;
+  const held = proving.get(key);
+  // F6: a start is an activation (the record's budget counts starts, the first included): PROOF_ACTIVATIONS = CONFIRM_TRIES + RECOVER_SLICES_MAX
+  // is the 19-round bound, and a send runs at most 18 slices after the confirm that asks for the proof, so counting restarts only, a proof
+  // that restarts every step never reached its budget (L2c)
+  // MUTANT:f6-proof-start-not-activation
+  const startBudget = (budget: number) => budget - 1;
+  if (held) { if (held.record === null && proofActivation) { held.record = proofActivation.record; held.activations = startBudget(proofActivation.budget); } return key; }
   if (proving.size >= PROVING_MAX) proving.delete(proving.keys().next().value!);
-  proving.set(key, { id, reader, cursor: 0, after: undefined, partial: null, waits: 0 });
+  proving.set(key, { id, reader, cursor: 0, after: undefined, partial: null, waits: 0, record: proofActivation?.record ?? null, activations: proofActivation ? startBudget(proofActivation.budget) : null });
   return key;
 }
+/** flagfold F6: while the warmer confirms or slices for a record, the proofs its judges ask for carry that record's activation budget
+ * (CONFIRM_TRIES + RECOVER_SLICES_MAX per send); null outside. */
+let proofActivation: { record: string; budget: number } | null = null;
+export function setProofActivationContext(context: { record: string; budget: number } | null): void { proofActivation = context; }
+let activationsExhausted: (record: string) => void = () => {};
+/** Told when a proof stops because its record's activations ran out (the record reads RECOVERING-exhausted, "checking"). */
+export function onProofActivationsExhausted(hook: ((record: string) => void) | null): void { activationsExhausted = hook ?? (() => {}); }
 /** Large sets waiting for their proof in this process, for tests and the scheduler's report. */
 export function rootSetProofsPending(): number { return proving.size; }
 // the owner is told while these wait or run ("Checking earlier memory"): the status reading asks the leaf for this count
 setMemoryCheckingSource(() => proving.size);
 /** Large sets a check met unproven and did not walk; of them, the ones deferred only because a background slice is time-boxed. */
-let deferredLarge = 0, boxDeferred = 0;
+let deferredLarge = 0, boxDeferred = 0, deferredUnfinished = 0;
 /** Members walked by every judgement of a set, nested ones included (a member's own set): what a proof slice is charged, not just its own members. */
 let memberWork = 0;
 /** When a background proof slice must hand back (performance.now()), Infinity outside one; and whether the slice has already finished a unit of work
@@ -2717,10 +3009,19 @@ function proveSlice(db: ReturnType<typeof database>, state: Proving, budget: num
       if (state.partial !== null) deps.add(`v${SEP}${state.partial}`);
       const clean = cycles === before.cycles && cycleThrown === before.cycleThrown && unfinished === before.unfinished && untracked === before.untracked && deps.size <= soundDepsMax();
       const key = end >= handle.end ? whole : partialKey(id, end, readerKey);
-      if (!clean || !keepSound(key, deps)) { restart(); return { members: worked(), finished: false }; }
+      if (!clean || forcedProofRestart(id) || !keepSound(key, deps)) {
+        restart();
+        const entry = state;
+        if (entry.activations !== null) {
+          entry.activations--;
+          // MUTANT:no-activation-budget
+          if (entry.activations <= 0) { if (entry.record !== null) activationsExhausted(entry.record); return { members: worked(), finished: true }; }
+        }
+        return { members: worked(), finished: false };
+      }
       if (reader) audienceHolds.get(reader.key)?.keys.add(key);
       // the step before is now carried by this one (its edges stay in the graph, so a change below still reaches this entry): its answer can go
-      if (state.partial?.startsWith(`Q${SEP}`)) verdicts.delete(state.partial);
+      if (state.partial?.startsWith(`Q${SEP}`)) store.supersede(state.partial, key);
       state.cursor = end; state.after = chunk[chunk.length - 1]; state.partial = key;
       if (end >= handle.end) { dropDependents([awaited]); return { members: worked(), finished: true }; }
     }
@@ -2850,7 +3151,7 @@ export function preLineageSessionRevoked(rows:ReadonlyArray<Record<string,unknow
 interface WarmSlice { done: boolean; spent: number; moved: boolean; unkept: boolean }
 function warmSlice(nodes: number, work: (allowance: LineageAllowance) => boolean): WarmSlice {
   const budget = LineageAllowance.warm(nodes), was = warming, before = progressTick, unkeptBefore = unkept;
-  warming = true;
+  warming = true; store.setWarming(true);
   try {
     const finished = work(budget);
     // done: it finished within its allowance and every verdict it reached is kept (or was already)
@@ -2858,7 +3159,7 @@ function warmSlice(nodes: number, work: (allowance: LineageAllowance) => boolean
   } catch (error) {
     if (!(error instanceof Error && error.message === "MEMORY_REPLAY_LIMIT")) throw error;
     return { done: false, spent: budget.spent, moved: progressTick !== before, unkept: unkept !== unkeptBefore };
-  } finally { warming = was; budget.close(); }
+  } finally { warming = was; store.setWarming(was); budget.close(); }
 }
 /** Judges captured replies of a thread (the verdicts recall, the replay check and the continuation check ask for), oldest first. */
 export function warmReplies(threadId: string, messageIds: readonly string[], nodes: number): WarmSlice {

@@ -46,6 +46,8 @@ export interface DecideInput {
   probeFlagged: boolean;
   /** Undefined = no transport: the bot is treated as Ask each step and the plain line goes to the owner. */
   checker?: { input: Omit<CheckerInput, "action"> & { action: Omit<CheckerAction, "level"> }; deps: CheckerDeps; tally: CheckerTally };
+  /** SABLE-B 5.5 R1: false once the call that asked has ended. Checked right after the checker answers, before the tally or a pause. */
+  alive?: () => boolean;
 }
 
 export interface Decision {
@@ -122,6 +124,8 @@ export async function decide(input: DecideInput, deps: DecideDeps = REAL): Promi
     // I-rules (T27). I4 (hidden target) is the first thing they check, so it settles before the checker is asked.
     trace.push("intent");
     const intent = deps.checkIntent({ ...input.intent, mode: input.mode, probeFlagged: input.probeFlagged === true, ...(input.routine ? { unattended: true } : {}), action: { ...input.intent.action, level } });
+    // SABLE-LIVE-B: attended Full access (an owner's turn, not a routine). The intent rules above are unchanged here.
+    const fullAttended = input.mode === "full" && !input.routine;
     if (intent.result === "refuse") return refuse("intent", intent.rule ?? "intent", intent.line ?? "The intent check refused this action.", { level, decidedBy: "intent", ...(intent.line ? { line: intent.line } : {}) });
 
     // Checker (T23): every L2 and L3, never L1. No transport means Ask each step. A failure is a block.
@@ -130,13 +134,23 @@ export async function decide(input: DecideInput, deps: DecideDeps = REAL): Promi
     let effectiveMode: ApprovalMode = input.mode;
     if (level === "L2" || level === "L3") {
       trace.push("checker");
-      if (!input.checker) { checkerMissing = true; effectiveMode = "step"; }
-      else if (input.checker.tally.needsHuman) {
+      // Attended Full: no checker keeps Full (the floor, D1 and the card rules above still hold); otherwise Ask each step.
+      if (!input.checker) { if (!fullAttended) { checkerMissing = true; effectiveMode = "step"; } }
+      // Attended Full: a latched loop guard never stops an ordinary step; it acts only on a step the checker itself blocks.
+      else if (!fullAttended && input.checker.tally.needsHuman) {
         return done({ outcome: "pause", level, stage: "checker", rule: "checker-needs-human", reason: "Too many checks in a row stopped this step.", line: DECIDE_LINES.blocked, decidedBy: "checker" });
       } else {
         verdict = await judge(deps, { ...input.checker.input, action: { ...input.checker.input.action, level } }, input.checker);
-        input.checker.tally.record(verdict);
-        if (input.checker.tally.needsHuman) {
+        // B5 (SEC-03): the verdict rides on the refusal for the activity line only; nothing decides on it.
+        if (input.alive && !input.alive()) return refuse("binding", "binding", "This browser task is not the owner's to act on right now.", { checker: verdict });
+        // Attended Full: an outage or an "ask" is advisory and never feeds the loop guard, so it can never pause the binding.
+        // A judged "block" still counts and refuses the step (below), never a card.
+        if (fullAttended && (FAILURE_CODES.has(verdict.code) || verdict.decision === "ask")) verdict = { ...verdict, decision: "allow", advisory: true, original: verdict.decision } as CheckerVerdict;
+        else input.checker.tally.record(verdict);
+        if (fullAttended && verdict.decision === "block") {
+          return refuse("checker", "full-checker-block", DECIDE_LINES.blocked, { level, decidedBy: "checker", line: DECIDE_LINES.blocked, checker: verdict });
+        }
+        if (input.checker.tally.needsHuman && (!fullAttended || verdict.decision === "block")) {
           return done({ outcome: "pause", level, stage: "checker", rule: "checker-needs-human", reason: "Too many checks in a row stopped this step.", line: DECIDE_LINES.blocked, decidedBy: "checker", checker: verdict });
         }
       }
@@ -144,13 +158,14 @@ export async function decide(input: DecideInput, deps: DecideDeps = REAL): Promi
 
     // Mode and grants (T12 again, with the verdicts). Attended, a block is a card; a routine has no one to ask, so it refuses.
     trace.push("mode");
-    const checkerInput: LevelInput["checker"] = verdict ? (verdict.decision === "block" && input.routine ? "block" : verdict.decision === "allow" ? "allow" : "ask") : undefined;
+    const checkerInput: LevelInput["checker"] = verdict ? (verdict.decision === "block" && input.routine ? "block" : verdict.decision === "allow" ? "allow" : "ask") : fullAttended ? "allow" : undefined;
     const final = deps.classifyLevel({ ...base, mode: effectiveMode, intent: intent.result, ...(checkerInput ? { checker: checkerInput } : {}) });
     // A later stage never changes the level or lifts the floor.
     if (final.level === "floor") return done({ outcome: "floor", level: "floor", stage: "mode", rule: final.rule, reason: final.reason, decidedBy: "policy" });
     if (final.level !== level) return done({ outcome: "floor", level: "floor", stage: "mode", rule: "level-changed", reason: "The level changed between stages, so the owner takes this step.", decidedBy: "policy" });
 
-    const judged = verdict !== undefined && !FAILURE_CODES.has(verdict.code);
+    const advisoryVerdict = (verdict as { advisory?: boolean } | undefined)?.advisory === true;
+    const judged = verdict !== undefined && !FAILURE_CODES.has(verdict.code) && !advisoryVerdict;
     const checkerNote = judged ? (verdict!.decision === "allow" ? DECIDE_LINES.matches : DECIDE_LINES.mismatch) : undefined;
     const lines: string[] = [];
     if (intent.line) lines.push(intent.line);

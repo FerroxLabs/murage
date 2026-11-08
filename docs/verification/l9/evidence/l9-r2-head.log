@@ -1,0 +1,130 @@
+
+ RUN  v4.1.10 /root/swarm1018/ENGINES-REST-1018/repo
+
+stdout | server/drivers/acp/pool.test.ts > ACP process pool (fake CLI) > a child that starts after the park check passed is caught before the next prompt: closed, and the turn spawns fresh
+acp close thread=t-pool reason=dispose
+
+stdout | server/drivers/acp/pool.test.ts > ACP process pool (fake CLI) > a fresh process replacing a rejected reused one keeps none of its session: a load answering null opens a new session
+acp close thread=t-pool reason=dispose
+
+stdout | server/drivers/acp/pool.test.ts > ACP process pool (fake CLI) > a candidate is unavailable until its park check succeeded: an immediate follow-up never adopts a process the check found unfit
+acp close thread=t-pool reason=dispose
+
+ ❯ server/drivers/acp/pool.test.ts (66 tests | 5 failed) 72121ms
+     × a child process left running after end_turn closes the process and kills its whole tree 5176ms
+     × MCP servers the engine replaces each turn are baseline: four replacing turns on one process, never closed as a leftover 10377ms
+     × a child that starts after the park check passed is caught before the next prompt: closed, and the turn spawns fresh 6085ms
+     × a fresh process replacing a rejected reused one keeps none of its session: a load answering null opens a new session 6125ms
+     × a candidate is unavailable until its park check succeeded: an immediate follow-up never adopts a process the check found unfit 5474ms
+ ❯ server/drivers/acp/engine-tree-stop.test.ts (2 tests | 2 failed) 20816ms
+     × pooled: the probes ask about the CLI, a replaced MCP child (parent: the CLI) is admitted, and a Stop ends the tree 10457ms
+     × per turn (the Windows default): a mid-turn Stop ends the launcher, the CLI and the CLI's MCP child 10352ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 7 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/drivers/acp/engine-tree-stop.test.ts > ACP Stop ends the whole tree behind a launcher (U24 T11) > pooled: the probes ask about the CLI, a replaced MCP child (parent: the CLI) is admitted, and a Stop ends the tree
+AssertionError: promise rejected "ProviderStopUnconfirmedError: treeStopTes… { …(2) }" instead of resolving
+ ❯ stopMidTurnEndsTree server/drivers/acp/engine-tree-stop.test.ts:148:67
+    146|     const tree = [...launched().entries()].flat().concat(mcpChildren()…
+    147|     expect(tree.some((pid) => alive(pid))).toBe(true);
+    148|     await expect(instance!.adapter.interruptTurn("t-tree", turnId)).re…
+       |                                                                   ^
+    149|     expect(await recorder.until((event) => event.type === "turn.comple…
+    150|     await until(() => tree.every((pid) => !alive(pid)), "the launcher,…
+ ❯ server/drivers/acp/engine-tree-stop.test.ts:200:5
+
+Caused by: ProviderStopUnconfirmedError: treeStopTest did not exit after termination was requested; its process remains owned
+ ❯ Object.interruptTurn server/drivers/acp/core.ts:5985:47
+ ❯ stopMidTurnEndsTree server/drivers/acp/engine-tree-stop.test.ts:148:5
+ ❯ server/drivers/acp/engine-tree-stop.test.ts:200:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { code: 'provider_stop_unconfirmed', stopResult: { closeConfirmed: false, reason: 'timeout' } }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/10]⎯
+
+ FAIL  server/drivers/acp/engine-tree-stop.test.ts > ACP Stop ends the whole tree behind a launcher (U24 T11) > pooled: the probes ask about the CLI, a replaced MCP child (parent: the CLI) is admitted, and a Stop ends the tree
+ProviderStopUnconfirmedError: treeStopTest did not exit after termination was requested; its process remains owned
+ ❯ Object.dispose server/drivers/acp/core.ts:6069:45
+    6067|           // Same as codex: an unconfirmed close keeps listeners attac…
+    6068|           // the owned child's late events are still accounted for.
+    6069|           if (!result.closeConfirmed) throw new ProviderStopUnconfirme…
+       |                                             ^
+    6070|           listeners.clear();
+    6071|         },
+ ❯ Object.live.dispose server/drivers/cli-memory-learning.ts:149:94
+ ❯ server/drivers/acp/engine-tree-stop.test.ts:176:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/10]⎯
+
+ FAIL  server/drivers/acp/engine-tree-stop.test.ts > ACP Stop ends the whole tree behind a launcher (U24 T11) > per turn (the Windows default): a mid-turn Stop ends the launcher, the CLI and the CLI's MCP child
+AssertionError: promise rejected "ProviderStopUnconfirmedError: treeStopPer… { …(2) }" instead of resolving
+ ❯ stopMidTurnEndsTree server/drivers/acp/engine-tree-stop.test.ts:148:67
+    146|     const tree = [...launched().entries()].flat().concat(mcpChildren()…
+    147|     expect(tree.some((pid) => alive(pid))).toBe(true);
+    148|     await expect(instance!.adapter.interruptTurn("t-tree", turnId)).re…
+       |                                                                   ^
+    149|     expect(await recorder.until((event) => event.type === "turn.comple…
+    150|     await until(() => tree.every((pid) => !alive(pid)), "the launcher,…
+ ❯ server/drivers/acp/engine-tree-stop.test.ts:207:5
+
+Caused by: ProviderStopUnconfirmedError: treeStopPerTurnTest did not exit after termination was requested; its process remains owned
+ ❯ Object.interruptTurn server/drivers/acp/core.ts:5985:47
+ ❯ stopMidTurnEndsTree server/drivers/acp/engine-tree-stop.test.ts:148:5
+ ❯ server/drivers/acp/engine-tree-stop.test.ts:207:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { code: 'provider_stop_unconfirmed', stopResult: { closeConfirmed: false, reason: 'timeout' } }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/10]⎯
+
+ FAIL  server/drivers/acp/engine-tree-stop.test.ts > ACP Stop ends the whole tree behind a launcher (U24 T11) > per turn (the Windows default): a mid-turn Stop ends the launcher, the CLI and the CLI's MCP child
+ProviderStopUnconfirmedError: treeStopPerTurnTest did not exit after termination was requested; its process remains owned
+ ❯ Object.dispose server/drivers/acp/core.ts:6069:45
+    6067|           // Same as codex: an unconfirmed close keeps listeners attac…
+    6068|           // the owned child's late events are still accounted for.
+    6069|           if (!result.closeConfirmed) throw new ProviderStopUnconfirme…
+       |                                             ^
+    6070|           listeners.clear();
+    6071|         },
+ ❯ Object.live.dispose server/drivers/cli-memory-learning.ts:149:94
+ ❯ server/drivers/acp/engine-tree-stop.test.ts:176:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/10]⎯
+
+ FAIL  server/drivers/acp/pool.test.ts > ACP process pool (fake CLI) > a child process left running after end_turn closes the process and kills its whole tree
+ FAIL  server/drivers/acp/pool.test.ts > ACP process pool (fake CLI) > MCP servers the engine replaces each turn are baseline: four replacing turns on one process, never closed as a leftover
+ FAIL  server/drivers/acp/pool.test.ts > ACP process pool (fake CLI) > a child that starts after the park check passed is caught before the next prompt: closed, and the turn spawns fresh
+ FAIL  server/drivers/acp/pool.test.ts > ACP process pool (fake CLI) > a fresh process replacing a rejected reused one keeps none of its session: a load answering null opens a new session
+ FAIL  server/drivers/acp/pool.test.ts > ACP process pool (fake CLI) > a candidate is unavailable until its park check succeeded: an immediate follow-up never adopts a process the check found unfit
+ProviderStopUnconfirmedError: poolTest did not exit after termination was requested; its process remains owned
+ ❯ Object.dispose server/drivers/acp/core.ts:6069:45
+    6067|           // Same as codex: an unconfirmed close keeps listeners attac…
+    6068|           // the owned child's late events are still accounted for.
+    6069|           if (!result.closeConfirmed) throw new ProviderStopUnconfirme…
+       |                                             ^
+    6070|           listeners.clear();
+    6071|         },
+ ❯ Object.live.dispose server/drivers/cli-memory-learning.ts:149:94
+ ❯ server/drivers/acp/pool.test.ts:154:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/10]⎯
+
+ FAIL  server/drivers/acp/pool.test.ts > ACP process pool (fake CLI) > MCP servers the engine replaces each turn are baseline: four replacing turns on one process, never closed as a leftover
+ProviderStopUnconfirmedError: poolTest did not exit after termination was requested; its process remains owned
+ ❯ Object.dispose server/drivers/acp/core.ts:6069:45
+    6067|           // Same as codex: an unconfirmed close keeps listeners attac…
+    6068|           // the owned child's late events are still accounted for.
+    6069|           if (!result.closeConfirmed) throw new ProviderStopUnconfirme…
+       |                                             ^
+    6070|           listeners.clear();
+    6071|         },
+ ❯ Object.live.dispose server/drivers/cli-memory-learning.ts:149:94
+ ❯ server/drivers/acp/pool.test.ts:520:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/10]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  7 failed | 61 passed (68)
+   Start at  16:42:54
+   Duration  100.28s (transform 5.25s, setup 6.14s, import 981ms, tests 92.94s, environment 0ms)
+

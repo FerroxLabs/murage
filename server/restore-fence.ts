@@ -129,6 +129,10 @@ export const RESTORE_NOT_PENDING_WORK: Readonly<Record<string, string>> = Object
   room_request_retry: "the next-look times of parked queued requests: a restore expires every queued request, and the database removes its retry row in the same statement",
   bot_call_watch_threads: "the channel threads of the enabled sender rules (bot-calls-schema.ts), derived from bot_call_rules and rewritten with them",
   bot_call_settings: "call settings (the bot switch, calls off for today, the last re-armed restore generation), no work",
+  speech_generations: "spoken-reply attribution of a provider turn (tts/reply-state.ts): every start marks a running one invalid, so a restored copy speaks nothing",
+  speech_sessions: "a spoken-reply connection (tts/reply-state.ts): every start closes them all; a client must open a new one",
+  speech_attempts: "spoken-reply attempts (tts/reply-state.ts): every start marks a reserved or streaming one interrupted and holds its account, so none is resumed",
+  speech_commands: "the answers already given to a spoken-reply client's commands (tts/reply-state.ts), kept so a repeat gets the same answer; no work",
   team_identities: "a rename journal; restore preparation (reconcileTeamJournalFiles) completes or rolls it back, so boot finds none, and it runs no bot work",
 });
 

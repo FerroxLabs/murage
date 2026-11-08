@@ -1110,3 +1110,106 @@ describe("Speaker.fetchClip", () => {
     await expect(new Speaker().fetchClip("One sec.", { botId: "b" })).rejects.toThrow("nope");
   });
 });
+
+describe("D24 server call audio playback", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("submits only reply identity and owns playback until the real player ends", async () => {
+    const fetcher = vi.fn(async () => new Response('{"type":"clip","mime":"audio/mpeg","data":"AQID","text":"Booked for eight."}\n{"type":"complete"}\n'));
+    vi.stubGlobal("fetch", fetcher);
+    let end!: (outcome: ClipOutcome) => void;
+    const play = vi.fn(() => new Promise<ClipOutcome>(resolve => { end = resolve; }));
+    const speaker = new Speaker();
+    speaker.useOutput({ play, teardown: vi.fn(), pause: vi.fn(), resume: vi.fn(), streams: false });
+    const playing = speaker.playCallReply({ callSessionId: "call", replyId: "reply", threadId: "thread" }, { botId: "bot", messageId: "message" });
+    await vi.waitFor(() => expect(play).toHaveBeenCalledOnce());
+    expect(speaker.state.status).toBe("speaking");
+    // the call screen captions the released utterance the clip voices
+    expect(speaker.state.caption).toBe("Booked for eight.");
+    expect(JSON.parse((fetcher.mock.calls[0] as unknown as [string, RequestInit])[1].body as string)).toEqual({ callSessionId: "call", replyId: "reply", threadId: "thread" });
+    expect((fetcher.mock.calls[0] as unknown as [string])[0]).toBe("/api/tts/call/reply");
+    end("ended");
+    expect(await playing).toBe(true);
+    expect(speaker.state.status).toBe("idle");
+  });
+  it("reports what the owner heard and when it began, and a failed clip shows the clip failure", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response('{"type":"clip","mime":"audio/mpeg","data":"AQID","text":"First one."}\n{"type":"clip","mime":"audio/mpeg","data":"AQID","text":"Second one."}\n{"type":"complete"}\n')));
+    const outcomes: ClipOutcome[] = ["ended", "failed"];
+    const play = vi.fn(async (_clip: unknown, _live: () => boolean, opts: { onPlaying?: () => void }) => { opts.onPlaying?.(); return outcomes.shift()!; });
+    const speaker = new Speaker();
+    speaker.useOutput({ play, teardown: vi.fn(), pause: vi.fn(), resume: vi.fn(), streams: false });
+    const heard = { heard: [] as string[], playingAt: null as number | null, ended: 0, cut: false };
+    expect(await speaker.playCallReply({ callSessionId: "call", replyId: "reply", threadId: "thread" }, { botId: "bot" }, undefined, heard)).toBe(false);
+    expect(heard.heard).toEqual(["First one.", "Second one…"]);
+    expect(heard.ended).toBe(1);
+    expect(heard.cut).toBe(true);
+    expect(heard.playingAt).toEqual(expect.any(Number));
+    expect(speaker.state.error).toBe("The generated voice clip couldn't be played.");
+  });
+  it.each([false, true])("counts only clips that started (started: %s)", async started => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response('{"type":"clip","mime":"audio/mpeg","data":"AQID","text":"First one."}\n{"type":"complete"}\n')));
+    const play = vi.fn(async (_clip: unknown, _live: () => boolean, opts: { onPlaying?: () => void }): Promise<ClipOutcome> => {
+      if (started) opts.onPlaying?.();
+      return started ? "cut" : "failed";
+    });
+    const speaker = new Speaker();
+    speaker.useOutput({ play, teardown: vi.fn(), pause: vi.fn(), resume: vi.fn(), streams: false });
+    const heard = { heard: [] as string[], playingAt: null as number | null, ended: 0, cut: false };
+    expect(await speaker.playCallReply({ callSessionId: "call", replyId: "reply", threadId: "thread" }, {}, undefined, heard)).toBe(false);
+    expect(heard.heard).toEqual(started ? ["First one…"] : []);
+    expect(heard.ended).toBe(0);
+    expect(heard.cut).toBe(started);
+    expect(heard.playingAt).toEqual(started ? expect.any(Number) : null);
+  });
+  it.each([
+    { outcome: "ended", started: true, collector: true, abort: false, ended: 1, cut: false, cutIn: false },
+    { outcome: "failed", started: false, collector: true, abort: false, ended: 0, cut: false, cutIn: false },
+    { outcome: "failed", started: true, collector: true, abort: false, ended: 0, cut: true, cutIn: false },
+    { outcome: "cut", started: true, collector: true, abort: false, ended: 0, cut: true, cutIn: true },
+    { outcome: "cut", started: true, collector: true, abort: true, ended: 0, cut: true, cutIn: true },
+    { outcome: "ended", started: true, collector: false, abort: false, ended: 1, cut: false, cutIn: false },
+  ] as const)("posts from finally: %j", async ({ outcome, started, collector, abort, ended, cut, cutIn }) => {
+    const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => new Response('{"type":"clip","mime":"audio/mpeg","data":"AQID","text":"First one."}\n{"type":"complete"}\n'));
+    vi.stubGlobal("fetch", fetcher);
+    const controller = new AbortController();
+    let finish: ((outcome: ClipOutcome) => void) | undefined;
+    const play = vi.fn(async (_clip: unknown, _live: () => boolean, opts: { onPlaying?: () => void }): Promise<ClipOutcome> => {
+      if (started) opts.onPlaying?.();
+      if (!abort) return outcome;
+      const pending = new Promise<ClipOutcome>(resolve => { finish = resolve; });
+      controller.abort();
+      return pending;
+    });
+    const speaker = new Speaker();
+    speaker.useOutput({ play, teardown: () => finish?.("cut"), pause: vi.fn(), resume: vi.fn(), streams: false });
+    const heard = { heard: [] as string[], playingAt: null as number | null, ended: 0, cut: false };
+    const identity = { callSessionId: "call", threadId: "thread", replyId: "reply" };
+    expect(await speaker.playCallReply(identity, {}, controller.signal, collector ? heard : undefined)).toBe(outcome === "ended");
+    const reports = fetcher.mock.calls.filter(([url]) => url === "/api/tts/call/heard");
+    expect(reports).toHaveLength(1);
+    const init = reports[0][1]!;
+    expect(init).toMatchObject({ method: "POST", keepalive: true, headers: fetcher.mock.calls[0][1]!.headers });
+    expect(init.signal).toBeUndefined();
+    expect(JSON.parse(init.body as string)).toEqual({ ...identity, ended, cut, cutIn });
+    if (collector) {
+      expect(heard.ended).toBe(ended); expect(heard.cut).toBe(cut);
+      expect(heard.heard).toEqual(outcome === "ended" ? ["First one."] : started ? ["First one…"] : []);
+    }
+  });
+  it("Stop cuts playback and aborts the identity request", async () => {
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, options: RequestInit) => {
+      if (_url === "/api/tts/call/reply") signal = options.signal as AbortSignal;
+      return new Response('{"type":"clip","mime":"audio/mpeg","data":"AQID","text":"Booked for eight."}\n{"type":"complete"}\n');
+    }));
+    let end: ((outcome: ClipOutcome) => void) | undefined;
+    const speaker = new Speaker();
+    const play = vi.fn(() => new Promise<ClipOutcome>(resolve => { end = resolve; }));
+    speaker.useOutput({ play, teardown: () => end?.("cut"), pause: vi.fn(), resume: vi.fn(), streams: false });
+    const playing = speaker.playCallReply({ callSessionId: "call", replyId: "reply", threadId: "thread" });
+    await vi.waitFor(() => expect(play).toHaveBeenCalledOnce());
+    speaker.stop();
+    expect(await playing).toBe(false);
+    expect(signal?.aborted).toBe(true);
+    expect(speaker.state.status).toBe("idle");
+  });
+});

@@ -1,5 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { LazyOverlay } from "@/components/LazyOverlay";
 //
 // The one sign-in button for an engine on this computer, on every surface: Inbox, EngineSetup (Settings, NoEngines, the
 // failed turn, the model picker) and the first-run card. Pressing it opens the dialog, which starts nothing: it names the
@@ -8,14 +9,14 @@
 //
 // The bridge is built by Part A in Electron main. A window without it (a browser or a phone) shows the plain line. A Cloud
 // home keeps the command it always showed here: its own sign-in screens replace that on the Cloud lane.
-import { Suspense, useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { LogIn } from "lucide-react";
 
 import { useCopyFeedback } from "@/lib/copy-text";
 import { currentLocalEngineLogin, engineSignInSurface } from "@/lib/engine-signin-surface";
 import { t } from "@/lib/i18n";
 import type { LocalEngineLoginBridge } from "@/lib/local-engine-login";
-import { LazyBoundary, retryableLazy } from "./LazyBoundary";
+import { retryableLazy } from "./LazyBoundary";
 
 const Dialog = retryableLazy(() => import("./EngineSignInDialog").then((module) => ({ default: module.EngineSignInDialog })));
 const EngineSignInDialog = Dialog.Component;
@@ -62,7 +63,7 @@ export function EngineSignInButton({ instanceId, name, command, className, onDon
   return (
     <div className={className}>
       <button type="button" data-engine-signin-button className={secondary || quiet ? secondaryButton : primary} onClick={() => setOpen(true)}><LogIn size={14} aria-hidden />{t("engineSignIn.button", { name })}</button>
-      {open ? <LazyBoundary onRetry={Dialog.retry} onDismiss={close}><Suspense fallback={null}><EngineSignInDialog bridge={bridge} instanceId={instanceId} name={name} command={command} onClose={close} /></Suspense></LazyBoundary> : null}
+      {open ? <LazyOverlay name="engine-sign-in-load" kind="dialog" covers="while-loading" onRetry={Dialog.retry} onDismiss={close}>{loadedLayer => (<EngineSignInDialog layerLifecycle={loadedLayer} bridge={bridge} instanceId={instanceId} name={name} command={command} onClose={loadedLayer.dismiss} />)}</LazyOverlay> : null}
     </div>
   );
 }

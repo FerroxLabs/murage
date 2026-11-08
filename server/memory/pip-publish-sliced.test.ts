@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
-import { captureMessage } from "./capture.ts";
+import { captureStoredMessage } from "./testing/captured-message.ts";
 import { setMemoryCaptureRoster } from "./capture-scope.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
@@ -35,8 +35,8 @@ function seed(pairs: number, thread = "private"): void {
   const db = database();
   db.exec("BEGIN");
   for (let i = 1; i <= pairs; i++) {
-    captureMessage(db, thread, { id: `o${i}`, at: T0 + i * 1000, role: "user", kind: "text", text: `Please be brief ${i}.`, origin: "desktop" } as never);
-    captureMessage(db, thread, { id: `b${i}`, at: T0 + i * 1000 + 500, role: "bot", kind: "text", text: "Sure.", turnTerminal: true, from: { botId: thread === "private" ? "moss" : "other" } } as never);
+    captureStoredMessage(db, thread, { id: `o${i}`, at: T0 + i * 1000, role: "user", kind: "text", text: `Please be brief ${i}.`, origin: "desktop" } as never);
+    captureStoredMessage(db, thread, { id: `b${i}`, at: T0 + i * 1000 + 500, role: "bot", kind: "text", text: "Sure.", turnTerminal: true, from: { botId: thread === "private" ? "moss" : "other" } } as never);
   }
   db.exec("COMMIT");
   db.exec("UPDATE memory_jobs SET status='complete',cursor=100");
@@ -78,9 +78,9 @@ it("a thread is judged by its own captures: a capture in another thread does not
   expect(isLearnableSource(db, String(first.id), Number(first.revision)).learnable).toBe(true);
   const stamp = admissionStamp(db, deps, "moss", ["private"], { reflect: true });
   expect(stampMoved(db, deps, "moss", stamp)).toBe("none");
-  captureMessage(db, "other-thread", { id: "x1", at: LATER, role: "user", kind: "text", text: "Elsewhere.", origin: "desktop" } as never);
+  captureStoredMessage(db, "other-thread", { id: "x1", at: LATER, role: "user", kind: "text", text: "Elsewhere.", origin: "desktop" } as never);
   expect(stampMoved(db, deps, "moss", stamp)).toBe("none");
-  captureMessage(db, "private", { id: "x2", at: LATER, role: "user", kind: "text", text: "Here.", origin: "desktop" } as never);
+  captureStoredMessage(db, "private", { id: "x2", at: LATER, role: "user", kind: "text", text: "Here.", origin: "desktop" } as never);
   expect(stampMoved(db, deps, "moss", stamp)).toBe("moved");
 });
 
@@ -102,7 +102,7 @@ it("a capture in the thread while the publication read yields is read again, and
     const family = Object.values(readReflectState(database(), "moss").run?.families ?? {})[0];
     if (captured || family?.state !== "validated") return;
     captured = true;
-    captureMessage(database(), "private", { id: "late", at: LATER, role: "bot", kind: "text", text: "Later.", turnTerminal: true, from: { botId: "moss" } } as never);
+    captureStoredMessage(database(), "private", { id: "late", at: LATER, role: "bot", kind: "text", text: "Later.", turnTerminal: true, from: { botId: "moss" } } as never);
   });
   // a publication read that moved is retried on the next idle pass (deferred, PIP-REDESIGN 2.4), from the family still validated
   for (let pass = 0; pass < 3 && value.reason === "read-moved"; pass++) value = await runPipReflect(deps, "moss", new AbortController().signal);

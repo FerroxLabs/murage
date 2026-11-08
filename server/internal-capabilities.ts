@@ -1,7 +1,9 @@
 import { assertHumanPrincipal, type HumanPrincipal } from "./human-principals.ts";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { forgetAllVenueReadTurns, forgetVenueReadTurn } from "./venue-read-turns.ts";
+import { forgetAllVenuePostTurns, forgetVenuePostTurn } from "./venue-post-turns.ts";
 import { forgetAllEmailTurns, forgetEmailTurn } from "./email/email-turns.ts";
+import { forgetAllPhoneTurns, forgetPhoneTurn } from "./phone-calls/phone-turns.ts";
 
 export type InternalCapabilityKind = "agents" | "connectors" | "computer" | "memory" | "mcp" | "device" | "highlevel";
 export type InternalCapability = Readonly<{
@@ -109,7 +111,7 @@ export class InternalCapabilities {
   }
 
   isActive(claim: InternalCapability): boolean {
-    if (claim.expiresAt <= this.#now()) { forgetVenueReadTurn(claim.generation); forgetEmailTurn(claim.generation); }
+    if (claim.expiresAt <= this.#now()) { forgetVenueReadTurn(claim.generation); forgetVenuePostTurn(claim.generation); forgetEmailTurn(claim.generation); forgetPhoneTurn(claim.generation); }
     if(claim.humanPrincipal){try{assertHumanPrincipal(claim.humanPrincipal);}catch{return false;}}
     const owner = this.#generations.get(claim.threadId);
     return Boolean(owner && owner.id === claim.generation && owner.botId === claim.botId
@@ -182,8 +184,11 @@ export class InternalCapabilities {
   revokeGeneration(threadId: string, generation: string): void {
     // the generation's venue-read record goes with its claims (BOT-VENUE-AWARENESS-106 4.2)
     forgetVenueReadTurn(generation);
+    forgetVenuePostTurn(generation);
     // and its email-mount record (BOT-EMAIL-MURAGE-109 3.1)
     forgetEmailTurn(generation);
+    // and its phone-mount record (BOT-CALLS-1020 3b)
+    forgetPhoneTurn(generation);
     for (const [token, claim] of this.#tokens) {
       if (claim.threadId === threadId && claim.generation === generation) this.#tokens.delete(token);
     }
@@ -204,7 +209,9 @@ export class InternalCapabilities {
 
   revokeAll(): void {
     forgetAllVenueReadTurns();
+    forgetAllVenuePostTurns();
     forgetAllEmailTurns();
+    forgetAllPhoneTurns();
     this.#tokens.clear();
     this.#generations.clear();
     this.#providers.clear();

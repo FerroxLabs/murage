@@ -1,0 +1,12 @@
+
+> murage@1.0.17 i18n:check /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+> node scripts/generate-locale.mjs --check
+
+de.json: 100% (4058/4060)
+es.json: 99% (4027/4060)
+fr.json: 99% (4027/4060)
+hi.json: 99% (4027/4060)
+ja.json: 99% (4027/4060)
+pt-br.json: 99% (4027/4060)
+zh.json: 99% (4027/4060)
+locale catalogs valid (8 languages, 4060 English strings)

@@ -1,3 +1,4 @@
+import { classifyFluxRefusal } from "../../shared/flux-refusal.ts";
 // Speech to text, on the Flux key the workspace already has.
 //
 // WHY THIS FILE EXISTS, AND WHAT FLUX ACTUALLY OFFERS
@@ -24,7 +25,7 @@
 // that credential and this file is a caller of it, never a second copy.
 import { fluxKey } from "../flux-config.ts";
 import { fluxCallHeaders } from "../flux-memory-headers.ts";
-import { notPermitted } from "./voice-routes.ts";
+import { notPermitted, markBudgetReached, isBudgetReached } from "./voice-routes.ts";
 
 /** OpenAI-compatible base. Read per call, NOT captured at module load: a
  *  module-level const is resolved before a test's `beforeAll` can point it
@@ -73,6 +74,7 @@ export type TranscriptionFailure =
   | "unavailable"
   | "auth"
   | "premium"
+  | "budget"
   | "too_large"
   | "rate_limit"
   | "format"
@@ -161,6 +163,7 @@ function describeFailure(status: number, body: any): TranscriptionUnavailable {
       "Flux rejected that key. Paste a fresh one in Settings on the computer.",
     );
   }
+  if (classifyFluxRefusal(status, body) === "budget") return new TranscriptionUnavailable("budget", "This Flux key has reached its budget.");
   if (status === 402) {
     return new TranscriptionUnavailable(
       "premium",
@@ -262,6 +265,7 @@ export async function transcribe(recording: Recording, options: TranscribeOption
   if (options.prompt?.trim()) form.append("prompt", options.prompt.trim().slice(0, PROMPT_MAX_CHARS));
 
   const call = options.fetchImpl ?? fetch;
+    if (!own && isBudgetReached({ via: "flux", label: "Flux", baseUrl: options.endpoint?.baseUrl ?? apiBase(), key, model: "flux-voice" })) throw new TranscriptionUnavailable("budget", "This Flux key has reached its budget.");
   let res: Response;
   try {
     res = await call(`${options.endpoint ? options.endpoint.baseUrl.replace(/\/+$/, "") : apiBase()}/audio/transcriptions`, {
@@ -278,6 +282,8 @@ export async function transcribe(recording: Recording, options: TranscribeOption
 
   if (!res.ok) {
     const failure = failureFor(res.status, await safeJson(res));
+    if (own && failure.reason === "budget") throw new TranscriptionUnavailable("premium", "Check this provider’s billing and limits.");
+    if (!own && failure.reason === "budget") markBudgetReached({ via: "flux", label: "Flux", baseUrl: options.endpoint?.baseUrl ?? apiBase(), key, model: "flux-voice" });
     failure.provider = own?.via ?? "flux";
     throw failure;
   }
