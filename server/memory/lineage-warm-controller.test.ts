@@ -53,3 +53,16 @@ it("an owner's turn holds the slices off until it has reached the engine, and a 
   await until(() => second >= 1);
   expect(yieldedWhileHeld, "an owner's turn arrived during the slice").toBe(true);
 });
+
+it("1.0.18 TURNSTART r14 EARLIEST WINS: a sooner wake replaces a pending later timer, and a later wake never postpones an earlier one (mutant earliest-wins-noop)", async () => {
+  let calls = 0;
+  started({ onLineageWarm: () => { calls++; return false; } });
+  controller.wakeLineageWarm(60_000);
+  controller.wakeLineageWarm(0);
+  await until(() => calls >= 1);
+  expect(calls, "the sooner wake ran; the pending 60 s timer did not park it").toBe(1);
+  controller.wakeLineageWarm(0);
+  controller.wakeLineageWarm(60_000);
+  await until(() => calls >= 2);
+  expect(calls, "the later wake did not postpone the earlier one").toBe(2);
+});

@@ -220,6 +220,7 @@ it("no connection of the server process runs TRUNCATE or RESTART on messages.db 
     "memory/schema.ts",                 // migration, before listen
     "memory/index.ts",                  // the memory child process's own file
     "memory/root-set-reclaim.ts",       // 1.0.2: idle-gated (10 min), sliced batches in a worker on its own connection; the one VACUUM holds owner writes asynchronously
+    "message-search-index.ts",         // 1.0.18 option A (451cce9e5): settleInheritedSearchMerge, called only from database() (database.ts:350), runs on every open; only its optimize and TRUNCATE wait on a pre-release search_merge marker and on the first open (before listen). A reopen after listen (a restore or data-dir switch) restores the merge config only and keeps the marker for the next start. busy_timeout=0 bounds only the lock wait (the checkpoint I/O itself is synchronous, as database.ts:211-213 notes for the open path)
   ]);
   const root = fileURLToPath(new URL(".", import.meta.url));
   const found: string[] = [];

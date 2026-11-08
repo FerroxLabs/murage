@@ -1,3 +1,4 @@
+import { LazyOverlay } from "@/components/LazyOverlay";
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/cn";
 import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
@@ -30,11 +31,11 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { LayerSurface } from "./LayerSurface";
 import type { BundleImportResult } from "./BundleImportDialog";
-import { LazyBoundary, retryableLazy } from "./LazyBoundary";
-import { returnFocus } from "@/lib/return-focus";
+import { retryableLazy } from "./LazyBoundary";
+import { useLayerContainer } from "./LayerSlot";
 import { t } from "@/lib/i18n";
 import { ImportGuardFindings, guardBlockedNote, guardScanFromError, type GuardScan } from "./ImportGuardFindings";
 import { ImportScanProgress } from "./ImportScanProgress";
@@ -367,7 +368,6 @@ function SkillAssignButton({
 export function TeamLibraryPanel({
   onClose,
   onImported,
-  returnFocusRef,
   initialUrl,
   initialView,
   initialTab,
@@ -579,42 +579,13 @@ export function TeamLibraryPanel({
     return () => clearTimeout(timer);
   }, [search, activeFacet]);
 
-  useEffect(() => {
-    dialogRef.current?.focus();
-    return () => returnFocus(returnFocusRef.current);
-  }, [returnFocusRef]);
-
-  useEffect(() => {
-    if (bundleFile) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        if (pending && !importing) setPending(null);
-        else { check.stop(); onClose(); }
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const dialog = dialogRef.current;
-      const items = Array.from(
-        dialog?.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), a[href], input:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ) ?? [],
-      );
-      if (!dialog || items.length === 0) return;
-      const first = items[0]!;
-      const last = items.at(-1)!;
-      if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [importing, onClose, pending, bundleFile, check]);
+  useLayerContainer(dialogRef, {
+    initialFocus: null,
+    onEscape: () => {
+      if (pending && !importing) setPending(null);
+      else { check.stop(); onClose(); }
+    },
+  });
 
   const previewManifest = (preview: PendingTeamImport, nextSource: ImportSource, art: string | null = null) => {
     setGuard(null); setGuardAcknowledged(false);
@@ -911,10 +882,11 @@ export function TeamLibraryPanel({
     return [...groups].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
   })();
 
-  return createPortal(
-    // Dim only: a full-window backdrop blur is redrawn on every frame without a GPU and keeps Templates laggy while open.
+  return (
+    <LayerSurface>
+    {/* Dim only: avoid full-window backdrop blur without a GPU. */}
     <div
-      className="overlay-inset fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/55 p-4 sm:p-6"
+      className="overlay-inset fixed inset-x-0 top-0 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/55 p-4 sm:p-6"
       onMouseDown={(event) => event.target === event.currentTarget && !bundleFile && closePanel()}
     >
       <div
@@ -1625,14 +1597,11 @@ export function TeamLibraryPanel({
         )}
       </div>
       {bundleFile && (
-        <LazyBoundary onRetry={BundleImportDialog.retry} onDismiss={() => { setBundleFile(null); dialogRef.current?.focus(); }}>
-          <Suspense fallback={null}>
-            <BundleImportDialog.Component archivePath={bundleFile.path} fileName={bundleFile.name}
-              onClose={() => { setBundleFile(null); dialogRef.current?.focus(); }} onImported={finishBundleImport} />
-          </Suspense>
-        </LazyBoundary>
+        <LazyOverlay name="bundle-import" kind="dialog" covers="while-loading" onRetry={BundleImportDialog.retry} onDismiss={() => { setBundleFile(null); }}>
+            {loadedLayer => (<BundleImportDialog.Component layerLifecycle={loadedLayer} archivePath={bundleFile.path} fileName={bundleFile.name}
+              onClose={loadedLayer.dismiss} onImported={finishBundleImport} />)}
+        </LazyOverlay>
       )}
-    </div>,
-    document.body,
+    </div></LayerSurface>
   );
 }

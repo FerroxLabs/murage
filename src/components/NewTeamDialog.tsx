@@ -1,8 +1,9 @@
 // "New Team" from the sidebar's + menu: a name, the bots, an optional lead and
 // optional instructions, in one dialog. The rules and the create sequence live
 // in lib/new-team.ts; this draws them and owns the draft.
-import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useFocusTrap } from "@/lib/focus-trap";
+import { LayerSurface } from "@/components/LayerSurface";
+import { useMemo, useRef, useState } from "react";
 
 import { botRole, botRolePatch, type RoleBot } from "@/lib/bot-role";
 import { cn } from "@/lib/cn";
@@ -39,6 +40,7 @@ export function newTeamBotDetail(bot: RoleBot, picked: boolean): string | undefi
 }
 
 export interface NewTeamDialogBodyProps {
+  dialogRef?: React.RefObject<HTMLDivElement | null>;
   bots: Bot[];
   existing: string[];
   canLead: (bot: Bot) => boolean;
@@ -54,7 +56,7 @@ export interface NewTeamDialogBodyProps {
 }
 
 /** Rendering only, so the markup can be asserted without a store or a DOM. */
-export function NewTeamDialogBody({
+export function NewTeamDialogBody({ dialogRef,
   bots, existing, canLead, draft, busy, error, onName, onToggle, onLead, onInstructions, onCreate, onClose,
 }: NewTeamDialogBodyProps) {
   const chosen = bots.filter((bot) => draft.picked.has(bot.id));
@@ -65,6 +67,8 @@ export function NewTeamDialogBody({
   const disabled = busy || problem !== null || leadBlocked;
   return (
     <div
+      ref={dialogRef}
+      tabIndex={-1}
       role="dialog"
       aria-modal="true"
       aria-labelledby="new-team-title"
@@ -79,7 +83,6 @@ export function NewTeamDialogBody({
       </BoxHead>
       <BoxBody className="px-4 pt-3">
       <input
-        autoFocus
         aria-label="Team name"
         maxLength={TEAM_NAME_MAX}
         value={draft.name}
@@ -171,13 +174,6 @@ export function NewTeamDialog({ onClose, onDone }: { onClose: () => void; onDone
     return !leadershipPromotionBlocked(botRole(bot), engine?.capabilities?.agentsMcp === true);
   };
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !busyRef.current) onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
 
   const create = async () => {
     if (busyRef.current) return;
@@ -214,12 +210,14 @@ export function NewTeamDialog({ onClose, onDone }: { onClose: () => void; onDone
 
   // Portalled out of the translated phone drawer, whose transform would
   // otherwise be the containing block of this fixed overlay.
-  return createPortal(
-    <div
-      className="overlay-inset fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40"
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const layer = useFocusTrap(dialogRef, true, { name: "new-team", kind: "dialog", initialFocus: "input", onEscape: () => { if (!busyRef.current) onClose(); } });
+  return <LayerSurface handle={layer}><div
+      className="overlay-inset fixed inset-x-0 top-0 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40"
       onMouseDown={(e) => e.target === e.currentTarget && !busyRef.current && onClose()}
     >
       <NewTeamDialogBody
+        dialogRef={dialogRef}
         bots={bots}
         existing={existing}
         canLead={canLead}
@@ -243,7 +241,5 @@ export function NewTeamDialog({ onClose, onDone }: { onClose: () => void; onDone
         onCreate={() => void create()}
         onClose={onClose}
       />
-    </div>,
-    document.body,
-  );
+    </div></LayerSurface>;
 }

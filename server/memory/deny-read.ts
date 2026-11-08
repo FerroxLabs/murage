@@ -16,7 +16,7 @@
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { DENIED_SOURCE } from "./deny.ts";
 import { threadNo } from "./thread-no.ts";
-import { murageAnchor } from "../murage-anchor.ts";
+import { murageAnchor, murageAnchorOf } from "../murage-anchor.ts";
 import { FOOTPRINT_STAR, memoryRefKey, PENDING_ALL_SCOPES, PENDING_ALL_THREADS, worstVerdict, type BuiltPrompt, type CheckingReason, type DenyReason, type LineageReader, type LineageRef,
   type LinePage, type LineageVerdict, type MemoryRef, type PageLine, type SessionKey } from "./lineage-types.ts";
 import { AUDIENCE_COALESCED } from "./lineage-types.ts";
@@ -288,6 +288,9 @@ interface MemoryMemo { inFlight?: boolean; every?: number | null; anyScope?: boo
   upgradeLsn?: number | null;
   /** Versioned record refs read in one statement (row, its deny_memory mark, its tombstone), by memoryRefKey; null = no such version. */
   records: Map<string, Row | null>;
+  /** Versioned source refs read in one statement (batchSources), by memoryRefKey: the row has the source's own columns (id null = no such
+   *  source), its deny_memory mark, its tombstone at the revision, its stamp and its anchor message. Absent = read on its own. */
+  sources: Map<string, Row>;
   /** Rule 23 verdicts of records already walked in this lookup, by `id\0version`; null = no Murage anchor. */
   anchored: Map<string, LineageVerdict | null> }
 function scopeDenied(db: DatabaseSync, scopeId: string, memo: MemoryMemo): boolean {
@@ -339,12 +342,15 @@ function recordCreated(db: DatabaseSync, id: string, version: number, memo: Memo
 const sourceFloors = new WeakMap<DatabaseSync, { cookie: number; floor: number }>();
 /** v13: every source version inserted since the migration is stamped (memory_source_lsn_insert), so one without a row predates the first
  * stamp: its created lsn is at most min(created_lsn), or, with no stamp yet, the lsn counter now. The first non-null minimum can only stay
- * or rise as stamps are added, so it is kept per handle; with no stamp yet it is read per lookup. */
-function sourceUnstampedBound(db: DatabaseSync): number | null {
+ * or rise as stamps are added, so it is kept per handle; with no stamp yet it is read per lookup. The minimum is one seek on the stamps'
+ * created_lsn index (schema.ts SOURCE_LSN_FLOOR_INDEX, made before listen), not a pass over every stamp. */
+export const SOURCE_FLOOR_SQL = "SELECT min(created_lsn) AS m FROM memory_source_lsn";
+/** Exported for the floor's plan and work tests (source-lsn-floor-index.test.ts). */
+export function sourceUnstampedBound(db: DatabaseSync): number | null {
   const cookie = Number(one(db, "PRAGMA schema_version")?.schema_version);
   const known = sourceFloors.get(db);
   if (known && known.cookie === cookie) return known.floor;
-  const floor = num(one(db, "SELECT min(created_lsn) AS m FROM memory_source_lsn")?.m);
+  const floor = num(one(db, SOURCE_FLOOR_SQL)?.m);
   if (floor !== null) { sourceFloors.set(db, { cookie, floor }); return floor; }
   return num(one(db, "SELECT next FROM memory_lsn WHERE id=1")?.next);
 }
@@ -367,7 +373,9 @@ function memoryVerdict(db: DatabaseSync, ref: MemoryRef, memo: MemoryMemo): Line
     if (anchored) return anchored;
     return memoryScopeVerdict(db, String(batched.scope_id), () => Number(batched.stamped) ? num(batched.stamp) : recordUnstampedBound(db, memo), memo);
   }
-  const marked = version
+  // a versioned source read by batchSources: the same facts as the seeks below, decided by the same steps
+  const fact = ref.kind === "source" && version ? memo.sources.get(memoryRefKey(ref)) : undefined;
+  const marked = fact ? Number(fact.marked) : version
     ? one(db, `SELECT 1 AS x FROM memory_deny_memory WHERE kind=? AND id=? AND version IN (0,?) AND ${NOT_AUDIENCE_MEMORY} LIMIT 1`, ref.kind, ref.id, version)
     : one(db, `SELECT 1 AS x FROM memory_deny_memory WHERE kind=? AND id=? AND ${NOT_AUDIENCE_MEMORY} LIMIT 1`, ref.kind, ref.id);
   if (marked) return withheld("deny-memory");
@@ -385,20 +393,25 @@ function memoryVerdict(db: DatabaseSync, ref: MemoryRef, memo: MemoryMemo): Line
     const anchored = recordAnchorVerdict(db, ref.id, Number(row.version), memo);
     if (anchored) return anchored;
   } else if (ref.kind === "source") {
-    const row = one(db, `SELECT s.scope_id,s.state,s.kind,s.content_hash,s.thread_id,s.message_id,${DENIED_SOURCE("s")} AS denied FROM memory_sources s WHERE s.id=?`, ref.id);
+    const row = fact ? (fact.id === null || fact.id === undefined ? undefined : fact)
+      : one(db, `SELECT s.scope_id,s.state,s.kind,s.content_hash,s.thread_id,s.message_id,${DENIED_SOURCE("s")} AS denied FROM memory_sources s WHERE s.id=?`, ref.id);
     if (!row) return withheld("tombstone");
-    scopeId = String(row.scope_id); created = () => sourceCreated(db, ref.id, version);
+    scopeId = String(row.scope_id);
+    created = fact ? () => (fact.stamp !== null && fact.stamp !== undefined ? num(fact.stamp) : sourceUnstampedBound(db)) : () => sourceCreated(db, ref.id, version);
     if (row.state === "deleted") return withheld("tombstone");
     if (Number(row.denied)) return withheld("scope-deny");
     // revbound r3 A6: an import admitted while its hash tombstone was still on the way is refused once the tombstone is there (one seek on
     // the tombstones' unique index, then the scope's forgotten import hashes)
     if (row.kind === "legacy-import" && one(db, "SELECT 1 AS x FROM memory_tombstones WHERE target_type='import' AND target_id=? AND content_hash=? LIMIT 1", scopeId, String(row.content_hash))) return withheld("tombstone");
-    const tomb = version
+    const tomb = fact ? Number(fact.tomb) : version
       ? one(db, "SELECT 1 AS x FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?) LIMIT 1", ref.id, version)
       : one(db, "SELECT 1 AS x FROM memory_tombstones WHERE target_type='source' AND target_id=? LIMIT 1", ref.id);
     if (tomb) return withheld("tombstone");
     // rule 24: a source anchored at a Murage-voice message (a legacy capture, rule 22) is withheld at every revision
-    if (murageAnchor(db, row.thread_id as string | null, row.message_id as string | null)) return withheld("murage-anchor");
+    const anchoredAt = fact
+      ? murageAnchorOf(db, row.thread_id as string | null, row.message_id as string | null, () => (Number(fact.anchor_found) ? { json: fact.anchor_json } : undefined))
+      : murageAnchor(db, row.thread_id as string | null, row.message_id as string | null);
+    if (anchoredAt) return withheld("murage-anchor");
     // revbound r3 A2: while a revoke is in flight, a source supporting a record the owner forgot is forgotten with it (the forget tombstones
     // only the newest supporting sources in its commit). Bounded fan-in; past it the source reads "checking" until the job has marked it.
     if (revokeInFlight(db, memo)) {
@@ -484,7 +497,7 @@ function receiptAnchorVerdict(db: DatabaseSync, bundleId: string): LineageVerdic
     const anchor = one(db, "SELECT thread_id,message_id FROM memory_sources WHERE id=?", sourceId);
     if (anchor && murageAnchor(db, anchor.thread_id as string | null, anchor.message_id as string | null)) return withheld("murage-anchor");
   }
-  const memo: MemoryMemo = { scopes: new Map(), denied: new Map(), records: new Map(), anchored: new Map() };
+  const memo: MemoryMemo = { scopes: new Map(), denied: new Map(), records: new Map(), sources: new Map(), anchored: new Map() };
   for (const record of records) {
     const recordId = (record as { id?: unknown } | null)?.id, recordVersion = (record as { version?: unknown } | null)?.version;
     if (typeof recordId !== "string" || typeof recordVersion !== "number") return checking("lookup-error");
@@ -519,12 +532,45 @@ function batchRecords(db: DatabaseSync, refs: readonly MemoryRef[], memo: Memory
   }
 }
 
+/** Every versioned source ref in one statement per BATCH (1.0.18 PIP-PERF: the learning send gate re-checks each held source of a window,
+ * up to WINDOW_MAX_SOURCES, inside its write lock, and one seek per fact per source held the loop about 7 ms at 208 sources). Per ref, the
+ * seeks memoryVerdict would make: the source row with its denied place (DENIED_SOURCE), the deny_memory mark at (0, revision), the
+ * tombstone at the revision, the revision's stamp (memory_source_lsn) and the anchor message (messages, by primary key). A LEFT JOIN from
+ * the refs, so a missing source still reads its mark first (id null). The forgotten-import check (legacy-import only) and the in-flight
+ * check stay their own seeks. The work follows the refs, never the history. */
+const SOURCE_BATCH = `SELECT j.key AS i, s.id,s.scope_id,s.state,s.kind,s.content_hash,s.thread_id,s.message_id,
+    CASE WHEN s.id IS NULL THEN 0 ELSE ${DENIED_SOURCE("s")} END AS denied,
+    EXISTS (SELECT 1 FROM memory_deny_memory dm WHERE dm.kind='source' AND dm.id=json_extract(j.value,'$[0]') AND dm.version IN (0,json_extract(j.value,'$[1]'))
+      AND dm.${NOT_AUDIENCE_ONLY} AND dm.revoke_id<>${AUDIENCE_COALESCED}) AS marked,
+    EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.target_type='source' AND t.target_id=json_extract(j.value,'$[0]') AND (t.revision IS NULL OR t.revision=json_extract(j.value,'$[1]'))) AS tomb,
+    l.created_lsn AS stamp, m.id IS NOT NULL AS anchor_found, m.json AS anchor_json
+  FROM json_each(?) j LEFT JOIN memory_sources s ON s.id=json_extract(j.value,'$[0]')
+  LEFT JOIN memory_source_lsn l ON l.source_id=s.id AND l.revision=json_extract(j.value,'$[1]')
+  LEFT JOIN messages m ON m.thread_id=s.thread_id AND m.id=s.message_id`;
+function batchSources(db: DatabaseSync, refs: readonly MemoryRef[], memo: MemoryMemo): void {
+  const wanted = [...new Map(refs.filter(ref => ref.kind === "source" && ref.version).map(ref => [memoryRefKey(ref), ref])).values()];
+  for (let at = 0; at < wanted.length; at += BATCH) {
+    const slice = wanted.slice(at, at + BATCH);
+    const rows = all(db, SOURCE_BATCH, JSON.stringify(slice.map(ref => [ref.id, ref.version])));
+    for (const row of rows) { const ref = slice[Number(row.i)]; if (ref) memo.sources.set(memoryRefKey(ref), row); }
+  }
+}
+
 /** The verdict for memory objects (records, sources, lessons, claims), keyed by memoryRefKey. */
 export function memoryLookup(db: DatabaseSync, refs: readonly MemoryRef[], reader: LineageReader): Map<string, LineageVerdict> {
+  return lookupMemory(db, refs, reader, true);
+}
+/** The reference path: every source ref read on its own, which batchSources must answer the same as (deny-read-source-batch.test.ts).
+ *  It shares no state with memoryLookup, so nothing a caller of it does can leave the product reading one source at a time. */
+export function memoryLookupEachSource(db: DatabaseSync, refs: readonly MemoryRef[], reader: LineageReader): Map<string, LineageVerdict> {
+  return lookupMemory(db, refs, reader, false);
+}
+function lookupMemory(db: DatabaseSync, refs: readonly MemoryRef[], reader: LineageReader, batched: boolean): Map<string, LineageVerdict> {
   void reader; // a memory object's own facts and marks are the same for every reader; scope access is the caller's assertMemoryAccess
   const out = new Map<string, LineageVerdict>();
-  const memo: MemoryMemo = { scopes: new Map(), denied: new Map(), records: new Map(), anchored: new Map() };
+  const memo: MemoryMemo = { scopes: new Map(), denied: new Map(), records: new Map(), sources: new Map(), anchored: new Map() };
   try { batchRecords(db, refs, memo); } catch { memo.records.clear(); } // each ref is then read on its own, and an error there is "checking"
+  if (batched) { try { batchSources(db, refs, memo); } catch { memo.sources.clear(); } } // likewise (a file with no messages table)
   for (const ref of refs) {
     const key = memoryRefKey(ref);
     if (out.has(key)) continue;

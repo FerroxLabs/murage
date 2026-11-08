@@ -112,7 +112,12 @@ const recursive = (options: unknown): boolean =>
  *
  * @returns the reason to refuse, or null to allow.
  */
-export function protectedRootRefusal(target: string, dataDir: string): string | null {
+let workspacesTargets: (dataDir: string) => string[] = () => [];
+/** C12 (S5-DATADIR-PATHS r4.1): data-roots.ts registers the read-only lookup of the workspaces root's targets (the frozen admitted
+ * target and the current resolved candidate). Injected, so this module never imports data-roots and the decision stays pure. */
+export function setWorkspacesTargetsProvider(provider: (dataDir: string) => string[]): void { workspacesTargets = provider; }
+
+export function protectedRootRefusal(target: string, dataDir: string, linkedTargets: (dataDir: string) => string[] = workspacesTargets): string | null {
   const root = canonical(dataDir);
   const path = canonical(target);
   if (sameOrInside(root, path)) {
@@ -123,6 +128,10 @@ export function protectedRootRefusal(target: string, dataDir: string): string | 
   const workspaces = join(root, "workspaces");
   if (sameOrInside(workspaces, path)) {
     return `it is or contains every bot workspace (${workspaces}); delete one bot's folder instead`;
+  }
+  // a linked workspaces root: the target equals or contains its canonical T (one bot's folder T/<botId> stays deletable)
+  for (const linked of linkedTargets(dataDir)) {
+    if (sameOrInside(canonical(linked), path)) return `it is or contains every bot workspace (${linked}); delete one bot's folder instead`;
   }
   return null;
 }

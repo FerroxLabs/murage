@@ -1,0 +1,26 @@
+
+ RUN  v4.1.10 /root/swarm1018/ENGINES-REST-1018/repo/scratch/l9-base
+
+ ❯ server/drivers/acp/acp.test.ts (453 tests | 1 failed | 452 skipped) 30116ms
+     × an upstream-trusted folder never sees a card and never a withheld chip, even over a Murage 'Don't trust' 30111ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/drivers/acp/acp.test.ts > ACP folder trust (fake CLI in folder-trust mode) > an upstream-trusted folder never sees a card and never a withheld chip, even over a Murage 'Don't trust'
+Error: no matching event within 30000ms; saw: turn.started, request.opened, session.started
+ ❯ Timeout._onTimeout server/testing/events.ts:48:13
+     46|           if (idx !== -1) waiters.splice(idx, 1);
+     47|           reject(
+     48|             new Error(
+       |             ^
+     49|               `no matching event within ${timeoutMs}ms; saw: ${events.…
+     50|             ),
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 452 skipped (453)
+   Start at  16:55:25
+   Duration  38.51s (transform 6.72s, setup 6.22s, import 2.04s, tests 30.12s, environment 0ms)
+

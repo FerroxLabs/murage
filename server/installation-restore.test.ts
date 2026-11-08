@@ -157,3 +157,31 @@ it.each(["rollback-started", "candidate-retained", "original-restored"])("retrie
   originalIntact(f);
   expect(existsSync(join(result.retainedCandidate!, "bots.json"))).toBe(true);
 });
+
+// D17 uses the same exact desk constructor as the D1/D2 data-roots fixtures.
+import fs from "node:fs";
+import { DataRoots } from "./data-roots.ts";
+import { rebaseStoredPath } from "./stored-paths.ts";
+it.each([true, false])("D17 archive provenance (record=%s); never reads restore previousDataDir", async withRecord => {
+  const f = await fixture();
+  const at = "2026-01-01T00:00:00.000Z";
+  if (withRecord) writeFileSync(join(f.source, ".murage-root.json"), JSON.stringify({ schema: 1, root: f.source, previous: [], linkedRoots: { workspaces: { target: join(f.root, "old-volume"), dev: 1, ino: 2, at } } }));
+  // The displaced installation must never become provenance for the restored one.
+  writeFileSync(join(f.target, ".murage-root.json"), JSON.stringify({ schema: 1, root: join(f.root, "unrelated"), previous: [] }));
+  const archive = join(f.root, "provenance.zip");
+  const saved = await writeInstallationArchive(f.source, archive);
+  const restored = await restoreInstallation(f.target, archive, saved.sha256);
+  expect(existsSync(join(f.target, ".murage-root.json"))).toBe(withRecord);
+  if (withRecord) expect(JSON.parse(readFileSync(join(f.target, ".murage-root.json"), "utf8"))).toMatchObject({ root: f.source, linkedRoots: { workspaces: { target: join(f.root, "old-volume") } } });
+  const rollback = restored.previousDataDir!;
+  expect(rollback).toBeTruthy();
+  const read = vi.spyOn(fs, "readFileSync");
+  try {
+    const roots = new DataRoots(f.target); roots.boot();
+    expect(read.mock.calls.filter(([path]) => String(path).startsWith(rollback))).toEqual([]);
+    expect(roots.previousRoots()).toEqual(withRecord ? [f.source] : []);
+    expect(JSON.parse(readFileSync(join(f.target, ".murage-root.json"), "utf8")).linkedRoots).toBeUndefined();
+    const ctor = (root: string) => [join(root, "workspaces", "b", "threads", "t"), join(root, "workspaces", "b", "threads", "t")];
+    expect(rebaseStoredPath(ctor(f.source)[0]!, ctor, { dataDir: f.target, previous: roots.previousRoots() })).toEqual(withRecord ? { path: ctor(f.target)[0] } : { keep: true });
+  } finally { read.mockRestore(); }
+});

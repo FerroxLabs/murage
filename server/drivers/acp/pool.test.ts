@@ -19,6 +19,8 @@ import type { ProviderInstance, RuntimeEvent, SendTurnInput } from "../../contra
 import { removeTempDir } from "../../testing/cleanup.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
+import { ProviderStopUnconfirmedError } from "../child-teardown.ts";
+import { openCodeDestinationAnswer } from "../../opencode-destination.ts";
 import { warmPool } from "../warm-pool.ts";
 import { cacheEnvFromProcess, markMountIncomplete, markMountReady } from "../../connector-cache.ts";
 import { acpPoolingEnabled, createAcpDriver, resetAcpMcpReadinessForTests, type AcpSupport } from "./core.ts";
@@ -128,6 +130,99 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
     const done = await recorder.until((event) => event.type === "turn.completed" && event.turnId === turnId);
     return { turnId, done: done as Extract<RuntimeEvent, { type: "turn.completed" }> };
   };
+
+  it.each(["stopAll", "dispose"] as const)("%s drains other threads before reporting an unconfirmed destination stop", async action => {
+    // Each case uses two threads: a held probe and another with either an
+    // active pooled turn or an idle pooled child. Exercise both ownership states.
+    for (const state of ["active", "idle"] as const) {
+      const gate = join(scratch, `gate-${state}`);
+      process.env.FAKE_ACP_MODE = "echo-gated";
+      process.env.FAKE_ACP_GATE_FILE = gate;
+      appendFileSync(gate, "open");
+      let entered!: () => void;
+      const entry = new Promise<void>(resolve => { entered = resolve; });
+      const failure = new ProviderStopUnconfirmedError("poolTest", { closeConfirmed: false, reason: "timeout" });
+      await create(createAcpDriver({ ...POOL_SUPPORT, effectiveDestination: async ctx => {
+        if (ctx.model === "m-two") {
+          entered();
+          await new Promise<void>((_resolve, reject) => {
+            ctx.signal.addEventListener("abort", () => reject(failure), { once: true });
+          });
+        }
+        return openCodeDestinationAnswer({}, { memoryOff: false });
+      } }));
+      expect((await turn({ threadId: "other", text: "park", model: "m-one" })).done).toMatchObject({ ok: true });
+      const pid = spawns().at(-1)!;
+      expect(alive(pid)).toBe(true);
+      let turnId: string | undefined;
+      if (state === "active") {
+        rmSync(gate);
+        const prompts = calls("session/prompt").length;
+        ({ turnId } = await instance!.adapter.sendTurn({ threadId: "other", text: "held", model: "m-one", resumeCursor: SESSION }));
+        await until(() => calls("session/prompt").length > prompts, "other thread's active prompt");
+        expect(calls("session/prompt").at(-1)!.pid).toBe(pid);
+      }
+      const send = instance!.adapter.sendTurn({ threadId: "probe", text: "probe", model: "m-two" });
+      const rejected = expect(send).rejects.toBe(failure);
+      await entry;
+      const stop = action === "stopAll" ? instance!.adapter.stopAll!() : instance!.dispose();
+      await expect(stop).rejects.toBe(failure);
+      await rejected;
+      // Check at return: reporting the probe error must wait for child closure.
+      expect(alive(pid)).toBe(false);
+      if (turnId) expect(recorder.events).toEqual(expect.arrayContaining([
+        // Stop All ends the turn as a cancel (ok, cancelled), as grok-setmodel T11 pins;
+        // dispose ends it as the engine closing (not ok), as T12 pins.
+        expect.objectContaining(action === "stopAll" ? { type: "turn.completed", turnId, ok: true, stopReason: "cancelled" } : { type: "turn.completed", turnId, ok: false }),
+      ]));
+      await instance!.dispose();
+      recorder.stop();
+    }
+  });
+
+  // X4 stop path (Astra acct2 BLOCK on 159bca1eb, defect a): interrupt and reset start child cleanup in the same tick and await
+  // the destination probe beside the close waits, so a probe that rejects, times out or never settles cannot skip or delay it.
+  const parkedChildWithHeldProbe = async (probe: "reject" | "slow") => {
+    const gate = join(scratch, `gate-int-${probe}`);
+    process.env.FAKE_ACP_MODE = "echo-gated";
+    process.env.FAKE_ACP_GATE_FILE = gate;
+    appendFileSync(gate, "open");
+    let entered!: () => void;
+    const entry = new Promise<void>(resolve => { entered = resolve; });
+    let release!: () => void;
+    const failure = new ProviderStopUnconfirmedError("poolTest", { closeConfirmed: false, reason: "timeout" });
+    await create(createAcpDriver({ ...POOL_SUPPORT, effectiveDestination: async ctx => {
+      if (ctx.model === "m-two") {
+        entered();
+        if (probe === "reject") await new Promise<never>((_resolve, reject) => { ctx.signal.addEventListener("abort", () => reject(failure), { once: true }); });
+        else await new Promise<void>(resolve => { release = resolve; }); // ignores the abort signal: settles only when released
+      }
+      return openCodeDestinationAnswer({}, { memoryOff: false });
+    } }));
+    expect((await turn({ text: "park", model: "m-one" })).done).toMatchObject({ ok: true });
+    const pid = spawns().at(-1)!;
+    expect(alive(pid)).toBe(true);
+    const send = instance!.adapter.sendTurn({ threadId: "t-pool", text: "probe", model: "m-two" });
+    await entry;
+    return { pid, send, failure, release: () => release() };
+  };
+  it.each(["interrupt", "reset"] as const)("T-INT-PROBE-REJECT: %s closes the parked child even when the destination probe rejects", async action => {
+    const { pid, send, failure } = await parkedChildWithHeldProbe("reject");
+    const sendRejected = expect(send).rejects.toBe(failure);
+    const stop = action === "interrupt" ? instance!.adapter.interruptTurn("t-pool") : instance!.adapter.resetSession!("t-pool");
+    await expect(stop).rejects.toBe(failure);
+    await sendRejected;
+    expect(alive(pid)).toBe(false);
+  });
+  it.each(["interrupt", "reset"] as const)("T-INT-PROBE-SLOW: %s closes the parked child while the probe is still unsettled (one budget, not two)", async action => {
+    const { pid, send, release } = await parkedChildWithHeldProbe("slow");
+    const sendRejected = expect(send).rejects.toThrow("stopped");
+    const stop = (action === "interrupt" ? instance!.adapter.interruptTurn("t-pool") : instance!.adapter.resetSession!("t-pool")).then(() => "ok", () => "err");
+    await until(() => !alive(pid), "the parked child to close while the probe is unsettled");
+    release();
+    await stop;
+    await sendRejected;
+  });
 
   beforeEach(() => {
     ensureDirs();
