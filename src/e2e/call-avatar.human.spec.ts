@@ -14,7 +14,7 @@ test.beforeAll(async () => {
     load(id){
       if(id.endsWith("/src/styles.css"))return readFileSync(id,"utf8").replace('@import "tailwindcss";','@import "tailwindcss" source(none);\n@source "./components";');
       if(id==="\0avatar-store")return `const empty=[];export const visibleMessages=()=>empty;export const olderOpenCards=(owner,visible)=>visible;export const viewedTaskBot=bot=>bot;export const useStreaming=()=>null;export function useStoreIfAny(){return useStore();} export const useStore=()=>({state:{config:{}},dispatch:()=>{}});export const api=async()=>({});`;
-      if(id==="\0avatar-call")return `export const useOnCall=()=>"portrait-bot";export const currentCall=()=>"portrait-bot";export const deferCallCleanup=()=>{};export const requestCall=()=>{};export const takeCallRequest=()=>false;export const useCallRequest=()=>null;export const endCall=()=>{};export const startCall=()=>{};`;
+      if(id==="\0avatar-call")return `export const useOnCall=()=>"portrait-bot";export const currentCall=()=>"portrait-bot";export const deferCallCleanup=()=>{};export const requestCall=()=>{};export const takeCallRequest=()=>false;export const useCallRequest=()=>null;export const endCall=()=>{};export const startCall=()=>{};export const useCallBudgetEnded=()=>null;export const callBudgetEnded=()=>null;export const dismissCallBudgetEnded=()=>{};`;
       if(id==="\0avatar-tts")return `export const speaker={isSpeaking:()=>false,speak:async()=>{},stop:()=>{}};export const onClipElement=()=>()=>{};`;
       if(id==="\0avatar-speech")return `export const useSpeech=()=>({caption:"",error:null});`;
       if(id==="\0avatar-push")return `export const usePushToTalk=()=>false;`;

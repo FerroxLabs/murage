@@ -2,7 +2,7 @@
 /** Transport data only. Authority is established by the broker, never by an envelope. */
 export const PROTOCOL_VERSION = 1 as const;
 export const MAX_MESSAGE_BYTES = 1024 * 1024;
-export const BROWSER_EXTENSION_OPERATIONS = ["bind", "cdp", "attach", "detach", "navigate", "snapshot", "read", "click", "fill", "type", "press", "scroll", "hover", "drag", "select", "wait", "screenshot", "back", "forward", "reload", "share", "unshare", "pause", "resume", "stop", "status", "tab_new", "tab_close", "tab_list", "tab_switch", "retire"] as const;
+export const BROWSER_EXTENSION_OPERATIONS = ["avatar", "bind", "cdp", "attach", "detach", "navigate", "snapshot", "read", "click", "fill", "type", "press", "scroll", "hover", "drag", "select", "wait", "screenshot", "back", "forward", "reload", "share", "unshare", "pause", "resume", "stop", "status", "tab_new", "tab_close", "tab_list", "tab_switch", "retire"] as const;
 export type BrowserExtensionOperation = typeof BROWSER_EXTENSION_OPERATIONS[number];
 export type ExtensionJson = null | boolean | number | string | ExtensionJson[] | { [key: string]: ExtensionJson };
 export type ExtensionObject = { [key: string]: ExtensionJson };

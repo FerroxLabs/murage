@@ -148,7 +148,7 @@ describe("1.1 the card's buttons and why-line", () => {
     expect(html).toMatch(/>Run</);
     expect(html).toContain("Don&#x27;t run");
     expect(html).not.toContain("data-fold-caret");
-    expect(html).toContain("Murage could not read this whole, so it asks. Allow it once if it is right.");
+    expect(html).toContain("Murage could not read all of this, so it asks. Allow it once if it is right.");
   });
   it("on the phone app the fold rows sit in the Details sheet, with no caret and no second link", () => {
     surface.desktop = false; surface.native = true;
@@ -184,11 +184,11 @@ describe("1.3 and 1.5: the fold", () => {
   it("ends with the desktop footer", () => {
     const html = fold(true);
     expect(html).toContain("Nova stays on Auto. Take any of these back under Nova › Level.");
-    expect(html).not.toContain("Give this on your computer");
+    expect(html).not.toContain("Allow this on your computer");
   });
   it("on the phone greys the bot-level row and keeps the task row", () => {
     const html = fold(false);
-    expect(html).toContain("Give this on your computer");
+    expect(html).toContain("Allow this on your computer");
     expect(html).toContain("Nova stays on Auto. Take back this conversation&#x27;s and routine choices here; bot-level ones on your computer.");
     expect(html).toMatch(/data-fold-scope="task"><button[^>]*type="button"(?![^>]*aria-disabled)/);
     expect(html).toMatch(/data-fold-scope="bot"><button[^>]*aria-disabled="true"/);

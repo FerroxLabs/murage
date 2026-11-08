@@ -17,7 +17,53 @@ import {
   sidebarSectionLabel,
   userSectionId,
   userSectionName,
+  sidebarBotOrder,
+  adjacentSidebarBot,
+  busyFirst,
+  sidebarCycleDirection,
 } from "./sidebar-layout";
+
+describe("sidebar keyboard order", () => {
+  it("recognises shifted brackets on Windows/Linux and Mac", () => {
+    for (const [key, code, direction] of [["}", "BracketRight", 1], ["{", "BracketLeft", -1], ["]", "", 1], ["[", "", -1]] as const) {
+      expect(sidebarCycleDirection({ key, code, shiftKey: true, altKey: false })).toBe(direction);
+      expect(sidebarCycleDirection({ key, code, shiftKey: false, altKey: false })).toBeNull();
+      expect(sidebarCycleDirection({ key, code, shiftKey: true, altKey: true })).toBeNull();
+    }
+  });
+  it("follows saved sections with chiefs first and busy bots first within their lists", () => {
+    const bots = [
+      { id: "idle" }, { id: "team-idle", section: "Team" },
+      { id: "pin", pinned: true }, { id: "chief", chiefOfStaff: true, chiefScope: "workspace" as const },
+      { id: "working", busy: true }, { id: "team-wait", section: "Team", activity: "waiting-on-you" },
+      { id: "team-chief", chiefOfStaff: true, section: "Team" }, { id: "hidden", hidden: true, busy: true },
+      { id: "sidebar-hidden", sidebarHidden: true },
+    ];
+    expect(sidebarBotOrder(bots, [], [BOTS_SECTION_ID, userSectionId("Team"), PINNED_SECTION_ID]).map((bot) => bot.id))
+      .toEqual(["chief", "working", "idle", "team-chief", "team-wait", "team-idle", "pin"]);
+    expect(bots[0].id).toBe("idle");
+  });
+  it("includes sidebar-hidden bots only while Show hidden is enabled, never archived bots", () => {
+    const bots = [{ id: "a" }, { id: "h", sidebarHidden: true }, { id: "archived", hidden: true }];
+    expect(sidebarBotOrder(bots, [], [], false).map((bot) => bot.id)).toEqual(["a"]);
+    const shown = sidebarBotOrder(bots, [], [], true);
+    expect(shown.map((bot) => bot.id)).toEqual(["a", "h"]);
+    expect(adjacentSidebarBot(shown, "h", -1)?.id).toBe("a");
+  });
+  it("activity does not reorder teams and preserves ties", () => {
+    const bots = [{ id: "a", section: "A" }, { id: "b", section: "B", busy: true }, { id: "c", activity: "working" }];
+    expect(sidebarBotOrder(bots, [], []).map((bot) => bot.id)).toEqual(["a", "b", "c"]);
+    expect(busyFirst(bots).map((bot) => bot.id)).toEqual(["b", "c", "a"]);
+  });
+  it("steps from either end when the selected bot is absent, wraps, and handles an empty roster", () => {
+    const bots = [{ id: "a" }, { id: "b" }, { id: "c" }];
+    expect(adjacentSidebarBot(bots, "hidden", 1)?.id).toBe("a");
+    expect(adjacentSidebarBot(bots, "hidden", -1)?.id).toBe("c");
+    expect(adjacentSidebarBot(bots, "a", -1)?.id).toBe("c");
+    expect(adjacentSidebarBot(bots, "c", 1)?.id).toBe("a");
+    expect(adjacentSidebarBot([], "hidden", -1)).toBeUndefined();
+  });
+});
 
 describe("sidebar virtual sections", () => {
   it("keeps reserved labels separate from identically named user sections", () => {

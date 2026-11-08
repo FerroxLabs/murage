@@ -44,7 +44,7 @@ describe("both halves are on the same page", () => {
 
   it("asks for a bot rather than guessing a folder when no conversation is chosen", () => {
     const markup = render({ bots });
-    expect(markup).toContain("Choose a bot above to browse the folder Murage resolved for its conversation.");
+    expect(markup).toContain("Choose a bot above to browse the folder Murage uses for its conversation.");
     expect(markup).not.toContain("Browsing ");
     // Nothing narrows the saved list, so there is no way out to offer.
     expect(markup).toContain("Showing every saved file.");

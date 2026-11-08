@@ -16,7 +16,7 @@ export interface EngineReadContext {
   currentUrl: string;
   activeHtml: () => Promise<string>;
   authorize: () => boolean;
-  admitUrl: (url: string) => Promise<void>;
+  admitUrl: (url: string, signal?: AbortSignal) => Promise<void>;
   fetch?: typeof fetch;
   /** Seam for the core lane: when set, page text in the result is capped at 20,000 characters and fenced (T24). */
   fenceOrigin?: string;
@@ -202,7 +202,7 @@ export async function readWithBrowserAuthority(options: EngineReadOptions, conte
     let url: URL;
     try { url = new URL(value); } catch { throw new RefusedRead("Browser read URL refused."); }
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new RefusedRead("Browser read URL refused.");
-    try { await bounded(() => context.admitUrl(url.href)); }
+    try { await bounded(() => context.admitUrl(url.href, controller.signal)); }
     catch (error) { if (error instanceof RefusedRead) throw error; throw new RefusedRead("Browser read destination was not approved."); }
     valid(); return url;
   };

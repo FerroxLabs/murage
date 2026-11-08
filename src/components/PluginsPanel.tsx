@@ -26,6 +26,7 @@ import {
 import { useDesktopSurface } from "@/lib/use-surface";
 import { t } from "@/lib/i18n";
 import { openExternalPage } from "@/lib/open-external";
+import { FLUX_DASHBOARD_BILLING_PAGE } from "../../shared/flux-links";
 import {
   appCountLabel,
   appsClaimFor,
@@ -38,7 +39,8 @@ import {
   type CatalogFallbackReason,
 } from "@/lib/app-catalog";
 import { VirtualRows } from "./VirtualRows";
-import { returnFocus } from "@/lib/return-focus";
+import { useLayerContainer } from "./LayerSlot";
+import { LayerSurface } from "./LayerSurface";
 import type { ConfirmedConnectLabel } from "@/lib/connect-app";
 import { ConnectLabelForm } from "./ConnectLabelForm";
 
@@ -190,7 +192,7 @@ export type ConnectedAppsNotice =
   | { kind: "consent"; body: string; actions: Array<{ id: ConnectedAppsNoticeAction; label: string }> }
   | { kind: "line"; tone: "warning" | "muted"; text: string; action?: { id: ConnectedAppsNoticeAction; label: string } };
 
-export const FLUXROUTER_BILLING_URL = "https://fluxrouter.ai/dashboard/billing";
+export const FLUXROUTER_BILLING_URL = FLUX_DASHBOARD_BILLING_PAGE;
 const CLAIMED_NOTICE_MS = 24 * 60 * 60 * 1000;
 
 /** The cut-off date as people read it; null when absent or unparseable. */
@@ -573,6 +575,8 @@ function ServiceIcon({ card }: { card: ToolkitCard }) {
   );
 }
 
+const CACHED_CATALOG_ERROR = "connectedApps.cachedCatalogError";
+
 export function PluginsPanel() {
   const { state, dispatch } = useStore();
   const desktop = useDesktopSurface();
@@ -796,7 +800,10 @@ export function PluginsPanel() {
       return;
     }
     if (action === "billing") {
-      window.open(FLUXROUTER_BILLING_URL, "_blank", "noopener,noreferrer");
+      // the system browser on desktop, Cloud and phone (a blank tab opened first in a plain browser, no opener): the billing page
+      // goes through Flux sign-in (shared/flux-links.ts), and a raw window.open answered nothing on Cloud and phone.
+      void openExternalPage(FLUXROUTER_BILLING_URL, t("modelSignIn.error.browser"))
+        .catch(() => setError(t("modelSignIn.error.browser")));
       return;
     }
     if (action === "keep-legacy") {
@@ -844,6 +851,7 @@ export function PluginsPanel() {
       .then((r) => {
         if (!mounted.current || request !== catalogRequest.current) return;
         catalogAnswered.current = true;
+        setError((current) => current === CACHED_CATALOG_ERROR ? null : current);
         const answer = catalogAnswerFrom(r);
         setCards(r.cards ?? []);
         setCatalog(answer);
@@ -919,7 +927,11 @@ export function PluginsPanel() {
         setCards(r.cards ?? []);
         setCatalog({ ...catalogAnswerFrom(r), allApps: false });
       })
-      .catch(() => {});
+      .catch(() => {
+        // The checked request still runs; a late cache failure must not
+        // replace its result or an unrelated action error.
+        if (alive && !catalogAnswered.current) setError((current) => current || CACHED_CATALOG_ERROR);
+      });
     void loadCatalog();
     return () => {
       alive = false;
@@ -1018,52 +1030,10 @@ export function PluginsPanel() {
     if (browseAll && !allApps.items.length && !allApps.done) loadMoreApps();
   }, [browseAll, allApps.items.length, allApps.done, loadMoreApps]);
 
-  useEffect(() => {
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const dialog = dialogRef.current;
-    const focusable = () =>
-      Array.from(
-        dialog?.querySelectorAll<HTMLElement>(
-          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ) ?? [],
-      );
-
-    // Locked, the offer's button is the first thing the keyboard reaches;
-    // otherwise the search field, as before.
-    (dialog?.querySelector<HTMLElement>("[data-connected-apps-lock-primary]")
-      ?? dialog?.querySelector<HTMLElement>("input")
-      ?? focusable()[0]
-      ?? dialog)?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        dispatch({ type: "togglePlugins", open: false });
-        return;
-      }
-      if (event.key !== "Tab" || !dialog) return;
-      const items = focusable();
-      if (items.length === 0) {
-        event.preventDefault();
-        dialog.focus();
-        return;
-      }
-      const first = items[0];
-      const last = items.at(-1)!;
-      if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      returnFocus(opener);
-    };
-  }, [dispatch]);
+  const layer = useLayerContainer(dialogRef, {
+    onEscape: () => dispatch({ type: "togglePlugins", open: false }),
+    initialFocus: lockState === "locked" ? "[data-connected-apps-lock-primary]" : "input",
+  });
 
   // The dialog places focus once, on mount, and the apps surface may not be
   // decided yet then (config answered late). Once it is, put focus where the
@@ -1071,7 +1041,7 @@ export function PluginsPanel() {
   // person has already moved it somewhere on purpose. Switching surfaces
   // does not re-run this.
   useEffect(() => {
-    if (lockState === "unknown") return;
+    if (lockState === "unknown" || !layer?.active) return;
     const dialog = dialogRef.current;
     if (!dialog) return;
     const active = document.activeElement;
@@ -1079,7 +1049,7 @@ export function PluginsPanel() {
     if (!parked) return;
     (dialog.querySelector<HTMLElement>("[data-connected-apps-lock-primary]")
       ?? dialog.querySelector<HTMLElement>('input[aria-label="Search apps"]'))?.focus();
-  }, [lockState]);
+  }, [lockState, layer]);
 
   const openConnectUrl = async (url: string) => {
     // If a popup blocker rejects the first asynchronous open, the visible
@@ -1338,8 +1308,8 @@ export function PluginsPanel() {
   };
 
   return (
-    <div
-      className="overlay-inset fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/55 p-4 backdrop-blur-[2px] sm:p-6"
+    <LayerSurface><div
+      className="overlay-inset fixed inset-x-0 top-0 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/55 p-4 backdrop-blur-[2px] sm:p-6"
       onMouseDown={(event) => event.target === event.currentTarget && close()}
     >
       <div
@@ -1539,7 +1509,7 @@ export function PluginsPanel() {
             )}
           </div>
         )}
-        {error && <div role="alert" className="mx-6 mt-2 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger sm:mx-8">{error}</div>}
+        {error && <div role="alert" className="mx-6 mt-2 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger sm:mx-8">{error === CACHED_CATALOG_ERROR ? t(CACHED_CATALOG_ERROR) : error}</div>}
 
         <BoxBody ref={scrollRef} className="px-6 pb-7 pt-5 sm:px-8">
           {cards === null && tab === "marketplace" ? (
@@ -1641,6 +1611,6 @@ export function PluginsPanel() {
 
         </>}
       </div>
-    </div>
+    </div></LayerSurface>
   );
 }

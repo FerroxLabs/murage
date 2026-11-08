@@ -545,6 +545,19 @@ describe("the learning send boundary (section 4)", () => {
       expect(bad).not.toBe(text);
       expect(planted({ [file]: bad }).join("\n")).toMatch(/codex: .*await on the hook chain/);
     }, 600_000);
+    it("Muse admission cannot move ahead of an await, outside the write function or into a timer", () => {
+      const file = "server/drivers/muse-code.ts", text = read(file);
+      const awaited = text.replace("admitted = true;", "await Promise.resolve(); admitted = true;");
+      expect(awaited).not.toBe(text);
+      expect(planted({ [file]: awaited }).join("\n")).toMatch(/muse: .*await on the hook chain/);
+      const moved = text.replace("p.beforeSubmit?.();", "(() => { p.beforeSubmit?.(); })();");
+      expect(planted({ [file]: moved }).join("\n")).toMatch(/muse: .*outside the hook's function/);
+      const deferred = text.replace('child.stdin.write(chunk, "utf8", (error) => {',
+        'setTimeout(() => child.stdin.write(chunk, "utf8", (error) => {')
+        .replace('if (error) reject(error); else resolve();\n        });', 'if (error) reject(error); else resolve();\n        }));');
+      expect(deferred).not.toBe(text);
+      expect(planted({ [file]: deferred }).join("\n")).toMatch(/muse: .*deferred function/);
+    }, 600_000);
     it("a new unpinned timer on the ACP prompt path", () => {
       const file = "server/drivers/acp/core.ts", text = read(file);
       const bad = text.replace("send({ jsonrpc: \"2.0\", id, method, params });", "setImmediate(() => undefined); send({ jsonrpc: \"2.0\", id, method, params });");
@@ -577,12 +590,20 @@ describe("the learning send boundary (section 4)", () => {
     }, 600_000);
     it("a deferral in a same-file helper the emit calls, under an unchanged pin (H5)", () => {
       const file = "server/drivers/headless-text-only.ts", text = read(file);
-      const spawn = `spawnCli(o.cli, o.args, { cwd: o.cwd, env, stdio: ["pipe", "pipe", "pipe"] }, job)`;
-      const bad = text.replace(`const spawnIt = () => ${spawn};`, `const spawnIt = (): ReturnType<typeof spawnCli> => { let late!: ReturnType<typeof spawnCli>; setImmediate(() => { late = ${spawn}; }); return late; };`);
+      const write = `writeFileSync(o.temp.promptFile, promptBytes, { mode: 0o600 })`;
+      const bad = text.replace(`${write};`, `setImmediate(() => { ${write}; });`);
       expect(bad).not.toBe(text);
       const out = planted({ [file]: bad }).join("\n");
-      expect(out).toMatch(/deferred write in helper spawnIt \(setImmediate\)/);
-      expect(out).not.toMatch(/headless-text-only\.ts\|spawnIt\|spawn\|/); // the pin itself still matches: only the helper walk sees it
+      expect(out).toMatch(/deferred write in helper writeAndSpawn \(setImmediate\)/);
+      expect(out).not.toMatch(/unpinned sink:|vanished or moved sink pin:/); // the pin still matches: only the helper walk sees the deferral
+    }, 600_000);
+    it("the voice host SSE emit without projectEvent (D24CH)", () => {
+      const file = "server/voice/voice-host-route.ts", text = read(file);
+      const bad = text.replace("JSON.stringify(projectEvent(event))", "JSON.stringify(event)");
+      expect(bad).not.toBe(text);
+      const out = planted({ [file]: bad }).join("\n");
+      expect(out).toMatch(/unpinned sink: server\/voice\/voice-host-route\.ts\|emit\|stream-write\|/);
+      expect(out).toMatch(/vanished or moved sink pin: server\/voice\/voice-host-route\.ts\|emit\|stream-write\|/);
     }, 600_000);
     it("an unchanged-anchor gate payload at a pinned not-learning ACP send( caller and at the interjection (H5)", () => {
       const file = "server/drivers/acp/core.ts", text = read(file);

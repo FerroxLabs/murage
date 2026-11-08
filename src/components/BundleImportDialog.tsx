@@ -1,3 +1,5 @@
+import { useNativeDialogLayer } from "@/lib/native-dialog-layer";
+import type { LoadedLayerProps } from "@/components/LazyOverlay";
 import { useEffect, useRef, useState } from "react";
 import { api, type Bot, type Group } from "@/state/store";
 import type { Routine } from "@/lib/routines";
@@ -27,10 +29,12 @@ interface Preview {
 export interface BundleImportResult { name: string; bots: Bot[]; groups: Group[]; routines: Routine[] }
 const emptySelection = (): Selection => ({ agents: [], skills: [], routines: [], instructions: [] });
 
-export function BundleImportDialog({ archivePath, fileName, onClose, onImported }: {
+export function BundleImportDialog({ layerLifecycle, archivePath, fileName, onClose: requestedClose, onImported }: {
   archivePath: string; fileName: string; onClose: () => void; onImported: (result: BundleImportResult) => void;
-}) {
+} & { layerLifecycle?: LoadedLayerProps }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const native = useNativeDialogLayer(dialog, { name: "bundle-import-native", returnFocusTo: layerLifecycle?.opener, lease: layerLifecycle?.lease });
+  const onClose = () => native.dismiss(requestedClose);
   const gate = useRef(false);
   const [options, setOptions] = useState<Options | null>(null);
   const [selection, setSelection] = useState<Selection>(emptySelection);
@@ -46,7 +50,7 @@ export function BundleImportDialog({ archivePath, fileName, onClose, onImported 
     catch (cause) { if (isCheckStopped(cause)) return; setError(cause instanceof Error ? cause.message : "Could not inspect this package."); }
     finally { setBusy(null); }
   };
-  useEffect(() => { dialog.current?.showModal(); void load(); }, []);
+  useEffect(() => { native.show(); void load(); }, []);
   const toggle = (field: keyof Selection, key: string) => {
     setSelection(current => ({ ...current, [field]: current[field].includes(key) ? current[field].filter(value => value !== key) : [...current[field], key] }));
     setPreview(null); setAcknowledged(false); setError("");

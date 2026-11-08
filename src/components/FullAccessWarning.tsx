@@ -1,4 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useFocusTrap } from "@/lib/focus-trap";
+import { LayerSurface } from "@/components/LayerSurface";
+import { useRef } from "react";
 import { t } from "@/lib/i18n";
 import { AlertTriangle } from "lucide-react";
 import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
@@ -42,7 +44,7 @@ export const NO_LIMITS_WARNING =
 /** The line above the warning when an owner who already had No limits reads the new terms (NOLIMITS-MEANS-IT section 6). */
 export const NO_LIMITS_TERMS_LINE = "No limits changed. Read this once and it applies to every bot.";
 
-export function FullAccessWarning({
+function FullAccessWarningOpen({
   open,
   botName,
   level = "full",
@@ -68,28 +70,18 @@ export function FullAccessWarning({
 }) {
   const cancelRef = useRef<HTMLButtonElement>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    // Cancel is the default: this is the one switch that removes every stop.
-    cancelRef.current?.focus();
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onCancel();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onCancel]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const layer = useFocusTrap(dialogRef, open, { name: "full-access-warning", kind: "dialog", initialFocus: "[data-layer-cancel]", onEscape: onCancel });
 
   if (!open) return null;
 
-  return (
-    <div
-      className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
+  return <LayerSurface handle={layer}><div
+      className="overlay-inset fixed inset-0 flex items-center justify-center bg-black/50 p-6"
       onMouseDown={(event) => event.target === event.currentTarget && onCancel()}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="full-access-warning-title"
@@ -119,7 +111,7 @@ export function FullAccessWarning({
         </BoxBody>
         <BoxFoot className="px-5 pb-5 pt-4">
           <button
-            ref={cancelRef}
+            ref={cancelRef} data-layer-cancel
             type="button"
             onClick={onCancel}
             className="rounded-xl px-4 py-2 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
@@ -135,6 +127,8 @@ export function FullAccessWarning({
           </button>
         </BoxFoot>
       </div>
-    </div>
-  );
+    </div></LayerSurface>;
+}
+export function FullAccessWarning(props: Parameters<typeof FullAccessWarningOpen>[0]) {
+  return props.open ? <FullAccessWarningOpen {...props} /> : null;
 }
