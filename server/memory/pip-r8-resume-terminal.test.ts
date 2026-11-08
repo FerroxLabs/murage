@@ -10,7 +10,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
-import { captureMessage } from "./capture.ts";
+import { captureStoredMessage } from "./testing/captured-message.ts";
 import { setMemoryCaptureRoster } from "./capture-scope.ts";
 import { setMemoryMode } from "./repository.ts";
 import { httpTextOnlyTurn } from "../drivers/http-text-only.ts";
@@ -34,8 +34,8 @@ const lived = { proposals: [], stance: [], episode: { text: `The owner shared th
 async function rig(opts: { probe?: boolean; content?: unknown } = {}) {
   const db = database();
   for (let i = 1; i <= 3; i++) {
-    captureMessage(db, "private", { id: `o${i}`, at: T0 + i * MIN, role: "user", kind: "text", text: `Secret ${i}.`, origin: "desktop" } as never);
-    captureMessage(db, "private", { id: `b${i}`, at: T0 + i * MIN + 1000, role: "bot", kind: "text", text: "Sure.", turnTerminal: true, from: { botId: "moss" } } as never);
+    captureStoredMessage(db, "private", { id: `o${i}`, at: T0 + i * MIN, role: "user", kind: "text", text: `Secret ${i}.`, origin: "desktop" } as never);
+    captureStoredMessage(db, "private", { id: `b${i}`, at: T0 + i * MIN + 1000, role: "bot", kind: "text", text: "Sure.", turnTerminal: true, from: { botId: "moss" } } as never);
   }
   db.exec("UPDATE memory_jobs SET status='complete',cursor=100");
   const { DatabaseSync } = await import("node:sqlite");
@@ -86,7 +86,7 @@ it("an older build's family with no record of what its attempt sent counts that 
 });
 
 // Every terminal state a family can reach. A refusal's reason is open (`refused:${verdict.reason}`), so any refused:* is terminal.
-const TERMINAL: FamilyStateName[] = ["applied", "off", "refused:off", "refused:unstable", "refused:cap", "refused:transient", "refused:unsupported", "refused:bad-output", "refused:schema", "refused:some-future-reason"];
+const TERMINAL: FamilyStateName[] = ["refused:monthly-limit", "refused:unseen-calls", "refused:call-pace", "applied", "off", "refused:off", "refused:unstable", "refused:cap", "refused:transient", "refused:unsupported", "refused:bad-output", "refused:schema", "refused:some-future-reason"];
 const LIVE: FamilyStateName[] = ["pending", "requested", "uncertain-transport", "validated", "catch-up"];
 
 it("every terminal state commits without result words, whatever path wrote it; live states keep theirs", () => {

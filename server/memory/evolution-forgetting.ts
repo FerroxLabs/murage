@@ -41,7 +41,9 @@ export function purgeEvolutionBinding(db: DatabaseSync, row: Record<string, unkn
     });
     if (!invalid) return;
     if (row.subject_id === "gepa-job") {
-      for (const call of db.prepare("SELECT id,intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id=?").all(String(row.id))) {
+      // Real jobs are gepa-job:<hash> (gepa-ledger.ts) and their receipts carry that id; a damaged row with any other id must never select another subject's rows.
+      const receipts = String(row.id).startsWith("gepa-job:") ? db.prepare("SELECT id,intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id=? AND subject_id LIKE 'gepa-job:%'").all(String(row.id)) : [];
+      for (const call of receipts) {
         let receipt: Record<string, unknown>;
         try { receipt = JSON.parse(String(call.intent)); } catch { receipt = {}; }
         const { value: _copiedResponse, ...metadata } = receipt;

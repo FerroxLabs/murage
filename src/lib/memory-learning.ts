@@ -1,3 +1,4 @@
+import { LEARNING_CEILING_MAX } from "../../server/memory/learning-policy.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { semanticStatusPhrase, type LearningCeiling, type LearningCeilingStatus, type RetrySkippedRequest } from "../../shared/memory-learning-contract.ts";
@@ -54,7 +55,7 @@ export function ceilingState(ceiling: Pick<LearningCeilingStatus, "input" | "out
   return ceiling.paused ? "paused" : "open";
 }
 /** The raise offered when the month's limit is reached: double both sides (the stored maximum is a million million). */
-export const raisedCeiling = (ceiling: LearningCeiling): LearningCeiling => ({ input: Math.min(1_000_000_000_000, Math.max(1, ceiling.input) * 2), output: Math.min(1_000_000_000_000, Math.max(1, ceiling.output) * 2) });
+export const raisedCeiling = (ceiling: LearningCeiling): LearningCeiling => ({ input: Math.min(LEARNING_CEILING_MAX, Math.max(1, ceiling.input) * 2), output: Math.min(LEARNING_CEILING_MAX, Math.max(1, ceiling.output) * 2) });
 /** "Learn as we talk" is one switch over two settings: on when both are on, off when both are off, "Partly on" when they differ. */
 export function learnAsWeTalk(settings: Pick<LearningSettings, "automaticFacts" | "automaticProcedures">): { on: boolean; partial: "facts" | "procedures" | null } {
   const { automaticFacts: facts, automaticProcedures: procedures } = settings;

@@ -1,0 +1,30 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+ ❯ src/lib/chats-previews-browser.test.ts (41 tests | 1 failed | 40 skipped) 1009ms
+   × RULE loss b disposes main transcript bytes while loss a keeps them in memory 540ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE loss b disposes main transcript bytes while loss a keeps them in memory
+AssertionError: expected '{"gen":{"epoch":"A","rev":0},"chats":…' not to contain 'memory secret'
+
+Expected: "memory secret"
+Received: "{"gen":{"epoch":"A","rev":0},"chats":[{"threadId":"main0","title":"Chat 0","createdAt":1794000465134,"botId":"bot","archived":false,"snippet":"memory secret","lastRole":"user"},{"threadId":"main1","title":"Chat 1","createdAt":1794000465134,"botId":"bot","archived":false,"snippet":"memory secret","lastRole":"user"}],"next":null,"total":60,"listGen":{"epoch":"A","rev":0}}"
+
+ ❯ src/lib/chats-previews-browser.test.ts:503:89
+    501|   expect(JSON.stringify(await page.evaluate(()=>(window as any).fixtur…
+    502|   await page.evaluate(gen=>(window as any).fixture.hello(gen),next);
+    503|   expect(JSON.stringify(await page.evaluate(()=>(window as any).fixtur…
+       |                                                                                         ^
+    504|   expect(await page.evaluate(()=>(window as any).fixture.memory().tota…
+    505|   await page.close();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 40 skipped (41)
+   Start at  21:27:35
+   Duration  9.46s (transform 6.79s, setup 8.00s, import 345ms, tests 1.01s, environment 0ms)
+

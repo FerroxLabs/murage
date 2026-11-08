@@ -10,6 +10,7 @@
 // lands `offerUndo` refuses anything server-shaped, so a request can never
 // gain an Undo by accident.
 
+import { activeTrapCount } from "./focus-trap";
 import { useSyncExternalStore } from "react";
 import { t } from "@/lib/i18n";
 import { UNDO_WINDOW_MS } from "@/lib/undo-window";
@@ -422,7 +423,7 @@ export function connectUndoHost(win: Window, host: UndoHost, toast: () => Elemen
       isComposing: event.isComposing,
       defaultPrevented: event.defaultPrevented,
       inEditable: isEditableTarget(doc.activeElement),
-      modalOpen: doc.querySelector('[aria-modal="true"]') !== null,
+      modalOpen: activeTrapCount() > 0 || doc.querySelector('[aria-modal="true"]') !== null,
     };
     if (undoKeyHandled({ ...base, key: event.key, metaKey: event.metaKey, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: event.altKey, repeat: event.repeat, hasOpen: host.hasOpen() })) {
       event.preventDefault();

@@ -19,8 +19,13 @@
 // this scan did not name, its request still reaches the driver and the card.
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+
+import { dataRoots, ownedPath } from "./data-roots.ts";
+import type { Partition } from "./execution-audience.ts";
+import { rebaseStoredPath, type Constructors } from "./stored-paths.ts";
+import type { BotRecord, Store } from "./store.ts";
 
 import { writeFileAtomic } from "./atomic.ts";
 import { readPersistedJson } from "./persisted-state.ts";
@@ -803,6 +808,52 @@ export class FolderTrustStore {
     const folders = raw && typeof raw === "object" && raw.folders && typeof raw.folders === "object" ? raw.folders : null;
     if (!folders) return;
     for (const [key, record] of Object.entries(folders)) if (isRecord(record)) this.folders.set(key, record);
+  }
+
+  /** S5 site 12: boot-only inventory matching. Never infer ownership from a path. */
+  async rebaseFromStore(store: Pick<Store, "bots" | "groups">): Promise<void> {
+    if (!dataRoots().previousRoots().length) return;
+    // Keep turn/driver dependencies out of ordinary trust readers; only boot needs them.
+    const { cwdConstructors } = await import("./turn-paths.ts");
+    const { threadPartition } = await import("./execution-audience.ts");
+    const constructors: Constructors[] = [];
+    const add = (bot: BotRecord, threadId: string, groupId?: string) => {
+      let partition: Partition | undefined;
+      try { partition = threadPartition(bot, threadId); } catch { /* no partition evidence */ }
+      const sharedTeamId = bot.tasks?.find(task => task.threadId === threadId)?.sharedWork?.teamId;
+      constructors.push(cwdConstructors(bot, threadId, { partition, sharedTeamId, groupId }));
+    };
+    for (const bot of store.bots) {
+      add(bot, bot.threadId);
+      for (const task of bot.tasks ?? []) add(bot, task.threadId);
+      for (const group of store.groups) {
+        if (!group.memberIds.includes(bot.id)) continue;
+        add(bot, group.threadId, group.id);
+        for (const task of group.tasks ?? []) add(bot, task.threadId, group.id);
+      }
+    }
+    const values = new Map<string, Array<string | undefined>>();
+    const all: Constructors = root => {
+      if (!values.has(root)) values.set(root, constructors.flatMap(make => make(root)));
+      return values.get(root)!;
+    };
+    const next = new Map(this.folders);
+    let count = 0;
+    let collisions = 0;
+    for (const [key, record] of this.folders) {
+      if (record.folder !== key) continue;
+      const result = rebaseStoredPath(key, all);
+      if (!("path" in result)) continue; // unmatched/refused trust keys remain untouched
+      if (next.has(result.path)) collisions++;
+      else { next.set(result.path, { ...record, folder: result.path }); count++; }
+      next.delete(key);
+    }
+    if (!count && !collisions) return;
+    const parent = ownedPath(dirname(this.file), { create: false });
+    const data: PersistedFolderTrust = { version: 1, folders: Object.fromEntries(next), ...(this.seededFrom ? { seededFrom: this.seededFrom } : {}) };
+    writeFileAtomic(join(parent.canonical, basename(this.file)), JSON.stringify(data, null, 2), { mode: 0o600 });
+    this.folders = next;
+    console.warn(`data-dir-rebase kind=folder-trust count=${count} collisions=${collisions}`);
   }
 
   /** 0.1.52 FUIGOTRUST2 upgrade seed: folders bots, tasks and rooms were

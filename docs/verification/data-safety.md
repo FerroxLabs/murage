@@ -489,6 +489,11 @@ contains a recursive delete fails). In short:
 - **The helpers themselves**: `server/testing/safe-wipe.mjs`,
   `server/testing/cleanup.ts` (`removeTempDir` asserts first),
   `scripts/safe-wipe.sh`.
+- **Muse model-list scratch**: `server/drivers/muse-code.ts` removes only the const
+  `murage-muse-models-` folder it created with mkdtemp, after rechecking its temp
+  parent and basename prefix. Production does not import the test-only wipe helper.
+- **Muse fixture string**: `server/testing/fake-muse-cli.ts` sends `rm -rf build`
+  as an approval-request subject; it never executes it.
 - **Strings, not deletes**: `server/testing/fake-codex-app-server.ts`
   ("rm -rf scratch" is an approval-request payload),
   `installer/test/systemd.test.mjs` (asserts the text setup prints),

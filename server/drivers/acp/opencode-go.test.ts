@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -574,6 +574,23 @@ describe("OpenCode Flux routing", () => {
     expect(openCodeFluxRouted(env)).toBe(true);
     expect(existsSync(configPath)).toBe(true);
   });
+
+  it("keeps the config file and parent unchanged when a local model renders the same text", async () => {
+    const { ensureOpenCodeInjectModel } = await import("./opencode-go.ts");
+    const pick = "omlx::GLM-5.2-fp8";
+    expect(ensureOpenCodeInjectModel(pick, env)).toBe("omlx/GLM-5.2-fp8");
+    const signature = (path: string) => {
+      const { dev, ino, size, mtimeMs, ctimeMs } = statSync(path);
+      return { dev, ino, size, mtimeMs, ctimeMs };
+    };
+    const file = signature(configPath);
+    const parent = signature(dirname(configPath));
+    expect(ensureOpenCodeInjectModel(pick, env)).toBe("omlx/GLM-5.2-fp8");
+    expect(signature(configPath)).toEqual(file);
+    expect(signature(dirname(configPath))).toEqual(parent);
+    ensureOpenCodeInjectModel("omlx::another-model", env);
+    expect(JSON.parse(readFileSync(configPath, "utf8")).provider.omlx.models).toHaveProperty("another-model");
+  });
 });
 
 describe("OpenCode model source", () => {
@@ -629,6 +646,37 @@ describe("OpenCode model source", () => {
       await discoverOpenCodeModels({ PATH: process.env.PATH }, cli, { refresh: true });
       expect(openCodeCatalogRevision(cli)).toBe(1);
     } finally {
+      resetOpenCodeModelCache();
+      removeTempDir(dir);
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("no refresh storm: concurrent and repeated Refresh clicks inside 60 s run `opencode models --refresh` once", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-opencode-throttle-"));
+    const cli = join(dir, "opencode");
+    const count = join(dir, "count.txt");
+    writeFileSync(count, "");
+    writeFileSync(cli, [
+      "#!/bin/sh",
+      `if [ "$1" = models ] && [ "$2" = --refresh ]; then echo x >> '${count}'; sleep 0.2; exit 0; fi`,
+      "if [ \"$1\" = models ]; then printf 'opencode/beam-free\\n'; exit 0; fi",
+      "exit 1",
+      "",
+    ].join("\n"), { mode: 0o755 });
+    const runs = () => readFileSync(count, "utf8").split("\n").filter(Boolean).length;
+    const env = { PATH: process.env.PATH };
+    try {
+      resetOpenCodeModelCache();
+      await Promise.all(Array.from({ length: 6 }, () => discoverOpenCodeModels(env, cli, { refresh: true })));
+      expect(runs()).toBe(1);
+      for (let i = 0; i < 4; i += 1) await discoverOpenCodeModels(env, cli, { refresh: true });
+      expect(runs()).toBe(1);
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(Date.now() + 61_000);
+      await discoverOpenCodeModels(env, cli, { refresh: true });
+      expect(runs()).toBe(2);
+    } finally {
+      vi.useRealTimers();
       resetOpenCodeModelCache();
       removeTempDir(dir);
     }
