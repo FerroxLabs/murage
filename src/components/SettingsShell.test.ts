@@ -1,6 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// 1.0.3 L1: the shell. Twelve pages in five groups, the anchor the store carries, and no <details> outside Advanced.
+// The shell: thirteen sidebar pages and a Messaging tab, the anchor the store carries, and no <details> outside Advanced.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -15,11 +15,11 @@ const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.m
 const modal = read("./SettingsModal.tsx");
 
 describe("the sidebar", () => {
-  it("draws the twelve pages under five headings, with the mockup's labels", () => {
-    expect(SECTION_PAGES).toHaveLength(12);
-    expect(SETTINGS_PAGE_GROUPS.map((group) => en[`settings.group.${group}` as keyof typeof en])).toEqual(["You", "Bots", "AI", "Reach", "App"]);
+  it("draws thirteen sidebar pages under six headings, with Messaging inside Apps", () => {
+    expect(SECTION_PAGES).toHaveLength(13);
+    expect(SETTINGS_PAGE_GROUPS.map((group) => en[`settings.group.${group}` as keyof typeof en])).toEqual(["You", "Each bot", "All bots", "Models and tools", "Connections", "App"]);
     expect(SECTION_PAGES.map((page) => en[`settings.page.${page.id}` as keyof typeof en])).toEqual([
-      "General", "Bots", "Skills", "Memory", "Models & engines", "Tools", "Connected apps", "Messaging apps", "Devices", "Backups", "Usage", "About & updates",
+      "General", "Calls", "How every bot behaves", "Skills", "Memory", "Models & engines", "Search, images and dictation", "Connected apps", "Computer & browser", "Phone and other devices", "Backups", "Usage", "About & help",
     ]);
     for (const group of SETTINGS_PAGE_GROUPS) expect(en[`settings.groupNote.${group}` as keyof typeof en], group).toBeTruthy();
     expect(modal).toContain("SECTION_PAGES.map((entry) => ({ ...entry, icon: PAGE_ICONS[entry.id] }))");
@@ -29,6 +29,8 @@ describe("the sidebar", () => {
 
 describe("the anchor in the store", () => {
   it("is set from the alias, an explicit anchor wins, a page has none, and closing forgets it", () => {
+    expect(reducer(initialState, { type: "toggleAppSettings", open: true, section: "channels" })).toMatchObject({ appSettingsSection: "channels", appSettingsAnchor: "telegram-settings-title" });
+    expect(reducer(initialState, { type: "toggleAppSettings", open: true, section: "channels", anchor: "slack-settings-title" }).appSettingsAnchor).toBe("slack-settings-title");
     expect(reducer(initialState, { type: "toggleAppSettings", open: true, section: "voice" })).toMatchObject({ appSettingsSection: "voice", appSettingsAnchor: "voice-settings-heading" });
     expect(reducer(initialState, { type: "toggleAppSettings", open: true, section: "experimental" }).appSettingsAnchor).toBe("skill-recorder-heading");
     expect(reducer(initialState, { type: "toggleAppSettings", open: true, section: "models" }).appSettingsAnchor).toBeNull();
@@ -39,8 +41,8 @@ describe("the anchor in the store", () => {
     expect(reducer(initialState, { type: "toggleAppSettings", open: true, section: "nonsense" as AppSettingsSection }).appSettingsAnchor).toBeNull();
   });
 
-  it("resolves every one of the 19 ids to a page", () => {
-    for (const id of ["general", "aboutMe", "botDefaults", "houseRules", "skills", "memory", "models", "engines", "images", "webSearch", "voice", "connections", "computer", "channels", "companion", "backups", "usage", "about", "experimental"] as const) {
+  it("resolves every one of the 21 ids to a page", () => {
+    for (const id of ["general", "calls", "browseBots", "aboutMe", "botDefaults", "houseRules", "skills", "memory", "models", "engines", "images", "webSearch", "voice", "connections", "computer", "channels", "companion", "backups", "usage", "about", "experimental"] as const) {
       const state = reducer(initialState, { type: "toggleAppSettings", open: true, section: id });
       expect(state.appSettingsSection, id).toBe(id);
     }
@@ -83,12 +85,12 @@ describe("no <details> outside Advanced", () => {
   });
 
   it("moves the messaging apps' extras and Skills' scan rules into the page's Advanced", () => {
-    expect(read("./SlackSettings.tsx")).toContain("<InAdvanced>");
-    expect(read("./DiscordSettings.tsx")).toContain("<InAdvanced>");
-    expect(read("./WhatsAppSettings.tsx").match(/<InAdvanced>/g)?.length).toBe(2);
+    // 1.0.19: each is its own card in Apps > Messaging, so each part names its slot.
+    expect(read("./SlackSettings.tsx")).toContain('<InAdvanced slot="slack-setup">');
+    expect(read("./DiscordSettings.tsx")).toContain('<InAdvanced slot="discord-setup">');
+    expect(read("./WhatsAppSettings.tsx").match(/<InAdvanced slot="(?:allow-lists|whatsapp-groups)">/g)?.length).toBe(2);
     expect(read("./skills/SkillsSettings.tsx")).toContain("<InAdvanced><SkillScanRules />");
-    expect(modal).toMatch(/<AdvancedSection \{\.\.\.advancedFor\("channels"\)\}/);
+    expect(read("./settings/pages/ChannelsPage.tsx")).toContain("<AdvancedHost><PageCards");
     expect(modal).toMatch(/<AdvancedSection \{\.\.\.advancedFor\("skills"\)\}/);
-    expect(modal).toContain('section="connections"');
   });
 });

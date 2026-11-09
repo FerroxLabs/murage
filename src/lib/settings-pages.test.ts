@@ -1,40 +1,40 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// 1.0.3 I0 (SETTINGS-LANES.md): 12 pages in 5 groups; all 19 ids keep landing.
+// 1.0.3 I0 (SETTINGS-LANES.md), moved on by the 1.0.19 shell (settings-shell-1019.test.ts holds the 13-page order and
+// words): every older section id keeps landing, and an alias keeps its anchor.
 import { describe, expect, it } from "vitest";
-import { SECTION_ALIASES, SECTION_PAGES, SETTINGS_PAGE_GROUPS, isSettingsPage, resolveSettingsSection, settingsPageGroup } from "./settings-pages";
-import { SETTINGS_SECTIONS } from "./settings-sections";
+import { BROWSE_BOTS_ROUTE, SECTION_ALIASES, SECTION_PAGES, SETTINGS_PAGE_GROUPS, isSettingsPage, resolveSettingsSection, settingsPageGroup } from "./settings-pages";
+import { SETTINGS_SECTIONS, sectionsForSurface, settingsSectionRedirect } from "./settings-sections";
 import { ANNOUNCEMENT_ACTION_SECTIONS } from "./announcements";
 
-describe("the 1.0.3 pages", () => {
-  it("are twelve pages under five groups, in the mockup's order, each group together", () => {
-    expect(SETTINGS_PAGE_GROUPS).toEqual(["you", "bots", "ai", "reach", "app"]);
-    expect(SECTION_PAGES.map((page) => `${page.group}:${page.id}`)).toEqual([
-      "you:general", "bots:botDefaults", "bots:skills", "bots:memory", "ai:models", "ai:webSearch",
-      "reach:connections", "reach:channels", "reach:companion", "app:backups", "app:usage", "app:about",
-    ]);
+describe("the Settings pages", () => {
+  it("are thirteen sidebar pages plus the Messaging tab, each heading's pages together", () => {
+    expect(SECTION_PAGES).toHaveLength(13);
     const groups = SECTION_PAGES.map((page) => page.group);
-    expect(groups.filter((group, index) => group !== groups[index - 1])).toEqual([...SETTINGS_PAGE_GROUPS]);
+    expect(groups.filter((group, index) => group !== groups[index - 1])).toEqual(SETTINGS_PAGE_GROUPS.filter((group) => group !== "bots"));
     expect(settingsPageGroup("webSearch")).toBe("ai");
   });
 
   // 1.0.3 attachment-cap added "storage" (the Composer's "manage storage" link): an alias onto the Backups page's Storage card, so every id
-  // still lands on one of the twelve pages (placement awaits the Fable/Sean look recorded in INT-103.md, merge 14)
-  it("alias resolve: every one of the 20 ids lands on a page, aliases with their anchor", () => {
-    expect(SETTINGS_SECTIONS).toHaveLength(20);
+  // still lands on one of the pages. 1.0.19: Calls and Computer & browser became pages, and Browse bots is a route.
+  it("alias resolve: every one of the 22 ids lands on a page, aliases with their anchor", () => {
+    expect(SETTINGS_SECTIONS).toHaveLength(22);
     const pages = new Set(SECTION_PAGES.map((page) => page.id));
     for (const { id } of SETTINGS_SECTIONS) {
+      if (id === BROWSE_BOTS_ROUTE) continue;
       const target = resolveSettingsSection(id);
       expect(pages.has(target.section), id).toBe(true);
       if (isSettingsPage(id)) expect(target).toEqual({ section: id, anchor: null });
       else expect(target).toEqual(SECTION_ALIASES[id as keyof typeof SECTION_ALIASES]);
     }
-    expect(Object.keys(SECTION_ALIASES).sort()).toEqual(["aboutMe", "computer", "engines", "experimental", "houseRules", "images", "storage", "voice"]);
+    expect(Object.keys(SECTION_ALIASES).sort()).toEqual(["aboutMe", "channels", "engines", "experimental", "houseRules", "images", "storage", "voice"]);
     expect(new Set(Object.values(SECTION_ALIASES).map((alias) => alias.anchor)).size).toBe(8);
     expect(SECTION_ALIASES.storage).toEqual({ section: "backups", anchor: "storage-heading" });
   });
 
   it("keeps routing anchors verbatim and lands every announcement target", () => {
+    expect(isSettingsPage("channels")).toBe(false);
+    expect(resolveSettingsSection("channels")).toEqual({ section: "connections", anchor: "telegram-settings-title" });
     expect(SECTION_ALIASES.images).toEqual({ section: "webSearch", anchor: "image-settings-heading" });
     expect(SECTION_ALIASES.aboutMe.anchor).toBe("about-me-heading");
     expect(SECTION_ALIASES.houseRules.anchor).toBe("house-rules-heading");
@@ -48,5 +48,15 @@ describe("the 1.0.3 pages", () => {
   it("keeps a page desktop-only exactly when its section was, so the surface contract holds", () => {
     const old = new Map(SETTINGS_SECTIONS.map((entry) => [entry.id, Boolean(entry.desktopOnly)]));
     for (const page of SECTION_PAGES) expect(Boolean(page.desktopOnly), page.id).toBe(old.get(page.id));
+  });
+
+  it.each([false, undefined])("admits Apps and the old Messaging route on remote surfaces (%s)", (desktop) => {
+    const pages = sectionsForSurface(SECTION_PAGES, desktop);
+    const sections = sectionsForSurface(SETTINGS_SECTIONS, desktop);
+    expect(pages.map((page) => page.id)).toContain("connections");
+    for (const section of ["connections", "channels"] as const) {
+      expect(settingsSectionRedirect(SETTINGS_SECTIONS, section, desktop, sections)).toBeNull();
+    }
+    expect(pages.map((page) => page.id)).not.toContain("models");
   });
 });

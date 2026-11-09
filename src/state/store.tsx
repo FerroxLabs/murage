@@ -1,5 +1,6 @@
 import { chatsGenHello, chatsGenFrame, chatsGenUnproven, registerChatsGenReplacement } from "@/lib/chats-gen";
 import { createStoreSubscriptions } from "./store-subscriptions";
+import { acceptCreatedBot } from "./bot-creation";
 import { raiseTransientError, useChatErrorClear } from "./chat-error";
 import { createNewTaskOnce, NEW_TASK_DEADLINE_MS, NewTaskStalled, withDeadline } from "./new-task-once";
 import { t } from "@/lib/i18n";
@@ -899,6 +900,10 @@ export interface ConfigStatus {
   rooms: { turnTimeoutMinutes: number };
   /** Effort every new bot starts with where its engine offers it; absent = none sent. */
   newBots?: { effort?: EffortLevel };
+  /** Which computer a new bot starts on (config computer.defaultForNewBots; "this" until chosen). Read at creation only. */
+  newBotComputer?: "off" | "this" | "vm" | "cloud";
+  /** Claude Code copy import: the owner's switch and what the last import added (counts only). */
+  claudeCodeImport?: { enabled: boolean; lastImportedAt: number | null; skills: number; servers: number; needsKey: number };
   localVm: { mode: "shared" | "per-bot"; maxInstances: number };
   opencodeGo?: { configured: boolean };
   /** Voice (ElevenLabs). `configured` = a key is saved; `ready` = a key AND
@@ -961,7 +966,7 @@ export type FluxKeyState = "ok" | "missing" | "not-flux" | "refused";
 
 export type ConfigStatusFrame = Pick<
   ConfigStatus,
-  "xai" | "composio" | "box" | "vps" | "rooms" | "newBots" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "flux" | "decider" | "webSearch" | "notifications" | "profile" | "language" | "spend" | "features" | "browserProfiles" | "harness"
+  "xai" | "composio" | "box" | "vps" | "rooms" | "newBots" | "newBotComputer" | "claudeCodeImport" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "flux" | "decider" | "webSearch" | "notifications" | "profile" | "language" | "spend" | "features" | "browserProfiles" | "harness"
 >;
 
 export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
@@ -975,6 +980,8 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     // Dropping them here made the auto-routing switch read off after any live
     // config change, and its next click saved it back on (U35).
     newBots: frame.newBots,
+    newBotComputer: frame.newBotComputer,
+    claudeCodeImport: frame.claudeCodeImport,
     localVm: frame.localVm,
     opencodeGo: frame.opencodeGo,
     tts: frame.tts,
@@ -1141,6 +1148,8 @@ export interface AppState {
   screens: Record<string, { png: string; mime: string }>;
   /** A bounded preview warning; the last good pixels remain available. */
   screenNotices?: Record<string, string>;
+  /** Creation fallback explanations, kept for this session's per-bot Computer settings. */
+  botComputerNotices?: Record<string, string>;
   /** bots whose cloud computer is being provisioned */
   provisioning: Record<string, boolean>;
   /** who is driving each bot's computer: held = the person has the wheel
@@ -1716,6 +1725,7 @@ export type Action =
   | { type: "deleteTask"; botId: string; threadId: string }
   /** `profile`: hire in one sentence (UX-L6A part 2, src/lib/hire-defaults.ts). The engine is still the server's birth rule. */
   | { type: "newBot"; profile?: { name: string; description: string }; onSettled?: (error: unknown | null) => void }
+  | { type: "botComputerNotice"; botId: string; message: string }
   | ({ type: "botAdded"; bot: Bot } & HttpOrigin)
   /** The person deleted a bot (the sidebar, or the archived list with `archived`): removed at once, pending until the DELETE's own
    * answer or the deletion frame (§2.7). `attempt` is a client nonce (newDeleteAttempt); `onSettled` is a local hook, never sent. */
@@ -3887,6 +3897,8 @@ function reduceState(state: AppState, action: Action): AppState {
         ...(action.message.kind === "options" ? { cardsRev: (b.cardsRev ?? 0) + 1 } : {}),
       }));
     }
+    case "botComputerNotice":
+      return { ...state, botComputerNotices: { ...state.botComputerNotices, [action.botId]: action.message } };
     case "screenUnavailable":
       return { ...state, screenNotices: { ...state.screenNotices, [action.botId]: action.message } };
     case "screenFrame": {
@@ -5503,8 +5515,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "newBot":
           api("/api/bots", action.profile ? { method: "POST", body: JSON.stringify({ name: action.profile.name, description: action.profile.description }) } : { method: "POST" })
-            .then(({ bot }) => {
-              rawDispatch({ type: "botAdded", ...fromAnswer(bot), bot });
+            .then((answer) => {
+              acceptCreatedBot(rawDispatch, answer);
               action.onSettled?.(null);
             })
             // A caller that says what happened (the Hire sheet) shows the refusal itself, with the owner's draft kept.

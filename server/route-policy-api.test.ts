@@ -339,6 +339,26 @@ posixOnly("deny by default on a running server", () => {
     expect((await call("GET", "/api/decisions", desktop)).status).toBe(200);
   });
 
+  it("serves only learning usage to the proved phone and refuses other callers and writes", async () => {
+    const path = "/api/memory/learning-usage";
+    const phone = { ...bare, "x-murage-companion": "1", "x-murage-companion-token": COMPANION_TOKEN };
+    const full = await call("GET", "/api/memory/status", desktop);
+    expect(full.status).toBe(200);
+    const { learning } = full.body as { learning: { ceiling: unknown; connection: { label: string; source: string } } };
+    expect(await call("GET", path, phone)).toEqual({ status: 200, body: { learning: {
+      ceiling: learning.ceiling, connection: { label: learning.connection.label, source: learning.connection.source },
+    } } });
+    expect((await call("GET", path, desktop)).status).toBe(200);
+    for (const headers of [bare, { ...bare, ...door }, { ...bare, "x-murage-companion": "1" }]) {
+      expect((await call("GET", path, headers)).status).toBe(404);
+    }
+    expect((await call("GET", path, { ...bare, authorization: `Bearer ${botToken}` })).status).toBe(403);
+    expect((await call("GET", "/api/memory/status", phone)).status).toBe(403);
+    expect((await call("POST", "/api/memory/action", phone)).status).toBe(403);
+    expect((await call("POST", path, phone)).status).toBe(403);
+    expect((await call("POST", path, desktop)).status).toBe(404);
+  });
+
   // 1.0.3 R1.10 (L7): the Storage attachment list answers the desktop only.
   it("the Storage attachment list refuses the phone, the door, a bot and nobody; the desktop gets the list", async () => {
     const route = "/api/storage/attachments";
