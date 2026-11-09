@@ -155,8 +155,10 @@ describe("the details panel", () => {
   it("opens and closes the way the members panel does, so there is one contract to learn", () => {
     expect(DETAILS).toContain('role="dialog"');
     expect(DETAILS).toContain('aria-modal="true"');
-    expect(DETAILS).toContain("triggerRef.current?.focus()");
-    expect(DETAILS).toContain('event.key === "Escape"');
+    for (const [source, name] of [[DETAILS, "channel-details"], [read("ManageMembersPanel.tsx"), "manage-members"]]) {
+      expect(source).toContain(`useFocusTrap(dialogRef, true, { name: "${name}", kind: "dialog", returnFocusTo: triggerRef.current, onEscape: onClose });`);
+      expect(source).toContain('<LayerSurface handle={layer}>');
+    }
   });
 
   it("names the thing by what it is", () => {

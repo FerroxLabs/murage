@@ -607,9 +607,16 @@ it("a build stopped part-way resumes from the persisted cursor on a new connecti
 it("a process killed in the middle of the build leaves a correct file; the next start resumes and finishes", async () => {
   const { db, dir, file } = openFile(1500);
   db.close(); dbs.splice(dbs.indexOf(db), 1);
-  const child = fork(join(import.meta.dirname, "testing", "index-build-child.ts"), [file], { execArgv: ["--experimental-strip-types", "--no-warnings"], stdio: ["ignore", "ignore", "ignore", "ipc"] });
+  const child = fork(join(import.meta.dirname, "testing", "index-build-child.ts"), [file], { execArgv: ["--experimental-strip-types", "--no-warnings"], stdio: ["ignore", "ignore", "pipe", "ipc"] });
+  // the child's stderr is kept, so a child that dies (a load error under strip-types) fails with its own message, not a timeout
+  let stderr = "";
+  child.stderr!.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
   const exited = new Promise<void>(res => child.once("exit", () => res()));
-  await new Promise<void>((res, rej) => { const t = setTimeout(() => rej(new Error("child never reported progress")), 20_000); child.on("message", (m: { type?: string }) => { if (m.type === "progress") { clearTimeout(t); res(); } }); });
+  await new Promise<void>((res, rej) => {
+    const t = setTimeout(() => rej(new Error(`child never reported progress; stderr: ${stderr}`)), 20_000);
+    child.once("exit", code => { clearTimeout(t); rej(new Error(`child exited (${code}) before progress; stderr: ${stderr}`)); });
+    child.on("message", (m: { type?: string }) => { if (m.type === "progress") { clearTimeout(t); res(); } });
+  });
   child.kill("SIGKILL"); await exited;
   const after = new DatabaseSync(file); dbs.push(after);
   try {

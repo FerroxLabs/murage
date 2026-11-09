@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -41,14 +43,17 @@ else { for(const key of Object.keys(process.env))if(!['HOME','USERPROFILE','PATH
     expect(JSON.parse(readFileSync(join(root,"auth-seen.json"),"utf8"))).toEqual({root});
   }
   const recordings=instances.map(instance=>recordEvents(instance.adapter));
-  await Promise.all(instances.map((instance,index)=>instance.adapter.sendTurn({threadId:`account-${index}`,text:"synthetic isolation turn"})));
+  await Promise.all(instances.map((instance,index)=>instance.adapter.sendTurn({ cwd: fixtureBotFolder(),threadId:`account-${index}`,text:"synthetic isolation turn"})));
   await Promise.all(recordings.map(recorder=>recorder.until(event=>event.type==="turn.completed")));
   const seen=instances.map((_,index)=>JSON.parse(readFileSync(join(scratch,index===0?"work":"personal","dump.json"),"utf8")));
   expect(seen[0].pid).not.toBe(seen[1].pid);
   for(const [index,instance] of instances.entries()){
     const root=join(scratch,index===0?"work":"personal");
     expect(seen[index].env.CLAUDE_CONFIG_DIR).toBe(root);expect(seen[index].env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
-    await expect(instance.reviewPermission?.("synthetic review")).resolves.toBe("fake generated text");
+    await expect(instance.reviewPermission?.("synthetic review", undefined, undefined, fixtureBotFolder())).resolves.toBe("fake generated text");
     const review=JSON.parse(readFileSync(join(root,"dump.json"),"utf8"));expect(review.env.CLAUDE_CONFIG_DIR).toBe(root);expect(review.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
   }
 },20000);
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

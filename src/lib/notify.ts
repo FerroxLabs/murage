@@ -54,7 +54,7 @@ export function showNotification(
   onOpen: (target: NotificationTarget) => void,
   avatarUrl?: string | null,
   visibleThreadId?: string | null,
-) {
+): (() => void) | void {
   if (typeof Notification === "undefined") return;
   if (frame.kind !== "approval" && document.hasFocus() && visibleThreadId === frame.threadId) return;
   if (Notification.permission !== "granted") return;
@@ -88,7 +88,10 @@ export function showNotification(
       // that muted notification sounds.
       ...(notificationSoundsEnabled() ? {} : { silent: true }),
     };
-    new Notification(frame.title, options).onclick = open;
+    const notification = new Notification(frame.title, options);
+    notification.onclick = open;
+    // The router can withdraw it when its card settles anywhere else.
+    return () => { try { notification.close(); } catch { /* already closed by the OS */ } };
   }
 }
 

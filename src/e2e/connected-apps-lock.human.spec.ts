@@ -53,10 +53,10 @@ test.beforeAll(async () => {
       load(id) {
         if (id.endsWith("/src/styles.css")) return readFileSync(id, "utf8").replace('@import "tailwindcss";', '@import "tailwindcss" source(none);\n@source "./components";');
         if (id !== "\0apps-lock-fixture") return;
-        return `import React from 'react';import {createRoot} from 'react-dom/client';import {StoreProvider,useStore} from '/src/state/store.tsx';import {PluginsPanel} from '/src/components/PluginsPanel.tsx';import {SettingsModal} from '/src/components/SettingsModal.tsx';import {focusSettingsField} from '/src/components/ConnectedAppsLock.tsx';import '/src/styles.css';
+        return `import React from 'react';import {createRoot} from 'react-dom/client';import {StoreProvider,useStore} from '/src/state/store.tsx';import {PluginsPanel} from '/src/components/PluginsPanel.tsx';import {SettingsModal} from '/src/components/SettingsModal.tsx';import {LazyOverlay} from '/src/components/LazyOverlay.tsx';import {focusSettingsField} from '/src/components/ConnectedAppsLock.tsx';import '/src/styles.css';
           const query=new URLSearchParams(location.search);document.documentElement.dataset.skin=query.get('skin')||'dark';
           window.focusSettingsField=focusSettingsField;
-          function Fixture(){const store=useStore();window.fixtureStore=store;React.useEffect(()=>{store.dispatch({type:'togglePlugins',open:true});},[]);return React.createElement(React.Fragment,null,store.state.appSettingsOpen&&React.createElement(SettingsModal),store.state.pluginsOpen&&React.createElement(PluginsPanel));}
+          function Fixture(){const store=useStore();window.fixtureStore=store;React.useEffect(()=>{store.dispatch({type:'togglePlugins',open:true});},[]);return React.createElement(React.Fragment,null,store.state.appSettingsOpen&&React.createElement(LazyOverlay,{name:'settings',kind:'window',covers:'always',holdFocus:false,onDismiss:()=>store.dispatch({type:'toggleAppSettings',open:false})},React.createElement(SettingsModal)),store.state.pluginsOpen&&React.createElement(LazyOverlay,{name:'plugins',kind:'window',covers:'always',onDismiss:()=>store.dispatch({type:'togglePlugins',open:false})},React.createElement(PluginsPanel)));}
           createRoot(document.getElementById('root')).render(React.createElement(StoreProvider,null,React.createElement(Fixture)));`;
       },
       configureServer(vite) { vite.middlewares.use((req, res, next) => {
@@ -208,7 +208,7 @@ test("focusSettingsField waits for a field that is still disabled", async ({ pag
     const input = document.createElement("input");
     input.name = "flux-router-key";
     input.disabled = true;
-    document.body.append(input);
+    (document.querySelector("[role=dialog][aria-modal=true]") ?? document.body).append(input);
     const win = window as any;
     win.focusSettingsField('input[name="flux-router-key"]:not([disabled])');
     await new Promise((resolve) => setTimeout(resolve, 50));

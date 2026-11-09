@@ -1,17 +1,18 @@
-// Live routing eval for the voice host. Skipped unless MURAGE_VOICE_HOST_EVAL
+import { runVoiceBrief, runVoiceHostTurn } from "../testing/protected-host.ts";
+// Live routing eval for the voice host. Skipped unless MURAGE_VOICE_HOST_TEST_EVAL
 // names a file holding a Flux key (the key is read, never printed). Each case
 // is a spoken sentence and what the host must do with it: answer from the
 // snapshot, hand it down, or cancel. The host's worst failure is answering
 // something it cannot know, so every "hand" case is a question the snapshot
 // does not answer.
 //
-//   MURAGE_VOICE_HOST_EVAL=~/.config/<key file> npx vitest run server/voice/voice-host.eval.test.ts
+//   MURAGE_VOICE_HOST_TEST_EVAL=~/.config/<key file> npx vitest run server/voice/voice-host.eval.test.ts
 //
-// MURAGE_VOICE_HOST_EVAL_XAI names a file holding an xAI key: lookups then run
+// MURAGE_VOICE_HOST_TEST_EVAL_XAI names a file holding an xAI key: lookups then run
 // live through xAI's own web search (Flux's lookup route is not deployed yet).
-// MURAGE_VOICE_HOST_EVAL_VIA=<provider> runs the HOST on that provider's own
+// MURAGE_VOICE_HOST_TEST_EVAL_VIA=<provider> runs the HOST on that provider's own
 // key instead of Flux, with the model voice-routes.ts would pick
-// (MURAGE_VOICE_HOST_MODEL overrides it). xai reads the file above; anthropic,
+// (MURAGE_VOICE_HOST_TEST_MODEL overrides it). xai reads the file above; anthropic,
 // openai and groq read ~/.config/murage-test/<provider>.key. Lookups then use
 // that provider's own web search when it has one, else xAI's.
 import { existsSync, readFileSync } from "node:fs";
@@ -20,17 +21,17 @@ import { describe, expect, it } from "vitest";
 
 import { PROVIDER_PRESETS } from "../../electron/provider-connections.mjs";
 import type { ProviderPreset } from "../../shared/provider-connections.ts";
-import { runVoiceBrief, runVoiceHostTurn, type VoiceHostState } from "./voice-host.ts";
+import { type VoiceHostState } from "./voice-host.ts";
 import { handDownResult } from "./hand-downs.ts";
 import { voiceEndpoint, type VoiceEndpoint } from "./voice-routes.ts";
 
 // the owner's real home: the test setup points HOME at a scratch folder
 const home = (file: string | undefined) => file?.replace(/^~/, userInfo().homedir);
-const keyFile = home(process.env.MURAGE_VOICE_HOST_EVAL);
-const via = (process.env.MURAGE_VOICE_HOST_EVAL_VIA || "flux") as ProviderPreset;
+const keyFile = home(process.env.MURAGE_VOICE_HOST_TEST_EVAL);
+const via = (process.env.MURAGE_VOICE_HOST_TEST_EVAL_VIA || "flux") as ProviderPreset;
 const keyFiles: Partial<Record<ProviderPreset, string | undefined>> = {
   flux: keyFile,
-  xai: home(process.env.MURAGE_VOICE_HOST_EVAL_XAI),
+  xai: home(process.env.MURAGE_VOICE_HOST_TEST_EVAL_XAI),
   ...Object.fromEntries((["anthropic", "openai", "groq"] as const).map((p) => [p, home(`~/.config/murage-test/${p}.key`)])),
 };
 const keyFor = (p: ProviderPreset) => {
@@ -112,7 +113,7 @@ const planned = routeVia("host", [via]);
 describe.skipIf(!planned)("voice host, live routing", () => {
   // the body is collected even when skipped: no key means nothing to build
   if (!planned) return;
-  const host: VoiceEndpoint = { ...planned, model: process.env.MURAGE_VOICE_HOST_MODEL || planned.model };
+  const host: VoiceEndpoint = { ...planned, model: process.env.MURAGE_VOICE_HOST_TEST_MODEL || planned.model };
   // Flux's own lookup route is not deployed yet: Flux runs use xAI's search.
   const lookup = (via !== "flux" && routeVia("lookup", [via])) || routeVia("lookup", ["xai"]);
   const rows: string[] = [];

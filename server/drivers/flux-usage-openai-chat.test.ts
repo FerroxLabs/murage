@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -62,7 +64,7 @@ describe("usage tags and the served model on an openai-compat turn", () => {
     });
     instances.push(live);
     const recorder = recordEvents(live.adapter);
-    await live.adapter.sendTurn({ threadId: "thread-usage", text: "question", warmIdentity: { botId: "bot-7f3a", audience: "owner", decidedOwner: true }, ...input });
+    await live.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "thread-usage", text: "question", warmIdentity: { botId: "bot-7f3a", audience: "owner", decidedOwner: true }, ...input });
     await recorder.until((event) => event.type === "turn.completed");
     recorder.stop();
     return recorder.events;
@@ -108,3 +110,6 @@ describe("usage tags and the served model on an openai-compat turn", () => {
     expect((await run({ providerRoute: fluxRoute })).filter((event) => event.type === "turn.served-model")).toHaveLength(0);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

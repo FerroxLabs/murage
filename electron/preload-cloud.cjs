@@ -32,12 +32,28 @@ function plainError(error) {
   throw new Error(String(error?.message ?? error).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ""));
 }
 
+const attentionMessage = (value) => {
+  if (!value || typeof value !== "object") return null;
+  if ((value.type === "show" || value.type === "close") && typeof value.ref === "string" && value.ref.length > 0 && value.ref.length <= 64) return { type: value.type, ref: value.ref };
+  if (value.type === "previews" && typeof value.previews === "boolean") return { type: "previews", previews: value.previews };
+  return null;
+};
+
 const homeId = expectedHomeId();
 if (documentIsOurHome(homeId)) {
   contextBridge.exposeInMainWorld("muragecloud", {
     homeId,
     platform: process.platform,
     setUnreadCount: (count) => ipcRenderer.send("desktop:unread-count", count),
+    attention: {
+      offer: (payload) => ipcRenderer.invoke("cloud-attention:offer", payload),
+      visible: (payload) => ipcRenderer.invoke("cloud-attention:visible", payload),
+      onShow: (callback) => {
+        const handler = (_event, value) => { const checked = attentionMessage(value); if (checked) callback(checked); };
+        ipcRenderer.on("cloud-attention:show", handler);
+        return () => ipcRenderer.removeListener("cloud-attention:show", handler);
+      },
+    },
     approvalNotifications: {
       show: (payload) => ipcRenderer.invoke("approval-notification:show", payload),
       onOpen: (callback) => {

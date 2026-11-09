@@ -53,9 +53,67 @@ def run(stage,args,cwd=None,command_env=None):
  active_process=None
  receipt(exitCode=code,ownedPid=None,ownedProcessGroup=None)
  if code:raise RuntimeError(stage+" failed with exit "+str(code))
-def fetch(url,path,expected=None):
+
+# --- Download resilience (kept in sync with scripts/download-retry.mjs) -------
+# Retries transport trouble only (network errors, timeouts, truncated bodies,
+# HTTP 408/425/429/5xx) with capped exponential backoff, then optionally tries
+# a Ferrox-controlled copy of the same pinned file. Callers still verify the
+# pinned sha256 on the finished file, so a bad mirror fails closed.
+_MIRROR_DEFAULT = "https://github.com/FerroxLabs/murage/releases/download/build-mirror-1/"
+def _mirror_url(url):
+    import urllib.parse
+    configured = os.environ.get("MURAGE_PACKAGE_MIRROR_BASE")
+    if configured in ("off", ""):
+        return None
+    base = urllib.parse.urlsplit(configured or _MIRROR_DEFAULT)
+    if base.scheme != "https" or not base.netloc or "@" in base.netloc or base.query or base.fragment or not base.path.endswith("/"):
+        return None
+    name = urllib.parse.urlsplit(url).path.rsplit("/", 1)[-1]
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", name):
+        return None
+    return urllib.parse.urlunsplit(base._replace(path=base.path + name))
+def _download_once_retrying(url, dest, timeout, attempts, sleep):
+    import http.client, urllib.error
+    last = None
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as src, open(dest, "wb") as out:
+                shutil.copyfileobj(src, out)
+                headers = getattr(src, "headers", None)
+                expected = headers.get("Content-Length") if headers is not None else None
+                if expected is not None and expected.isdigit() and out.tell() != int(expected):
+                    raise OSError("truncated download: got %d of %s bytes" % (out.tell(), expected))
+            return
+        except urllib.error.HTTPError as error:
+            if not (error.code in (408, 425, 429) or 500 <= error.code <= 599):
+                raise
+            last = error
+        except (urllib.error.URLError, http.client.HTTPException, OSError) as error:
+            last = error
+        if attempt < attempts:
+            delay = min(60, 5 * 2 ** (attempt - 1))
+            print("download attempt %d/%d failed (%s); retrying in %ds" % (attempt, attempts, last, delay), file=sys.stderr, flush=True)
+            sleep(delay)
+    raise last
+def download_pinned(url, dest, timeout=60, attempts=5, mirror=True, sleep=None):
+    sleep = sleep or time.sleep
+    try:
+        _download_once_retrying(url, dest, timeout, attempts, sleep)
+        return url
+    except Exception as primary:
+        fallback = _mirror_url(url) if mirror else None
+        if not fallback:
+            raise
+        print("upstream download failed (%s); trying the Ferrox mirror %s" % (primary, fallback), file=sys.stderr, flush=True)
+        try:
+            _download_once_retrying(fallback, dest, timeout, attempts, sleep)
+            return fallback
+        except Exception:
+            raise primary
+# ------------------------------------------------------------------------------
+def fetch(url,path,expected=None,mirror=False):
  receipt(stage="download",url=url)
- with urllib.request.urlopen(url,timeout=min(60,max(1,deadline-time.monotonic()))) as src,open(path,"wb") as out:shutil.copyfileobj(src,out)
+ download_pinned(url,path,timeout=min(60,max(1,deadline-time.monotonic())),mirror=mirror)
  h=hashlib.sha256(path.read_bytes()).hexdigest()
  with open(R/"input-hashes.txt","a") as f:f.write(h+"  "+str(path.relative_to(R))+"\n")
  if expected and h!=expected:raise RuntimeError("SHA256 mismatch: "+str(path))
@@ -68,7 +126,7 @@ try:
  for label,args in [("uname",["/usr/bin/uname","-a"]),("clang",["/usr/bin/clang","--version"]),("make",["/usr/bin/make","--version"]),("sdk",["/usr/bin/xcrun","--show-sdk-path"]),("disk",["/bin/df","-k","."])]:
   if not pathlib.Path(args[0]).is_file():raise RuntimeError("Required tool unavailable: "+args[0])
   run("toolchain-"+label,args)
- archive=fetch("https://www.python.org/ftp/python/3.13.15/Python-3.13.15.tar.xz",R/"inputs/Python-3.13.15.tar.xz","1e66a7945a48390ee4c2a4268a0e4185884059a13c4aab6d148aa208deea4a76")
+ archive=fetch("https://www.python.org/ftp/python/3.13.15/Python-3.13.15.tar.xz",R/"inputs/Python-3.13.15.tar.xz","1e66a7945a48390ee4c2a4268a0e4185884059a13c4aab6d148aa208deea4a76",mirror=True)
  with tarfile.open(archive) as tf:tf.extractall(R/"source",filter="data")
  # Fetch only exact hashed required wheels from official package metadata.
  locks=(R/"inputs/requirements-build.txt").read_text()+"\n"+(R/"inputs/requirements-runtime.txt").read_text()

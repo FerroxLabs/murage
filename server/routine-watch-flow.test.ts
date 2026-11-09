@@ -221,3 +221,9 @@ it("treats two file watches as duplicates only when they watch the same source",
   await expect(watchProposal("status.txt")).rejects.toThrow(/already exists/);
   expect(f.manager.listRoutines()).toHaveLength(2);
 });
+
+it("1.0.18 U6 F38: a file watch's routine details carry the watch's end time", async () => {
+  const f = fixture(), expiresAt = Date.parse("2026-09-11T00:00:00Z"), p = await f.propose(5, expiresAt); f.confirm(p.requestId);
+  const [detail] = f.manager.listRoutineDetails("worker");
+  expect(detail.expiresAt).toBe(expiresAt);
+});

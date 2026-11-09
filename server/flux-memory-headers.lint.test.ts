@@ -33,6 +33,7 @@ const DECIDES = /flux-memory-(headers|wire)/;
 const NO_REQUEST_OF_THEIR_OWN: Record<string, string> = {
   "flux-config.ts": "reads the key",
   "flux-usage-tags.ts": "the usage tag values and the Flux host rule; makes no request",
+  "flux-limits.ts": "UX-L2C: one GET of the key's monthly limits (/v1/key/limits); an account read, no model request, so no memory headers",
   "opencode-config.ts": "connector plan for opencode.json; the headers ride the per-turn OPENCODE_CONFIG_CONTENT (drivers/acp/opencode-go.ts)",
   "announcements.ts": "a comment; announcements are fetched from Ferrox, not Flux",
   "model-gateway.ts": "a comment; the local gateway never falls back to Flux",
@@ -51,6 +52,7 @@ const NO_REQUEST_OF_THEIR_OWN: Record<string, string> = {
   "engine-health-routes.ts": "the Health line; the key check is flux-key-health.ts, GET /key/info: no model turn, nothing to capture or recall",
   "email/flux-email-client.ts": "bot email /v1/email/* (BOT-EMAIL-MURAGE-109): inbox, send and read routes, no model turn, nothing to capture or recall",
   "email/runtime.ts": "bot email wiring: hands the Flux base to email/flux-email-client.ts, makes no request itself",
+  "browser-extension-integration.ts": "FLUX-FREE-MODEL r3: reads fluxKey() only to put a sha256 of it in the browser action checker fence (keyMark, in memory, never stored, logged or sent: designs/FFM-FENCE-NOTE.md:7); the check request is made by browser-action-checker-connection.ts",
   "app-trigger-delivery.ts": "connected-app events /v1/app-events/*: claim, ack and the run ledger, no model turn, nothing to capture or recall",
 };
 /** Call-site ids whose code is owned by another lane. They may be unused until that lane lands. */
@@ -138,6 +140,7 @@ const USAGE_NOT_TAGGED_HERE: Record<string, string> = {
   "email/runtime.ts": "wiring; email/flux-email-client.ts makes the tagged requests",
   "email/email-secrets.ts": "bot email key storage; makes no request",
   "engine-health-routes.ts": "the Health line; flux-key-health.ts checks the key, no model turn",
+  "browser-extension-integration.ts": "reads fluxKey() only for the checker fence keyMark (sha256, in memory, never sent: designs/FFM-FENCE-NOTE.md:7); the check request is made and tagged by browser-action-checker-connection.ts",
 };
 
 describe("every Flux request carries the usage tags", () => {

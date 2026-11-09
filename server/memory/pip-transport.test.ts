@@ -36,6 +36,19 @@ describe("parseHeadlessMessages", () => {
     expect(p).toMatchObject({ initCount: 1, resultCount: 1, tools: [], mcpServers: [], toolCallLines: 0 });
     expect(p.result).toMatchObject({ subtype: "success", isError: false, usage: { inputTokens: 3, outputTokens: 2 }, structuredOutput: { ok: true } });
   });
+  it.each([{ input_tokens: 7 }, { output_tokens: 5 }, { input_tokens: 0, output_tokens: 0 }])("keeps the latest meaningful result usage per line (%j)", usage => {
+    const p = parseHeadlessMessages([
+      line({ type: "result", usage: { input_tokens: 9000, output_tokens: 5000 } }),
+      line({ type: "result", usage }),
+      line({ type: "result", usage: {}, result: "last answer" }),
+    ].join("\n"));
+    expect(p.resultCount).toBe(3);
+    expect(p.result?.text).toBe("last answer");
+    expect(p.result?.usage).toEqual({
+      inputTokens: "input_tokens" in usage ? usage.input_tokens : undefined,
+      outputTokens: "output_tokens" in usage ? usage.output_tokens : undefined,
+    });
+  });
   it("never treats a missing or non-array field as empty", () => {
     expect(parseHeadlessMessages(line({ type: "system", subtype: "init", tools: [] })).mcpServers).toBeNull();
     expect(parseHeadlessMessages(line({ type: "system", subtype: "init", tools: "x", mcp_servers: [] })).tools).toBeNull();
@@ -362,4 +375,21 @@ describe("Astra audit2 preflight and identity", () => {
     writeFileSync(path, "other executable bytes");
     expect(await binaryIdentity(path)).not.toBe(first);
   });
+});
+
+// Retry journal design 29 / BUILD-FIX 3, 6: the stdout counter and accepted answer have distinct jobs.
+it("tokenless ledger estimates distinguish zero bytes, empty answers, partial usage and StructuredOutput", async()=>{
+  const {headlessUsageReport,headlessAnswerBytes}=await import("./pip-transport.ts");
+  expect(headlessUsageReport({inputTokens:0,outputTokens:0},true,0,0,0)).toEqual({prompt_tokens:0,completion_tokens:0,replyBytes:0,engineRun:true});
+  expect(headlessUsageReport(undefined,true,35,70,0)).toMatchObject({prompt_tokens:10,completion_tokens:20,estimatedRuns:1});
+  expect(headlessUsageReport({inputTokens:7},true,35,70,10)).toEqual({prompt_tokens:7,completion_tokens:undefined,replyBytes:70,engineRun:true});
+  expect(headlessUsageReport(undefined,false,35,70,10).estimatedRuns).toBeUndefined();
+  const parsed=parseHeadlessMessages([
+    JSON.stringify({type:"assistant",message:{content:[{type:"tool_use",id:"so",name:"StructuredOutput",input:{ok:true}}]}}),
+    JSON.stringify({type:"result",subtype:"success",is_error:false,usage:{input_tokens:0,output_tokens:0}}),
+  ].join("\n"));
+  expect(headlessAnswerBytes(parsed,"claude")).toBe(Buffer.byteLength('{"ok":true}'));
+  expect(headlessUsageReport(parsed.result?.usage,true,35,70,headlessAnswerBytes(parsed,"claude")).estimatedRuns).toBe(1);
+  const empty=parseHeadlessMessages(JSON.stringify({type:"result",result:"",usage:{input_tokens:0,output_tokens:0}}));
+  expect(headlessAnswerBytes(empty,"fuigo")).toBe(0);expect(headlessUsageReport(empty.result?.usage,true,35,70,0).estimatedRuns).toBeUndefined();
 });

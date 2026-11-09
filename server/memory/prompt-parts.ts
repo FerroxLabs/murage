@@ -50,11 +50,12 @@ export function lineRefs(threadId: string, messageIds: Iterable<string>): Lineag
   for (const messageId of new Set(messageIds)) refs.push({ kind: "line", threadId, messageId });
   return refs;
 }
-/** The lines of the prompt's own thread its replay shows in words, named one by one (the last rebuild, which reads no prefix): judged by content
- * at the send fence, as a prefix's shown lines are (deny-read.ts refsLookup). Only for the prompt's own thread. */
-export function ownReplayRefs(threadId: string, messageIds: Iterable<string>): LineageRef[] {
+/** The lines of the prompt's own thread its replay shows in words, named one by one (the last rebuild, which reads no prefix). With
+ * `judge: "content"` (an owner audience only) the send fence judges them by content, as a prefix's shown lines are; without it, for the
+ * reader's own audience (deny-read.ts refsLookup). Only for the prompt's own thread. */
+export function ownReplayRefs(threadId: string, messageIds: Iterable<string>, judge?: "content"): LineageRef[] {
   const refs: LineageRef[] = [];
-  for (const messageId of new Set(messageIds)) refs.push({ kind: "line", threadId, messageId, replay: true });
+  for (const messageId of new Set(messageIds)) refs.push({ kind: "line", threadId, messageId, replay: true, ...(judge === "content" ? { judge } : {}) });
   return refs;
 }
 /** A line a prompt shows, as the turn builds collect them (steer-lineage.ts ShownLine). */

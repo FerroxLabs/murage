@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -319,3 +320,5 @@ it("P1: a reply made with an owner's rewrite of an approved copy stays visible",
   captured("closing-chat", "m-finch-rewrite", "finch", "The invoices go out on Monday.");
   expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", [{ id: "m-finch-rewrite" }])]).toEqual([]);
 });
+
+useOutsideStoreFixture();

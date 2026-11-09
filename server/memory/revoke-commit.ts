@@ -16,7 +16,7 @@ import { drainReceiptFlips, receiptStart } from "./receipt-outputs.ts";
 import { AUDIENCE_COALESCED } from "./lineage-types.ts";
 import { BOUNDED_RANGE, bumpDenyGeneration, enqueueNode, foldRefusesUndo, hasWritetime, lineOf, markerWorkPending, markPending, PENDING_ALL_SCOPES, resolveRevoke, seedFlow, setFlipDrain, softVersion, st, writeLine, writeMemory, writeRange, writeSession } from "./revoke-marker.ts";
 import { INLINE_REVOCATION, wakeIfStarted } from "./memory-revocation.ts";
-import { budgetedMarkerSlice, revokeMinuteChanges } from "./revoke-budget.ts";
+import { budgetedMarkerSlice, revokeFlipCutoffRows } from "./revoke-budget.ts";
 import "./revoke-fold.ts"; // the revoke fold registers with the marker (revoke-marker.ts setFoldHooks), as the flip drain does below
 
 /** Memory roots that remove the object itself (deny_memory); the others (archive, correct, revise) withdraw what was shown from it, and
@@ -177,7 +177,6 @@ export function commitRevoke(tx: DatabaseSync, root: RevokeRoot, options: Revoke
     case "thread": {
       // a deleted conversation is denied as a direct fact whatever was captured from it (revbound r3 A1/F2)
       if (hasDenyTable(tx)) st(tx, "INSERT OR IGNORE INTO memory_deny(kind,id,epoch,created_at) VALUES('thread',?,?,?)").run(root.threadId, epochNow(tx), Date.now());
-      setMeta(tx, "epoch_bump_lsn", now);
       rootLsn = firstLsn(tx, root.threadId, now);
       writeRange(tx, R, root.threadId, FIRST_LSN, now, reason);
       // the deletion's durable receipt (DELETION-DRAIN-V2 2.5, capture.ts captureThreadDeletion): a line row at FIRST_LSN, a position no line
@@ -317,12 +316,13 @@ function receiptHoldPlan(tx: DatabaseSync, bundleId: string, threadId: string): 
   return plan && receiptPlanTooBig(tx, plan, threadId) ? [...HOLD_WILD] : plan;
 }
 /** The most rows a receipt's commit with `plan` writes, whatever is interned already (each carry thread and the receipt's own thread taking
- * a number), with its bulk's opening. Over a whole minute's budget (revokeMinuteChanges) it could never be committed inside one minute.
+ * a number), with its bulk's opening. Over a whole minute's budget, or over one drain commit (revokeFlipCutoffRows: cap + step reserve), it
+ * would break the commit cap (r3.6).
  * Interns are counted at their most so the answer does not move between the drain's admission and the commit itself. */
 function receiptPlanTooBig(db: DatabaseSync, plan: readonly HoldItem[], threadId: string): boolean {
   const threads = new Set<string>([threadId]);
   for (const item of plan) threads.add(objectCarryThread(item));
-  return RECEIPT_ROOT_COST + (threads.size - 1) + threads.size + BULK_OPEN_COST > revokeMinuteChanges(db);
+  return RECEIPT_ROOT_COST + (threads.size - 1) + threads.size + BULK_OPEN_COST > revokeFlipCutoffRows(db);
 }
 function itemHoldPlan(tx: DatabaseSync, bundleId: string): HoldItem[] | null {
   const row = st(tx, "SELECT record_versions,source_versions FROM memory_disclosures WHERE bundle_id=?").get(bundleId);

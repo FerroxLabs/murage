@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "./testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -86,7 +88,7 @@ const driver = async () => {
   recorder = recordEvents(instance.adapter);
   return instance;
 };
-const send = (threadId: string) => instance!.adapter.sendTurn({ threadId, text: "go", integrations: { computer: { boxId: BOX } } } as never);
+const send = (threadId: string) => instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go", integrations: { computer: { boxId: BOX } } } as never);
 
 beforeEach(() => {
   ensureDirs();
@@ -321,3 +323,6 @@ describe("S1 sites (the server is not loaded here)", () => {
     expect(fn).toContain("settleHeldOfEndedRequest(request.id, handoffSettleOptions({ bus: commsBus, approvalBus }))");
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

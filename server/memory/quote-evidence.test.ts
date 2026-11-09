@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -63,7 +64,9 @@ it("words the conversation does not contain, or a line this bot may not read, ar
 });
 
 function say(id: string, at: number, role: "user" | "bot", text: string) {
-  appendMessage("thread", { id, at, role, origin: "desktop", kind: "text", text });
+  // Normal conversation appends extend the selected leaf (Store.addMessage).
+  const parentId = database().prepare("SELECT active_leaf_id FROM thread_state WHERE thread_id=?").get("thread")?.active_leaf_id as string | null;
+  appendMessage("thread", { id, at, role, origin: "desktop", kind: "text", text, parentId });
   for (let job = claimMemoryJob("fixture"); job; job = claimMemoryJob("fixture")) publishMemoryWork(job, "fixture", captureWork(job));
 }
 
@@ -88,3 +91,5 @@ it("a retried save meets the evidence its first attempt stored, even after a new
   const fresh = await memoryAgentRoute("/api/internal/memory/save", { ...args, idempotencyKey: "fresh" }, f.context, f.bridge) as { candidateId: string };
   expect(JSON.parse(String(evidenceOf(fresh.candidateId)[0]!.payload)).text).toBe(`Like I said, ${quote}`);
 });
+
+useOutsideStoreFixture();

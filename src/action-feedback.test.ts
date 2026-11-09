@@ -80,8 +80,6 @@ const BACKGROUND = "Not a user action: a background refresh or best-effort clean
 
 // Seeded from ACTION-FEEDBACK-AUDIT.md (2026-10-16), minus the 13 High rows fixed in 1.0.3.
 export const ALLOWED: Allowed[] = [
-  { file: "SettingsModal.tsx", voidOnClick: 1, reason: "Opens the download page in the browser; the page link stays visible if the open fails. Not in the audit; to triage with the other openExternal rows." },
-  { file: "UpdateBanner.tsx", voidOnClick: 1, reason: "Opens the download page in the browser from the update banner; the banner keeps its own state line. Not in the audit; to triage with the other openExternal rows." },
   { file: "BackupSettings.tsx", swallowed: 1, reason: "Status read at mount; the section already shows its own unavailable text when the read gives nothing. Background, not a user action." },
   { file: "BrowserApprovedSites.tsx", swallowed: 1, reason: BACKGROUND },
   { file: "BrowserPanel.tsx", swallowed: 1, voidOnClick: 1, reason: "Audit Low (BrowserPanel.tsx:691): Open in your default browser has no error line for a rejected openExternal; the layout catch is a native-view hand-off that repaints on the next frame." },
@@ -103,7 +101,6 @@ export const ALLOWED: Allowed[] = [
   { file: "ModelPicker.tsx", swallowed: 1, reason: "localStorage write for the picker's own preference; a blocked store is not a failed action." },
   { file: "NewsSignupSettings.tsx", swallowed: 1, reason: "Status read at mount (/api/news); no answer means this home has no news signup (Cloud), so the card stays hidden on purpose. The join action itself shows its outcome." },
   { file: "PhoneNotifications.tsx", swallowed: 3, reason: BACKGROUND },
-  { file: "PluginsPanel.tsx", swallowed: 1, reason: "Audit Medium/Low (PluginsPanel.tsx:1431 family): follow-up read after a Reconnect or Retry that has its own notice." },
   { file: "SkillRecorderPage.tsx", swallowed: 5, reason: "Audit Low (SkillRecorderPage.tsx:363,446): stopping capture and closing transcription during teardown; the Finishing recording label is the open Low row." },
   { file: "SubscriptionSignIn.tsx", swallowed: 3, reason: "Audit Low (SubscriptionSignIn.tsx:85): refresh after a sign-in that already succeeded; the Checking label on submit is the open Low row." },
   { file: "TeamLibraryPanel.tsx", voidOnClick: 1, reason: "Opens a team's detail page in the browser; the link stays on the card if the open fails. Not in the audit; to triage." },

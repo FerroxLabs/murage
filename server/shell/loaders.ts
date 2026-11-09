@@ -8,6 +8,7 @@
 // and the PowerShell reader (pwsh.ts) alike, whatever the program is: none,
 // `-`, the null device, a file or inline code.
 import { Unreadable } from "./lex.ts";
+import { HardFinding, ownerDeny } from "./marks.ts";
 
 /** Variables an interpreter or a shell reads code, a code folder or its own
  * options from when it starts. Named anywhere in a text, they count. */
@@ -168,7 +169,7 @@ const STARTUP_READERS = /^(?:sh|bash|zsh|dash|ksh|fish|ash|mksh|python[0-9.]*|rs
 /** A shell, python or R runs after an unplaced write (1.0.5 r8 lanereview). */
 export function checkUnplacedWrite(marks: LoaderMarks, name: string): void {
   const base = name.replace(/^.*[\\/]/, "");
-  if (marks.unplacedWrite !== undefined && STARTUP_READERS.test(base)) throw new Unreadable("opaque", `${name} may read a startup file this text wrote (${marks.unplacedWrite})`);
+  if (marks.unplacedWrite !== undefined && STARTUP_READERS.test(base)) throw ownerDeny() ? new HardFinding("ask", "unreadable", "startup-file-unplaced-write") : new Unreadable("opaque", `${name} may read a startup file this text wrote (${marks.unplacedWrite})`); // FIX A (ruling (ii)): a could-not-read, not a deny
 }
 
 function check(marks: LoaderMarks): void {

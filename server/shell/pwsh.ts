@@ -928,12 +928,12 @@ function scriptFile(spelled: string, name: string, dialect: "pwsh" | "cmd"): boo
 /** Throws when a program, as the reader resolved it, is one it does not
  * model: a launcher, an interpreter running code, a script file. */
 function unmodelled(name: string, spelled: string, args: Word[], stdin: Provenance | undefined, dialect: "pwsh" | "cmd", ctx: WalkContext, literalProgram: string | undefined): void {
-  // Drive-relative Bash still launches code, but cannot use the absolute-path exception.
+  // Drive-relative Bash still launches code.
   const runner = powershellRunner(name) ?? (/^[a-z]:bash(?:\.exe)?$/i.test(name) ? "launcher" : undefined);
-  // Only a literal PATH name or absolute path, with exact literal argv the Bash reader supports.
-  const literalBash = literalProgram !== undefined && (/^bash(?:\.exe)?$/i.test(literalProgram)
-    || /^(?:[a-z]:[\\/]|\/|\\\\[^\\/]+[\\/][^\\/]+[\\/])/i.test(literalProgram));
-  if (runner === "launcher" && dialect === "pwsh" && ctx.windowsBash && literalBash && /^(bash|bash\.exe)$/i.test(name)
+  // The relief is for the exact bare word `bash` with exact literal argv the Bash reader supports (WIN-PWSH-1018 H1), resolved on the handed PATH in always-ask.ts; `bash.exe`,
+  // a drive, UNC or rooted path and every other spelling keep the launcher hold
+  const literalBash = literalProgram !== undefined && /^bash$/i.test(literalProgram);
+  if (runner === "launcher" && dialect === "pwsh" && ctx.windowsBash && literalBash && /^bash$/i.test(name)
       && !stdin && args.length === 2 && literalText(args[0]!) === "-c"
       && args[1]!.parts.every(part => part.kind === "lit" && part.quote === "single")) {
     const payload = literalText(args[1]!);

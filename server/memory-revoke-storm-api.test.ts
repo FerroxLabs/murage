@@ -118,6 +118,11 @@ describe.skipIf(process.platform === "win32")("1.0.3 revoke storm", () => {
       };
       BUILT_IN_DRIVERS.push(driver);
       const dir=process.env.MURAGE_DATA_DIR;
+      // Since IO-IDLE-DRAIN r3.5 the revoke drain is paced and write-budgeted; the revokes this storm lands (an edit's branch change, a room's
+      // refused attempts) would otherwise leave the next test's turn waiting out the production pace. Same lift as the direct-rebuild-hold
+      // fixtures: only this server process's limits move; no production guard changes.
+      const budget=await import(${JSON.stringify(pathToFileURL(join(process.cwd(), "server/memory/revoke-budget.ts")).href)});
+      budget.REVOKE_PACE.bytesPerMinute=2**50; budget.REVOKE_WRITE_BUDGET.bytesPerMinute=2**50;
       const file=path.join(dir,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
       cfg.instances.keep={driver:'fakeLateTerminal',environment:{BUMP_GENERATION:'1',FAKE_LATE_HANDBACK:'1',FAKE_LATE_SESSION:'1',FAKE_LATE_DUMP:path.join(dir,'keep-dump')}};
       cfg.instances.nosession={driver:'fakeLateTerminal',environment:{BUMP_GENERATION:'1',FAKE_LATE_HANDBACK:'1',FAKE_LATE_GATE_EACH:'1',FAKE_LATE_SESSION_GATE:path.join(dir,'ns-gate'),FAKE_LATE_DUMP:path.join(dir,'keep-dump')}};

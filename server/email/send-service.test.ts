@@ -506,6 +506,25 @@ describe("crash and restart (F3, F4, F27)", () => {
     expect(fake.requests).toHaveLength(0);
   });
 
+  it("NLINT-FIX4 B4: a prepared row that the marked lane held is re-decided held at boot, never dispatched", async () => {
+    await submit({ to: ["a@x.test"] });
+    const base = row("send-1");
+    store.insertSend({ ...base, sendId: "h1", payloadHash: "h1", state: "prepared", why: "waiting_ask", revision: 1, summary: { ...base.summary, to: ["jane@acme.test"] } });
+    store.putPayload("h1", store.getPayload("send-1"));
+    await service.recover();
+    expect(row("h1")).toMatchObject({ state: "awaiting_owner", why: "waiting_ask" });
+    expect(fake.requests).toHaveLength(0);
+  });
+
+  it("NLINT-FIX4 B4: submit with holdForOwner keeps the hold on the prepared row it writes", async () => {
+    const written: SendRow[] = [];
+    const insert = store.insertSend.bind(store);
+    store.insertSend = (item: SendRow) => { written.push(item); insert(item); };
+    await service.submit({ botId: "b1", generation: 1, threadId: "t1", draft: draft(), holdForOwner: true });
+    expect(written[0]).toMatchObject({ state: "prepared", why: "waiting_ask" });
+    expect(row("send-1")).toMatchObject({ state: "awaiting_owner", why: "waiting_ask" });
+  });
+
   it("F4: crash after a 202 before the card: boot's reconcile finds the hold on the pending approvals and the card comes back", async () => {
     await submit();
     const base = row("send-1");

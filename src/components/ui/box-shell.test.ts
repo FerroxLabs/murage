@@ -33,7 +33,7 @@ export function boxProblems(source: string, read: (name: string) => string = () 
   for (const match of source.matchAll(ROOT)) {
     // A selector in a string is not a box.
     const line = source.slice(source.lastIndexOf("\n", match.index) + 1, source.indexOf("\n", match.index));
-    if (/querySelector|^\s*'\[|^\s*\/\/|^\s*\/?\*|'\[aria-modal/.test(line)) continue;
+    if (/querySelector|\.closest\(|^\s*'\[|^\s*\/\/|^\s*\/?\*|'\[aria-modal/.test(line)) continue;
     const tag = openingTag(source, match.index);
     if (seen.has(tag)) continue;
     seen.add(tag);

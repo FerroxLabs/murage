@@ -5,6 +5,8 @@
 // or No limits, on the desktop. It is the warning and the open-conversations
 // preview in one place: in Settings › Level it stands where the example table
 // was; from the chat chip it is the same card, without counts, in a dialog.
+import { activeTrapCount, useFocusTrap } from "@/lib/focus-trap";
+import { LayerSurface } from "@/components/LayerSurface";
 import { useEffect, useRef } from "react";
 import { AlertTriangle } from "lucide-react";
 import { t } from "@/lib/i18n";
@@ -43,7 +45,7 @@ export function LevelConfirmCard({ bot, target, keep, effect, onThisComputer, no
 }) {
   const keepRef = useRef<HTMLButtonElement>(null);
   // Keep is the default: this is the switch that removes the stops.
-  useEffect(() => { keepRef.current?.focus(); }, []);
+  useEffect(() => { if (!boxed && activeTrapCount() === 0) keepRef.current?.focus(); }, [boxed]);
   const level = levelName(target);
   const heading = t("ux.l1.confirm.title", { level, bot });
   const stale = notice && <p role="status" data-level-stale className="text-warning">{notice}</p>;
@@ -70,7 +72,7 @@ export function LevelConfirmCard({ bot, target, keep, effect, onThisComputer, no
   </>;
   const actions = <>
       <div className="mt-1 flex flex-wrap justify-between gap-2">
-        <button ref={keepRef} type="button" disabled={busy} onClick={onKeep} className={SECONDARY}>{t("ux.l1.confirm.keep", { level: levelName(keep) })}</button>
+        <button ref={keepRef} type="button" disabled={busy} data-layer-keep onClick={onKeep} className={SECONDARY}>{t("ux.l1.confirm.keep", { level: levelName(keep) })}</button>
         <button type="button" disabled={busy} onClick={onUse} className={PRIMARY}>{t("ux.l1.confirm.use", { level })}</button>
       </div>
       {effect.kind === "default" && onOnlyNew && (
@@ -102,20 +104,11 @@ export function LevelConfirmCard({ bot, target, keep, effect, onThisComputer, no
 
 /** The chat chip's door to the card. */
 export function LevelConfirmDialog({ onKeep, ...card }: Parameters<typeof LevelConfirmCard>[0]) {
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      onKeep();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onKeep]);
-  return (
-    <div className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6" onMouseDown={(event) => event.target === event.currentTarget && onKeep()}>
-      <div role="dialog" aria-modal="true" aria-label={t("ux.l1.confirm.title", { level: levelName(card.target), bot: card.bot })} className={cn(BOX_FRAME, "max-h-[calc(var(--vvh,100dvh)-3rem)] w-full max-w-[440px] rounded-2xl border border-hairline/50 bg-panel shadow-2xl")}>
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const layer = useFocusTrap(dialogRef, true, { name: "level-confirm", kind: "dialog", initialFocus: "[data-layer-keep]", onEscape: onKeep });
+  return <LayerSurface handle={layer}><div className="overlay-inset fixed inset-0 flex items-center justify-center bg-black/50 p-6" onMouseDown={(event) => event.target === event.currentTarget && onKeep()}>
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={t("ux.l1.confirm.title", { level: levelName(card.target), bot: card.bot })} className={cn(BOX_FRAME, "max-h-[calc(var(--vvh,100dvh)-3rem)] w-full max-w-[440px] rounded-2xl border border-hairline/50 bg-panel shadow-2xl")}>
         <LevelConfirmCard {...card} onKeep={onKeep} boxed />
       </div>
-    </div>
-  );
+    </div></LayerSurface>;
 }
