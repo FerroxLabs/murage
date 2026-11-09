@@ -469,6 +469,7 @@ function handle(cmd: any) {
           /* never let dumping break a run */
         }
       }
+      if (mode === "big-frame") send({ type: "fake_big_frame", text: `BIGFRAME-CANARY ${"x".repeat(70_000)}` });
       // acknowledge acceptance; the completion comes via events. FAKE_PI_PROMPT_RESPONSE replaces the answer, as a refused or handled prompt.
       send({ type: "response", command: "prompt", success: true, ...(process.env.FAKE_PI_PROMPT_RESPONSE ? JSON.parse(process.env.FAKE_PI_PROMPT_RESPONSE) : {}) });
       if (process.env.FAKE_PI_PROMPT_RESPONSE) return;

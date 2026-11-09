@@ -285,3 +285,25 @@ it("catches a Remove made while the image is being read", async () => {
     expect(await f.images.collect("t", "a", f.text(saved.path))).toEqual({ images: [], unbound: [], overCount: [], tooLarge: [], removed: [saved.path] });
   } finally { __setAttachmentReadHookForTests(undefined); }
 });
+it("SEAN-ASK-ATTACH-CAP: the upload cap is what a turn can deliver to the engine, never more than a turn reads", async () => {
+  const { imageUploadMaxBytes, DEFAULT_TURN_IMAGE_FIT } = await import("./turn-images.ts");
+  const { ATTACHMENT_READ_CEILING } = await import("./attachment-read.ts");
+  const { IMAGE_UPLOAD_MAX_BYTES } = await import("../shared/media-assets.ts");
+  // With the resizer every engine gets the picture shrunk to its own fit.
+  expect(imageUploadMaxBytes(CLAUDE_TURN_IMAGE_FIT, true)).toBe(25 * 1024 * 1024);
+  expect(imageUploadMaxBytes(DEFAULT_TURN_IMAGE_FIT, true)).toBe(25 * 1024 * 1024);
+  expect(IMAGE_UPLOAD_MAX_BYTES).toBeLessThanOrEqual(Math.min(ATTACHMENT_READ_CEILING, TURN_IMAGE_LIMITS.maxReadBytes));
+  // Without it, what the engine takes as it is: Claude Code 5 MB of base64.
+  expect(imageUploadMaxBytes(CLAUDE_TURN_IMAGE_FIT, false)).toBe(CLAUDE_TURN_IMAGE_FIT.hardMaxBytes);
+  expect(imageUploadMaxBytes(DEFAULT_TURN_IMAGE_FIT, false)).toBe(TURN_IMAGE_LIMITS.maxBytesEach);
+  expect(await fixture().images.canShrink()).toBe(false);
+  expect(await fixture(async () => "fits").images.canShrink()).toBe(true);
+});
+it("SEAN-ASK-ATTACH-CAP: a 20 MB upload at the new cap reaches the bot shrunk, not left out", async () => {
+  const shrink: Shrink = async (_bytes, target) => ({ bytes: Buffer.concat([png, Buffer.alloc(Math.min(1024, target.maxBytes - png.length))]) });
+  const f = fixture(shrink), big = f.file(Buffer.concat([png, Buffer.alloc(20 * 1024 * 1024)]));
+  f.append("t", { attachments: [{ kind: "image", ...big }] });
+  const collected = await f.images.collect("t", "a", f.text(big.path), CLAUDE_TURN_IMAGE_FIT);
+  expect(collected.tooLarge).toEqual([]);
+  expect(collected.images).toHaveLength(1);
+});

@@ -19,6 +19,7 @@ export interface RouteHost {
   connectionRevision(connectionId: string): string | null;
   /** The resolved CLI path of an engine, when it has one. */
   binaryPath(engine: PipEngine): string | undefined;
+  botFolderOf?(bot: ReflectBot, threadId: string): string | undefined;
   connectionModels?(connectionId: string): readonly string[];
 }
 
@@ -54,6 +55,9 @@ export function createResolveRoute(host: RouteHost) {
     const base = { fingerprint, engine: instance.displayName ?? instance.driverKind, kind: (engine ? "cli" : "http") as "cli" | "http", model, providerRoute };
     if (!adapter.capabilities.textOnlyTurn || !adapter.textOnlyTurn) return { ...base, unsupported: { reason: "no-text-only-turn" } };
     if (pre && !pre.ok) return { ...base, unsupported: { reason: pre.verdict.reason, detail: pre.verdict.detail } };
-    return { ...base, probeRequired: Boolean(engine), textOnlyTurn: (input) => prepared ? prepared.turn(input) : adapter.textOnlyTurn!(input) };
+    return { ...base, probeRequired: Boolean(engine), textOnlyTurn: (input) => {
+      const turn = { ...input, cwd: host.botFolderOf?.(bot, threadId) };
+      return prepared ? prepared.turn(turn) : adapter.textOnlyTurn!(turn);
+    } };
   };
 }

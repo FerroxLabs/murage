@@ -418,3 +418,133 @@ describe("quarantine byte pressure and old-format logins", () => {
     expect(readdirSync(aside())).toHaveLength(1);
   });
 });
+
+import { linkSync, lstatSync, lutimesSync, readlinkSync, renameSync, symlinkSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { vi } from "vitest";
+import { DATA_DIR } from "../config.ts";
+import { dataRoots } from "../data-roots.ts";
+import { prefixRebaseLinks, prefixRebaseSeams, setRelinkNotice } from "../link-removal.ts";
+import { resetIsolationCache } from "./isolation-cache.ts";
+
+describe("S5 site 10", () => {
+  afterEach(() => { vi.restoreAllMocks(); setRelinkNotice(line => console.warn(line)); resetIsolationCache(); });
+  function fixture() {
+    const dir = mkdtempSync(join(DATA_DIR, "carry-rebase-")); dirs.push(dir);
+    const spec = { kind: "s5carry", realHome: dir, botId: dir, share: [] };
+    const root = scopedCliHome(spec); dirs.push(root);
+    const marker = JSON.parse(readFileSync(join(root, SCOPE_MARKER), "utf8"));
+    writeFileSync(join(root, SCOPE_MARKER), JSON.stringify({ ...marker, generation: 1 }));
+    const dest = join(root, "login-g1"); mkdirSync(dest);
+    const old = join(dir, "old"); mkdirSync(old);
+    vi.spyOn(dataRoots(), "previousRoots").mockReturnValue([old]);
+    const lines: string[] = []; setRelinkNotice(line => lines.push(line));
+    const run = () => { resetIsolationCache(); expect(scopedCliHome(spec)).toBe(dest); };
+    return { dir, root, dest, old, lines, run };
+  }
+  it.each(["dir", "file"] as const)("S5 site 10 carry %s symlink is relinked", kind => {
+    const c = fixture(), target = join(c.dir, "target"), link = join(c.dest, "state");
+    if (kind === "dir") mkdirSync(target); else writeFileSync(target, "fixture");
+    symlinkSync(c.old + target.slice(DATA_DIR.length), link);
+    c.run();
+    expect(readlinkSync(link)).toBe(target); expect(c.lines).toEqual([]);
+  });
+  // POSIX link semantics under a mocked platform; Windows is covered by T10-win32.
+  (process.platform === "win32" ? it.skip : it).each(["dir", "file"] as const)("S5 site 10 T10-posix %s", kind => {
+    const c = fixture(), real = join(c.dir, "real"), target = join(c.dir, "target"), link = join(c.dest, "state");
+    vi.spyOn(prefixRebaseSeams, "platform").mockReturnValue("linux");
+    if (kind === "dir") mkdirSync(real); else writeFileSync(real, "fixture");
+    symlinkSync(real, target, kind);
+    symlinkSync(c.old + target.slice(DATA_DIR.length), link);
+    c.run(); expect(readlinkSync(link)).toBe(real); expect(c.lines).toEqual([]);
+  });
+  it("S5 site 10 T10-win32", () => {
+    const c = fixture(), real = join(c.dir, "real"), target = join(c.dir, "target"), link = join(c.dest, "state");
+    mkdirSync(real); symlinkSync(real, target, "junction");
+    vi.spyOn(prefixRebaseSeams, "platform").mockReturnValue("win32");
+    // Make the NEW target itself a junction recreated by the approved restore path.
+    const replacementRoot = join(c.dir, "replacement");
+    mkdirSync(replacementRoot + real.slice(DATA_DIR.length), { recursive: true });
+    const rename = vi.spyOn(prefixRebaseSeams, "rename")
+      .mockImplementationOnce(() => { throw Object.assign(new Error("busy"), { code: "EPERM" }); })
+      .mockImplementationOnce(() => { throw Object.assign(new Error("replace"), { code: "EIO" }); });
+    const create = vi.fn((text: string, path: string, kind: "dir" | "file") => symlinkSync(text, path, kind === "dir" ? "junction" : "file"));
+    prefixRebaseLinks.relink(target, { site: 10, dataDir: replacementRoot, previousRoots: [DATA_DIR], kind: "new-target", create });
+    expect(rename).toHaveBeenCalledTimes(2);
+    expect(create).toHaveBeenLastCalledWith(real, target, "dir");
+    expect(readlinkSync(target)).toBe(real);
+    expect(c.lines).toEqual(["relink-skipped site=10 reason=replace"]); c.lines.length = 0;
+    rename.mockImplementation(renameSync);
+    symlinkSync(c.old + target.slice(DATA_DIR.length), link);
+    c.run(); expect(readlinkSync(link)).toBe(real); expect(c.lines).toEqual([]);
+  });
+  // Windows resolves "/./" and "//" when it creates a link, so those escape spellings cannot exist there.
+  it.each((process.platform === "win32" ? ["absolute", "parent", "relative", "chain"] : ["absolute", "parent", "relative", "dot", "empty", "chain"]) as Array<"absolute" | "parent" | "relative" | "dot" | "empty" | "chain">)("S5 site 10 escape %s (guard)", mode => {
+    const c = fixture(), real = join(c.dir, "real"), target = join(c.dir, "target"), link = join(c.dest, "state");
+    mkdirSync(real);
+    const outside = tmp("carry-escape-");
+    const text = mode === "absolute" ? outside : mode === "parent" ? DATA_DIR + "/../x" :
+      mode === "relative" ? "real" : mode === "dot" ? c.dir + "/./real" :
+      mode === "empty" ? c.dir + "//real" : join(c.dir, "second");
+    if (mode === "chain") symlinkSync(real, text);
+    symlinkSync(text, target);
+    const rel = target.slice(DATA_DIR.length + 1), oldText = c.old + "/" + rel;
+    mkdirSync(join(c.old, rel, ".."), { recursive: true }); writeFileSync(oldText, "old fixture");
+    // Windows rewrites a link's text when it creates it: compare with the spelling on disk.
+    symlinkSync(oldText, link); const ino = lstatSync(link).ino, stored = readlinkSync(link);
+    c.run(); expect(readlinkSync(link)).toBe(stored); expect(lstatSync(link).ino).toBe(ino);
+    expect(c.lines).toEqual(["relink-skipped site=10 reason=kind"]);
+  });
+  it("S5 site 10 missing logs before unchanged dangling-link cleanup", () => {
+    const c = fixture(), link = join(c.dest, "state"), text = `${c.old}/missing`;
+    symlinkSync(text, link); const ino = lstatSync(link).ino, stored = readlinkSync(link);
+    setRelinkNotice(line => {
+      expect(readlinkSync(link)).toBe(stored); expect(lstatSync(link).ino).toBe(ino); c.lines.push(line);
+    });
+    c.run();
+    expect(c.lines).toEqual(["relink-skipped site=10 reason=missing"]);
+    expect(lstatSync(link, { throwIfNoEntry: false })).toBeUndefined();
+  });
+  it("S5 site 10 outside every P stays untouched during rebase", () => {
+    const c = fixture(), target = join(c.dir, "foreign"), link = join(c.dest, "state");
+    writeFileSync(target, "fixture"); symlinkSync(target, link); const ino = lstatSync(link).ino;
+    const owned = join(c.dest, "owned"); symlinkSync(c.old + target.slice(DATA_DIR.length), owned);
+    c.run(); expect(readlinkSync(owned)).toBe(target); expect(readlinkSync(link)).toBe(target); expect(lstatSync(link).ino).toBe(ino); expect(c.lines).toEqual([]);
+  });
+  // Windows has no FIFO and resolves "x/../" when it creates a link; link-removal.test.ts covers outside on every OS.
+  it.each((process.platform === "win32" ? ["symlink"] : ["outside", "symlink", "fifo"]) as Array<"outside" | "symlink" | "fifo">)("S5 site 10 refuses %s", mode => {
+    const c = fixture(), target = join(c.dir, "target"), link = join(c.dest, "state");
+    if (mode === "fifo") {
+      try { execFileSync("mkfifo", [target], { stdio: ["pipe", "pipe", "pipe"] }); }
+      catch (error) { if (!lstatSync(target, { throwIfNoEntry: false })?.isFIFO()) throw error; }
+      expect(lstatSync(target).isFIFO()).toBe(true);
+    }
+    else if (mode === "symlink") symlinkSync(tmp("carry-outside-"), target);
+    else writeFileSync(target, "fixture");
+    const rel = target.slice(DATA_DIR.length + 1);
+    const text = `${c.old}/${mode === "outside" ? "x/../" : ""}${rel}`;
+    // Keep the old target present, so the existing dangling check preserves the refused link.
+    mkdirSync(join(c.old, "x")); mkdirSync(join(c.old, rel, ".."), { recursive: true });
+    writeFileSync(join(c.old, rel), "old fixture");
+    symlinkSync(text, link); const ino = lstatSync(link).ino, stored = readlinkSync(link);
+    c.run(); expect(readlinkSync(link)).toBe(stored); expect(lstatSync(link).ino).toBe(ino);
+    expect(c.lines).toEqual([`relink-skipped site=10 reason=${mode === "outside" ? "outside" : "kind"}`]);
+  });
+  it("S5 site 10 sweeps stale siblings and never carries bookkeeping", () => {
+    const c = fixture(), name = "state.murage-relink-1-1", stale = join(c.dest, name);
+    symlinkSync(c.dir, stale); lutimesSync(stale, ago(11 * 60_000), ago(11 * 60_000));
+    symlinkSync(c.dir, join(c.root, name));
+    const young = "young.murage-relink-1-2"; symlinkSync(c.dir, join(c.dest, young));
+    writeFileSync(join(c.root, "plain.murage-relink-1-3"), "bookkeeping");
+    c.run(); expect(lstatSync(stale, { throwIfNoEntry: false })).toBeUndefined();
+    expect(lstatSync(join(c.dest, young)).isSymbolicLink()).toBe(true);
+    expect(existsSync(join(c.dest, "plain.murage-relink-1-3"))).toBe(false);
+  });
+  it("S5 site 10 hardlink and copy entries are unchanged (control)", () => {
+    const c = fixture(), target = join(c.dir, "file"), hard = join(c.dest, "hard"), copy = join(c.dest, "copy");
+    writeFileSync(target, "fixture"); linkSync(target, hard); writeFileSync(copy, "copy fixture");
+    const before = [hard, copy].map(path => lstatSync(path)); c.run();
+    [hard, copy].forEach((path, i) => { expect(lstatSync(path).ino).toBe(before[i]!.ino); expect(lstatSync(path).nlink).toBe(before[i]!.nlink); });
+    expect(readFileSync(copy, "utf8")).toBe("copy fixture"); expect(c.lines).toEqual([]);
+  });
+});

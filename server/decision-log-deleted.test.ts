@@ -27,7 +27,10 @@ it("keeps that an approval happened but not what it said or where", async () => 
   const rows = readDecisions(dir, 100);
   expect(rows).toHaveLength(4);
   const redacted = rows.filter((item) => item.threadId === DELETED_CONVERSATION);
-  expect(redacted.map((item) => [item.at.length > 0, item.botName, item.tool, item.decision])).toEqual([[true, "Ember", "Bash", "user-allowed"], [true, "Ember", "Read", "auto-approved"]]);
+  // an older build's line keeps the botName it was written with; a row this build writes names its bot by id only (ql2 sink fold)
+  expect(redacted.map((item) => [item.at.length > 0, item.botId, item.botName, item.tool, item.decision])).toEqual([[true, "b1", "Ember", "Bash", "user-allowed"], [true, "b1", undefined, "Read", "auto-approved"]]);
   for (const item of redacted) expect(item.summary ?? item.rule ?? item.requestId).toBeUndefined();
-  expect(rows.filter((item) => item.threadId === "kept").map((item) => item.summary)).toEqual(["ls", "public.md"]);
+  // an older build's line is left as written; a row this build writes has the fixed label (Astra r1 H11; was "public.md")
+  expect(rows.filter((item) => item.threadId === "kept").map((item) => item.summary)).toEqual(["ls", "tool"]);
+  expect(text).not.toContain("public.md");
 });

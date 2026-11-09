@@ -465,6 +465,7 @@ export class PlanUsageService {
     for (const [bucketId, windows] of norm.buckets) s.buckets.set(bucketId, { windows, seq });
     if (!this.withinCapacity(s)) return;
     const now = this.clock.now();
+    s.deferred = false;
     s.source = "native-event";
     s.observedAt = now;
     s.lastSuccessAt = now;
@@ -637,9 +638,9 @@ export class PlanUsageService {
     const windows = [...s.buckets.values()].flatMap((b) => b.windows.map((w) => ({ ...w })));
     const readable = this.readableHandle(s) !== null;
     const status: PlanObservation["status"] = s.inFlight && s.handles.size > 0 && windows.length === 0 ? "checking"
+      : s.deferred ? "deferred"
       : windows.length > 0 && freshUntil !== null && now < freshUntil && s.reason === null ? "current"
       : windows.length > 0 ? "stale"
-      : s.deferred ? "deferred"
       : "unavailable";
     const reason: PlanReason | null = status === "current" || status === "checking" ? null
       : s.reason ?? (s.handles.size === 0 ? "awaiting-session" : readable ? null : "unsupported");
@@ -665,6 +666,15 @@ export class PlanUsageService {
 
   /** Every subject with a live handle or a reading, at most 32. */
   subjectKeys(): string[] { return [...this.subjects.keys()].slice(0, 32); }
+
+  /** Every subject held, uncapped: the owner report filters live accounts first, then caps (DG8 slice 3). */
+  allSubjectKeys(): string[] { return [...this.subjects.keys()]; }
+
+  /** True while a read for this subject is queued or running, even when an older reading is still shown. */
+  refreshing(subjectKey: string): boolean {
+    const s = this.subjects.get(subjectKey);
+    return !!s && (s.inFlight || s.queued);
+  }
 }
 
 /** The environment's one service. */

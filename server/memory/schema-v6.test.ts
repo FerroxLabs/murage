@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Memory schema v6 (1.0, round 3 item 3): output lineage tables, added
 // additively. The upgrade runs on a COPY of a used data dir: a realistic v5
 // messages.db made by this build's own paths (a disclosure under a receipt,
@@ -182,3 +183,5 @@ it("the v10 upgrade writes no root sets even past 256 outputs (the old deduplica
     expect(() => validateMemorySchema(db)).toThrow();
   } finally { db.close(); }
 });
+
+useOutsideStoreFixture();

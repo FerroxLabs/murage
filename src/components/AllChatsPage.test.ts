@@ -1,8 +1,11 @@
+import { chatsGenHello } from "@/lib/chats-gen";
+const previewGen = { epoch: "view-fixture", rev: 0 };
+beforeEach(() => chatsGenHello(previewGen));
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readFileSync } from "node:fs";
 import type { ReactElement } from "react";
@@ -11,6 +14,7 @@ import { en, loadLocalePack, localeChoices } from "@/locales";
 import { NO_CHATS, appendChatPage, type ChatRow } from "@/lib/all-chats";
 import type { Bot, Group } from "@/state/store";
 import type { SearchHit } from "@/lib/search-hit";
+import { CHATS_SECTIONS_MIN, chatHome, chatsSections, chatsSectionTitle, chatsSectionsShown, chatsWaitingThreads } from "@/lib/chats-sections";
 import { pageChats, type ChatSourceBot } from "../../server/chat-list";
 
 const NOW = Date.parse("2026-10-24T12:00:00-04:00");
@@ -28,6 +32,7 @@ const render = (over: Partial<AllChatsViewProps> = {}) => renderToStaticMarkup(c
   query: "",
   onQuery: vi.fn(),
   held: NO_CHATS,
+  listGen: previewGen,
   loading: null,
   failed: null,
   hitRows: null,
@@ -47,6 +52,18 @@ const render = (over: Partial<AllChatsViewProps> = {}) => renderToStaticMarkup(c
 const BANNED = [/—/, /\bsafe\b/i, /\bunsafe\b/i, /\bsafety\b/i, /composio/i, /\$\d/, /\bprice\b/i];
 
 describe("All chats view", () => {
+  it("shows owner snippets, date ranges, active filters, readiness and more message results", () => {
+    const held = appendChatPage(NO_CHATS, { chats: [row("a", 1, { snippet: "Lease renewal", lastRole: "user" })], total: 1, next: null, partial: true }, true);
+    const html = render({ held, filters: { date: "custom", pinned: true, unread: true, archived: true }, hitRows: [], onMoreHits: vi.fn() });
+    expect(html).toContain("You: Lease renewal");
+    expect(html).toContain('aria-label="From date"');
+    expect(html).toContain('aria-label="Through date"');
+    expect(html).toContain("Past week");
+    expect(html).toContain("Past month");
+    expect(html).toContain("More results");
+    expect(html).toContain("Chat previews are still getting ready.");
+    expect(html.match(/aria-pressed="true"/g)).toHaveLength(3);
+  });
   it("says what it is doing while the first page loads", () => {
     const html = render({ loading: "first" });
     expect(html).toContain("Loading your chats…");
@@ -60,17 +77,32 @@ describe("All chats view", () => {
       next: "cursor",
       total: 30_000,
     }, true);
-    const html = render({ held });
-    expect(html.indexOf(">Pinned<")).toBeLessThan(html.indexOf(">Today<"));
-    expect(html.indexOf(">Today<")).toBeLessThan(html.indexOf(">Yesterday<"));
-    expect(html).toContain("Project: Office move");
-    expect(html).toContain("Channel: Launch room");
-    expect(html).toContain("#Launch room");
-    expect(html).toContain("Chat b");
-    expect(html).toContain('aria-label="Pinned"');
+    // 30,000 chats: the sections replace the day list, and each chat's own row
+    // (pin, place, time) still draws inside the section it belongs to.
+    const html = render({ held, sectionsOpen: ["bots:ember", "older:channels"] });
+    expect(html).toContain("data-chats-sections");
+    // the date filter also offers "Today" (CHATS-S2 C1): only a day heading counts
+    expect(html).not.toMatch(/<h3[^>]*>Today</);
+    const at = (key: string) => html.indexOf(`data-chats-section="${key}"`);
+    expect(at("bots")).toBeGreaterThan(-1);
+    expect(at("bots")).toBeLessThan(at("projects"));
+    expect(at("projects")).toBeLessThan(at("channels"));
+    const botsPart = html.slice(at("bots"), at("projects"));
+    expect(botsPart).toContain('aria-label="Chats with Ember"');
+    expect(botsPart).toContain("2 chats");
+    expect(botsPart).toContain('data-chat-row="p"');
+    expect(botsPart).toContain('aria-label="Pinned"');
+    expect(botsPart.lastIndexOf('data-chat-row="a"')).toBeLessThan(botsPart.indexOf('data-chat-row="p"'));
+    const projectsPart = html.slice(at("projects"), at("channels"));
+    expect(projectsPart).toContain("Office move");
+    expect(projectsPart).toContain("Chat b");
+    // the 40-day-old channel chat sits in its section's older fold, opened here
+    expect(html.slice(at("channels"))).toContain("Launch room");
+    expect(html.slice(at("channels"))).toContain("Show less");
     expect(html).toContain("Show older chats (4 of 30000 shown)");
     expect(html).toContain("· 30000");
-    expect(html.match(/data-chat-row=/g)).toHaveLength(4);
+    // one row each for Ember, the project and the channel, plus Ember's two chats opened: never the list flat
+    expect(html.match(/data-chat-row=/g)).toHaveLength(5);
     // a bot-to-bot room is not a place to filter by; an archived bot is offered only under Archived
     expect(html).not.toContain(">Ember and Sage<");
     expect(html).not.toContain(">Old<");
@@ -80,8 +112,16 @@ describe("All chats view", () => {
 
   it("renders a page of 50 rows from a 30,000-chat history: the markup follows what is held, not the history", () => {
     const held = appendChatPage(NO_CHATS, { chats: Array.from({ length: 50 }, (_, i) => row(`t${i}`, i)), next: "more", total: 30_000 }, true);
-    const html = render({ held });
-    expect(html.match(/data-chat-row=/g)).toHaveLength(50);
+    // folded: one row for the bot that holds all 50, never the page flat
+    const folded = render({ held });
+    expect(folded).toContain("data-chats-sections");
+    expect(folded.match(/data-chats-owner=/g)).toHaveLength(1);
+    expect(folded).toContain("50 chats");
+    expect(folded.match(/data-chat-row=/g)).toHaveLength(1);
+    // opened under its bot: the 50 held rows inside the Bots section, still not the 30,000
+    const open = render({ held, sectionsOpen: ["bots:ember"] });
+    expect(open.match(/data-chat-row=/g)).toHaveLength(51);
+    expect(open.slice(open.indexOf('data-chats-section="bots"')).match(/data-chat-row=/g)).toHaveLength(51);
   });
 
   it("does the same row work on repeated renders with 100 or 30,000 records, including later pages", () => {
@@ -102,8 +142,11 @@ describe("All chats view", () => {
         const held = appendChatPage(NO_CHATS, { ...page, chats }, true);
         reads = 0;
         for (let paint = 0; paint < 3; paint++) {
-          const html = render({ bots: [owner], held });
-          expect(html.match(/data-chat-row=/g)).toHaveLength(50);
+          // the sections at this scale: one Ember row, opened to the 50 held chats
+          const html = render({ bots: [owner], held, sectionsOpen: ["bots:ember"] });
+          expect(html).toContain("data-chats-sections");
+          expect(html.match(/data-chats-owner=/g)).toHaveLength(1);
+          expect(html.match(/data-chat-row=/g)).toHaveLength(51);
         }
         costs.push(reads);
       }
@@ -141,7 +184,7 @@ describe("All chats view", () => {
     const searching = render({ query: "lease", searchingMessages: true });
     expect(searching).toContain("Searching your messages for “lease”…");
     const hit: SearchHit = { threadId: "a", messageId: "m1", botId: "ember", name: "Ember", task: "Austin lease", role: "user", kind: "text", at: NOW - 1000, snippet: "the lease runs to March", matchStart: 4, matchLength: 5 };
-    const html = render({ query: "lease", hitRows: [{ threadId: "a", hit, count: 3 }] });
+    const html = render({ query: "lease", hitRows: [{ threadId: "a", hit, count: 3, countComplete: true }] });
     expect(html).toContain("Matches in messages · 1 chat");
     expect(html).toContain('<mark class="rounded-sm bg-accent/25 px-0.5 text-ink">lease</mark>');
     expect(html).toContain(" · 3 matches");
@@ -204,5 +247,70 @@ describe("All chats view", () => {
     expect(html).toContain("grid-cols-[28px_1fr]");
     expect(html).toContain("sm:grid-cols-[28px_1fr_auto]");
     expect(html).toContain("col-start-2");
+  });
+});
+
+// UX L6B (scale, UX-FIRSTRUN-SCALE-1012.md 2.2): at 50+ chats the door shows
+// Bots, Projects, Channels and Archived, one row per bot or place, never 54
+// flat rows; past 30 days folds; waiting rolls up into the header.
+describe("Chats sections at 50+ chats", () => {
+  const many = (): ChatRow[] => [
+    ...Array.from({ length: 30 }, (_, i) => row(`e${i}`, i + 1, { title: i === 0 ? "Morning brief" : `Ember ${i}` })),
+    ...Array.from({ length: 20 }, (_, i) => row(`s${i}`, i + 2, { botId: "sage" })),
+    row("m1", 3, { botId: "sage", place: { kind: "project", groupId: "move", name: "Office move" } }),
+    row("l1", 5, { groupId: "launch", botId: undefined, place: { kind: "channel", groupId: "launch", name: "Launch room" } }),
+    row("o1", 24 * 45, { botId: "old2" }),
+    row("o2", 24 * 60, { botId: "old3" }),
+  ];
+  const held = () => appendChatPage(NO_CHATS, { chats: many(), next: "cursor", total: 54 }, true);
+  const waitingBots = [bot("ember", "Ember", { tasks: [{ threadId: "e3", title: "x", createdAt: 0, activity: "waiting-on-you" }] as never }), bot("sage", "Sage", { activity: "waiting-on-you", threadId: "s0" }), bot("old2", "Olga"), bot("old3", "Otto")];
+
+  it("groups by owner and never lists the page flat", () => {
+    const html = render({ held: held(), bots: waitingBots, waitingThreads: chatsWaitingThreads(waitingBots), archived: { total: 9, rows: [] } });
+    expect(html).toContain("data-chats-sections");
+    // the date filter also offers "Today" (CHATS-S2 C1): only a day heading counts
+    expect(html).not.toMatch(/<h3[^>]*>Today</);
+    // one row per bot or place: Ember, Sage, the project, the channel (the old two are folded)
+    expect(html.match(/data-chats-owner=/g)).toHaveLength(4);
+    expect(html).toContain("Morning brief");
+    expect(html).toContain("30 chats");
+    expect(html).toContain("20 chats");
+    expect(html).toContain("Bots · 2 waiting");
+    expect(html.indexOf(">Bots · 2 waiting")).toBeLessThan(html.indexOf("data-chats-section=\"projects\""));
+    expect(html).toContain("2 older");
+    expect(html).toContain("Archived · 9");
+    // Archived starts folded: its header only
+    expect(html).toMatch(/data-chats-section="archived"[^]*aria-expanded="false"/);
+  });
+
+  it("keeps the day list for a short list, a search, a filter or a later page", () => {
+    const short = appendChatPage(NO_CHATS, { chats: many().slice(0, 10), next: null, total: 10 }, true);
+    expect(render({ held: short })).not.toContain("data-chats-sections");
+    expect(render({ held: held(), query: "brief" })).not.toContain("data-chats-sections");
+    expect(render({ held: held(), filters: { unread: true } })).not.toContain("data-chats-sections");
+    expect(render({ held: held(), pageIndex: 1 })).not.toContain("data-chats-sections");
+  });
+
+  it("files each chat under its place first, then its channel, then its bot", () => {
+    expect(chatHome(row("a", 1))).toEqual({ section: "bots", owner: "ember" });
+    expect(chatHome(row("b", 1, { place: { kind: "project", groupId: "move", name: "Office move" } }))).toEqual({ section: "projects", owner: "move" });
+    expect(chatHome(row("c", 1, { groupId: "launch", botId: undefined }))).toEqual({ section: "channels", owner: "launch" });
+    expect(chatHome(row("d", 1, { archived: true }))?.section).toBe("archived");
+    const views = chatsSections(many(), NOW, () => 0);
+    const bots = views.find((view) => view.key === "bots")!;
+    expect(bots.rows.map((owner) => owner.key)).toEqual(["bots:ember", "bots:sage"]);
+    expect(bots.rows[0]!.latest.threadId).toBe("e0");
+    expect(bots.older.map((owner) => owner.key)).toEqual(["bots:old2", "bots:old3"]);
+    expect(views.some((view) => view.key === "archived")).toBe(false);
+    expect(chatsSectionTitle({ key: "bots", label: "Bots", waiting: 0 })).toBe("Bots");
+    expect(chatsSectionsShown(CHATS_SECTIONS_MIN, "", 0)).toBe(true);
+    expect(chatsSectionsShown(CHATS_SECTIONS_MIN - 1, "", 0)).toBe(false);
+    // waiting is read once from the store: a chat's own state, or the bot's for its main thread
+    expect([...chatsWaitingThreads(waitingBots)].sort()).toEqual(["e3", "s0"]);
+  });
+
+  it("copy keeps the house rules", () => {
+    const html = render({ held: held(), bots: waitingBots, waitingThreads: chatsWaitingThreads(waitingBots), archived: { total: 9, rows: [] } });
+    for (const banned of BANNED) expect(html).not.toMatch(banned);
   });
 });

@@ -18,8 +18,9 @@ import { removeTempDirSync } from "./testing/cleanup.ts";
 
 /** The answer without the cursor and the snoozed-owed count the old code never
  *  had. `snoozedOwed` is new over the old queries (UX L2B, the Needs you badge
- *  adds it back) and is held by its own assertions in the row-shape test. */
-const plain = (page: InboxPage) => ({ ...page, next: undefined, snoozedOwed: undefined });
+ *  adds it back) and is held by its own assertions in the row-shape test; `snoozedHere` (FUNCTION-SWEEP-1018) by
+ *  server/inbox-needs-you-count.test.ts. */
+const plain = (page: InboxPage) => ({ ...page, next: undefined, snoozedOwed: undefined, snoozedHere: undefined });
 
 const roots: string[] = [], databases: DatabaseSync[] = [];
 afterEach(() => { for (const db of databases.splice(0)) { try { db.close(); } catch {} } for (const root of roots.splice(0)) removeTempDirSync(root); });

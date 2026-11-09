@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -47,7 +49,7 @@ describe("Antigravity denied action with an empty reply", () => {
       config: { cli: FAKE_CLI, fullAuto: false },
     });
     recorder = recordEvents(instance.adapter);
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-denied", text: "run ls", routeAsks: true, ...level });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-denied", text: "run ls", routeAsks: true, ...level });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
     const titles = recorder.events
       .filter((e) => e.type === "item.started" && (e as any).toolKind === "notice")
@@ -77,3 +79,6 @@ describe("Antigravity denied action with an empty reply", () => {
     expect(titles).toEqual([]);
   }, 10_000);
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

@@ -9,6 +9,8 @@
 // channel, Escape closes it, Tab stays inside it, and focus goes back to the
 // control that opened it — because a person should not have to learn two
 // different panels in the same header.
+import { useFocusTrap } from "@/lib/focus-trap";
+import { LayerSurface } from "@/components/LayerSurface";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { FolderOpen, X } from "lucide-react";
 
@@ -73,45 +75,9 @@ export function ChannelDetailsPanel({
 
   // Same focus contract as ManageMembersPanel: first control focused, Escape
   // closes, Tab cycles inside, and the opener gets focus back on the way out.
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    const focusable = () =>
-      [
-        ...dialog.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ),
-      ].filter((element) => !element.hasAttribute("hidden"));
-    focusable()[0]?.focus();
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const controls = focusable();
-      if (!controls.length) return event.preventDefault();
-      const first = controls[0];
-      const last = controls[controls.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    dialog.addEventListener("keydown", onKey);
-    return () => {
-      dialog.removeEventListener("keydown", onKey);
-      triggerRef.current?.focus();
-    };
-  }, [onClose, triggerRef]);
-
-  return (
-    <div
-      className="overlay-inset fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40 p-3"
+  const layer = useFocusTrap(dialogRef, true, { name: "channel-details", kind: "dialog", returnFocusTo: triggerRef.current, onEscape: onClose });
+  return <LayerSurface handle={layer}><div
+      className="overlay-inset fixed inset-x-0 top-0 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40 p-3"
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >
       <div
@@ -175,8 +141,7 @@ export function ChannelDetailsPanel({
           {section === "memory" && <MemorySection group={group} />}
         </BoxBody>
       </div>
-    </div>
-  );
+    </div></LayerSurface>;
 }
 
 /** Instructions, the lead responder and the folder. The three things that

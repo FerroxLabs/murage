@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { createHash } from 'node:crypto';
+import { parseBrowserExtensionMessage as oldParser } from './fixtures/browser-extension-protocol-1.0.0.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -13,12 +15,12 @@ function event() {
 }
 
 // Isolated worker, profile storage, native host and clock. No browser or app is contacted.
-async function fixture({ stored = {}, now = 1_000_000, random = 0.5, absent = true, busy = () => false, storageFails = false } = {}) {
+async function fixture({ stored = {}, now = 1_000_000, random = 0.5, absent = true, busy = () => false, storageFails = false, parseCommand } = {}) {
   const timers = new Map(), alarms = new Map(), ports = [], attempts = [], sent = [];
   let sequence = 0, reloads = 0, wakeups = 0;
   const runtime = {
     initialize: async () => {}, connection: async () => ({ type: 'hello' }), restartReports: () => [],
-    handlePanel: async () => ({}), handleRequest: async () => ({ result: {} }),
+    handlePanel: async () => ({}), handleRequest: async message => { parseCommand?.(message); return { result: {} }; },
     driving: () => { throw Error('update must use busy'); }, drivingBotName: () => 'Fixture',
     ...(busy ? { busy } : {}),
   };
@@ -220,8 +222,17 @@ test('missing, throwing or indeterminate busy hook defers update reload', async 
   }
 });
 
-test('manifest excludes incognito profiles and is version 1.0.0', () => {
+test('manifest excludes incognito profiles and is version 1.0.1', () => {
   const manifest = JSON.parse(readFileSync(new URL('../extensions/murage-browser/manifest.json', import.meta.url), 'utf8'));
   assert.equal(manifest.incognito, 'not_allowed');
-  assert.equal(manifest.version, '1.0.0');
+  assert.equal(manifest.version, '1.0.1');
+});
+
+test('E5: historical 1.0.0 parser rejects avatar and the real worker disconnects',async()=>{
+ const bytes=readFileSync(new URL('./fixtures/browser-extension-protocol-1.0.0.ts',import.meta.url));
+ assert.equal(createHash('sha256').update(bytes).digest('hex'),'4048cf7a81586eab1e9775acf0db06a29f8658740ef2d2113286ff0f04adf69b');
+ const frame={version:1,type:'command',id:'request',bindingId:'bot',generation:1,operation:'avatar',params:{avatarId:''}};
+ assert.throws(()=>oldParser(frame));
+ const f=await fixture({absent:false,parseCommand:oldParser});let disconnected=false;
+ f.ports[0].disconnect=()=>{disconnected=true;};await f.ports[0].onMessage.fire(frame);assert.equal(disconnected,true);
 });

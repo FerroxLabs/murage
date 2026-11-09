@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -5,6 +6,7 @@
 // A message stored again takes a new rowid and keeps its timestamp, so the order looked proven when it was not, and a paraphrase B of a
 // receipt-backed reply A could end up with no dependency on A: archive A's record and A was withheld while B stayed readable. The backfill
 // now decides by the message's own parentId chain only; where that is not provable a reply rests on every receipt output of the thread.
+import { storeAnchorMessage } from "./testing/anchor-message.ts";
 import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -29,6 +31,7 @@ function access() {
 }
 function secretRecord() {
   const text = "The alarm code is 4812.";
+  storeAnchorMessage(database(), "older", "m1", text, "user", 1);
   captureSource(database(), { id: "message:older:m1", threadId: "older", messageId: "m1", kind: "text", speaker: "owner", outcome: "recorded", text });
   const record = saveMemoryCandidate(text, [{ sourceId: "message:older:m1", revision: 1, startByte: 0, endByte: Buffer.byteLength(text) }], "k", access());
   database().prepare("UPDATE memory_records SET state='active' WHERE id=?").run(record);
@@ -137,3 +140,5 @@ it("repair widens a row that rests on fewer outputs than its chain proves", () =
   forgetMemory(ownerMemoryTicket(), { kind: "record", id: record });
   expect(withheld(["A", "B"])).toEqual(new Set(["A", "B"]));
 });
+
+useOutsideStoreFixture();

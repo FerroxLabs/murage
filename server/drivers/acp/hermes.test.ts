@@ -1,3 +1,4 @@
+import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -277,7 +278,7 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
       config: { cli: FAKE_ACP, fullAuto: true },
     });
     recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: "t-flux", text: "hi", model, ...turnExtra });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-flux", text: "hi", model, ...turnExtra });
     await recorder.until((e) => e.type === "turn.completed");
     return JSON.parse(readFileSync(dump, "utf8")) as { argv: string[]; env: Record<string, string> };
   }
@@ -311,7 +312,7 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
       recorder = recordEvents(instance.adapter);
       for (const [turn, enforced] of [false, true, false].entries()) {
         const threadId = `t-enforce-${fullAuto}-${turn}`;
-        const sent = await instance.adapter.sendTurn({ threadId, text: "go", model: "flux-auto",
+        const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go", model: "flux-auto",
           ...(enforced ? { routeAsks: true as const } : {}),
         });
         const event = await recorder.until((event) => event.turnId === sent.turnId &&
@@ -565,7 +566,7 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
       config: { cli: FAKE_ACP, fullAuto: true, profile: "research" },
     });
     await expect(
-      instance.adapter.sendTurn({ threadId: "t-profile", text: "hi", model: "flux-auto" }),
+      instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-profile", text: "hi", model: "flux-auto" }),
     ).rejects.toThrow(/Hermes profile "research"/);
     expect(existsSync(dump)).toBe(false);
   });

@@ -17,6 +17,7 @@ import { promisify } from "node:util";
 import { augmentedPath } from "./env-path.ts";
 import { DATA_DIR } from "./config.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
+import { nextTask } from "./procs.ts";
 
 const run = promisify(execFile);
 const SCREENSHOT_STATUS_TTL_MS = 10_000;
@@ -204,8 +205,11 @@ LABEL ${MANAGED_LABEL}="1" \\
 `;
 }
 
-async function sh(cmd: string, args: string[], timeout = 8000): Promise<{ stdout: string }> {
-  const { stdout } = await run(cmd, args, {
+/** The default command runner. ALL.eld250 B9: the spawn runs in its own macrotask (nextTask first), never in the task that asked for the
+ * status (the start-up engine snapshot scan reached it before listen). `exec` is a test seam. */
+export async function sh(cmd: string, args: string[], timeout = 8000, exec: typeof run = run): Promise<{ stdout: string }> {
+  await nextTask();
+  const { stdout } = await exec(cmd, args, {
     timeout,
     encoding: "utf8",
     maxBuffer: 16 * 1024 * 1024,

@@ -32,12 +32,16 @@ export type SidebarBot = {
   section?: string;
   pinned?: boolean;
   hidden?: boolean;
+  sidebarHidden?: boolean;
+  busy?: boolean;
+  activity?: string;
 };
 
 export type SidebarGroup = {
   id: string;
   section?: string;
   dm?: boolean;
+  channelProject?: unknown;
 };
 
 function unique(values: string[]): string[] {
@@ -115,7 +119,54 @@ export function partitionSidebarBots<T extends SidebarBot>(bots: T[]) {
   const unsectionedBots = visible.filter(
     (bot) => listed(bot) && !bot.section && !pinnedIds.has(bot.id),
   );
-  return { unsectionedChief, pinnedBots, sectionChiefs, sectionedBots, unsectionedBots };
+  return { unsectionedChief, pinnedBots: busyFirst(pinnedBots), sectionChiefs, sectionedBots: busyFirst(sectionedBots), unsectionedBots: busyFirst(unsectionedBots) };
+}
+
+/** Stable within each list; never move a bot out of its pinned/team section. */
+export function busyFirst<T extends SidebarBot>(bots: T[]): T[] {
+  const busy = (bot: T) => Number(Boolean(bot.busy) || bot.activity === "working" || bot.activity === "waiting-on-you");
+  return [...bots].sort((a, b) => busy(b) - busy(a));
+}
+
+/** Keyboard navigation follows the rail's sections, including bots behind a fold. */
+export function sidebarBotOrder<T extends SidebarBot>(bots: T[], groups: SidebarGroup[], savedOrder: string[], showHidden = false): T[] {
+  bots = bots.filter((bot) => showHidden || !bot.sidebarHidden);
+  const parts = partitionSidebarBots(bots);
+  // Use the original order for section discovery: activity must not move teams.
+  const visible = bots.filter((bot) => !bot.hidden);
+  const names = unique([
+    ...visible.filter((bot) => !bot.chiefOfStaff && bot.section && !bot.pinned).map((bot) => bot.section!),
+    ...parts.sectionChiefs.map((bot) => bot.section!),
+    ...groups.filter((group) => !group.dm && group.section).map((group) => group.section!),
+  ]);
+  const sections = orderedSidebarSections([
+    ...(parts.pinnedBots.length ? [PINNED_SECTION_ID] : []),
+    ...(groups.some((group) => !group.dm && !group.section && group.channelProject) ? ["builtin:projects"] : []),
+    ...(groups.some((group) => !group.dm && !group.section && !group.channelProject) ? [CHANNELS_SECTION_ID] : []),
+    ...names.map(userSectionId),
+    ...(parts.unsectionedBots.length ? [BOTS_SECTION_ID] : []),
+    ...(groups.some((group) => group.dm) ? [BOT_CHATS_SECTION_ID] : []),
+  ], savedOrder);
+  return [
+    ...(parts.unsectionedChief ? [parts.unsectionedChief] : []),
+    ...sections.flatMap((id) => id === PINNED_SECTION_ID ? parts.pinnedBots : id === BOTS_SECTION_ID ? parts.unsectionedBots : [
+      ...parts.sectionChiefs.filter((bot) => bot.section === userSectionName(id)),
+      ...parts.sectionedBots.filter((bot) => bot.section === userSectionName(id)),
+    ]),
+  ];
+}
+
+export function adjacentSidebarBot<T extends { id: string }>(bots: T[], selectedId: string, direction: -1 | 1): T | undefined {
+  const index = bots.findIndex((bot) => bot.id === selectedId);
+  if (index < 0) return direction === 1 ? bots[0] : bots.at(-1);
+  return bots[(index + direction + bots.length) % bots.length];
+}
+
+export function sidebarCycleDirection(event: { shiftKey: boolean; altKey: boolean; key: string; code: string }): -1 | 1 | null {
+  if (!event.shiftKey || event.altKey) return null;
+  if (event.code === "BracketRight" || event.key === "]" || event.key === "}") return 1;
+  if (event.code === "BracketLeft" || event.key === "[" || event.key === "{") return -1;
+  return null;
 }
 
 /** Bot-to-bot DMs are also a virtual view. We do not rewrite their persisted

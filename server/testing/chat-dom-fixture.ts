@@ -6,6 +6,7 @@
 import { COLLECT_FLOOR_FACTS_SOURCE, COLLECT_RECIPIENTS_SOURCE, EFFECT_TARGET_SOURCE, RELATED_ELEMENTS_SOURCE, SEND_CAPABLE_SOURCE, collectFloorFacts, type FloorFactsIo } from '../browser-floor-facts.ts';
 
 import { NATIVE_DOM_SOURCE } from '../browser-native-dom.ts';
+import { parseFragment } from 'parse5';
 import { domFunction } from './native-dom-fixture.ts';
 
 let nextNodeId = 100;
@@ -133,4 +134,35 @@ export function addSecondWindow(dom: ReturnType<typeof gmailChat>) {
   dom.body.children.push(region); dom.body.childNodes.push(region); region.parentNode = dom.body;
   for (const n of region.all()) n.ownerDocument = dom.body.ownerDocument;
   return { composer, send };
+}
+
+/** CHROME-OWNER-NAMED-SITE row 30: google.com's home page as saved (form role=search, the q box, hidden inputs and the two submit buttons). */
+export function googleHome() {
+  const q = h('textarea', { name: 'q', role: 'combobox', 'aria-label': 'Search', title: 'Search', 'aria-autocomplete': 'both', 'aria-expanded': 'false' });
+  const searchButton = h('input', { type: 'submit', name: 'btnK', value: 'Google Search', 'aria-label': 'Google Search', role: 'button' });
+  const lucky = h('input', { type: 'submit', name: 'btnI', value: "I'm Feeling Lucky", 'aria-label': "I'm Feeling Lucky", id: 'gbqfbb' });
+  const voice = h('div', { role: 'button', 'aria-label': 'Search by voice', tabindex: '0' });
+  const lens = h('div', { role: 'button', 'aria-label': 'Search by image', tabindex: '0' });
+  const p = page(h('div', { role: 'navigation' }, h('a', { href: 'https://mail.google.com/mail/' }, 'Gmail'), h('a', { href: 'https://www.google.com/imghp' }, 'Images')),
+    h('form', { action: '/search', method: 'GET', role: 'search' }, h('input', { type: 'hidden', name: 'source', value: 'hp' }), h('input', { type: 'hidden', name: 'iflsig', value: 'AL9hbdg' }), q, voice, lens, searchButton, lucky));
+  return { ...p, q, searchButton, lucky };
+}
+/** CHROME-OWNER-NAMED-SITE row 30: real markup (parsed by parse5) as FakeNodes inside a page, so the REAL scan runs over a saved page. */
+export function pageFromHtml(html: string) {
+  type P5 = { nodeName: string; tagName?: string; value?: string; attrs?: { name: string; value: string }[]; childNodes?: P5[]; content?: P5 };
+  const build = (node: P5): FakeNode | string | undefined => {
+    if (node.nodeName === '#text') return node.value ?? '';
+    if (!node.tagName) return undefined;
+    const kids = (node.content ?? node).childNodes?.map(build).filter((k): k is FakeNode | string => k !== undefined) ?? [];
+    return new FakeNode(node.tagName, Object.fromEntries((node.attrs ?? []).map(a => [a.name, a.value])), kids);
+  };
+  const body = (parseFragment(html) as unknown as P5).childNodes!.map(build).filter((k): k is FakeNode => k instanceof FakeNode);
+  return page(...body);
+}
+/** CHROME-OWNER-NAMED-SITE row 54: duckduckgo.com's home page (a search form with one input and a submit button). */
+export function duckduckgoHome() {
+  const q = h('input', { type: 'text', name: 'q', id: 'searchbox_input', 'aria-label': 'Search with DuckDuckGo', placeholder: 'Search without being tracked' });
+  const submit = h('button', { type: 'submit', 'aria-label': 'Search', name: 'submit', value: '' });
+  const p = page(h('form', { action: '/', method: 'GET', id: 'searchbox_homepage' }, q, submit, h('input', { type: 'hidden', name: 'ia', value: 'web' })));
+  return { ...p, q, submit };
 }

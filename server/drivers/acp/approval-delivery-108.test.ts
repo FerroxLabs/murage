@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 // Isolated ACP peer + HTTP fixture. Never uses an installed engine or the owner's data.
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -525,3 +526,6 @@ it("the real approval API returns 503 and preserves the card until the fake ACP 
     await fixture.close();
   }
 }, 60000);
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

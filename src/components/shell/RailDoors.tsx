@@ -26,14 +26,15 @@ export interface RailDoorsProps {
   onOpen: (door: ShellDoor) => void;
 }
 
-const ICON: Record<ShellDoor, (size: number) => ReactNode> = {
+/** Shared with the phone tabs (src/components/phone/PhoneTabs.tsx), so both show the same four doors. */
+export const DOOR_ICON: Record<ShellDoor, (size: number) => ReactNode> = {
   today: (size) => <Sun size={size} aria-hidden="true" />,
   chats: (size) => <MessageSquare size={size} aria-hidden="true" />,
   "needs-you": (size) => <Inbox size={size} aria-hidden="true" />,
   routines: (size) => <CalendarDays size={size} aria-hidden="true" />,
 };
 
-const LABEL = {
+export const DOOR_LABEL = {
   today: "ux.l2a.door.today",
   chats: "ux.l2a.door.chats",
   "needs-you": "ux.l2a.door.needsYou",
@@ -47,7 +48,7 @@ const TIP = {
   routines: "ux.l2a.door.tip.routines",
 } as const satisfies Record<ShellDoor, string>;
 
-/** "Needs you, 3 waiting" / "Needs you, nothing waiting" / "Needs you, not known yet"; "may be out of date" when stale. */
+/** "Needs you, 3 waiting" / "Needs you, nothing waiting" / "Needs you: details not yet available"; "may be out of date" when stale. */
 export function needsDoorName(count: number | undefined, stale: boolean): string {
   const base = count === undefined
     ? t("ux.l2a.door.needsUnknown")
@@ -61,7 +62,7 @@ export function RailDoors({ lit, needs, iconsOnly = false, routinesAttention = f
     <nav aria-label={t("ux.l2a.door.navLabel")} data-rail-doors className={cn("flex flex-col gap-0.5", iconsOnly && "items-center")}>
       {SHELL_DOORS.map((door) => {
         const on = lit === door;
-        const label = t(LABEL[door]);
+        const label = t(DOOR_LABEL[door]);
         const name = door === "needs-you"
           ? needsDoorName(needs.count, needs.stale)
           : door === "routines" && routinesAttention
@@ -84,7 +85,7 @@ export function RailDoors({ lit, needs, iconsOnly = false, routinesAttention = f
             )}
           >
             <span className={cn("relative shrink-0", on ? "text-accent-text" : "text-ink-secondary")}>
-              {ICON[door](iconsOnly ? 20 : 17)}
+              {DOOR_ICON[door](iconsOnly ? 20 : 17)}
               {door === "routines" && routinesAttention && (
                 <span aria-hidden="true" data-routines-attention className="absolute -right-1 -top-1 size-2 rounded-full bg-danger ring-2 ring-panel" />
               )}

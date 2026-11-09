@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -257,3 +258,5 @@ it("Astra r1 #7: the room turn renders the project layers again after its withho
   // Astra r2 #7: the Chief's roster in the room system prompt is rendered again too
   expect(index.indexOf('if(bot.chiefOfStaff){const fresh=buildRoomSystem();')).toBeGreaterThan(again);
 });
+
+useOutsideStoreFixture();

@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // pi driver contract tests, run against the scripted fake `pi` CLI in
 // server/testing/fake-pi-cli.ts: parse the live catalog, normalize a full
 // RPC turn into canonical events, ride the toolUse→end_turn auto-continue,
@@ -20,8 +22,33 @@ import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { encodeInjectId, localHost } from "./local-inject.ts";
 import { execChecks, resetExecChecks } from "../testing/exec-check-spy.ts";
 import { approveStartupWrite } from "../testing/startup-write.ts";
+import { ProviderStopUnconfirmedError } from "./child-teardown.ts";
+import { cliSig, noteVersionProbe, resetVersionProbeBackoff, versionProbeAllowed } from "./isolation-cache.ts";
 
 vi.mock("node:child_process", async (original) => (await import("../testing/exec-check-spy.ts")).withExecCheckSpy(await original()));
+// STOP-NONACP s4 pi: two switches the stop rows flip, both pass-through while off. `unconfirmed`: the child stop reads as not confirmed
+// (the unconfirmed-stop row U2); `heldContext`: the model-context await of a starting turn is held until released.
+const stopRows = vi.hoisted(() => ({ unconfirmed: false, heldContext: false, release: null as null | (() => void) }));
+vi.mock("./child-teardown.ts", async (original) => {
+  const real = await original<typeof import("./child-teardown.ts")>();
+  class Teardowns extends real.TurnTeardowns {
+    override async waitAll(budget: Parameters<InstanceType<typeof real.TurnTeardowns>["waitAll"]>[0]) {
+      const result = await super.waitAll(budget);
+      return stopRows.unconfirmed ? ({ closeConfirmed: false, reason: "timeout" } as const) : result;
+    }
+  }
+  return { ...real, TurnTeardowns: Teardowns };
+});
+vi.mock("../local-server-probe.ts", async (original) => {
+  const real = await original<typeof import("../local-server-probe.ts")>();
+  return {
+    ...real,
+    primeLocalContext: async (...args: Parameters<typeof real.primeLocalContext>) => {
+      if (stopRows.heldContext) await new Promise<void>((resolve) => { stopRows.release = resolve; });
+      return real.primeLocalContext(...args);
+    },
+  };
+});
 import {
   piGateAsk,
   applyPiLocalCatalog,
@@ -37,6 +64,7 @@ import {
 } from "./pi.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { CLI_TERM_GRACE_MS } from "../procs.ts";
+import * as procs from "../procs.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-pi-cli.ts");
 const MODELS_LINE =
@@ -288,16 +316,40 @@ describe("PiDriver turns (fake CLI)", () => {
     await instance?.dispose();
   });
 
+  // STOP-NONACP s6 (ruling A): gate.launch gives live back when the spawn throws synchronously, so the wrapper ends the turn.
+  it("STOP-NONACP s6 P1: a spawn that throws synchronously is not swallowed as a live turn: sendTurn rejects with the error, nothing is left live, a later Stop and Stop All end nothing", async () => {
+    await create();
+    const warm = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-s6-spawn", text: "one", model: "ollama-cloud/glm-5.2" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === warm.turnId);
+    const before = recorder.events.length;
+    const realSpawnCli = procs.spawnCli;
+    const spy = vi.spyOn(procs, "spawnCli").mockImplementation((cli, args, ...rest) => {
+      if (!args.includes("--version")) throw new Error("spawn failed (s6)");
+      return realSpawnCli(cli, args, ...rest);
+    });
+    try {
+      // before the fix the entry stayed live, the wrapper swallowed the throw as belonging to a close path that does not exist, and sendTurn resolved
+      await expect(instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-s6-spawn", text: "two", model: "ollama-cloud/glm-5.2" })).rejects.toThrow("spawn failed (s6)");
+      await instance.adapter.interruptTurn("t-s6-spawn").catch(() => {});
+      await instance.adapter.stopAll!().catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(recorder.events.slice(before).filter((e) => e.type === "turn.completed")).toEqual([]);
+    } finally { spy.mockRestore(); }
+    // control: the same thread runs a normal turn after the failed one (no entry is left behind)
+    const again = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-s6-spawn", text: "three", model: "ollama-cloud/glm-5.2" });
+    expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === again.turnId)).toMatchObject({ ok: true });
+  });
+
   it("reports every step's usage once for each of two multi-step turns",async()=>{
     await create("tooluse");
-    for(let n=0;n<2;n++){const sent=await instance.adapter.sendTurn({threadId:"usage-two",text:"hi",model:"ollama-cloud/glm-5.2"});await recorder.until(e=>e.type==="turn.completed"&&e.turnId===sent.turnId);}
+    for(let n=0;n<2;n++){const sent=await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),threadId:"usage-two",text:"hi",model:"ollama-cloud/glm-5.2"});await recorder.until(e=>e.type==="turn.completed"&&e.turnId===sent.turnId);}
     const completed=recorder.events.filter(e=>e.type==="turn.completed");expect(completed).toHaveLength(2);
     for(const event of completed)expect(event).toMatchObject({ok:true,usage:{input:17,output:3}});
   });
 
   it("normalizes a full turn into the canonical event sequence", async () => {
     await create();
-    const { turnId } = await instance.adapter.sendTurn({
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-happy",
       text: "hi",
       model: "ollama-cloud/glm-5.2",
@@ -333,7 +385,7 @@ describe("PiDriver turns (fake CLI)", () => {
     await create(undefined, { FAKE_PI_NO_SESSION: "1" });
     expect(instance.keepsNoSession).toBe(true);
     for (const text of ["first", "second"]) {
-      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-no-session", text });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-no-session", text });
       await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
     }
     expect(recorder.events.filter((e) => e.type === "session.started").map((e) => (e as { sessionId: string | null }).sessionId)).toEqual([null, null]);
@@ -342,7 +394,7 @@ describe("PiDriver turns (fake CLI)", () => {
 
   it("fails promptly when the pi process exits before replying", async () => {
     await create("exit-early");
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-exit", text: "hi" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-exit", text: "hi" });
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
     expect(done).toMatchObject({ ok: false, stopReason: "failed" });
     expect(instance.adapter.hasSession("t-exit")).toBe(false);
@@ -352,7 +404,7 @@ describe("PiDriver turns (fake CLI)", () => {
   // a pi that exits before its turn ended must still show the owner exactly one error.
   const exitCase = async (mode: string, threadId: string) => {
     await create(mode);
-    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "hi" });
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
     await new Promise((resolve) => setTimeout(resolve, 100));
     const errors = recorder.events.filter((e) => e.type === "runtime.error" && e.turnId === turnId) as Array<{ message: string }>;
@@ -385,7 +437,7 @@ describe("PiDriver turns (fake CLI)", () => {
 
   it("surfaces a pi turn error instead of reporting an empty success", async () => {
     await create("turn-error");
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-turn-error", text: "hi" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-turn-error", text: "hi" });
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
     expect(done).toMatchObject({ ok: false, stopReason: "failed", usage: { input: 0, output: 0 } });
     expect(recorder.events.find((e) => e.type === "runtime.error")).toMatchObject({
@@ -419,7 +471,7 @@ describe("PiDriver turns (fake CLI)", () => {
     const dump = join(mkdtempSync(join(tmpdir(), "murage-pi-model-reject-")), "dump.jsonl");
     await create(undefined, { FAKE_PI_DUMP: dump, FAKE_PI_SET_MODEL: "reject" });
     const threadId = `t-model-reject-${newId()}`;
-    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi", model: "openai/gpt-4o" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "hi", model: "openai/gpt-4o" });
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
 
     expect(done).toMatchObject({ ok: false, stopReason: "failed" });
@@ -440,7 +492,7 @@ describe("PiDriver turns (fake CLI)", () => {
       await create(undefined, { FAKE_PI_DUMP: dump });
       const threadId = `t-submission-refused-${newId()}`;
       const beforeSubmit = vi.fn(() => { throw new Error("MEMORY_CONTEXT_REVOKED"); });
-      const { turnId } = await instance.adapter.sendTurn({threadId, text:"hi", model:"openai/gpt-4o", beforeSubmit});
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),threadId, text:"hi", model:"openai/gpt-4o", beforeSubmit});
       expect(beforeSubmit).toHaveBeenCalledOnce();
       expect(outboundCommands(threadId)).toEqual(["new_session", "set_model"]);
       expect(dumpRows(dump).filter(row => row.prompt)).toEqual([]);
@@ -456,7 +508,7 @@ describe("PiDriver turns (fake CLI)", () => {
     // Only the driver's RPC timers are faked; child-process I/O stays real.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
-      const sent = instance.adapter.sendTurn({ threadId, text: "hi", model: "ollama-cloud/glm-5.2" });
+      const sent = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "hi", model: "ollama-cloud/glm-5.2" });
       // session.started is emitted in the same synchronous continuation that
       // arms the set_model response timer and writes set_model.
       await recorder.until((e) => e.type === "session.started" && e.threadId === threadId);
@@ -480,7 +532,7 @@ describe("PiDriver turns (fake CLI)", () => {
   it("fails before model selection or the prompt when a new session cannot start", async () => {
     await create(undefined, { FAKE_PI_SESSION: "reject" });
     const threadId = `t-session-reject-${newId()}`;
-    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi", model: "openai/gpt-4o" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "hi", model: "openai/gpt-4o" });
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
 
     expect(done).toMatchObject({ ok: false, stopReason: "failed" });
@@ -499,7 +551,7 @@ describe("PiDriver turns (fake CLI)", () => {
     const dump = join(dir, "dump.jsonl");
     await create(undefined, { FAKE_PI_SESSION_GATE: gate, FAKE_PI_DUMP: dump });
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const sent = instance.adapter.sendTurn({ threadId, text: "hi" });
+    const sent = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "hi" });
     await recorder.until((e) => e.type === "turn.started" && e.threadId === threadId);
     await vi.advanceTimersByTimeAsync(20_000);
     await vi.advanceTimersByTimeAsync(25_000);
@@ -560,10 +612,10 @@ describe("PiDriver turns (fake CLI)", () => {
   it("a sealed thread's turns carry no cursor: each starts a new_session and never a switch_session", async () => {
     await create();
     const threadId = `t-sealed-${newId()}`;
-    const first = await instance.adapter.sendTurn({ threadId, text: "before the seal" });
+    const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "before the seal" });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
     for (const text of ["sealed one", "sealed two", "sealed three"]) {
-      const sent = await instance.adapter.sendTurn({ threadId, text, sessionReset: true });
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text, sessionReset: true });
       await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
     }
     const commands = outboundCommands(threadId);
@@ -574,7 +626,7 @@ describe("PiDriver turns (fake CLI)", () => {
   it("fails instead of silently dropping history when a saved session cannot be resumed", async () => {
     await create(undefined, { FAKE_PI_SESSION: "reject" });
     const threadId = `t-resume-reject-${newId()}`;
-    const { turnId } = await instance.adapter.sendTurn({
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId,
       text: "hi",
       resumeCursor: "/fake/missing-session.json",
@@ -594,7 +646,7 @@ describe("PiDriver turns (fake CLI)", () => {
     await create(undefined, { FAKE_PI_DUMP: dump });
     const rowsAfterCatalogProbe = dumpRows(dump).length;
     const threadId = `t-bare-model-${newId()}`;
-    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi", model: "gpt-4o" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "hi", model: "gpt-4o" });
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
 
     expect(done).toMatchObject({ ok: false, stopReason: "failed" });
@@ -612,12 +664,12 @@ describe("PiDriver turns (fake CLI)", () => {
     const dump = join(mkdtempSync(join(tmpdir(), "murage-pi-model-ok-")), "dump.jsonl");
     await create(undefined, { FAKE_PI_DUMP: dump });
     const picked = `t-model-picked-${newId()}`;
-    const first = await instance.adapter.sendTurn({ threadId: picked, text: "hi", model: "openai/gpt-4o" });
+    const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: picked, text: "hi", model: "openai/gpt-4o" });
     expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId)).toMatchObject({ ok: true });
     expect(outboundCommands(picked)).toEqual(["new_session", "set_model", "prompt"]);
 
     const plain = `t-model-default-${newId()}`;
-    const second = await instance.adapter.sendTurn({ threadId: plain, text: "hi" });
+    const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: plain, text: "hi" });
     expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId)).toMatchObject({ ok: true });
     expect(outboundCommands(plain)).toEqual(["new_session", "prompt"]);
 
@@ -640,7 +692,7 @@ describe("PiDriver turns (fake CLI)", () => {
     const dir = mkdtempSync(join(tmpdir(), "murage-pi-effort-"));
     const dump = join(dir, "dump.jsonl");
     await create(undefined, { FAKE_PI_DUMP: dump });
-    const { turnId } = await instance.adapter.sendTurn({
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-effort",
       text: "hi",
       model: "ollama-cloud/glm-5.2",
@@ -660,9 +712,9 @@ describe("PiDriver turns (fake CLI)", () => {
     const dir = mkdtempSync(join(tmpdir(), "murage-pi-effort-"));
     const dump = join(dir, "dump.jsonl");
     await create(undefined, { FAKE_PI_DUMP: dump });
-    const none = await instance.adapter.sendTurn({ threadId: "t-none", text: "hi", effort: "none" });
+    const none = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-none", text: "hi", effort: "none" });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === none.turnId);
-    const plain = await instance.adapter.sendTurn({ threadId: "t-plain", text: "hi" });
+    const plain = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-plain", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === plain.turnId);
     const levels = readFileSync(dump, "utf8")
       .split("\n")
@@ -756,7 +808,7 @@ describe("PiDriver turns (fake CLI)", () => {
     const dir = mkdtempSync(join(tmpdir(), "murage-pi-mcp-dump-"));
     const dump = join(dir, "dump.jsonl");
     await create(undefined, { FAKE_PI_DUMP: dump });
-    const { turnId } = await instance.adapter.sendTurn({
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-mcp",
       text: "hi",
       integrations: {
@@ -797,7 +849,7 @@ describe("PiDriver turns (fake CLI)", () => {
 
   it("rides the toolUse auto-continue and only settles on the final end_turn", async () => {
     await create("tooluse");
-    await instance.adapter.sendTurn({ threadId: "t-tool", text: "run it" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-tool", text: "run it" });
     const done = await recorder.until((e) => e.type === "turn.completed");
 
     // a tool ran and completed, then pi auto-continued to synthesize the reply
@@ -815,7 +867,7 @@ describe("PiDriver turns (fake CLI)", () => {
 
   it("emits each assistant text block before the tool that follows it", async () => {
     await create("interleave");
-    await instance.adapter.sendTurn({ threadId: "t-interleave", text: "go", model: "ollama-cloud/glm-5.2" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-interleave", text: "go", model: "ollama-cloud/glm-5.2" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const types = recorder.events.map((e) => e.type);
@@ -842,7 +894,7 @@ describe("PiDriver turns (fake CLI)", () => {
 
   it("turns a <todo> block a model wrote into the answer into plan updates (issue #7)", async () => {
     await create("todo");
-    await instance.adapter.sendTurn({ threadId: "t-todo", text: "go", model: "ollama-cloud/glm-5.2" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-todo", text: "go", model: "ollama-cloud/glm-5.2" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const plans = recorder.events.flatMap((e) => (e.type === "plan.updated" ? [e.entries] : []));
@@ -860,7 +912,7 @@ describe("PiDriver turns (fake CLI)", () => {
     // Before 0.1.52 ASK3 this used the select fixture; a select is now a
     // question, so the permission path is pi's confirm dialog.
     await create("host-confirm");
-    await instance.adapter.sendTurn({ threadId: "t-perm", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-perm", text: "go" });
     await recorder.until((e) => e.type === "request.opened");
     expect(recorder.events.some((e) => e.type === "request.opened")).toBe(true);
 
@@ -885,7 +937,7 @@ describe("PiDriver turns (fake CLI)", () => {
           .then(resolve);
       });
     });
-    await instance.adapter.sendTurn({ threadId: "t-sync-auto", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-sync-auto", text: "go" });
     expect(await outcome).toBe("allowed-once");
     unsubscribe();
     const done = await recorder.until((event) => event.type === "turn.completed");
@@ -900,7 +952,7 @@ describe("PiDriver turns (fake CLI)", () => {
   it("carries local-computer scope on a host-control confirmation from open through resolve", async () => {
     await create("host-confirm");
     const threadId = `t-host-scope-${newId()}`;
-    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "click it", integrations: hostControl });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "click it", integrations: hostControl });
     const opened = await recorder.until((e) => e.type === "request.opened" && e.turnId === turnId);
     expect(opened).toMatchObject({
       requestId: "ask-host",
@@ -921,7 +973,7 @@ describe("PiDriver turns (fake CLI)", () => {
   it("T63: the ask carries its engine and a record per server in the mcp.json it wrote", async () => {
     await create("host-confirm");
     const threadId = `t-63-${newId()}`;
-    const { turnId } = await instance.adapter.sendTurn({
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId, text: "go",
       integrations: {
         ...hostControl,
@@ -943,7 +995,7 @@ describe("PiDriver turns (fake CLI)", () => {
   it("keeps remembered grants from auto-approving a Pi host action and keeps it out of AI review", async () => {
     await create("host-confirm");
     const threadId = `t-host-policy-${newId()}`;
-    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "click it", integrations: hostControl });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "click it", integrations: hostControl });
     const opened = (await recorder.until((e) => e.type === "request.opened" && e.turnId === turnId)) as unknown as OpenedAsk;
 
     // Every grant a user could have remembered for this card, with Auto off —
@@ -982,7 +1034,7 @@ describe("PiDriver turns (fake CLI)", () => {
     const dump = join(tmpdir(), `murage-pi-select-${newId()}.jsonl`);
     await create("permission", { FAKE_PI_DUMP: dump });
     const threadId = `t-select-question-${newId()}`;
-    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "go" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go" });
     const opened = (await recorder.until((e) => e.type === "request.opened" && e.turnId === turnId)) as unknown as OpenedAsk & {
       questionTool?: true;
       choices?: string[];
@@ -1017,7 +1069,7 @@ describe("PiDriver turns (fake CLI)", () => {
     const dump2 = join(tmpdir(), `murage-pi-confirm-${newId()}.jsonl`);
     await create("host-confirm", { FAKE_PI_DUMP: dump2 });
     const plain = `t-confirm-plain-${newId()}`;
-    const second = await instance.adapter.sendTurn({ threadId: plain, text: "click it" });
+    const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: plain, text: "click it" });
     const confirm = await recorder.until((e) => e.type === "request.opened" && e.turnId === second.turnId);
     expect(confirm).toMatchObject({ requestType: "permission" });
     expect(confirm).not.toHaveProperty("questionTool");
@@ -1033,7 +1085,7 @@ describe("PiDriver turns (fake CLI)", () => {
     const dump = join(tmpdir(), `murage-pi-editor-${newId()}.jsonl`);
     await create("editor", { FAKE_PI_DUMP: dump });
     const threadId = `t-editor-${newId()}`;
-    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "go" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go" });
     const opened = await recorder.until((e) => e.type === "request.opened" && e.turnId === turnId);
     expect(opened).toMatchObject({
       requestType: "question",
@@ -1054,7 +1106,7 @@ describe("PiDriver turns (fake CLI)", () => {
     const dump2 = join(tmpdir(), `murage-pi-input-skip-${newId()}.jsonl`);
     await create("question", { FAKE_PI_DUMP: dump2 });
     const skipped = `t-input-skip-${newId()}`;
-    const second = await instance.adapter.sendTurn({ threadId: skipped, text: "go" });
+    const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: skipped, text: "go" });
     const input = await recorder.until((e) => e.type === "request.opened" && e.turnId === second.turnId);
     expect(input).toMatchObject({ requestType: "question", tool: "input", questions: [{ id: "q1", question: "Which branch should I use?", header: "branch name", allowOther: true }] });
     await expect(instance.adapter.respondToRequest(skipped, "ask-q", { behavior: "deny" })).resolves.toBe("rejected");
@@ -1069,7 +1121,7 @@ describe("PiDriver turns (fake CLI)", () => {
     // An ordinary permission ask (a confirm) with no host control.
     await create("host-confirm");
     const plain = `t-plain-scope-${newId()}`;
-    const first = await instance.adapter.sendTurn({ threadId: plain, text: "go" });
+    const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: plain, text: "go" });
     const ordinary = (await recorder.until((e) => e.type === "request.opened" && e.turnId === first.turnId)) as unknown as OpenedAsk;
     expect(ordinary).not.toHaveProperty("approvalScope");
     expect(
@@ -1088,7 +1140,7 @@ describe("PiDriver turns (fake CLI)", () => {
     // An isolated computer (Cua VM / VPS) mounts without host-control scope.
     await create("host-confirm");
     const vm = `t-vm-scope-${newId()}`;
-    const second = await instance.adapter.sendTurn({
+    const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: vm,
       text: "click it",
       integrations: { localComputer: { command: process.execPath, args: ["vm-mcp.js"], env: {} } },
@@ -1104,7 +1156,7 @@ describe("PiDriver turns (fake CLI)", () => {
     // A question on a host-controlling turn is not a permission.
     await create("question");
     const asked = `t-question-scope-${newId()}`;
-    const third = await instance.adapter.sendTurn({ threadId: asked, text: "go", integrations: hostControl });
+    const third = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: asked, text: "go", integrations: hostControl });
     const question = await recorder.until((e) => e.type === "request.opened" && e.turnId === third.turnId);
     expect(question).toMatchObject({ requestType: "question" });
     expect(question).not.toHaveProperty("approvalScope");
@@ -1124,7 +1176,7 @@ describe("PiDriver turns (fake CLI)", () => {
 
   it("interruptTurn cancels a running turn", async () => {
     await create("permission");
-    await instance.adapter.sendTurn({ threadId: "t-interrupt", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-interrupt", text: "go" });
     await recorder.until((e) => e.type === "request.opened");
     await instance.adapter.interruptTurn("t-interrupt");
     const done = await recorder.until((e) => e.type === "turn.completed");
@@ -1136,7 +1188,7 @@ describe("PiDriver turns (fake CLI)", () => {
   // CLOSE-STOP-1014: a turn only the close (quit, restart) ended reads as the engine closing, never as the owner's Stop.
   it("CLOSE-STOP quit alone: a held turn ends as the engine closing, delivered before dispose resolves", async () => {
     await create("permission");
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-close-quit", text: "go" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-close-quit", text: "go" });
     await recorder.until((e) => e.type === "request.opened");
     await instance.dispose();
     expect(recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId)).toEqual([expect.objectContaining({ ok: false, stopReason: "exit_before_result" })]);
@@ -1145,7 +1197,7 @@ describe("PiDriver turns (fake CLI)", () => {
 
   it("CLOSE-STOP Stop then quit: the owner's Stop, once, with no error", async () => {
     await create("permission");
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-close-stop", text: "go" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-close-stop", text: "go" });
     await recorder.until((e) => e.type === "request.opened");
     await instance.adapter.interruptTurn("t-close-stop");
     await instance.dispose();
@@ -1156,7 +1208,7 @@ describe("PiDriver turns (fake CLI)", () => {
   it("a Stop that lands while the turn is still starting (no pi child yet) ends it as cancelled before its prompt", async () => {
     await create();
     // sendTurn awaits its setup (version probe, engine environment) before it spawns and registers the child: the Stop lands there
-    const sent = instance.adapter.sendTurn({ threadId: "t-early-stop", text: "go" });
+    const sent = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-early-stop", text: "go" });
     void instance.adapter.interruptTurn("t-early-stop").catch(() => {});
     const { turnId } = await sent;
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
@@ -1164,6 +1216,250 @@ describe("PiDriver turns (fake CLI)", () => {
     // no prompt reached the engine: nothing was answered
     expect(recorder.events.filter((e) => e.turnId === turnId && (e.type === "content.delta" || e.type === "item.completed"))).toEqual([]);
     expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+  });
+
+  // STOP-NONACP: interruptTurn records a Stop for a thread that is still starting (earlyStops); stopAll did not.
+  it("STOP-NONACP: a Stop All that lands while the turn is still starting ends it as the stopped pair before its prompt", async () => {
+    await create();
+    const sent = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-early-stopall", text: "go" });
+    void instance.adapter.stopAll!().catch(() => {});
+    const { turnId } = await sent;
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(recorder.events.filter((e) => e.turnId === turnId).map((e) => e.type)).toEqual(["turn.started", "turn.completed"]);
+    expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+  });
+
+  // STOP-NONACP row F: a Stop while starting used to be honoured only after the spawn (pi spawned, MCP temp files written, then killed)
+  it.each(["Stop", "Stop All"] as const)("STOP-NONACP row F: %s while the turn is starting spawns no pi child", async (kind) => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-pi-rowf-"));
+    const dump = join(dir, "dump.jsonl");
+    try {
+      await create(undefined, { FAKE_PI_DUMP: dump });
+      const runs = () => (existsSync(dump) ? readFileSync(dump, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((l) => l.argv?.includes("rpc")).length : 0);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const before = runs();                                         // the instance's own catalog probe also runs pi in rpc mode
+      const threadId = `t-rowf-${kind === "Stop" ? "one" : "all"}`;
+      const sent = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go" });
+      void (kind === "Stop" ? instance.adapter.interruptTurn(threadId) : instance.adapter.stopAll!()).catch(() => {});
+      const { turnId } = await sent;
+      const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+      expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(runs()).toBe(before);                                   // no pi child was spawned for the turn
+      expect(recorder.events.filter((e) => e.turnId === turnId).map((e) => e.type)).toEqual(["turn.started", "turn.completed"]);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  // Astra r3 P2: a Stop that landed during the model-context await must not write ~/.pi/agent/models.json
+  it("STOP-NONACP: a Stop while the model is being set up writes no models.json: the stopped pair", async () => {
+    const home = mkdtempSync(join(tmpdir(), "murage-pi-stop-models-"));
+    try {
+      await create(undefined, { HOME: home });
+      const sent = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stop-models", text: "go", model: encodeInjectId("omlx", "MiniMax-M3-4bit") });
+      void instance.adapter.interruptTurn("t-stop-models").catch(() => {});
+      const { turnId } = await sent;
+      const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+      expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+      expect(existsSync(join(home, ".pi", "agent", "models.json"))).toBe(false);
+      expect(recorder.events.filter((e) => e.turnId === turnId).map((e) => e.type)).toEqual(["turn.started", "turn.completed"]);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  // Astra r3 P2: a Stop, then an unsupported-version verdict: the stopped pair, not the update-your-engine card
+  it("STOP-NONACP: a Stop, then an unsupported pi version: the stopped pair, no setup error card", async () => {
+    await create(undefined, { FAKE_PI_VERSION: "0.1.0" });
+    const sent = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stop-oldver", text: "go" });
+    void instance.adapter.interruptTurn("t-stop-oldver").catch(() => {});
+    const { turnId } = await sent;
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+    expect(recorder.events.some((e) => e.turnId === turnId && e.type === "runtime.error")).toBe(false);
+  });
+
+  // Astra r3 P2: a dispose while the turn is starting spawns no pi child (listeners are cleared by the dispose, so only the spawn is observable)
+  it("STOP-NONACP: a dispose while the turn is starting spawns no pi child", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-pi-dispose-"));
+    const dump = join(dir, "dump.jsonl");
+    try {
+      await create(undefined, { FAKE_PI_DUMP: dump });
+      const runs = () => (existsSync(dump) ? readFileSync(dump, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((l) => l.argv?.includes("rpc")).length : 0);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const before = runs();
+      const sent = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-dispose-start", text: "go" });
+      const closing = instance.dispose();
+      await sent.catch(() => {});
+      await closing.catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(runs()).toBe(before);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("STOP-NONACP control: a Stop for another thread leaves a starting turn running to its end", async () => {
+    await create();
+    const sent = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-early-control", text: "go" });
+    void instance.adapter.interruptTurn("some-other-thread").catch(() => {});
+    const { turnId } = await sent;
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    expect(done).toMatchObject({ ok: true });
+    expect((done as { stopReason?: string }).stopReason).not.toBe("cancelled");
+  });
+
+  // ---- STOP-NONACP s4 pi rows (design r3 + r3.1; mutants in /root/swarm1018/stopnonacp/s4-mut/pi) ----
+  const rpcRuns = (dump: string) => (existsSync(dump) ? readFileSync(dump, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((l) => l.argv?.includes("rpc")).length : 0);
+  const eventsOf = (threadId: string) => recorder.events.filter((e) => e.threadId === threadId) as Array<Record<string, any>>;
+  const expectClosingPair = (events: Array<Record<string, any>>) => {
+    expect(events.map((e) => e.type)).toEqual(["turn.started", "runtime.error", "turn.completed"]);
+    expect(events[1]!.message).toContain("closed before it finished its reply");
+    expect(events[2]).toMatchObject({ ok: false, stopReason: "exit_before_result" });
+  };
+  const expectStoppedPair = (events: Array<Record<string, any>>) => {
+    expect(events.map((e) => e.type)).toEqual(["turn.started", "turn.completed"]);
+    expect(events[1]).toMatchObject({ ok: true, stopReason: "cancelled" });
+  };
+
+  it("P1 dispose during startup (before spawn): the closing ending is delivered before dispose resolves, and no pi child is spawned", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-pi-p1-"));
+    const dump = join(dir, "dump.jsonl");
+    try {
+      await create(undefined, { FAKE_PI_DUMP: dump });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const before = rpcRuns(dump);
+      const threadId = "t-p1";
+      let atResolve: Array<Record<string, any>> = [];
+      const sent = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go" });
+      const closing = instance.dispose().then(() => { atResolve = eventsOf(threadId); });
+      await sent;
+      await closing;
+      expectClosingPair(atResolve);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(rpcRuns(dump)).toBe(before);
+      expectClosingPair(eventsOf(threadId));
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("P2 allowance cached (905 skipped), a Stop lands in the 906 step: the stopped pair, not the version card", async () => {
+    const key = `pi|${FAKE_CLI}`;
+    resetVersionProbeBackoff();
+    try {
+      await create(undefined, { FAKE_PI_VERSION: "0.1.0" });
+      const sig = cliSig(FAKE_CLI, process.env);
+      noteVersionProbe(key, sig, false);
+      expect(versionProbeAllowed(key, sig)).toBe(false);   // the backoff skips the first probe: the second probe's step is where the Stop lands
+      const threadId = "t-p2";
+      const sent = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go" });
+      void instance.adapter.interruptTurn(threadId).catch(() => {});
+      const { turnId } = await sent;
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+      expectStoppedPair(eventsOf(threadId));
+    } finally { resetVersionProbeBackoff(); }
+  });
+
+  it.each(["Stop All", "dispose"] as const)("P3 %s during primeLocalContext: the pair, no models.json, no pi child", async (kind) => {
+    const home = mkdtempSync(join(tmpdir(), "murage-pi-p3-"));
+    const dump = join(home, "dump.jsonl");
+    try {
+      await create(undefined, { HOME: home, FAKE_PI_DUMP: dump });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const before = rpcRuns(dump);
+      const threadId = `t-p3-${kind === "dispose" ? "d" : "s"}`;
+      let atResolve: Array<Record<string, any>> = [];
+      const sent = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go", model: encodeInjectId("omlx", "MiniMax-M3-4bit") });
+      const ended = kind === "dispose"
+        ? instance.dispose().then(() => { atResolve = eventsOf(threadId); })
+        : instance.adapter.stopAll!().then(() => { atResolve = eventsOf(threadId); });
+      await sent;
+      await ended;
+      if (kind === "dispose") expectClosingPair(atResolve); else expectStoppedPair(eventsOf(threadId));
+      expect(existsSync(join(home, ".pi", "agent", "models.json"))).toBe(false);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(rpcRuns(dump)).toBe(before);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it("P4 live child dispose: the closing ending (exit_before_result with the engine-closed line) is delivered before dispose resolves, never cancelled", async () => {
+    await create("permission");
+    const threadId = "t-p4";
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go" });
+    await recorder.until((e) => e.type === "request.opened" && e.turnId === turnId);
+    let atResolve: Array<Record<string, any>> = [];
+    await instance.dispose().then(() => { atResolve = eventsOf(threadId); });
+    const ending = atResolve.filter((e) => e.type === "runtime.error" || e.type === "turn.completed");
+    expect(ending.map((e) => e.type)).toEqual(["runtime.error", "turn.completed"]);
+    expect(ending[0]!.message).toContain("closed before it finished its reply");
+    expect(ending[1]).toMatchObject({ ok: false, stopReason: "exit_before_result" });
+    expect(atResolve.some((e) => e.type === "turn.completed" && e.stopReason === "cancelled")).toBe(false);
+  });
+
+  it("P5 U2 variant: dispose with an unconfirmed child stop: the closing receipt is delivered, dispose rejects with today's message, the listeners stay", async () => {
+    await create("permission");
+    const threadId = "t-p5";
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go" });
+    await recorder.until((e) => e.type === "request.opened" && e.turnId === turnId);
+    const seen: Array<Record<string, any>> = [];
+    const unlisten = instance.adapter.onEvent((event) => { seen.push(event as Record<string, any>); });
+    stopRows.unconfirmed = true;
+    try {
+      const failure = await instance.dispose().then(() => null, (error: unknown) => error);
+      expect(failure).toBeInstanceOf(ProviderStopUnconfirmedError);
+      expect((failure as Error).message).toBe(new ProviderStopUnconfirmedError("piAgent", { closeConfirmed: false, reason: "timeout" }).message);
+      // the receipt was delivered before the rejection
+      expect(eventsOf(threadId).filter((e) => e.type === "turn.completed")).toEqual([expect.objectContaining({ ok: false, stopReason: "exit_before_result" })]);
+      // the listeners were kept (registry keeps the leases of an unconfirmed disposal): a turn started now still reaches them
+      const late = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-p5-late", text: "go" });
+      expect(seen.filter((e) => e.turnId === late.turnId && e.type === "turn.completed")).toEqual([expect.objectContaining({ ok: false, stopReason: "exit_before_result" })]);
+      expect(recorder.events.filter((e) => e.turnId === late.turnId && e.type === "turn.completed")).toHaveLength(1);
+    } finally {
+      stopRows.unconfirmed = false;
+      unlisten();
+    }
+  });
+
+  it("P6 (D1/D2) dispose with a startup held past the drain bound: the receipt is delivered before dispose resolves, once, and nothing is written after", async () => {
+    const home = mkdtempSync(join(tmpdir(), "murage-pi-p6-"));
+    const closeMs = process.env.MURAGE_PROVIDER_CLOSE_MS;
+    process.env.MURAGE_PROVIDER_CLOSE_MS = "300";
+    try {
+      await create(undefined, { HOME: home });
+      const threadId = "t-p6";
+      stopRows.heldContext = true;
+      const sent = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go", model: encodeInjectId("omlx", "MiniMax-M3-4bit") });
+      let atResolve: Array<Record<string, any>> = [];
+      await instance.dispose().then(() => { atResolve = eventsOf(threadId); });
+      expectClosingPair(atResolve);
+      stopRows.heldContext = false;
+      stopRows.release?.();
+      await sent;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(eventsOf(threadId).filter((e) => e.type === "turn.completed")).toHaveLength(1);
+      expect(existsSync(join(home, ".pi", "agent", "models.json"))).toBe(false);
+    } finally {
+      stopRows.heldContext = false;
+      stopRows.release?.();
+      if (closeMs === undefined) delete process.env.MURAGE_PROVIDER_CLOSE_MS; else process.env.MURAGE_PROVIDER_CLOSE_MS = closeMs;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("P control: with no Stop and no close an unsupported pi version still shows its setup card", async () => {
+    resetVersionProbeBackoff();
+    try {
+      await create(undefined, { FAKE_PI_VERSION: "0.1.0" });
+      const threadId = "t-p-card";
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go" });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+      const events = eventsOf(threadId);
+      expect(events.map((e) => e.type)).toEqual(["turn.started", "runtime.error", "turn.completed"]);
+      expect(events[1]).toMatchObject({ setup: true, message: expect.stringContaining("Murage needs") });
+      expect(events[2]).toMatchObject({ ok: false, stopReason: "failed" });
+    } finally { resetVersionProbeBackoff(); }
+  });
+
+  it("P control: an idle dispose resolves and says nothing", async () => {
+    await create();
+    await instance.dispose();
+    expect(recorder.events).toEqual([]);
   });
 
   it("close-confirmed stop: interruptTurn resolves only after the pi child has exited", async () => {
@@ -1180,7 +1476,7 @@ describe("PiDriver turns (fake CLI)", () => {
       const pidFile = join(scratch, "pi.pid");
       await create("permission", { FAKE_PI_PID_FILE: pidFile, FAKE_PI_LINGER_MS: "400" });
       const threadId = "t-close-confirmed";
-      const { turnId } = await instance.adapter.sendTurn({ threadId, text: "go" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go" });
       await recorder.until((e) => e.type === "request.opened");
       const pid = Number(readFileSync(pidFile, "utf8"));
       expect(alive(pid)).toBe(true);
@@ -1202,7 +1498,7 @@ describe("PiDriver turns (fake CLI)", () => {
       const commands = join(scratch, "commands.jsonl");
       await create("permission", { FAKE_PI_ABORT_MS: "250", FAKE_PI_ABORT_MARKER: marker, FAKE_PI_COMMAND_LOG: commands });
       const threadId = "t-abort-flush";
-      const { turnId } = await instance.adapter.sendTurn({ threadId, text: "go" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go" });
       await recorder.until(e => e.type === "request.opened");
       const stopped = instance.adapter.interruptTurn(threadId);
       const joined = instance.adapter.interruptTurn(threadId);
@@ -1221,7 +1517,7 @@ describe("PiDriver turns (fake CLI)", () => {
   it("bounds a silent abort reply before requesting termination", async () => {
     await create("permission", { FAKE_PI_ABORT_SILENT: "1" });
     const threadId = "t-abort-timeout";
-    await instance.adapter.sendTurn({ threadId, text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go" });
     await recorder.until(e => e.type === "request.opened");
     const start = Date.now();
     await expect(instance.adapter.interruptTurn(threadId)).resolves.toEqual({ closeConfirmed: true });
@@ -1233,7 +1529,7 @@ describe("PiDriver turns (fake CLI)", () => {
     const home = mkdtempSync(join(tmpdir(), "murage-pi-turn-inject-"));
     const dump = join(home, "dump.jsonl");
     await create(undefined, { HOME: home, FAKE_PI_DUMP: dump });
-    const { turnId } = await instance.adapter.sendTurn({
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-inject",
       text: "hi",
       model: encodeInjectId("omlx", "MiniMax-M3-4bit"),
@@ -1459,8 +1755,8 @@ describe("PiDriver bounded ingress (A4)", () => {
 
   it("fails only the turn whose frame is over the limit, even when turn_end follows it", async () => {
     await create();
-    const oversized = await instance.adapter.sendTurn({ threadId: "t-oversize", text: "__fixture_oversize_frame__", model: "ollama-cloud/glm-5.2" });
-    const ordinary = await instance.adapter.sendTurn({ threadId: "t-ordinary", text: "hi", model: "ollama-cloud/glm-5.2" });
+    const oversized = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oversize", text: "__fixture_oversize_frame__", model: "ollama-cloud/glm-5.2" });
+    const ordinary = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-ordinary", text: "hi", model: "ollama-cloud/glm-5.2" });
     const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === oversized.turnId);
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === ordinary.turnId);
 
@@ -1480,7 +1776,7 @@ describe("PiDriver bounded ingress (A4)", () => {
 
   it("fails an unterminated oversized frame without waiting for a newline", async () => {
     await create();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-open", text: "__fixture_oversize_open_frame__", model: "ollama-cloud/glm-5.2" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-open", text: "__fixture_oversize_open_frame__", model: "ollama-cloud/glm-5.2" });
     const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
 
     expect(failed).toMatchObject({ ok: false, stopReason: "frame_too_large" });
@@ -1489,7 +1785,7 @@ describe("PiDriver bounded ingress (A4)", () => {
 
   it("still carries a valid 14 MiB multibyte frame intact", async () => {
     await create();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-large", text: "__fixture_large_frame__", model: "ollama-cloud/glm-5.2" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-large", text: "__fixture_large_frame__", model: "ollama-cloud/glm-5.2" });
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId, 90_000);
 
     expect(done).toMatchObject({ ok: true });
@@ -1547,7 +1843,7 @@ describe("PiDriver approvals gate (fake CLI)", () => {
     await create(false, { FAKE_PI_GATE_TWICE: "1" });
     resetExecChecks();
     const threadId = `t-gen-pi-${newId()}`;
-    const { turnId } = await instance!.adapter.sendTurn({ threadId, text: "tidy up" });
+    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "tidy up" });
     const first = await recorder!.until((e) => e.type === "request.opened" && e.turnId === turnId && e.requestId === "ask-host") as any;
     expect(execChecks.runs).toBe(1);
     expect(first.execEnv?.shell.at(-1)).toBe("-c");
@@ -1565,7 +1861,7 @@ describe("PiDriver approvals gate (fake CLI)", () => {
     await create(false, { FAKE_PI_GATE_CALL: JSON.stringify({ tool: "write", input: { path: "/tmp/murage-u20-scope", content: "x" } }) });
     resetExecChecks();
     const threadId = `t-u20-pi-${newId()}`;
-    const { turnId } = await instance!.adapter.sendTurn({ threadId, text: "write it" });
+    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "write it" });
     const ask = await recorder!.until((e) => e.type === "request.opened" && e.turnId === turnId && e.requestId === "ask-host") as any;
     expect(ask.tool).toBe("Write");
     expect(execChecks.runs).toBe(0);
@@ -1578,7 +1874,7 @@ describe("PiDriver approvals gate (fake CLI)", () => {
   it("loads the gate and carries the real command to the stop line", async () => {
     const dump = await create(false);
     const threadId = `t-gate-${newId()}`;
-    const { turnId } = await instance!.adapter.sendTurn({ threadId, text: "tidy up" });
+    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "tidy up" });
     const ask = await recorder!.until((e) => e.type === "request.opened" && e.turnId === turnId);
     expect(ask).toMatchObject({
       requestType: "permission",
@@ -1602,7 +1898,7 @@ describe("PiDriver approvals gate (fake CLI)", () => {
   it("Allow answers the editor with the input the gate sent, unchanged", async () => {
     const dump = await create(false);
     const threadId = `t-gate-allow-${newId()}`;
-    const { turnId } = await instance!.adapter.sendTurn({ threadId, text: "tidy up" });
+    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "tidy up" });
     await recorder!.until((e) => e.type === "request.opened" && e.turnId === turnId);
     await instance!.adapter.respondToRequest(threadId, "ask-host", { behavior: "allow" });
     await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId);
@@ -1617,14 +1913,14 @@ describe("PiDriver approvals gate (fake CLI)", () => {
   ])("S4: on %s Allow tells the gate to run what it holds, and Deny stays a deny", async (_name, call) => {
     const dump = await create(false, { FAKE_PI_GATE_CALL: JSON.stringify(call) });
     const threadId = `t-gate-keep-${newId()}`;
-    const { turnId } = await instance!.adapter.sendTurn({ threadId, text: "go" });
+    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go" });
     await recorder!.until((e) => e.type === "request.opened" && e.turnId === turnId);
     await instance!.adapter.respondToRequest(threadId, "ask-host", { behavior: "allow" });
     await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId);
     const replies = readFileSync(dump, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)).filter((r) => r.uiResponse);
     expect(JSON.parse(replies[0].uiResponse.value)).toEqual({ allow: true, keep: true });
     const denied = `t-gate-keep-deny-${newId()}`;
-    const second = await instance!.adapter.sendTurn({ threadId: denied, text: "go" });
+    const second = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: denied, text: "go" });
     await recorder!.until((e) => e.type === "request.opened" && e.turnId === second.turnId);
     await instance!.adapter.respondToRequest(denied, "ask-host", { behavior: "deny", message: "no" });
     await recorder!.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
@@ -1635,7 +1931,7 @@ describe("PiDriver approvals gate (fake CLI)", () => {
   it("T14: a confirm from any other extension is unproven (empty identity), whatever its title says", async () => {
     await create(false, { FAKE_PI_GATE_FORGE: "1" });
     const threadId = `t-gate-forge-${newId()}`;
-    const { turnId } = await instance!.adapter.sendTurn({ threadId, text: "tidy up" });
+    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "tidy up" });
     const ask = await recorder!.until((e) => e.type === "request.opened" && e.turnId === turnId);
     expect(ask).not.toHaveProperty("toolCall");
     expect(ask).toMatchObject({ tool: "murage-gate:not-the-secret", toolIdentity: { namespace: "", name: "" } });
@@ -1649,7 +1945,7 @@ describe("PiDriver approvals gate (fake CLI)", () => {
       if (fullAuto) { recorder!.stop(); await instance!.dispose(); }
       const dump = await create(fullAuto, { FAKE_PI_MODE: "happy" });
       for (const [turn, enforced] of [false, true, false].entries()) {
-        const sent = await instance!.adapter.sendTurn({
+        const sent = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(),
           threadId: `t-enforce-${fullAuto}-${turn}`, text: "hi",
           ...(enforced ? { routeAsks: true as const } : {}),
         });
@@ -1665,7 +1961,7 @@ describe("PiDriver approvals gate (fake CLI)", () => {
 
   it("stays off when the instance skips asks and the bot is not on Full access, and on when it is", async () => {
     const off = await create(true, { FAKE_PI_MODE: "happy" });
-    const first = await instance!.adapter.sendTurn({ threadId: `t-gate-off-${newId()}`, text: "hi" });
+    const first = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-gate-off-${newId()}`, text: "hi" });
     await recorder!.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
     expect(argvOf(off).argv.join(" ")).not.toMatch(/pi-permission-gate/);
     expect(argvOf(off).gate).toBeNull();
@@ -1673,14 +1969,14 @@ describe("PiDriver approvals gate (fake CLI)", () => {
     await instance!.dispose();
 
     const on = await create(true, { FAKE_PI_MODE: "happy" });
-    const second = await instance!.adapter.sendTurn({ threadId: `t-gate-on-${newId()}`, text: "hi", stopLine: true });
+    const second = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-gate-on-${newId()}`, text: "hi", stopLine: true });
     await recorder!.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
     expect(argvOf(on).argv.join(" ")).toMatch(/pi-permission-gate/);
   });
 
   it("is on when the instance skips asks and the bot is on Ask or Auto", async () => {
     const on = await create(true, { FAKE_PI_MODE: "happy" });
-    const turn = await instance!.adapter.sendTurn({ threadId: `t-gate-route-${newId()}`, text: "hi", routeAsks: true });
+    const turn = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-gate-route-${newId()}`, text: "hi", routeAsks: true });
     await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turn.turnId);
     expect(argvOf(on).argv.join(" ")).toMatch(/pi-permission-gate/);
   });
@@ -1693,7 +1989,7 @@ describe("the gate table, not a prefix list, decides (Rule 14)", () => {
     const recorder = recordEvents(instance.adapter);
     const composio = { command: "node", args: ["connector-proxy.js"], env: {} };
     for (const [name, flags] of [["plain", {}], ["routeAsks", { routeAsks: true as const }]] as const) {
-      const sent = await instance.adapter.sendTurn({ threadId: `t-prefix-${name}-${newId()}`, text: "hi", ...flags, integrations: { composio } });
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-prefix-${name}-${newId()}`, text: "hi", ...flags, integrations: { composio } });
       await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
       const row = (readFileSync(dump, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.argv).at(-1)) as { gate: Record<string, unknown> | null; mcpConfig?: { mcpServers: Record<string, any> } };
       expect(row.mcpConfig?.mcpServers.murage_connectors.murageMountId).toBe("own:connector");
@@ -1813,3 +2109,5 @@ describe("piToolErrorDetail", () => {
     expect(piToolErrorDetail({ result: "  \n " })).toBeUndefined();
   });
 });
+
+useOutsideStoreFixture();

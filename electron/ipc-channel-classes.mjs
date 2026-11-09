@@ -216,6 +216,9 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   "perm:open-settings",
   "perm:request-mic",
   "perm:status",
+  // phone-key (1.0.20 bot calls): the Settings key box hands the Vapi key to main once; main stores it encrypted, nothing reads it back
+  "phone-key:remove",
+  "phone-key:save",
   // screen
   "screen:frame",
   "screen:preview-intent",

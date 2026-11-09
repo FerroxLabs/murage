@@ -5,7 +5,7 @@
 // and Settings "Clear" reach the harness from the paired phone, as the owner;
 // the bot card's Undo (always-allow/undo) stays the computer's, like the save.
 // RED until the integrator applies
-// handoffs/ROUTE-POLICY-PATCH-1013-UX-L1A.diff (route-policy.ts is
+// ROUTE-POLICY-PATCH-1013-UX-L1A.diff (route-policy.ts is
 // integrator-only); that is what this test proves landed.
 import { describe, expect, it } from "vitest";
 import { conversationSubject, routeAdmits, routeClass, routePolicy } from "./route-policy.ts";
