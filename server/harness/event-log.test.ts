@@ -18,7 +18,7 @@ import { ConversationDeletions, runConversationDeletion } from "../conversation-
 import { readThreadEvents } from "../thread-events.ts";
 import { EventBus } from "./bus.ts";
 import {
-  enforceEventLogBudget, eventLogIo, eventLogJobsSettled, eventLogLimits, eventLogPruneDone, forgottenTextsAll, forgottenTextsFor, pruneEventLogs, recordEventLogForget, resetEventLogJobsForTests,
+  boundedRecord, enforceEventLogBudget, eventLogIo, eventLogJobsSettled, eventLogLimits, eventLogPruneDone, forgottenTextsAll, forgottenTextsFor, pruneEventLogs, recordEventLogForget, resetEventLogJobsForTests,
   runEventLogForgets, setEventLogBudgetReady, threadSessionLines,
 } from "./event-log.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
@@ -87,12 +87,21 @@ describe("event log writes", () => {
     expect(sessions).toContain("second-session");
   });
 
+  // ql2 sink fold (was: the 50,000-byte result summarized "too large"): a tool result is not a logged field (Astra r1 H9), so the
+  // row is small and holds none of it; the per-record summary itself is pinned on boundedRecord, for a row still over the limit
   it("summarizes a record over the per-record limit instead of writing it whole", () => {
     eventLogLimits.recordBytes = 4 * 1024;
     const bus = new EventBus();
     bus.publish(ev("huge", { type: "item.completed", itemType: "tool", itemId: "t1", ok: true, result: "y".repeat(50_000) }));
-    const [logged] = readFileSync(join(EVENTS_DIR, "huge.ndjson"), "utf8").trim().split("\n").map(l => JSON.parse(l));
-    expect(logged).toMatchObject({ type: "item.completed", itemType: "tool", ok: true, result: expect.stringContaining("too large") });
+    const text = readFileSync(join(EVENTS_DIR, "huge.ndjson"), "utf8");
+    const [logged] = text.trim().split("\n").map(l => JSON.parse(l));
+    expect(logged).toMatchObject({ type: "item.completed", itemType: "tool", itemId: "t1", ok: true });
+    expect(Object.hasOwn(logged, "result")).toBe(false);
+    expect(text).not.toContain("yyyy");
+    const big = ev("huge", { type: "item.completed", itemType: "tool", itemId: "t2", ok: true, result: "y".repeat(50_000) });
+    expect(JSON.parse(boundedRecord(big, 4 * 1024))).toMatchObject({ type: "item.completed", itemType: "tool", itemId: "t2", ok: true, result: expect.stringContaining("too large") });
+    expect(JSON.parse(boundedRecord(ev("huge", { type: "plan.updated", entries: Array.from({ length: 400 }, (_, i) => ({ status: "pending", id: `p${i}` })) }), 4 * 1024)))
+      .toMatchObject({ type: "runtime.error", message: expect.stringContaining("was summarized") });
   });
 
   it("keeps the folder within its total budget and age, and never sweeps routine runs or sessions", async () => {
@@ -129,7 +138,9 @@ describe("event log writes", () => {
   });
 
   it("the Inspector reads across a rotation", () => {
-    eventLogLimits.threadBytes = 8 * 1024;
+    // ql2 sink fold (was 8 KiB): a logged tool row is ids and ok only (~200 bytes, the result is not written), so the cap that
+    // makes 40 rows rotate is smaller
+    eventLogLimits.threadBytes = 2 * 1024;
     const bus = new EventBus();
     for (let i = 0; i < 40; i++) bus.publish(ev("inspect", { type: "item.completed", itemType: "tool", itemId: `t${i}`, ok: true, result: "x".repeat(300) }));
     expect(existsSync(join(EVENTS_DIR, "inspect.previous.ndjson"))).toBe(true);

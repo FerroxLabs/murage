@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "./testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -150,7 +152,7 @@ describe("wire: openai-chat behind the memory adapter", () => {
     const memoryContext = recall
       ? ({ bundleId: "b1", text: recall, policyRevision: 1, deletionEpoch: 0, tokenCount: 1, recordVersions: [], sourceVersions: [] } as MemoryBundle)
       : undefined;
-    await live.adapter.sendTurn({ threadId, text: "question", providerRoute, warmIdentity, ...(memoryContext ? { memoryContext } : {}) });
+    await live.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "question", providerRoute, warmIdentity, ...(memoryContext ? { memoryContext } : {}) });
     await recorder.until((event) => event.type === "turn.completed");
     recorder.stop();
     const request = sent.at(-1)!;
@@ -220,3 +222,6 @@ describe("wire: openai-chat behind the memory adapter", () => {
     expect(countBlocks(prompt)).toBe(1);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

@@ -18,6 +18,7 @@ import { BOT_VISIBLE_STATUS, MurageStatus, statusFromStored } from "./murage-sta
 import { copyChainCheck, transcriptRowCheck } from "./partition-sources.ts";
 import { executionStore } from "./execution-audience.ts";
 import { lineAuthor } from "./message-db.ts";
+import { rowToMessage } from "./transcript-seq.ts";
 import { withheldRoomLine } from "./room-context.ts";
 import { denyLookup, lineageLive } from "./memory/deny-read.ts";
 import { verdictShows, type LineageAudience, type LineageReader, type LineageVerdict } from "./memory/lineage-types.ts";
@@ -195,7 +196,7 @@ export function chainJudge(db: DatabaseSync, threadId: string, audience: Lineage
     const judgeSource = (ref: ChainRef): boolean => {
       const stored = read.get(ref.threadId, ref.messageId) as { role: unknown; json: unknown } | undefined;
       if (!stored) { hard = true; return false; }
-      const json: unknown = JSON.parse(String(stored.json));
+      const json: unknown = rowToMessage({ json: String(stored.json) });
       if (!plainObject(json) || isMurageVoice(json)) { hard = true; return false; }
       if ((stored.role !== "bot" && stored.role !== "user") || json.role !== stored.role) { hard = true; return false; }
       const further = chainRefs(json);
@@ -314,7 +315,7 @@ export function storedRowsVerdict(db: DatabaseSync, viewer: Viewer, threadId: st
     for (const id of ids) {
       const stored = read.get(threadId, id) as { json: unknown } | undefined;
       if (!stored) return "withheld";
-      const json: unknown = JSON.parse(String(stored.json));
+      const json: unknown = rowToMessage({ json: String(stored.json) });
       if (!plainObject(json)) return "withheld";
       rows.push({ threadId, row: { ...json, id } as unknown as Message });
     }

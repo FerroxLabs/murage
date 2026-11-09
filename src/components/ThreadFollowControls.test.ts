@@ -45,8 +45,8 @@ describe("Refresh permissions", () => {
 
 describe("routine limit waits", () => {
   it("names the engine a run is waiting on", () => {
-    expect(limitWaitLabel("engine:claude", [{ instanceId: "claude", displayName: "Claude Code" }])).toBe("waiting for a limit on Claude Code");
-    expect(limitWaitLabel("connection:abc", [])).toBe("waiting for a limit on a connected account");
+    expect(limitWaitLabel("engine:claude", [{ instanceId: "claude", displayName: "Claude Code" }])).toBe("waiting for the limit on Claude Code to reset");
+    expect(limitWaitLabel("connection:abc", [])).toBe("waiting for the limit on a connected account to reset");
   });
   it("a limit reset routine is not moved by dragging its marker", () => {
     expect(scheduleAt({ type: "limit_reset", engineKey: "engine:claude" }, 0, 1000)).toEqual({ type: "limit_reset", engineKey: "engine:claude" });

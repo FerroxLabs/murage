@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -93,3 +94,5 @@ it("a frame with no email-derived memory is unchanged and leaves the turn unmark
   expect(built.text).not.toContain("page-content");
   expect(turnEmailDerived("thread")).toBe(false);
 });
+
+useOutsideStoreFixture();

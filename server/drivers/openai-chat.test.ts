@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Shared OpenAI chat-completions stream runtime (A3). A streamed reply is a
 // successful completion only when it meets the terminal contract: [DONE], or
 // a finish frame followed by clean EOF. In-band errors, unreadable frames,
@@ -12,6 +14,8 @@ import { recordEvents } from "../testing/events.ts";
 import { appendBounded, createOpenAIChatRuntime, MAX_RESPONSE_BYTES, MAX_SSE_LINE_BYTES } from "./openai-chat.ts";
 
 const SECRET = "sk-openai-chat-test-secret";
+/** A Flux host (the fetch stub never leaves the process): Flux's refusal codes are read only on a Flux route. */
+const FLUX_URL = "https://api.fluxrouter.ai/v1";
 const encoder = new TextEncoder();
 
 const frame = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
@@ -95,7 +99,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     for (const instance of instances.splice(0)) await instance.dispose();
   });
 
-  const create = (overrides: { retryScale?: number; reasoning?: boolean; timeoutMs?: number | undefined; apiKey?: string } = {}) => {
+  const create = (overrides: { retryScale?: number; reasoning?: boolean; timeoutMs?: number | undefined; apiKey?: string; apiUrl?: string } = {}) => {
     const instance = createOpenAIChatRuntime({
       input: { instanceId: "chat-test", displayName: "Chat test", environment: {}, enabled: true, config: {} },
       driverKind: "openai-chat-test",
@@ -122,12 +126,12 @@ describe("createOpenAIChatRuntime stream contract", () => {
   const runTurn = async (
     threadId: string,
     next: Responder[],
-    overrides: { retryScale?: number; reasoning?: boolean } = {},
+    overrides: { retryScale?: number; reasoning?: boolean; apiUrl?: string } = {},
   ) => {
     responders = next;
     const instance = create(overrides);
     const recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId, text: "question" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "question" });
     const completed = await recorder.until((event) => event.type === "turn.completed");
     recorder.stop();
     return { completed, events: recorder.events, instance };
@@ -222,7 +226,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     responders = [0.1, 0.2].map(cost => () => sse([contentFrame("ok", "stop"), frame({ choices: [], usage: { prompt_tokens: 10, completion_tokens: 5, cost_usd: cost } }), DONE]));
     const instance = create(); const recorder = recordEvents(instance.adapter);
     for (let n = 0; n < 2; n++) {
-      const sent = await instance.adapter.sendTurn({ threadId: "bank", text: "go" });
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "bank", text: "go" });
       await recorder.until(e => e.type === "turn.completed" && e.turnId === sent.turnId);
     }
     expect(recorder.events.filter(e => e.type === "turn.completed")).toMatchObject([
@@ -319,6 +323,74 @@ describe("createOpenAIChatRuntime stream contract", () => {
     expect(calls).toBe(2);
   });
 
+  it("1.0.18 (f): a Flux free_cap_reached 429 is sent exactly once, and its code travels on the error", async () => {
+    // Recorded shape: flux-router rate_limiter.py raises HTTPException(429, detail={"error":{...,"state":"free_cap_reached"}}),
+    // and LiteLLM flattens that dict into the OpenAI envelope's error.message as a Python repr.
+    const repr = "{'error': {'type': 'rate_limit_exceeded', 'state': 'free_cap_reached', 'tier': 'free', 'message': \"Your account's monthly free-tier token allowance is exhausted.\"}}";
+    const refusal = () => new Response(JSON.stringify({ error: { message: repr, type: "None", param: "None", code: "429" } }), { status: 429, headers: { "content-type": "application/json" } });
+    const { completed, events } = await runTurn("t-flux-free-cap", [refusal, refusal, refusal], { retryScale: 0.001, apiUrl: FLUX_URL });
+    expect(completed).toMatchObject({ ok: false });
+    expect(events.some((event) => event.type === "turn.retrying")).toBe(false);
+    expect(calls).toBe(1);
+    expect(events.find((event) => event.type === "runtime.error")).toMatchObject({ gatewayCode: "free_cap_reached" });
+  });
+
+  it("FLUX-BURN-COPY-1018: a Flux hourly_burn_limit 429 is sent exactly once, and its code and reset time travel on the error", async () => {
+    // Recorded shape: flux-router forge_hook.py's hourly burn gate raises HTTPException(429, detail={"error": "hourly_burn_limit", ..., "retry_after": s}).
+    const refusal = () => new Response(JSON.stringify({ detail: { error: "hourly_burn_limit", subscription_tier: "pro", spent_usd_last_hour: 12.5, inflight_usd: 0.2, threshold_usd: 12, retry_after: 1800 } }), { status: 429, headers: { "content-type": "application/json" } });
+    const before = Date.now();
+    const { completed, events } = await runTurn("t-flux-hourly", [refusal, refusal, refusal], { retryScale: 0.001, apiUrl: FLUX_URL });
+    expect(completed).toMatchObject({ ok: false });
+    expect(events.some((event) => event.type === "turn.retrying")).toBe(false);
+    expect(calls).toBe(1);
+    const error = events.find((event) => event.type === "runtime.error") as { gatewayCode?: string; gatewayResetsAt?: number } | undefined;
+    expect(error).toMatchObject({ gatewayCode: "hourly_burn_limit" });
+    expect(error?.gatewayResetsAt).toBeGreaterThanOrEqual(before + 1_800_000);
+    expect(error?.gatewayResetsAt).toBeLessThanOrEqual(Date.now() + 1_800_000);
+  });
+
+  it("1.0.18 (f): a Flux code that sits only in error.state (not the sentence) is still read, and the 429 is sent once", async () => {
+    const refusal = () => new Response(JSON.stringify({ error: { type: "rate_limit_exceeded", state: "free_cap_reached", message: "Your account's monthly allowance is used up." } }), { status: 429, headers: { "content-type": "application/json" } });
+    const { completed, events } = await runTurn("t-flux-state-only", [refusal, refusal, refusal], { retryScale: 0.001, apiUrl: FLUX_URL });
+    expect(completed).toMatchObject({ ok: false });
+    expect(events.some((event) => event.type === "turn.retrying")).toBe(false);
+    expect(calls).toBe(1);
+    expect(events.find((event) => event.type === "runtime.error")).toMatchObject({ gatewayCode: "free_cap_reached" });
+  });
+
+  it("1.0.18 (f): a metered Flux 402 names credit_exhausted only in the X-Flux-Hold-Reason header, and the code reaches the error", async () => {
+    const refusal = () => new Response(JSON.stringify({ error: { message: "Your credit is used up. Top up at https://fluxrouter.ai/billing" } }), { status: 402, headers: { "content-type": "application/json", "x-flux-hold-reason": "credit_exhausted" } });
+    const { completed, events } = await runTurn("t-flux-header-only", [refusal, refusal, refusal], { retryScale: 0.001, apiUrl: FLUX_URL });
+    expect(completed).toMatchObject({ ok: false });
+    expect(events.some((event) => event.type === "turn.retrying")).toBe(false);
+    expect(calls).toBe(1);
+    expect(events.find((event) => event.type === "runtime.error")).toMatchObject({ gatewayCode: "credit_exhausted" });
+  });
+
+  it("1.0.18 (f, Astra r5): a header-only Flux hold keeps its retries and, when they run out, reaches the error as the hold", async () => {
+    const hold = () => new Response(JSON.stringify({ error: { message: "Too many requests" } }), { status: 429, headers: { "content-type": "application/json", "x-flux-hold-reason": "concurrency" } });
+    const { completed, events } = await runTurn("t-flux-hold-header", [hold, hold, hold], { retryScale: 0.001, apiUrl: FLUX_URL });
+    expect(completed).toMatchObject({ ok: false });
+    expect(calls).toBe(3);
+    expect(events.find((event) => event.type === "runtime.error")).toMatchObject({ gatewayCode: "hold" });
+  });
+
+  it("1.0.18 (f, Astra r4): Flux's code words in another provider's 429 leave its retry and its card as they were", async () => {
+    const refusal = () => new Response(JSON.stringify({ error: { type: "rate_limit_exceeded", state: "free_cap_reached", message: "slow down" } }), { status: 429, headers: { "content-type": "application/json", "x-flux-hold-reason": "credit_exhausted" } });
+    const { completed, events } = await runTurn("t-not-flux-words", [refusal, () => sse([contentFrame("recovered", "stop"), DONE])], { retryScale: 0.001 });
+    expect(completed).toMatchObject({ ok: true });
+    expect(calls).toBe(2);
+    expect(events.some((event) => event.type === "runtime.error" && "gatewayCode" in event)).toBe(false);
+  });
+
+  it("1.0.18 (f): a plain 429 with no Flux code keeps its quiet retry", async () => {
+    const busy = () => new Response(JSON.stringify({ error: { message: "Too many requests" } }), { status: 429, headers: { "content-type": "application/json" } });
+    const { completed, events } = await runTurn("t-plain-429", [busy, () => sse([contentFrame("recovered", "stop"), DONE])], { retryScale: 0.001 });
+    expect(completed).toMatchObject({ ok: true });
+    expect(events.filter((event) => event.type === "turn.retrying")).toHaveLength(1);
+    expect(calls).toBe(2);
+  });
+
   it("fences every send: a retry refused after the backoff is never resent and the turn stops retrying", async () => {
     responders = [
       () => sse([frame({ error: { message: "The server is overloaded" } })]),
@@ -327,7 +399,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     const instance = create({ retryScale: 0.001 });
     const recorder = recordEvents(instance.adapter);
     let checks = 0;
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-fenced-retry",
       text: "question",
       // the first send passes; the turn is retired during the backoff
@@ -348,7 +420,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     responders = [() => sse([contentFrame("never", "stop"), DONE])];
     const instance = create();
     const recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: "t-fenced-first", text: "question", beforeSubmit: () => { throw new Error("refused"); } });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fenced-first", text: "question", beforeSubmit: () => { throw new Error("refused"); } });
     const completed = await recorder.until((event) => event.type === "turn.completed");
     recorder.stop();
     expect(calls).toBe(0);
@@ -521,7 +593,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     }];
     const instance = create();
     const recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: "t-interrupt", text: "question" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-interrupt", text: "question" });
     await recorder.until((event) => event.type === "content.delta");
     await instance.adapter.interruptTurn("t-interrupt");
     const completed = await recorder.until((event) => event.type === "turn.completed");
@@ -564,7 +636,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     }];
     const instance = create();
     const recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: "t-stop-long", text: "write a story" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stop-long", text: "write a story" });
     let deltas = 0;
     await recorder.until((event) => event.type === "content.delta" && ++deltas === 3);
     await instance.adapter.interruptTurn("t-stop-long");
@@ -583,7 +655,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     })];
     const instance = create();
     const recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: "t-html", text: "hello" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-html", text: "hello" });
     const completed = await recorder.until((event) => event.type === "turn.completed");
     recorder.stop();
 
@@ -603,7 +675,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     })];
     const instance = create();
     const recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: "t-empty-json", text: "hello" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-empty-json", text: "hello" });
     const completed = await recorder.until((event) => event.type === "turn.completed");
     recorder.stop();
 
@@ -620,7 +692,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     )];
     const instance = create();
     const recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: "t-401", text: "hello" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-401", text: "hello" });
     const completed = await recorder.until((event) => event.type === "turn.completed");
     recorder.stop();
 
@@ -637,6 +709,18 @@ describe("createOpenAIChatRuntime stream contract", () => {
     expect(JSON.stringify(recorder.events)).not.toContain(SECRET);
   });
 
+  for (const code of ["key_budget_reached", "premium_locked"]) for (const body of [{ error: { code } }, { error: code }]) for (const streamed of [false, true]) it(`typed Flux refusal ${code}, stream=${streamed}, body=${JSON.stringify(body)}`, async () => {
+    responders = [() => streamed ? sse([contentFrame("Partial."), frame(body), DONE]) : Response.json(body, { status: 402 })];
+    const instance = create({ apiUrl: "https://api.fluxrouter.ai/v1" });
+    const recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-flux-budget", text: "hello" });
+    await recorder.until(event => event.type === "turn.completed");
+    recorder.stop();
+    const failure = recorder.events.find(event => event.type === "runtime.error");
+    expect(failure?.providerError?.fluxBudget).toBe(code === "key_budget_reached" ? true : undefined);
+    expect(calls).toBe(1);
+  });
+
   it("a 402 turn reads the provider's reason under the plain line, with the key still masked", async () => {
     responders = [() => new Response(
       JSON.stringify({ error: { message: `Your team has used all credits. Key ${SECRET} was checked.`, code: "credit_exhausted" } }),
@@ -644,7 +728,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     )];
     const instance = create();
     const recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: "t-402", text: "hello" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-402", text: "hello" });
     await recorder.until((event) => event.type === "turn.completed");
     recorder.stop();
     const failure = recorder.events.find((event) => event.type === "runtime.error");
@@ -658,7 +742,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
 
   const sendAndSettle = async (instance: ProviderInstance, threadId: string) => {
     const recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId, text: "hello" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "hello" });
     await recorder.until((event) => event.type === "turn.completed");
     recorder.stop();
   };
@@ -787,7 +871,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     }];
     const instance = create();
     const recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: "t-dead-endpoint", text: "hello" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-dead-endpoint", text: "hello" });
     const completed = await recorder.until((event) => event.type === "turn.completed");
     recorder.stop();
 
@@ -844,7 +928,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     }];
     const instance = create();
     const recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: "t-stop-econnreset", text: "question" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stop-econnreset", text: "question" });
     await recorder.until((event) => event.type === "content.delta");
     await instance.adapter.interruptTurn("t-stop-econnreset");
     const completed = await recorder.until((event) => event.type === "turn.completed");
@@ -912,7 +996,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     })];
     const instance = create({ reasoning: true });
     const recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: "t-vllm-whole", text: "hello" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-vllm-whole", text: "hello" });
     const completed = await recorder.until((event) => event.type === "turn.completed");
     recorder.stop();
 
@@ -1066,7 +1150,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
       const instance = create(overrides);
       const recorder = recordEvents(instance.adapter);
       const notWritten = vi.fn();
-      await instance.adapter.sendTurn({ threadId, text: "hello", notWritten });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "hello", notWritten });
       const completed = await recorder.until((event) => event.type === "turn.completed");
       recorder.stop();
       return { completed, notWritten };
@@ -1146,3 +1230,6 @@ describe("createOpenAIChatRuntime stream contract", () => {
     });
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

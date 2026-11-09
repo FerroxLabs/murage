@@ -13,7 +13,8 @@ const { approvalKey, autoVerdict } = await import("./auto-approve.ts");
 const { alwaysAskCommand } = await import("./always-ask.ts");
 
 type Context = Parameters<typeof autoVerdict>[3];
-const OWNER = { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null } as const;
+// 1.0.20: a clean lane turn; PowerShell keeps today's verdicts there (ruling 3)
+const OWNER = { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null } as const;
 
 const ENDS = ["\n", "\r\n"] as const;
 const CASES = ENDS.flatMap((end) => [

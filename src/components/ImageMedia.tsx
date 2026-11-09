@@ -1,3 +1,5 @@
+import type { WorkspaceScopeRef } from "../../shared/workspace-files";
+import { isWorkspaceRelativePath } from "../../shared/workspace-files";
 // One image surface for chat content (0.1.52 M2, F5-T2). Attachment galleries,
 // Markdown images, the bot's screen frames, room transcripts and the Files
 // saved-copy preview all render their inline image through ImageThumb and
@@ -17,6 +19,8 @@
 // The dialog is a native modal <dialog>, not a positioned <div>: the Files
 // browser is itself a modal <dialog>, and only another top-layer dialog can sit
 // above it without being made inert.
+import { useNativeDialogLayer } from "@/lib/native-dialog-layer";
+import type { LoadedLayerProps } from "@/components/LazyOverlay";
 import { resourceNeedsTicket, ticketedResourceUrl } from "@/lib/live-events";
 import { clickDownload } from "@/lib/save-file";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type SyntheticEvent } from "react";
@@ -33,6 +37,8 @@ import type { ImageReferenceSource, MediaAssetSource } from "../../shared/media-
 import type { Artifact } from "../../shared/artifacts";
 import { UseAsReferenceButton } from "./UseAsReferenceButton";
 import { DesktopImg } from "./DesktopImg";
+
+import { LocalImage } from "./LocalImage";
 
 /** Where an enlarged image came from. `MediaAssetSource` from the frozen media
  * contract, plus `inline-data`: raster bytes embedded in the message text
@@ -146,7 +152,7 @@ export function screenFrameItem(png: string, mime?: string): ImageMediaItem {
 export type MarkdownImageResolution =
   | { kind: "inline"; item: ImageMediaItem }
   | { kind: "external"; url: string; host: string; alt: string }
-  | { kind: "local"; alt: string };
+  | { kind: "local"; alt: string; candidate?: string };
 
 /** What a Markdown image may become. Filename or extension alone never
  * authorizes a load: only the attachment server's own URL form and bytes
@@ -170,12 +176,21 @@ export function resolveMarkdownImage(src: string | undefined, alt: string | unde
       return { kind: "local", alt: label };
     }
   }
-  return { kind: "local", alt: label };
+  const candidate = localImageCandidate(value);
+  return { kind: "local", alt: label, ...(candidate ? { candidate } : {}) };
+}
+export function localImageCandidate(value: string): string | null {
+  if (!/\.(png|jpe?g|gif|webp)$/i.test(value) || /[?#]/.test(value) || value.startsWith("//") || value.startsWith("\\\\")) return null;
+  const drive = /^[A-Za-z]:[\\/]/.test(value);
+  if (!drive && /^[A-Za-z][A-Za-z0-9+.-]*:/.test(value)) return null;
+  const relative = drive ? value.slice(3).replace(/\\/g, "/") : value.startsWith("/") ? value.slice(1) : value;
+  return isWorkspaceRelativePath(relative) ? value : null;
 }
 
 // ── Inline thumbnail ─────────────────────────────────────────────────────
 
-export function ImageThumb({ item, label, onOpen, className, imgClassName, sizes = THUMBNAIL_SIZES }: {
+export function ImageThumb({ item, label, onOpen, className, imgClassName, sizes = THUMBNAIL_SIZES, onLoad, onError }: {
+  onLoad?: () => void; onError?: () => void;
   item: ImageMediaItem;
   label: string;
   onOpen: () => void;
@@ -236,6 +251,7 @@ export function ImageThumb({ item, label, onOpen, className, imgClassName, sizes
         decoding="async"
         referrerPolicy="no-referrer"
         onLoad={(event) => {
+          onLoad?.();
           // naturalWidth here is density-corrected by the srcset; measure the
           // file's true pixels instead (see servedOriginal).
           const current = event.currentTarget.currentSrc;
@@ -246,7 +262,7 @@ export function ImageThumb({ item, label, onOpen, className, imgClassName, sizes
             setSmallOriginal(true);
           });
         }}
-        onError={() => setFailed(true)}
+        onError={() => { if (onError) onError(); else setFailed(true); }}
         className={cn(
           "block max-w-full transition-transform duration-200 group-hover/image:scale-[1.015] motion-reduce:transition-none motion-reduce:group-hover/image:scale-100",
           imgClassName,
@@ -263,7 +279,8 @@ export function ImageThumb({ item, label, onOpen, className, imgClassName, sizes
 }
 
 /** One image with its own lightbox. */
-export function ImageMedia({ item, label, className, imgClassName, sizes }: {
+export function ImageMedia({ item, label, className, imgClassName, sizes, onOpen, onLoad, onError, onDownload }: {
+  onOpen?: () => Promise<ImageMediaItem | null>; onLoad?: () => void; onError?: () => void; onDownload?: () => void;
   item: ImageMediaItem;
   label?: string;
   className?: string;
@@ -271,19 +288,31 @@ export function ImageMedia({ item, label, className, imgClassName, sizes }: {
   sizes?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const items = useMemo(() => [item], [item]);
+  const [openedItem, setOpenedItem] = useState<ImageMediaItem | null>(null);
+  // the full-size read failed: the thumbnail stays pressable and says so, instead of doing nothing
+  const [openFailed, setOpenFailed] = useState(false);
+  const epoch = useRef(0);
+  useLayoutEffect(() => () => { epoch.current++; }, []);
+  const items = useMemo(() => [openedItem ?? item], [openedItem, item]);
   return (
     <>
       <ImageThumb
-        key={item.id}
+        key={`${item.id}#${item.src}`}
         item={item}
         label={label ?? t("media.thumb.open", { name: item.name })}
-        onOpen={() => setOpen(true)}
+        onLoad={onLoad} onError={onError}
+        onOpen={() => {
+          const token = ++epoch.current;
+          setOpenFailed(false);
+          if (!onOpen) { setOpen(true); return; }
+          void onOpen().then(current => { if (current && token === epoch.current) { setOpenedItem(current); setOpen(true); } }).catch(() => { if (token === epoch.current) setOpenFailed(true); });
+        }}
         className={className}
         imgClassName={imgClassName}
         sizes={sizes}
       />
-      {open && <ImageLightbox items={items} index={0} onClose={() => setOpen(false)} />}
+      {openFailed && <span role="status" data-image-media-state="open-failed" className="mt-1 block text-[12px] text-ink-secondary">{t("media.thumb.unavailable", { name: item.name })}</span>}
+      {open && <ImageLightbox items={items} index={0} onLoad={onLoad} onError={onError} onDownload={onDownload} onClose={() => { epoch.current++; setOpen(false); setOpenedItem(null); }} />}
     </>
   );
 }
@@ -335,7 +364,7 @@ export function ImageGallery({ items, className, thumbClassName, imgClassName, l
 const FOCUSABLE = 'button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
 const HEADER_BUTTON = "flex size-9 items-center justify-center rounded-lg text-white/70 hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60";
 
-function LightboxImage({ item }: { item: ImageMediaItem }) {
+function LightboxImage({ item, onLoad, onError, onImageRef }: { item: ImageMediaItem; onLoad?: () => void; onError?: () => void; onImageRef?: (element: HTMLImageElement | null) => void }) {
   // keyed by item.id by the caller: a failure belongs to one image only
   const [failed, setFailed] = useState(false);
   if (failed) {
@@ -351,20 +380,25 @@ function LightboxImage({ item }: { item: ImageMediaItem }) {
       src={item.src}
       alt={item.alt}
       referrerPolicy="no-referrer"
-      onError={() => setFailed(true)}
+      ref={onImageRef}
+      onLoad={onLoad}
+      onError={() => { if (onError) onError(); else setFailed(true); }}
       data-testid="image-lightbox-image"
       className="block max-h-full max-w-full rounded-lg object-contain shadow-2xl"
     />
   );
 }
 
-export function ImageLightbox({ items, index, onIndexChange, onClose }: {
+export function ImageLightbox({ layerLifecycle, items, index, onIndexChange, onClose: requestedClose, onLoad, onError, onImageRef, onDownload, downloadDisabled }: {
+  onLoad?: () => void; onError?: () => void; onImageRef?: (element: HTMLImageElement | null) => void; onDownload?: () => void; downloadDisabled?: boolean;
   items: ImageMediaItem[];
   index: number;
   onIndexChange?: (index: number) => void;
   onClose: () => void;
-}) {
+} & { layerLifecycle?: LoadedLayerProps }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const native = useNativeDialogLayer(dialogRef, { name: "image-lightbox", returnFocusTo: layerLifecycle?.opener, lease: layerLifecycle?.lease });
+  const onClose = () => native.dismiss(requestedClose);
   const closeRef = useRef(onClose);
   useLayoutEffect(() => {
     closeRef.current = onClose;
@@ -375,21 +409,15 @@ export function ImageLightbox({ items, index, onIndexChange, onClose }: {
 
   useLayoutEffect(() => {
     const dialog = dialogRef.current;
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     if (dialog && !dialog.open) {
       try {
-        dialog.showModal();
+        native.show();
       } catch {
         // not connected or already modal elsewhere: fall back to a plain open dialog
         dialog.setAttribute("open", "");
       }
     }
     dialog?.focus();
-    return () => {
-      if (dialog?.open) dialog.close();
-      // back to the thumbnail that opened it, if it is still on screen
-      if (previousFocus?.isConnected) previousFocus.focus();
-    };
   }, []);
 
   const go = useCallback((next: number | null) => {
@@ -513,9 +541,11 @@ export function ImageLightbox({ items, index, onIndexChange, onClose }: {
                 // single-use ticket minted at the click (it lives seconds), so
                 // its bare path never sits in the href; anything else is a
                 // plain link, exactly as given.
-                href={resourceNeedsTicket(item.src) ? "#" : item.src}
+                href={onDownload || resourceNeedsTicket(item.src) ? "#" : item.src}
+                aria-disabled={downloadDisabled}
                 download={item.name}
                 onClick={(event) => {
+                  if (onDownload) { event.preventDefault(); if (!downloadDisabled) onDownload(); return; }
                   if (!resourceNeedsTicket(item.src)) return;
                   event.preventDefault();
                   void ticketedResourceUrl(item.src).then((url) => clickDownload(url, item.name));
@@ -534,7 +564,7 @@ export function ImageLightbox({ items, index, onIndexChange, onClose }: {
           </div>
         </header>
         <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4 sm:p-8">
-          <LightboxImage key={item.id} item={item} />
+          <LightboxImage key={`${item.id}#${item.src}`} item={item} onLoad={onLoad} onError={onError} onImageRef={onImageRef} />
         </div>
       </div>
     </dialog>,
@@ -605,7 +635,8 @@ const CARD = "my-1 inline-flex max-w-full flex-wrap items-center gap-x-2 gap-y-1
 // screens.
 const MARKDOWN_IMAGE_SIZES = "(max-width: 767.98px) 90vw, 640px";
 
-export function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
+export function MarkdownImage({ src, alt, scope }: { src?: string; alt?: string; scope?: WorkspaceScopeRef }) {
+  const owner = useDesktopSurface();
   const resolved = useMemo(() => resolveMarkdownImage(src, alt), [src, alt]);
   // permission to fetch lasts as long as this rendered image, and only for
   // the exact URL that was shown when the person clicked Load
@@ -641,11 +672,12 @@ export function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
       </span>
     );
   }
+  if (resolved.candidate && scope && owner === true) return <LocalImage key={JSON.stringify([scope.botId, scope.threadId, resolved.candidate])} candidate={resolved.candidate} scope={scope} alt={resolved.alt} />;
   return (
     <span className={CARD} data-image-media-state="local">
       <ImageOff size={13} className="shrink-0" aria-hidden="true" />
       {resolved.alt && <span className="min-w-0 text-ink">{resolved.alt}</span>}
-      <span className="min-w-0">{t("media.local.notLoaded")}</span>
+      <span className="min-w-0">{t(owner === false && scope && resolved.candidate ? "media.local.desktopOnly" : "media.local.onlyWorkspace")}</span>
     </span>
   );
 }

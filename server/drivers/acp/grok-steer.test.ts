@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Grok Build takes pictures and messages sent mid-turn, as Fuigo (its downstream) does. Proven on a real grok 1.0.67
@@ -53,7 +55,7 @@ async function heldTurn(home: string, threadId: string, interject?: string) {
   const gate = join(home, "turn.gate");
   const created = await create(home, { FAKE_ACP_MODE: "echo-gated", FAKE_ACP_GATE_FILE: gate, FAKE_ACP_RPC_DUMP: dump,
     ...(interject ? { FAKE_ACP_INTERJECT: interject } : {}) });
-  const { turnId } = await created.adapter.sendTurn({ threadId, text: "Count the invoices" });
+  const { turnId } = await created.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "Count the invoices" });
   for (let i = 0; i < 500 && !methods(dump).includes("session/prompt"); i++) await new Promise((r) => setTimeout(r, 20));
   expect(methods(dump)).toContain("session/prompt");
   return { adapter: created.adapter, dump, release: () => writeFileSync(gate, ""), turnId };
@@ -73,7 +75,7 @@ describe("Grok Build pictures and mid-turn messages", () => {
     const promptDump = join(home, "prompt.json");
     const created = await create(home, { FAKE_ACP_MODE: "happy", FAKE_ACP_PROMPT_DUMP: promptDump });
     const data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aM1sAAAAASUVORK5CYII=";
-    const { turnId } = await created.adapter.sendTurn({ threadId: "t-grok-image", text: "what word is this?", images: [{ mimeType: "image/png", data }] });
+    const { turnId } = await created.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-grok-image", text: "what word is this?", images: [{ mimeType: "image/png", data }] });
     await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId, 15_000);
     const prompt = JSON.parse(readFileSync(promptDump, "utf8")) as Array<Record<string, unknown>>;
     expect(prompt.filter((block) => block.type === "image")).toEqual([{ type: "image", mimeType: "image/png", data }]);
@@ -104,3 +106,6 @@ describe("Grok Build pictures and mid-turn messages", () => {
     release();
   }, 30_000);
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

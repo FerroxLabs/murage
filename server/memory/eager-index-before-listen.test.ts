@@ -7,12 +7,13 @@ import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { buildEagerIndexesBeforeListen, buildPreListenIndexes, OPTIONAL_INDEXES, optionalIndexReady } from "./optional-index.ts";
-import { IDENTITY_CANON_INDEX, IDENTITY_PARTITION_INDEX, OWNER_PIN_INDEX, ownerPinIndexPresent, WAITING_REVIEW_INDEX } from "./schema.ts";
+import { IDENTITY_CANON_INDEX, IDENTITY_PARTITION_INDEX, OWNER_PIN_INDEX, ownerPinIndexPresent, TOMBSTONE_FORGETS_INDEX, WAITING_REVIEW_INDEX } from "./schema.ts";
 import { buildSyntheticV6 } from "./testing/upgrade-fast-fixture.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
-const EAGER = [IDENTITY_CANON_INDEX, IDENTITY_PARTITION_INDEX, WAITING_REVIEW_INDEX];
+// (1.0.18 TURNCACHE-FAILOPEN r4: the owner's forgets of message lines, a small partial index)
+const EAGER = [IDENTITY_CANON_INDEX, IDENTITY_PARTITION_INDEX, WAITING_REVIEW_INDEX, TOMBSTONE_FORGETS_INDEX];
 
 it("an upgrade launch opens with every eager index made, and only those", () => {
   buildSyntheticV6(join(DATA_DIR, "messages.db"), { threads: 4, perThread: 6, payloadBytes: 50, receiptsPerThread: 1 });

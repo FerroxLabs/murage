@@ -79,7 +79,7 @@ describe("what the menu item opens", () => {
     expect(whatsNewTarget("1.0.5")).toMatchObject({ kind: "page", version: "1.0.2" });
     expect(whatsNewTarget("1.0.7")).toMatchObject({ kind: "page", version: "1.0.6" });
     expect(whatsNewTarget("1.0.13")).toMatchObject({ kind: "page", version: "1.0.6" });
-    expect(whatsNewTarget("1.1.0")).toMatchObject({ kind: "page", version: "1.0.17" });
+    expect(whatsNewTarget("1.1.0")).toMatchObject({ kind: "page", version: "1.0.18" });
     expect(whatsNewTarget("0.1.62")).toMatchObject({ kind: "page", version: "0.1.61" });
   });
 
@@ -103,8 +103,11 @@ describe("what the menu item opens", () => {
     const hook = readFileSync(new URL("./whats-new.ts", import.meta.url), "utf8");
     expect(hook).toContain("available: desktop === true }");
     expect(hook).not.toMatch(/available: [^}]*whatsNewPage/);
-    const settings = readFileSync(new URL("../components/SettingsModal.tsx", import.meta.url), "utf8");
-    expect(settings).toMatch(/function WhatsNewRow\(\) \{[\s\S]*?if \(desktop !== true\) return null;/);
+    const settings = readFileSync(new URL("../components/settings/pages/about-rows.tsx", import.meta.url), "utf8");
+    const row = settings.slice(settings.indexOf("export function WhatsNewRow()"), settings.indexOf("export function SourceCodeRow()"));
+    expect(row).toContain("openWhatsNew();");
+    expect(row).toContain("href={changelogUrl()}");
+    expect(row).not.toContain("if (desktop !== true) return null;");
   });
 });
 

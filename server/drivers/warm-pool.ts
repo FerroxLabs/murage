@@ -93,20 +93,27 @@ export const TAKEOVER_FAILED_MESSAGE = "The engine that was starting for this co
 /** The in-flight prewarms of one driver instance, so a send that arrives meanwhile
  * waits for the engine being started instead of failing as "already running". */
 export function createPrewarmGate() {
-  const pending = new Map<string, { done: Promise<void>; finish: () => void }>();
+  const pending = new Map<string, { done: Promise<void>; finish: () => void; token: object }>();
   return {
     has: (threadId: string) => pending.has(threadId),
-    /** False when a prewarm of this thread is already starting. */
-    begin(threadId: string): boolean {
-      if (pending.has(threadId)) return false;
+    /** The current prewarm's token, or undefined. */
+    token: (threadId: string): object | undefined => pending.get(threadId)?.token,
+    /** True while `token` is still this thread's prewarm. */
+    current: (threadId: string, token: object): boolean => pending.get(threadId)?.token === token,
+    /** A token (truthy) for the new prewarm, or null when a prewarm of this thread is already starting. */
+    begin(threadId: string): object | null {
+      if (pending.has(threadId)) return null;
       let finish = () => {};
       const done = new Promise<void>((resolve) => { finish = resolve; });
-      pending.set(threadId, { done, finish });
-      return true;
+      const token = {};
+      pending.set(threadId, { done, finish, token });
+      return token;
     },
-    end(threadId: string) {
+    /** Ends the prewarm. With a token, only if it is still the current one (a stale end leaves a newer prewarm alone). */
+    end(threadId: string, token?: object) {
       const entry = pending.get(threadId);
       if (!entry) return;
+      if (token !== undefined && entry.token !== token) return;
       pending.delete(threadId);
       entry.finish();
     },

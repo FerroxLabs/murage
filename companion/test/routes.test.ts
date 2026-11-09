@@ -692,6 +692,21 @@ describe("project phone routes", () => {
   });
 });
 
+it("learning usage is GET-only on both doors with owner launch proof", () => {
+  const path = "/api/memory/learning-usage", token = "a".repeat(64);
+  for (const surface of ["device", "browser"] as const) {
+    expect(ask("GET", path, true, surface)).toBeNull();
+    expect(ask("GET", path, false, surface)?.status).toBe(401);
+    for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD"]) expect(ask(method, path, true, surface)).not.toBeNull();
+    expect(ask("GET", "/api/memory/status", true, surface)).not.toBeNull();
+    expect(ask("POST", "/api/memory/action", true, surface)).not.toBeNull();
+    expect(ask("GET", `${path}/extra`, true, surface)).not.toBeNull();
+  }
+  expect(launchProofHeaders("GET", path, token)).toEqual({ "x-murage-companion-token": token });
+  expect(launchProofHeaders("GET", path, undefined)).toEqual({});
+  expect(launchProofHeaders("POST", path, token)).toEqual({});
+});
+
 it("project usage is owner-readable on both doors but authority writes stay desktop",()=>{
   for(const surface of ["device","browser"] as const){
     expect(ask("GET","/api/groups/g/usage",true,surface)).toBeNull();
@@ -729,6 +744,12 @@ describe("the owner phone's reads carry the proof on the device door only", () =
     }
     expect(deviceProofHeaders("POST", "/api/bots/b1/work-threads", token)).toEqual({ "x-murage-companion-token": token });
     expect(deviceProofHeaders("POST", "/api/bots/b1/messages", token)).toEqual({ "x-murage-companion-token": token });
+  });
+  it("device: All chats and its search carry the proof; the browser door's do not", () => {
+    for (const path of ["/api/chats", "/api/search"]) {
+      expect(deviceProofHeaders("GET", path, token), path).toEqual({ "x-murage-companion-token": token });
+      expect(launchProofHeaders("GET", path, token), path).toEqual({});
+    }
   });
   it("browser: the same reads get no proof", () => {
     for (const path of ["/api/bots", "/api/events"]) {
@@ -877,4 +898,43 @@ describe("voice note audio", () => {
   it("needs no launch proof, like the transcript image beside it", () => {
     expect(needsLaunchProof("GET", path)).toBe(false);
   });
+});
+
+import { createServer } from "node:http";
+import { createProxyHandler } from "../src/proxy.ts";
+import { createBrowserHandler, cookieName, type BrowserDeviceStore } from "../src/browser.ts";
+it("H1-phone-refetch: the device byte pipe forwards chats.forgot and the browser proof cannot request it", async () => {
+  const token = "c".repeat(64), frame = { kind: "chats.forgot", gen: { epoch: "fixture", rev: 1 }, seq: 1 };
+  const seen: Array<import("node:http").IncomingHttpHeaders> = [];
+  const upstream = createServer((req, res) => {
+    seen.push(req.headers);
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.end(`data: ${JSON.stringify(req.headers["x-murage-companion-token"] === token ? frame : { kind: "hello" })}\n\n`);
+  });
+  await new Promise<void>(done => upstream.listen(0, "127.0.0.1", done));
+  const upstreamPort = (upstream.address() as { port: number }).port;
+  const relay = createServer(createProxyHandler({ harnessPort: upstreamPort, companionToken: token, authenticate: () => ({ cloudDesktopAccess: false }), redeem: () => ({ error: "no" }), serverName: () => "Fixture" }));
+  await new Promise<void>(done => relay.listen(0, "127.0.0.1", done));
+  const devices: BrowserDeviceStore = {
+    redeem: () => ({ error: "fixture" }), openSession: () => null,
+    resolveSession: value => value === "fixture-session" ? {device:{id:"browser-fixture",name:"Browser",cloudDesktopAccess:false},session:{expiresAt:Date.now()+60000},sessionId:"session"} : null,
+    sessionDeadline: () => Date.now()+60000, closeSession: () => false, signOutDevice: () => null,
+    renewSession: () => null, issuePushTokens: () => null, pushBinding: () => null,
+    approvalIdentity: () => null, authenticatePush: () => null,
+  };
+  const browserDoor = createServer(createBrowserHandler({harnessPort:upstreamPort,companionToken:token,identity:()=>({scheme:"http",hosts:new Set(["127.0.0.1"])}),devices}));
+  await new Promise<void>(done => browserDoor.listen(0,"127.0.0.1",done));
+  try {
+    const received = await fetch(`http://127.0.0.1:${(relay.address() as { port: number }).port}/api/events`, { headers: { authorization: "Bearer fixture" } });
+    expect(await received.text()).toContain(JSON.stringify(frame));
+    expect(seen[0]["x-murage-companion-token"]).toBe(token);
+    const browser = await fetch(`http://127.0.0.1:${(browserDoor.address() as {port:number}).port}/api/events`, { headers: {cookie:`${cookieName("http")}=fixture-session`, "x-murage-companion-token":token} });
+    expect(browser.status).toBe(200);
+    const browserStream = await browser.text();
+    expect(browserStream).toContain('"kind":"hello"');
+    expect(browserStream).not.toContain("chats.forgot");
+    expect(seen).toHaveLength(2);
+    expect(seen[1]["x-murage-companion-token"]).toBeUndefined();
+    expect(seen[1]["x-murage-companion"]).toBe("1");
+  } finally { browserDoor.closeAllConnections(); relay.closeAllConnections(); upstream.closeAllConnections(); await Promise.all([new Promise<void>(done => browserDoor.close(() => done())),new Promise<void>(done => relay.close(() => done())), new Promise<void>(done => upstream.close(() => done()))]); }
 });

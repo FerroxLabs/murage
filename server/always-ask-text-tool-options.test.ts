@@ -15,6 +15,7 @@ process.env.HOME = "/home/tester";
 process.env.USERPROFILE = "/home/tester";
 vi.resetModules();
 const { alwaysAskCommand } = await import("./always-ask.ts");
+const { expectProtectedPath } = await import("./testing/marks-doubt-free.ts");
 
 const ORDINARY: string[] = [
   // cut
@@ -121,14 +122,28 @@ const HELD: Array<[cmd: string, rule: string]> = [
 ];
 
 describe("a text tool's separator is not a path", () => {
+  // MARKS r9 C1: probe cut -d / -f1-3 list.txt -> unreadable (value-path) at cwd /work/project, /home/tester, /w and no cwd:
+  // the bare / or ~ separator card is not a cwd matter on No limits, so the cwd does not clear it. Other ORDINARY rows stay null.
+  const R9_CARDS = new Set([
+    "cut -d / -f1-3 list.txt", "cut --delimiter / -f2 list.txt", "cut -d ~ -f1 list.txt", "sort -t / -k 2 list.txt",
+    "sort --field-separator / -k2 list.txt", "column -t -s / list.txt", "column -t -s/ -o / list.txt", "join -t / -1 2 a.txt b.txt",
+    "tr / _ < list.txt", "tr '/' '\\n' < list.txt", "tr -d / < list.txt", "tr -s / < list.txt", "echo a/b | tr / ~",
+  ]);
   it.each(ORDINARY)("%s is ordinary", (cmd) => {
+    if (R9_CARDS.has(cmd)) {
+      expect(alwaysAskCommand(cmd, "/work/project")?.rule).toBe("unreadable");
+      expect(alwaysAskCommand(cmd, "/home/tester")?.rule).toBe("unreadable");
+      return;
+    }
     expect(alwaysAskCommand(cmd, "/work/project")).toBeNull();
     expect(alwaysAskCommand(cmd, "/home/tester")).toBeNull();
   });
   it.each(AWK_ASKS)("%s asks: awk's separator is read as a path", (cmd) => {
-    expect(alwaysAskCommand(cmd, "/work/project")?.rule ?? null).toBe("protected-path");
+    expectProtectedPath(cmd, "/work/project"); // MARKS r12 re-baseline (MurageMain 11-07 item 1): the doubt-free read names it; strict read and every level still card
   });
   it.each(HELD)("%s still asks (%s)", (cmd, rule) => {
+    // MARKS r12 re-baseline (MurageMain 11-07 item 1): the doubt-free read names it; strict read and every level still card
+    if (rule === "protected-path") return expectProtectedPath(cmd, "/work/project");
     expect(alwaysAskCommand(cmd, "/work/project")?.rule ?? null).toBe(rule);
   });
   it("a redirect from tr still asks", () => {

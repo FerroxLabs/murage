@@ -41,7 +41,8 @@ vi.mock("@/lib/learning-counts", async (original) => ({
 const { BotEmailAccountCard, BotEmailSection, BotEmailStub, emailGate } = await import("./BotEmailSettings");
 const { ComputerOnlyStub, SETTINGS_STUB_COPY, SettingsStub, chiefName, settingsCardPath } = await import("./SettingsStub");
 const { WorkspaceFeatureRow } = await import("./SettingsModal");
-const { BotSettingsDialog } = await import("./BotSettingsDialog");
+const { BotSettingsPane } = await import("./BotSettingsPane");
+const BotSettingsDialog = (props: { bot: unknown }) => createElement(BotSettingsPane, { ...(props as { bot: never }), onClose: () => {} });
 const { CLOUD_COMPUTER_ONLY_CARDS } = await import("@/lib/cloud-settings");
 const { CLOUD_PROTOCOL } = await import("@/lib/cloud-workspace");
 const source = (file: string) => readFileSync(new URL(file, import.meta.url), "utf8");
@@ -289,7 +290,7 @@ describe("cards that need this computer, in the Cloud window", () => {
 
   it("paths name the page and the fold", () => {
     expect(settingsCardPath("startup-heading")?.path).toBe("General > Advanced > Start at login and run in the background");
-    expect(settingsCardPath("setup-heading")?.path).toBe("About & updates > Run setup again");
+    expect(settingsCardPath("setup-heading")?.path).toBe("About & help > Run setup again");
   });
 });
 
@@ -344,7 +345,7 @@ describe("invariant: no gated card component returns null for a gated state", ()
 
   it("Settings never hides a card on a Cloud gate, and the bot window never filters a gated row out", () => {
     expect(source("SettingsModal.tsx")).not.toContain("!cloudCardHidden(");
-    const dialog = source("BotSettingsDialog.tsx");
+    const dialog = source("BotSettingsPane.tsx");
     const matches = dialog.slice(dialog.indexOf("const matches = "), dialog.indexOf("\n", dialog.indexOf("const matches = ")));
     expect(matches).not.toContain("GATED_BOT_SETTINGS");
     expect(dialog).not.toMatch(/!GATED_BOT_SETTINGS\.has/);

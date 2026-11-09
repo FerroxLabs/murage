@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -272,7 +274,7 @@ describe("14.3 item 2 and item 5 through the driver (fake CLI)", () => {
     const log = join(dir, "probes-review.jsonl");
     setEnv("FAKE_CLAUDE_PROBE_LOG", log);
     await create();
-    await instance!.generateText!("say hi");
+    await instance!.generateText!("say hi", undefined, fixtureBotFolder());
     expectPinned(probes(log), ["version"]);
   });
 });
@@ -326,3 +328,6 @@ describe("item 6: the PowerShell ask card offers what the Bash ask card offers",
     }
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

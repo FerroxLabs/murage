@@ -1,0 +1,1227 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "1.0.18-lanes",
+  "date": "2026-11-07",
+  "base": "1effcd533225164422aba5c0e9aa372566519377",
+  "scope": "strings and lint files without a valid review",
+  "strings": {
+    "en:engines.cloud.localOnly": {
+      "text": "{engine} runs on your computer. Open Murage on your computer to use it.",
+      "en": "{engine} runs on your computer. Open Murage on your computer to use it.",
+      "verdict": "pass"
+    },
+    "en:engines.hide": {
+      "text": "Hide",
+      "en": "Hide",
+      "verdict": "pass"
+    },
+    "en:engines.hideHint": {
+      "text": "Leave this engine out of every model list. Its app and sign-in stay as they are, and you can unhide it below.",
+      "en": "Leave this engine out of every model list. Its app and sign-in stay as they are, and you can unhide it below.",
+      "verdict": "pass"
+    },
+    "en:engines.hiddenTitle": {
+      "text": "Hidden ({count})",
+      "en": "Hidden ({count})",
+      "verdict": "pass"
+    },
+    "en:engines.hiddenHint": {
+      "text": "Left out of every model list. Their apps and sign-ins are unchanged.",
+      "en": "Left out of every model list. Their apps and sign-ins are unchanged.",
+      "verdict": "pass"
+    },
+    "en:engines.unhide": {
+      "text": "Unhide",
+      "en": "Unhide",
+      "verdict": "pass"
+    },
+    "en:engines.unhiding": {
+      "text": "Unhiding…",
+      "en": "Unhiding…",
+      "verdict": "pass"
+    },
+    "en:engines.copilot.preview": {
+      "text": "GitHub Copilot runs through your own Copilot CLI, with your GitHub sign-in and Copilot plan. GitHub calls its ACP mode a public preview.",
+      "en": "GitHub Copilot runs through your own Copilot CLI, with your GitHub sign-in and Copilot plan. GitHub calls its ACP mode a public preview.",
+      "verdict": "fail",
+      "note": "Rule 1: CLI and ACP mode are unexplained technical terms."
+    },
+    "en:engines.copilot.install": {
+      "text": "Murage does not install GitHub Copilot CLI. Install it with GitHub's own instructions below, then check again.",
+      "en": "Murage does not install GitHub Copilot CLI. Install it with GitHub's own instructions below, then check again.",
+      "verdict": "pass"
+    },
+    "en:slik.backupModel": {
+      "text": "Model for {name}",
+      "en": "Model for {name}",
+      "verdict": "pass"
+    },
+    "en:media.local.onlyWorkspace": {
+      "text": "Only pictures in this conversation's folder load here.",
+      "en": "Only pictures in this conversation's folder load here.",
+      "verdict": "pass"
+    },
+    "en:media.local.desktopOnly": {
+      "text": "Pictures from the bot's folder are not available on this surface.",
+      "en": "Pictures from the bot's folder are not available on this surface.",
+      "verdict": "fail",
+      "note": "Rule 1: “Surface” is internal interface jargon."
+    },
+    "en:media.local.missing": {
+      "text": "That picture is not in this conversation's folder right now.",
+      "en": "That picture is not in this conversation's folder right now.",
+      "verdict": "pass"
+    },
+    "en:media.local.changed": {
+      "text": "That picture changed or could not be loaded.",
+      "en": "That picture changed or could not be loaded.",
+      "verdict": "pass"
+    },
+    "en:media.local.denied": {
+      "text": "That file is not available from this conversation.",
+      "en": "That file is not available from this conversation.",
+      "verdict": "pass"
+    },
+    "en:media.local.unsupported": {
+      "text": "Murage can't show this file as a picture.",
+      "en": "Murage can't show this file as a picture.",
+      "verdict": "pass"
+    },
+    "en:media.local.tryAgain": {
+      "text": "Try again",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "en:media.local.unreachable": {
+      "text": "Murage can't reach that picture right now.",
+      "en": "Murage can't reach that picture right now.",
+      "verdict": "pass"
+    },
+    "en:media.local.large": {
+      "text": "Large picture, {width} by {height}.",
+      "en": "Large picture, {width} by {height}.",
+      "verdict": "pass"
+    },
+    "en:media.local.changedShown": {
+      "text": "That picture changed. This is the current version.",
+      "en": "That picture changed. This is the current version.",
+      "verdict": "pass"
+    },
+    "en:media.local.showIt": {
+      "text": "Show it",
+      "en": "Show it",
+      "verdict": "pass"
+    },
+    "en:media.local.budget": {
+      "text": "Other pictures are using the preview space.",
+      "en": "Other pictures are using the preview space.",
+      "verdict": "pass"
+    },
+    "en:media.local.saveBusy": {
+      "text": "Another picture is being saved. Try again shortly.",
+      "en": "Another picture is being saved. Try again shortly.",
+      "verdict": "pass"
+    },
+    "en:call.budgetStop": {
+      "text": "The call ended because this Flux key has reached its budget. It starts again when the budget resets or changes.",
+      "en": "The call ended because this Flux key has reached its budget. It starts again when the budget resets or changes.",
+      "verdict": "pass"
+    },
+    "en:voice.budgetReached": {
+      "text": "Voice is paused: this Flux key has reached its budget. It starts again when the budget changes.",
+      "en": "Voice is paused: this Flux key has reached its budget. It starts again when the budget changes.",
+      "verdict": "pass"
+    },
+    "en:chats.previews.partial": {
+      "text": "Chat previews are still getting ready.",
+      "en": "Chat previews are still getting ready.",
+      "verdict": "pass"
+    },
+    "en:chats.previews.checking": {
+      "text": "Checking for changes…",
+      "en": "Checking for changes…",
+      "verdict": "pass"
+    },
+    "en:chats.matches.atLeast": {
+      "text": "At least {count} matches",
+      "en": "At least {count} matches",
+      "verdict": "pass"
+    },
+    "en:chats.preview.you": {
+      "text": "You: {text}",
+      "en": "You: {text}",
+      "verdict": "pass"
+    },
+    "en:chats.matches.atLeastOne": {
+      "text": "At least {count} match",
+      "en": "At least {count} match",
+      "verdict": "pass"
+    },
+    "de:engines.cloud.localOnly": {
+      "text": "{engine} läuft auf deinem Computer. Öffne Murage auf deinem Computer, um es zu nutzen.",
+      "en": "{engine} runs on your computer. Open Murage on your computer to use it.",
+      "verdict": "pass"
+    },
+    "de:engines.hide": {
+      "text": "Ausblenden",
+      "en": "Hide",
+      "verdict": "pass"
+    },
+    "de:engines.hideHint": {
+      "text": "Diese Engine aus allen Modelllisten herausnehmen. Die App und die Anmeldung bleiben, wie sie sind, und du kannst sie unten wieder einblenden.",
+      "en": "Leave this engine out of every model list. Its app and sign-in stay as they are, and you can unhide it below.",
+      "verdict": "pass"
+    },
+    "de:engines.hiddenTitle": {
+      "text": "Ausgeblendet ({count})",
+      "en": "Hidden ({count})",
+      "verdict": "pass"
+    },
+    "de:engines.hiddenHint": {
+      "text": "In keiner Modellliste zu sehen. Die Apps und Anmeldungen bleiben unverändert.",
+      "en": "Left out of every model list. Their apps and sign-ins are unchanged.",
+      "verdict": "pass"
+    },
+    "de:engines.unhide": {
+      "text": "Einblenden",
+      "en": "Unhide",
+      "verdict": "pass"
+    },
+    "de:engines.unhiding": {
+      "text": "Wird eingeblendet…",
+      "en": "Unhiding…",
+      "verdict": "pass"
+    },
+    "de:engines.copilot.preview": {
+      "text": "GitHub Copilot läuft über deine eigene Copilot CLI, mit deiner GitHub-Anmeldung und deinem Copilot-Plan. GitHub nennt den ACP-Modus eine öffentliche Vorschau.",
+      "en": "GitHub Copilot runs through your own Copilot CLI, with your GitHub sign-in and Copilot plan. GitHub calls its ACP mode a public preview.",
+      "verdict": "fail",
+      "note": "Rule 1: CLI and ACP-Modus are unexplained technical terms."
+    },
+    "de:engines.copilot.install": {
+      "text": "Murage installiert die GitHub Copilot CLI nicht. Installiere sie mit der Anleitung von GitHub unten und prüfe dann erneut.",
+      "en": "Murage does not install GitHub Copilot CLI. Install it with GitHub's own instructions below, then check again.",
+      "verdict": "pass"
+    },
+    "de:slik.backupModel": {
+      "text": "Modell für {name}",
+      "en": "Model for {name}",
+      "verdict": "pass"
+    },
+    "de:media.local.onlyWorkspace": {
+      "text": "Hier werden nur Bilder aus dem Ordner dieses Gesprächs geladen.",
+      "en": "Only pictures in this conversation's folder load here.",
+      "verdict": "pass"
+    },
+    "de:media.local.desktopOnly": {
+      "text": "Bilder aus dem Bot-Ordner sind auf dieser Oberfläche nicht verfügbar.",
+      "en": "Pictures from the bot's folder are not available on this surface.",
+      "verdict": "pass"
+    },
+    "de:media.local.missing": {
+      "text": "Dieses Bild befindet sich gerade nicht im Ordner dieses Gesprächs.",
+      "en": "That picture is not in this conversation's folder right now.",
+      "verdict": "pass"
+    },
+    "de:media.local.changed": {
+      "text": "Dieses Bild wurde geändert oder konnte nicht geladen werden.",
+      "en": "That picture changed or could not be loaded.",
+      "verdict": "pass"
+    },
+    "de:media.local.denied": {
+      "text": "Diese Datei ist in diesem Gespräch nicht verfügbar.",
+      "en": "That file is not available from this conversation.",
+      "verdict": "pass"
+    },
+    "de:media.local.unsupported": {
+      "text": "Murage kann diese Datei nicht als Bild anzeigen.",
+      "en": "Murage can't show this file as a picture.",
+      "verdict": "pass"
+    },
+    "de:media.local.tryAgain": {
+      "text": "Erneut versuchen",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "de:media.local.unreachable": {
+      "text": "Murage kann dieses Bild gerade nicht erreichen.",
+      "en": "Murage can't reach that picture right now.",
+      "verdict": "pass"
+    },
+    "de:media.local.large": {
+      "text": "Großes Bild, {width} mal {height}.",
+      "en": "Large picture, {width} by {height}.",
+      "verdict": "pass"
+    },
+    "de:media.local.changedShown": {
+      "text": "Dieses Bild wurde geändert. Dies ist die aktuelle Version.",
+      "en": "That picture changed. This is the current version.",
+      "verdict": "pass"
+    },
+    "de:media.local.showIt": {
+      "text": "Anzeigen",
+      "en": "Show it",
+      "verdict": "pass"
+    },
+    "de:media.local.budget": {
+      "text": "Andere Bilder nutzen den Vorschaubereich.",
+      "en": "Other pictures are using the preview space.",
+      "verdict": "pass"
+    },
+    "de:media.local.saveBusy": {
+      "text": "Ein anderes Bild wird gespeichert. Versuche es gleich erneut.",
+      "en": "Another picture is being saved. Try again shortly.",
+      "verdict": "pass"
+    },
+    "de:call.budgetStop": {
+      "text": "Der Anruf wurde beendet, weil dieser Flux-Schlüssel sein Budget erreicht hat. Er startet wieder, wenn das Budget zurückgesetzt oder geändert wird.",
+      "en": "The call ended because this Flux key has reached its budget. It starts again when the budget resets or changes.",
+      "verdict": "pass"
+    },
+    "de:voice.budgetReached": {
+      "text": "Die Sprachausgabe ist pausiert: Dieser Flux-Schlüssel hat sein Budget erreicht. Die Sprachausgabe wird fortgesetzt, wenn sich das Budget ändert.",
+      "en": "Voice is paused: this Flux key has reached its budget. It starts again when the budget changes.",
+      "verdict": "pass"
+    },
+    "de:chats.previews.partial": {
+      "text": "Chatvorschauen werden noch vorbereitet.",
+      "en": "Chat previews are still getting ready.",
+      "verdict": "pass"
+    },
+    "de:chats.previews.checking": {
+      "text": "Änderungen werden geprüft…",
+      "en": "Checking for changes…",
+      "verdict": "pass"
+    },
+    "de:chats.matches.atLeast": {
+      "text": "Mindestens {count} Treffer",
+      "en": "At least {count} matches",
+      "verdict": "pass"
+    },
+    "de:chats.preview.you": {
+      "text": "Du: {text}",
+      "en": "You: {text}",
+      "verdict": "pass"
+    },
+    "de:chats.matches.atLeastOne": {
+      "text": "Mindestens {count} Treffer",
+      "en": "At least {count} match",
+      "verdict": "pass"
+    },
+    "es:engines.cloud.localOnly": {
+      "text": "{engine} funciona en tu computadora. Abre Murage en tu computadora para usarlo.",
+      "en": "{engine} runs on your computer. Open Murage on your computer to use it.",
+      "verdict": "pass"
+    },
+    "es:engines.hide": {
+      "text": "Ocultar",
+      "en": "Hide",
+      "verdict": "pass"
+    },
+    "es:engines.hideHint": {
+      "text": "Quita este motor de todas las listas de modelos. Su app y su inicio de sesión no cambian, y puedes volver a mostrarlo abajo.",
+      "en": "Leave this engine out of every model list. Its app and sign-in stay as they are, and you can unhide it below.",
+      "verdict": "pass"
+    },
+    "es:engines.hiddenTitle": {
+      "text": "Ocultos ({count})",
+      "en": "Hidden ({count})",
+      "verdict": "pass"
+    },
+    "es:engines.hiddenHint": {
+      "text": "No aparecen en ninguna lista de modelos. Sus apps e inicios de sesión no cambian.",
+      "en": "Left out of every model list. Their apps and sign-ins are unchanged.",
+      "verdict": "pass"
+    },
+    "es:engines.unhide": {
+      "text": "Mostrar",
+      "en": "Unhide",
+      "verdict": "pass"
+    },
+    "es:engines.unhiding": {
+      "text": "Mostrando…",
+      "en": "Unhiding…",
+      "verdict": "pass"
+    },
+    "es:engines.copilot.preview": {
+      "text": "GitHub Copilot funciona con tu propia Copilot CLI, con tu sesión de GitHub y tu plan de Copilot. GitHub llama a su modo ACP una vista previa pública.",
+      "en": "GitHub Copilot runs through your own Copilot CLI, with your GitHub sign-in and Copilot plan. GitHub calls its ACP mode a public preview.",
+      "verdict": "fail",
+      "note": "Rule 1: CLI and modo ACP are unexplained technical terms."
+    },
+    "es:engines.copilot.install": {
+      "text": "Murage no instala GitHub Copilot CLI. Instálala con las instrucciones de GitHub de abajo y luego vuelve a comprobar.",
+      "en": "Murage does not install GitHub Copilot CLI. Install it with GitHub's own instructions below, then check again.",
+      "verdict": "pass"
+    },
+    "es:slik.backupModel": {
+      "text": "Modelo para {name}",
+      "en": "Model for {name}",
+      "verdict": "pass"
+    },
+    "es:media.local.onlyWorkspace": {
+      "text": "Aquí solo se cargan imágenes de la carpeta de esta conversación.",
+      "en": "Only pictures in this conversation's folder load here.",
+      "verdict": "pass"
+    },
+    "es:media.local.desktopOnly": {
+      "text": "Las imágenes de la carpeta del bot no están disponibles en esta interfaz.",
+      "en": "Pictures from the bot's folder are not available on this surface.",
+      "verdict": "pass"
+    },
+    "es:media.local.missing": {
+      "text": "Esa imagen no está en la carpeta de esta conversación ahora.",
+      "en": "That picture is not in this conversation's folder right now.",
+      "verdict": "pass"
+    },
+    "es:media.local.changed": {
+      "text": "Esa imagen cambió o no se pudo cargar.",
+      "en": "That picture changed or could not be loaded.",
+      "verdict": "pass"
+    },
+    "es:media.local.denied": {
+      "text": "Ese archivo no está disponible en esta conversación.",
+      "en": "That file is not available from this conversation.",
+      "verdict": "pass"
+    },
+    "es:media.local.unsupported": {
+      "text": "Murage no puede mostrar este archivo como imagen.",
+      "en": "Murage can't show this file as a picture.",
+      "verdict": "pass"
+    },
+    "es:media.local.tryAgain": {
+      "text": "Reintentar",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "es:media.local.unreachable": {
+      "text": "Murage no puede acceder a esa imagen ahora.",
+      "en": "Murage can't reach that picture right now.",
+      "verdict": "pass"
+    },
+    "es:media.local.large": {
+      "text": "Imagen grande, {width} por {height}.",
+      "en": "Large picture, {width} by {height}.",
+      "verdict": "pass"
+    },
+    "es:media.local.changedShown": {
+      "text": "Esa imagen cambió. Esta es la versión actual.",
+      "en": "That picture changed. This is the current version.",
+      "verdict": "pass"
+    },
+    "es:media.local.showIt": {
+      "text": "Mostrar",
+      "en": "Show it",
+      "verdict": "pass"
+    },
+    "es:media.local.budget": {
+      "text": "Otras imágenes están usando el espacio de vista previa.",
+      "en": "Other pictures are using the preview space.",
+      "verdict": "pass"
+    },
+    "es:media.local.saveBusy": {
+      "text": "Se está guardando otra imagen. Vuelve a intentarlo en breve.",
+      "en": "Another picture is being saved. Try again shortly.",
+      "verdict": "pass"
+    },
+    "es:call.budgetStop": {
+      "text": "La llamada terminó porque esta clave de Flux alcanzó su presupuesto. Vuelve a empezar cuando el presupuesto se restablece o cambia.",
+      "en": "The call ended because this Flux key has reached its budget. It starts again when the budget resets or changes.",
+      "verdict": "pass"
+    },
+    "es:voice.budgetReached": {
+      "text": "La voz está en pausa: esta clave de Flux ha alcanzado su presupuesto. Se reanudará cuando cambie el presupuesto.",
+      "en": "Voice is paused: this Flux key has reached its budget. It starts again when the budget changes.",
+      "verdict": "pass"
+    },
+    "es:chats.previews.partial": {
+      "text": "Las vistas previas de los chats aún se están preparando.",
+      "en": "Chat previews are still getting ready.",
+      "verdict": "pass"
+    },
+    "es:chats.previews.checking": {
+      "text": "Buscando cambios…",
+      "en": "Checking for changes…",
+      "verdict": "pass"
+    },
+    "es:chats.matches.atLeast": {
+      "text": "Al menos {count} coincidencias",
+      "en": "At least {count} matches",
+      "verdict": "pass"
+    },
+    "es:chats.preview.you": {
+      "text": "Tú: {text}",
+      "en": "You: {text}",
+      "verdict": "pass"
+    },
+    "es:chats.matches.atLeastOne": {
+      "text": "Al menos {count} coincidencia",
+      "en": "At least {count} match",
+      "verdict": "pass"
+    },
+    "fr:engines.cloud.localOnly": {
+      "text": "{engine} fonctionne sur ton ordinateur. Ouvre Murage sur ton ordinateur pour l'utiliser.",
+      "en": "{engine} runs on your computer. Open Murage on your computer to use it.",
+      "verdict": "pass"
+    },
+    "fr:engines.hide": {
+      "text": "Masquer",
+      "en": "Hide",
+      "verdict": "pass"
+    },
+    "fr:engines.hideHint": {
+      "text": "Retirer ce moteur de toutes les listes de modèles. Son app et sa connexion restent telles quelles, et tu peux le réafficher plus bas.",
+      "en": "Leave this engine out of every model list. Its app and sign-in stay as they are, and you can unhide it below.",
+      "verdict": "pass"
+    },
+    "fr:engines.hiddenTitle": {
+      "text": "Masqués ({count})",
+      "en": "Hidden ({count})",
+      "verdict": "pass"
+    },
+    "fr:engines.hiddenHint": {
+      "text": "Absents de toutes les listes de modèles. Leurs apps et connexions ne changent pas.",
+      "en": "Left out of every model list. Their apps and sign-ins are unchanged.",
+      "verdict": "pass"
+    },
+    "fr:engines.unhide": {
+      "text": "Réafficher",
+      "en": "Unhide",
+      "verdict": "pass"
+    },
+    "fr:engines.unhiding": {
+      "text": "Réaffichage…",
+      "en": "Unhiding…",
+      "verdict": "pass"
+    },
+    "fr:engines.copilot.preview": {
+      "text": "GitHub Copilot passe par ta propre Copilot CLI, avec ta connexion GitHub et ton forfait Copilot. GitHub présente son mode ACP comme un aperçu public.",
+      "en": "GitHub Copilot runs through your own Copilot CLI, with your GitHub sign-in and Copilot plan. GitHub calls its ACP mode a public preview.",
+      "verdict": "fail",
+      "note": "Rule 1: CLI and mode ACP are unexplained technical terms."
+    },
+    "fr:engines.copilot.install": {
+      "text": "Murage n'installe pas GitHub Copilot CLI. Installe-la avec les instructions de GitHub ci-dessous, puis vérifie à nouveau.",
+      "en": "Murage does not install GitHub Copilot CLI. Install it with GitHub's own instructions below, then check again.",
+      "verdict": "pass"
+    },
+    "fr:slik.backupModel": {
+      "text": "Modèle pour {name}",
+      "en": "Model for {name}",
+      "verdict": "pass"
+    },
+    "fr:media.local.onlyWorkspace": {
+      "text": "Seules les images du dossier de cette conversation se chargent ici.",
+      "en": "Only pictures in this conversation's folder load here.",
+      "verdict": "pass"
+    },
+    "fr:media.local.desktopOnly": {
+      "text": "Les images du dossier du bot ne sont pas disponibles sur cette interface.",
+      "en": "Pictures from the bot's folder are not available on this surface.",
+      "verdict": "pass"
+    },
+    "fr:media.local.missing": {
+      "text": "Cette image n’est pas dans le dossier de cette conversation actuellement.",
+      "en": "That picture is not in this conversation's folder right now.",
+      "verdict": "pass"
+    },
+    "fr:media.local.changed": {
+      "text": "Cette image a changé ou n’a pas pu être chargée.",
+      "en": "That picture changed or could not be loaded.",
+      "verdict": "pass"
+    },
+    "fr:media.local.denied": {
+      "text": "Ce fichier n’est pas disponible dans cette conversation.",
+      "en": "That file is not available from this conversation.",
+      "verdict": "pass"
+    },
+    "fr:media.local.unsupported": {
+      "text": "Murage ne peut pas afficher ce fichier comme une image.",
+      "en": "Murage can't show this file as a picture.",
+      "verdict": "pass"
+    },
+    "fr:media.local.tryAgain": {
+      "text": "Réessayer",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "fr:media.local.unreachable": {
+      "text": "Murage ne peut pas accéder à cette image actuellement.",
+      "en": "Murage can't reach that picture right now.",
+      "verdict": "pass"
+    },
+    "fr:media.local.large": {
+      "text": "Grande image, {width} sur {height}.",
+      "en": "Large picture, {width} by {height}.",
+      "verdict": "pass"
+    },
+    "fr:media.local.changedShown": {
+      "text": "Cette image a changé. Voici la version actuelle.",
+      "en": "That picture changed. This is the current version.",
+      "verdict": "pass"
+    },
+    "fr:media.local.showIt": {
+      "text": "Afficher",
+      "en": "Show it",
+      "verdict": "pass"
+    },
+    "fr:media.local.budget": {
+      "text": "D’autres images utilisent l’espace d’aperçu.",
+      "en": "Other pictures are using the preview space.",
+      "verdict": "pass"
+    },
+    "fr:media.local.saveBusy": {
+      "text": "Une autre image est en cours d’enregistrement. Réessaie dans un instant.",
+      "en": "Another picture is being saved. Try again shortly.",
+      "verdict": "pass"
+    },
+    "fr:call.budgetStop": {
+      "text": "L’appel s’est terminé car cette clé Flux a atteint son budget. Il reprend quand le budget est réinitialisé ou modifié.",
+      "en": "The call ended because this Flux key has reached its budget. It starts again when the budget resets or changes.",
+      "verdict": "pass"
+    },
+    "fr:voice.budgetReached": {
+      "text": "La voix est en pause : cette clé Flux a atteint son budget. Elle reprendra lorsque le budget changera.",
+      "en": "Voice is paused: this Flux key has reached its budget. It starts again when the budget changes.",
+      "verdict": "pass"
+    },
+    "fr:chats.previews.partial": {
+      "text": "Les aperçus des discussions sont en cours de préparation.",
+      "en": "Chat previews are still getting ready.",
+      "verdict": "pass"
+    },
+    "fr:chats.previews.checking": {
+      "text": "Vérification des changements…",
+      "en": "Checking for changes…",
+      "verdict": "pass"
+    },
+    "fr:chats.matches.atLeast": {
+      "text": "Au moins {count} résultats",
+      "en": "At least {count} matches",
+      "verdict": "pass"
+    },
+    "fr:chats.preview.you": {
+      "text": "Toi : {text}",
+      "en": "You: {text}",
+      "verdict": "pass"
+    },
+    "fr:chats.matches.atLeastOne": {
+      "text": "Au moins {count} résultat",
+      "en": "At least {count} match",
+      "verdict": "pass"
+    },
+    "hi:engines.cloud.localOnly": {
+      "text": "{engine} आपके कंप्यूटर पर चलता है। इसे इस्तेमाल करने के लिए अपने कंप्यूटर पर Murage खोलें।",
+      "en": "{engine} runs on your computer. Open Murage on your computer to use it.",
+      "verdict": "pass"
+    },
+    "hi:engines.hide": {
+      "text": "छिपाएं",
+      "en": "Hide",
+      "verdict": "pass"
+    },
+    "hi:engines.hideHint": {
+      "text": "इस इंजन को हर मॉडल सूची से हटा दें। इसका ऐप और साइन-इन जैसे हैं वैसे रहते हैं, और आप इसे नीचे फिर से दिखा सकते हैं।",
+      "en": "Leave this engine out of every model list. Its app and sign-in stay as they are, and you can unhide it below.",
+      "verdict": "pass"
+    },
+    "hi:engines.hiddenTitle": {
+      "text": "छिपे हुए ({count})",
+      "en": "Hidden ({count})",
+      "verdict": "pass"
+    },
+    "hi:engines.hiddenHint": {
+      "text": "किसी भी मॉडल सूची में नहीं दिखते। इनके ऐप और साइन-इन नहीं बदलते।",
+      "en": "Left out of every model list. Their apps and sign-ins are unchanged.",
+      "verdict": "pass"
+    },
+    "hi:engines.unhide": {
+      "text": "फिर दिखाएं",
+      "en": "Unhide",
+      "verdict": "pass"
+    },
+    "hi:engines.unhiding": {
+      "text": "फिर दिखा रहे हैं…",
+      "en": "Unhiding…",
+      "verdict": "pass"
+    },
+    "hi:engines.copilot.preview": {
+      "text": "GitHub Copilot आपकी अपनी Copilot CLI से चलता है, आपके GitHub साइन-इन और Copilot प्लान के साथ। GitHub इसके ACP मोड को पब्लिक प्रीव्यू कहता है।",
+      "en": "GitHub Copilot runs through your own Copilot CLI, with your GitHub sign-in and Copilot plan. GitHub calls its ACP mode a public preview.",
+      "verdict": "fail",
+      "note": "Rule 1: CLI and ACP mode are unexplained technical terms."
+    },
+    "hi:engines.copilot.install": {
+      "text": "Murage GitHub Copilot CLI इंस्टॉल नहीं करता। नीचे GitHub के अपने निर्देशों से इसे इंस्टॉल करें, फिर दोबारा जांचें।",
+      "en": "Murage does not install GitHub Copilot CLI. Install it with GitHub's own instructions below, then check again.",
+      "verdict": "pass"
+    },
+    "hi:slik.backupModel": {
+      "text": "{name} के लिए मॉडल",
+      "en": "Model for {name}",
+      "verdict": "pass"
+    },
+    "hi:media.local.onlyWorkspace": {
+      "text": "यहाँ केवल इस बातचीत के फ़ोल्डर की तस्वीरें लोड होती हैं।",
+      "en": "Only pictures in this conversation's folder load here.",
+      "verdict": "pass"
+    },
+    "hi:media.local.desktopOnly": {
+      "text": "इस स्क्रीन पर बॉट के फ़ोल्डर की तस्वीरें उपलब्ध नहीं हैं।",
+      "en": "Pictures from the bot's folder are not available on this surface.",
+      "verdict": "pass"
+    },
+    "hi:media.local.missing": {
+      "text": "वह तस्वीर अभी इस बातचीत के फ़ोल्डर में नहीं है।",
+      "en": "That picture is not in this conversation's folder right now.",
+      "verdict": "pass"
+    },
+    "hi:media.local.changed": {
+      "text": "वह तस्वीर बदल गई या लोड नहीं हो सकी।",
+      "en": "That picture changed or could not be loaded.",
+      "verdict": "pass"
+    },
+    "hi:media.local.denied": {
+      "text": "वह फ़ाइल इस बातचीत में उपलब्ध नहीं है।",
+      "en": "That file is not available from this conversation.",
+      "verdict": "pass"
+    },
+    "hi:media.local.unsupported": {
+      "text": "Murage इस फ़ाइल को तस्वीर के रूप में नहीं दिखा सकता।",
+      "en": "Murage can't show this file as a picture.",
+      "verdict": "pass"
+    },
+    "hi:media.local.tryAgain": {
+      "text": "फिर कोशिश करें",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "hi:media.local.unreachable": {
+      "text": "Murage अभी उस तस्वीर तक नहीं पहुँच सकता।",
+      "en": "Murage can't reach that picture right now.",
+      "verdict": "pass"
+    },
+    "hi:media.local.large": {
+      "text": "बड़ी तस्वीर, {width} गुणा {height}।",
+      "en": "Large picture, {width} by {height}.",
+      "verdict": "pass"
+    },
+    "hi:media.local.changedShown": {
+      "text": "वह तस्वीर बदल गई। यह मौजूदा संस्करण है।",
+      "en": "That picture changed. This is the current version.",
+      "verdict": "pass"
+    },
+    "hi:media.local.showIt": {
+      "text": "दिखाएँ",
+      "en": "Show it",
+      "verdict": "pass"
+    },
+    "hi:media.local.budget": {
+      "text": "अन्य तस्वीरें पूर्वावलोकन की जगह इस्तेमाल कर रही हैं।",
+      "en": "Other pictures are using the preview space.",
+      "verdict": "pass"
+    },
+    "hi:media.local.saveBusy": {
+      "text": "दूसरी तस्वीर सहेजी जा रही है। थोड़ी देर में फिर कोशिश करें।",
+      "en": "Another picture is being saved. Try again shortly.",
+      "verdict": "pass"
+    },
+    "hi:call.budgetStop": {
+      "text": "कॉल समाप्त हो गई क्योंकि इस Flux कुंजी का बजट पूरा हो गया है। बजट रीसेट होने या बदलने पर कॉल फिर शुरू होती है।",
+      "en": "The call ended because this Flux key has reached its budget. It starts again when the budget resets or changes.",
+      "verdict": "pass"
+    },
+    "hi:voice.budgetReached": {
+      "text": "आवाज़ रुकी हुई है: इस Flux कुंजी का बजट पूरा हो गया है। बजट बदलने पर यह फिर शुरू होगी।",
+      "en": "Voice is paused: this Flux key has reached its budget. It starts again when the budget changes.",
+      "verdict": "pass"
+    },
+    "hi:chats.previews.partial": {
+      "text": "चैट की झलकियाँ अभी तैयार हो रही हैं।",
+      "en": "Chat previews are still getting ready.",
+      "verdict": "pass"
+    },
+    "hi:chats.previews.checking": {
+      "text": "बदलावों की जाँच हो रही है…",
+      "en": "Checking for changes…",
+      "verdict": "pass"
+    },
+    "hi:chats.matches.atLeast": {
+      "text": "कम से कम {count} परिणाम",
+      "en": "At least {count} matches",
+      "verdict": "pass"
+    },
+    "hi:chats.preview.you": {
+      "text": "आप: {text}",
+      "en": "You: {text}",
+      "verdict": "pass"
+    },
+    "hi:chats.matches.atLeastOne": {
+      "text": "कम से कम {count} परिणाम",
+      "en": "At least {count} match",
+      "verdict": "pass"
+    },
+    "ja:engines.cloud.localOnly": {
+      "text": "{engine} はお使いのコンピューターで動きます。使うには、コンピューターで Murage を開いてください。",
+      "en": "{engine} runs on your computer. Open Murage on your computer to use it.",
+      "verdict": "pass"
+    },
+    "ja:engines.hide": {
+      "text": "非表示",
+      "en": "Hide",
+      "verdict": "pass"
+    },
+    "ja:engines.hideHint": {
+      "text": "このエンジンをすべてのモデル一覧から外します。アプリとサインインはそのままで、下から再表示できます。",
+      "en": "Leave this engine out of every model list. Its app and sign-in stay as they are, and you can unhide it below.",
+      "verdict": "pass"
+    },
+    "ja:engines.hiddenTitle": {
+      "text": "非表示 ({count})",
+      "en": "Hidden ({count})",
+      "verdict": "pass"
+    },
+    "ja:engines.hiddenHint": {
+      "text": "どのモデル一覧にも表示されません。アプリとサインインは変わりません。",
+      "en": "Left out of every model list. Their apps and sign-ins are unchanged.",
+      "verdict": "pass"
+    },
+    "ja:engines.unhide": {
+      "text": "再表示",
+      "en": "Unhide",
+      "verdict": "pass"
+    },
+    "ja:engines.unhiding": {
+      "text": "再表示しています…",
+      "en": "Unhiding…",
+      "verdict": "pass"
+    },
+    "ja:engines.copilot.preview": {
+      "text": "GitHub Copilot は、あなた自身の Copilot CLI で、あなたの GitHub サインインと Copilot プランを使って動きます。GitHub は ACP モードをパブリックプレビューとしています。",
+      "en": "GitHub Copilot runs through your own Copilot CLI, with your GitHub sign-in and Copilot plan. GitHub calls its ACP mode a public preview.",
+      "verdict": "fail",
+      "note": "Rule 1: CLI and ACP mode are unexplained technical terms."
+    },
+    "ja:engines.copilot.install": {
+      "text": "Murage は GitHub Copilot CLI をインストールしません。下の GitHub の手順でインストールしてから、もう一度確認してください。",
+      "en": "Murage does not install GitHub Copilot CLI. Install it with GitHub's own instructions below, then check again.",
+      "verdict": "pass"
+    },
+    "ja:slik.backupModel": {
+      "text": "{name} のモデル",
+      "en": "Model for {name}",
+      "verdict": "pass"
+    },
+    "ja:media.local.onlyWorkspace": {
+      "text": "ここでは、この会話のフォルダー内の画像のみ読み込まれます。",
+      "en": "Only pictures in this conversation's folder load here.",
+      "verdict": "pass"
+    },
+    "ja:media.local.desktopOnly": {
+      "text": "この画面ではボットのフォルダー内の画像を利用できません。",
+      "en": "Pictures from the bot's folder are not available on this surface.",
+      "verdict": "pass"
+    },
+    "ja:media.local.missing": {
+      "text": "現在、この会話のフォルダーにその画像はありません。",
+      "en": "That picture is not in this conversation's folder right now.",
+      "verdict": "pass"
+    },
+    "ja:media.local.changed": {
+      "text": "その画像は変更されたか、読み込めませんでした。",
+      "en": "That picture changed or could not be loaded.",
+      "verdict": "pass"
+    },
+    "ja:media.local.denied": {
+      "text": "この会話ではそのファイルを利用できません。",
+      "en": "That file is not available from this conversation.",
+      "verdict": "pass"
+    },
+    "ja:media.local.unsupported": {
+      "text": "Murageはこのファイルを画像として表示できません。",
+      "en": "Murage can't show this file as a picture.",
+      "verdict": "pass"
+    },
+    "ja:media.local.tryAgain": {
+      "text": "再試行",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "ja:media.local.unreachable": {
+      "text": "現在、Murageはその画像にアクセスできません。",
+      "en": "Murage can't reach that picture right now.",
+      "verdict": "pass"
+    },
+    "ja:media.local.large": {
+      "text": "大きな画像、{width} × {height}。",
+      "en": "Large picture, {width} by {height}.",
+      "verdict": "pass"
+    },
+    "ja:media.local.changedShown": {
+      "text": "その画像は変更されました。これが現在のバージョンです。",
+      "en": "That picture changed. This is the current version.",
+      "verdict": "pass"
+    },
+    "ja:media.local.showIt": {
+      "text": "表示",
+      "en": "Show it",
+      "verdict": "pass"
+    },
+    "ja:media.local.budget": {
+      "text": "他の画像がプレビュー領域を使用しています。",
+      "en": "Other pictures are using the preview space.",
+      "verdict": "pass"
+    },
+    "ja:media.local.saveBusy": {
+      "text": "別の画像を保存中です。少し待ってから再試行してください。",
+      "en": "Another picture is being saved. Try again shortly.",
+      "verdict": "pass"
+    },
+    "ja:call.budgetStop": {
+      "text": "このFluxキーの予算に達したため、通話が終了しました。予算がリセットまたは変更されると、再び通話を開始できます。",
+      "en": "The call ended because this Flux key has reached its budget. It starts again when the budget resets or changes.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation says the user can restart the call instead of saying it restarts."
+    },
+    "ja:voice.budgetReached": {
+      "text": "このFluxキーの予算上限に達したため、音声を一時停止しています。予算が変更されると再開します。",
+      "en": "Voice is paused: this Flux key has reached its budget. It starts again when the budget changes.",
+      "verdict": "pass"
+    },
+    "ja:chats.previews.partial": {
+      "text": "チャットのプレビューを準備しています。",
+      "en": "Chat previews are still getting ready.",
+      "verdict": "pass"
+    },
+    "ja:chats.previews.checking": {
+      "text": "変更を確認しています…",
+      "en": "Checking for changes…",
+      "verdict": "pass"
+    },
+    "ja:chats.matches.atLeast": {
+      "text": "少なくとも{count}件の一致",
+      "en": "At least {count} matches",
+      "verdict": "pass"
+    },
+    "ja:chats.preview.you": {
+      "text": "あなた: {text}",
+      "en": "You: {text}",
+      "verdict": "pass"
+    },
+    "ja:chats.matches.atLeastOne": {
+      "text": "少なくとも{count}件の一致",
+      "en": "At least {count} match",
+      "verdict": "pass"
+    },
+    "pt-br:engines.cloud.localOnly": {
+      "text": "O {engine} funciona no seu computador. Abra o Murage no seu computador para usá-lo.",
+      "en": "{engine} runs on your computer. Open Murage on your computer to use it.",
+      "verdict": "pass"
+    },
+    "pt-br:engines.hide": {
+      "text": "Ocultar",
+      "en": "Hide",
+      "verdict": "pass"
+    },
+    "pt-br:engines.hideHint": {
+      "text": "Tira este motor de todas as listas de modelos. O app e o login dele continuam como estão, e você pode mostrá-lo de novo abaixo.",
+      "en": "Leave this engine out of every model list. Its app and sign-in stay as they are, and you can unhide it below.",
+      "verdict": "fail",
+      "note": "Rule 7: “Tira” does not match the você imperative used elsewhere."
+    },
+    "pt-br:engines.hiddenTitle": {
+      "text": "Ocultos ({count})",
+      "en": "Hidden ({count})",
+      "verdict": "pass"
+    },
+    "pt-br:engines.hiddenHint": {
+      "text": "Fora de todas as listas de modelos. Os apps e logins deles não mudam.",
+      "en": "Left out of every model list. Their apps and sign-ins are unchanged.",
+      "verdict": "pass"
+    },
+    "pt-br:engines.unhide": {
+      "text": "Mostrar",
+      "en": "Unhide",
+      "verdict": "pass"
+    },
+    "pt-br:engines.unhiding": {
+      "text": "Mostrando…",
+      "en": "Unhiding…",
+      "verdict": "pass"
+    },
+    "pt-br:engines.copilot.preview": {
+      "text": "O GitHub Copilot roda pela sua própria Copilot CLI, com o seu login do GitHub e o seu plano do Copilot. O GitHub chama o modo ACP de prévia pública.",
+      "en": "GitHub Copilot runs through your own Copilot CLI, with your GitHub sign-in and Copilot plan. GitHub calls its ACP mode a public preview.",
+      "verdict": "fail",
+      "note": "Rule 1: CLI and modo ACP are unexplained technical terms."
+    },
+    "pt-br:engines.copilot.install": {
+      "text": "O Murage não instala a GitHub Copilot CLI. Instale com as instruções do próprio GitHub abaixo e depois verifique de novo.",
+      "en": "Murage does not install GitHub Copilot CLI. Install it with GitHub's own instructions below, then check again.",
+      "verdict": "pass"
+    },
+    "pt-br:slik.backupModel": {
+      "text": "Modelo para {name}",
+      "en": "Model for {name}",
+      "verdict": "pass"
+    },
+    "pt-br:media.local.onlyWorkspace": {
+      "text": "Só imagens da pasta desta conversa são carregadas aqui.",
+      "en": "Only pictures in this conversation's folder load here.",
+      "verdict": "pass"
+    },
+    "pt-br:media.local.desktopOnly": {
+      "text": "As imagens da pasta do bot não estão disponíveis nesta interface.",
+      "en": "Pictures from the bot's folder are not available on this surface.",
+      "verdict": "pass"
+    },
+    "pt-br:media.local.missing": {
+      "text": "Essa imagem não está na pasta desta conversa agora.",
+      "en": "That picture is not in this conversation's folder right now.",
+      "verdict": "pass"
+    },
+    "pt-br:media.local.changed": {
+      "text": "Essa imagem mudou ou não pôde ser carregada.",
+      "en": "That picture changed or could not be loaded.",
+      "verdict": "pass"
+    },
+    "pt-br:media.local.denied": {
+      "text": "Esse arquivo não está disponível nesta conversa.",
+      "en": "That file is not available from this conversation.",
+      "verdict": "pass"
+    },
+    "pt-br:media.local.unsupported": {
+      "text": "O Murage não pode mostrar este arquivo como imagem.",
+      "en": "Murage can't show this file as a picture.",
+      "verdict": "pass"
+    },
+    "pt-br:media.local.tryAgain": {
+      "text": "Tentar novamente",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "pt-br:media.local.unreachable": {
+      "text": "O Murage não consegue acessar essa imagem agora.",
+      "en": "Murage can't reach that picture right now.",
+      "verdict": "pass"
+    },
+    "pt-br:media.local.large": {
+      "text": "Imagem grande, {width} por {height}.",
+      "en": "Large picture, {width} by {height}.",
+      "verdict": "pass"
+    },
+    "pt-br:media.local.changedShown": {
+      "text": "Essa imagem mudou. Esta é a versão atual.",
+      "en": "That picture changed. This is the current version.",
+      "verdict": "pass"
+    },
+    "pt-br:media.local.showIt": {
+      "text": "Mostrar",
+      "en": "Show it",
+      "verdict": "pass"
+    },
+    "pt-br:media.local.budget": {
+      "text": "Outras imagens estão usando o espaço de prévia.",
+      "en": "Other pictures are using the preview space.",
+      "verdict": "pass"
+    },
+    "pt-br:media.local.saveBusy": {
+      "text": "Outra imagem está sendo salva. Tente novamente em breve.",
+      "en": "Another picture is being saved. Try again shortly.",
+      "verdict": "pass"
+    },
+    "pt-br:call.budgetStop": {
+      "text": "A chamada terminou porque esta chave do Flux atingiu seu orçamento. Ela começa de novo quando o orçamento é redefinido ou alterado.",
+      "en": "The call ended because this Flux key has reached its budget. It starts again when the budget resets or changes.",
+      "verdict": "pass"
+    },
+    "pt-br:voice.budgetReached": {
+      "text": "A voz está pausada: esta chave do Flux atingiu o orçamento. Ela será retomada quando o orçamento mudar.",
+      "en": "Voice is paused: this Flux key has reached its budget. It starts again when the budget changes.",
+      "verdict": "pass"
+    },
+    "pt-br:chats.previews.partial": {
+      "text": "As prévias das conversas ainda estão sendo preparadas.",
+      "en": "Chat previews are still getting ready.",
+      "verdict": "pass"
+    },
+    "pt-br:chats.previews.checking": {
+      "text": "Verificando alterações…",
+      "en": "Checking for changes…",
+      "verdict": "pass"
+    },
+    "pt-br:chats.matches.atLeast": {
+      "text": "Pelo menos {count} resultados",
+      "en": "At least {count} matches",
+      "verdict": "pass"
+    },
+    "pt-br:chats.preview.you": {
+      "text": "Você: {text}",
+      "en": "You: {text}",
+      "verdict": "pass"
+    },
+    "pt-br:chats.matches.atLeastOne": {
+      "text": "Pelo menos {count} resultado",
+      "en": "At least {count} match",
+      "verdict": "pass"
+    },
+    "zh:engines.cloud.localOnly": {
+      "text": "{engine} 在你的电脑上运行。请在你的电脑上打开 Murage 来使用它。",
+      "en": "{engine} runs on your computer. Open Murage on your computer to use it.",
+      "verdict": "pass"
+    },
+    "zh:engines.hide": {
+      "text": "隐藏",
+      "en": "Hide",
+      "verdict": "pass"
+    },
+    "zh:engines.hideHint": {
+      "text": "把这个引擎从所有模型列表中移除。它的应用和登录保持不变，你可以在下方取消隐藏。",
+      "en": "Leave this engine out of every model list. Its app and sign-in stay as they are, and you can unhide it below.",
+      "verdict": "pass"
+    },
+    "zh:engines.hiddenTitle": {
+      "text": "已隐藏 ({count})",
+      "en": "Hidden ({count})",
+      "verdict": "pass"
+    },
+    "zh:engines.hiddenHint": {
+      "text": "不会出现在任何模型列表中。它们的应用和登录不变。",
+      "en": "Left out of every model list. Their apps and sign-ins are unchanged.",
+      "verdict": "pass"
+    },
+    "zh:engines.unhide": {
+      "text": "取消隐藏",
+      "en": "Unhide",
+      "verdict": "pass"
+    },
+    "zh:engines.unhiding": {
+      "text": "正在取消隐藏…",
+      "en": "Unhiding…",
+      "verdict": "pass"
+    },
+    "zh:engines.copilot.preview": {
+      "text": "GitHub Copilot 通过你自己的 Copilot CLI 运行，使用你的 GitHub 登录和 Copilot 套餐。GitHub 将其 ACP 模式称为公开预览。",
+      "en": "GitHub Copilot runs through your own Copilot CLI, with your GitHub sign-in and Copilot plan. GitHub calls its ACP mode a public preview.",
+      "verdict": "fail",
+      "note": "Rule 1: CLI and ACP mode are unexplained technical terms."
+    },
+    "zh:engines.copilot.install": {
+      "text": "Murage 不会安装 GitHub Copilot CLI。请按照下方 GitHub 自己的说明安装，然后再检查一次。",
+      "en": "Murage does not install GitHub Copilot CLI. Install it with GitHub's own instructions below, then check again.",
+      "verdict": "pass"
+    },
+    "zh:slik.backupModel": {
+      "text": "{name} 的模型",
+      "en": "Model for {name}",
+      "verdict": "pass"
+    },
+    "zh:media.local.onlyWorkspace": {
+      "text": "这里只加载此对话文件夹中的图片。",
+      "en": "Only pictures in this conversation's folder load here.",
+      "verdict": "pass"
+    },
+    "zh:media.local.desktopOnly": {
+      "text": "此界面无法使用机器人文件夹中的图片。",
+      "en": "Pictures from the bot's folder are not available on this surface.",
+      "verdict": "pass"
+    },
+    "zh:media.local.missing": {
+      "text": "该图片目前不在此对话的文件夹中。",
+      "en": "That picture is not in this conversation's folder right now.",
+      "verdict": "pass"
+    },
+    "zh:media.local.changed": {
+      "text": "该图片已更改或无法加载。",
+      "en": "That picture changed or could not be loaded.",
+      "verdict": "pass"
+    },
+    "zh:media.local.denied": {
+      "text": "此对话无法使用该文件。",
+      "en": "That file is not available from this conversation.",
+      "verdict": "pass"
+    },
+    "zh:media.local.unsupported": {
+      "text": "Murage 无法将此文件显示为图片。",
+      "en": "Murage can't show this file as a picture.",
+      "verdict": "pass"
+    },
+    "zh:media.local.tryAgain": {
+      "text": "重试",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "zh:media.local.unreachable": {
+      "text": "Murage 目前无法访问该图片。",
+      "en": "Murage can't reach that picture right now.",
+      "verdict": "pass"
+    },
+    "zh:media.local.large": {
+      "text": "大图片，{width} × {height}。",
+      "en": "Large picture, {width} by {height}.",
+      "verdict": "pass"
+    },
+    "zh:media.local.changedShown": {
+      "text": "该图片已更改。这是当前版本。",
+      "en": "That picture changed. This is the current version.",
+      "verdict": "pass"
+    },
+    "zh:media.local.showIt": {
+      "text": "显示",
+      "en": "Show it",
+      "verdict": "pass"
+    },
+    "zh:media.local.budget": {
+      "text": "其他图片正在使用预览空间。",
+      "en": "Other pictures are using the preview space.",
+      "verdict": "pass"
+    },
+    "zh:media.local.saveBusy": {
+      "text": "正在保存另一张图片。请稍后重试。",
+      "en": "Another picture is being saved. Try again shortly.",
+      "verdict": "pass"
+    },
+    "zh:call.budgetStop": {
+      "text": "此 Flux 密钥已达到预算，因此通话已结束。预算重置或更改后，可以再次开始通话。",
+      "en": "The call ended because this Flux key has reached its budget. It starts again when the budget resets or changes.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation says the user can restart the call instead of saying it restarts."
+    },
+    "zh:voice.budgetReached": {
+      "text": "语音已暂停：此 Flux 密钥已达到预算上限。预算变更后会恢复。",
+      "en": "Voice is paused: this Flux key has reached its budget. It starts again when the budget changes.",
+      "verdict": "pass"
+    },
+    "zh:chats.previews.partial": {
+      "text": "聊天预览仍在准备中。",
+      "en": "Chat previews are still getting ready.",
+      "verdict": "pass"
+    },
+    "zh:chats.previews.checking": {
+      "text": "正在检查更改…",
+      "en": "Checking for changes…",
+      "verdict": "pass"
+    },
+    "zh:chats.matches.atLeast": {
+      "text": "至少 {count} 条匹配",
+      "en": "At least {count} matches",
+      "verdict": "pass"
+    },
+    "zh:chats.preview.you": {
+      "text": "你：{text}",
+      "en": "You: {text}",
+      "verdict": "pass"
+    },
+    "zh:chats.matches.atLeastOne": {
+      "text": "至少 {count} 条匹配",
+      "en": "At least {count} match",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

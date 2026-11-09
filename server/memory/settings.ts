@@ -34,7 +34,7 @@ import { ownerMemoryList } from "./owner-list.ts";
 import { pastChatsCounters } from "./past-chats-build.ts";
 import type { MemoryRecord } from "../../shared/memory.ts";
 import { prepareMemorySkillReview } from "../skills.ts";
-import { learningCeilingSchema, memoryLearningPatchSchema, readMemoryLearning, retrySkippedRequestSchema, updateMemoryLearning } from "./learning-policy.ts";
+import { LEARNING_CEILING_MAX, learningCeilingSchema, memoryLearningPatchSchema, readMemoryLearning, retrySkippedRequestSchema, updateMemoryLearning } from "./learning-policy.ts";
 import { ceilingReached, learningSpendLedgerId, learningSpendMonth, type LearningCeilingStatus } from "../../shared/memory-learning-contract.ts";
 import { releaseCeilingDeferrals, retrySkippedSlice } from "./consolidate.ts";
 import { clearUnseenExcess, unmeteredPause } from "./extract.ts";
@@ -302,7 +302,8 @@ export function learningCeilingStatus(db:ReturnType<typeof database>,ceiling:{in
   const month=learningSpendMonth(at),row=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(learningSpendLedgerId(month));
   const spend=row?JSON.parse(String(row.intent)):{};
   const used={input:Math.max(0,Number(spend.input)||0),output:Math.max(0,Number(spend.output)||0)};
-  return {month,input:ceiling.input,output:ceiling.output,inputUsed:used.input,outputUsed:used.output,paused:ceilingReached(ceiling,used)||unmeteredPause(spend)};
+  const limit=ceilingReached(ceiling,used),paused=limit||unmeteredPause(spend);
+  return {month,input:ceiling.input,output:ceiling.output,inputUsed:used.input,outputUsed:used.output,paused,...(paused?{pausedBy:limit?"limit" as const:"unseen" as const}:{})};
 }
 /** Bumped whenever the last reading is forgotten: a reading that began before then is not kept (it may predate an owner's change). */
 let figuresGeneration=0;
@@ -337,6 +338,14 @@ async function ownerStatusSliced(ticket:object,roster:MemoryRoster,options:Memor
   for(let tries=0;upgrading&&lastFigures?.db!==db&&tries<4&&db.isOpen&&database()===db;tries++){try{await primeMemoryStatusFigures(db);}catch{break;}}
   return memoryOwnerStatus(ticket,roster,options);
 }
+/** Shared by the desktop status and the phone's read-only usage projection. */
+function readLearningStatus(db:ReturnType<typeof database>,options:MemoryOwnerOptions){
+  const {revision,...settings}=readMemoryLearning(db);
+  const resolved=options.learningConnection?.();
+  const connection=resolved?{instanceId:resolved.instanceId,label:resolved.label,source:resolved.source,reason:resolved.reason,suggestion:resolved.suggestion}:{instanceId:configuration().extractorInstanceId,label:"No connection",source:"none" as const};
+  const ceiling=learningCeilingStatus(db,settings.ceiling);
+  return {settings,revision,resolved,connection,ceiling};
+}
 export function memoryOwnerStatus(ticket:object,roster:MemoryRoster,options:MemoryOwnerOptions={}){
   requireMemoryOwner(ticket);const db=database();
   let upgrading=false;
@@ -345,10 +354,7 @@ export function memoryOwnerStatus(ticket:object,roster:MemoryRoster,options:Memo
   lastFigures={db,figures};
   const {counts,recordsMore,backlog,omittedScopes}=figures;
   const runtime=options.runtimeStatus?.();
-  const {revision,...settings}=readMemoryLearning(db);
-  const resolved=options.learningConnection?.();
-  const connection=resolved?{instanceId:resolved.instanceId,label:resolved.label,source:resolved.source,reason:resolved.reason,suggestion:resolved.suggestion}:{instanceId:configuration().extractorInstanceId,label:"No connection",source:"none" as const};
-  const ceiling=learningCeilingStatus(db,settings.ceiling);
+  const {settings,revision,resolved,connection,ceiling}=readLearningStatus(db,options);
   const learning={settings,revision,connection,defaultOn:options.learningDefaultOn?.()??false,ceiling};
   const hold=memoryHoldCode(),stored=String(db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode??"");
   const model=modelStatus();
@@ -411,6 +417,10 @@ function plainMemoryEditError<T>(action:()=>T):T{
 
 export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,roster:MemoryRoster,options:MemoryOwnerOptions={}){
   requireMemoryOwner(ticket);
+  if(path==="/api/memory/learning-usage"){
+    const {ceiling,connection}=readLearningStatus(database(),options);
+    return {learning:{ceiling,connection:{label:connection.label,source:connection.source}}};
+  }
   if(path==="/api/memory/status")return ownerStatusSliced(ticket,roster,options);
   if(path!=="/api/memory/action")throw Object.assign(new Error("MEMORY_ROUTE_UNAVAILABLE"),{status:404});
   const parsed=actions.safeParse(body);if(!parsed.success)throw Object.assign(new Error("INVALID_MEMORY_ARGUMENTS"),{status:400});
@@ -543,11 +553,12 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
       if(input.learning||input.ceiling){
         const before=readMemoryLearning(db).ceiling;
         const next=updateMemoryLearning(db,{...input.learning,...input.ceiling?{ceiling:input.ceiling}:{}},input.learningRevision);
-        // a raise applies now: every source waiting for next month's ceiling is due at once
-        // a raise of both sides is also the owner's answer to unmetered replies, so they are cleared with it (one side alone is not:
-        // their unknown excess may sit on the other)
-        if(next.ceiling.input>before.input||next.ceiling.output>before.output)releaseCeilingDeferrals(db);
-        if(next.ceiling.input>before.input&&next.ceiling.output>before.output)clearUnseenExcess(db);
+        // An explicit ceiling save accepts unseen usage on each raised or maximum side.
+        const acceptsUnseen = (next.ceiling.input > before.input || (input.ceiling !== undefined && next.ceiling.input === LEARNING_CEILING_MAX))
+          && (next.ceiling.output > before.output || (input.ceiling !== undefined && next.ceiling.output === LEARNING_CEILING_MAX));
+        if (acceptsUnseen) clearUnseenExcess(db);
+        // Accepted unseen usage also frees sources held until next month.
+        if (acceptsUnseen || next.ceiling.input > before.input || next.ceiling.output > before.output) releaseCeilingDeferrals(db);
       }
       db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','owner-settings',0,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent").run(SETTINGS,scope,JSON.stringify(updated));
       if(input.mode)db.prepare("UPDATE memory_meta SET mode=?").run(input.mode);

@@ -136,7 +136,9 @@ it("enforces the payload byte budget and caller ownership before mutation", () =
 it.skipIf(process.platform === "win32")("refuses symlinked payload parents without following them", () => {
   const f = fixture();
   const external = mkdtempSync(join(tmpdir(), "murage-transaction-external-")); cleanup.push(() => removeTempDirSync(external));
-  symlinkSync(external, join(f.root, "workspaces"));
+  // S5-DATADIR-PATHS r4.1: a linked `workspaces` ROOT is admitted (D5l, data-roots-package-import.test.ts); a linked
+  // non-root parent such as skill-state is still refused without being followed, as at b17.
+  symlinkSync(external, join(f.root, "skill-state"));
   expect(() => commitPackageImportFiles(f.root, f.replacements, f.expected, f.options)).toThrow("UNSAFE_PACKAGE_IMPORT_PATH");
   expect(existsSync(join(external, f.botId))).toBe(false);
 });

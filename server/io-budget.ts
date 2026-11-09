@@ -5,9 +5,9 @@
 // CPU is judged on the whole computer too (system-load.ts: load average and all
 // cores busy, children and other apps included), not only Murage's own process.
 import { AsyncLocalStorage } from "node:async_hooks";
-import { closeSync, openSync, readSync, statSync } from "node:fs";
-import { endianness } from "node:os";
 import type { DatabaseSync, StatementSync } from "node:sqlite";
+import { BLOCK_BYTES, osWriteBlocks, takeWrittenBytes, walFrameReader } from "./io-written.ts";
+import { darwinWrittenBytes } from "./os-disk-written.ts";
 import { turnTraceEnabled } from "./turn-trace.ts";
 import { activeTaskName, oldestLongOp, rateLimited, reportSlowSql, SLOW_SQL_MS } from "./observe.ts";
 import { systemLoad } from "./system-load.ts";
@@ -23,12 +23,14 @@ export const IO_BUDGET_CPU_MINUTES = 3;
 export const IO_BUDGET_MAX_SCALE = 8;
 /** Calm minutes in a row before the poll scale is halved back. */
 export const IO_BUDGET_CALM_MINUTES = 10;
-/** resourceUsage().fsWrite counts block-output operations; 512 bytes each is the unit getrusage reports in. (The memory helper
- * reports its own fsWrite count to its controller, which charges it here in the same unit.) */
-export const BLOCK_BYTES = 512;
+/** The OS write floor and the WAL readers live in io-written.ts (a leaf the memory helper can import): on win32 the floor is 0,
+ *  because fsWrite there counts pipe and IPC writes too, and application bytes decide (WIN-IOB-QUICK; what that still sees is
+ *  listed in that file's header). */
+export { BLOCK_BYTES, fileGrowthReader, noteWrittenBytes, noteWrittenFile, osWriteBlocks, walFrameReader } from "./io-written.ts";
 
 /** What one reading of the process looks like. All values are cumulative. */
-export interface IoReading { at: number; fsWriteBlocks: number; cpuMicros: number }
+/** `osKnown` false: the OS write count could not be read (macOS without the addon's diskWritten): that minute's OS bytes are UNKNOWN. */
+export interface IoReading { at: number; fsWriteBlocks: number; cpuMicros: number; osKnown?: boolean }
 export interface StatementCost { sql: string; calls: number; ms: number }
 
 export interface IoBudgetOptions {
@@ -48,11 +50,18 @@ export interface IoBudgetOptions {
   onSample?: (sample: IoSample) => void;
   /** Reads and restarts the minute's traffic counters (net-meter.ts). A throw is ignored. */
   netMinute?: () => NetMinute;
+  /** Takes the logical output bytes noted since the last call (io-written.ts takeWrittenBytes; the process singleton only). */
+  written?: () => Iterable<[string, number]>;
 }
 
-export function readProcess(): IoReading {
+/** The process's cumulative writes and CPU. macOS (IO-IDLE r3.6): getrusage's block count reads 0 there, so the OS floor is the addon's
+ *  diskWritten bytes (os-disk-written.ts), in BLOCK_BYTES units (not rounded); unreadable is osKnown false, never 0 blocks. */
+export function readProcess(platform: string = process.platform, disk: () => number | null = darwinWrittenBytes): IoReading {
   const usage = process.resourceUsage();
-  return { at: Date.now(), fsWriteBlocks: usage.fsWrite, cpuMicros: usage.userCPUTime + usage.systemCPUTime };
+  const at = Date.now(), cpuMicros = usage.userCPUTime + usage.systemCPUTime;
+  if (platform !== "darwin") return { at, fsWriteBlocks: osWriteBlocks(usage, platform), cpuMicros };
+  const bytes = disk();
+  return bytes === null ? { at, fsWriteBlocks: 0, cpuMicros, osKnown: false } : { at, fsWriteBlocks: bytes / BLOCK_BYTES, cpuMicros };
 }
 
 export class IoBudget {
@@ -76,6 +85,7 @@ export class IoBudget {
   private systemOverloaded: () => { overloaded: boolean; why: string } | null;
   private onSample?: (sample: IoSample) => void;
   private netMinute?: () => NetMinute;
+  private written?: () => Iterable<[string, number]>;
   private deferredSource: string | null = null;
   private deferUntil = 0;
   /** Bytes written in the last minute under a budget of their own (the revoke marker's, revoke-budget.ts): planned, capped there, and
@@ -88,7 +98,7 @@ export class IoBudget {
   private traced = new Map<string, { calls: number; ms: number }>();
   private traceTimer: ReturnType<typeof setInterval> | null = null;
   /** One diagnostic per category per minute; three fixed keys bound state even as sources change. */
-  private readonly diagnosticLogs = new Map<"writing" | "cpu" | "both" | "traffic", { at: number; suppressed: number }>();
+  private readonly diagnosticLogs = new Map<"writing" | "cpu" | "both" | "traffic" | "unknown", { at: number; suppressed: number }>();
 
   constructor(options: IoBudgetOptions = {}) {
     this.read = options.read ?? readProcess;
@@ -102,6 +112,7 @@ export class IoBudget {
     this.systemOverloaded = options.systemOverloaded ?? (() => systemLoad.reading());
     this.onSample = options.onSample;
     this.netMinute = options.netMinute;
+    this.written = options.written;
   }
 
   /** Replace the listener told when the scale changes. */
@@ -151,6 +162,7 @@ export class IoBudget {
   /** Pending application bytes in this window, including newly observed files. */
   sampleBytes(): number {
     for (const name of this.byteSources.keys()) this.sampleByteSource(name);
+    if (this.written) { try { for (const [name, bytes] of this.written()) this.noteBytes(name, bytes); } catch { /* a reader never throws into the tick */ } }
     return [...this.bytes.values()].reduce((sum, bytes) => sum + bytes, 0);
   }
 
@@ -228,7 +240,10 @@ export class IoBudget {
     if (!previous) { this.bytes.clear(); return null; }
     if (reading.at <= previous.at) return null;
     const minutes = (reading.at - previous.at) / 60_000;
-    const osBytes = Math.max(0, (reading.fsWriteBlocks - previous.fsWriteBlocks) * BLOCK_BYTES);
+    // fail closed (IO-IDLE r3.6): a minute either end of which could not read the OS count is UNKNOWN, not 0: it is never calm (the poll
+    // rate stays at least halved and never steps back), its sample is never valid evidence, and it says so once an hour
+    const osUnknown = reading.osKnown === false || previous.osKnown === false;
+    const osBytes = osUnknown ? 0 : Math.max(0, (reading.fsWriteBlocks - previous.fsWriteBlocks) * BLOCK_BYTES);
     let planned = 0;
     if (this.plannedBytes) { try { planned = Math.min(this.plannedCap * minutes, Math.max(0, Number(this.plannedBytes()) || 0)); } catch { planned = 0; } }
     const writeBytesPerMinute = Math.max(0, Math.max(osBytes, applicationBytes) - planned) / minutes;
@@ -256,7 +271,7 @@ export class IoBudget {
         const line = `[io-budget] ${writing ? `writing ${(writeBytesPerMinute / 1048576).toFixed(1)} MB/min (budget ${(budget / 1048576).toFixed(0)}${planned > 0 ? `, ${(planned / minutes / 1048576).toFixed(1)} MB/min planned not counted` : ""})` : ""}`
           + `${writing && spinning ? ", " : ""}${spinning ? `cpu ${(cpu * 100).toFixed(0)}%${systemHot ? ` (computer: ${system!.why})` : ""} for ${this.hotCpuMinutes} min` : ""}; source: ${this.deferredSource}; top statements: ${top}; poll rate x1/${next}${traffic && `; ${traffic}`}`;
         // Bound diagnostics too: custom source names and load descriptions need not be short.
-        this.log(`${line.length > 4096 ? `${line.slice(0, 4096)}…` : line}; suppressed=${lastLog?.suppressed ?? 0}`);
+        this.log(`${line.length > 4096 ? `${line.slice(0, 4096)}…` : line}; osBytes=${Math.round(osBytes)}; applicationBytes=${Math.round(applicationBytes)}; suppressed=${lastLog?.suppressed ?? 0}`);
         this.diagnosticLogs.set(category, { at: reading.at, suppressed: 0 });
       } else {
         lastLog.suppressed++;
@@ -264,6 +279,14 @@ export class IoBudget {
       this.setScale(next);
       this.statements.clear(); this.traced.clear();
       if (spinning) this.hotCpuMinutes = 0;
+    } else if (osUnknown) {
+      this.calmMinutes = 0;
+      if (this.scale < 2) this.setScale(2);
+      const lastLog = this.diagnosticLogs.get("unknown");
+      if (!lastLog || reading.at - lastLog.at >= 60 * 60_000) {
+        try { this.log(`[io-budget] os writes unknown (the engine-exclusion helper's diskWritten could not be read): background work runs at half rate; applicationBytes=${Math.round(applicationBytes)}; suppressed=${lastLog?.suppressed ?? 0}`); } catch { /* a line never changes the minute */ }
+        this.diagnosticLogs.set("unknown", { at: reading.at, suppressed: 0 });
+      } else lastLog.suppressed++;
     } else if (this.scale > 1 && ++this.calmMinutes >= IO_BUDGET_CALM_MINUTES) {
       this.calmMinutes = 0;
       this.setScale(Math.max(1, this.scale / 2));
@@ -286,7 +309,7 @@ export class IoBudget {
         chargedBytes: Math.round(Math.max(0, Math.max(osBytes, applicationBytes) - planned)), budgetBytes: budget,
         cpuFraction: Math.min(1, Math.max(0, Number.isFinite(cpu) ? cpu : 0)), pollScale: this.scale, sourceClass: ioSourceClass(top),
         // A minute far longer than the timer's is a suspend or a clock jump; the sample is reported but never valid.
-        discontinuity: intervalMs > HEALTH_LIMITS.ioSampleMaxMs,
+        discontinuity: intervalMs > HEALTH_LIMITS.ioSampleMaxMs || osUnknown,
       };
       try { this.onSample(sample); } catch { /* telemetry never changes the watchdog */ }
     }
@@ -360,79 +383,7 @@ export function ioSourceClass(source: string | undefined): IoSourceClass {
   }
 }
 
-export const ioBudget = new IoBudget({ onSample: sample => recordFact({ kind: "io-minute", ...sample }), netMinute: () => netMeter.take() });
-
-/** File growth is cumulative across truncation and recreation between samples.
- * Existing bytes form the baseline. In-place rewrites need explicit counters. */
-export function fileGrowthReader(paths: readonly string[]): () => number {
-  const size = (path: string) => { try { return statSync(path).size; } catch { return 0; } };
-  const previous = paths.map(size);
-  let total = 0;
-  return () => {
-    paths.forEach((path,index) => {
-      const current = size(path);
-      total += Math.max(0, current - previous[index]);
-      previous[index] = current;
-    });
-    return total;
-  };
-}
-
-/** WAL frames appended, read from the wal-index header in `<db>-shm`. A WAL
- * that has reached its working size is rewritten in place after each
- * checkpoint, so its file size stops growing while writes continue; the
- * header's frame count and salt keep counting them. Falls back to file growth
- * when the header cannot be read consistently. */
-export function walFrameReader(databaseFile: string): (() => number) & { close(): void; fd(): number | undefined } {
-  const growth = fileGrowthReader([`${databaseFile}-wal`]);
-  // The -shm file is the one SQLite maps and takes POSIX locks on in this very
-  // process. Closing ANY descriptor on a file drops every lock the process holds
-  // on it, so an open/read/close here let another process run wal-index recovery
-  // and truncate the shm under SQLite's live mapping (SIGBUS). Keep one read-only
-  // descriptor per shm inode and never close it while that inode is current.
-  const shm = `${databaseFile}-shm`;
-  let held: { fd: number; ino: number | bigint; dev: number | bigint } | undefined;
-  let closed = false;
-  const header = (): { salt: string; frames: number; frameBytes: number } | null => {
-    // After close() nothing reads or reopens a descriptor; callers fall back to WAL file growth.
-    if (closed) return null;
-    try {
-      const now = statSync(shm);
-      if (held && (held.ino !== now.ino || held.dev !== now.dev)) {
-        // A different file now: the old inode is no longer SQLite's, closing it drops no live lock.
-        try { closeSync(held.fd); } catch { /* already closed */ }
-        held = undefined;
-      }
-      if (!held) held = { fd: openSync(shm, "r"), ino: now.ino, dev: now.dev };
-      const raw = Buffer.alloc(96);
-      if (readSync(held.fd, raw, 0, 96, 0) < 96 || !raw.subarray(0, 48).equals(raw.subarray(48, 96)) || raw[12] !== 1) return null;
-      const little = endianness() === "LE";
-      const page = little ? raw.readUInt16LE(14) : raw.readUInt16BE(14);
-      const frames = little ? raw.readUInt32LE(16) : raw.readUInt32BE(16);
-      return { salt: raw.subarray(32, 40).toString("hex"), frames, frameBytes: (page === 1 ? 65536 : page) + 24 };
-    } catch { return null; }
-  };
-  let last = header(), total = 0, grown = growth();
-  const read = () => {
-    const fileBytes = growth() - grown;
-    grown += fileBytes;
-    const next = header();
-    if (next && last) total += (next.salt === last.salt ? Math.max(0, next.frames - last.frames) : next.frames) * next.frameBytes;
-    else total += fileBytes;
-    if (next) last = next;
-    return total;
-  };
-  // Call only after the database handle is closed: closing any descriptor on the shm
-  // drops the process's locks on it. Idempotent; held is cleared before closing so a
-  // second call cannot close a reused descriptor number.
-  const close = () => {
-    closed = true;
-    const fd = held?.fd;
-    held = undefined;
-    if (fd !== undefined) { try { closeSync(fd); } catch { /* already closed */ } }
-  };
-  return Object.assign(read, { close, fd: () => held?.fd });
-}
+export const ioBudget = new IoBudget({ onSample: sample => recordFact({ kind: "io-minute", ...sample }), netMinute: () => netMeter.take(), written: takeWrittenBytes });
 
 // The lock wait each handle runs with now (database.ts setBusy keeps it). A statement that waited on the write lock with no budget below the
 // handle's default is the bug the stall work hunts (database.ts invariant 4): it is named, with its caller, by `[sqlite] busy ... budget=none`.
