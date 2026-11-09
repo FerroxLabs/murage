@@ -2269,6 +2269,14 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
   useEffect(()=>{const open=()=>dispatch({ type: "showNeedsYou" });window.addEventListener("murage:open-inbox",open);return()=>window.removeEventListener("murage:open-inbox",open);},[dispatch]);
   useTrayIntents();
   const [teamFeedback, setTeamFeedback] = useState<TeamFeedback | null>(null);
+  const shownComputerNotices = useRef(new Set<string>());
+  useEffect(() => {
+    for (const [botId, text] of Object.entries(state.botComputerNotices ?? {})) {
+      if (shownComputerNotices.current.has(botId) || !state.bots.some((bot) => bot.id === botId && !bot.hidden)) continue;
+      shownComputerNotices.current.add(botId);
+      setTeamFeedback({ error: false, text });
+    }
+  }, [state.botComputerNotices, state.bots]);
   const [query, setQuery] = useState("");
   // The chosen density is shared with Settings > General > Appearance. On a
   // window 768 to 1100px wide the sidebar folds to the rail by itself, until
