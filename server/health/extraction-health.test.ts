@@ -14,9 +14,11 @@ import { closeDatabase } from "../database.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { openLearningGate } from "../testing/open-learning-gate.ts";
 import { withCliMemoryLearning } from "../drivers/cli-memory-learning.ts";
+import { fixtureLearningBot } from "../testing/learning-bot-fixture.ts";
 import { extractCandidates, reportMemoryUsage, type TextOnlyExtractor } from "../memory/extract.ts";
 import { EXTRACTION_CATALOGUE_MODELS, EXTRACTION_SUMMARY_MS, extractionOutcomes, FLUX_PINNED_LEARNING_MODEL } from "../memory/extraction-outcomes.ts";
 import { clearPinQuarantineForTests, FLUX_EXTRACTORS, resolveMemoryExtractor } from "../memory/extractor-connections.ts";
+import { resetFluxKeyModelsForTests, setFluxKeyCatalog } from "../flux-key-models.ts";
 import { HEALTH_DIR } from "../../shared/health-protocol.mjs";
 import { drainServerWindows, factsOf, freshServerCounters, rows, total } from "./test-support.ts";
 
@@ -26,6 +28,8 @@ const SECRETS = [SOURCE, "PRIVATE_REPLY_SENTINEL", "PRIVATE_KEY_SENTINEL", "PRIV
 beforeEach(() => {
   closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   extractionOutcomes.clear(); clearPinQuarantineForTests();
+  // The key's own Flux catalog lists the pinned learning model (a paid key), so the learning call asks for it.
+  resetFluxKeyModelsForTests(); setFluxKeyCatalog(() => ["flux-auto", "flux-fast", FLUX_PINNED_LEARNING_MODEL]);
   vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
   vi.setSystemTime(new Date("2026-10-27T00:00:00Z"));
   vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -166,7 +170,9 @@ describe("extraction outcomes as health counters", () => {
       respondToRequest: async () => "rejected", interruptTurn: async () => undefined, resetSession: async () => undefined,
     };
     const instance = { instanceId: "PRIVATE-CONNECTION-exit", driverKind: "codex", displayName: "Codex", enabled: true, adapter, dispose: async () => undefined } as unknown as ProviderInstance;
-    withCliMemoryLearning(instance);
+    // f62f91afa (bot-folder launch contract): the hidden session now starts in the bot's resolved folder, so the call carries one (the fixture supplies it);
+    // without a folder it is refused before the engine starts and nothing is interrupted
+    fixtureLearningBot(withCliMemoryLearning(instance));
     expect(await run(resolveMemoryExtractor(instance.instanceId, [instance])!)).toMatchObject({ status: "deferred" });
     const windows = drainServerWindows();
     expect(total(windows, "extraction", "cancelled", { engineKind: "gateway" })).toBe(1);

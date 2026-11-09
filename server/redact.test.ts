@@ -4,9 +4,18 @@
 // object form — so a change to either shape breaks the test, not the secret.
 import { describe, expect, it } from "vitest";
 
-import { redactSecrets } from "./redact.ts";
+import { redactSecrets, redactSecretsForSink } from "./redact.ts";
 
 const flat = (value: unknown) => JSON.stringify(value);
+
+// red-at-6ba44ff37: an ordinary line exhausted the shared scan while logging.
+it("masks a server sink line when the label scan budget is exhausted", () => {
+  const source = "z".repeat(524_289);
+  let output = "";
+  expect(() => { output = redactSecretsForSink(source); }).not.toThrow();
+  expect(output).toBe("«redacted»");
+  expect(output).not.toContain("z");
+});
 
 describe("redactSecrets", () => {
   it("masks the tokens in an ACP session/new, keeping the shape", () => {

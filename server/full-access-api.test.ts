@@ -110,23 +110,25 @@ describe.skipIf(process.platform === "win32")("Full access", () => {
     writeFileSync(
       join(home, ".murage", "config.json"),
       JSON.stringify({
+        // FAKE_ACP_TOOL_KIND think: the fake's scripted tool row is a local one, so an owner turn here is a clean turn
+        // (an unknown tool kind marks the turn and its session, NOLIMITS-MEANS-IT M2 / M5b)
         instances: {
           // asks the client to approve reading a shell profile and a personal
           // folder — Auto stops at the first; Full access must not
           protected: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: PROTECTED_READ },
+            environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_TOOL_KIND: "think", FAKE_ACP_PERMISSION_COMMAND: PROTECTED_READ },
             config: { cli: FAKE_CLI, fullAuto: false },
           },
           cleaner: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: CLEAN_BUILD },
+            environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_TOOL_KIND: "think", FAKE_ACP_PERMISSION_COMMAND: CLEAN_BUILD },
             config: { cli: FAKE_CLI, fullAuto: false },
           },
           // fullAuto on the engine: under Full access it must still ask
           deleter: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: DELETE_OUTSIDE },
+            environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_TOOL_KIND: "think", FAKE_ACP_PERMISSION_COMMAND: DELETE_OUTSIDE },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
         },

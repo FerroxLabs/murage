@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Box agent contract tests against a scripted fake of ascii.dev's box HTTP
 // API. The driver polls events + prompt status; the fake advances one poll
 // per GET so we can assert message → tool → message order without sleeping.
@@ -7,6 +8,7 @@ import { ensureDirs } from "../config.ts";
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { BoxAgentDriver } from "./boxagent.ts";
+import { engineClosedLine } from "./stop-copy.ts";
 import { IntakeValve, installIntakeValve } from "../harness/intake.ts";
 import { _cloudComputerIdle, _cloudComputerTiming, _resetCloudComputerTurns, CLOUD_COMPUTER_TURNS_FILE } from "../cloud-computer-turns.ts";
 import { DATA_DIR } from "../config.ts";
@@ -427,4 +429,298 @@ describe("BoxAgentDriver turns (fake API)", () => {
     expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
     expect(JSON.stringify(recorder.events)).not.toContain("late events text");
   });
+
+  // STOP-NONACP: a Stop or Stop All before the POST has no `active` entry to reach (it is set after the POST). The send holds its own
+  // pending entry; the submission fence refuses the POST, and the turn ends as the stopped pair (turn.started, ok:true cancelled).
+  describe("STOP-NONACP: a Stop before the POST", () => {
+    const run = async (threadId: string, stop: (() => Promise<unknown>) | null) => {
+      restoreFetch = installFakeBox([{ events: [], status: { promptRun: { status: "finished", result: "done" } } }]);
+      const inner = globalThis.fetch;
+      const posts: string[] = [];
+      let fired = false;
+      globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (String(init?.method ?? "GET").toUpperCase() === "POST" && /\/prompt$/.test(url)) posts.push(url);
+        // the events snapshot a send takes under the box lock, before its fence and POST
+        if (stop && url.includes("/events") && !fired) { fired = true; await stop(); }
+        return inner(input, init);
+      }) as typeof fetch;
+      const base = restoreFetch; restoreFetch = () => { globalThis.fetch = inner; base(); };
+      await create();
+      const sent = await instance.adapter.sendTurn({ threadId, text: "go", integrations: { computer } });
+      return { sent, posts };
+    };
+    const own = (turnId: string) => recorder.events.filter((e) => e.turnId === turnId);
+
+    it("Stop: the stopped pair, nothing POSTed, no error card", async () => {
+      const { sent, posts } = await run("t-pre-stop", () => instance.adapter.interruptTurn("t-pre-stop"));
+      expect(own(sent.turnId).map((e) => e.type)).toEqual(["turn.started", "turn.completed"]);
+      expect(own(sent.turnId)[1]).toMatchObject({ ok: true, stopReason: "cancelled" });
+      expect(posts).toEqual([]);
+      expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(false);
+      expect(instance.adapter.hasSession("t-pre-stop")).toBe(false);
+    });
+
+    it("Stop All: the stopped pair, nothing POSTed, no error card", async () => {
+      const { sent, posts } = await run("t-pre-stopall", () => instance.adapter.stopAll!());
+      expect(own(sent.turnId).map((e) => e.type)).toEqual(["turn.started", "turn.completed"]);
+      expect(own(sent.turnId)[1]).toMatchObject({ ok: true, stopReason: "cancelled" });
+      expect(posts).toEqual([]);
+      expect(recorder.events.some((e) => e.type === "runtime.error")).toBe(false);
+    });
+
+    it("Stop, then the events snapshot fails: still the stopped pair, nothing POSTed", async () => {
+      const { sent, posts } = await run("t-pre-snapfail", async () => { await instance.adapter.interruptTurn("t-pre-snapfail"); throw new Error("snapshot down"); });
+      expect(own(sent.turnId).map((e) => e.type)).toEqual(["turn.started", "turn.completed"]);
+      expect(own(sent.turnId)[1]).toMatchObject({ ok: true, stopReason: "cancelled" });
+      expect(posts).toEqual([]);
+    });
+
+    // CLOSE-STOP-1014: the quit ends the unsent turn too (listeners are cleared by the dispose, so only the POST is observable)
+    it("a dispose before the POST: nothing is POSTed", async () => {
+      const { posts } = await run("t-pre-dispose", () => instance.dispose());
+      expect(posts).toEqual([]);
+      expect(instance.adapter.hasSession("t-pre-dispose")).toBe(false);
+    });
+
+    it("control: no Stop posts exactly once and runs to its end; a Stop for another thread changes nothing", async () => {
+      const { sent, posts } = await run("t-pre-control", () => instance.adapter.interruptTurn("some-other-thread"));
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+      expect(posts).toHaveLength(1);
+      expect(own(sent.turnId).find((e) => e.type === "turn.completed")).toMatchObject({ ok: true, stopReason: null });
+    });
+  });
+
+  // STOP-NONACP s4 (design r3 + r3.1): one gate, one ending. A dispose nobody asked for ends the turn as the engine closing, an asked
+  // Stop ends it as the stopped pair, and the ending is on the bus BEFORE dispose() resolves (the receipt is taken at that moment).
+  describe("STOP-NONACP s4: the gate rows", () => {
+    const closingLine = engineClosedLine("the Cloud computer", null);
+    const deferred = () => { let resolve!: () => void; const promise = new Promise<void>((r) => { resolve = r; }); return { promise, resolve }; };
+    const RUNNING: Poll[] = [{ events: [], status: { promptRun: { status: "running" } } }];
+    const FINISHED: Poll[] = [{ events: [{ id: "reply", type: "response", text: "done" }], status: { promptRun: { status: "finished", result: "done" } } }];
+
+    /** The fake box with counters and hooks: onEvents runs once, on the events snapshot a send takes before its POST. */
+    const gated = (script: Poll[], hooks: { onEvents?: () => Promise<void>; afterPost?: () => void; onStatus?: () => void; post500?: boolean } = {}) => {
+      restoreFetch = installFakeBox(script);
+      const inner = globalThis.fetch;
+      const seen = { posts: 0, interrupts: 0 };
+      let eventsHooked = false;
+      globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = String(init?.method ?? "GET").toUpperCase();
+        if (method === "POST" && /\/prompt$/.test(url)) {
+          seen.posts += 1;
+          if (hooks.post500) return json({ error: "box says no" }, 500);
+          const res = await inner(input, init);
+          hooks.afterPost?.();
+          return res;
+        }
+        if (method === "POST" && url.includes("/interrupt")) seen.interrupts += 1;
+        if (url.includes("/events") && hooks.onEvents && !eventsHooked) { eventsHooked = true; await hooks.onEvents(); }
+        if (url.includes("/prompts/")) hooks.onStatus?.();
+        return inner(input, init);
+      }) as typeof fetch;
+      const base = restoreFetch; restoreFetch = () => { globalThis.fetch = inner; base(); };
+      return seen;
+    };
+    /** dispose() with the bus as it stood the moment it resolved. */
+    const disposeWithReceipt = () => {
+      const receipt: any[] = [];
+      const done = instance.dispose().then(() => { receipt.push(...recorder.events); });
+      return { receipt, done };
+    };
+    const ownOf = (events: any[], turnId: string) => events.filter((e) => e.turnId === turnId);
+    const expectClosingPair = (events: any[], turnId: string) => {
+      const own = ownOf(events, turnId);
+      expect(own.map((e) => e.type)).toEqual(["turn.started", "runtime.error", "turn.completed"]);
+      expect(own[1]).toMatchObject({ message: closingLine });
+      expect(own[2]).toMatchObject({ ok: false, stopReason: "exit_before_result" });
+      expect(own.some((e) => e.type === "turn.completed" && e.stopReason === "cancelled")).toBe(false);
+    };
+    const expectStoppedPair = (events: any[], turnId: string) => {
+      const own = ownOf(events, turnId);
+      expect(own.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+      expect(own.find((e) => e.type === "turn.completed")).toMatchObject({ ok: true, stopReason: "cancelled" });
+      expect(own.some((e) => e.type === "runtime.error")).toBe(false);
+    };
+
+    it("B0 dispose before the POST: no POST, and the closing receipt is on the bus before dispose resolves", async () => {
+      const hold = deferred();
+      const reached = deferred();
+      const seen = gated(FINISHED, { onEvents: async () => { reached.resolve(); await hold.promise; } });
+      await create();
+      const sending = instance.adapter.sendTurn({ threadId: "t-b0", text: "go", integrations: { computer } });
+      await reached.promise;
+      const disposing = disposeWithReceipt();
+      hold.resolve();
+      const sent = await sending;
+      await disposing.done;
+      expect(seen.posts).toBe(0);
+      expectClosingPair(disposing.receipt, sent.turnId);
+      expect(instance.adapter.hasSession("t-b0")).toBe(false);
+    });
+
+    it("B0b dispose() called synchronously, un-awaited, from the caller's own fence: the POST still does not happen", async () => {
+      const seen = gated(FINISHED);
+      await create();
+      let disposing: ReturnType<typeof disposeWithReceipt> | undefined;
+      const sent = await instance.adapter.sendTurn({
+        threadId: "t-b0b", text: "go", integrations: { computer },
+        beforeSubmit: () => { disposing = disposeWithReceipt(); },
+      });
+      await disposing!.done;
+      expect(seen.posts).toBe(0);
+      expectClosingPair(disposing!.receipt, sent.turnId);
+    });
+
+    it("B1 dispose while the POST is being answered: the engine closing, never cancelled, the prompt is Stopped on the box", async () => {
+      let disposing: ReturnType<typeof disposeWithReceipt> | undefined;
+      const seen = gated(RUNNING, { afterPost: () => { disposing = disposeWithReceipt(); } });
+      await create();
+      const sent = await instance.adapter.sendTurn({ threadId: "t-b1", text: "go", integrations: { computer } });
+      await disposing!.done;
+      expect(seen.posts).toBe(1);
+      expectClosingPair(disposing!.receipt, sent.turnId);
+      await _cloudComputerIdle();
+      expect(seen.interrupts).toBeGreaterThanOrEqual(1);
+    });
+
+    it("B2 a Stop from the caller's own fence, before the POST: the stopped pair, no POST", async () => {
+      const seen = gated(FINISHED);
+      await create();
+      const sent = await instance.adapter.sendTurn({
+        threadId: "t-b2", text: "go", integrations: { computer },
+        beforeSubmit: () => { void instance.adapter.interruptTurn("t-b2"); },
+      });
+      expect(seen.posts).toBe(0);
+      const own = ownOf(recorder.events, sent.turnId);
+      expect(own.map((e) => e.type)).toEqual(["turn.started", "turn.completed"]);
+      expect(own[1]).toMatchObject({ ok: true, stopReason: "cancelled" });
+      expect(instance.adapter.hasSession("t-b2")).toBe(false);
+    });
+
+    it("B3 dispose while the poll is live (past the status read): the engine closing, never cancelled", async () => {
+      const polled = deferred();
+      gated(RUNNING, { onStatus: () => polled.resolve() });
+      await create();
+      const sent = await instance.adapter.sendTurn({ threadId: "t-b3", text: "go", integrations: { computer } });
+      await polled.promise;
+      const disposing = disposeWithReceipt();
+      await disposing.done;
+      const own = ownOf(disposing.receipt, sent.turnId);
+      expect(own.map((e) => e.type).slice(0, 2)).toEqual(["turn.started", "session.started"]);
+      expect(own.slice(-2).map((e) => e.type)).toEqual(["runtime.error", "turn.completed"]);
+      expect(own.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+      expect(own.find((e) => e.type === "runtime.error")).toMatchObject({ message: closingLine });
+      expect(own.find((e) => e.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "exit_before_result" });
+      expect(instance.adapter.hasSession("t-b3")).toBe(false);
+      await _cloudComputerIdle();
+    });
+
+    it("B4 a Stop, then dispose, on a live turn: the stopped pair, exactly once", async () => {
+      const polled = deferred();
+      gated(RUNNING, { onStatus: () => polled.resolve() });
+      await create();
+      const sent = await instance.adapter.sendTurn({ threadId: "t-b4", text: "go", integrations: { computer } });
+      await polled.promise;
+      void instance.adapter.interruptTurn("t-b4");
+      const disposing = disposeWithReceipt();
+      await disposing.done;
+      expectStoppedPair(disposing.receipt, sent.turnId);
+      await _cloudComputerIdle();
+    });
+
+    it("B4 a Stop, then dispose, before the POST: the stopped pair, no POST", async () => {
+      const hold = deferred();
+      const reached = deferred();
+      const seen = gated(FINISHED, { onEvents: async () => { reached.resolve(); await hold.promise; } });
+      await create();
+      const sending = instance.adapter.sendTurn({ threadId: "t-b4pre", text: "go", integrations: { computer } });
+      await reached.promise;
+      void instance.adapter.interruptTurn("t-b4pre");
+      const disposing = disposeWithReceipt();
+      hold.resolve();
+      const sent = await sending;
+      await disposing.done;
+      expect(seen.posts).toBe(0);
+      const own = ownOf(disposing.receipt, sent.turnId);
+      expect(own.map((e) => e.type)).toEqual(["turn.started", "turn.completed"]);
+      expect(own[1]).toMatchObject({ ok: true, stopReason: "cancelled" });
+    });
+
+    it("M8m a send stuck past the drain bound is closed by settleOutstanding before dispose resolves", async () => {
+      const previous = process.env.MURAGE_PROVIDER_CLOSE_MS;
+      process.env.MURAGE_PROVIDER_CLOSE_MS = "150";
+      try {
+        const hold = deferred();
+        const reached = deferred();
+        const seen = gated(FINISHED, { onEvents: async () => { reached.resolve(); await hold.promise; } });
+        await create();
+        const sending = instance.adapter.sendTurn({ threadId: "t-m8m", text: "go", integrations: { computer } });
+        await reached.promise;
+        const disposing = disposeWithReceipt();
+        await disposing.done;                                   // the events call never answered: the bound ran out
+        const turnId = recorder.events.find((e) => e.threadId === "t-m8m")?.turnId as string;
+        expectClosingPair(disposing.receipt, turnId);
+        hold.resolve();
+        const sent = await sending;                             // the late send resumes into a closed gate: nothing is POSTed, nothing is said twice
+        expect(sent.turnId).toBe(turnId);
+        expect(seen.posts).toBe(0);
+        expect(ownOf(recorder.events, turnId).filter((e) => e.type === "turn.completed")).toHaveLength(1);
+      } finally {
+        if (previous === undefined) delete process.env.MURAGE_PROVIDER_CLOSE_MS; else process.env.MURAGE_PROVIDER_CLOSE_MS = previous;
+      }
+    });
+
+    it("M8n a refused POST (HTTP 500) releases the entry: the send rejects, nothing is left in the gate, dispose returns at once", async () => {
+      gated(RUNNING, { post500: true });
+      await create();
+      await expect(instance.adapter.sendTurn({ threadId: "t-m8n", text: "go", integrations: { computer } })).rejects.toThrow(/box says no/);
+      expect(recorder.events).toEqual([]);
+      const started = Date.now();
+      await instance.dispose();
+      expect(Date.now() - started).toBeLessThan(2_000);
+    });
+
+    it("M8-liveWhen refused POST is not live: a Stop afterwards ends the turn as a plain refusal, not via the live close path", async () => {
+      const seen = gated(RUNNING, { post500: true });
+      await create();
+      await expect(instance.adapter.sendTurn({ threadId: "t-m8lw", text: "go", integrations: { computer } })).rejects.toThrow(/box says no/);
+      await instance.adapter.interruptTurn("t-m8lw");
+      await instance.adapter.stopAll();
+      const started = Date.now();
+      await instance.dispose();
+      expect(Date.now() - started).toBeLessThan(2_000);
+      expect(recorder.events).toEqual([]);
+      expect(seen.posts).toBe(1);
+      expect(seen.interrupts).toBe(0);
+    });
+
+    it("control: a plain turn starts, names its session, and ends once with the box's own completion", async () => {
+      gated(FINISHED);
+      await create();
+      const sent = await instance.adapter.sendTurn({ threadId: "t-ctl", text: "go", integrations: { computer } });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+      const own = ownOf(recorder.events, sent.turnId);
+      expect(own.map((e) => e.type).slice(0, 2)).toEqual(["turn.started", "session.started"]);
+      expect(own.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+      expect(own.find((e) => e.type === "turn.completed")).toMatchObject({ ok: true, stopReason: null });
+      expect(own.some((e) => e.type === "runtime.error")).toBe(false);
+      const started = Date.now();
+      await instance.dispose();                                 // the turn left the gate with its ending: nothing to drain
+      expect(Date.now() - started).toBeLessThan(2_000);
+    });
+
+    it("control: dispose with no turn resolves at once and says nothing", async () => {
+      gated(FINISHED);
+      await create();
+      const started = Date.now();
+      await instance.dispose();
+      expect(Date.now() - started).toBeLessThan(2_000);
+      expect(recorder.events).toEqual([]);
+    });
+  });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

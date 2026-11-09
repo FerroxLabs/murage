@@ -1,3 +1,4 @@
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // On a Cloud home the launcher refuses any engine run that names no bot, except the CLI probes
@@ -44,9 +45,9 @@ describe("one-shot Cloud spawns name their bot", () => {
     const before = spawned.length; // anything create itself ran
     try {
       vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
-      await expect(instance.reviewPermission!("review", undefined, "bot-atlas")).rejects.toThrow();
-      await expect(instance.proposeProject!("propose", new AbortController().signal, "claude-haiku-4-5", "bot-chief")).rejects.toThrow();
-      await expect(instance.generateText!("title", "bot-scribe")).rejects.toThrow();
+      await expect(instance.reviewPermission!("review", undefined, "bot-atlas", fixtureBotFolder())).rejects.toThrow();
+      await expect(instance.proposeProject!("propose", new AbortController().signal, "claude-haiku-4-5", "bot-chief", fixtureBotFolder())).rejects.toThrow();
+      await expect(instance.generateText!("title", "bot-scribe", fixtureBotFolder())).rejects.toThrow();
       expect(spawned.slice(before).map((s) => s.env[TURN_BOT])).toEqual(["bot-atlas", "bot-chief", "bot-scribe"]);
       // The review grammar the launcher accepts, unchanged.
       expect(spawned[before].args).toEqual(expect.arrayContaining(["-p", "--tools", "", "--strict-mcp-config", "--no-session-persistence"]));
@@ -67,7 +68,7 @@ describe("one-shot Cloud spawns name their bot", () => {
     try {
       // off Cloud: the owner map with the pins on top
       let before = spawned.length;
-      await expect(instance.generateText!("title", "bot-scribe")).rejects.toThrow();
+      await expect(instance.generateText!("title", "bot-scribe", fixtureBotFolder())).rejects.toThrow();
       const plain = spawned.slice(before).filter((s) => s.args.includes("-p"));
       expect(plain).toHaveLength(1);
       if (process.platform !== "win32") expect(plain[0].cli).toBe(join(bin, "claude-fixture"));
@@ -76,7 +77,7 @@ describe("one-shot Cloud spawns name their bot", () => {
       // on a Cloud home: the pins ride on top of the cloudTurnEnvironment map, whose turn markers stay
       vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
       before = spawned.length;
-      await expect(instance.reviewPermission!("review", undefined, "bot-atlas")).rejects.toThrow();
+      await expect(instance.reviewPermission!("review", undefined, "bot-atlas", fixtureBotFolder())).rejects.toThrow();
       const cloud = spawned.slice(before).filter((s) => s.args.includes("-p"));
       expect(cloud).toHaveLength(1);
       expect(cloud[0].env[TURN_BOT]).toBe("bot-atlas");
@@ -93,7 +94,7 @@ describe("one-shot Cloud spawns name their bot", () => {
 
   it("a PIP text-only turn carries the bot of its run context", async () => {
     vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
-    const input = {
+    const input = { cwd: fixtureBotFolder(),
       system: fixedPrompt("SYS"), text: "USER", model: "model-1", signal: new AbortController().signal, maxOutputTokens: 2000, maxOutputBytes: 12 * 1024,
       outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } }, additionalProperties: false },
       context: { botId: "bot-atlas", runId: "run1", family: "lived", attempt: 1 },
@@ -124,11 +125,11 @@ describe("one-shot Cloud spawns name their bot", () => {
   it("callers pass the bot: the approval review names its asker, the project proposal its Chief, the checker its bot", () => {
     const source = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
     const index = source("../index.ts");
-    expect(index).toContain("requestReview((prompt, signal) => review(prompt, signal, args.asker.id)");
-    expect(index).toContain("instance!.proposeProject!(prompt,signal,chief.modelSelection.model,chief.id)");
-    expect(source("../browser-extension-integration.ts")).toContain("...(bot?.id ? { botId: bot.id } : {})");
+    expect(index).toContain("requestReview((prompt, signal) => review(prompt, signal, args.asker.id, turnCwdByThread.get(args.threadId))");
+    expect(index).toContain("instance!.proposeProject!(prompt,signal,chief.modelSelection.model,chief.id,chiefProposalFolder(chief))");
+    expect(source("../browser-extension-integration.ts")).toContain("...(bot?.id ? { botId: bot.id, cwd: this.options.botFolderOf ? this.options.botFolderOf(bot.id, context.threadId) : bot.cwd } : {})");
     // Antigravity has no launcher grammar on a home, but its one-shot helper names the bot like every other site.
     // 1.0.3 runs it through the one-shot queue (oneShots), which hands the bot on to generateTextNow.
-    expect(source("./antigravity.ts")).toMatch(/const generateText = \(prompt: string, botId\?: string\)[^\n]*generateTextNow\(prompt, signal, botId\)[\s\S]*const generateTextNow = async \(prompt: string, signal: AbortSignal, botId\?: string\)[\s\S]*cloudTurnBot\(callEnv, botId\)/);
+    expect(source("./antigravity.ts")).toMatch(/const generateText = async \(prompt: string, botId\?: string, cwd\?: string\)[\s\S]*botFolderOrThrow\(\{ cwd \}\)[\s\S]*generateTextNow\(prompt, signal, botId, folder\)[\s\S]*const generateTextNow = async \(prompt: string, signal: AbortSignal, botId\?: string, folder\?: string\)[\s\S]*cloudTurnBot\(callEnv, botId\)/);
   });
 });

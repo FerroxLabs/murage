@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // HERMES-BUGS-1010: the two Murage-only Hermes defects carried from 1.0.9.
 // 1. An ask the Murage hook escalates reaches Murage with the placeholder
 //    `<terminal> (plugin approval rule)` as its command and the hook's message
@@ -88,7 +90,7 @@ describe("HERMES-BUGS-1010: a Hermes hook ask is judged by its real command, who
     instance = await HermesAskDriver.create({ instanceId: "hermes-ask-test", displayName: "Hermes Ask Test", environment: {}, enabled: true,
       config: { cli: FAKE_CLI, fullAuto: false } });
     recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId, text: "go" } as any);
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go" } as any);
     const opened = (await recorder.until((e) => e.type === "request.opened")) as any;
     await instance.adapter.respondToRequest(threadId, opened.requestId, { behavior: "deny" });
     await recorder.until((e) => e.type === "turn.completed");
@@ -163,7 +165,7 @@ describe("HERMES-BUGS-1010: a Hermes hook ask is judged by its real command, who
       expect(verdict.approve).toBeNull();
       expect(["unread-call", "always-ask"]).toContain(verdict.source);
       // and at No limits on a turn the owner started: a call that did not arrive whole asks there too
-      const owner = autoVerdict({ autoApprove: true, fullAccess: true, noLimits: true }, opened.tool, opened.summary, { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, inputTruncated: opened.toolInputTruncated === true, call: callOf(opened) });
+      const owner = autoVerdict({ autoApprove: true, fullAccess: true, noLimits: true }, opened.tool, opened.summary, { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null, inputTruncated: opened.toolInputTruncated === true, call: callOf(opened) });
       expect(owner.approve, id).toBeNull();
       await instance?.dispose();
       instance = undefined;
@@ -184,3 +186,6 @@ describe("HERMES-BUGS-1010: a Hermes hook ask is judged by its real command, who
     expect(opened.toolInputMissing).toBeUndefined();
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

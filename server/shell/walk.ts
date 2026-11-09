@@ -48,6 +48,9 @@
 // parts and command kinds are enumerated in exhaustive switches, so a new
 // node kind fails the typecheck until it is placed.
 
+import { wipeWordIn } from "./wipe-vocab.ts";
+import { HardFinding, ownerDeny, denyTarget, ambiguousInterpreter, withoutDoubts, Doubt, doubt, COMMAND_GATE_CHARS, SCAN_GATE_CHARS, compilerResponse, genericResponse, checkSed, interpolated, checkEnvironment, execCapableOption } from "./marks.ts";
+import { realpathSync, lstatSync } from "node:fs";
 import { homedir } from "node:os";
 import { powershellRunner } from "./pwsh.ts";
 
@@ -119,6 +122,8 @@ export type Candidate =
   | { kind: "fromFile"; path: string };
 
 export interface WalkContext {
+  sessionEdits?: ReadonlySet<string>;
+  sessionFile?: (path: string) => { text: string } | "unavailable";
   /** Server-authorized literal Bash payloads from a Windows command. Shared across forks. */
   windowsBash?: string[];
   /** Set while PowerShell or cmd hands a command to `env`, `sudo`-style wrappers or a POSIX shell (walkForeignExecutor): an
@@ -237,6 +242,7 @@ export interface Visitor<H> {
    * goes on to the rest of the text; otherwise it is unreadable, as before.
    * Never offered elevated, nor for a file this text wrote or a value names. */
   unseenScript?(path: string, ctx: WalkContext): boolean;
+  protectedCommand?(cmd: SimpleCommand, ctx: WalkContext): H | null;
 }
 
 /** 1.0.5: a literal script file on disk this text did not write. The visitor
@@ -255,14 +261,21 @@ function runnerStarts(ctx: WalkContext, name: string): void {
   if (startup) throw new Unreadable("opaque", `${name} reads a startup file this text wrote (${startup})`);
 }
 
-export function newContext(cwd?: string): WalkContext {
-  return { cwd, cwdConflict: false, bound: new Map(), arrays: new Set(), readonly: new Set(), functions: new Map(), opaque: false, written: new Map(), links: new Map(), inodes: new Map(), loaders: {}, depth: 0 };
+export function newContext(cwd?: string, runtimePaths?: Readonly<Record<string, string>>): WalkContext {
+  const bound = new Map<string, Word[] | null>();
+  for (const [name, path] of Object.entries(ownerDeny() ? runtimePaths ?? {} : {})) {
+    if (/^[A-Za-z_]\w*$/.test(name) && isAnchored(path) && !/[\x00-\x1f$`]/.test(path))
+      bound.set(name, [{ parts: [{ kind: "lit", text: path, quote: "single" }] }]);
+  }
+  return { cwd, cwdConflict: ownerDeny() && cwd !== undefined && !isAnchored(cwd), bound, arrays: new Set(), readonly: new Set(), functions: new Map(), opaque: false, written: new Map(), links: new Map(), inodes: new Map(), loaders: {}, depth: 0 };
 }
 
 /** A copy for a subshell, a branch or a nested script: what it binds or
  * moves to does not leak back out unless `merge` is asked to. */
 export function fork(ctx: WalkContext, deeper = false): WalkContext {
   const next: WalkContext = {
+    sessionEdits: ctx.sessionEdits,
+    sessionFile: ctx.sessionFile,
     windowsBash: ctx.windowsBash,
     windowsForeign: ctx.windowsForeign,
     cwd: ctx.cwd,
@@ -355,6 +368,112 @@ export function normalizePath(path: string): string {
   return `${drive}${lead}${parts.join("/")}` || (drive ? `${drive}/` : lead || ".");
 }
 
+/** Canonical lexical path, before policy matching. Proc magic links cannot be
+ * folded like ordinary directories: keep that uncertainty before normalization. */
+export function procTraversal(raw: string): boolean {
+  const parts = raw.split("/").filter(Boolean);
+  return parts.includes("proc") && parts.includes(".."); // M-PR-3a
+}
+export function procCanonical(path: string): boolean {
+  return /^\/proc(?:\/|$)/.test(path); // M-PR-3b
+}
+/** A parent step must not erase a protected folder from the write check. */
+export function protectedClimb(raw: string): boolean {
+  const parts = homeSpelled(raw).replace(/^~(?=\/|$)/, homedir()).split("/");
+  let prefix = "";
+  for (const part of parts) {
+    if (part === ".." && protectedWritePath(normalizePath(prefix))) return true; // M-FIX3-climb
+    prefix += `${prefix ? "/" : ""}${part}`;
+    if (prefix === "" && raw.startsWith("/")) prefix = "/";
+  }
+  return false;
+}
+function protectedWritePath(path: string): boolean {
+  return isDeviceWrite(path) || /^\/dev(?:\/|$)/i.test(path) || systemWriteRoot(path) || homeWriteHolds(path, false);
+}
+/** A folder the system runs from, a whole mount, or a Windows system folder: any write inside holds (MARKS r7). */
+function systemWriteRoot(path: string): boolean {
+  return /^\/(?:etc|sys|boot|usr|bin|sbin|lib|lib32|lib64|libexec|system|library|applications|nix|snap|cores)(?:\/|$)/i.test(path)
+    || /^\/private\/(?:etc|var\/db|var\/root)(?:\/|$)/i.test(path) || /^\/var\/(?:spool|db|root)(?:\/|$)/i.test(path)
+    || /^\/(?:private|var|opt|srv|home|users|volumes|mnt|media|run\/media)\/?$/i.test(path)
+    || /^\/(?:volumes|mnt|media)\/[^/]+\/?$/i.test(path) || /^\/(?:media|run\/media)\/[^/]+\/[^/]+\/?$/i.test(path)
+    || /^[a-z]:\/(?:windows|program files(?: \(x86\))?|programdata)(?:\/|$)/i.test(path) || /^[a-z]:\/users\/?$/i.test(path);
+}
+/** A home folder itself and its dot folders hold; `entries` adds its top-level entries (a write target, not a climb). */
+function homeWriteHolds(path: string, entries: boolean): boolean {
+  const lower = path.toLowerCase();
+  const homes = [HOME, "/root", "/var/root", /^\/(?:home|users)\/[^/]+/.exec(lower)?.[0], /^[a-z]:\/users\/[^/]+/.exec(lower)?.[0]];
+  for (const home of homes) {
+    if (!home) continue;
+    if (lower === home) return true;
+    if (!lower.startsWith(`${home}/`)) continue;
+    const rest = lower.slice(home.length + 1);
+    if (rest.startsWith(".") || entries && !rest.includes("/")) return true;
+  }
+  return false;
+}
+/** The explicit folder the engine gave this command is not a usable folder (MARKS FIX A, N4). */
+export function invalidCwd(ctx: Pick<WalkContext, "cwd">): boolean {
+  return ctx.cwd !== undefined && !isAnchored(ctx.cwd);
+}
+/** N1: the fixed part of a target, resolved from the known folder with the unknown part read as empty, is protected. */
+function fixedPrefixProtected(fixed: string, ctx: Pick<WalkContext, "cwd" | "cwdConflict"> & { links?: WalkContext["links"] }): boolean {
+  if (!fixed || /[\x00-\x1f]/.test(fixed)) return false;
+  try { return withoutDoubts(() => canonPath(fixed, ctx, "write")).value; }
+  catch (error) { if (error instanceof HardFinding) throw error; return false; }
+}
+export function canonPath(raw: string, ctx: Pick<WalkContext, "cwd" | "cwdConflict"> & { links?: WalkContext["links"] }, position: "read" | "write"): { path: string; value: boolean } {
+  // MARKS FIX A (ruling N1, N4): the typed deny only where a protected place can be reached: the fixed part of the target
+  // (the unknown part read as empty) is protected, or the engine's explicit folder is invalid. Every other uncertainty is a doubt.
+  const uncertain = (fixed?: string): void => {
+    if (ownerDeny() && position === "write") {
+      if (invalidCwd(ctx) && !isAnchored(homeSpelled(raw))) denyTarget("unresolved-cwd");
+      if (fixed !== undefined && fixedPrefixProtected(fixed, ctx)) denyTarget();
+    }
+    doubt("value-path");
+  };
+  if (!raw || /[\x00-\x1f]/.test(raw) || raw.includes(UNKNOWN_MARK)) uncertain(raw.includes(UNKNOWN_MARK) ? raw.replaceAll(UNKNOWN_MARK, "") : undefined);
+  if (!raw) return { path: "", value: true }; // MARKS r11: with the doubts off the read goes on, never into a TypeError
+  let spelled = homeSpelled(raw);
+  if (/^[a-z]:(?!\/)/i.test(spelled)) uncertain();
+  if (/^~(?:\/|$)/.test(spelled)) spelled = homedir() + spelled.slice(1);
+  if (spelled.startsWith("~")) uncertain();
+  if (!isAnchored(spelled) && (ctx.cwdConflict || !ctx.cwd || !isAnchored(ctx.cwd))) uncertain(); // M-R1-cwd
+  const base = homeSpelled(ctx.cwd ?? "").replace(/^~(?=\/|$)/, homedir());
+  if (!isAnchored(spelled) && (/^~|^[a-z]:(?!\/)/i.test(base))) uncertain();
+  const joined = isAnchored(spelled) ? spelled : `${base}/${spelled}`;
+  // a stream name under /dev/ holds no filesystem; resolving it (Linux /dev/stderr -> /proc/self/fd/2) would hide that
+  const stream = normalizePath(joined);
+  if (stream.startsWith("/dev/") && DEVICE_STREAMS.test(stream.slice("/dev/".length))) return { path: stream, value: false };
+  let path = joined;
+  // Resolve each existing component before consuming a parent step.
+  if (joined.startsWith("/") || process.platform === "win32") {
+    const drive = /^[a-z]:\//i.exec(joined)?.[0];
+    path = drive ?? "/";
+    for (const part of joined.slice(drive?.length ?? 0).split("/")) {
+      if (!part || part === ".") continue;
+      const next = normalizePath(`${path}/${part}`);
+      if (ctx.links?.has(next)) uncertain(); // M-FIX2-pending-link
+      try { path = realpathSync.native(next).replaceAll("\\", "/"); }
+      catch (error) {
+        // MARKS r11: a step below a regular file (ENOTDIR, `cp a ./file` read as `./file/a`) is as absent as a missing one;
+        // the read must not depend on which files happen to exist on the host
+        const absent = (code?: string) => code === "ENOENT" || code === "ENOTDIR";
+        if (!absent((error as NodeJS.ErrnoException).code)) uncertain();
+        try { if (lstatSync(next).isSymbolicLink()) uncertain(); }
+        catch (missing) { if (!absent((missing as NodeJS.ErrnoException).code)) uncertain(); }
+        path = next;
+      }
+    }
+  }
+  path = normalizePath(path);
+  if (process.platform === "win32" || process.platform === "darwin" || /^[a-z]:/i.test(path)) path = path.toLowerCase();
+  const value = position === "write" && (procTraversal(spelled) || protectedClimb(joined) || procCanonical(path)
+    || isDeviceWrite(path) || systemWriteRoot(path) || homeWriteHolds(path, false) // M-R9-tilde: `touch ~/x` is ordinary; ~/.x still holds
+    || /^[a-z]:\/?$/.test(path) || path === "/" || path === "~");
+  return { path, value };
+}
+
 /** A path argument as the command would reach it: relative paths are taken
  * from the folder the command runs in, when that folder is known. */
 export function resolveFrom(cwd: string | undefined, raw: string): string {
@@ -380,21 +499,48 @@ export function resolveFrom(cwd: string | undefined, raw: string): string {
  * wrote to its target. */
 export function resolveWritten(ctx: WalkContext, text: string): string {
   if (text.startsWith(INODE_MARK)) return text;
-  return writtenKey(ctx, resolveFrom(ctx.cwd, text));
+  return writtenKey(ctx, text);
+}
+
+/** Only execution reads session bytes: reading or overwriting a session file
+ * does not require the file to be an approved executable. */
+function executionWrittenKey(ctx: WalkContext, text: string): string {
+  if (ctx.sessionEdits?.has("\u0000session-edits-overflow")) doubt("unavailable-exec");
+  if (text.startsWith(INODE_MARK)) return text;
+  const absolute = canonPath(text, ctx, "read").path;
+  const key = writtenKey(ctx, absolute);
+  // Never replace this text's bytes with an older session snapshot.
+  if (ctx.written.has(key)) return key; // M-FIX2-current
+  for (const edited of ctx.sessionEdits ?? []) {
+    if (writtenKey(ctx, edited) === key && edited !== absolute) doubt("unavailable-exec"); // M-FIX2-session
+  }
+  if (ctx.sessionEdits?.has(absolute)) {
+    let file: { text: string } | "unavailable" = "unavailable";
+    try { file = ctx.sessionFile?.(absolute) ?? "unavailable"; } catch { /* unreadable holds */ }
+    // MARKS r13 (Astra L7): doubt() returns inside withoutDoubts; there a session file with no bytes still holds, by name
+    if (file === "unavailable") {
+      doubt("unavailable-exec"); // M-PR-5a
+      throw new Unreadable("opaque", "a file this session wrote that the reader cannot read");
+    }
+    if (file.text.length > SCAN_GATE_CHARS) doubt("unavailable-exec"); // over the scan gate (M-PR-5a's size half)
+    ctx.written.set(key, { kind: "literal", text: file.text, words: [tokenWord(file.text)] });
+  }
+  return key;
 }
 
 /** The file a path names: resolved from the folder the command runs in,
  * every symbolic link followed. A path, never a hard-link identity; its
  * record is read through `resolveWritten`. */
 export function resolvePath(ctx: WalkContext, text: string): string {
-  return followLinks(ctx, resolveFrom(ctx.cwd, text));
+  return followLinks(ctx, canonPath(text, ctx, "read").path);
 }
 
 /** The `written` key of a path already resolved from the folder the command
  * runs in: every symbolic link followed, then the hard-link identity the
  * name shares with its other names, so one record serves them all. */
 export function writtenKey(ctx: WalkContext, resolved: string): string {
-  const path = followLinks(ctx, resolved);
+  if (resolved.startsWith(INODE_MARK)) return resolved;
+  const path = followLinks(ctx, canonPath(resolved, ctx, "read").path); // M-FIX2-key
   return ctx.inodes.get(path) ?? path;
 }
 
@@ -498,7 +644,7 @@ export function deviceInWord(text: string): string | undefined {
     // a device name starts a word, follows `=`, a quote, a bracket or a
     // blank, ends a glued short option (`-o/dev/sda`) or a URL scheme
     // (`file:///dev/sda`); `~/dev/x` and `/home/me/dev/x` are folders
-    if (i > 0 && /[A-Za-z0-9_.~$}\-\/\\]/.test(plain[i - 1]!) && !/^-[A-Za-z]+$/.test(plain.slice(0, i)) && !plain.slice(0, i).endsWith("://")) continue;
+    if (i > 0 && /[A-Za-z0-9_~$}\-\/\\]/.test(plain[i - 1]!) && !/^-[A-Za-z]+$/.test(plain.slice(0, i)) && !plain.slice(0, i).endsWith("://")) continue;
     let end = i;
     // a `/dev/` name is made of name characters: it ends at a quote, a
     // bracket, `#` or anything else around it (`open('/dev/null')`,
@@ -1069,8 +1215,9 @@ function candidateOf(word: Word, ctx: WalkContext): Candidate {
     return { kind: "glob", anchor: resolveFrom(ctx.cwd, anchor), path };
   }
   // a link this text made stands for what it points to
-  const link = resolvePath(ctx, path);
-  if (link !== resolveFrom(ctx.cwd, path)) return { kind: "literal", text: link, path: link };
+  // Candidates can be data. Resolve disk paths only when a consumer reads or writes a file.
+  const link = followLinks(ctx, resolveFrom(ctx.cwd, path)); // M-FIX3-data
+  if (link !== resolveFrom(ctx.cwd, path)) return { kind: "literal", text: link, path };
   return { kind: "literal", text, path };
 }
 
@@ -1226,7 +1373,11 @@ function unwrap(words: Word[], ctx: WalkContext): Unwrapped {
     // `command -v $c` with `for c in a b`: one wrapped command per program
     if (lists.length > 1) return done({ alternatives: lists });
     rest = lists[0]!;
+    if (/[\\/]/.test(renderWord(rest[0]!)) && !SYSTEM_PROGRAM.test(literalText(rest[0]!) ?? "")) return done(); // M-FIX2-wrapper-path; M-R9-wrapper: a wrapper in a system bin folder is the wrapper its name says (MARKS r7 sysbin), as on b18
     const name = resolveName(rest[0]!);
+    const rawName = name;
+    const rawArgs = rest.slice(1).map(renderWord);
+    if (rawName === "xargs" && rawArgs.some(a => /^-[^-]*a/.test(a) || a === "--arg-file" || a.startsWith("--arg-file="))) doubt("file-fed-args"); // M-PR-6c
     const wrapper = name === undefined ? undefined : WRAPPERS[name];
     if (!wrapper) return done();
     if (wrapper.plainWords) plainWords(rest, `${name}'s command`);
@@ -1248,6 +1399,7 @@ function unwrap(words: Word[], ctx: WalkContext): Unwrapped {
       // 1.0.5 r8: `env "$n=x" node …`: a name a value gives may be a loader variable
       if (wrapper.assignments && literalText(word) === undefined && !assignmentOf(word)) markLoaderVariable(ctx.loaders, `${name} with a value in its arguments`);
       const setName = wrapper.assignments ? literalText(word)?.match(/^([^=]+)=/)?.[1] : undefined;
+      if (setName !== undefined) checkEnvironment(setName);
       if (setName !== undefined && isLoaderName(setName)) markLoaderVariable(ctx.loaders, setName);
       if (wrapper.assignments && assignmentOf(word)) {
         // `env HOME=$x cmd`: what the command sees is not in the text
@@ -1486,8 +1638,16 @@ const OUTPUT_OPTIONS = optionSet("-o -O --output --out --outfile --output-file -
 
 /** The file an output option names, for the word at `i` (`-o f`, `-of`,
  * `--output=f`, `of=f`), with the index of the last word it used. */
-function outputOption(texts: string[], i: number, name?: string): { file: string; last: number } | undefined {
+export function outputOption(texts: string[], i: number, name?: string): { file: string; last: number } | undefined {
   const text = texts[i]!;
+  if (name && ["cp", "mv", "ln", "install"].includes(name)) {
+    const target = /^--target-directory=(.*)$|^-[A-Za-z]*t(.+)$/.exec(text);
+    if (target) return { file: target[1] ?? target[2]!, last: i }; // M-R1-target
+    if (/^-[A-Za-z]*t$/.test(text) || text === "--target-directory") {
+      if (texts[i + 1] === undefined) { doubt("value-path"); return undefined; }
+      return { file: texts[i + 1]!, last: i + 1 };
+    }
+  }
   if (text.startsWith("of=")) return { file: text.slice(3), last: i };
   if (OUTPUT_OPTIONS.has(text)) return texts[i + 1] === undefined ? undefined : { file: texts[i + 1]!, last: i + 1 };
   const eq = text.indexOf("=");
@@ -1683,7 +1843,7 @@ function startupFile(word: Word | undefined, ctx: WalkContext, option: string): 
   const only = candidates.length === 1 ? candidates[0]! : undefined;
   if (only?.kind !== "literal") throw new Unreadable("expansion", `a shell reads a startup file a value names (${option})`);
   if (isNullInput(only.text)) return undefined;
-  const written = ctx.written.get(resolveWritten(ctx, only.text));
+  const written = ctx.written.get(executionWrittenKey(ctx, only.text));
   if (!written) throw new Unreadable("opaque", `a shell reads a startup file the reader does not see (${option})`);
   return written;
 }
@@ -1712,7 +1872,7 @@ const SHELL_OPTION_CAP = 64;
  * `SHELL_PLAIN_CLUSTER` or a `-o <SHELL_O_NAMES>` pair, and the last is one
  * `SHELL_C_CLUSTER`; anything else falls to the option loop, which asks for
  * any option word holding `c`. */
-function shellCScript(args: Word[], shell: string): number | undefined {
+export function shellCScript(args: Word[], shell: string): number | undefined {
   // fish's getopt reads `c` as taking the rest of its word (`-cvi x` runs `vi`)
   // and keeps reading options after the script: only `-c`/`-lc` first
   if (shell === "fish") {
@@ -1923,6 +2083,9 @@ function interpreterProgram(key: string, args: Word[], ctx: WalkContext): Interp
   };
   for (let i = 0; i < args.length; i++) {
     const text = literalText(args[i]!);
+    // an option that loads code first keeps its own reading (below); only a value option that may consume the script name is ambiguous
+    if (ownerDeny() && text !== undefined && takesValue(key, text) && !loadsCodeFirst(key, text, literalText(args[i + 1] ?? { parts: [] })) && runnerOption(key, text) !== "preload") ambiguousInterpreter();
+    if ((key === "ruby" || key === "perl") && text?.startsWith("-") && text !== "-e" && text !== "--") doubt("tokenizer"); // M-R1-interpreter-option
     // the option on its own (`-e`, `-pe`) takes the next word, below
     const attached = text !== undefined && inline.test(text) ? undefined : attachedInlineCode(key, args[i]!);
     if (attached) {
@@ -1966,7 +2129,7 @@ function interpreterProgram(key: string, args: Word[], ctx: WalkContext): Interp
         // `--preload x.ts`, `-r x.ts`: code that runs before the script, a file
         // the run does not show the reader (1.0.4 U17 r3)
         if (runnerOption(key, option) === "preload") throw new Unreadable("opaque", `${key} run loads code first (${name})`);
-        if (flags.valued.has(name)) { if (!option.includes("=")) at++; continue; }
+        if (flags.valued.has(name)) { if (!option.includes("=")) { if (ownerDeny()) ambiguousInterpreter(); else at++; } continue; }
         if (flags.bare.has(name) || flags.prefixes.some((prefix) => name.startsWith(prefix))) continue;
         throw new Unreadable("opaque", `${key} run with an option the reader does not know (${name})`);
       }
@@ -1982,7 +2145,8 @@ function interpreterProgram(key: string, args: Word[], ctx: WalkContext): Interp
     // `bun -r ./x.ts ok.ts`, `bun --require ./x.ts run ok.ts`: code that runs
     // first, before or without a `run` (1.0.5 r4, reader-gaps r3)
     if ((key === "deno" || key === "bun") && runnerOption(key, text) === "preload") throw new Unreadable("opaque", `${key} loads code first (${text.split("=")[0]})`);
-    if (text.startsWith("-")) { if (takesValue(key, text)) i++; continue; }
+    // Ambiguous value options have already raised the mandatory finding above.
+    if (text.startsWith("-")) { const valued = takesValue(key, text); doubt("tokenizer"); if (valued && !ownerDeny()) i++; continue; } // M-R1-unknown-option
     // php reads its own options after the script too (`php x.php -r code`,
     // `php /dev/null -d auto_prepend_file=x`): any option there asks
     if (key === "php") {
@@ -2058,11 +2222,6 @@ function interpreterFile(word: Word, ctx: WalkContext): InterpreterProgram {
   throw new Unreadable("expansion", ctx.written.size ? "an interpreter runs a file a value names, after this text wrote files" : "an interpreter runs a file a value names");
 }
 
-/** The scan of a file this text wrote and then runs (`strict`): any home
- * lookup, any call that deletes or runs, any quoted catastrophe asks. */
-const STRICT_HOME = /\b(HOME|USERPROFILE|expanduser|homedir|GetFolderPath|SpecialFolder|UserProfile)\b/;
-const STRICT_EXIT = /\b(os\.execute|execute|system|popen|subprocess|child_process|execSync|execFileSync|execFile|exec|spawnSync|spawn|Start-Process|Invoke-Expression|iex|os\.remove|os\.unlink|unlink|rmtree|rmSync|rimraf|unlinkSync|rmdirSync|Remove-Item)\b|`|%x/;
-
 /** Literal inline code (`python -c`, `node -e`, a heredoc into `python3 -`)
  * is read by what it can do. Code that only prints, reads or computes is
  * ordinary whatever its strings say: text that is printed or searched is
@@ -2072,6 +2231,9 @@ const OPAQUE_RUNS = /\b(os\.execute|system|popen|Popen|subprocess|child_process|
 /** Backticks run shell text in these languages; in JavaScript they are a template string. */
 const BACKTICK_RUNS = new Set(["perl", "ruby", "php"]);
 const OPAQUE_DELETES = /\b(rm_rf|rm_r|rm_f|rmdir|rmtree|remove_tree|remove_dir|remove_entry|remove_entry_secure|unlink|unlinkSync|rmSync|rmdirSync|rimraf|removedirs|removeSync|emptyDir|emptyDirSync|shred|Remove-Item)\b|\bos\.remove\b/;
+const OPAQUE_FOREIGN = /\b(?:ctypes|cffi|syscall|dlopen|ffi-napi|Fiddle|FFI)\b/;
+/** Write intent only: an `open` needs a write, append, create or update mode. */
+const OPAQUE_WRITE_INTENT = /\b(writeFile|writeFileSync|createWriteStream|appendFile|appendFileSync|WriteAllBytes|Set-Content|Out-File|syswrite)\b|\b(?:fopen|open)\s*\((?:[^()]|\([^()]*\))*,\s*["'`][^"'`]*[wax+][^"'`]*["'`]/;
 const OPAQUE_WRITES = /\b(open|fopen|write|writeFile|writeFileSync|createWriteStream|appendFile|appendFileSync|WriteAllBytes|Set-Content|Out-File|copy|copy2|copyfile|copyFile|syswrite)\b/;
 /** `rm` as code (`fs.rm`, `FileUtils.rm`), or as a word a shell-out runs (`['rm', '-rf', p]`). */
 const OPAQUE_RM = /\brm\b/;
@@ -2226,7 +2388,28 @@ function scanOpaque<H>(text: string, elevated: boolean, visitor: Visitor<H>, ctx
   // Lua's long strings, long comments and the other ways to reach
   // `os.execute` are read into the forms the scan knows (1.0.4 U21 r2)
   if (input.key === "lua") text = readLua(text);
-  if (input.strict) return scanWritten(text, visitor);
+  // Literal targets are classified before incomplete expression handling.
+  const literals = ownerDeny() ? opaqueParts(text, input.key).strings : [];
+  if (literals.some(path => /^(?:\/|~|[a-z]:[\/])/i.test(path) && visitor.catastrophic?.(path)))
+    throw new HardFinding("deny", "protected-path", "protected-path");
+  // N5: a protected path spelled as adjacent literals joined by `+` (`"/et" + "c/cron.d/pwn"`) is still a literal path the code names
+  for (const run of !ownerDeny() ? [] : text.match(/(?:"[^"\\\n]*"|'[^'\\\n]*')(?:\s*\+\s*(?:"[^"\\\n]*"|'[^'\\\n]*'))+/g) ?? []) {
+    const joined = [...run.matchAll(/"([^"\\\n]*)"|'([^'\\\n]*)'/g)].map((piece) => piece[1] ?? piece[2] ?? "").join("");
+    if (/^(?:\/|~|[a-z]:[\/])/i.test(joined) && visitor.catastrophic?.(joined)) throw new HardFinding("deny", "unknown-target", "incomplete-executable-code");
+  }
+  // MARKS FIX A (ruling N5): code the reader cannot finish is a typed deny only when it names a wipe word; a protected literal
+  // was classified above. Otherwise it is read as before (FULL-DENY-1018 / M-R9-inline / M-R10-monotonic).
+  if (OPAQUE_FOREIGN.test(text)) {
+    if (ownerDeny() && wipeWordIn(text) !== undefined) throw new HardFinding("deny", "unknown-target", "native-code");
+    throw new Unreadable("opaque", "code that calls into native code");
+  }
+  if (scanWritten(text, ctx, input.key) === "incomplete") {
+    if (ownerDeny() && wipeWordIn(text) !== undefined) throw new HardFinding("deny", "unknown-target", "incomplete-executable-code");
+    // M-R10-monotonic: inline code the grammar cannot finish is read by the family scan below at every level, as on Full
+    // access (No limits is never stricter than Full access without a deny rule); code the text wrote to a file still doubts
+    if (input.strict) doubt("tokenizer");
+    if (input.strict) throw new Unreadable("opaque", "runs code the reader cannot follow");
+  }
   // (2) the code, its strings, its strings blanked
   const key = input.key;
   const { code, bare, strings, ranges, tops } = opaqueParts(text, key);
@@ -2261,6 +2444,10 @@ function scanOpaque<H>(text: string, elevated: boolean, visitor: Visitor<H>, ctx
   if (key === "tclsh") for (const span of [...runSpans, ...deleteSpans]) for (const word of opaqueParts(span, undefined, false).bare.split(/[\s{}]+/)) if (word && !word.startsWith("-")) words.push(word);
   const named = [...strings, ...words];
   if (named.some((s) => deviceInWord(s) !== undefined)) throw new Unreadable("opaque", "names a disk");
+  // FULL-DENY-1018: a deny rule holds at every level. Code that writes and builds a device path from pieces (`"/dev/" + d`,
+  // `join("/dev", d)`, a template) names a disk; code that writes into a literal system-folder path writes into a protected one
+  if ((ownerDeny() || OPAQUE_WRITE_INTENT.test(text)) && strings.some((s) => /^\/dev\/?$/.test(s.trim()) || /^\/dev\/.*[{$%]/.test(s.trim()))) throw new Unreadable("opaque", "writes and builds a disk path");
+  if ((ownerDeny() || OPAQUE_WRITE_INTENT.test(text)) && strings.some((s) => s.startsWith("/") && s.length > 1 && !/\s/.test(s) && visitor.catastrophic?.(s))) throw new Unreadable("opaque", "writes into a protected path");
   // a delete found only by its stem (a collection's `clear`, a string's
   // `format`) is judged by what its own call is given (UPSEC 10.3, the
   // stem families kept whole): a root, home or system literal, or a value,
@@ -2297,6 +2484,7 @@ function scanOpaque<H>(text: string, elevated: boolean, visitor: Visitor<H>, ctx
         try {
           hit = walkScript(s, fork(ctx, true), visitor);
         } catch (error) {
+          if (error instanceof HardFinding) throw error;
           if (!(error instanceof Unreadable)) throw error;
           // a string that is no shell text (`it's`) is data; one-word dialect names (`end`) too
           if (NOT_SHELL.has(error.reason) || (error.reason === "dialect" && !/\s/.test(s.trim()))) continue;
@@ -2553,21 +2741,39 @@ function namesWritten(named: string[], ctx: WalkContext): boolean {
 }
 
 /** The strict scan, for code this text wrote to a file and then runs. */
-function scanWritten<H>(text: string, visitor: Visitor<H>): void {
-  for (let i = 0; i < text.length; i++) {
-    const quote = text[i]!;
-    if (quote !== "'" && quote !== '"' && quote !== "`") continue;
-    let s = "";
-    let j = i + 1;
-    for (; j < text.length && text[j] !== quote; j++) {
-      if (text[j] === "\\" && (text[j + 1] === "\\" || text[j + 1] === "'" || text[j + 1] === '"')) { s += text[j + 1]; j++; continue; }
-      s += text[j];
-    }
-    if (visitor.catastrophic?.(s) || deviceInWord(s) !== undefined) throw new Unreadable("opaque", "names a catastrophe");
-    i = j;
+function scanWritten(text: string, ctx: WalkContext, key?: string): "complete" | "incomplete" {
+  if (text.length > SCAN_GATE_CHARS) doubt("scan-gate");
+  if (interpolated(text)) doubt("tokenizer");
+  // opaqueParts is the same literal lexer for inline and written-file code.
+  const { strings } = opaqueParts(text, key);
+  for (const value of strings) {
+    if (/^(?:\/|\.\.?\/|~|[a-z]:[\\/])/i.test(value) && canonPath(value, ctx, "write").value) doubt("value-path"); // M-PR-1b
   }
-  if (STRICT_HOME.test(text)) throw new Unreadable("opaque", "looks up the home folder");
-  if (STRICT_EXIT.test(text)) throw new Unreadable("opaque", "deletes or runs something the reader cannot see");
+  // A closed grammar: entire statements, never a list of dangerous words.
+  // Captures are literal strings without escapes, interpolation or adjacent literals.
+  const literal = String.raw`(?:"[^"\\\n{}]*"|'[^'\\\n{}]*')`;
+  const scalar = `(?:${literal}|-?\\d+(?:\\.\\d+)?|True|False|None)`;
+  const printValue = `(?:${scalar}|(?:${literal}|"{}"|'{}')\\.format\\(${scalar}(?:\\s*,\\s*${scalar})*\\))`;
+  const body = text.trim();
+  const opened = /^open\(\s*(["'])([^"'\\]*)\1/.exec(body);
+  if (key === "python" && opened) {
+    const target = canonPath(opened[2]!, ctx, "write");
+    const root = ctx.cwd && !ctx.cwdConflict ? canonPath(ctx.cwd, ctx, "read").path : undefined;
+    if (!target.value && (!root || !target.path.startsWith(`${root}/`))) doubt("value-path"); // M-FIX2-python-root
+  }
+  if (key === "python" && opened && !/^(?:\/|\.\.?\/|~|[a-z]:[\\/])/i.test(opened[2]!) && canonPath(opened[2]!, ctx, "write").value) doubt("value-path");
+
+  if (key === "python") {
+    if (new RegExp(`^print\\(\\s*${printValue}(?:\\s*,\\s*${printValue})*\\s*\\)\\s*;?$`).test(body)) return "complete";
+    if (new RegExp(`^open\\(\\s*${literal}\\s*,\\s*["'](?:w|wb|a|ab)["']\\s*\\)\\.write\\(\\s*b?${literal}\\s*\\)\\s*;?$`).test(body)) return "complete";
+  }
+  if ((key === "node" || key === "bun" || key === "deno") && new RegExp(`^console\\.log\\(\\s*${scalar}\\s*\\)\\s*;?$`).test(body)) return "complete";
+  if (key === "ruby" && new RegExp(`^puts\\s+${scalar}\\s*;?$`).test(body)) return "complete";
+  if (key === "perl" && new RegExp(`^print\\s+${ownerDeny() ? scalar : literal}\\s*;?$`).test(body)) return "complete";
+  if (key === "php" && new RegExp(`^echo\\s+${literal}\\s*;?$`).test(body)) return "complete";
+  if (key === "lua" && new RegExp(`^print\\(\\s*${scalar}\\s*\\)\\s*;?$`).test(body)) return "complete";
+  if (ownerDeny() && key === "rscript" && /^-?\d+(?:\.\d+)?\s*;?$/.test(body)) return "complete";
+  return "incomplete"; // M-PR-1c: never silently finish an unclassified written file
 }
 
 /** A script with a shebang naming a non-shell interpreter is scanned as code. */
@@ -2591,6 +2797,7 @@ function bindPositionals(inner: WalkContext, values: Word[][], zero?: Word[]): v
 
 
 export function walkScript<H>(text: string, ctx: WalkContext, visitor: Visitor<H>): H | null {
+  if (text.length > COMMAND_GATE_CHARS) doubt("scan-gate"); // M-PR-7
   if (ctx.depth > MAX_DEPTH) throw new Unreadable("depth");
   // 1.0.5 r8: a loader variable named anywhere in the text, with an
   // interpreter or a shell run anywhere in the read, asks
@@ -3115,9 +3322,13 @@ function placements(name: string, args: Word[], texts: Array<string | undefined>
  * stderr and an unknown program's output are values); `tee` records its
  * input; `cp`, `mv` and `install` record what the source held. */
 function recordWrites(command: Command, before: Command[], name: string | undefined, args: Word[], ctx: WalkContext, catastrophic?: (text: string) => boolean): void {
-  const literalTargets = (word: Word): string[] | undefined => {
+  const literalTargets = (word: Word, position: "read" | "write" = "write"): string[] | undefined => {
     const candidates = candidatesOf(word, ctx);
-    return candidates.every((c) => c.kind === "literal") ? candidates.map((c) => resolveFrom(ctx.cwd, (c as { text: string }).text)) : undefined;
+    return candidates.every((c) => c.kind === "literal") ? candidates.map((c) => {
+      const target = canonPath(c.path, ctx, position);
+      if (target.value) doubt("value-path"); // M-FIX3-target
+      return target.path;
+    }) : undefined;
   };
   for (const redirect of command.redirects) {
     if (!redirect.target) continue;
@@ -3130,6 +3341,8 @@ function recordWrites(command: Command, before: Command[], name: string | undefi
     for (const path of targets ?? []) setWritten(ctx, path, content);
   }
   if (command.kind !== "simple" || name === undefined) return;
+  // These arguments are data; redirects above are their only file targets.
+  if (name === "printf" || name === "echo") return; // M-FIX3-record-data
   const texts = args.map(literalText);
   if (name === "tee") {
     const content: Provenance = texts.some((text) => text === "-a" || text === "--append") ? { kind: "value", why: "appended" } : stdinProvenance(command, before, ctx) ?? { kind: "value", why: "tee of unknown input" };
@@ -3143,7 +3356,7 @@ function recordWrites(command: Command, before: Command[], name: string | undefi
       || (name === "cp" && texts.some((text) => text !== undefined && (/^-[A-Za-z]*s/.test(text) || text === "--symbolic-link")));
     // `cp -l` makes hard links, as `ln` does
     const hard = name === "ln" || (name === "cp" && texts.some((text) => text !== undefined && (/^-[A-Za-z]*l/.test(text) || text === "--link")));
-    const resolvedSources = placed.sources.map((word) => literalTargets(word));
+    const resolvedSources = placed.sources.map((word) => literalTargets(word, "read"));
     const destinations = literalTargets(placed.destination) ?? [];
     if (!literalTargets(placed.destination)) ctx.loaders.unplacedWrite ??= `${name} to a value`;
     const several = placed.sources.length > 1;
@@ -3217,14 +3430,14 @@ function recordWrites(command: Command, before: Command[], name: string | undefi
     const content: Provenance = download?.output !== undefined ? { kind: "remote", url: download.url }
       : stdin?.kind === "remote" || stdin?.kind === "file" ? stdin
       : { kind: "value", why: `a file ${name} wrote` };
-    setWritten(ctx, resolveFrom(ctx.cwd, out.file), content);
+    setWritten(ctx, out.file, content);
   }
   const literalSource = stdin?.kind === "literal" || plain.some((text, index) => texts[index] !== undefined && index !== script
     && (text.split(/\s+/).some((word) => word !== "" && (catastrophic?.(word) || deviceInWord(word) !== undefined)) || catastrophic?.(text)));
   if (!literalSource) return;
   for (const [index, text] of texts.entries()) {
     if (index === script || text === undefined || !pathShaped(text)) continue;
-    setWritten(ctx, resolveFrom(ctx.cwd, text), { kind: "value", why: `a file ${name} may have written from this text` });
+    setWritten(ctx, text, { kind: "value", why: `a file ${name} may have written from this text` });
   }
 }
 
@@ -3236,6 +3449,7 @@ function walkSimple<H>(command: Extract<Command, { kind: "simple" }>, ctx: WalkC
     if (named) markLoaderVariable(ctx.loaders, named);
   }
   for (const assign of command.assigns) {
+    if (command.words.length > 0) checkEnvironment(assign.name);
     // 1.0.5 r8: `HOME=./x zsh -c …`, `NODE_OPTIONS=… node …`
     if (isLoaderName(assign.name)) markLoaderVariable(ctx.loaders, assign.name);
     const hit = walkParts(assign.value, ctx, visitor);
@@ -3304,11 +3518,12 @@ function runWritten<H>(written: Provenance, positionals: Word[], ctx: WalkContex
       if (direct && shebangInterpreter(written.text)) { const key = interpreterKey(shebangInterpreter(written.text)!); scanOpaque(written.text, elevated, visitor, ctx, { strict: true, ...(key ? { key } : {}) }); return null; }
       return walkWithPositionals(written.text, undefined, positionals, ctx, visitor, elevated, stdin);
     case "file": {
-      const again = ctx.written.get(resolveWritten(ctx, written.path));
+      const again = ctx.written.get(executionWrittenKey(ctx, written.path));
       if (again) return runWritten(again, positionals, ctx, visitor, elevated, direct, hops + 1, stdin);
       // 1.0.4 U17: a shell given a copy of a script on disk runs what the
       // reader does not see; a program run directly is read as any program on disk is
-      if (direct || isNullInput(written.path)) return null;
+      if (direct) doubt("command"); // M-FIX2-copy
+      if (isNullInput(written.path)) return null;
       throw new Unreadable("opaque", "a shell runs a copy of a script file the reader does not see");
     }
     case "roots": case "value": throw new Unreadable("expansion", "a script this text wrote from a value");
@@ -3326,7 +3541,7 @@ function scanProvenance<H>(program: Provenance, ctx: WalkContext, visitor: Visit
     // piped or heredoc text is read as inline code; a file this text wrote, strictly
     case "literal": scanOpaque(program.text, elevated, visitor, ctx, { key, strict: hops > 0 }); return;
     case "file": {
-      const written = ctx.written.get(resolveWritten(ctx, program.path));
+      const written = ctx.written.get(executionWrittenKey(ctx, program.path));
       if (written) { scanProvenance(written, ctx, visitor, elevated, key, hops + 1); return; }
       // 1.0.4 U17: code from a file on disk this text did not write asks
       if (isNullInput(program.path)) return;
@@ -3423,6 +3638,15 @@ function visitWords<H>(list: Word[], command: Extract<Command, { kind: "simple" 
   }
 }
 
+/** Commands admitted to the existing operand/redirect walker. Executable options
+ * are checked before this list, and interpreters have their own closed grammar. */
+const SYSTEM_PROGRAM = /^(?:\/usr(?:\/local)?|\/opt\/homebrew)?\/s?bin\/[^/]+$|^\/applications\/[^/]+\.app\/contents\/macos\/[^/]+$/i;
+/** An awk program that can start a program, read a command's output or write a file holds (MARKS r7). */
+function awkRuns(args: readonly string[]): boolean {
+  return args.some(arg => /^(?:-[^-]*[fEile]|--(?:file|exec|include|load|source))/.test(arg) || /system|getline|[|>]|@include|@load|ENVIRON/.test(arg));
+}
+
+
 /** One simple command after its wrappers. */
 function visitUnwrapped<H>(unwrapped: Unwrapped, command: Extract<Command, { kind: "simple" }>, given: Provenance | undefined, ctx: WalkContext, visitor: Visitor<H>, viaXargs: XargsOptions | undefined, viaDerived: boolean, before: Command[], viaElevated: boolean): H | null {
   let hit: H | null = null;
@@ -3466,26 +3690,103 @@ function visitUnwrapped<H>(unwrapped: Unwrapped, command: Extract<Command, { kin
   }
   const name = resolveName(words[0]!);
   if (name === undefined) throw new Unreadable("dynamic-name", renderWord(words[0]!));
+  // A default-deny doubt asks only after the catastrophe rules have had their say: a catastrophe keeps its own name (M-FIX4-order).
+  const rulesFirst = (): H | null => {
+    const probe = fork(ctx, true);
+    try {
+      return visitor.command(simpleCommand(name, words.slice(1), probe, { redirects: command.redirects, elevated, derived }), probe);
+    } catch (error) {
+      if (error instanceof HardFinding || !(error instanceof Unreadable)) throw error;
+      return null;
+    }
+  };
   const windowsRunner = ctx.windowsBash ? powershellRunner(name) : undefined;
   if (ctx.windowsForeign && (powershellRunner(name) === "interpreter" || interpreterKey(name) !== undefined)) throw new Unreadable("pwsh", `${name} reached through a wrapper needs approval`);
   if (ctx.windowsBash && (windowsRunner === "interpreter" || windowsRunner === "launcher" && name !== "bash" || /^(cmd|wsl|start-process|set-content|powershell|pwsh)(\.exe)?$/i.test(name) || /\.(ps1|psm1|psd1|py|sh)$/i.test(name))) throw new Unreadable("pwsh", "the nested executor needs approval");
   if (ctx.indirect === "trap") (ctx.trapCalls ??= new Set()).add(name);
-  const shape = ctx.functions.get(name);
-  if (shape?.forkBomb) return visitor.forkBomb();
-  if (shape) return callFunction(name, shape, words.slice(1), ctx, visitor);
   const args = words.slice(1);
+  const marksArgs = args.map(renderWord);
+  const direct = literalText(words[0]!);
+  const interpreterClass = interpreterKey(name);
+  let ambiguous = false;
+  if (interpreterClass) for (const arg of marksArgs) {
+    if (!arg.startsWith("-") || arg === "--" || INLINE_CODE[interpreterClass]?.test(arg) || attachedInlineCode(interpreterClass, lit(arg))) break;
+    if (takesValue(interpreterClass, arg)) { ambiguous = true; break; }
+  }
+  // Do not guess which word is the script when an option may consume it.
+  const protectedHit = ambiguous || !ownerDeny() || ctx.functions.has(name) ? null : visitor.protectedCommand?.(simpleCommand(name, args, ctx, {
+    redirects: command.redirects, elevated, derived,
+    ...(direct !== undefined ? { program: { text: direct, dialect: "posix" as const } } : {}),
+  }), ctx);
+  if (protectedHit) return protectedHit;
+  // A basename does not prove the bytes at a supplied executable path. A program in a system bin folder or an
+  // installed macOS app is the program its name says (MARKS r7); it is read as that name.
+  const systemProgram = direct !== undefined && SYSTEM_PROGRAM.test(direct); // M-R7-sysbin
+  if (/[\\/]/.test(renderWord(words[0]!)) && !systemProgram) {
+    const written = direct === undefined ? undefined : ctx.written.get(executionWrittenKey(ctx, direct));
+    if (written) { runnerStarts(ctx, direct!); return runWritten(written, args, ctx, visitor, elevated, true, 0, stdin); }
+    // An unproven executable path asks, but a catastrophe in its operands keeps its own name (M-FIX4-pathname).
+    const found = rulesFirst();
+    if (found) return found; // M-FIX4-pathname
+    doubt("command"); // M-FIX2-command
+  }
+  try {
+    const shape = ctx.functions.get(name);
+    if (shape?.forkBomb) return visitor.forkBomb();
+    if (shape) return callFunction(name, shape, words.slice(1), ctx, visitor);
+    // MARKS r7: an unlisted name is read like any other command; only unreadable text, a value or device in a
+    // write or exec position, an unseen script or an unlexable interpreter body holds (r1.5 FC-0).
+
+    if (compilerResponse(name, marksArgs)) doubt("file-fed-args");
+    if (genericResponse(name, marksArgs, PURE_READERS.has(name))) doubt("file-fed-args");
+    if ((name === "tar" || name === "rsync") && marksArgs.some(a => a === "-T" || a === "--files-from" || a.startsWith("--files-from="))) doubt("file-fed-args"); // M-PR-6d
+    if (name === "less" && marksArgs.some(a => a.startsWith("+"))) doubt("tokenizer");
+    if (execCapableOption(name, marksArgs)) doubt("tokenizer"); // M-X1-exec
+    if (name === "sed") {
+      // M-R9-sed: options and the program must be literal; a value is fine as a file operand after the program
+      // (`sed -n 1p "$f"` reads a file). checkSed still refuses in-place, w/e programs and unknown options.
+      const programAt = marksArgs.findIndex(a => !a.startsWith("-"));
+      const takesProgram = (prev: string | undefined) => prev !== undefined && /^(?:-[A-Za-z]*[ef]|--expression|--file)$/.test(prev);
+      for (const [i, arg] of args.entries()) {
+        if (isPlain(arg)) continue;
+        if (programAt < 0 || i <= programAt || marksArgs[i]!.startsWith("-") || takesProgram(marksArgs[i - 1])) doubt("tokenizer");
+      }
+      checkSed(marksArgs, file => {
+        if (file === "-") return undefined;
+        try {
+          const path = canonPath(file, ctx, "read").path;
+          const written = ctx.written.get(executionWrittenKey(ctx, path));
+          if (written?.kind === "literal") return written.text;
+          if (written) return undefined; // M-FIX2-shadow
+          const content = ctx.sessionFile?.(path);
+          if (content && content !== "unavailable" && content.text.length <= SCAN_GATE_CHARS) return content.text;
+        } catch { /* An unknown program holds. */ }
+        return undefined; // M-PR-2
+      });
+    }
+    if (["awk", "gawk", "nawk"].includes(name) && awkRuns(marksArgs) || name === "perl" && marksArgs.some(arg => /^-[^-]*[ip]/.test(arg))) doubt("tokenizer"); // M-R1-program
+    for (let i = 0; i < marksArgs.length; i++) {
+      const out = outputOption(marksArgs, i, name);
+      if (out && canonPath(out.file, ctx, "write").value) doubt("value-path"); // M-PR-4
+    }
+    if (!PURE_READERS.has(name)) for (const arg of marksArgs) {
+      const tail = arg.replace(/^-{0,2}[\w.-]*=/, "").replace(/^-[A-Za-z](?=[/~.])/, "");
+      if (tail && (procTraversal(homeSpelled(tail)) || protectedClimb(tail))) doubt("value-path"); // M-R7-climb
+      if (tail && /(?:^|\/)\.\.(?:\/|$)/.test(tail) && protectedWritePath(resolveFrom(ctx.cwd, tail))) doubt("value-path"); // M-X1-climb
+    }
+  } catch (error) {
+    if (error instanceof Doubt) {
+      const found = rulesFirst();
+      if (found) return found; // M-FIX4-region
+    }
+    throw error;
+  }
   // the positional parameters moved or replaced: what `$1` names from here
   // on is not something the reader follows
   if (name === "shift" || (name === "set" && setsArguments(args))) throw new Unreadable("dynamic-eval", `${name} moves the arguments`);
-  // `./x`, `/tmp/x`: a program this text wrote, run directly
-  const direct = literalText(words[0]!);
-  if (direct !== undefined && /[\\/]/.test(direct)) {
-    const written = ctx.written.get(resolveWritten(ctx, direct));
-    if (written) { runnerStarts(ctx, direct); return runWritten(written, args, ctx, visitor, elevated, true, 0, stdin); }
-  }
   if (name === "wsl" || name === "wsl.exe") return walkWsl(args, ctx, visitor, stdin);
   // NOLIMITS-WALK-CRIT: a multi-call wrapper or a shell the reader does not model runs code it does not follow
-  if (UNMODELED_LAUNCHERS.has(name)) throw new Unreadable("opaque", `${name} runs code the reader does not follow`);
+  if (UNMODELED_LAUNCHERS.has(name)) { doubt("tokenizer"); throw new Unreadable("opaque", `${name} runs code the reader does not follow`); }
   if (SHELLS.has(name)) {
     runnerStarts(ctx, name);
     const startup: Array<Provenance | undefined> = [];
@@ -3499,7 +3800,7 @@ function visitUnwrapped<H>(unwrapped: Unwrapped, command: Extract<Command, { kin
     }
     if (!program) return null;
     if (program.kind === "file") {
-      const written = ctx.written.get(resolveWritten(ctx, program.path));
+      const written = ctx.written.get(executionWrittenKey(ctx, program.path));
       // 1.0.4 U17 (fail closed, as the PowerShell reader does): a script on
       // disk this text did not write is one the reader does not see. An
       // empty input (`/dev/null`) runs nothing
@@ -3531,12 +3832,14 @@ function visitUnwrapped<H>(unwrapped: Unwrapped, command: Extract<Command, { kin
       if (!program.words.every(isPlain)) throw new Unreadable("opaque", "inline code from a value");
       scanOpaque(program.words.map(renderWord).join("\n"), elevated, visitor, ctx, { key: interpreter, rest: program.rest, ...(stdin ? { stdin } : {}) });
     } else if (program.kind === "file") {
-      const written = ctx.written.get(resolveWritten(ctx, program.path));
+      const written = ctx.written.get(executionWrittenKey(ctx, program.path));
       // 1.0.4 U17: a script on disk this text did not write asks
       if (!written) { if (!isNullInput(program.path)) unseenScript(visitor, program.path, ctx, elevated, `${name} runs a script file the reader does not see`); }
       else scanProvenance(written, ctx, visitor, elevated, interpreter, 1);
-    } else if (program.kind === "stdin" && stdin) {
-      scanProvenance(stdin, ctx, visitor, elevated, interpreter);
+    } else if (program.kind === "stdin") {
+      // MARKS r11: with the doubts off an interpreter with no program and no input (`node -v`) is ordinary, as on b18
+      if (!stdin) doubt("tokenizer"); // M-R11-stdin
+      else scanProvenance(stdin, ctx, visitor, elevated, interpreter);
     }
   }
   if (name === "eval") {
@@ -3585,7 +3888,7 @@ function visitUnwrapped<H>(unwrapped: Unwrapped, command: Extract<Command, { kin
       const candidates = candidatesOf(file, ctx);
       const only = candidates.length === 1 ? candidates[0]! : undefined;
       if (only?.kind === "literal") {
-        const written = ctx.written.get(resolveWritten(ctx, only.text));
+        const written = ctx.written.get(executionWrittenKey(ctx, only.text));
         if (written) {
           hit = runWritten(written, args.slice(at + 1), ctx, visitor, elevated, false, 0, stdin);
           if (hit) return hit;
@@ -3604,11 +3907,9 @@ function visitUnwrapped<H>(unwrapped: Unwrapped, command: Extract<Command, { kin
     // 1.0.5 r8: `printf -v "$n" …`: a name a value gives may be a loader variable
     if (args.some((word) => { const text = literalText(word); return text === undefined || isLoaderName(text); })) markLoaderVariable(ctx.loaders, `${name} of a loader variable or a name a value gives`);
   }
-  if (OPAQUE.has(name) || (name === "printf" && args.some((word) => literalText(word) === "-v"))) {
-    // `source x`, `let`, `printf -v`: names the text does not spell out are
-    // assigned, and a sourced file can define anything a trap would run
-    if (ctx.trapCalls?.size && (name === "source" || name === ".")) throw new Unreadable("dynamic-eval", `${name} after a trap is registered`);
-    applyEffects(name === "source" || name === "." ? SOURCE_EFFECTS : OPAQUE_EFFECTS, ctx);
+  if ((!ownerDeny() || (name !== "source" && name !== ".")) && (OPAQUE.has(name) || (name === "printf" && args.some((word) => literalText(word) === "-v")))) {
+    if (!ownerDeny() && ctx.trapCalls?.size && (name === "source" || name === ".")) throw new Unreadable("dynamic-eval", `${name} after a trap is registered`);
+    applyEffects(!ownerDeny() && (name === "source" || name === ".") ? SOURCE_EFFECTS : OPAQUE_EFFECTS, ctx);
     for (const [fname, shape] of ctx.functions) ctx.functions.set(fname, { ...shape, conflict: true });
   }
   if (name === "alias") {
@@ -3662,6 +3963,7 @@ function visitUnwrapped<H>(unwrapped: Unwrapped, command: Extract<Command, { kin
       // variable; `export $'NODE_OPT\x49ONS'=x` is one, decoded
       if (!assignment && text === undefined) markLoaderVariable(ctx.loaders, `${name} of a name a value gives`);
       const setName = assignment?.name ?? text?.split("=")[0];
+      if (name === "export" && setName !== undefined) checkEnvironment(setName);
       if (setName !== undefined && isLoaderName(setName)) markLoaderVariable(ctx.loaders, setName);
       const readonly = name === "readonly" || (name !== "export" && options && args.some((w) => /^-[A-Za-z]*r/.test(literalText(w) ?? "")));
       if (!assignment) {
@@ -3687,6 +3989,13 @@ function visitUnwrapped<H>(unwrapped: Unwrapped, command: Extract<Command, { kin
     ...(direct !== undefined ? { program: { text: direct, dialect: "posix" as const } } : {}),
   }), ctx);
   if (hit) return hit;
+  if (ownerDeny() && (name === "source" || name === ".")) {
+    // Classify the source operands in the cwd that actually loads the file,
+    // then invalidate state for subsequent commands the file can affect.
+    if (ctx.trapCalls?.size) throw new Unreadable("dynamic-eval", `${name} after a trap is registered`);
+    applyEffects(SOURCE_EFFECTS, ctx);
+    for (const [fname, shape] of ctx.functions) ctx.functions.set(fname, { ...shape, conflict: true });
+  }
   recordWrites(command, before, name, args, ctx, visitor.catastrophic);
   return null;
 }

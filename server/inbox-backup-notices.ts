@@ -28,7 +28,7 @@ import type { HealthInbox } from "../shared/sentinel-view.ts";
 
 export interface BackupNotices {
   backupWaiting?: BackupWaiting | null;
-  backupFailed?: { sentence: string; at: number } | null;
+  backupFailed?: { sentence: string; at: number; code?: string } | null;
   /** The owner's Health summary: pass it only for a read that proved the owner (owner-api.ts sentinelOwner). */
   health?: HealthInbox | null;
 }

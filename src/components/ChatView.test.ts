@@ -404,7 +404,7 @@ describe("the comm chip on a phone never opens the wrong bot (E1, 2026-09-28)", 
   it("decides open vs. blocked with commChipAction, not an inline guess", () => {
     expect(chat).toContain('import { commChipAction } from "@/lib/comm-chip-visibility";');
     expect(chipTail).toMatch(
-      /commChipAction\(\{ phone: isPhoneClient\(\), groupId: comm\.groupId, groups: state\.groups \}\) === "blocked"/,
+      /commChipAction\(\{ phone: isPhoneClient\(\), groupId: comm\.groupId, groups: groupVisible \? \[\{ id: comm\.groupId \}\] : \[\] \}\) === "blocked"/,
     );
   });
 
@@ -442,5 +442,25 @@ describe("Regenerate and widget rows", () => {
   it("the last bot text row that Regenerate targets is never a widget row", () => {
     const chat = readFileSync(fileURLToPath(new URL("./ChatView.tsx", import.meta.url)), "utf8");
     expect(chat).toMatch(/m\.kind === "text" && !m\.widget\)\?\.id/);
+  });
+});
+
+describe("1.0.18 U6 E15: a step whose turn ended with no recorded end", () => {
+  const chip = chat.slice(chat.indexOf("function ActivityChip("), chat.indexOf("function ActivityChip(") + 6_000);
+  const en = JSON.parse(read("../locales/en.json")) as Record<string, string>;
+  it("shows a static icon and the words No result, never the spinning dots; only the server's mark says so", () => {
+    expect(chip).toContain("const noResult = tool.ok === undefined && tool.unrecorded === true;");
+    // the static branch comes first, so a marked row can never reach WorkingDots; an unmarked open row still does
+    expect(chip).toMatch(/\{noResult \? \(\s*<Minus [^>]*\/>\s*\) : tool\.ok === undefined \? \(\s*<WorkingDots/);
+    expect(chip).toContain('{noResult && <span data-testid="tool-chip-no-result" className="shrink-0">{t("toolChip.noResult")}</span>}');
+    expect(en["toolChip.noResult"]).toBe("No result");
+  });
+  it("the run log says how many steps have no result and gives each one the words, with a still dot", () => {
+    expect(chat).toContain('t("timeline.noResultCount", { count: noResult })');
+    expect(chat).toMatch(/event\.state === "unrecorded"\s*\?\s*"bg-ink-secondary\/50"/);
+    expect(en["timeline.noResultCount"]).toBe("{count} with no result");
+  });
+  it.each(views)("%s does not call a No result step in flight (the mascot stops working)", (_name, source) => {
+    expect(source).toMatch(/toolInFlight = \w+\?\.kind === "activity" && \w+\.tool\?\.ok === undefined && \w+\.tool\?\.unrecorded !== true;/);
   });
 });

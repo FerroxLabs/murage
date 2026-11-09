@@ -4,10 +4,12 @@
 // "New Bot" and "New Team": one box each. Say what it should do and the
 // best templates come up; or browse one topic at a time; or start blank.
 // Clicking a template shows what it comes with before anything is made.
+import { useFocusTrap } from "@/lib/focus-trap";
+import { LayerSurface } from "@/components/LayerSurface";
+import type { LoadedLayerProps } from "@/components/LazyOverlay";
 import { ChevronLeft, ChevronRight, Search, X } from "lucide-react";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LibraryArt } from "./LibraryArt";
-import { createPortal } from "react-dom";
 import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 
 import { track } from "@/lib/analytics";
@@ -97,13 +99,15 @@ export function templateImportUrl(manifest: unknown, reviewed: unknown, acknowle
 
 type Screen = { kind: "choose" } | { kind: "hermes" } | { kind: "preview"; entry: TemplateEntry; preview: PendingTeamImport | null; error: string };
 
-export function NewFromTemplateDialog({ kind, onClose, onBlank, onOpenFile, onCreated }: {
+export function NewFromTemplateDialog({ layerLifecycle, kind, onClose, onBlank, onHire, onOpenFile, onCreated }: {
   kind: TemplateKind;
   onClose(): void;
   onBlank(): void;
+  /** UX-L6A part 2: hire in one sentence, its own entry beside Start blank (bots only). */
+  onHire?(): void;
   onOpenFile(): void;
   onCreated(result: TeamImportResult): void;
-}) {
+} & { layerLifecycle?: LoadedLayerProps }) {
   const { state, dispatch } = useStore();
   const [catalog, setCatalog] = useState<TemplateEntry[] | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -123,6 +127,8 @@ export function NewFromTemplateDialog({ kind, onClose, onBlank, onOpenFile, onCr
   const [guardAcknowledged, setGuardAcknowledged] = useState(false);
   const [showAllTopics, setShowAllTopics] = useState(false);
   const generation = useRef(0);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const layer = useFocusTrap(dialogRef, true, { name: "new-from-template-dialog", kind: "dialog", initialFocus: "input", onEscape: closeDialog, returnFocusTo: layerLifecycle?.opener, lease: layerLifecycle?.lease });
   const noun = kind === "bot" ? "bot" : "team";
 
   useEffect(() => {
@@ -136,11 +142,6 @@ export function NewFromTemplateDialog({ kind, onClose, onBlank, onOpenFile, onCr
     })();
   }, [kind]);
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") closeDialog(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [closeDialog]);
 
   // Best matches: the catalogue's own ranking for the sentence typed.
   useEffect(() => {
@@ -235,9 +236,8 @@ export function NewFromTemplateDialog({ kind, onClose, onBlank, onOpenFile, onCr
   // overlay was laid out against the drawer instead of the screen. Below md
   // the panel is a full-width sheet inside the safe area (overlay-inset) and
   // the visual viewport (--vvh), like SettingsModal.
-  return createPortal(
-    <div className="overlay-inset fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40" onMouseDown={(event) => event.target === event.currentTarget && closeDialog()}>
-      <div role="dialog" aria-modal="true" aria-labelledby="new-from-template-title" className={`${BOX_FRAME} max-h-[min(720px,calc(var(--vvh,100dvh)-32px))] w-[min(560px,calc(100vw-32px))] rounded-2xl border border-hairline bg-panel shadow-2xl max-md:h-[var(--vvh,100dvh)] max-md:max-h-none max-md:w-full max-md:rounded-none max-md:border-x-0`}>
+  return <LayerSurface handle={layer}><div className="overlay-inset fixed inset-x-0 top-0 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40" onMouseDown={(event) => event.target === event.currentTarget && closeDialog()}>
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="new-from-template-title" className={`${BOX_FRAME} max-h-[min(720px,calc(var(--vvh,100dvh)-32px))] w-[min(560px,calc(100vw-32px))] rounded-2xl border border-hairline bg-panel shadow-2xl max-md:h-[var(--vvh,100dvh)] max-md:max-h-none max-md:w-full max-md:rounded-none max-md:border-x-0`}>
         <BoxHead className="border-b border-hairline/40 px-5 py-3">
           <h2 id="new-from-template-title" className="text-[17px] font-semibold text-ink">{title}</h2>
           <button type="button" aria-label="Close" onClick={closeDialog} className="flex size-9 items-center justify-center rounded-lg hover:bg-control max-md:size-11"><X size={17} /></button>
@@ -291,7 +291,6 @@ export function NewFromTemplateDialog({ kind, onClose, onBlank, onOpenFile, onCr
                 <Search size={14} className="text-ink-secondary" aria-hidden="true" />
                 <input
                   id="new-from-template-query"
-                  autoFocus
                   value={query}
                   onChange={(event) => { setQuery(event.target.value); setTopic(""); }}
                   placeholder={kind === "bot" ? "e.g. chase unpaid invoices and follow up with clients" : "e.g. run my sales pipeline"}
@@ -347,14 +346,13 @@ export function NewFromTemplateDialog({ kind, onClose, onBlank, onOpenFile, onCr
           </BoxFoot>
         )}
         {screen.kind === "choose" && (
-          <BoxFoot className="gap-4 border-t border-hairline/40 px-5 py-3 text-[12.5px]">
+          <BoxFoot className="flex-wrap gap-x-4 gap-y-2 border-t border-hairline/40 px-5 py-3 text-[12.5px]">
             {kind === "bot" && hermesDetected(state.instances) && <button type="button" onClick={() => setScreen({ kind: "hermes" })} className="text-ink-secondary hover:text-ink">Import from Hermes…</button>}
             <button type="button" onClick={onOpenFile} className="text-ink-secondary hover:text-ink">Open a file…</button>
+            {kind === "bot" && onHire && <button type="button" onClick={onHire} className="text-ink-secondary hover:text-ink">{t("ux.l6a.hire.entry")} →</button>}
             <button type="button" onClick={onBlank} className="text-ink-secondary hover:text-ink">{kind === "bot" ? "Start blank" : "Pick from my bots"} →</button>
           </BoxFoot>
         )}
       </div>
-    </div>,
-    document.body,
-  );
+    </div></LayerSurface>;
 }

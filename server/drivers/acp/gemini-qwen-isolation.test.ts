@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Gemini and Qwen bot turns: Murage's own MCP servers present, the owner's personal setup out.
@@ -322,3 +323,6 @@ describe("Qwen personal setup isolation", () => {
     } finally { await instance.dispose(); }
   }, 45000);
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

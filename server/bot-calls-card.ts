@@ -7,18 +7,35 @@
 // verbatim from design 8; the card's buttons and the History view are phase 5.
 import { CALL_COPY } from "../shared/bot-calls-contract.ts";
 import type { CallIntent } from "./bot-calls-machine.ts";
+import type { OutsideSource } from "./email/external-marks.ts";
 import { murageLine } from "./murage-line.ts";
 import type { Message } from "./store.ts";
 
 export const callCardId = (intentId: string): string => `botcall-${intentId}`;
 
+/** Murage's own source labels: the only words of a fact field that reach the owner's card or the call opener. */
+const SOURCE_LABELS: Readonly<Record<OutsideSource, true>> = {
+  "web page": true, "web search": true, email: true, "another person": true, "another bot": true, "browser page": true, "outside tool": true,
+  "downloaded file": true, "network command": true, "package install": true, git: true, archive: true, interpreter: true, helper: true,
+  "earlier turn": true, "earlier session": true, memory: true, "cloned folder": true,
+};
+
+/** needs_owner_now on a marked turn: the owner is told what is behind it. Anything but one of our labels is never printed: the
+ *  owner still hears the turn read outside content, without the name. */
+function outsideNote(intent: CallIntent): string | null {
+  const source = intent.factFields?.outside;
+  if (source === undefined || source === null) return null;
+  return typeof source === "string" && Object.hasOwn(SOURCE_LABELS, source) ? `Earlier, this chat read outside content (${source}).` : "Earlier, this chat read outside content.";
+}
+
 /** The card's words for the intent as it is now; null when the state owes no card (ringing, live, seen, dropped). */
 export function callCardText(intent: CallIntent, botName: string, clock: (ms: number) => string): string | null {
   const when = clock(intent.rangAt ?? intent.createdAt);
-  if (intent.state === "waiting") return `${botName} needs you`;
+  const needsYou = [`${botName} needs you`, outsideNote(intent)].filter(Boolean).join("\n");
+  if (intent.state === "waiting") return needsYou;
   if (intent.state !== "done") return null;
   switch (intent.outcome) {
-    case "texted": return `${botName} needs you`;
+    case "texted": return needsYou;
     case "late": return `${botName} would have called you at ${when}, while Murage wasn't running.`;
     case "missed": case "text_instead": return `${botName} tried to call you at ${when}`;
     case "declined": return `${botName} tried to call you at ${when}\n${CALL_COPY.declined}`;
@@ -77,7 +94,10 @@ export function callOpener(intent: CallIntent, o: { firstName: string | null; bo
     case "channel.message": fact = `A message came in from ${o.senderName ?? "someone on your list"}${o.channel ? ` on ${o.channel}` : ""}.`; break;
     case "turn.ended": fact = `${o.taskName ?? "Your task"} has finished.`; break;
     case "routine.failed": case "routine.needs_you": fact = `Your routine ${o.routineName ?? ""} reported a problem ${ago}.`.replace("routine  ", "routine "); break;
-    default: fact = intent.line ? `${o.botName} thinks you're needed now. ${o.botName} says: ${intent.line}.` : `${o.botName} thinks you're needed now.`;
+    default: {
+      const note = outsideNote(intent);
+      fact = `${intent.line ? `${o.botName} thinks you're needed now. ${o.botName} says: ${intent.line}.` : `${o.botName} thinks you're needed now.`}${note ? ` ${note}` : ""}`;
+    }
   }
   return `${hi} ${fact} Want the details?`;
 }

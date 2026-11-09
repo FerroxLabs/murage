@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -96,7 +98,7 @@ const parseLines = (value: string | undefined): Record<string, string> =>
 async function oneTurn(turn: Partial<SendTurnInput> & { threadId: string; model: string }): Promise<void> {
   const completed = () => recorder!.events.filter((event) => event.type === "turn.completed").length;
   const before = completed();
-  await instance!.adapter.sendTurn({ text: "hi", ...turn });
+  await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), text: "hi", ...turn });
   await vi.waitFor(() => expect(completed()).toBeGreaterThan(before), { timeout: 10_000, interval: 25 });
 }
 
@@ -345,3 +347,6 @@ describe("openai-compat and the other HTTP engines: the request headers", () => 
     expect(memoryOf(await run("https://openrouter.ai/api/v1", CASES[2]!.turn))).toEqual({});
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

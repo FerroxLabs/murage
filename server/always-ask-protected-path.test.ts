@@ -1,3 +1,4 @@
+// secret-scan: fixture (fake paths, policy test rows)
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -14,6 +15,7 @@ process.env.HOME = "/home/tester";
 process.env.USERPROFILE = "/home/tester";
 vi.resetModules();
 const { alwaysAskCommand } = await import("./always-ask.ts");
+const { expectProtectedPath, doubtFree } = await import("./testing/marks-doubt-free.ts");
 
 type Row = [cmd: string, rule: string | null];
 
@@ -205,13 +207,18 @@ const ORDINARY: Row[] = [
 
 describe("A+: a protected literal under a program off the allow list asks", () => {
   it.each(CARD)("%s -> %s", (cmd, rule) => {
+    // MARKS r12 re-baseline (MurageMain 11-07 item 1): the doubt-free read names it; strict read and every level still card
+    if (rule === "protected-path") return expectProtectedPath(cmd);
     expect(alwaysAskCommand(cmd)?.rule ?? null).toBe(rule);
   });
   it("names the class in plain words", () => {
-    expect(alwaysAskCommand("zorbwipe ~")?.what).toMatch(/home folder/);
-    expect(alwaysAskCommand("zorbwipe /")?.what).toMatch(/main drive/);
-    expect(alwaysAskCommand("zorbwipe /usr")?.what).toMatch(/needs to run/);
-    expect(alwaysAskCommand("zorbwipe /Volumes/Scratch")?.what).toMatch(/whole disk or volume/);
+    // MARKS r12 re-baseline: the doubt-free read names the class; the strict read still cards each one
+    expect(doubtFree("zorbwipe ~")?.what).toMatch(/home folder/);
+    expect(doubtFree("zorbwipe /")?.what).toMatch(/main drive/);
+    expect(doubtFree("zorbwipe /usr")?.what).toMatch(/needs to run/);
+    expect(doubtFree("zorbwipe /Volumes/Scratch")?.what).toMatch(/whole disk or volume/);
+    // MARKS r13 (Astra M4): and each keeps the shared check: strict read cards, every level cards, Full access names protected-path
+    for (const cmd of ["zorbwipe ~", "zorbwipe /", "zorbwipe /usr", "zorbwipe /Volumes/Scratch"]) expectProtectedPath(cmd);
   });
 });
 
@@ -221,8 +228,29 @@ describe("A+: a find action is never exempt", () => {
   });
 });
 
+// MARKS r9 C1: probe cp -r build /tmp/out, rm -rf dist build, chmod -R 755 ~/dev -> null with cwd /w; unreadable (value-path) with no cwd.
+// The row runs at cwd /w; the (no cwd) twin asserts the card.
+const R9_NOCWD: Record<string, string> = {
+  "cp -r build /tmp/out": "unreadable",
+  "rm -rf dist build": "unreadable",
+  "chmod -R 755 ~/dev": "unreadable",
+  "zorbtool --name 'a / b'": "unreadable",
+};
+// MARKS r9 C1: the cwd does not clear these. probe zorbwipe /etc/hosts -> unreadable (value-path) at cwd /w and no cwd;
+// probe docker run -v ~/.ssh:/s img -> unreadable (value-path); probe PATH=/usr/bin:/bin zorbwipe x -> unreadable (tokenizer).
+const R9_NOW: Record<string, string> = {
+  "zorbwipe /usr/local/bin/x": "unreadable",
+  "zorbwipe /etc/hosts": "unreadable",
+  "docker run -v ~/.ssh:/s img": "unreadable",
+  "PATH=/usr/bin:/bin zorbwipe x": "unreadable",
+};
+
 describe("A+: ordinary work stays ordinary", () => {
   it.each(ORDINARY)("%s -> %s", (cmd, rule) => {
+    const cwd = cmd in R9_NOCWD || cmd in R9_NOW ? "/w" : undefined;
+    expect(alwaysAskCommand(cmd, cwd)?.rule ?? null).toBe(R9_NOW[cmd] ?? rule);
+  });
+  it.each(Object.entries(R9_NOCWD))("%s -> null (no cwd)", (cmd, rule) => {
     expect(alwaysAskCommand(cmd)?.rule ?? null).toBe(rule);
   });
 });
@@ -233,18 +261,19 @@ describe("A+ only adds cards", () => {
     expect(alwaysAskCommand("rm -rf /")?.rule).toBe("delete-root");
     expect(alwaysAskCommand("rm -rf /usr")?.rule).toBe("delete-system-folder");
     expect(alwaysAskCommand("rsync -a --delete empty/ ~")?.rule).toBe("delete-home");
-    expect(alwaysAskCommand("zorbwipe $(cat x) ~")?.rule).toBe("protected-path");
+    expectProtectedPath("zorbwipe $(cat x) ~"); // MARKS r12 re-baseline
     // a protected-path hit early in the text never hides a later rule's own verdict
     expect(alwaysAskCommand("cp ~ /tmp/x; rm -rf ~")?.rule).toBe("delete-home");
     expect(alwaysAskCommand("find / -name x | sort | xargs rm -rf")?.rule).toBe("delete-root");
     expect(alwaysAskCommand("zorbwipe /usr; rm -rf $X/")?.rule).toBe("unknown-target");
     expect(alwaysAskCommand("export DIR=/usr; rm -rf $DIR")?.rule).toBe("delete-system-folder");
-    expect(alwaysAskCommand("env -i PATH=/bin ls")).toBeNull();
+    // MARKS r9 C4: probe env -i PATH=/bin ls -> unreadable (tokenizer) with and without cwd
+    expect(alwaysAskCommand("env -i PATH=/bin ls")?.rule).toBe("unreadable");
   });
   it("a fixed cwd resolves relative literals, and a project cwd stays ordinary", () => {
     expect(alwaysAskCommand("zorbwipe .", "/Users/tester/project")).toBeNull();
     expect(alwaysAskCommand("zorbwipe src", "/Users/tester/project")).toBeNull();
-    expect(alwaysAskCommand("zorbwipe ..", "/Users/tester/project")?.rule).toBe("protected-path");
+    expectProtectedPath("zorbwipe ..", "/Users/tester/project"); // MARKS r12 re-baseline
     expect(alwaysAskCommand("ls ..", "/Users/tester/project")).toBeNull();
   });
 });

@@ -16,6 +16,7 @@ import { EventEmitter } from "node:events";
 import { randomBytes } from "node:crypto";
 import type { CardReason } from "../shared/fold-scopes.ts";
 import type { BatchLine } from "../shared/approval-digest.ts";
+import { bulkKindKey as sharedBulkKindKey, type BulkKind } from "../shared/bulk-kind.ts";
 
 export const APPROVE_ALL_CAP = 25;
 export const APPROVE_ALL_BATCH_TTL_MS = 120_000;
@@ -23,10 +24,33 @@ export const APPROVE_ALL_BATCH_TTL_MS = 120_000;
 export const APPROVE_ALL_MAX_BATCHES = 64;
 export const BATCH_ID = /^aab-[0-9a-f]{32}$/;
 
+/** The Inbox lists that offer Approve all: Approvals, and Needs you (`decisions`). */
+export const APPROVE_ALL_VIEWS = ["approvals", "decisions"] as const;
+/** RESIDUALS-1018-B row 6 (APPROVALS-SIMPLE Medium): the Inbox list a press was made over, the same query the screen
+ *  read (view, search, page, page size, Show snoozed, and the page's cursor). The preview reads exactly that page, so
+ *  Needs you page 2+ and a snoozed ok row on Show snoozed are previewed rather than always "The list changed". */
+export interface PreviewScreen { view: (typeof APPROVE_ALL_VIEWS)[number]; query: string; page: number; pageSize: number; includeSnoozed: boolean; after?: string }
+/** An empty body (an older caller): Approvals page 0, as before. */
+export const PREVIEW_DEFAULT_SCREEN: Readonly<PreviewScreen> = { view: "approvals", query: "", page: 0, pageSize: 100, includeSnoozed: false };
+/** The preview body's `screen`, checked with the Inbox's own bounds; null for anything malformed (the route says 400). */
+export function previewScreen(body: unknown): PreviewScreen | null {
+  const raw = body && typeof body === "object" && !Array.isArray(body) ? (body as { screen?: unknown }).screen : undefined;
+  if (raw === undefined) return { ...PREVIEW_DEFAULT_SCREEN };
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const { view, query = "", page, pageSize, includeSnoozed, after } = raw as Record<string, unknown>;
+  if (!(APPROVE_ALL_VIEWS as readonly unknown[]).includes(view)) return null;
+  if (typeof query !== "string" || query.length > 200) return null;
+  if (typeof page !== "number" || !Number.isInteger(page) || page < 0 || page > 100_000) return null;
+  if (typeof pageSize !== "number" || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) return null;
+  if (typeof includeSnoozed !== "boolean") return null;
+  if (after !== undefined && (typeof after !== "string" || after.length > 12_000)) return null;
+  return { view: view as PreviewScreen["view"], query, page, pageSize, includeSnoozed, ...(after ? { after } : {}) };
+}
+
 /** Why a card stays for one-by-one. Content free: the sheet words each key (batch B). */
 export type BulkReasonKey =
   | "always-ask" | "pay" | "message" | "delete" | "needs-look" | "held" | "unattended"
-  | "truncated" | "local-computer" | "routine" | "origin" | "not-approval" | "not-open";
+  | "truncated" | "local-computer" | "routine" | "origin" | "not-approval" | "not-open" | "sensitive";
 
 /** Every verdict source has an explicit answer, so a new source cannot reach Approve all without a decision here.
  *  null: the source may qualify (only an ordinary card no grant answered). Anything else: the reason it stays. */
@@ -36,12 +60,14 @@ export const BULK_REASON: Readonly<Record<CardReason, BulkReasonKey | null>> = {
   narrow: "held",
   "stop-line": "held",
   "destructive-guard": "held",
-  "sensitive-guard": "held",
+  "sensitive-guard": "sensitive",
   "prompt-guard": "held",
+  "outside-turn": "held",
   "unread-call": "held",
   "unattended-block": "unattended",
   "local-computer-block": "local-computer",
-  "routine-allow": "routine",
+  // APPROVALS-SIMPLE-1018 section 4: an ordinary step of the owner's attended routine run is the same yes as any row
+  "routine-allow": null,
   "question-tool": "not-approval",
   question: "not-approval",
   // sources that answer without a card; a card that carries one anyway is not ordinary
@@ -60,6 +86,10 @@ export const BULK_REASON: Readonly<Record<CardReason, BulkReasonKey | null>> = {
 
 export type BulkVerdict = { ok: true } | { ok: false; reasonKey: BulkReasonKey };
 const no = (reasonKey: BulkReasonKey): BulkVerdict => ({ ok: false, reasonKey });
+function stopNo(value: unknown): BulkVerdict {
+  const kind = value && typeof value === "object" ? (value as Record<string, unknown>).kind : undefined;
+  return kind === "pay" ? no("pay") : kind === "delete" ? no("delete") : no("message");
+}
 const has = (record: Record<string, unknown>, key: string): boolean => record[key] !== undefined && record[key] !== null && record[key] !== false;
 
 /** Design 2: may Approve all give this card the owner's Allow once? Read only from facts the server wrote; `lowRisk`
@@ -89,29 +119,29 @@ export function bulkEligibility(card: unknown, requestId: string): BulkVerdict {
   if (!cls || typeof cls !== "object" || Array.isArray(cls)) return no("held");
   const k = cls as Record<string, unknown>;
   if (typeof k.reason !== "string" || !Object.prototype.hasOwnProperty.call(BULK_REASON, k.reason)) return no("held");
-  if (k.reason === "always-ask") return no("always-ask");
-  if (k.stop !== undefined) {
-    const stop = k.stop as Record<string, unknown> | null;
-    const kind = stop && typeof stop === "object" ? stop.kind : undefined;
-    return kind === "pay" ? no("pay") : kind === "delete" ? no("delete") : no("message");
+  // APPROVALS-SIMPLE-1018 section 4 (Astra r1 H2): no early ok. The one always-ask card that walks on is an `unreadable`
+  // hit whose open-time hard read came back clear; a held read stays with what it hit; every wipe rule stays.
+  const reader = k.reason === "always-ask" && k.rule === "unreadable";
+  if (k.reason === "always-ask" && !reader) {
+    if (k.rule === "unreadable-held") return k.stop !== undefined ? stopNo(k.stop) : k.ruleHeld === "sensitive" ? no("sensitive") : k.ruleHeld === "destructive" ? no("delete") : no("held");
+    return no("always-ask");
   }
-  const byReason = BULK_REASON[k.reason as CardReason];
+  if (k.stop !== undefined) return stopNo(k.stop);
+  const byReason = reader ? null : BULK_REASON[k.reason as CardReason];
   if (byReason !== null) return no(byReason);
+  // a webhook, a group or someone else's message stays out even when its origin reads `routine`
   if (k.unattended !== false) return no("unattended");
-  if (k.automated !== false) return no("routine");
-  if (k.routine !== undefined) return no("routine");
   if (k.scope !== undefined) return no("local-computer");
-  if (k.origin !== "owner") return no("origin");
-  if (has(c, "held")) return no("held");
+  // the owner's own turn, the owner's own DM to the bot, or the owner's attended routine run (Astra r1 H6)
+  if (k.origin !== "owner" && k.origin !== "owner-channel" && k.origin !== "routine") return no("origin");
+  // the reader's own hold note ("Auto mode couldn't answer this one") is that admitted hold; any other stays
+  if (has(c, "held") && !reader) return no("held");
   return { ok: true };
 }
 
 /** The plain kind of a qualifying card, as a key the sheet words (batch B): never English here. */
-export function bulkKindKey(tool: string): "command" | "edit" | "app" | "other" {
-  if (/^(?:mcp__.+__)?(?:[\w-]+\.)?(?:bash|shell|execute|exec_command|run_command|terminal|powershell|pwsh)$/i.test(tool)) return "command";
-  if (/^(?:mcp__.+__)?(?:edit|write|multiedit|multi_edit|apply_patch|notebookedit|str_replace_editor|create_file|edit_file|write_file)$/i.test(tool)) return "edit";
-  if (tool.startsWith("mcp__")) return "app";
-  return "other";
+export function bulkKindKey(tool: string): BulkKind {
+  return sharedBulkKindKey(tool);
 }
 
 /** The special cards Approve all never answers, in respondToCard's own branch order (design 6.2). */

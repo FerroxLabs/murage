@@ -43,8 +43,8 @@ describe("the without-memory note", () => {
   });
 
   it.each([
-    ["ChatView", read("./ChatView.tsx"), 'case "activity"', "if (!showToolCalls && !m.comm) return null;"],
-    ["GroupView", read("./GroupView.tsx"), 'm.kind === "activity" && m.tool', "|| showToolCalls ? ("],
+    ["ChatView", read("./ChatView.tsx"), 'case "activity"', "if (!showToolCalls && !m.comm && !hasDoneWhenLine(m.tool?.doneWhen)) return null;"],
+    ["GroupView", read("./GroupView.tsx"), 'm.kind === "activity" && m.tool', "|| showToolCalls || hasDoneWhenLine(m.tool.doneWhen) ? ("],
   ])("%s routes it to its own row before the Tool calls gate", (_name, source, branch, gate) => {
     const activity = source.indexOf(branch);
     const routed = source.indexOf("isWithoutMemoryNote(m)", activity);

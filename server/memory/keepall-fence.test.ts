@@ -23,6 +23,7 @@ const W = (reason: string) => ({ state: "withheld", reason });
 const DENIED_PARENT: LineageRef = { kind: "memory", ref: { kind: "lesson", id: "l1" } };
 
 describe("the send fence: a turn's own generation bumps (Astra 1.0.3 rollback High)", () => {
+  // control: intentional owner-content replay, now explicitly tagged.
   it("a committed own bump passes; a rolled-back own bump followed by a real revoke on the same value is caught", () => {
     const f = make().reply("T", "q", 5).meta("deny_generation", 3);
     // a parent under a revoke: carrying it onto the turn's session row bumps deny_generation (revoke-commit.ts inheritMarks)
@@ -55,6 +56,7 @@ describe("the send fence: a turn's own generation bumps (Astra 1.0.3 rollback Hi
     closeTurnLineage(turn);
   });
 
+  // control: intentional owner-content replay, now explicitly tagged.
   it("an own bump plus a real revoke on top is looked up again", () => {
     const f = make().reply("T", "q", 5).meta("deny_generation", 3);
     f.denyMemory("lesson", "l1", 0, 1);
@@ -72,6 +74,7 @@ describe("the send fence: a turn's own generation bumps (Astra 1.0.3 rollback Hi
 describe("the room's last rebuild: owner-room replay judged by content (Astra 1.0.3 room High)", () => {
   const audienceOnly = (f: WritetimeFixture, revoke: number) => f.db.prepare("INSERT OR IGNORE INTO memory_revoke_audience(revoke_id) VALUES(?)").run(revoke);
 
+  // control: intentional owner-content replay, now explicitly tagged.
   it("after a global revoke marks historical replies and the generation moves before submission, the final retry passes without revoked content", () => {
     // the room R: historical replies g1 and g2; an install-wide revoke (audience-only, Keep all) marked g1; a real forget marked g2
     const f = make().owner("R", "o1", 1).reply("R", "g1", 2).reply("R", "g2", 3).owner("R", "o2", 4).reply("U", "x", 6).meta("deny_generation", 3);
@@ -86,7 +89,7 @@ describe("the room's last rebuild: owner-room replay judged by content (Astra 1.
     const turn = openTurnLineage(f.db, { threadId: "R", turnId: "member\u0000last" });
     const roomReader = OWNER;
     // index.ts room path, roomLastResort: the own lines one by one plus Murage's own words
-    const finalRetry = buildPrompt(turn, [promptPart("room replay", [...ownReplayRefs("R", shownIds), noneRef("murage")])]);
+    const finalRetry = buildPrompt(turn, [promptPart("room replay", [...ownReplayRefs("R", shownIds, "content"), noneRef("murage")])]);
     const before = buildPrompt(turn, [promptPart("room replay", [...lineRefs("R", shownIds), noneRef("murage")])]);
     f.meta("deny_generation", 4); // another revoke committed before submission
     expect(fenceVerdict(f.db, before, roomReader), "1.0.3 RC: audience-checked lines refused the valid replay").toEqual(W("deny-line"));
@@ -94,18 +97,29 @@ describe("the room's last rebuild: owner-room replay judged by content (Astra 1.
     expect(fenceVerdict(f.db, finalRetry, MEMBER)).toEqual(SHOWN);
 
     // a real mark on a replayed line still refuses it
-    const leaked = buildPrompt(turn, [promptPart("room replay", [...ownReplayRefs("R", ["g2"]), noneRef("murage")])]);
+    const leaked = buildPrompt(turn, [promptPart("room replay", [...ownReplayRefs("R", ["g2"], "content"), noneRef("murage")])]);
     expect(fenceVerdict(f.db, leaked, roomReader)).toEqual(W("deny-line"));
 
     // an external reference (a line of another thread) stays judged for the room's audience
     f.denyLine("U", 6, 7);
-    const external = buildPrompt(turn, [promptPart("room replay", [...ownReplayRefs("R", shownIds), { kind: "line", threadId: "U", messageId: "x" }, noneRef("murage")])]);
+    const external = buildPrompt(turn, [promptPart("room replay", [...ownReplayRefs("R", shownIds, "content"), { kind: "line", threadId: "U", messageId: "x" }, noneRef("murage")])]);
     expect(fenceVerdict(f.db, external, roomReader)).toEqual(W("deny-line"));
     closeTurnLineage(turn);
   });
 });
 
 describe("a room turn after a revoke's commit keeps its post-commit history (1.0.3 rw-cap)", () => {
+  // red-at-4df086541: replay alone is not permission to use the content reader.
+  it("refuses an untagged replay for an audience reader", () => {
+    const f = make().reply("R", "X", 1).meta("deny_generation", 1);
+    const turn = openTurnLineage(f.db, { threadId: "R", turnId: "strict-replay" });
+    const prompt = buildPrompt(turn, [promptPart("replay", ownReplayRefs("R", ["X"]))]);
+    f.db.prepare("INSERT INTO memory_revoke_audience(revoke_id) VALUES(7)").run();
+    f.denyLine("R", 1, 7).meta("deny_generation", 2);
+    expect(fenceVerdict(f.db, prompt, MEMBER)).toEqual(W("deny-line"));
+    closeTurnLineage(turn);
+  });
+  // control: intentional owner-content replay, now explicitly tagged.
   it("the replay of lines whose turns began after the commit passes the fence while the install-wide window is open; a line of an earlier turn is held", () => {
     // the room R: an owner line and a reply written before anything; another thread U holds the line the owner regenerates
     const f = make().owner("R", "o1", 1).reply("R", "g0", 2).reply("U", "x", 3).meta("deny_generation", 3);
@@ -126,12 +140,12 @@ describe("a room turn after a revoke's commit keeps its post-commit history (1.0
     // the next room turn replays its shown history; another revoke moves the generation before submission
     const turn = openTurnLineage(f.db, { threadId: "R", turnId: "member\u0000next" });
     const shownIds = ["o1", ...Object.entries(judged).filter(([, verdict]) => verdict.state === "shown").map(([id]) => id)];
-    const replay = buildPrompt(turn, [promptPart("room replay", [...ownReplayRefs("R", shownIds), noneRef("murage")])]);
+    const replay = buildPrompt(turn, [promptPart("room replay", [...ownReplayRefs("R", shownIds, "content"), noneRef("murage")])]);
     f.meta("deny_generation", denyGeneration(f.db) + 1);
     expect(fenceVerdict(f.db, replay, OWNER), "no send fence refused (checking:pending) on post-commit history").toEqual(SHOWN);
     expect(fenceVerdict(f.db, replay, MEMBER)).toEqual(SHOWN);
     // the line of the turn begun before the commit still holds the send
-    const withPre = buildPrompt(turn, [promptPart("room replay", [...ownReplayRefs("R", [...shownIds, "pre"]), noneRef("murage")])]);
+    const withPre = buildPrompt(turn, [promptPart("room replay", [...ownReplayRefs("R", [...shownIds, "pre"], "content"), noneRef("murage")])]);
     expect(fenceVerdict(f.db, withPre, OWNER)).toEqual({ state: "checking", reason: "pending" });
     closeTurnLineage(turn);
   });

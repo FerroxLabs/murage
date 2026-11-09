@@ -29,6 +29,8 @@ const LEVELS = { Ask: ASK, Auto: AUTO, "Full access": FULL, "No limits": NO_LIMI
 type Level = keyof typeof LEVELS;
 
 const nix = () => ({ cwd: CWD, roots: [CWD, "/tmp"], home: "/home/tester", knownRecipients: new Set<string>(), realpath: (p: string) => posix.normalize(p) });
+// MARKS r13: No limits relief and the unseen-script waiver need the owner-started proof (server/auto-approve.ts ownerOwnTurn); outsideRead null = a clean turn (markedLaneTurn)
+const OWNER_TURN = { ownerStarted: true, fullAccessOrigin: "owner", outsideRead: null } as const;
 const verdict = (level: Level, cmd: string, extra: Record<string, unknown> = {}) =>
   autoVerdict(LEVELS[level], "Bash", cmd, { commandText: cmd, commandCwd: CWD, stopLine: classifyStopLine("Bash", { command: cmd }, "", nix()), unseen: { fs: STUB, platform: "posix" }, ...extra });
 
@@ -62,10 +64,18 @@ describe("an ordinary script file on disk", () => {
     expect(alwaysAskCommand(cmd, CWD, "command", undefined, undefined, undefined, { fs: STUB, platform: "posix" })).toMatchObject({ rule: "unreadable", unseenScript: true });
     expect(verdict("Ask", cmd)).toMatchObject({ approve: null });
     expect(verdict("Auto", cmd)).toMatchObject({ approve: null, source: "always-ask" });
-    expect(verdict("Full access", cmd)).toMatchObject({ source: "full-access" });
-    expect(verdict("Full access", cmd).approve).toBeTruthy();
-    expect(verdict("No limits", cmd)).toMatchObject({ source: "no-limits" });
-    expect(verdict("No limits", cmd).approve).toBeTruthy();
+    expect(verdict("Full access", cmd, OWNER_TURN)).toMatchObject({ source: "full-access" });
+    expect(verdict("Full access", cmd, OWNER_TURN).approve).toBeTruthy();
+    expect(verdict("No limits", cmd, OWNER_TURN)).toMatchObject({ source: "no-limits" });
+    expect(verdict("No limits", cmd, OWNER_TURN).approve).toBeTruthy();
+  });
+});
+
+describe("an ordinary script file on a turn the owner did not start", () => {
+  it("`bash ./build.sh` at No limits without ownerStarted still asks (MARKS r13)", () => {
+    const v = verdict("No limits", "bash ./build.sh", { ownerStarted: false });
+    expect(v.approve).not.toBe(true);
+    expect(v).not.toMatchObject({ source: "no-limits" });
   });
 });
 
@@ -86,9 +96,9 @@ describe("a virtual environment, then its Python tools", () => {
     expect(alwaysAskCommand(cmd, CWD, "command", undefined, undefined, undefined, { fs: STUB, platform: "posix" })).toMatchObject({ rule: "unreadable", unseenScript: true });
     expect(verdict("Ask", cmd)).toMatchObject({ approve: null });
     expect(verdict("Auto", cmd)).toMatchObject({ approve: null, source: "always-ask" });
-    expect(verdict("Full access", cmd).approve).toBeTruthy();
-    expect(verdict("No limits", cmd)).toMatchObject({ source: "no-limits" });
-    expect(verdict("No limits", cmd).approve).toBeTruthy();
+    expect(verdict("Full access", cmd, OWNER_TURN).approve).toBeTruthy();
+    expect(verdict("No limits", cmd, OWNER_TURN)).toMatchObject({ source: "no-limits" });
+    expect(verdict("No limits", cmd, OWNER_TURN).approve).toBeTruthy();
   });
 });
 
@@ -115,7 +125,11 @@ describe("a shell startup file asks at every level", () => {
   it.each(["source /home/tester/.zshrc", ". /home/tester/.bashrc"])("`%s` asks at every level, on the key guard from Full access up", (cmd) => {
     expect(verdict("Auto", cmd)).toMatchObject({ approve: null, source: "always-ask" });
     expect(verdict("Full access", cmd)).toMatchObject({ approve: null, source: "sensitive-guard" });
-    expect(verdict("No limits", cmd)).toMatchObject({ approve: null, source: "sensitive-guard" });
+    // NOLIMITS-MEANS-IT 2.3: a gate file runs on a clean owner No limits turn (held=gate:<row>); a marked turn keeps the card
+    expect(verdict("No limits", cmd, OWNER_TURN)).toMatchObject({ source: "no-limits", rule: "held=gate:shell-rc" });
+    expect(verdict("No limits", cmd, OWNER_TURN).approve).toBeTruthy();
+    const marked = verdict("No limits", cmd, { ownerStarted: true, fullAccessOrigin: "owner" });
+    expect(marked).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" }); // the reader holds a marked turn before the key guard
   });
 });
 
@@ -230,7 +244,8 @@ describe("what still asks at every level", () => {
     "deno run -A main.ts",
     "/bin/bash build.sh",
     "env bash build.sh",
-    "python -u manage.py migrate",
+    // 1.0.18 APPROVALS-SIMPLE 5a: `python -u manage.py` is admitted (server/approvals-simple-1018.test.ts); an option that takes a value still is not
+    "python -W ignore manage.py migrate",
     "bash build.sh | tee log.txt",
     "bash build.sh &",
     "(bash build.sh)",
