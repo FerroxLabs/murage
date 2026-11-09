@@ -17,9 +17,11 @@ import { routeNativeClicks } from "./lib/open-external";
 import { registerServiceWorker } from "./lib/register-sw";
 import { applySkin, readPreference, resolveSkin, watchSystemSkin } from "./lib/skins";
 import { applyFont, readFont } from "./lib/fonts";
+import { installSpeakerBudgetReset } from "./lib/tts";
 import "./styles.css";
 
 installTrustedTypes();
+installSpeakerBudgetReset();
 
 // index.html has already stamped the palette before the stylesheet resolved;
 // this repeats it because that inline copy cannot run the migration's storage

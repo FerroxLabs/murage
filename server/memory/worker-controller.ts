@@ -47,6 +47,8 @@ export const UPGRADE_RECHECK_MS=5_000;
 export const UPGRADE_YIELD_MAX_MS=60*60_000;
 /** A helper that has not initialised by then is killed and respawned with backoff. */
 export const MEMORY_WORKER_INIT_MS=120_000;
+/** After start(), when the helper is started for recall if nothing has started it yet. */
+export const MEMORY_BOOT_WARM_MS=5_000;
 /** While parking maintenance is still pending, an idle controller comes back this soon for its next bounded step. */
 const PARK_STEP_MS=250;
 /** A turn from acceptance to the prompt keeps the worker's claims, receipts and consolidation steps off the main thread for at most this long. */
@@ -85,9 +87,15 @@ export class MemoryWorkerController {
   private initDeadline=0;
   private initFailures=0;
   private respawnAt=0;
+  private bootWarmTimer:ReturnType<typeof setTimeout>|null=null;
+  /** The helper warmForIntent started, until it is ready or real work needs it: if it fails with no search waiting on it, only the log hears about it. */
+  private warmStart:ChildProcess|null=null;
+  private initWatch:ReturnType<typeof setTimeout>|null=null;
+  /** The next time a warm may start a helper that never left on purpose, so one that keeps dying is not restarted by every key press. */
+  private nextWarmAt=0;
   /** The helper that was allowed to exit because it held a WebAssembly model and had been idle (worker.ts). */
   private idleExit:ChildProcess|null=null;
-  /** True from a planned idle exit until the next helper starts: the only state in which a turn's start warms the helper (native helpers never idle-exit, so nothing changes for them). */
+  /** True from a planned idle exit until the next helper starts. */
   private idleExited=false;
   private stopping=false;
   private indexing=false;
@@ -154,14 +162,29 @@ export class MemoryWorkerController {
     try{child.send({type:"warm"});}catch{this.warmSent=false;}
   }
   /** The owner is about to use the bot (the window took focus, the first key of a draft) or a turn is starting: have the helper's model
-   * loaded and warm before recall asks. A helper that left for being idle (WebAssembly only) is started first; a live WebAssembly
-   * helper whose model is not loaded yet is asked to load it. Does nothing for a native helper, or when the model is already warm. */
+   * loaded and warm before recall asks. With memory active, a helper that is not running is started first; a live WebAssembly
+   * helper whose model is not loaded yet is asked to load it. A warm failing is never the owner's problem: it logs, waits, and shows nothing. */
   warmForIntent(){
     if(this.stopping||!this.started)return;
     if(this.child){if(this.ready)this.requestWarm(this.child);else if(this.wasmHelper||this.idleExited)this.warmOwed=true;return;}
-    if(!this.idleExited||Date.now()<this.respawnAt)return;
-    this.warmOwed=true;
-    try{this.spawn();}catch(error){logSwallowed("recall",error);}
+    // No helper at all counts too: one that never started (no job was owed at boot) is forked by the first search, and that cold
+    // start outlasts the query deadline, so the first turn after a restart goes out with no recall (ALL.eld250 real legs).
+    const now=Date.now();
+    if(now<this.respawnAt||(!this.idleExited&&now<this.nextWarmAt))return;
+    // A helper that left on its planned idle exit comes back as it always has. One that never ran starts only with memory active.
+    // This also runs at every turn's start, so a locked database means no warm this time: never a failed turn, and no back-off, which would refuse the next search.
+    try{if(!this.idleExited&&memoryState().mode!=="active")return;}
+    catch(error){logSwallowed("recall",error,BUSY_RETRY_MS);return;}
+    try{
+      this.nextWarmAt=now+MEMORY_IDLE_SWEEP_MS;
+      this.warmOwed=true;
+      this.spawn();
+      this.warmStart=this.child;
+    }catch(error){
+      logSwallowed("recall",error);this.warmOwed=false;
+      // spawn() shuts the index reader before it forks: a fork that threw must not leave recall shut out.
+      if(!this.child){unblockMemoryIndexReader();this.waitBeforeNextStart();}
+    }
   }
   private warmAfterIdleExit(){this.warmForIntent();}
   /** Sources whose capture was published while a turn held the worker: their derived work (extraction, consolidation) starts once the hold ends,
@@ -304,6 +327,9 @@ export class MemoryWorkerController {
     this.independentWork(true);
     this.maintenanceTimer=setInterval(()=>this.independentWork(),MEMORY_IDLE_SWEEP_MS);
     this.maintenanceTimer.unref();
+    // Recall finds a helper ready on the first turn after a restart; a few seconds' wait lets the app's own startup work finish first.
+    this.bootWarmTimer=setTimeout(()=>{this.bootWarmTimer=null;try{this.warmForIntent();}catch(error){logSwallowed("recall",error);}},MEMORY_BOOT_WARM_MS);
+    this.bootWarmTimer.unref?.();
     ioBudget.setOnMemoryWork(notifyMemoryWork);
     this.unsubscribe=onMemoryWork(()=>this.wake());
     try {
@@ -427,6 +453,8 @@ export class MemoryWorkerController {
       const projection=memoryOn?this.pendingProjection():hasPendingProjection(database(),true),job=memoryOn&&hasClaimableMemoryJob();
       // Nothing else to do: one bounded parking maintenance step (no helper is needed for it, unless the index owes a scrub).
       if(!projection&&!job&&!this.scrubOwed){if(memoryOn)this.maintain(false);return;}
+      // Work is owed from here on: a helper that fails it is no longer only a warm, so the status shows it.
+      this.warmStart=null;
       if(!this.child) { if(Date.now()>=this.respawnAt)this.spawn(); return; }
       if(!this.ready) { if(Date.now()>this.initDeadline)this.failInit("MEMORY_WORKER_INIT_TIMEOUT"); return; }
       // No cursor: every batch is read from the durable receipts, delete-pending first. Each batch is acknowledged when its rows are
@@ -542,6 +570,8 @@ export class MemoryWorkerController {
     return false;
   }
   private lineageWarmTimer:ReturnType<typeof setTimeout>|null=null;
+  /** When the pending lineage-warm timer fires (Date.now() ms; Infinity: none pending). */
+  private lineageWarmDue=Infinity;
   /** Asks for a slice of lineage warming soon (lineage-warm.ts): after a start, and when a turn reaches a thread that is not warm.
    * Idle-only like the status scan: it waits for the owner's turn, typing and load, and each slice is short. */
   wakeLineageWarm(delay=0){this.scheduleLineageWarm(delay);}
@@ -555,9 +585,18 @@ export class MemoryWorkerController {
   /** Whether a hurry is in force now. */
   hurrying():boolean{return performance.now()<this.hurryUntil;}
   private scheduleLineageWarm(delay:number){
-    if(this.stopping||!this.started||this.lineageWarmTimer||!this.options.onLineageWarm)return;
+    if(this.stopping||!this.started||!this.options.onLineageWarm)return;
+    const due=Date.now()+Math.max(0,delay);
+    // 1.0.18 TURNSTART r14 EARLIEST WINS: a wake sooner than the pending timer replaces it (a turn's wake is never parked behind a
+    // 500 ms backoff or an admission retry); a later one never postpones an earlier. One timer at most.
+    if(this.lineageWarmTimer){
+      // MUTANT:earliest-wins-noop
+      if(due < this.lineageWarmDue){clearTimeout(this.lineageWarmTimer);this.lineageWarmTimer=null;}
+      else return;
+    }
+    this.lineageWarmDue=due;
     this.lineageWarmTimer=setTimeout(()=>{
-      this.lineageWarmTimer=null;
+      this.lineageWarmTimer=null;this.lineageWarmDue=Infinity;
       if(this.stopping)return;
       if(writersHeldForIndexBuild()){this.deferForHold(this.resumeLineageWarm);return;}
       if(this.turnHeld()||ioBudget.shouldDefer("memory-idle")){this.scheduleLineageWarm(500);return;}
@@ -688,31 +727,45 @@ export class MemoryWorkerController {
     logSwallowed("capture","MEMORY_INDEX_QUARANTINE_LEFT",wait);
     this.quarantineSweepAt=Date.now()+wait;this.schedule(wait);
   }
+  private clearInitWatch(){if(this.initWatch)clearTimeout(this.initWatch);this.initWatch=null;}
   private failInit(reason:string){
+    this.clearInitWatch();
     this.failedStart=this.child;this.backOffStart(reason);
     this.child?.kill("SIGKILL");
   }
   /** A helper that never became ready: the status shows why, and the next start waits (30 s, doubling to 30 min). */
   private backOffStart(reason:string){
-    this.setError("helper",reason);logSwallowed("capture",reason);this.initFailures++;
+    if(!this.quietWarmFailure(this.child))this.setError("helper",reason);
+    logSwallowed("capture",reason);this.waitBeforeNextStart();
+  }
+  private waitBeforeNextStart(){
+    this.initFailures++;
     this.respawnAt=Date.now()+Math.min(30*60_000,MEMORY_IDLE_SWEEP_MS*2**(this.initFailures-1));
   }
+  /** A helper only a warm asked for, with no search waiting on it: its failure goes to the log, not the status. */
+  private quietWarmFailure(child:ChildProcess|null){return child!==null&&child===this.warmStart&&this.queries.size===0;}
   private clearHeartbeat(){if(this.heartbeat)clearTimeout(this.heartbeat);this.heartbeat=null;}
-  /** The helper's writes as an io-budget source, from the counts it reports (noteWorkerBlocks). Earlier builds read the index file
+  /** The helper's writes as an io-budget source, from the counts it reports (noteWorkerIo). Earlier builds read the index file
    * and its log from here, which missed every write cycle that ended between two samples: a merge, then a truncation, leaves the
    * log at zero and the file the same size (1.0.3 rehearsal 2, 240 MB/min unseen). */
   private registerWorkerBytes(){
     if(!this.unregisterBytes)this.unregisterBytes=ioBudget.registerByteSource("memory-worker",()=>this.workerBytes);
   }
-  /** A helper's cumulative fsWrite count: its growth since the last report is charged. Each helper counts from zero, so its first
-   * report is charged whole: the baseline is the reporting helper's own (a new one starts at zero), and a count that fell is a new
-   * process's too. */
-  private noteWorkerBlocks(child:unknown,blocks:unknown){
-    if(typeof blocks!=="number"||!Number.isFinite(blocks)||blocks<0)return;
-    if(child!==this.workerBlocksChild||blocks<this.workerBlocks){this.workerBlocksChild=child;this.workerBlocks=0;}
-    this.workerBytes+=(blocks-this.workerBlocks)*BLOCK_BYTES;this.workerBlocks=blocks;
+  /** A helper's cumulative counts, fsWrite blocks and index WAL bytes (worker.ts reportIo): the larger growth of the two since the last
+   * report is charged (the same writes, seen twice; on win32 the blocks read 0 and the WAL bytes decide). Each helper counts from zero,
+   * so its first report is charged whole: the baseline is the reporting helper's own (a new one starts at zero), and a count that fell
+   * is a new process's too. A count that is missing or not finite is left out; a report with neither charges nothing. */
+  private noteWorkerIo(child:unknown,blocks:unknown,bytes:unknown){
+    const valid=(n:unknown):n is number=>typeof n==="number"&&Number.isFinite(n)&&n>=0;
+    const b=valid(blocks)?blocks:undefined,w=valid(bytes)?bytes:undefined;
+    if(b===undefined&&w===undefined)return;
+    if(child!==this.workerBlocksChild||(b!==undefined&&b<this.workerBlocks)||(w!==undefined&&w<this.workerWalBytes)){this.workerBlocksChild=child;this.workerBlocks=0;this.workerWalBytes=0;}
+    this.workerBytes+=Math.max(b===undefined?0:(b-this.workerBlocks)*BLOCK_BYTES,w===undefined?0:w-this.workerWalBytes);
+    if(b!==undefined)this.workerBlocks=b;
+    if(w!==undefined)this.workerWalBytes=w;
   }
   private workerBlocksChild:unknown=null;
+  private workerWalBytes=0;
   private spawn() {
     this.registerWorkerBytes();
     this.initDeadline=Date.now()+MEMORY_WORKER_INIT_MS;this.idleExited=false;this.modelReady=false;this.wasmHelper=false;this.warmSent=false;
@@ -724,15 +777,19 @@ export class MemoryWorkerController {
         // directory and home, or an account with no home entry cannot start a helper at all (RED2C).
         MURAGE_DATA_DIR:DATA_DIR,...(process.env.HOME?{HOME:process.env.HOME}:{}),...(process.env.USERPROFILE?{USERPROFILE:process.env.USERPROFILE}:{}),...(process.env.MURAGE_MEMORY_BACKEND==="wasm"?{MURAGE_MEMORY_BACKEND:"wasm"}:{}),...(process.env.SystemRoot?{SystemRoot:process.env.SystemRoot}:{}),...(process.env.TMPDIR?{TMPDIR:process.env.TMPDIR}:{})}});
     this.child=child;
+    // The tick checks this deadline only when work is owed. With nothing owed (a warm at boot) a helper stuck starting would leave recall shut out for good.
+    // One sweep later than the deadline, so when work is owed the tick still decides, on its own timing.
+    this.clearInitWatch();
+    this.initWatch=setTimeout(()=>{this.initWatch=null;if(this.child===child&&!this.ready&&!this.stopping)this.failInit("MEMORY_WORKER_INIT_TIMEOUT");},MEMORY_WORKER_INIT_MS+MEMORY_IDLE_SWEEP_MS);
+    this.initWatch.unref?.();
     // What the helper prints when it swallows a failure reaches the log (rate limited), not the void.
     const forward=makeStderrForwarder();
     child.stderr?.setEncoding("utf8");child.stderr?.on("data",chunk=>forward(String(chunk)));
     child.on("message", (message: unknown)=>this.receiveWorkerMessage(child,message));
-    child.on("error",error=>{this.setError("helper","MEMORY_WORKER_START_FAILED");logSwallowed("capture",error);});
-    child.on("exit",()=>{if(this.child===child){
+    const gone=()=>{if(this.child===child){
       // An exit before "ready" that nothing asked for (failInit already counted its own kill) is a failed start, never a silent respawn.
       if(!this.ready&&!this.stopping&&this.idleExit!==child&&this.failedStart!==child)this.backOffStart("MEMORY_WORKER_START_FAILED");
-      this.failedStart=null;
+      this.failedStart=null;this.warmStart=null;this.clearInitWatch();
       unblockMemoryIndexReader();setWalCheckpointRequester(null);setScrubRewriteFinisher(null);this.settleCheckpoints(false);
       // A helper that goes away because Murage is quitting says nothing about the job it held: it reschedules without spending an attempt.
       this.modelReady=false;const planned=this.idleExit===child;this.idleExit=null;if(planned&&!this.stopping)this.idleExited=true;
@@ -745,7 +802,10 @@ export class MemoryWorkerController {
       // A record that arrived while the helper was leaving was seen by a tick that found no ready helper and did nothing: look again now.
       if(planned&&!this.stopping)delay=0;
       this.schedule(delay);
-    }});
+    }};
+    child.on("exit",gone);
+    // A process that never started has no exit to wait for.
+    child.on("error",error=>{if(!this.quietWarmFailure(child))this.setError("helper","MEMORY_WORKER_START_FAILED");logSwallowed("capture",error);if(child.pid===undefined)gone();});
   }
   /** A message from the helper. While a writer hold is in force, a message whose handling writes is queued (in order) and dispatched once
    * the hold is released; the read-only ones (search results, checkpoint answers, the hello) are not held, so a search never waits on a VACUUM. */
@@ -780,9 +840,9 @@ export class MemoryWorkerController {
     const handlerStart=performance.now();
     {
       if(!message||typeof message!=="object")return;
-      const event=message as {type?:string;result?:unknown;requestId?:string;reset?:boolean;records?:Array<{id:string;version:number;deleted:boolean}>;embeddingStatus?:string;scrubOwed?:boolean;fsWriteBlocks?:unknown};
-      // the helper's own write count rides on its index acknowledgements and its maintenance reports (worker.ts reportIo)
-      if("fsWriteBlocks" in event)this.noteWorkerBlocks(child,event.fsWriteBlocks);
+      const event=message as {type?:string;result?:unknown;requestId?:string;reset?:boolean;records?:Array<{id:string;version:number;deleted:boolean}>;embeddingStatus?:string;scrubOwed?:boolean;fsWriteBlocks?:unknown;ioBytes?:unknown};
+      // the helper's own write counts ride on its index acknowledgements and its maintenance reports (worker.ts reportIo)
+      if("fsWriteBlocks" in event||"ioBytes" in event)this.noteWorkerIo(child,event.fsWriteBlocks,event.ioBytes);
       if(event.type==="io")return;
       if(event.type==="ready"){
         const manifestFile=join(SERVER_ROOT,"memory-model-manifest.json");
@@ -806,7 +866,7 @@ export class MemoryWorkerController {
         if(!this.turnHeld())this.applyIndexReset();
         // The helper removed the copies it could when it opened the index; any it could not are looked for again from the next tick.
         this.quarantineSweepAt=0;
-        this.ready=true;this.initFailures=0;this.clearError("helper");unblockMemoryIndexReader();setWalCheckpointRequester(()=>this.requestCheckpoint());setScrubRewriteFinisher(()=>this.requestFinishRewrite());
+        this.ready=true;this.initFailures=0;this.warmStart=null;this.clearInitWatch();this.clearError("helper");unblockMemoryIndexReader();setWalCheckpointRequester(()=>this.requestCheckpoint());setScrubRewriteFinisher(()=>this.requestFinishRewrite());
         for(const [requestId,pending] of this.queries)if(!pending.sent){pending.sent=true;try{sendSearch(m=>child.send(m),requestId,pending.input);}catch{this.queries.delete(requestId);pending.cleanup();pending.reject(new Error("MEMORY_QUERY_REFUSED"));logSwallowed("recall","MEMORY_QUERY_REFUSED");}}
         if(this.warmOwed){this.warmOwed=false;this.requestWarm(child);}
         this.scheduleTick(handlerStart);return;
@@ -989,6 +1049,8 @@ export class MemoryWorkerController {
     this.stopping=true;this.started=false;if(this.timer)clearTimeout(this.timer);this.timer=null;this.scheduledAt=Infinity;
     this.requested=false;this.consolidationWake=false;
     if(this.maintenanceTimer)clearInterval(this.maintenanceTimer);this.maintenanceTimer=null;
+    if(this.bootWarmTimer)clearTimeout(this.bootWarmTimer);this.bootWarmTimer=null;
+    this.clearInitWatch();
     this.clearHeartbeat();
     this.unsubscribe?.();this.unsubscribe=null;
     for(const pending of this.queries.values()){pending.cleanup();pending.reject(new Error("MEMORY_WORKER_NOT_READY"));}this.queries.clear();
@@ -1000,14 +1062,14 @@ export class MemoryWorkerController {
     if(child)await new Promise<void>(resolve=>{
       let killed:ReturnType<typeof setTimeout>|undefined;
       // A kill not seen to land by the wait: the helper is let go, so the next start gets a new one and its late exit changes nothing.
-      const letGo=()=>{if(this.child===child){this.clearHeartbeat();this.failWork("MEMORY_WORKER_STOPPED");this.child=null;this.ready=false;this.indexing=false;this.modelReady=false;this.idleExit=null;}resolve();};
+      const letGo=()=>{if(this.child===child){this.clearHeartbeat();this.failWork("MEMORY_WORKER_STOPPED");this.child=null;this.ready=false;this.indexing=false;this.modelReady=false;this.idleExit=null;this.warmStart=null;this.clearInitWatch();}resolve();};
       const grace=setTimeout(()=>{child.kill("SIGKILL");killed=setTimeout(letGo,MEMORY_WORKER_KILL_WAIT_MS);},MEMORY_WORKER_STOP_GRACE_MS);
       child.once("exit",()=>{clearTimeout(grace);if(killed)clearTimeout(killed);resolve();});
       child.disconnect();
     });
     ioBudget.sampleByteSource("memory-worker");this.unregisterBytes?.();this.unregisterBytes=null;
     if(this.statusScanTimer)clearTimeout(this.statusScanTimer);this.statusScanTimer=null;
-    if(this.lineageWarmTimer)clearTimeout(this.lineageWarmTimer);this.lineageWarmTimer=null;
+    if(this.lineageWarmTimer)clearTimeout(this.lineageWarmTimer);this.lineageWarmTimer=null;this.lineageWarmDue=Infinity;
     try{flushMemoryCounters(Date.now(),true);}catch{/* counters are advisory */}
     setWalCheckpointRequester(null);setScrubRewriteFinisher(null);this.settleCheckpoints(false);
     unblockMemoryIndexReader();closeMemoryIndexReader();

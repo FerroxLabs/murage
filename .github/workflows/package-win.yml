@@ -32,6 +32,38 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
+      - name: Restore the pinned tool download cache
+        # Primary source for age, restic, cloudflared and the other pinned helpers: served by the
+        # Actions cache, not github.com release hosting. Files are named by their pinned sha256 and
+        # re-verified on every use (scripts/download-retry.mjs), so a stale or bad entry is discarded.
+        id: tools-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/package-tool-cache
+          key: package-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/prepare-cloudflared.mjs', 'shared/backup-age-pins.mjs', 'shared/backup-restic-pin.mjs', 'shared/windows-backup-tools.mjs', 'scripts/prepare-cua.mjs', 'scripts/build-murage-cage.mjs') }}-restore
+          restore-keys: |
+            package-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/prepare-cloudflared.mjs', 'shared/backup-age-pins.mjs', 'shared/backup-restic-pin.mjs', 'shared/windows-backup-tools.mjs', 'scripts/prepare-cua.mjs', 'scripts/build-murage-cage.mjs') }}-
+            package-tools-${{ runner.os }}-${{ runner.arch }}-
+      - name: Point the packagers at the tool download cache
+        shell: bash
+        run: |
+          echo "MURAGE_PACKAGE_DOWNLOAD_CACHE=${{ runner.temp }}/package-tool-cache" >> "$GITHUB_ENV"
+          # Authenticated github.com downloads are not in the anonymous (throttled/timing-out) pool.
+          echo "MURAGE_PACKAGE_GITHUB_TOKEN=${{ github.token }}" >> "$GITHUB_ENV"
+      - name: Restore the Electron and electron-builder toolchain cache
+        # electron zips, NSIS and winCodeSign come from github.com; serve them from the Actions cache.
+        id: electron-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: electron-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: electron-toolchain-${{ runner.os }}-${{ runner.arch }}-
       - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -45,8 +77,8 @@ jobs:
         run: |
           v=$(node -p process.version)
           dir="$(cygpath -u "$RUNNER_TEMP")/node-headers"; mkdir -p "$dir"
-          curl -fsSL "https://nodejs.org/dist/$v/node-$v-headers.tar.gz" -o "$dir/h.tgz"
-          curl -fsSL "https://nodejs.org/dist/$v/SHASUMS256.txt" -o "$dir/sums"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 "https://nodejs.org/dist/$v/node-$v-headers.tar.gz" -o "$dir/h.tgz"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 "https://nodejs.org/dist/$v/SHASUMS256.txt" -o "$dir/sums"
           (cd "$dir" && want=$(grep " node-$v-headers.tar.gz\$" sums | cut -d' ' -f1) && echo "$want  h.tgz" | sha256sum -c - && tar xzf h.tgz)
           echo "NODE_HEADERS_DIR=$(cygpath -w "$dir/node-$v/include/node")" >> "$GITHUB_ENV"
       # Murage for Chrome: the store item ID and public key when the owner has
@@ -101,8 +133,17 @@ jobs:
           $metadata = Get-Content -Raw -LiteralPath qualification-evidence/gepa-package-metadata.json | ConvertFrom-Json
           $hash = $metadata.extraMetadata.murageGepaManifests.'win32-x64'
           if ($hash -notmatch '^[a-f0-9]{64}$') { throw 'Missing trusted GEPA manifest hash' }
-          pnpm package:win "--config.extraMetadata.murageGepaManifests.win32-x64=$hash"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $log = Join-Path $env:RUNNER_TEMP 'package-win.log'
+          pnpm package:win "--config.extraMetadata.murageGepaManifests.win32-x64=$hash" 2>&1 | Tee-Object -FilePath $log
+          $code = $LASTEXITCODE
+          # One retry when electron-builder's own toolchain download (electron zip, nsis, winCodeSign) hit a 5xx or network error.
+          if ($code -ne 0 -and (Select-String -Path $log -Pattern 'Response code 5\d\d|status code 5\d\d|HTTP 5\d\d|ETIMEDOUT|ECONNRESET|socket hang up|EAI_AGAIN' -Quiet)) {
+            Write-Host '::warning::package:win hit a transient download failure; retrying once in 45s'
+            Start-Sleep -Seconds 45
+            pnpm package:win "--config.extraMetadata.murageGepaManifests.win32-x64=$hash"
+            $code = $LASTEXITCODE
+          }
+          exit $code
         env:
           NODE_OPTIONS: --max-old-space-size=6144
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
@@ -237,6 +278,37 @@ jobs:
             release/latest.yml
           if-no-files-found: error
           retention-days: 7
+      - name: Save the Electron and electron-builder toolchain cache
+        if: success() && steps.electron-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: electron-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - name: Fingerprint the tool download cache
+        id: tool-sig
+        if: always()
+        shell: bash
+        run: |
+          dir="${{ runner.temp }}/package-tool-cache"
+          sig=""
+          if [ -d "$dir" ] && [ -n "$(ls -A "$dir")" ]; then sig="$(ls "$dir" | sort | sha256sum | cut -c1-16)"; fi
+          echo "sig=$sig" >> "$GITHUB_OUTPUT"
+      - name: Save the pinned tool download cache
+        # Saves a new generation whenever the set of verified files changed (even if a later step failed), so a
+        # partial cache is topped up instead of being frozen under one key.
+        if: always() && steps.tool-sig.outputs.sig != ''
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/package-tool-cache
+          key: package-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/prepare-cloudflared.mjs', 'shared/backup-age-pins.mjs', 'shared/backup-restic-pin.mjs', 'shared/windows-backup-tools.mjs', 'scripts/prepare-cua.mjs', 'scripts/build-murage-cage.mjs') }}-${{ steps.tool-sig.outputs.sig }}
 
   # Release rule: the Windows build must install and start as a STANDARD
   # (non-admin) user. Runs after the packaging job in the same run, on a

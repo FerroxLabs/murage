@@ -1,4 +1,7 @@
+import { probeFolder } from "./probe-folder.ts";
+import { botFolderOrThrow } from "./bot-folder.ts";
 import { cloudTurnLaunch } from "./cloud-home/turn-process.ts";
+import { enginePathFromEnv, noteEngineEnv, noteEnginePath } from "./outside-scan.ts";
 import { registerCloudTurnUnit } from "./cloud-home/cloud-process-hooks.ts";
 // Cross-platform process spawning for the agent CLIs. Four Windows
 // differences are exposed to drivers through this module:
@@ -233,7 +236,7 @@ export function launcherEnvironment(base: NodeJS.ProcessEnv = process.env): Node
 
 /** The frame the server writes to the launcher's stdin once it is in the job: a length line, then that many bytes of JSON. */
 export function launcherFrame(env: NodeJS.ProcessEnv | undefined, cwd: string | undefined): Buffer {
-  const body = Buffer.from(JSON.stringify({ env: env ?? {}, cwd: cwd ?? "" }), "utf8");
+  const body = Buffer.from(JSON.stringify({ env: env ?? {}, cwd: botFolderOrThrow({ cwd }) }), "utf8");
   return Buffer.concat([Buffer.from(`${body.length}\n`, "utf8"), body]);
 }
 
@@ -325,7 +328,16 @@ export function spawnCli(
    * server (vps-computer.ts). It is not an engine turn, holds the home's ssh key and
    * must not go through the turn launcher. Nothing else may ask for this. */
   mode?: { serverTool: "docker" },
+  /** NOLIMITS 1.0.18 (Astra acct5 r1 H2, GrokBuild r1 G1): the thread an engine turn spawns for. The PATH the child gets is
+   *  noted for it (noteEnginePath), and the shell scan looks that thread's bare program names up on it. */
+  engineThread?: string,
 ): ChildProcessByStdio<Writable, Readable, Readable> {
+  opts = { ...opts, cwd: botFolderOrThrow({ cwd: opts.cwd }) };
+  // NOLIMITS 1.0.18 (GrokBuild #16 close): the env every engine is spawned with is noted here, whichever driver built it and
+  // whether or not it went through cloudTurnEnvironment (the owner's captured map handedEngineEnv hands, a driver's own map).
+  // Only a code-loading value turns the relief off (engineEnvLoadsCode); the Cloud docker server tool is not an engine.
+  if (mode?.serverTool !== "docker") noteEngineEnv(opts.env ?? process.env);
+  if (engineThread !== undefined && mode?.serverTool !== "docker") noteEnginePath(engineThread, enginePathFromEnv(opts.env ?? process.env));
   const resolved = resolveCli(cli, args);
   assertSafeCliArgv(resolved);
   const launch = mode?.serverTool === "docker" && cli === "docker" ? null : cloudTurnLaunch(resolved.command, resolved.args, opts.env, opts.cwd);
@@ -416,7 +428,7 @@ export function spawnCli(
     try {
       const pipes = (stdio as Array<unknown>).slice(0, 3);
       const wrappedStdio = [...pipes, ...Array(Math.max(0, BWRAP_SECCOMP_FD - pipes.length)).fill("ignore"), fd, ...Array(Math.max(0, BWRAP_ARGS_FD - BWRAP_SECCOMP_FD - 1)).fill("ignore"), "pipe", ...Array(Math.max(0, BWRAP_STATUS_FD - BWRAP_ARGS_FD - 1)).fill("ignore"), "pipe"] as StdioOptions;
-      const wrapped = spawn(plan.command, plan.args, { env: plan.env, cwd: "/", stdio: wrappedStdio, detached: true }) as ChildProcessByStdio<Writable, Readable, Readable>;
+      const wrapped = spawn(plan.command, plan.args, { env: plan.env, cwd: opts.cwd, stdio: wrappedStdio, detached: true }) as ChildProcessByStdio<Writable, Readable, Readable>;
       const argsPipe = wrapped.stdio[BWRAP_ARGS_FD] as Writable | null;
       if (argsPipe) {
         // A bwrap that exits before reading it ends the pipe (EPIPE): that exit is the refusal read at close, not an error here.
@@ -609,12 +621,21 @@ export function cliJobRefused(child: ChildProcess): boolean {
   return cliOwnership.get(child)?.jobRefused === true;
 }
 
+/** One event-loop turn (ALL.eld250 B9): a status probe's spawn (`--version`, the container runtime's status) runs in its own macrotask
+ * instead of the task that asked for it, so the start-up engine snapshot scan no longer spawns inside the pre-listen task. The awaiter waits
+ * one turn more; nothing is reordered against stored state (the probes write nothing). */
+export function nextTask(): Promise<void> { return new Promise(resolve => setImmediate(resolve)); }
+
 export function execCli(
   cli: string,
   args: string[],
   opts: ExecFileOptions & { absoluteExecutable?: boolean },
   cb: (err: Error | null, stdout: string, stderr?: string) => void,
 ): void {
+  opts = { ...opts, cwd: opts.cwd ?? probeFolder() };
+  // NOLIMITS 1.0.18 (GrokBuild r1 G7): a probe run with a caller's env is noted like an engine spawn (only a code-loading
+  // value turns the relief off)
+  noteEngineEnv(opts.env ?? process.env);
   // Environment probes pass an already pinned executable. Never let CLI
   // resolution select a PATH shadow or a PATHEXT/shim substitute for it.
   if (opts.absoluteExecutable && !(process.platform === "win32" ? windowsPath.isAbsolute(cli) : isAbsolute(cli))) {
@@ -754,12 +775,14 @@ export function execCliSync(
   args: string[],
   opts: { cwd?: string; env?: NodeJS.ProcessEnv | Readonly<Record<string, string>>; timeout: number; maxBuffer: number },
 ): SpawnSyncReturns<Buffer> {
+  // NOLIMITS 1.0.18 (GrokBuild r1 G7): the env this probe really gets (a copy of opts.env, empty without one) is noted
+  noteEngineEnv({ ...opts.env });
   if (!(process.platform === "win32" ? windowsPath.isAbsolute(command) : isAbsolute(command))) {
     const error = Object.assign(new Error("Probe executable is not absolute"), { code: "EUNPINNEDPROBE" });
     return { pid: 0, output: [], stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), status: null, signal: null, error };
   }
   return spawnSync(command, args, {
-    cwd: opts.cwd, env: { ...opts.env }, timeout: opts.timeout, maxBuffer: opts.maxBuffer, input: "", stdio: ["pipe", "pipe", "pipe"],
+    cwd: opts.cwd ?? probeFolder(), env: { ...opts.env }, timeout: opts.timeout, maxBuffer: opts.maxBuffer, input: "", stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true, ...(process.platform === "win32" ? {} : { detached: true }),
   });
 }

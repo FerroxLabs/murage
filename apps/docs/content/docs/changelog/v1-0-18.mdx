@@ -1,0 +1,76 @@
+---
+title: What changed in Murage 1.0.18
+description: No limits with a protected list, Today in Calm and Detailed views, one-tap Approve, and bots that read your other chats.
+icon: Clock
+---
+
+{/* DRAFT pending the RC. Put this at apps/docs/content/docs/changelog/v1-0-18.mdx AFTER bump.sh (bump.sh copies the GitHub notes there as a draft; overwrite it with this file, same shape as v1-0-17.mdx). Then run `node scripts/build-help-index.mjs` on a clean hz tree: shared/help-index.ts entries are GENERATED from the "##" headings below, one per heading, ids changelog/v1-0-18#<slug>. Do not hand-write them. The STOP-NONACP markers were removed by INT46. */}
+
+## No limits in 1.0.18
+
+- **Your bot gets on with the job.** At No limits, when you start the request yourself, a bot runs what you asked.
+- **A protected list.** Murage protects certain files and places, such as the keys and sign-ins you have given it, and answers a request for one with a clear refusal that says why.
+- **Outside content.** If a bot has taken in something from outside, such as a web page, an email or a file someone sent, only that bot keeps the extra check.
+- **Mac temp folders.** Commands in your Mac temp folders run as usual, and the real system folders stay protected.
+- **Small everyday commands.** Writing output to /dev/null works, and a trivial inline check, such as a one-number node or python command, runs straight away.
+
+## Today and chats in 1.0.18
+
+- **Today, two ways.** The Today page has a Calm view for a short summary and a Detailed view for the full list, in every language.
+- **Search all chats.** One search box looks through every chat, with a date filter.
+- **Routines.** Open a routine to see its details and press Run now. Routine times show the right time zone.
+- **Approve in one tap.** Answer a waiting request right inside Needs you, or use Approve all for the stack. A refusal still shows its reason.
+- **Errors name the service.** When something holds a reply, the message says which service, such as Flux hold, limit reached or busy.
+- **Pictures in chat.** Pictures a bot saves in its workspace show in chat and open full size.
+
+## Bots and rooms in 1.0.18
+
+- **Read your other chats.** A bot can read from your other chats, and you pick the exact excerpts it shares into a room.
+- **Post by rule.** A bot can post into a room by a rule you set, and you see each post.
+- **Many bots.** The bot rail and lists stay quick with 18 or more bots.
+- **Bring what you use.** First run has doors to import a Grok bot or tell a bot about yourself, and saving your name or picking a job answers at once.
+- **Clients card.** The Clients card explains how to switch clients.
+
+## Engines in 1.0.18
+
+- **Fuigo 1.0.40.** Fuigo 1.0.40 is the engine on board, and Fuigo asks before it reads the keys and sign-ins you have given Murage.
+- **Muse Code.** Muse Code joins the engine list. It runs on a regular model, writes only at Full access, and Stop ends all of its work.
+- **Signed-in engines first.** New and paired bots start on an engine you are already signed in to.
+- **Flux keys.** When a Flux key does not cover a model, Murage retries on a model the key does cover.
+- **Model defaults.** Default models for Claude and Codex are up to date.
+- **First Codex turn.** The first Codex turn on a fresh Mac goes straight through.
+- **Stop everywhere.** Stop works, and usage is counted, on every engine that is not ACP.
+
+## Murage for Chrome and phone in 1.0.18
+
+- **Guided Chrome setup.** Use my Chrome setup takes you through it in three steps, and the extension picks up again after a restart.
+- **Phone tabs.** The phone app has tabs along the bottom and a You sheet with Approve on it.
+- **Phone calls.** A Phone calls section in Settings lets a bot place calls for you.
+
+## Settings and money in 1.0.18
+
+- **Dollar meter.** The dollar meter gives you a heads-up at 80 percent of your budget.
+- **Plan usage.** The Plan usage card shows what your plan allows.
+- **Health.** Health also checks a Flux call in flight, the Fuigo version you have, and screenshots.
+- **Voice and calls.** Voice and calls stop when Flux says your budget is spent, and tell you.
+
+## Memory and privacy in 1.0.18
+
+- **Hidden stays hidden.** Memory you have hidden or withheld stays hidden, including when a skill reviews memory.
+- **Recall.** Recall says "unknown" when part of a thread's history is too long to walk.
+- **Logs.** Logs, and anything sent on from them, leave sensitive text out.
+- **Owner-only content.** Content meant for you alone stays out of room transcripts, so a room only shows what you chose to share.
+- **Record file.** The file where Murage records which turns touched things outside a bot's folder stays small, and it comes through a crash intact.
+- **Engine logs.** Engine logs stay a steady size, and a resumed chat picks up exactly where it left off.
+
+## Updates and backups in 1.0.18
+
+- **Backups.** A backup that needs more disk space waits and tells you, and backup and restore work as a standard Windows user.
+- **Mac updates.** Mac updates hand off cleanly, and the splash stays until the window paints.
+- **Update notice.** A notice tells you when a new version is ready.
+
+## Better in 1.0.18
+
+- Murage paints its first screen faster.
+- Core libraries are brought up to date.
+- Plus many smaller improvements throughout.

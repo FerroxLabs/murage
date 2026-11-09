@@ -1,3 +1,5 @@
+import { classifyFluxRefusal } from "../../shared/flux-refusal";
+import { fatal } from "../../shared/flux-stream-contract";
 // src/lib/stream-uplink.ts
 // The page's end of streaming voice (spec C.5): a ticket over the ordinary
 // fetch path, then a same-origin websocket to the harness, which holds the
@@ -144,7 +146,9 @@ export class StreamUplink {
         ws.addEventListener("close", (e) => {
           if (this.ws === ws) this.ws = null;
           if (!opened) return reject(signal.aborted ? stopped() : new UplinkRefused(0, String((e as CloseEvent).code), "stream closed before it opened"));
-          const info = { code: (e as CloseEvent).code, error: this.lastError };
+          const event = e as CloseEvent;
+          const refusal = classifyFluxRefusal(event.code, this.lastError ?? event.reason);
+          const info = { code: event.code, error: refusal === "budget" ? fatal("key_budget_reached", "This Flux key has reached its budget") : refusal === "premium" ? fatal("premium_locked", "Premium access is required") : this.lastError };
           for (const fn of [...this.closes]) fn(info);
         });
         ws.addEventListener("error", () => {

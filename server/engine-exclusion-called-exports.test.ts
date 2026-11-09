@@ -55,7 +55,7 @@ function exportedBySource() {
 
 describe("the packaged-addon check covers every export the code calls", () => {
   const { members, called } = calledExports();
-  const covered = new Set([...COMMON, ...WINDOWS_ADDON_FUNCTIONS, ...POSIX_ADDON_FUNCTIONS]);
+  const covered = new Set([...COMMON, ...WINDOWS_ADDON_FUNCTIONS, ...requiredAddonFunctions("darwin")]);
   it("reads the interface and finds the calls (so the comparison below is not vacuous)", () => {
     expect(members.length).toBeGreaterThan(25);
     for (const name of ["removeTree", "writers", "fullSync", "bootId", "authenticode", "driveInfo", "processStart", "openFile", "speechVoices"]) expect(called, name).toContain(name);
@@ -65,15 +65,17 @@ describe("the packaged-addon check covers every export the code calls", () => {
   });
   it("removeTree and every Windows-only call the code makes are on the Windows list; writers, fullSync and bootId on the other one", () => {
     expect(WINDOWS_ADDON_FUNCTIONS).toContain("removeTree");
-    expect(called.filter(name => !COMMON.includes(name) && !POSIX_ADDON_FUNCTIONS.includes(name) && !WINDOWS_ADDON_FUNCTIONS.includes(name))).toEqual([]);
+    expect(called.filter(name => !COMMON.includes(name) && !requiredAddonFunctions("darwin").includes(name) && !WINDOWS_ADDON_FUNCTIONS.includes(name))).toEqual([]);
     for (const name of ["writers", "fullSync", "bootId"]) expect(requiredAddonFunctions("darwin")).toContain(name);
-    expect(requiredAddonFunctions("linux")).toEqual(requiredAddonFunctions("darwin"));
+    // macOS adds only diskWritten (IO-IDLE r3.6, the watchdog's OS floor there); the Linux list is the POSIX one, unchanged
+    expect(requiredAddonFunctions("darwin")).toEqual([...requiredAddonFunctions("linux"), "diskWritten"]);
+    expect(requiredAddonFunctions("linux")).toEqual(POSIX_ADDON_FUNCTIONS);
   });
   it("the addon source exports removeTree on Windows, and everything each platform's list names", () => {
     const { win, posix } = exportedBySource();
     expect(win.has("removeTree")).toBe(true);
     expect(WINDOWS_ADDON_FUNCTIONS.filter(name => !win.has(name)), "listed for Windows, not exported by exclusion.c there").toEqual([]);
-    expect(POSIX_ADDON_FUNCTIONS.filter(name => !posix.has(name)), "listed for macOS/Linux, not exported by exclusion.c there").toEqual([]);
+    expect(requiredAddonFunctions("darwin").filter(name => !posix.has(name)), "listed for macOS/Linux, not exported by exclusion.c there").toEqual([]);
     expect(COMMON.filter(name => !win.has(name) || !posix.has(name))).toEqual([]);
   });
 });

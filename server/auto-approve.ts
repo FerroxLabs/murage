@@ -14,11 +14,17 @@ import { CONNECTED_APPS_SERVER, sameToolGrant } from "../shared/connected-app-na
 import { actionGrantKey, actionGrantRead, actionGrantSet, commandArgument, placeArgumentScan, resolveCall, STAMP_SPELLING_WHY, type GrantCall, type ResolvedCall } from "../shared/app-action-grant.ts";
 import { isStopLineKey, stopFindings, stopLineKey, stopLineKeyCovers, type StopHit } from "./stop-line.ts";
 import { redactSecretsInText } from "./redact.ts";
-import { alwaysAskCommand, alwaysAskNote, alwaysAskRoutineCommand, type CarvedTarget, unreadableHit, type AlwaysAskHit, type UnseenOptions } from "./always-ask.ts";
+import { decodeAnsiC, plainWipe, readOnlyShape, type OutsideMark, type ReadOnlyHooks } from "./outside-scan.ts";
+import { realpathSync } from "node:fs";
+import { printfRunContract } from "./shell/printf-literal.ts";
+import { withPrintfContract } from "./shell/walk.ts";
+import type { OutsideSource } from "./email/external-marks.ts";
+import { ownerMarks, withoutDoubts } from "./shell/marks.ts";
+import { alwaysAskCommand, alwaysAskNote, alwaysAskRoutineCommand, type CarvedTarget, COULD_NOT_READ_FINDINGS, protectedScriptHit, unreadableHit, type AlwaysAskHit, type UnseenOptions } from "./always-ask.ts";
 import { commandCwdFromToolInput, commandFromToolInput, exactCommandKey, isExactCommandKey, routineExactGrantCovers, type ExactCommand } from "../shared/exact-command.ts";
 import { approvalSummaryIsCut } from "../shared/approval-summary.ts";
 import { SENSITIVE_RULES } from "../shared/sensitive-paths.ts";
-import { gateHit, ruleRowId } from "../shared/gate-files.ts";
+import { gateHit, gateHitSpelled, ruleRowId } from "../shared/gate-files.ts";
 import { globKeyRead } from "../shared/sensitive-globs.ts";
 import { fileToolRead, splitCommand, isReadPassHold, keyRowId, keyValueShapeIn, PATH_RULES, readKindRules, TEXT_RULES, type CommandDataRead, type FileToolRead } from "./key-text.ts";
 import { powershellRunner } from "./shell/pwsh.ts";
@@ -176,22 +182,6 @@ function homeGlobIn(word: Word): string | undefined {
     text += "\u0001";
   }
   return undefined;
-}
-
-/** 1.0.10 (NOLIMITS-CARDS fix round): `$'...'` (ANSI-C quoting) written out as bash reads it: `\xHH`, `\NNN`,
- * `\uHHHH`, `\UHHHHHHHH`, `\cX` and the one-letter escapes. An escape it does not know is kept as its letter. */
-function decodeAnsiC(text: string): string {
-  const ONE: Record<string, string> = { n: "\n", t: "\t", r: "\r", a: "\x07", b: "\b", e: "\x1b", E: "\x1b", f: "\f", v: "\v" };
-  return text.replace(/\$'((?:[^'\\]|\\[\s\S])*)'/g, (_whole, body: string) => body.replace(/\\(x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|[0-7]{1,3}|c[\s\S]|[\s\S])/g, (_esc, esc: string) => {
-    const lead = esc[0]!;
-    if ((lead === "x" || lead === "u" || lead === "U") && esc.length > 1) {
-      const point = parseInt(esc.slice(1), 16);
-      return point <= 0x10ffff ? String.fromCodePoint(point) : "";
-    }
-    if (/[0-7]/.test(lead)) return String.fromCharCode(parseInt(esc, 8) & 0xff);
-    if (lead === "c" && esc.length === 2) return String.fromCharCode(esc.charCodeAt(1) & 0x1f);
-    return ONE[lead] ?? lead;
-  }));
 }
 
 /** 1.0.10 (NOLIMITS-CARDS): the key guard's copy of a command the lexer could not read. Quotes and backslashes are taken out and each `{a,b}` is
@@ -405,6 +395,20 @@ export function exactCommandForRequest(input: {
   return exactCommandKey(exact) === undefined ? undefined : exact;
 }
 
+/** The whole command for the always-ask reader (server/index.ts approval context): the engine's own text, uncapped, from the folder
+ * the call names for this one command, else the turn's folder. Only a command tool carries one, and only when its input holds a
+ * command; any other call (an MCP tool, a file write) gives nothing, so the reader reads its card text instead. A named folder
+ * that is not a usable path is marked invalid and never replaced by the turn's folder (MARKS-r14 rule 11, D3). */
+export function wholeCommandOf(tool: string, input: unknown, turnCwd: string | undefined): Pick<AutoContext, "commandText" | "commandCwd" | "commandCwdInvalid"> {
+  if (!isCommandTool(tool)) return {};
+  const commandText = commandFromToolInput(input);
+  if (commandText === undefined) return {};
+  const named = commandCwdFromToolInput(input);
+  if (named === null) return { commandText, commandCwdInvalid: true };
+  const commandCwd = named === undefined ? turnCwd : named ?? undefined;
+  return commandCwd === undefined ? { commandText } : { commandText, commandCwd };
+}
+
 export interface AutoApprover {
   /** Server-owned identity for value-free approval diagnostics. */
   id?: string;
@@ -516,10 +520,16 @@ export type AutoVerdictSource =
    * its non-interactive form. `rule` names the row, `note` its reason.
    * Ahead of every standing answer; Full access and No limits keep theirs. */
   | "prompt-guard"
+  /** NOLIMITS-MEANS-IT 1.0.20 (design r4 6.1): an owner No limits lane turn that read outside content (or whose state
+   * the server did not state) asks before every shell text that is not a read-only shape and every acting tool.
+   * `rule` is `outside-content`, `note` names the first source. Never waived; offers no grant. */
+  | "outside-turn"
   | "question-tool"
   | "no-grant";
 
 export interface AutoVerdict {
+  classification?: "deny" | "ask";
+  reason?: string;
   /** Chip text when the bot may answer itself, null when a human decides.
    * The string becomes the chip in the transcript, so an auto-approved
    * action is never invisible. */
@@ -559,6 +569,7 @@ export function approvalHoldNote(verdict: AutoVerdict | null | undefined): strin
     case "sensitive-guard": return "This action may access sensitive data. Review it before allowing it.";
     case "unread-call": return verdict.rule?.startsWith(U20_WORDS) || verdict.rule?.startsWith(U19_WORDS) ? `${verdict.rule}. Review it before allowing it.` : "Murage could not read this action whole. Review it before allowing it.";
     case "prompt-guard": return verdict.note ?? "This command can ask for input that nobody would see. Review it before allowing it.";
+    case "outside-turn": return verdict.note ?? outsideTurnNote(undefined);
     case "unattended-block": return "This task started outside the desktop. Your approval is required before this action can continue.";
     case "local-computer-block": return "This action controls your computer. Your approval is required.";
     case "question-tool": return "Your bot is asking you a question. Only you can answer it.";
@@ -576,12 +587,29 @@ export interface AutoContext {
   /** NOLIMITS-MEANS-IT: this call belongs to the bound provider turn of a run the owner started directly. Read from the
    * server's own run record at each ask; absent means false. Never copied to a held item, a message or disk. */
   ownerStarted?: boolean;
+  /** NOLIMITS-MEANS-IT 1.0.20 (design r4 3.1, C2): the marks this turn carried BEFORE this call. `null` = a clean turn,
+   * filled by the server only when its outside store is wired and loaded (3.5). Absent counts as marked: no relief. */
+  outsideRead?: readonly (OutsideMark | OutsideSource)[] | null;
+  /** NOLIMITS-MEANS-IT 1.0.20 (section 1, r3): the engine has no pre-run seam at No limits (OpenClaw). The lane does
+   * not apply: exactly today's behaviour, clean or marked. */
+  noPreRunSeamAtNoLimits?: boolean;
+  /** NOLIMITS-MEANS-IT 1.0.20 (6.3): no call of this engine session wrote since it was tainted. Only `true` lets a
+   * read-only shape (6.2) run on a marked lane turn; absent is false. */
+  readOnlySoFar?: boolean;
+  /** NOLIMITS-MEANS-IT 1.0.20 (6.2): the hooks the read-only shape check runs with (cwd, `sessionEdits`, the registry
+   * check, the PATH lookup on the shared 64-syscall budget). Absent: no shell text is read-only on a marked turn. */
+  readOnlyHooks?: ReadOnlyHooks;
+  /** NOLIMITS-MEANS-IT 1.0.20 (6.1.3): the engine's working folder. Absent: every engine file edit on a marked lane
+   * turn asks. */
+  workFolder?: string;
   /** the engine's whole command, uncapped, for the always-ask reader (the
    * 4,000-character `exactCommand` copy exists for the exact grant, which
    * must stay bounded; a catastrophe after the cut must still be read) */
   commandText?: string;
   /** the folder the engine says `commandText` runs in, when it names one */
   commandCwd?: string;
+  commandCwdInvalid?: boolean;
+  runtimePaths?: Readonly<Record<string, string>>;
   /** Where the paths this call names really are, links followed
    * (`realKeyPaths`): the key guard reads them, so a harmless name that links
    * to a key file is held as that file (1.0.4, 09-1). */
@@ -615,6 +643,7 @@ export interface AutoContext {
    * text is read as (always-ask.ts UnseenOptions); unset, this computer's own
    * disk and shell. Tests and the corpus pass a stub and name the shell. */
   unseen?: UnseenOptions;
+  sessionFile?: UnseenOptions["sessionFile"];
   /** the driver's trusted signal that this ask is a question to the owner
    * even though it is filed as a permission (Pi `select`, whose title is
    * extension-composed text and so cannot be matched by name) */
@@ -680,6 +709,8 @@ export interface AutoContext {
    * turn the workspace owner is behind; placed like `ownToolResults`. */
   ownFileRead?: boolean;
   projectWorkRoots?: boolean;
+  /** The requesting engine's handed PATH and PATHEXT (WIN-PWSH-1018 H1), from its F12 record; missing, pwsh `bash` holds. */
+  handedShellPath?: UnseenOptions["bashResolve"];
   /** What the stop line (server/stop-line.ts) found, computed by the caller
    * from the engine's structured input and the bot's own folders and
    * recipients. `null` = checked, nothing crosses it; `undefined` = not
@@ -829,6 +860,8 @@ const askedWindows = new Map<string, { at: number; suppressed: number }>();
 /** NOLIMITS-KEY-TEXT 3.7: why the key guard held a verdict, by fixed name, for the asked line only. */
 type KeyWhy = "path" | "value" | "field" | "mcp" | "summary" | "unmodeled" | "pwsh" | "local-hold";
 const keyWhyOf = new WeakMap<AutoVerdict, KeyWhy>();
+/** APPROVALS-SIMPLE-1018: why the reader held an `unreadable` hit, a fixed content-free name (UnseenWhy and three more). */
+const readerWhyOf = new WeakMap<AutoVerdict, string>();
 const ASK_LOG_MS = 60_000;
 const ALWAYS_ASK_LOG_RULES = new Set(["delete-root", "delete-home", "delete-system-folder", "disk-erase", "fork-bomb", "unknown-target", "protected-path"]);
 
@@ -886,12 +919,15 @@ function logAsked(bot: AutoApprover, tool: string, verdict: AutoVerdict, context
   const origin = fullAccessOriginOf(context);
   const cmd = !isCommandTool(tool) && context?.exactCommand === undefined ? "none" : isPowerShellTool(tool) || context?.call?.commandShell === "pwsh" ? "pwsh" : "shell";
   const reader = verdict.reader ? ` reader=${verdict.reader}` : "";
+  // NOLIMITS-MEANS-IT 1.0.20 (design 11): every ask of a marked lane turn names its first source, a fixed mark name
+  const outsideMark = markedLaneTurn(bot, context) ? (context?.outsideRead?.[0] ?? "unknown") : undefined;
+  const outsideField = outsideMark !== undefined && /^[a-z ]{1,32}$/.test(outsideMark) ? ` outside=${outsideMark.replace(/ /g, "-")}` : "";
   // NOLIMITS-MEANS-IT and KEY-TEXT: fixed names only: whether the owner started this turn, a row's id and the class of read, never a path, a name or command text
   const keyRow = held === "key-row" || held === "local-hold" ? keyRowId(verdict.rule) : undefined;
   const row = keyRow ?? (verdict.source === "sensitive-guard" ? ruleRowId(verdict.rule) : undefined);
-  const why = keyWhyOf.get(verdict);
+  const why = keyWhyOf.get(verdict) ?? readerWhyOf.get(verdict);
   const keyFields = `${row ? ` row=${row}` : ""}${why ? ` why=${why}` : ""}`;
-  console.info(`approvals: asked bot=${botId} tool=${toolName} reason=${reason} origin=${origin} unattended=${context?.unattended ? 1 : 0} cmd=${cmd}${reader} level=${askLevel(bot)} owner=${context?.ownerStarted === true ? 1 : 0}${held ? ` held=${held}` : ""} suppressed=${previous?.suppressed ?? 0}${keyFields}`);
+  console.info(`approvals: asked bot=${botId} tool=${toolName} reason=${reason} origin=${origin} unattended=${context?.unattended ? 1 : 0} cmd=${cmd}${reader} level=${askLevel(bot)} owner=${context?.ownerStarted === true ? 1 : 0}${held ? ` held=${held}` : ""} suppressed=${previous?.suppressed ?? 0}${keyFields}${outsideField}`);
 }
 
 export function autoVerdict(bot: AutoApprover, tool: string, summary: string, context?: AutoContext): AutoVerdict {
@@ -932,17 +968,24 @@ function autoVerdictOf(
   // after the cut), and a non-command tool's summary is read as text, where
   // an apostrophe in a file name is not an unterminated quote.
   const commandTool = isCommandTool(tool);
+  // MARKS (MurageMain ruling 11-08, N4): the engine's own explicit command folder is invalid (the engine broke its contract; this is not a
+  // reader limit). It never auto-approves at any level or origin: every level gets the typed deny card, no grant or mode answers it.
+  // Ahead of the always-ask read, so no other hit changes the card. Synchronous, no await: the interrupt, stop and dispose paths are unchanged.
+  if (commandTool && context?.commandCwdInvalid === true) {
+    const invalidFolder: AlwaysAskHit = { rule: "unknown-target", classification: "deny", reason: "invalid-command-folder",
+      what: "This command would run in a folder Murage could not confirm is this bot's own, so it asks first." };
+    return { approve: null, source: "always-ask", rule: invalidFolder.rule, classification: "deny", reason: invalidFolder.reason, note: alwaysAskNote(invalidFolder) };
+  }
   // a PowerShell tool's text is PowerShell's, however it starts, and so is
   // the text of a command tool whose driver runs it under PowerShell (Codex
   // and every ACP engine on Windows, `powershell.exe -Command`)
   const shell = isPowerShellTool(tool) || (commandTool && context?.call?.commandShell === "pwsh") ? "pwsh" : undefined;
   const text = context?.commandText ?? context?.exactCommand?.command;
-  const cwd = context?.commandCwd ?? context?.exactCommand?.cwd;
   // 1.0.9: the HOME the requesting engine's shell was handed, from its own
   // environment record; a `~` in an unseen-script text needs it (always-ask.ts)
   const home = context?.promptFacts?.home;
   // the disk reads of the unseen-script check (tests and the corpus pass a stub)
-  const unseen = context?.unseen ?? {};
+  const unseen: UnseenOptions = { ...context?.unseen, bashResolve: context?.unseen?.bashResolve ?? context?.handedShellPath, sessionEdits: context?.readOnlyHooks?.sessionEdits ?? context?.unseen?.sessionEdits, sessionFile: context?.sessionFile ?? context?.unseen?.sessionFile };
   // The owner's routine carve-out (1.0.3): on a scheduled or manual routine
   // run, with the engine's own whole command in hand, a write or delete whose
   // target is held in a value does not hold the turn. Everything else the
@@ -951,50 +994,176 @@ function autoVerdictOf(
   // get here.
   const routineCarve = commandTool && text !== undefined && context?.routineLevel === true && context.routineCarveOut === true && !context.unattended && context.inputCut !== true && context.scope === undefined;
   const windowsBash = shell === "pwsh" && fullAccessOriginOf(context) === "owner" && fullAccessCovers(bot, "owner") ? [] as string[] : undefined;
+  // MARKS R1 (MurageMain 11-08): the typed denies and the stricter MARKS reads are the owner's own clean No limits turn only
+  // (the same turn `ask` gives the doubt-free relief); every other level and origin reads exactly as at NLH0.
+  const ownerMode = hasNoLimits(bot) && !routineCarve && ownerOwnTurn(bot, context);
+  const cwd = ownerMode ? (context?.commandCwdInvalid ? "" : context?.commandCwd || context?.exactCommand?.cwd || context?.workFolder) : context?.commandCwd ?? context?.exactCommand?.cwd;
+  if (ownerMode) unseen.runtimePaths = context?.runtimePaths;
+  // NL-WIN-1018 D4: the pwsh `bash ./x.sh` admission needs the whole clean owner gate; set here and nowhere else
+  unseen.pwshOwnerBash = ownerMode && cleanLaneTurn(bot, context) && context?.inputCut !== true && context?.inputTruncated !== true
+    && context?.call?.inputMissing === undefined && context?.scope === undefined && context?.routineLevel !== true && context?.commandCwdInvalid !== true;
+  // WIN-PWSH-1018 (parity, not relief): Codex and the ACP engines run every Windows command as `powershell -NoProfile -Command
+  // <text>`, so their `bash ./build.sh` reached the 1.0.5 launcher rule (pwsh.ts unmodelled: "bash runs something the reader does
+  // not see") and carded at Full access with why=tokenizer, where the Claude Bash tool's own `bash ./build.sh` is read by the
+  // unseen-script reader and covered (`unseenCovered` below). At the level and origin Full access covers for the owner (the
+  // `windowsBash` gate above), the exact D4 text is read as the Git Bash text it is, through that same reader and the same judges
+  // (a deny rule on the script's path, placement under the folder, the head bytes, the relayed-scope card); nothing passes here
+  // that the Claude Bash tool's text would not. No limits keeps the D4 gate; every other level, origin and spelling reads as before.
+  unseen.pwshFullBash = !hasNoLimits(bot) && windowsBash !== undefined && context?.inputCut !== true && context?.inputTruncated !== true
+    && context?.call?.inputMissing === undefined && context?.scope === undefined && context?.routineLevel !== true && context?.commandCwdInvalid !== true;
   let catastrophe: AlwaysAskHit | null;
   let valueTarget: CarvedTarget[] | undefined;
+  let innerText: string | undefined;
+  let waived = false;
+  // MARKS r7 (M-R7-level): the closed-list doubts hold owner No limits turns only; every other level reads with them
+  // off, as before MARKS. A doubt-free read that fails for any other reason keeps the strict read's verdict.
+  const lax = <T>(read: () => T): T => {
+    try { return withoutDoubts(read); } catch { return read(); }
+  };
+  // M-R10-monotonic (MurageMain 11-07): No limits is never stricter than Full access unless a deny rule (a named
+  // catastrophe) or the wipe list applies. A closed-list doubt alone is neither, so a card that rests only on a doubt
+  // is replaced by what the doubt-free read finds, exactly as Full access reads it, on the owner's own turns.
+  const ask = <T>(read: () => T): T => {
+    if (!hasNoLimits(bot)) return lax(read);
+    // owner turns only: a routine, a channel, a webhook, any unattended No limits turn, and a turn the owner did not start
+    // himself (origin "owner" also means a bot his turn reached; MARKS r13, Astra H2) keep the strict read as at NLH0
+    if (!ownerMode) return read();
+    // NL-SAMETURN-1018 5 (NL-OPUS A2): the owner's read decodes a printf literal only for the exact same-text contract
+    const sameFolder = (folder: string): boolean => {
+      try { return cwd !== undefined && realpathSync.native(folder) === realpathSync.native(cwd); } catch { return false; }
+    };
+    const contract = typeof text === "string" && printfRunContract(text, sameFolder) !== null;
+    const owner = <R>(r: () => R): R => ownerMarks(() => withPrintfContract(contract, r));
+    const strict = owner(read);
+    const hit = (strict && typeof strict === "object" && "hit" in strict ? (strict as { hit: unknown }).hit : strict) as AlwaysAskHit | null;
+    return hit && hit.classification !== "deny" && !hit.mandatory && hit.rule === "unreadable" && hit.doubt !== undefined && hit.unseenScript !== true ? owner(() => lax(read)) : strict;
+  };
   const resolvedCall = resolveCall(context?.call);
   if (routineCarve) {
-    ({ hit: catastrophe, valueTarget } = alwaysAskRoutineCommand(text, cwd, shell, home, unseen));
+    ({ hit: catastrophe, valueTarget } = ask(() => alwaysAskRoutineCommand(text, cwd, shell, home, unseen)));
   } else {
     catastrophe = text !== undefined
-      ? alwaysAskCommand(text, cwd, "command", shell, windowsBash, home, unseen)
+      ? ask(() => alwaysAskCommand(text, cwd, "command", shell, windowsBash, home, unseen))
       : commandTool && approvalSummaryIsCut(summary)
         ? unreadableHit()
-        : alwaysAskCommand(summary, cwd, commandTool ? "command" : "text", shell, windowsBash, home, unseen);
+        : ask(() => alwaysAskCommand(summary, cwd, commandTool ? "command" : "text", shell, windowsBash, home, unseen));
   }
-  if (!catastrophe || catastrophe.unseenScript === true || catastrophe.rule === "unreadable") {
-    // A command a wrapper or an MCP tool carries (Fuigo's `use_tool` around the cloud computer's exec) is judged like
-    // the engine's own shell tool asking: the card title is the model's, the command inside is what runs.
-    // An unseen script in the outer text never stands in for that read: whatever the inner command hits wins,
-    // unless it too is only an unseen script.
-    const innerCommand = commandArgument(resolvedCall.kind === "engine" || resolvedCall.kind === "mcp" ? resolvedCall.input : context?.call?.toolCall?.input);
-    if (innerCommand !== undefined && innerCommand !== text) {
-      const inner = alwaysAskCommand(innerCommand, cwd, "command", shell, windowsBash, home, unseen);
-      if (inner && (!catastrophe || inner.unseenScript !== true)) catastrophe = inner;
+  if (ownerMode) {
+    const outer = catastrophe;
+    let innerHit: AlwaysAskHit | null = null;
+    {
+      // A command a wrapper or an MCP tool carries (Fuigo's `use_tool` around the cloud computer's exec) is judged like
+      // the engine's own shell tool asking: the card title is the model's, the command inside is what runs.
+      // The outer summary never substitutes for the inner command's read.
+      const innerCommand = commandArgument(resolvedCall.kind === "engine" || resolvedCall.kind === "mcp" ? resolvedCall.input : context?.call?.toolCall?.input);
+      if (innerCommand !== undefined && innerCommand !== text) {
+        const inner = ask(() => alwaysAskCommand(innerCommand, cwd, "command", shell, windowsBash, home, unseen));
+        innerHit = inner;
+        innerText = innerCommand;
+      }
+    }
+    // Each executable component must qualify on its own before any aggregation.
+    const normalize = (finding: AlwaysAskHit | null): AlwaysAskHit | null => {
+      if (!finding) return null;
+      const denied = finding.unseenScript ? ownerMarks(() => protectedScriptHit(finding.unseenPaths ?? [])) : null;
+      if (denied) return denied;
+      if (finding.classification === "deny" || finding.mandatory) return finding;
+      if (finding.unseenScript && context?.scope === "local-computer") return { ...unreadableHit(), unseenWhy: "relayed" };
+      const owner = finding.unseenScript && hasNoLimits(bot)
+        ? ownerUnseenWaived(bot, context, routineCarve, finding, [text ?? summary, innerText]) : false;
+      if (typeof owner === "object") return owner;
+      const covered = finding.unseenScript === true
+        && (marksHitWaivable(finding) || !hasNoLimits(bot) || owner === true)
+        && fullAccessCovers(bot, fullAccessOriginOf(context));
+      return covered ? null : finding;
+    };
+    const findings = [normalize(outer), normalize(innerHit)].filter((hit): hit is AlwaysAskHit => hit !== null);
+    catastrophe = findings.find(hit => hit.classification === "deny") ?? findings.find(hit => hit.mandatory) ?? findings[0] ?? null;
+    waived = catastrophe !== null && catastrophe.classification !== "deny" && !catastrophe.mandatory
+      && !windowsShellCall(shell, [text ?? summary, innerText])
+      && couldNotReadWaived(bot, context, [catastrophe, outer, innerHit], [text ?? summary, ...(innerText !== undefined ? [innerText] : [])]);
+    if (waived) logWaived(bot, tool, catastrophe!);
+    if (catastrophe && !waived) {
+      const reader = catastrophe.rule === "unreadable" ? "held" : undefined;
+      const held: AutoVerdict = { approve: null, source: "always-ask", rule: catastrophe.rule,
+        classification: catastrophe.classification ?? "ask", reason: catastrophe.reason ?? catastrophe.doubt ?? catastrophe.rule,
+        note: alwaysAskNote(catastrophe), ...(reader ? { reader } : {}) };
+      if (reader) readerWhyOf.set(held, catastrophe.mandatory ? catastrophe.reason ?? "named" : catastrophe.doubt ?? catastrophe.unseenWhy ?? (catastrophe.unseenScript ? "unseen-script" : catastrophe.readerFailed ? "reader-failed" : "named"));
+      return held;
+    }
+  } else {
+    const outer = catastrophe;
+    let innerHit: AlwaysAskHit | null = null;
+    if (!catastrophe || catastrophe.unseenScript === true || catastrophe.rule === "unreadable") {
+      // A command a wrapper or an MCP tool carries (Fuigo's `use_tool` around the cloud computer's exec) is judged like
+      // the engine's own shell tool asking: the card title is the model's, the command inside is what runs.
+      // An unseen script in the outer text never stands in for that read: whatever the inner command hits wins,
+      // unless it too is only an unseen script.
+      const innerCommand = commandArgument(resolvedCall.kind === "engine" || resolvedCall.kind === "mcp" ? resolvedCall.input : context?.call?.toolCall?.input);
+      if (innerCommand !== undefined && innerCommand !== text) {
+        const inner = ask(() => alwaysAskCommand(innerCommand, cwd, "command", shell, windowsBash, home, unseen));
+        innerHit = inner;
+        innerText = innerCommand;
+        if (inner && (!catastrophe || inner.unseenScript !== true)) catastrophe = inner;
+      }
+    }
+    // An unseen script is not proven safe by its shape or the selected mode.
+    if (catastrophe?.unseenScript === true && context?.scope === "local-computer") catastrophe = { ...unreadableHit(), unseenWhy: "relayed" };
+    // r1.5 2.1: an unseen script admitted by shape holds on No limits; Full access is unchanged (MARKS r7)
+    // MARKS r11 (M-R11-unseen): the owner's own No limits turn runs what Full access runs; a script a deny rule names cards by that rule
+    // MARKS r13 (Astra H3, MurageMain 11-07): a script whose own path a deny rule names cards by that rule at every level,
+    // Full access included (R2: a deny rule holds at every level)
+    const deniedScript = catastrophe?.unseenScript === true ? protectedScriptHit(catastrophe.unseenPaths ?? []) : null;
+    if (deniedScript) catastrophe = deniedScript; // M-R11-unseen-deny
+    const ownerUnseen = catastrophe?.unseenScript === true && hasNoLimits(bot) ? ownerUnseenWaived(bot, context, routineCarve, catastrophe, [text ?? summary, innerText]) : false;
+    if (typeof ownerUnseen === "object") catastrophe = ownerUnseen;
+    const unseenCovered = catastrophe?.unseenScript === true
+      && (marksHitWaivable(catastrophe) || !hasNoLimits(bot) || ownerUnseen === true)
+      && fullAccessCovers(bot, fullAccessOriginOf(context));
+    // 1.0.13 (NOLIMITS-MEANS-IT, design section 14): a text the reader could not follow holds at every level, owner
+    // No limits included. Hits it holds on carry `readerFailed`.
+    // HOOK (NOLIMITS-WIPE-WORD, design R3 and R11): any waiver of such a hit is one check on that mark, here and only here,
+    // ahead of this return. It needs `outer` from before the inner read. `inputTruncated` already keeps a cut call's card.
+    // The explicit waiver policy is empty. Context checks cannot grant a waiver.
+    waived = catastrophe !== null && !unseenCovered
+      && !windowsShellCall(shell, [text ?? summary, innerText])
+      && couldNotReadWaived(bot, context, [catastrophe, outer, innerHit], [text ?? summary, ...(innerText !== undefined ? [innerText] : [])]);
+    if (waived) logWaived(bot, tool, catastrophe!);
+    if (catastrophe && !unseenCovered && !waived) {
+      const reader = catastrophe.rule === "unreadable" ? "held" : undefined;
+      const held: AutoVerdict = { approve: null, source: "always-ask", rule: catastrophe.rule, note: alwaysAskNote(catastrophe), ...(reader ? { reader } : {}) };
+      // APPROVALS-SIMPLE-1018 5 (NOLIMITS-UNREADABLE R6): the asked line says which reader shape still cards, no text
+      if (reader) readerWhyOf.set(held, catastrophe.doubt ?? catastrophe.unseenWhy ?? (catastrophe.unseenScript ? "unseen-script" : catastrophe.readerFailed ? "reader-failed" : "named"));
+      return held;
     }
   }
-  // 1.0.5: a script file on disk the text runs or sources, unseen but named
-  // literally and not written by this text, asks at Ask and Auto. Full access
-  // and No limits, on a turn they cover, run it as `./build.sh` runs: the
-  // owner chose no cards there, and the stop line and key guard still read it.
-  // 1.0.9 (NOLIMITS-NODE-109-CUT R7): the file was checked on this computer;
-  // a command relayed to the owner's own computer runs on another disk, so
-  // its unseen script asks there, as in 1.0.8
-  if (catastrophe?.unseenScript === true && context?.scope === "local-computer") catastrophe = { ...unreadableHit(), unseenWhy: "relayed" };
-  const unseenCovered = catastrophe?.unseenScript === true && fullAccessCovers(bot, fullAccessOriginOf(context));
-  // 1.0.13 (NOLIMITS-MEANS-IT, design section 14): a text the reader could not follow holds at every level, owner
-  // No limits included. Hits it holds on carry `readerFailed`.
-  // HOOK (NOLIMITS-WIPE-WORD, design R3 and R11): any waiver of such a hit is one check on that mark, here and only here,
-  // ahead of this return. It needs `outer` from before the inner read. `inputTruncated` already keeps a cut call's card.
-  if (catastrophe && !unseenCovered) {
-    const reader = catastrophe.rule === "unreadable" ? "held" : undefined;
-    return { approve: null, source: "always-ask", rule: catastrophe.rule, note: alwaysAskNote(catastrophe), ...(reader ? { reader } : {}) };
-  }
+  // NOLIMITS-MEANS-IT 1.0.20 (design r4 6.1): a marked lane turn asks here, after the always-ask read and ahead of every
+  // mode, grant, own-tool and own-folder answer. A Windows shell call keeps this card too (ruling 3: only 2.1 and 2.3
+  // are withheld there; design 7.5).
+  const outside = outsideTurnCard(bot, tool, context, resolvedCall, shell, commandTool, [text ?? summary, innerText]);
+  if (outside) return outside;
   // a carved command is guarded on its whole text too, so a key or a
   // destructive step past the card's cut summary still holds
-  const verdict = verdictPastAlwaysAsk(bot, tool, summary, context, windowsBash?.length ? [text ?? summary, ...windowsBash].join("\n") : valueTarget !== undefined ? text : undefined, windowsBash);
+  const passed = verdictPastAlwaysAsk(bot, tool, summary, context, windowsBash?.length ? [text ?? summary, ...windowsBash].join("\n") : valueTarget !== undefined ? text : undefined, windowsBash);
+  // MurageMain (S10 relay 4, 11-06): a run the reader could not follow is logged as that, so the decision log tells it from a normal read
+  const verdict = waived && passed.approve && passed.rule === undefined ? { ...passed, rule: "held=waived" } : passed;
   return valueTarget !== undefined && verdict.approve ? { ...verdict, valueTarget } : verdict;
+}
+
+/** MurageMain 11-07 (MARKS r11, M-R11-unseen): No limits is never stricter than Full access except on a deny rule or the
+ * wipe list, and Full access runs an unseen script file of the allowed shape (`bash ./build.sh`, `node tvcall.mjs`). So
+ * the owner's own No limits turn runs it too. A routine, a channel, an unattended, a scoped, a cut or a marked-lane turn
+ * keeps the card, and so does a script whose own path a deny rule names (a system folder, a climb, the home or root
+ * folder) or a text the wipe list names. */
+function ownerUnseenWaived(bot: AutoApprover, context: AutoContext | undefined, routineCarve: boolean, hit: AlwaysAskHit, texts: ReadonlyArray<string | undefined>): boolean | AlwaysAskHit {
+  if (hit.classification === "deny" || hit.mandatory || hit.reason === "ambiguous-interpreter") return false;
+  if (routineCarve || !ownerOwnTurn(bot, context)) return false; // M-R11-unseen-owner (r13: the owner-started proof, Astra H2)
+  if (context?.unattended || context?.automated || context?.channelOwner || context?.routineLevel) return false; // M-R11-unseen-turn
+  if (context?.scope !== undefined || context?.inputCut === true || context?.inputTruncated === true) return false;
+  if (markedLaneTurn(bot, context)) return false; // M-R11-unseen-lane
+  const paths = hit.unseenPaths ?? [];
+  if (paths.length === 0) return false;
+  return !texts.some((t) => t !== undefined && plainWipe(t)); // M-R11-unseen-wipe
 }
 
 /** The card sources a held OWN_ALWAYS_ASK tool is re-named from: those that
@@ -1030,9 +1199,133 @@ function envCheckWaived(bot: AutoApprover, context: AutoContext): boolean {
 /** NOLIMITS-MEANS-IT section 2: No limits on a turn the owner started himself, at the app or his paired phone. Stored
  * fields only, never inferred from a missing one: `ownerStarted` is computed fresh at every start and bound to the
  * exact provider turn, because origin `owner` alone also means "a bot the owner's turn reached". */
+/** MARKS r13 (Astra H2): the owner's own turn for the doubt-free relief and the unseen-script waiver: ownerNoLimits()'s
+ * proof (ownerStarted, origin owner, attended, not automated, not a routine), and not a channel. */
+function ownerOwnTurn(bot: AutoApprover, context: AutoContext | undefined): boolean {
+  return ownerNoLimits(bot, context) && context?.channelOwner !== true;
+}
+
 export function ownerNoLimits(bot: AutoApprover, context: AutoContext | undefined): boolean {
   return hasNoLimits(bot) && context?.ownerStarted === true && context.fullAccessOrigin === "owner"
     && !context.unattended && !context.automated && !context.routineLevel;
+}
+
+/** NOLIMITS-MEANS-IT 1.0.20 (section 1, r3): the lane predicate. Relief (2) and the marked-turn rule (6) use it. */
+export function laneApplies(bot: AutoApprover, context: AutoContext | undefined): boolean {
+  return ownerNoLimits(bot, context) && context?.noPreRunSeamAtNoLimits !== true;
+}
+
+/** NOLIMITS-MEANS-IT 1.0.20, MurageMain ruling 3 (11-06): on Windows, PowerShell and cmd commands keep TODAY's behaviour
+ *  at No limits (fail closed, the same no-regression exception as OpenClaw): neither the could-not-read waiver (2.1) nor
+ *  the gate-file relief (2.3) applies. A call is a Windows shell call when its dialect is PowerShell (a PowerShell tool,
+ *  or a driver that runs commands under it), or when any of its texts names cmd or PowerShell as a word anywhere. Words
+ *  only over-match, which keeps today's card. A real Windows-path registry is follow-up F4 (1.0.21). */
+const WINDOWS_SHELL_WORD = /(?:^|[\s;&|(){}\\/=])(?:cmd|powershell|pwsh)(?:\.exe)?(?=$|[\s;&|(){}\\/])/i;
+export function windowsShellCall(dialect: string | undefined, texts: ReadonlyArray<string | undefined>): boolean {
+  return dialect !== undefined || texts.some((text) => text !== undefined && WINDOWS_SHELL_WORD.test(text));
+}
+
+/** 6.1: a lane turn that is not stated clean. Absent `outsideRead` is a marked turn (fail closed). */
+export function markedLaneTurn(bot: AutoApprover, context: AutoContext | undefined): boolean {
+  return laneApplies(bot, context) && context?.outsideRead !== null;
+}
+
+/** Note N (design 11, en). The source is a fixed mark name, never text from the call. */
+export function outsideTurnNote(source: OutsideMark | OutsideSource | undefined): string {
+  return `This chat read outside content (${source ?? "not checked"}), so Murage asks before running this. Allow to run it.`;
+}
+
+/** 6.1.2: the engine's LOCAL read tools (Claude, ACP kinds, Codex items) and the outside readers that set the mark.
+ *  Compared on the engine's own tool name, lower case; never on an MCP name. */
+const OUTSIDE_TURN_ENGINE_READS: ReadonlySet<string> = new Set([
+  "read", "notebookread", "glob", "grep", "ls", "todowrite", "exitplanmode",
+  "search", "think", "switch_mode", "reasoning", "plan",
+  "webfetch", "websearch", "fetch",
+]);
+/** 6.1.2: Murage's own read tools, on a proven own mount only. */
+const OUTSIDE_TURN_OWN_READS: ReadonlySet<string> = new Set([
+  "venue_read_messages", "project_read_messages", "check_delegation", "wait_delegation", "tool_result_read", "email_list",
+  "email_read", "web_search", "thread_search", "thread_list", "thread_read", "memory_search", "memory_get", "skills_list",
+  "dweb_repo_status",
+]);
+
+/** 6.1.3: an engine file edit that may run on a marked lane turn: every path it names (and every real path the caller
+ *  followed) lies inside the working folder, no segment of the part inside starts with `.`, and no gate file is named. */
+function editInsideWorkFolder(context: AutoContext, input: unknown): boolean {
+  const folder = context.workFolder;
+  if (!folder || !folder.startsWith("/")) return false;
+  const body = input && typeof input === "object" && !Array.isArray(input) ? input as Record<string, unknown> : undefined;
+  const named = body ? ["file_path", "path", "notebook_path"].map((key) => body[key]).filter((value): value is string => typeof value === "string" && value.trim() !== "") : [];
+  if (named.length === 0) return false;
+  const root = folder.replace(/\/+$/, "") || "/";
+  const inside = (p: string): boolean => {
+    if (!p.startsWith("/") || p.includes("\\") || p.includes("\0")) return false;
+    const parts = p.split("/").filter(Boolean);
+    if (parts.some((part) => part === ".." || part === ".")) return false;
+    const norm = `/${parts.join("/")}`;
+    if (root === "/" ? false : !(norm.startsWith(`${root}/`))) return false;
+    return !norm.slice(root.length + 1).split("/").some((part) => part.startsWith("."));
+  };
+  if (!named.every(inside)) return false;
+  if (!(context.realPaths ?? []).every(inside) || context.realPathCannot !== undefined) return false;
+  return gateHit([...named, ...(context.realPaths ?? [])]) === null;
+}
+
+type OutsideShell = "pwsh" | undefined;
+/** NOLIMITS-MEANS-IT 1.0.20 (design r4 6.1 items 1-3): on a marked lane turn, every shell text cards unless it is a
+ *  read-only shape and the session has written nothing since it was tainted; every tool other than the local and
+ *  outside readers and an in-folder engine edit cards. Items 4 (the whole key guard, the base could-not-read card)
+ *  hold because 2.1 and 2.3 apply only on a clean turn. OWN_WRITERS card here too until their handler holds (6.1.5)
+ *  exist: more cards, never fewer. Returns null when the call may go on to the usual verdict. */
+function outsideTurnCard(bot: AutoApprover, tool: string, context: AutoContext | undefined, resolved: ResolvedCall, shell: OutsideShell, commandTool: boolean, texts: ReadonlyArray<string | undefined>): AutoVerdict | null {
+  if (!markedLaneTurn(bot, context)) return null;
+  const card: AutoVerdict = { approve: null, source: "outside-turn", rule: "outside-content", note: outsideTurnNote(context?.outsideRead?.[0]) };
+  const inner = commandArgument(resolved.kind === "engine" || resolved.kind === "mcp" ? resolved.input : context?.call?.toolCall?.input);
+  const shellTexts = [...texts, inner].filter((t): t is string => t !== undefined);
+  if (commandTool || shell !== undefined || inner !== undefined) {
+    if (context!.readOnlySoFar !== true || !context!.readOnlyHooks) return card;
+    if (context!.inputCut === true || context!.inputTruncated === true || context!.call?.inputMissing !== undefined) return card;
+    return shellTexts.length > 0 && shellTexts.every((t) => readOnlyShape(t, context!.readOnlyHooks)) ? null : card;
+  }
+  if (resolved.kind === "unproven") return card;
+  if (resolved.kind === "mcp") return resolved.own && OUTSIDE_TURN_OWN_READS.has(resolved.tool) ? null : card;
+  if (/^mcp__/i.test(tool)) return card;
+  // the engine's own name, whole: a dotted or namespaced name is not taken for a local read
+  const name = resolved.kind === "engine" ? resolved.name.toLowerCase() : tool.toLowerCase();
+  if (OUTSIDE_TURN_ENGINE_READS.has(name)) return null;
+  const edit = FILE_EDIT_TOOLS.has(name) || name === "edit" || context?.call?.toolKind === "edit";
+  if (edit) return editInsideWorkFolder(context!, resolved.kind === "engine" ? resolved.input : context?.call?.toolCall?.input) ? null : card;
+  return card;
+}
+
+/** C1 + C2: a lane turn the server stated clean. Absent `outsideRead` is a marked turn. */
+function cleanLaneTurn(bot: AutoApprover, context: AutoContext | undefined): boolean {
+  return laneApplies(bot, context) && context?.outsideRead === null;
+}
+
+/** No parser rejection proves a command safe, regardless of the lane. */
+export function marksHitWaivable(hit: AlwaysAskHit): boolean {
+  // D4 as corrected (NOLIMITS-MEANS-IT r3 2.1.1) and FIX A ruling 2: only the two could-not-read findings with no guessed path are
+  // waivable (owner No limits, clean turn, no plainWipe); no other parser rejection proves a command safe (M-FIX2-waiver)
+  return hit.classification === "ask" && hit.couldNotRead === true && COULD_NOT_READ_FINDINGS.has(hit.reason ?? "");
+}
+
+/** Keep the context checks, but require explicit admission for each hit. */
+function couldNotReadWaived(bot: AutoApprover, context: AutoContext | undefined, hits: ReadonlyArray<AlwaysAskHit | null>, texts: readonly string[]): boolean {
+  if (!cleanLaneTurn(bot, context) || !ownerOwnTurn(bot, context)) return false; // the owner's own turn (not a channel turn)
+  if (context!.inputCut === true || context!.inputTruncated === true || context!.call?.inputMissing !== undefined || context!.scope !== undefined) return false;
+  if (!hits.every((hit) => hit === null || marksHitWaivable(hit))) return false;
+  return !texts.some((t) => plainWipe(t));
+}
+
+/** Ask log for a waived hit: fixed names only, the reader's rule (a fixed string), never command text. */
+function logWaived(bot: AutoApprover, tool: string, hit: AlwaysAskHit): void {
+  try {
+    const botId = bot.id && /^[\w-]{1,128}$/.test(bot.id) ? bot.id : "unknown";
+    const toolName = /^[a-zA-Z][\w.:-]{0,127}$/.test(tool) ? tool : "unknown";
+    const why = /^[\w -]{1,64}$/.test(hit.rule) ? hit.rule.replace(/ /g, "-") : "unreadable";
+    console.info(`approvals: waived bot=${botId} tool=${toolName} level=no-limits owner=1 held=waived why=${why}`);
+  } catch { /* the verdict stands */ }
 }
 
 /** Who started this turn, as Full access reads it. */
@@ -1291,15 +1584,23 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   // permanent and unrecoverable. No limits on a turn the owner started is the
   // one exception, below: he read and accepted that in the warning.
   if (fullAccessCovers(bot, origin)) {
-    const keyGuard = sensitive ?? (destructive ? keyHit() : null);
+    // FULL-DENY-1018: a protected file spelled with `./`, `//`, empty or `x/../` segments is the same file at every level
+    const keyGuard = sensitive ?? (destructive ? keyHit() : null) ?? gateHitSpelled([keyText, rawDequotedText(keyText, pinShell === "pwsh").text, ...(dequoted ? [dequoted.text] : [])]);
     // No limits on a turn the owner started keeps only the gate files of the key guard: a call naming one still asks,
     // and everything else the guard holds runs and is recorded by its fixed name. The gate runs with no key hit too,
     // since the rows read path spellings the key rows do not (`~/.kube/./config`). Every other turn keeps the whole guard.
     if (ownerNoLimits(bot, context)) {
       const gate = gateHit([keyText, rawDequotedText(keyText, pinShell === "pwsh").text, ...(dequoted ? [dequoted.text] : [])]);
-      if (gate) return { approve: null, source: "sensitive-guard", rule: gate };
+      // NOLIMITS-MEANS-IT 1.0.20 (2.3): on a clean lane turn a gate file runs and is recorded by its row; a marked turn
+      // keeps today's card here (the whole key guard on a marked turn is the 6.1 slice); a Windows shell call keeps it too.
+      // NL-SELFGUARD-RULING-1018: Murage's own hook programs (`murage-engine-hooks`) keep the card on a clean turn as well:
+      // an honest bot never writes them, and a write is the one route by which a clean turn changes the guard for another
+      // bot's live turn. The relief is the owner's own turn only (MARKS r13 H2), never a channel.
+      const cleanGate = gate !== null && ruleRowId(gate) !== "murage-engine-hooks" && ownerOwnTurn(bot, context) && cleanLaneTurn(bot, context) && !windowsShellCall(pinShell, [keyText, promptText]);
+      if (gate && !cleanGate) return { approve: null, source: "sensitive-guard", rule: gate };
       // a call that did not arrive whole keeps its card, whatever the reason (design R3); a cut the card made is no such call
       if (context?.inputTruncated === true || context?.call?.inputMissing !== undefined) return { approve: null, source: "unread-call", rule: unread ?? "the call was cut before it could be checked" };
+      if (cleanGate) return { approve: `auto-approved ${tool} (no limits)`, source: "no-limits", rule: `held=gate:${ruleRowId(gate!) ?? "row"}` };
       const held = keyGuard ? askHeldClass({ approve: null, source: sensitiveSource, rule: keyGuard }) : undefined;
       return { approve: `auto-approved ${tool} (no limits)`, source: "no-limits", ...(held ? { rule: `held=${held}` } : {}) };
     }

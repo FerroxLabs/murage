@@ -18,7 +18,8 @@ import { managedOutputWorkspace } from "./execution-audience.ts";
 import { murageTool } from "./murage-tool-surface.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync, type Stats } from "node:fs";
-import { basename, extname, isAbsolute, join, relative, sep } from "node:path";
+import { rootsFor, WorkspaceTreeError } from "./data-roots.ts";
+import { basename, extname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { notRestoreHeldSql, sqlRowRestoreHeld } from "./restore-fence.ts";
 import {
@@ -522,7 +523,6 @@ function resumeRegisteredShellCards(deps: OutputPublicationDeps): void {
 export type ImageOutputProducer = Extract<OutputProducer, "image-operation" | "assistant-image">;
 export interface ImageOutputDeps { db: DatabaseSync; dataDir: string; store: Store }
 
-const inside = (root: string, path: string) => { const tail = relative(root, path); return tail !== ".." && !tail.startsWith(`..${sep}`) && !isAbsolute(tail); };
 const imageIdentityPattern = /^[\w-]{1,160}$/;
 
 /** <partitionRoot>/generated-images/<thread>, without touching disk.
@@ -535,14 +535,13 @@ export function managedImageOutputPath(dataDir: string, botId: string, threadId:
  * every component is a real directory inside DATA_DIR, never a link. */
 export function managedImageOutputRoot(dataDir: string, botId: string, threadId: string, create: boolean): string {
   if (!imageIdentityPattern.test(botId) || !imageIdentityPattern.test(threadId)) throw Object.assign(new Error("Invalid image workspace."), { status: 403 });
-  const root = realpathSync.native(dataDir);
-  let directory = root;
-  for (const part of relative(dataDir, managedImageOutputPath(dataDir, botId, threadId)).split(sep)) {
-    directory = join(directory, part);
-    if (create) { try { mkdirSync(directory, { mode: 0o700 }); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; } }
-    const stat = lstatSync(directory);
-    if (!stat.isDirectory() || stat.isSymbolicLink() || !inside(root, realpathSync.native(directory))) throw Object.assign(new Error("Generated-image workspace is not a private directory."), { status: 403 });
-  }
+  // C4 (S5-DATADIR-PATHS r4.1 DR4): the one walker, from the workspaces root's canonical target, so a linked `workspaces` root
+  // keeps generated images working; a link below the root is still refused, and nothing is created through one.
+  let directory: string;
+  try { directory = rootsFor(dataDir).ownedPath(managedImageOutputPath(dataDir, botId, threadId), { create }).canonical; }
+  catch (error) { if (error instanceof WorkspaceTreeError) throw Object.assign(new Error("Generated-image workspace is not a private directory."), { status: 403 }); throw error; }
+  const stat = lstatSync(directory);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw Object.assign(new Error("Generated-image workspace is not a private directory."), { status: 403 });
   return directory;
 }
 

@@ -287,9 +287,11 @@ export function antigravityRelayAsk(delivery: HookDelivery, cwd: string, ownDir?
   if (name === "run_command") {
     const command = args.CommandLine;
     if (typeof command !== "string" || !command) return unread("CommandLine");
-    const dir = firstString(args, ["Cwd", "cwd", "WorkingDirectory"]);
-    if (dir !== undefined && !cwdInside(dir, cwd)) return { ...unread(`a command folder outside the bot's folder (${dir.slice(0, 200)})`, command), tool: "run_command", toolCall: { name: "run_command", input: { command, cwd: dir } } };
-    return { tool: "run_command", summary: command, toolCall: { name: "run_command", input: { command } } };
+    const named = ["Cwd", "cwd", "WorkingDirectory"].filter(key => Object.hasOwn(args, key)).map(key => args[key]);
+    if (named.length && (named.some(value => typeof value !== "string" || !value.trim()) || new Set(named).size !== 1)) return { ...unread("the command folder is invalid or conflicting", command), toolCall: { name: "run_command", input: { command, cwd: null, cwdExplicit: true } } };
+    const dir = named[0] as string | undefined;
+    if (dir !== undefined && !cwdInside(dir, cwd)) return { ...unread(`a command folder outside the bot's folder (${dir.slice(0, 200)})`, command), tool: "run_command", toolCall: { name: "run_command", input: { command, cwd: dir, cwdInvalid: true } } };
+    return { tool: "run_command", summary: command, toolCall: { name: "run_command", input: { command, cwdExplicit: dir !== undefined, ...(dir !== undefined ? { cwd: resolve(cwd, dir) } : {}) } } };
   }
   if (name === "send_command_input") {
     // text typed into a command that is already running is read as a command of its own

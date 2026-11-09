@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
+import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
 import { onRollback, scopedTx } from "./tx-scope.ts";
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
@@ -10,13 +11,22 @@ export interface ProjectUsageTerminal {
   turnGeneration: string; providerTurnId?: string | null; at: number; ok: boolean;
   usage?: { input: number; output: number; cachedInput?: number };
   charge?: number | null; cost?: number | null;
+  /** CHARGE-UNKNOWN-1018: the charge is the known part of the turn only (a step reported none), so it is a lower bound. */
+  chargePartial?: boolean;
   unknown?: boolean; lastActivityAt?: number;
 }
+/** CHARGE-UNKNOWN-1018 (no schema change): a lower-bound charge row keeps charge_kind 'charge' and carries ':partial' just
+ *  before its ':dispatch:<n>' tail (the unknown-row check below compares that tail, so the marker never goes after it).
+ *  A rollup of such rows ends in ':partial'. The SQL twin is PARTIAL_SQL; rtrim drops the digits so the GLOB is anchored.
+ *  A shared-owner row (no dispatch tail; its generation is Murage's own id) ends in ':partial' (Astra CH14 #1). */
+const PARTIAL_MARK = ":partial";
+const isPartialKey = (key: string): boolean => /:partial:dispatch:\d+$/.test(key) || /^(rollup|shared-owner):.*:partial$/.test(key);
+const PARTIAL_SQL = "(rtrim(settle_key,'0123456789') GLOB '*:partial:dispatch:' OR settle_key GLOB 'rollup:*:partial' OR settle_key GLOB 'shared-owner:*:partial')";
 function atomic<T>(db: DatabaseSync, run: () => T): T {
   return scopedTx(() => {
-    db.exec("SAVEPOINT usage_settlement");
-    try { const result = run(); db.exec("RELEASE usage_settlement"); return result; }
-    catch (error) { db.exec("ROLLBACK TO usage_settlement; RELEASE usage_settlement"); throw error; }
+    beginWrite(db, "usage_settlement");
+    try { const result = run(); endWrite(db, "usage_settlement"); return result; }
+    catch (error) { undoWrite(db, "usage_settlement"); throw error; }
   });
 }
 const count = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
@@ -30,7 +40,9 @@ export function settleProjectUsage(db: DatabaseSync, request: RoomRequest, termi
   const dispatch = `:dispatch:${request.dispatchedAt}`;
   const legacyKey = (unknown ? `unknown:${request.id}` : terminal.providerTurnId
     ? `turn:${JSON.stringify([terminal.threadId, terminal.providerTurnId])}` : `req:${request.id}:${terminal.turnGeneration}`);
-  const key = legacyKey + dispatch;
+  // A partial mark only on a real charge: with no charge the row is 'estimate' or 'none' and there is no sum to qualify.
+  const partial = !unknown && money(terminal.charge) && terminal.chargePartial === true;
+  const key = legacyKey + (partial ? PARTIAL_MARK : "") + dispatch;
   return atomic(db, () => {
     if (unknown && db.prepare("SELECT 1 FROM usage_ledger WHERE request_id=? AND rolled_up=0 AND settle_key NOT LIKE 'unknown:%' AND settle_key NOT LIKE 'charge:%' AND (substr(settle_key,-length(?))=? OR (settle_key NOT LIKE '%:dispatch:%' AND at>=?))").get(request.id, dispatch, dispatch, request.dispatchedAt)) return false;
     // Legacy keys lack a dispatch id. Their terminal timestamp must belong to
@@ -39,6 +51,8 @@ export function settleProjectUsage(db: DatabaseSync, request: RoomRequest, termi
     if (!unknown && Number(db.prepare("DELETE FROM usage_ledger WHERE settle_key=? OR (settle_key=? AND at>=?)")
       .run(`unknown:${request.id}${dispatch}`, `unknown:${request.id}`, request.dispatchedAt).changes) > 0) dropBudgetTotals(db);
     if (legacy) return false;
+    // One row per turn whichever form a retry arrives in: ON CONFLICT only sees its own key, so both forms are checked.
+    if (!unknown && db.prepare("SELECT 1 FROM usage_ledger WHERE settle_key IN (?,?)").get(legacyKey + dispatch, legacyKey + PARTIAL_MARK + dispatch)) return false;
     const end = unknown ? Math.min(terminal.at, terminal.lastActivityAt ?? terminal.at) : terminal.at;
     const pendingWait = request.waitingSince === null ? 0 : Math.max(0, end - request.waitingSince);
     // An unfinished run (restart) is estimated up to its last activity; no run
@@ -70,7 +84,8 @@ export function settleProjectToolCharge(db: DatabaseSync, request: RoomRequest, 
     request.executionAudience == null ? null : JSON.stringify(request.executionAudience), input.at,
   ).changes) > 0;
 }
-export interface UsageTotals { workMs: number; input: number; output: number; tokensReported: boolean; charge: number | null }
+/** chargeIsLowerBound: some charge in `charge` is only the known part of a turn (CHARGE-UNKNOWN-1018), so the sum is "at least". */
+export interface UsageTotals { workMs: number; input: number; output: number; tokensReported: boolean; charge: number | null; chargeIsLowerBound: boolean }
 // Tokens count as reported when ANY settled turn reported them: the budget check sums input and output over every row, so the panel
 // shows the same sum instead of "not reported" because one interrupted turn had no figures.
 export function projectUsage(db: DatabaseSync, scope: { groupId: string; goalId?: string; since?: number }): { totals: UsageTotals; byBot: Array<UsageTotals & { botId: string }>; notReported: string[]; interrupted: boolean } {
@@ -78,12 +93,15 @@ export function projectUsage(db: DatabaseSync, scope: { groupId: string; goalId?
   if (scope.goalId) { clauses.push("goal_id=?"); values.push(scope.goalId); }
   if (scope.since !== undefined) { clauses.push("at>=?"); values.push(scope.since); }
   const rows = db.prepare(`SELECT bot_id AS botId, SUM(work_ms) AS workMs, COALESCE(SUM(input),0) AS input, COALESCE(SUM(output),0) AS output,
-    MAX(tokens_reported) AS tokensReported, SUM(CASE WHEN charge_kind='charge' THEN charge END) AS charge
-    FROM usage_ledger WHERE ${clauses.join(" AND ")} GROUP BY bot_id ORDER BY bot_id`).all(...values) as unknown as Array<Omit<UsageTotals, "tokensReported"> & { botId: string; tokensReported: number }>;
-  const byBot = rows.map(row => ({ ...row, tokensReported: row.tokensReported === 1 }));
+    MAX(tokens_reported) AS tokensReported, SUM(CASE WHEN charge_kind='charge' THEN charge END) AS charge,
+    MAX(CASE WHEN charge_kind='charge' AND ${PARTIAL_SQL} THEN 1 ELSE 0 END) AS chargeIsLowerBound
+    FROM usage_ledger WHERE ${clauses.join(" AND ")} GROUP BY bot_id ORDER BY bot_id`).all(...values) as unknown as Array<Omit<UsageTotals, "tokensReported" | "chargeIsLowerBound"> & { botId: string; tokensReported: number; chargeIsLowerBound: number }>;
+  // The lower-bound flag rides the same grouped pass over the scope's rows: no second scan, nothing that grows apart from it.
+  const byBot = rows.map(row => ({ ...row, tokensReported: row.tokensReported === 1, chargeIsLowerBound: row.chargeIsLowerBound === 1 }));
   const totals = byBot.reduce<UsageTotals>((sum, row) => ({ workMs: sum.workMs + row.workMs, input: sum.input + row.input, output: sum.output + row.output,
     tokensReported: sum.tokensReported && row.tokensReported, charge: row.charge === null ? sum.charge : (sum.charge ?? 0) + row.charge,
-  }), { workMs: 0, input: 0, output: 0, tokensReported: true, charge: null });
+    chargeIsLowerBound: sum.chargeIsLowerBound || row.chargeIsLowerBound,
+  }), { workMs: 0, input: 0, output: 0, tokensReported: true, charge: null, chargeIsLowerBound: false });
   if (!byBot.length) totals.tokensReported = false;
   const interrupted=Boolean(db.prepare(`SELECT 1 FROM usage_ledger WHERE ${clauses.join(" AND ")} AND (settle_key LIKE 'unknown:%' OR settle_key LIKE 'rollup:%:interrupted') LIMIT 1`).get(...values));
   return { totals, byBot, notReported: byBot.filter(row => !row.tokensReported).map(row => row.botId), interrupted };
@@ -162,7 +180,8 @@ export function rollupSettledUsage(db: DatabaseSync, now: number): void {
       const dimensions: unknown[] = [row.goal_id, row.root_id, row.bot_id, row.engine, row.model, row.audience, row.charge_kind];
       if (row.work_item_id !== null) dimensions.push(row.work_item_id);
       const hash = createHash("sha256").update(JSON.stringify(dimensions)).digest("hex").slice(0, 16);
-      const key = `rollup:${row.group_id}:${day}:${hash}${String(row.settle_key).startsWith("unknown:") ? ":interrupted" : ""}`;
+      // A lower-bound row keeps its mark through the rollup (its own bucket; the dimension hash is unchanged, so older keys stay).
+      const key = `rollup:${row.group_id}:${day}:${hash}${String(row.settle_key).startsWith("unknown:") ? ":interrupted" : isPartialKey(String(row.settle_key)) ? PARTIAL_MARK : ""}`;
       const bucket = buckets.get(key) ?? []; bucket.push(row); buckets.set(key, bucket);
     }
     for (const [key, bucket] of buckets) {
@@ -188,10 +207,14 @@ export function settleSharedWorkOwnerTurn(db: DatabaseSync, terminal: ProjectUsa
   const usage = terminal.usage && count(terminal.usage.input) && count(terminal.usage.output) ? terminal.usage : undefined;
   const charge = money(terminal.charge) ? terminal.charge : null;
   const estimate = terminal.engine === "claude" && money(terminal.cost) ? terminal.cost : null;
+  // CHARGE-UNKNOWN-1018 (Astra CH14 #1): a lower-bound owner charge keeps its mark; a retry settles once whichever form it carries.
+  const legacyKey = `shared-owner:${terminal.turnGeneration}`;
+  const partial = charge !== null && terminal.chargePartial === true;
+  if (db.prepare("SELECT 1 FROM usage_ledger WHERE settle_key IN (?,?)").get(legacyKey, legacyKey + PARTIAL_MARK)) return false;
   return Number(db.prepare(`INSERT INTO usage_ledger
     (settle_key,turn_id,bot_id,thread_id,engine,model,input,output,cached_input,tokens_reported,charge,charge_kind,work_ms,ok,audience,at)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(settle_key) DO NOTHING`).run(
-      `shared-owner:${terminal.turnGeneration}`, terminal.providerTurnId ?? null, terminal.botId, terminal.threadId, terminal.engine, terminal.model ?? null,
+      legacyKey + (partial ? PARTIAL_MARK : ""), terminal.providerTurnId ?? null, terminal.botId, terminal.threadId, terminal.engine, terminal.model ?? null,
       usage?.input ?? null, usage?.output ?? null, usage?.cachedInput ?? null, usage ? 1 : 0, charge ?? estimate,
       charge !== null ? "charge" : estimate !== null ? "estimate" : "none", Math.max(0,terminal.at-terminal.startedAt-(terminal.ownerWaitMs??0)), terminal.ok ? 1 : 0,
       JSON.stringify({v:1,kind:"team",human:"owner",team:terminal.teamId,rootRequestId:`message:${terminal.ownerMessageId}`}), terminal.at,

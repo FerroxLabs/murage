@@ -21,7 +21,7 @@ class FakeElement {
 }
 Object.assign(globalThis, { HTMLElement: FakeElement });
 vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
-const { WhatsNewCard, WhatsNewDialog, whatsNewCardCount, whatsNewContent, WHATS_NEW_ART, WHATS_NEW_PAGES, WHATS_NEW_TILES, WHATS_NEW_MORE, WHATS_NEW_TILES_102, WHATS_NEW_MORE_102, WHATS_NEW_TILES_106, WHATS_NEW_MORE_106, WHATS_NEW_MORE_1014, WHATS_NEW_TILES_1015, WHATS_NEW_MORE_1015, WHATS_NEW_MORE_1016, WHATS_NEW_MORE_1017, whatsNewArrowStep } = await import("./WhatsNewDialog");
+const { WhatsNewCard, WhatsNewDialog, whatsNewCardCount, whatsNewContent, WHATS_NEW_ART, WHATS_NEW_PAGES, WHATS_NEW_TILES, WHATS_NEW_MORE, WHATS_NEW_TILES_102, WHATS_NEW_MORE_102, WHATS_NEW_TILES_106, WHATS_NEW_MORE_106, WHATS_NEW_MORE_1014, WHATS_NEW_TILES_1015, WHATS_NEW_MORE_1015, WHATS_NEW_MORE_1016, WHATS_NEW_MORE_1017, WHATS_NEW_MORE_1018, whatsNewArrowStep } = await import("./WhatsNewDialog");
 const { runWhatsNewAction, openOutside, CHROME_STORE_OPEN_FAILED } = await import("./WhatsNewHost");
 
 const source = readFileSync(new URL("./WhatsNewDialog.tsx", import.meta.url), "utf8");
@@ -128,7 +128,7 @@ describe("what's new cards", () => {
 
   it("closes on Escape through the dialog's cancel, and respects reduced motion", () => {
     expect(source).toContain("onCancel={(event) => { event.preventDefault(); onClose(); }}");
-    expect(source).toContain("element.showModal()");
+    expect(source).toContain("native.show()");
     const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\s*\.whats-new-card \{ animation: none; \}/);
   });
@@ -455,6 +455,19 @@ describe("one page per release, from 1.0.14 on", () => {
     expect(WHATS_NEW_TILES_1015[0]!.art).toBe("tile-one-place");
     const earlier = new Map([...WHATS_NEW_TILES, ...WHATS_NEW_TILES_102].map((tile) => [tile.art, tile.alt]));
     for (const tile of WHATS_NEW_TILES_1015.slice(1)) expect(earlier.get(tile.art), tile.action).toBe(tile.alt);
+  });
+
+  it("1.0.18 leads with Approve in one tap, then its list, on art already in the app", () => {
+    expect(whatsNewCardCount("1.0.18")).toBe(2);
+    expect(text(renderAt("1.0.18", 0))).toContain("Approve in one tap");
+    expect(buttons(renderAt("1.0.18", 0))).toEqual(["", "Open Needs you", "Next"]);
+    const more = renderAt("1.0.18", 1);
+    expect(buttons(more)).toEqual(["Back", "Let's go"]);
+    for (const line of WHATS_NEW_MORE_1018) expect(text(more)).toContain(line);
+    expect(more).toContain('href="https://github.com/FerroxLabs/murage-releases/releases/tag/v1.0.18"');
+    expect(renderAt("1.0.18", 2)).toBe("");
+    const earlier = new Map([...WHATS_NEW_TILES, ...WHATS_NEW_TILES_102, ...WHATS_NEW_TILES_1015].map((tile) => [tile.art, tile.alt]));
+    expect(earlier.get(WHATS_NEW_PAGES["1.0.18"]!.hero.art)).toBe(WHATS_NEW_PAGES["1.0.18"]!.hero.alt);
   });
 
   it("1.0.17 leads with Approve all, then its list, on art already in the app", () => {

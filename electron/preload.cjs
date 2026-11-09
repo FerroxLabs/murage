@@ -273,17 +273,30 @@ contextBridge.exposeInMainWorld("muragebox", {
       ipcRenderer.invoke("android-device:input", serial, payload).then(() => undefined),
   },
   speechStart: (options) => ipcRenderer.invoke("speech:start", options),
-  speechStop: () => ipcRenderer.invoke("speech:stop"),
-  speechFinish: () => ipcRenderer.invoke("speech:finish"),
+  speechStop: (token) => ipcRenderer.invoke("speech:stop", token),
+  speechFinish: (token) => ipcRenderer.invoke("speech:finish", token),
   /** Call mode: 16 kHz mono s16le from the echo-cancelled microphone. */
   speechFeed: (bytes) => ipcRenderer.send("speech:pcm", bytes),
+  // Calls and push-to-talk listen here and never see composer dictation
+  // events, which carry a `session` token.
   onSpeechTranscript: (cb) => {
-    const handler = (_event, line) => cb(line);
+    const handler = (_event, line) => { if (!(line && line.session !== undefined)) cb(line); };
     ipcRenderer.on("speech:transcript", handler);
     return () => ipcRenderer.removeListener("speech:transcript", handler);
   },
   onSpeechEnd: (cb) => {
-    const handler = (_event, info) => cb(info);
+    const handler = (_event, info) => { if (!(info && info.session !== undefined)) cb(info); };
+    ipcRenderer.on("speech:end", handler);
+    return () => ipcRenderer.removeListener("speech:end", handler);
+  },
+  // Composer dictation: only events that carry a `session` token.
+  onDictationTranscript: (cb) => {
+    const handler = (_event, line) => { if (line && line.session !== undefined) cb(line); };
+    ipcRenderer.on("speech:transcript", handler);
+    return () => ipcRenderer.removeListener("speech:transcript", handler);
+  },
+  onDictationEnd: (cb) => {
+    const handler = (_event, info) => { if (info && info.session !== undefined) cb(info); };
     ipcRenderer.on("speech:end", handler);
     return () => ipcRenderer.removeListener("speech:end", handler);
   },
@@ -437,6 +450,11 @@ contextBridge.exposeInMainWorld("muragebox", {
   emailOwnerSignin: {
     start: () => ipcRenderer.invoke("email-owner-signin:start"),
     cancel: () => ipcRenderer.invoke("email-owner-signin:cancel"),
+  },
+  /** Phone calls: the Settings key box. Save sends the key to main once; nothing ever reads it back. Resolves { ok } or { ok:false, code, message }. */
+  phoneKey: {
+    save: (key) => ipcRenderer.invoke("phone-key:save", { key }),
+    remove: () => ipcRenderer.invoke("phone-key:remove"),
   },
   /** Plan sign-in (ChatGPT, Grok). Results and status never carry a token. */
   modelSignIn: {

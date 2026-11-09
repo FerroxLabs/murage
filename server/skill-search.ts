@@ -33,6 +33,7 @@ import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { DATA_DIR } from "./config.ts";
+import { noteWrittenFile } from "./io-written.ts";
 import { SKILL_LIBRARY_ROOT, checkLibrarySkill } from "./skills.ts";
 
 /** Bump when the table shape, the tokenizer, or the ADMISSION RULE changes.
@@ -382,6 +383,7 @@ async function buildIndexFile(target: string, root: string): Promise<number> {
     db.close();
   }
   renameSync(temp, target);
+  noteWrittenFile("skill-index-build", target); // a journal_mode=OFF build: its logical size is its count on win32 (io-written.ts)
   // SQLite may leave sidecars next to the temp name; rename moved only the
   // main file, so clear them rather than leaking one per build.
   rmSync(`${temp}-wal`, { force: true });

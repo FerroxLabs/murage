@@ -11,6 +11,7 @@
 // admissible, so it reads as withheld. Only a source that names no message at all (not a message source) has no anchor to check.
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { isMurageVoice } from "./murage-voice.ts";
+import { rowToMessage } from "./transcript-seq.ts";
 
 const positive = new WeakMap<DatabaseSync, Set<string>>();
 const seeks = new WeakMap<DatabaseSync, StatementSync>();
@@ -18,18 +19,25 @@ const seeks = new WeakMap<DatabaseSync, StatementSync>();
 /** Whether the message a source is anchored at must be withheld from a bot: it classifies as Murage-voice, or it cannot be read (a thread
  * missing beside a message id, no such row, a row that does not parse). A source with no message id is not anchored at a message: false. */
 export function murageAnchor(db: DatabaseSync, threadId: string | null | undefined, messageId: string | null | undefined): boolean {
+  return murageAnchorOf(db, threadId, messageId, () => {
+    let seek = seeks.get(db);
+    if (!seek) { seek = db.prepare("SELECT json FROM messages WHERE thread_id=? AND id=?"); seeks.set(db, seek); }
+    return seek.get(threadId!, messageId!) as { json?: unknown } | undefined;
+  });
+}
+/** murageAnchor on a messages row the caller already read by the same primary key (deny-read.ts batchSources joins it; undefined = no such
+ *  row). `read` runs only when the answer needs the row. The one implementation of the rule. */
+export function murageAnchorOf(db: DatabaseSync, threadId: string | null | undefined, messageId: string | null | undefined, read: () => { json?: unknown } | undefined): boolean {
   if (!messageId) return false;
   if (!threadId) return true;
   const key = `${threadId}\u0000${messageId}`;
   const memo = positive.get(db);
   if (memo?.has(key)) return true;
-  let seek = seeks.get(db);
-  if (!seek) { seek = db.prepare("SELECT json FROM messages WHERE thread_id=? AND id=?"); seeks.set(db, seek); }
-  const row = seek.get(threadId, messageId) as { json?: unknown } | undefined;
+  const row = read();
   // not memoized: a row that arrives later (a restore) is judged on what it is then
   if (!row || typeof row.json !== "string") return true;
   let json: unknown;
-  try { json = JSON.parse(row.json); } catch { return true; }
+  try { json = rowToMessage({ json: row.json }); } catch { return true; }
   if (typeof json !== "object" || json === null || Array.isArray(json)) return true;
   if (!isMurageVoice(json)) return false;
   if (memo) memo.add(key); else positive.set(db, new Set([key]));
@@ -61,7 +69,7 @@ export function bareAnchorsWithheld(db: DatabaseSync, threads: Iterable<string>,
     if (positive.get(db)?.has(key)) return true;
     if (typeof row.json !== "string") return true;
     let json: unknown;
-    try { json = JSON.parse(row.json); } catch { return true; }
+    try { json = rowToMessage({ json: row.json }); } catch { return true; }
     if (typeof json !== "object" || json === null || Array.isArray(json)) return true;
     if (isMurageVoice(json)) {
       const memo = positive.get(db);
