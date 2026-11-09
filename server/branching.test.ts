@@ -55,6 +55,7 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
   let child: ChildProcess;
   let home: string;
   let stderr = "";
+  let stdout = "";
 
   const api = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
     const res = await fetch(`${BASE}${path}`, {
@@ -122,6 +123,7 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       stdio: ["ignore", "pipe", "pipe"],
     });
     child.stderr!.on("data", (c) => (stderr += c));
+    child.stdout!.on("data", (c) => (stdout += c));
 
     const deadline = Date.now() + 20_000;
     for (;;) {
@@ -141,6 +143,65 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
     await waitForExit(child, { signal: "SIGTERM" });
     await removeTempDir(home);
   });
+
+  // This test runs FIRST on purpose. Switching memory mode revokes the receipts every earlier test of this one shared server left, and those revoke marks are
+  // written paced (memory/revoke-budget.ts), for minutes: until they are on disk every line reads "checking" (memory/deny-read.ts), so a retained session
+  // made meanwhile is reset by the next turn and the warm-process proof below cannot hold. Before any receipt exists the switch revokes nothing.
+  // #1562: after an edit the rewound history rides in the prompt. Claude's
+  // idle process still held the abandoned branch, and with no cursor sent it
+  // was reused, so the engine saw both branches. The harness must ask for a
+  // reset whenever it rebuilds the context, in any memory mode.
+  it(
+    "an edit asks Claude to drop the retained session holding the abandoned branch",
+    async () => {
+      // memory "active" already reset the session on its own path; the
+      // defect lived in every other mode
+      expect((await desktopApi("POST", "/api/memory/action", { action: "configure", mode: "off" })).status).toBe(200);
+      try {
+      const dump = join(home, "claude-dump.json");
+      const launched = () => JSON.parse(readFileSync(dump, "utf8")) as { pid: number; argv: string[] };
+      const replies = async () => (await getBot(created.id)).messages.filter((m: Msg) => m.role === "bot" && m.kind === "text").length;
+      const created = (await api("POST", "/api/bots")).body.bot;
+      expect((await desktopApi("PATCH", `/api/bots/${created.id}`, {
+        modelSelection: { instanceId: "claude", model: "claude-sonnet-4-6" },
+      })).status).toBe(200);
+
+      expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "abandoned question" })).status).toBe(202);
+      await waitFor(async () => !(await getBot(created.id)).busy && (await replies()) >= 1, "the first reply");
+      const first = launched();
+
+      // An ordinary follow-up asks for no reset and continues the same warm
+      // process: turn credentials live in a per-process file and no longer
+      // rotate per turn, so the spawn contract is unchanged.
+      expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "follow-up" })).status).toBe(202);
+      await waitFor(async () => !(await getBot(created.id)).busy && (await replies()) >= 2, "the follow-up reply");
+      const followUp = launched();
+      expect(followUp.pid).toBe(first.pid);
+
+      const bot = await getBot(created.id);
+      const original: Msg = bot.messages.find((m: Msg) => m.role === "user" && m.text === "abandoned question");
+      expect((await api("POST", `/api/bots/${created.id}/messages/${original.id}/edit`, { text: "replacement question" })).status).toBe(202);
+      await waitFor(async () => {
+        const b = await getBot(created.id);
+        return !b.busy && activePath(b.messages, b.activeLeafId).some((m) => m.role === "bot" && m.kind === "text");
+      }, "the reply on the edited branch");
+      const rebuilt = launched();
+      expect(rebuilt.pid).not.toBe(first.pid);
+      expect(rebuilt.argv).not.toContain("--resume");
+      // the reset crossed the harness/driver boundary: the idle process was
+      // closed because the context was rebuilt, not by chance. The native log keeps only its allowlisted fields (NOLIMITS), so the reason is read from
+      // the driver's own close line on the server's output: the edit recycled the warm process that held the abandoned branch, and only for the reset.
+      const closes = [...stdout.matchAll(new RegExp(`claude close thread=${bot.threadId} reason=(.*)`, "g"))].map((m) => m[1]!.trim());
+      expect(closes).toEqual(["context reset"]);
+      } finally {
+        // The mode is NOT switched back. Every test below shares this server and none needs memory: a switch back would revoke the receipts made in the
+        // meantime, the paced revoke marks stay pending for minutes, and a bot switched to another engine then gets the "memory context refreshed" replay
+        // wrapper instead of the "joining this conversation" one the model-switch test pins (turn-context.ts buildTurnContext, memoryRefreshed).
+      }
+    },
+    40_000,
+  );
+
 
   it(
     "forks on edit, replies on the new branch, and switches versions cleanly",
@@ -340,61 +401,6 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       }
     },
     45_000,
-  );
-
-  // #1562: after an edit the rewound history rides in the prompt. Claude's
-  // idle process still held the abandoned branch, and with no cursor sent it
-  // was reused, so the engine saw both branches. The harness must ask for a
-  // reset whenever it rebuilds the context, in any memory mode.
-  it(
-    "an edit asks Claude to drop the retained session holding the abandoned branch",
-    async () => {
-      // memory "active" already reset the session on its own path; the
-      // defect lived in every other mode
-      expect((await desktopApi("POST", "/api/memory/action", { action: "configure", mode: "off" })).status).toBe(200);
-      try {
-      const dump = join(home, "claude-dump.json");
-      const launched = () => JSON.parse(readFileSync(dump, "utf8")) as { pid: number; argv: string[] };
-      const replies = async () => (await getBot(created.id)).messages.filter((m: Msg) => m.role === "bot" && m.kind === "text").length;
-      const created = (await api("POST", "/api/bots")).body.bot;
-      expect((await desktopApi("PATCH", `/api/bots/${created.id}`, {
-        modelSelection: { instanceId: "claude", model: "claude-sonnet-4-6" },
-      })).status).toBe(200);
-
-      expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "abandoned question" })).status).toBe(202);
-      await waitFor(async () => !(await getBot(created.id)).busy && (await replies()) >= 1, "the first reply");
-      const first = launched();
-
-      // An ordinary follow-up asks for no reset and continues the same warm
-      // process: turn credentials live in a per-process file and no longer
-      // rotate per turn, so the spawn contract is unchanged.
-      expect((await api("POST", `/api/bots/${created.id}/messages`, { text: "follow-up" })).status).toBe(202);
-      await waitFor(async () => !(await getBot(created.id)).busy && (await replies()) >= 2, "the follow-up reply");
-      const followUp = launched();
-      expect(followUp.pid).toBe(first.pid);
-
-      const bot = await getBot(created.id);
-      const original: Msg = bot.messages.find((m: Msg) => m.role === "user" && m.text === "abandoned question");
-      expect((await api("POST", `/api/bots/${created.id}/messages/${original.id}/edit`, { text: "replacement question" })).status).toBe(202);
-      await waitFor(async () => {
-        const b = await getBot(created.id);
-        return !b.busy && activePath(b.messages, b.activeLeafId).some((m) => m.role === "bot" && m.kind === "text");
-      }, "the reply on the edited branch");
-      const rebuilt = launched();
-      expect(rebuilt.pid).not.toBe(first.pid);
-      expect(rebuilt.argv).not.toContain("--resume");
-      // the reset crossed the harness/driver boundary: the idle process was
-      // closed because the context was rebuilt, not by chance
-      const closes = readFileSync(join(home, ".murage", "native", `${bot.threadId}.ndjson`), "utf8").split("\n").filter(Boolean)
-        .map((line) => JSON.parse(line)).filter((e) => e.source === "claude.session").map((e) => e.msg?.close).filter((c) => c !== undefined);
-      // the edit recycled the warm process that held the abandoned branch, and
-      // only because the context was reset
-      expect(closes).toEqual(["context reset"]);
-      } finally {
-        await desktopApi("POST", "/api/memory/action", { action: "configure", mode: "active" });
-      }
-    },
-    40_000,
   );
 
   it(

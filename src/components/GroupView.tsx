@@ -1,10 +1,14 @@
+import { useFocusTrap } from "@/lib/focus-trap";
+import { LayerSurface } from "@/components/LayerSurface";
+import { LazyOverlay } from "@/components/LazyOverlay";
 import { ProjectLifecycleBanner } from "./ProjectLifecycleBanner";
+import { DoneWhenLine } from "./DoneWhenLine";
+import { hasDoneWhenLine } from "@/lib/done-when-line";
+import { venuePostNote } from "../lib/venue-post-note";
 import { EmailSendCard, EmailTrustOfferCard } from "./EmailSendCard";
 import { bubbleWidth } from "@/lib/reply-width";
 import { loopNoticeLabel } from "@/lib/loop-notice";
-import { Suspense } from "react";
-import { LazyBoundary, retryableLazy } from "./LazyBoundary";
-import { LazyFallback } from "./LazyFallback";
+import { retryableLazy } from "./LazyBoundary";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { projectClient, refreshProject } from "@/lib/use-project";
 const CloseProject = retryableLazy(() => import("./CloseProjectDialog"));
@@ -39,7 +43,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { Archive, Check, ChevronDown, Folder, FolderOpen, Info, Loader2, MessageSquareReply, MoreHorizontal, Pencil, Pin, PinOff, Plus, Search, Square, Target, Trash2, Volume2, X } from "lucide-react";
 import { SpeakButton } from "./SpeakButton";
 import { speaker } from "@/lib/tts";
-import { useSpeech } from "@/lib/tts/useSpeech";
+import { useReadAloudSpeech } from "@/lib/tts/reply-speech";
 import { canReadAloud, isReading, readAloudLabel, toggleReadAloud } from "@/lib/read-aloud";
 import {
   api,
@@ -69,7 +73,7 @@ import { effectiveDefaultResponder, groupResponseHint } from "@/lib/group-routin
 import { instructionsPreview } from "@/lib/channel-instructions";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { JumpToLatestButton } from "./JumpToLatestButton";
-import { jumpScrollBehavior, jumpToLatestVisible, useCanScroll } from "@/lib/transcript-viewport";
+import { jumpScrollBehavior, jumpToLatestVisible, shortTranscriptReveal, useCanScroll } from "@/lib/transcript-viewport";
 import { ErrorBanner, ErrorRow, MessageActionSheet, type MessageAction } from "./ChatView";
 import { claudeUpdateTarget } from "@/lib/claude-update";
 import { roomRetryTarget } from "@/lib/room-member-retry";
@@ -86,7 +90,7 @@ import { GroupCallButton, CallBarStrip } from "./CallControls";
 import { registerCallSlot } from "@/lib/call-slot";
 
 import { ApprovalCard } from "./ApprovalCard";
-import { McpEnableCard, McpSignInCard, PublishCard } from "./LazyChatCards";
+import { McpEnableCard, McpSignInCard, PublishCard, RoomShareAsk, RoomShareCard } from "./LazyChatCards";
 import { QuestionCard } from "./QuestionCard";
 import { isQuestionCard } from "../../shared/questions";
 import { ManageMembersPanel } from "./ManageMembersPanel";
@@ -227,7 +231,7 @@ function RoomToolChip({ message, botName }: { message: Message; botName?: string
     </div>
   );
   return (
-    <div className="flex justify-start">
+    <div className="flex flex-col items-start gap-1">
       {/* Same shape, and the same trap, as ChatView's ActivityChip: a nowrap
           `max-w-[480px]` span is the chip's min-content width, so the pill
           could not shrink below 480px and ran off a phone. See the note there
@@ -238,6 +242,7 @@ function RoomToolChip({ message, botName }: { message: Message; botName?: string
       >
         <span data-testid="tool-chip-name" className={cn(CHIP_NAME, "font-mono")}>{tool.name.startsWith("error:") && inNativeShell() ? withoutProviderSentence(tool.name) : (loopNoticeLabel(tool.name) ?? tool.name)}</span>
       </div>
+      <DoneWhenLine text={tool.doneWhen} />
     </div>
   );
 }
@@ -289,7 +294,7 @@ const Transcript = memo(function Transcript({
   follow: boolean;
 }) {
   const { state, dispatch } = useStore();
-  const speech = useSpeech();
+  const speech = useReadAloudSpeech();
   const showToolCalls = showToolCallsEnabled(state.config);
   const project = useProject(group.id, !!group.channelProject && projectSurfaceEnabled(state.config));
   // Below `md` the hover rail is `display: none` and each bubble becomes its
@@ -333,7 +338,7 @@ const Transcript = memo(function Transcript({
   const roomActions = (m: Message): MessageAction[] => {
     const pinned = group.pinnedMessageId === m.id;
     const reader = speaks(m);
-    const reading = isReading(speech, m.id);
+    const reading = isReading(speech, m.id, group.threadId);
     const ready = Boolean(reader?.voice || state.config?.tts?.voice);
     return [
       ...(reader && m.text
@@ -342,7 +347,7 @@ const Transcript = memo(function Transcript({
             label: readAloudLabel({ playing: reading, ready }),
             icon: reading ? <Square size={18} className="fill-current" /> : <Volume2 size={18} />,
             disabled: !ready && !reading,
-            onSelect: () => toggleReadAloud(speaker, { text: m.text ?? "", botId: reader.id, messageId: m.id, voiceId: reader.voice }),
+            onSelect: () => toggleReadAloud(speaker, { text: m.text ?? "", threadId: group.threadId, botId: reader.id, messageId: m.id, voiceId: reader.voice }),
           }]
         : []),
       ...(markOwner(m) ? outcomeSheetActions(outcomes, markOwner(m)!, m, markOwner(m)!.id) : []),
@@ -440,6 +445,8 @@ const Transcript = memo(function Transcript({
             <McpSignInCard botId={m.from.botId} threadId={group.threadId} message={m} />
           ) : m.kind === "options" && m.card?.kind === "mcpEnable" && m.from?.botId ? (
             <McpEnableCard botId={m.from.botId} threadId={group.threadId} message={m} />
+          ) : m.roomShareId && !m.from ? (
+            <div className="flex justify-start"><RoomShareCard shareId={m.roomShareId} text={m.text ?? ""} /></div>
           ) : m.kind === "options" && m.card?.kind === "publish" ? (
             <div className="flex justify-start"><PublishCard threadId={group.threadId} message={m} /></div>
           ) : m.kind === "options" && isQuestionCard(m.card) ? (
@@ -521,7 +528,7 @@ const Transcript = memo(function Transcript({
                     : undefined;
                 })()}
               />
-            ) : m.tool.name.startsWith("error:") || showToolCalls ? (
+            ) : m.tool.name.startsWith("error:") || showToolCalls || hasDoneWhenLine(m.tool.doneWhen) ? (
               /* A failed step is a tool call: with Tool calls off it stays hidden, as in a 1:1 chat; a failed turn still shows. */
               <RoomToolChip message={m} botName={memberOf(m.from?.botId)?.name ?? m.from?.name} />
             ) : null
@@ -623,6 +630,10 @@ const Transcript = memo(function Transcript({
                         <ChatMarkdown text={m.text} scope={m.from?.botId ? { botId: m.from.botId, threadId: group.threadId } : undefined} />
                       ) : null}
                       {m.kind === "text" && <ServedModelNote served={m.servedModel} />}
+                      {m.postedFrom && (
+                        <div className="mt-1 text-[11px] text-ink-secondary/70">{venuePostNote(m.postedFrom, state.bots)}</div>
+                      )}
+                      {m.sharedFrom && <div className="mt-1 text-[11px] text-ink-secondary/70">{t("roomShare.sharedFrom", { name: memberOf(m.sharedFrom.botId)?.name ?? t("roomShare.aBot") })}</div>}
                       {m.withheldFromBots && (
                         <div className="mt-1 text-[11px] text-ink-secondary/70">{m.withheldFromBots === "forgotten" ? "Bots no longer see this reply: you chose to forget it." : m.withheldFromBots === "checking" ? "Bots will see this reply once earlier memory is checked." : "Bots no longer see this reply: it used something you deleted or changed."}</div>
                       )}
@@ -634,7 +645,7 @@ const Transcript = memo(function Transcript({
                 {!user && (
                   <>
                     {m.text && speaks(m) && (
-                      <SpeakButton text={m.text} botId={m.from?.botId} messageId={m.id} voiceId={speaks(m)?.voice} />
+                      <SpeakButton threadId={group.threadId} text={m.text} botId={m.from?.botId} messageId={m.id} voiceId={speaks(m)?.voice} />
                     )}
                     {markOwner(m) && <OutcomeRailButtons bot={markOwner(m)!} botId={markOwner(m)!.id} messageId={m.id} message={m} />}
                     <button
@@ -1321,7 +1332,7 @@ function ChannelHeaderMenu({
 
 /** Renaming in a dialog rather than in place: the header name is a truncated
  * strip that a long name cannot be read in, let alone edited. */
-function RenameChannelDialog({ group, onClose }: { group: Group; onClose: () => void }) {
+export function RenameChannelDialog({ group, onClose }: { group: Group; onClose: () => void }) {
   const { dispatch } = useStore();
   const [draft, setDraft] = useState(group.name);
   const save = () => {
@@ -1329,13 +1340,14 @@ function RenameChannelDialog({ group, onClose }: { group: Group; onClose: () => 
     if (name && name !== group.name) dispatch({ type: "patchGroup", groupId: group.id, patch: { name } });
     onClose();
   };
-  return (
-    <div
-      className="overlay-inset fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40 p-3"
+  const dialogRef = useRef<HTMLFormElement>(null);
+  const layer = useFocusTrap(dialogRef, true, { name: "rename-channel", kind: "dialog", initialFocus: "input", onEscape: onClose });
+  return <LayerSurface handle={layer}><div
+      className="overlay-inset fixed inset-x-0 top-0 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40 p-3"
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >
       <form
-        role="dialog"
+        ref={dialogRef} tabIndex={-1} role="dialog"
         aria-modal="true"
         aria-labelledby="rename-channel-title"
         onSubmit={(event) => {
@@ -1349,13 +1361,11 @@ function RenameChannelDialog({ group, onClose }: { group: Group; onClose: () => 
         </div></BoxHead>
         <BoxBody className="px-4 pb-1 pt-3">
         <input dir="auto"
-          autoFocus
           value={draft}
           maxLength={100}
           aria-label="Name"
           onFocus={(event) => event.currentTarget.select()}
           onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => event.key === "Escape" && onClose()}
           className="w-full rounded-lg bg-raised/70 px-3 py-2 text-[14px] text-ink focus:outline-none focus:ring-1 focus:ring-accent"
         />
         </BoxBody>
@@ -1372,14 +1382,13 @@ function RenameChannelDialog({ group, onClose }: { group: Group; onClose: () => 
           </button>
         </BoxFoot>
       </form>
-    </div>
-  );
+    </div></LayerSurface>;
 }
 
 /** Making a channel a project asks for ONE thing, because everything else
  * already exists: the chat, the bots, the instructions and the folder all
  * stay exactly as they are. The only thing a channel never had is a goal. */
-function MakeProjectDialog({ group, onClose, onMade }: { group: Group; onClose: () => void; onMade: () => void }) {
+export function MakeProjectDialog({ group, onClose, onMade }: { group: Group; onClose: () => void; onMade: () => void }) {
   const { dispatch } = useStore();
   const [goal, setGoal] = useState("");
   const save = () => {
@@ -1389,13 +1398,14 @@ function MakeProjectDialog({ group, onClose, onMade }: { group: Group; onClose: 
     onMade();
     onClose();
   };
-  return (
-    <div
-      className="overlay-inset fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40 p-3"
+  const dialogRef = useRef<HTMLFormElement>(null);
+  const layer = useFocusTrap(dialogRef, true, { name: "make-project", kind: "dialog", initialFocus: "textarea", onEscape: onClose });
+  return <LayerSurface handle={layer}><div
+      className="overlay-inset fixed inset-x-0 top-0 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40 p-3"
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >
       <form
-        role="dialog"
+        ref={dialogRef} tabIndex={-1} role="dialog"
         aria-modal="true"
         aria-labelledby="make-project-title"
         onSubmit={(event) => {
@@ -1416,12 +1426,10 @@ function MakeProjectDialog({ group, onClose, onMade }: { group: Group; onClose: 
         </label>
         <textarea dir="auto"
           id="make-project-goal"
-          autoFocus
           value={goal}
           maxLength={CHANNEL_PROJECT_GOAL_MAX}
           onChange={(event) => setGoal(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Escape") onClose();
             if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) save();
           }}
           rows={4}
@@ -1442,8 +1450,7 @@ function MakeProjectDialog({ group, onClose, onMade }: { group: Group; onClose: 
           </button>
         </BoxFoot>
       </form>
-    </div>
-  );
+    </div></LayerSurface>;
 }
 
 export function GroupView({ group }: { group: Group }) {
@@ -1498,6 +1505,8 @@ export function GroupView({ group }: { group: Group }) {
   }, [group.id]);
   const detailsTriggerRef = useRef<HTMLButtonElement>(null);
   const menuTriggerRef = useRef<HTMLButtonElement>(null);
+  // A dialog whose chunk is loading or failed never mounted, so it cannot hand focus back: the menu button gets it.
+  const dismissLifecycleDialog = () => { setLifecycleDialog(null); };
   const closeDetails = useCallback(() => setDetailsSection(null), []);
   const { replyTo, selectReply, clearReply, consumeReply, restoreReply } = useReplyDraft(
     group.threadId,
@@ -1564,7 +1573,7 @@ export function GroupView({ group }: { group: Group }) {
 
   // Mascot stays while a member works; the finished reply pops in above it.
   const lastGroupMessage = roomMessages.at(-1);
-  const toolInFlight = lastGroupMessage?.kind === "activity" && lastGroupMessage.tool?.ok === undefined;
+  const toolInFlight = lastGroupMessage?.kind === "activity" && lastGroupMessage.tool?.ok === undefined && lastGroupMessage.tool?.unrecorded !== true;
   const activityLabel = liveActivityLabel(lastGroupMessage);
   // The mascot stays for the speaker's whole turn; only its end hides it (upstream #3374).
   const turnLiveState = useTurnLive(group.threadId);
@@ -1750,6 +1759,12 @@ export function GroupView({ group }: { group: Group }) {
     if (hiddenCount > 0) showEarlier();
     else if (hasOlder(group)) loadOlder();
   };
+  // An upward gesture over rows too short to scroll never fires onScroll: read back from here instead.
+  const revealWhenShort = () => {
+    const reveal = shortTranscriptReveal(scrollRef.current, hiddenCount, hasOlder(group));
+    if (reveal === "showEarlier") showEarlier();
+    else if (reveal === "loadOlder") loadOlder();
+  };
 
   const showLater = () => {
     captureAnchor("last");
@@ -1816,8 +1831,8 @@ export function GroupView({ group }: { group: Group }) {
       {makeProjectOpen && !group.dm && (
         <MakeProjectDialog group={group} onClose={() => setMakeProjectOpen(false)} onMade={() => chooseProjectTab("overview")} />
       )}
-      {desktop === true && lifecycleDialog === "close" && <LazyBoundary onRetry={CloseProject.retry}><Suspense fallback={<LazyFallback />}><CloseProject.Component returnFocusRef={menuTriggerRef} groupId={group.id} goalState={project?.goal?.state} onClose={() => setLifecycleDialog(null)} /></Suspense></LazyBoundary>}
-      {desktop === true && lifecycleDialog === "end" && <LazyBoundary onRetry={EndProject.retry}><Suspense fallback={<LazyFallback />}><EndProject.Component returnFocusRef={menuTriggerRef} groupId={group.id} onClose={() => setLifecycleDialog(null)} /></Suspense></LazyBoundary>}
+      {desktop === true && lifecycleDialog === "close" && <LazyOverlay name="close-project" kind="dialog" covers="while-loading" opener={menuTriggerRef.current} onRetry={CloseProject.retry} onDismiss={dismissLifecycleDialog}>{loadedLayer => (<CloseProject.Component layerLifecycle={loadedLayer} returnFocusRef={menuTriggerRef} groupId={group.id} goalState={project?.goal?.state} onClose={loadedLayer.dismiss} />)}</LazyOverlay>}
+      {desktop === true && lifecycleDialog === "end" && <LazyOverlay name="end-project" kind="dialog" covers="while-loading" opener={menuTriggerRef.current} onRetry={EndProject.retry} onDismiss={dismissLifecycleDialog}>{loadedLayer => (<EndProject.Component layerLifecycle={loadedLayer} returnFocusRef={menuTriggerRef} groupId={group.id} onClose={loadedLayer.dismiss} />)}</LazyOverlay>}
       {confirmDelete && (
         <ConfirmDelete
           name={group.name}
@@ -1988,7 +2003,7 @@ export function GroupView({ group }: { group: Group }) {
 
       <ProjectLifecycleBanner closing={project?.closing === true} closed={project?.lifecycle === "closed"} leadName={state.bots.find(bot=>bot.id===project?.settings.leadBotId)?.name} reopening={reopening} reopened={reopenedNotice} onReopen={desktop === true ? async () => { setReopening(true); const result=await projectClient.reopen(group.id); if(result.ok) { setReopenedNotice({pausedRoutines:result.data.pausedRoutines,resumeHint:result.data.resumeHint}); await refreshProject(group.id); } else setLifecycleError(result.reason); setReopening(false); } : undefined} />
       {lifecycleError && <p role="alert" className="p-3 text-sm text-ink">{lifecycleError}</p>}
-      {findOpen && <LazyBoundary onRetry={ChatFindBar.retry} onDismiss={() => setFindOpen(false)}><Suspense fallback={null}><ChatFindBar.Component threadId={group.threadId} onClose={() => setFindOpen(false)} /></Suspense></LazyBoundary>}
+      {findOpen && <LazyOverlay name="group-find" kind="dialog" covers="while-loading" onRetry={ChatFindBar.retry} onDismiss={() => setFindOpen(false)}><ChatFindBar.Component threadId={group.threadId} onClose={() => setFindOpen(false)} /></LazyOverlay>}
       {/* A channel never showed an error: a refused delete or rename in the
           conversation picker just did nothing. Same banner as a bot chat. */}
       {state.error && <ErrorBanner message={state.error} onDismiss={() => dispatch({ type: "error", message: null })} />}
@@ -2096,13 +2111,13 @@ export function GroupView({ group }: { group: Group }) {
            same reason as ChatView — src/e2e/transcript-width.human.spec.ts. */
         className="h-full overflow-x-hidden overflow-y-auto px-5 max-md:px-3 [overflow-anchor:none]"
         onWheel={(e) => {
-          if (e.deltaY < 0) setBottomFollow(false);
+          if (e.deltaY < 0) { setBottomFollow(false); revealWhenShort(); }
           else if (atEnd()) setBottomFollow(true);
         }}
         onTouchStart={(e) => (touchY.current = e.touches[0]?.clientY ?? 0)}
         onTouchMove={(e) => {
           const y = e.touches[0]?.clientY ?? 0;
-          if (y > touchY.current + 4) setBottomFollow(false);
+          if (y > touchY.current + 4) { setBottomFollow(false); revealWhenShort(); }
           else if (atEnd()) setBottomFollow(true);
         }}
         onScroll={() => {
@@ -2233,7 +2248,7 @@ export function GroupView({ group }: { group: Group }) {
               name={presenceName}
             >
               {popping ? (
-                <div className="w-fit max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] max-md:max-w-full rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink">
+                <div className={cn(bubbleWidth(popping.text, false), "max-md:max-w-full rounded-2xl bg-card px-4 py-2.5 text-[15px] leading-relaxed text-ink")}>
                   {poppingMessage?.attachments?.length ? (
                     <AttachedImageGallery
                       paths={poppingMessage.attachments.map((attachment) => attachment.path)}
@@ -2266,6 +2281,7 @@ export function GroupView({ group }: { group: Group }) {
       )}
 
       <div ref={composerDock.ref} className="dock-safe-bottom absolute inset-x-0 bottom-0 z-[2]">
+      {!channelReadOnlyReason(group) && !group.dm && !setupPending && <RoomShareAsk group={group} members={members} />}
       {channelReadOnlyReason(group) ? <div role="status" className="border-t border-hairline bg-app px-4 py-3 text-[13px] text-ink-secondary">{channelReadOnlyReason(group)}</div> : <Composer
         key={group.threadId}
         group={group}

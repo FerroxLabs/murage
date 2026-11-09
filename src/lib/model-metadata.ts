@@ -73,11 +73,52 @@
 // tsconfig.server.json` fails.
 // eslint-disable-next-line typescript/triple-slash-reference
 /// <reference path="./raw-modules.d.ts" />
-// `?raw`, not a JSON import: this hands the module a 1.6 MB STRING LITERAL,
-// which module evaluation pays nothing for, instead of a 7,842-entry object
+// `?raw`, not a JSON import: the chunk hands the module a 1.6 MB STRING
+// LITERAL, which evaluation pays nothing for, instead of a 7,842-entry object
 // graph that V8 must construct on every cold start of the app. The parse
 // happens on first use, inside loadModelMetadata() below.
-import snapshotText from "../data/model-metadata.json?raw";
+//
+// A DYNAMIC import since 1.0.18 (BUNDLE-HEADROOM-1018): the string was about
+// 100 KiB brotli of the first paint, which no screen draws. It is still
+// bundled (a chunk in `dist`, never fetched from models.dev); it arrives after
+// the first paint, on the first lookup (the picker's rows are built when a
+// chat draws) or when the picker opens, whichever comes first. Until then a
+// row whose band would come from it reads as pending (`isPricePending`), never
+// as "Price unavailable".
+let snapshotText: string | null = null;
+let snapshotLoad: Promise<void> | null = null;
+const readyListeners = new Set<() => void>();
+const importSnapshot = (): Promise<{ default: string }> => import("../data/model-metadata.json?raw");
+
+/** True once the snapshot's text has arrived (not parsed: that is still lazy). */
+export function modelMetadataReady(): boolean {
+  return snapshotText !== null;
+}
+
+/** For `useSyncExternalStore`: called once, when the snapshot arrives. */
+export function subscribeModelMetadata(listener: () => void): () => void {
+  readyListeners.add(listener);
+  return () => readyListeners.delete(listener);
+}
+
+/** Fetch the snapshot's chunk. Idempotent, and it never rejects: a failed
+ *  chunk load (offline phone, a home updated under an open tab) leaves the
+ *  rows pending and lets the next call try again, rather than memoizing an
+ *  empty catalog that would read "Price unavailable" for the whole session.
+ *  `load` is a seam for the tests only. */
+export function preloadModelMetadata(load: () => Promise<{ default: string }> = importSnapshot): Promise<void> {
+  if (snapshotText !== null) return Promise.resolve();
+  snapshotLoad ??= load().then(
+    (module) => {
+      snapshotText = module.default;
+      for (const listener of [...readyListeners]) listener();
+    },
+    () => {
+      snapshotLoad = null;
+    },
+  );
+  return snapshotLoad;
+}
 // The routing helpers, not a second copy of their prefix parsing: these are
 // load-bearing for the spawn-side guards (server/flux-routing.ts:248-274) and
 // two implementations that disagree would send a turn to the wrong host. The
@@ -223,6 +264,8 @@ function buildModelIndex(data: Snapshot): Map<string, ModelMetadataMatch[]> {
 interface LoadedMetadata { data: Snapshot; index: Map<string, ModelMetadataMatch[]> }
 let loaded: LoadedMetadata | null = null;
 let loads = 0;
+/** The answer while the snapshot's chunk is still on its way: never memoized. */
+const PENDING: LoadedMetadata = { data: EMPTY, index: new Map() };
 
 /** How many times the snapshot has actually been parsed. Exported for the test
  *  that pins the memo: neither "it was not parsed at import" nor "it was not
@@ -257,9 +300,19 @@ export function modelMetadataLoads(): number {
  *  never as `$`.
  *
  *  `parse` is a seam for the failure test only; production always uses the
- *  default. */
+ *  default.
+ *
+ *  Before the snapshot's chunk has arrived (1.0.18) this answers an empty
+ *  catalog WITHOUT memoizing it or counting a parse, and starts the fetch, so
+ *  the first lookup after arrival builds the real index. Callers that draw a
+ *  price check `modelMetadataReady()` (via `isPricePending`) so that state is
+ *  shown as pending, not as unknown. */
 export function loadModelMetadata(parse: (text: string) => Snapshot = (text) => JSON.parse(text) as Snapshot): LoadedMetadata {
   if (loaded) return loaded;
+  if (snapshotText === null) {
+    void preloadModelMetadata();
+    return PENDING;
+  }
   loads += 1;
   try {
     const data = parse(snapshotText);

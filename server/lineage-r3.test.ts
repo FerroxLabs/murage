@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -400,3 +401,5 @@ it("rig 4: a turn whose checks ran out gives the warmer a guaranteed slice, even
     expect(capturedMessageVerdict(LineageAllowance.turn(5), "chat", "reply-1")).toEqual({ withheld: false, unproven: false });
   } finally { onLineageThreadWarmed(null); resetLineageWarmForTest(); }
 });
+
+useOutsideStoreFixture();

@@ -24,7 +24,9 @@
 // throws came straight back after the reload. Such an error now stays in the
 // panel with its own words, "Try again" re-renders only the panel, and
 // nothing reloads.
-import { Component, lazy, type ComponentProps, type ComponentType, type ReactNode } from "react";
+import { Component, lazy, useRef, type ComponentProps, type ComponentType, type ReactNode } from "react";
+import { useLayerContainer } from "./LayerSlot";
+import { LayerSurface } from "./LayerSurface";
 
 export interface RetryableLazy<P extends object> {
   Component: (props: P) => ReactNode;
@@ -59,6 +61,26 @@ export function isChunkLoadError(error: unknown): boolean {
   return /Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed|Unable to preload CSS for|Loading (?:CSS )?chunk \S+ failed/i.test(message);
 }
 
+/** The marker is the claim "this layer takes Esc", so it is set only when a dismiss path exists (the panel then also
+ * joins the layer stack and offers Close). With no onDismiss there is no marker, and Esc falls through to the next layer. */
+export function overlayMarker(onDismiss: (() => void) | undefined): { "data-lazy-overlay"?: "" } {
+  return onDismiss ? { "data-lazy-overlay": "" } : {};
+}
+
+/** A shell only attaches to its explicit owner; it never registers a layer. */
+export function OverlayShell({ onDismiss, className, label, children }: { onDismiss?: () => void; className: string; label?: "Loading"; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayerContainer(ref, { onEscape: onDismiss }, label ? 'loading' : 'error');
+  const role = label ? "status" : "alert";
+  return (
+    <LayerSurface>
+      <div ref={ref} role={role} aria-label={label} tabIndex={-1} {...overlayMarker(onDismiss)} className={className}>
+        {children}
+      </div>
+    </LayerSurface>
+  );
+}
+
 export class LazyBoundary extends Component<
   {
     children: ReactNode;
@@ -72,6 +94,12 @@ export class LazyBoundary extends Component<
      *  frame, so a panel that failed to load still looks like that panel and
      *  keeps its own Close (the help panel, L4A). */
     frame?: (alert: ReactNode) => ReactNode;
+    /** A surface's own words in the app's language (the help panel, L-COPY r3).
+     *  Each falls back to the global English line. They are used both when the
+     *  chunk could not load and when the panel threw while drawing. */
+    retryLabel?: string;
+    errorLabel?: string;
+    closeLabel?: string;
     /** Test seam; the page reload by default. */
     reload?: () => void;
   },
@@ -106,26 +134,32 @@ export class LazyBoundary extends Component<
   render() {
     if (this.state.broken) return this.renderBroken();
     if (!this.state.failed) return this.props.children;
+    const { onDismiss, retryLabel, errorLabel, closeLabel } = this.props;
     const button = (
       <button
         type="button"
         onClick={this.retry}
         className="min-h-11 rounded-xl border border-hairline/50 bg-card px-4 text-[13px] text-ink shadow-xl hover:bg-raised"
       >
-        {LAZY_RETRY_TEXT}
+        {retryLabel ?? LAZY_RETRY_TEXT}
       </button>
     );
-    if (this.props.inline) return this.inlineAlert(button);
-    const { onDismiss } = this.props;
-    return (
-      <div role="alert" className="overlay-inset fixed inset-0 z-50 flex flex-col items-center justify-center gap-2 bg-black/20">
+    const content = errorLabel === undefined ? button : (
+      <div className="flex flex-col items-start gap-2">
+        <p className="text-[13px] text-ink">{errorLabel}</p>
         {button}
+      </div>
+    );
+    if (this.props.inline) return this.inlineAlert(content);
+    return (
+      <OverlayShell onDismiss={onDismiss} className="overlay-inset fixed inset-0 flex flex-col items-center justify-center gap-2 bg-black/20">
+        {content}
         {onDismiss && (
           <button type="button" onClick={onDismiss} className="min-h-11 rounded-xl px-4 text-[13px] text-white/80 hover:text-white">
-            Close
+            {closeLabel ?? "Close"}
           </button>
         )}
-      </div>
+      </OverlayShell>
     );
   }
 
@@ -135,23 +169,27 @@ export class LazyBoundary extends Component<
   }
 
   renderBroken() {
-    const { onDismiss, inline } = this.props;
+    const { onDismiss, inline, retryLabel, errorLabel, closeLabel } = this.props;
     const body = (
       <div className="flex max-w-sm flex-col items-center gap-3 rounded-xl border border-hairline/50 bg-card p-4 text-center shadow-xl">
-        <p className="text-[13px] text-ink">{PANEL_ERROR_TEXT}</p>
+        <p className="text-[13px] text-ink">{errorLabel ?? PANEL_ERROR_TEXT}</p>
         <div className="flex gap-2">
           <button type="button" onClick={this.renderAgain} className="min-h-11 rounded-xl border border-hairline/50 bg-card px-4 text-[13px] text-ink hover:bg-raised">
-            {PANEL_ERROR_RETRY}
+            {retryLabel ?? PANEL_ERROR_RETRY}
           </button>
           {onDismiss && (
             <button type="button" onClick={onDismiss} className="min-h-11 rounded-xl px-4 text-[13px] text-ink-secondary hover:text-ink">
-              Close
+              {closeLabel ?? "Close"}
             </button>
           )}
         </div>
       </div>
     );
     if (inline) return this.inlineAlert(body);
-    return <div role="alert" className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/20">{body}</div>;
+    return (
+      <OverlayShell onDismiss={onDismiss} className="overlay-inset fixed inset-0 flex items-center justify-center bg-black/20">
+        {body}
+      </OverlayShell>
+    );
   }
 }

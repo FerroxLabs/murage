@@ -1,0 +1,1388 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "1.0.18-lanes",
+  "date": "2026-11-07",
+  "base": "1effcd533225164422aba5c0e9aa372566519377",
+  "scope": "strings and lint files without a valid review",
+  "strings": {
+    "en:settings.l6.usage.plan.title": {
+      "text": "Plan usage",
+      "en": "Plan usage",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.hint": {
+      "text": "What each engine account last reported about its plan limits.",
+      "en": "What each engine account last reported about its plan limits.",
+      "verdict": "fail",
+      "note": "Rule 1: “Engine account” is technical jargon."
+    },
+    "en:settings.l6.usage.plan.you": {
+      "text": "you",
+      "en": "you",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.rowName": {
+      "text": "{engine} · {bot}",
+      "en": "{engine} · {bot}",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.used": {
+      "text": "{percent}% used",
+      "en": "{percent}% used",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.notMeasured": {
+      "text": "Percent not reported",
+      "en": "Percent not reported",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.stale": {
+      "text": "Last reported: {percent}% used, checked {ago}.",
+      "en": "Last reported: {percent}% used, checked {ago}.",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.staleNoPercent": {
+      "text": "Last reported, checked {ago}.",
+      "en": "Last reported, checked {ago}.",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.resetsIn": {
+      "text": "Resets in {time}, {when}.",
+      "en": "Resets in {time}, {when}.",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.about": {
+      "text": "about {time}",
+      "en": "about {time}",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.resetUnknown": {
+      "text": "Reset time not available.",
+      "en": "Reset time not available.",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.resetReached": {
+      "text": "Reported reset time reached. Waiting for the next usage report.",
+      "en": "Reported reset time reached. Waiting for the next usage report.",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.resetReachedLive": {
+      "text": "Reported reset time reached, checking usage.",
+      "en": "Reported reset time reached, checking usage.",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.lessThanMinute": {
+      "text": "less than a minute",
+      "en": "less than a minute",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.m": {
+      "text": "{minutes} min",
+      "en": "{minutes} min",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.hm": {
+      "text": "{hours} h {minutes} min",
+      "en": "{hours} h {minutes} min",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.dh": {
+      "text": "{days} d {hours} h",
+      "en": "{days} d {hours} h",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.today": {
+      "text": "Today",
+      "en": "Today",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.tomorrow": {
+      "text": "tomorrow",
+      "en": "tomorrow",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.checked": {
+      "text": "Checked {ago}.",
+      "en": "Checked {ago}.",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.checking": {
+      "text": "Checking usage.",
+      "en": "Checking usage.",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.limitReached": {
+      "text": "This account reached its limit.",
+      "en": "This account reached its limit.",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.notAvailableRow": {
+      "text": "Plan usage not available for this account yet.",
+      "en": "Plan usage not available for this account yet.",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.empty": {
+      "text": "Plan usage not available yet. Usage appears when Codex reports it.",
+      "en": "Plan usage not available yet. Usage appears when Codex reports it.",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.cloud": {
+      "text": "Plan usage is not reported on Cloud yet.",
+      "en": "Plan usage is not reported on Cloud yet.",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.omitted": {
+      "text": "{count} more accounts not shown.",
+      "en": "{count} more accounts not shown.",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.refresh": {
+      "text": "Refresh",
+      "en": "Refresh",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.refreshing": {
+      "text": "Checking",
+      "en": "Checking",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.refreshed": {
+      "text": "Checked",
+      "en": "Checked",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.refreshFailed": {
+      "text": "Could not check usage. Try again.",
+      "en": "Could not check usage. Try again.",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.windowHours": {
+      "text": "{count}-hour window",
+      "en": "{count}-hour window",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.windowDays": {
+      "text": "{count}-day window",
+      "en": "{count}-day window",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.windowPlan": {
+      "text": "Plan window",
+      "en": "Plan window",
+      "verdict": "fail",
+      "note": "Rule 1: “Plan window” does not clearly describe a usage period."
+    },
+    "en:settings.fluxSpendLimits": {
+      "text": "Spend limits here cover Flux. When a bot uses your own sign-in or key, that provider bills you and its own limits apply.",
+      "en": "Spend limits here cover Flux. When a bot uses your own sign-in or key, that provider bills you and its own limits apply.",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.title": {
+      "text": "Tarifnutzung",
+      "en": "Plan usage",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.hint": {
+      "text": "Was jedes Engine-Konto zuletzt über die Grenzen seines Tarifs gemeldet hat.",
+      "en": "What each engine account last reported about its plan limits.",
+      "verdict": "fail",
+      "note": "Rule 1: “Engine-Konto” is technical jargon."
+    },
+    "de:settings.l6.usage.plan.you": {
+      "text": "du",
+      "en": "you",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.rowName": {
+      "text": "{engine} · {bot}",
+      "en": "{engine} · {bot}",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.used": {
+      "text": "{percent} % genutzt",
+      "en": "{percent}% used",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.notMeasured": {
+      "text": "Prozent nicht gemeldet",
+      "en": "Percent not reported",
+      "verdict": "fail",
+      "note": "Rule 5: “Prozent nicht gemeldet” is unnatural German for an unreported percentage."
+    },
+    "de:settings.l6.usage.plan.stale": {
+      "text": "Zuletzt gemeldet: {percent} % genutzt, geprüft {ago}.",
+      "en": "Last reported: {percent}% used, checked {ago}.",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.staleNoPercent": {
+      "text": "Zuletzt gemeldet, geprüft {ago}.",
+      "en": "Last reported, checked {ago}.",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.resetsIn": {
+      "text": "Wird zurückgesetzt in {time}, {when}.",
+      "en": "Resets in {time}, {when}.",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.about": {
+      "text": "etwa {time}",
+      "en": "about {time}",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.resetUnknown": {
+      "text": "Zeitpunkt der Zurücksetzung nicht verfügbar.",
+      "en": "Reset time not available.",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.resetReached": {
+      "text": "Gemeldeter Zeitpunkt der Zurücksetzung erreicht. Warte auf die nächste Nutzungsmeldung.",
+      "en": "Reported reset time reached. Waiting for the next usage report.",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.resetReachedLive": {
+      "text": "Gemeldeter Zeitpunkt der Zurücksetzung erreicht, Nutzung wird geprüft.",
+      "en": "Reported reset time reached, checking usage.",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.lessThanMinute": {
+      "text": "weniger als einer Minute",
+      "en": "less than a minute",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.m": {
+      "text": "{minutes} Min.",
+      "en": "{minutes} min",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.hm": {
+      "text": "{hours} Std. {minutes} Min.",
+      "en": "{hours} h {minutes} min",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.dh": {
+      "text": "{days} T. {hours} Std.",
+      "en": "{days} d {hours} h",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.today": {
+      "text": "Heute",
+      "en": "Today",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.tomorrow": {
+      "text": "morgen",
+      "en": "tomorrow",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.checked": {
+      "text": "Geprüft {ago}.",
+      "en": "Checked {ago}.",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.checking": {
+      "text": "Nutzung wird geprüft.",
+      "en": "Checking usage.",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.limitReached": {
+      "text": "Dieses Konto hat seine Grenze erreicht.",
+      "en": "This account reached its limit.",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.notAvailableRow": {
+      "text": "Tarifnutzung für dieses Konto noch nicht verfügbar.",
+      "en": "Plan usage not available for this account yet.",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.empty": {
+      "text": "Tarifnutzung noch nicht verfügbar. Die Nutzung erscheint, sobald Codex sie meldet.",
+      "en": "Plan usage not available yet. Usage appears when Codex reports it.",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.cloud": {
+      "text": "Tarifnutzung wird in der Cloud noch nicht gemeldet.",
+      "en": "Plan usage is not reported on Cloud yet.",
+      "verdict": "fail",
+      "note": "Rule 6: The product name “Cloud” becomes a generic reference to the cloud."
+    },
+    "de:settings.l6.usage.plan.omitted": {
+      "text": "{count} weitere Konten nicht angezeigt.",
+      "en": "{count} more accounts not shown.",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.refresh": {
+      "text": "Aktualisieren",
+      "en": "Refresh",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.refreshing": {
+      "text": "Wird geprüft",
+      "en": "Checking",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.refreshed": {
+      "text": "Geprüft",
+      "en": "Checked",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.refreshFailed": {
+      "text": "Nutzung konnte nicht geprüft werden. Versuch es noch einmal.",
+      "en": "Could not check usage. Try again.",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.windowHours": {
+      "text": "{count}-Stunden-Zeitraum",
+      "en": "{count}-hour window",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.windowDays": {
+      "text": "{count}-Tage-Zeitraum",
+      "en": "{count}-day window",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.windowPlan": {
+      "text": "Tarifzeitraum",
+      "en": "Plan window",
+      "verdict": "pass"
+    },
+    "de:settings.fluxSpendLimits": {
+      "text": "Die Ausgabenlimits hier gelten für Flux. Wenn ein Bot deine eigene Anmeldung oder deinen Schlüssel nutzt, rechnet dieser Anbieter mit dir ab und es gelten seine Limits.",
+      "en": "Spend limits here cover Flux. When a bot uses your own sign-in or key, that provider bills you and its own limits apply.",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.title": {
+      "text": "Uso del plan",
+      "en": "Plan usage",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.hint": {
+      "text": "Lo que cada cuenta de motor informó por última vez sobre los límites de su plan.",
+      "en": "What each engine account last reported about its plan limits.",
+      "verdict": "fail",
+      "note": "Rules 1 and 5: “Cuenta de motor” is technical and unnatural in this context."
+    },
+    "es:settings.l6.usage.plan.you": {
+      "text": "tú",
+      "en": "you",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.rowName": {
+      "text": "{engine} · {bot}",
+      "en": "{engine} · {bot}",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.used": {
+      "text": "{percent} % usado",
+      "en": "{percent}% used",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.notMeasured": {
+      "text": "Porcentaje no informado",
+      "en": "Percent not reported",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.stale": {
+      "text": "Último informe: {percent} % usado, consultado {ago}.",
+      "en": "Last reported: {percent}% used, checked {ago}.",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.staleNoPercent": {
+      "text": "Último informe, consultado {ago}.",
+      "en": "Last reported, checked {ago}.",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.resetsIn": {
+      "text": "Se restablece en {time}, {when}.",
+      "en": "Resets in {time}, {when}.",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.about": {
+      "text": "aprox. {time}",
+      "en": "about {time}",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.resetUnknown": {
+      "text": "Hora de restablecimiento no disponible.",
+      "en": "Reset time not available.",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.resetReached": {
+      "text": "Se alcanzó la hora de restablecimiento informada. Esperando el próximo informe de uso.",
+      "en": "Reported reset time reached. Waiting for the next usage report.",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.resetReachedLive": {
+      "text": "Se alcanzó la hora de restablecimiento informada, consultando el uso.",
+      "en": "Reported reset time reached, checking usage.",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.lessThanMinute": {
+      "text": "menos de un minuto",
+      "en": "less than a minute",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.m": {
+      "text": "{minutes} min",
+      "en": "{minutes} min",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.hm": {
+      "text": "{hours} h {minutes} min",
+      "en": "{hours} h {minutes} min",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.dh": {
+      "text": "{days} d {hours} h",
+      "en": "{days} d {hours} h",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.today": {
+      "text": "Hoy",
+      "en": "Today",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.tomorrow": {
+      "text": "mañana",
+      "en": "tomorrow",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.checked": {
+      "text": "Consultado {ago}.",
+      "en": "Checked {ago}.",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.checking": {
+      "text": "Consultando el uso.",
+      "en": "Checking usage.",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.limitReached": {
+      "text": "Esta cuenta alcanzó su límite.",
+      "en": "This account reached its limit.",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.notAvailableRow": {
+      "text": "El uso del plan aún no está disponible para esta cuenta.",
+      "en": "Plan usage not available for this account yet.",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.empty": {
+      "text": "El uso del plan aún no está disponible. Aparece cuando Codex lo informa.",
+      "en": "Plan usage not available yet. Usage appears when Codex reports it.",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.cloud": {
+      "text": "El uso del plan aún no se informa en la nube.",
+      "en": "Plan usage is not reported on Cloud yet.",
+      "verdict": "fail",
+      "note": "Rule 6: The product name “Cloud” has been translated."
+    },
+    "es:settings.l6.usage.plan.omitted": {
+      "text": "{count} cuentas más no se muestran.",
+      "en": "{count} more accounts not shown.",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.refresh": {
+      "text": "Actualizar",
+      "en": "Refresh",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.refreshing": {
+      "text": "Consultando",
+      "en": "Checking",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.refreshed": {
+      "text": "Consultado",
+      "en": "Checked",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.refreshFailed": {
+      "text": "No se pudo consultar el uso. Inténtalo de nuevo.",
+      "en": "Could not check usage. Try again.",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.windowHours": {
+      "text": "Periodo de {count} horas",
+      "en": "{count}-hour window",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.windowDays": {
+      "text": "Periodo de {count} días",
+      "en": "{count}-day window",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.windowPlan": {
+      "text": "Periodo del plan",
+      "en": "Plan window",
+      "verdict": "pass"
+    },
+    "es:settings.fluxSpendLimits": {
+      "text": "Los límites de gasto aquí cubren Flux. Cuando un bot usa tu propia cuenta o clave, ese proveedor te cobra y se aplican sus límites.",
+      "en": "Spend limits here cover Flux. When a bot uses your own sign-in or key, that provider bills you and its own limits apply.",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.title": {
+      "text": "Utilisation du forfait",
+      "en": "Plan usage",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.hint": {
+      "text": "Ce que chaque compte de moteur a signalé en dernier sur les limites de son forfait.",
+      "en": "What each engine account last reported about its plan limits.",
+      "verdict": "fail",
+      "note": "Rules 1 and 5: “Compte de moteur” is technical and unnatural in this context."
+    },
+    "fr:settings.l6.usage.plan.you": {
+      "text": "toi",
+      "en": "you",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.rowName": {
+      "text": "{engine} · {bot}",
+      "en": "{engine} · {bot}",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.used": {
+      "text": "{percent} % utilisé",
+      "en": "{percent}% used",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.notMeasured": {
+      "text": "Pourcentage non signalé",
+      "en": "Percent not reported",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.stale": {
+      "text": "Dernier relevé : {percent} % utilisé, vérifié {ago}.",
+      "en": "Last reported: {percent}% used, checked {ago}.",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.staleNoPercent": {
+      "text": "Dernier relevé, vérifié {ago}.",
+      "en": "Last reported, checked {ago}.",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.resetsIn": {
+      "text": "Réinitialisation dans {time}, {when}.",
+      "en": "Resets in {time}, {when}.",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.about": {
+      "text": "environ {time}",
+      "en": "about {time}",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.resetUnknown": {
+      "text": "Heure de réinitialisation non disponible.",
+      "en": "Reset time not available.",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.resetReached": {
+      "text": "Heure de réinitialisation signalée atteinte. En attente du prochain relevé d’utilisation.",
+      "en": "Reported reset time reached. Waiting for the next usage report.",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.resetReachedLive": {
+      "text": "Heure de réinitialisation signalée atteinte, vérification de l’utilisation.",
+      "en": "Reported reset time reached, checking usage.",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.lessThanMinute": {
+      "text": "moins d’une minute",
+      "en": "less than a minute",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.m": {
+      "text": "{minutes} min",
+      "en": "{minutes} min",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.hm": {
+      "text": "{hours} h {minutes} min",
+      "en": "{hours} h {minutes} min",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.dh": {
+      "text": "{days} j {hours} h",
+      "en": "{days} d {hours} h",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.today": {
+      "text": "Aujourd’hui",
+      "en": "Today",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.tomorrow": {
+      "text": "demain",
+      "en": "tomorrow",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.checked": {
+      "text": "Vérifié {ago}.",
+      "en": "Checked {ago}.",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.checking": {
+      "text": "Vérification de l’utilisation.",
+      "en": "Checking usage.",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.limitReached": {
+      "text": "Ce compte a atteint sa limite.",
+      "en": "This account reached its limit.",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.notAvailableRow": {
+      "text": "Utilisation du forfait pas encore disponible pour ce compte.",
+      "en": "Plan usage not available for this account yet.",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.empty": {
+      "text": "Utilisation du forfait pas encore disponible. Elle apparaît quand Codex la signale.",
+      "en": "Plan usage not available yet. Usage appears when Codex reports it.",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.cloud": {
+      "text": "L’utilisation du forfait n’est pas encore signalée dans le Cloud.",
+      "en": "Plan usage is not reported on Cloud yet.",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.omitted": {
+      "text": "{count} comptes de plus non affichés.",
+      "en": "{count} more accounts not shown.",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.refresh": {
+      "text": "Actualiser",
+      "en": "Refresh",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.refreshing": {
+      "text": "Vérification",
+      "en": "Checking",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.refreshed": {
+      "text": "Vérifié",
+      "en": "Checked",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.refreshFailed": {
+      "text": "Impossible de vérifier l’utilisation. Réessaie.",
+      "en": "Could not check usage. Try again.",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.windowHours": {
+      "text": "Période de {count} heures",
+      "en": "{count}-hour window",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.windowDays": {
+      "text": "Période de {count} jours",
+      "en": "{count}-day window",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.windowPlan": {
+      "text": "Période du forfait",
+      "en": "Plan window",
+      "verdict": "pass"
+    },
+    "fr:settings.fluxSpendLimits": {
+      "text": "Les limites de dépenses ici concernent Flux. Quand un bot utilise ta propre connexion ou clé, ce fournisseur te facture et ses limites s’appliquent.",
+      "en": "Spend limits here cover Flux. When a bot uses your own sign-in or key, that provider bills you and its own limits apply.",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.title": {
+      "text": "प्लान का उपयोग",
+      "en": "Plan usage",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.hint": {
+      "text": "हर इंजन खाते ने अपने प्लान की सीमाओं के बारे में आखिरी बार क्या बताया।",
+      "en": "What each engine account last reported about its plan limits.",
+      "verdict": "fail",
+      "note": "Rule 1: “इंजन खाते” is technical jargon."
+    },
+    "hi:settings.l6.usage.plan.you": {
+      "text": "आप",
+      "en": "you",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.rowName": {
+      "text": "{engine} · {bot}",
+      "en": "{engine} · {bot}",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.used": {
+      "text": "{percent}% उपयोग हुआ",
+      "en": "{percent}% used",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.notMeasured": {
+      "text": "प्रतिशत नहीं बताया गया",
+      "en": "Percent not reported",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.stale": {
+      "text": "आखिरी बार बताया गया: {percent}% उपयोग हुआ, {ago} जाँचा गया।",
+      "en": "Last reported: {percent}% used, checked {ago}.",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.staleNoPercent": {
+      "text": "आखिरी बार बताया गया, {ago} जाँचा गया।",
+      "en": "Last reported, checked {ago}.",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.resetsIn": {
+      "text": "{time} में रीसेट होगा, {when}।",
+      "en": "Resets in {time}, {when}.",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.about": {
+      "text": "लगभग {time}",
+      "en": "about {time}",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.resetUnknown": {
+      "text": "रीसेट का समय उपलब्ध नहीं है।",
+      "en": "Reset time not available.",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.resetReached": {
+      "text": "बताया गया रीसेट समय आ गया। अगली उपयोग रिपोर्ट का इंतज़ार है।",
+      "en": "Reported reset time reached. Waiting for the next usage report.",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.resetReachedLive": {
+      "text": "बताया गया रीसेट समय आ गया, उपयोग जाँचा जा रहा है।",
+      "en": "Reported reset time reached, checking usage.",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.lessThanMinute": {
+      "text": "एक मिनट से कम",
+      "en": "less than a minute",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.m": {
+      "text": "{minutes} मिनट",
+      "en": "{minutes} min",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.hm": {
+      "text": "{hours} घंटे {minutes} मिनट",
+      "en": "{hours} h {minutes} min",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.dh": {
+      "text": "{days} दिन {hours} घंटे",
+      "en": "{days} d {hours} h",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.today": {
+      "text": "आज",
+      "en": "Today",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.tomorrow": {
+      "text": "कल",
+      "en": "tomorrow",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.checked": {
+      "text": "{ago} जाँचा गया।",
+      "en": "Checked {ago}.",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.checking": {
+      "text": "उपयोग जाँचा जा रहा है।",
+      "en": "Checking usage.",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.limitReached": {
+      "text": "यह खाता अपनी सीमा तक पहुँच गया।",
+      "en": "This account reached its limit.",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.notAvailableRow": {
+      "text": "इस खाते के लिए प्लान का उपयोग अभी उपलब्ध नहीं है।",
+      "en": "Plan usage not available for this account yet.",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.empty": {
+      "text": "प्लान का उपयोग अभी उपलब्ध नहीं है। Codex के बताने पर उपयोग दिखेगा।",
+      "en": "Plan usage not available yet. Usage appears when Codex reports it.",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.cloud": {
+      "text": "Cloud पर प्लान का उपयोग अभी नहीं बताया जाता।",
+      "en": "Plan usage is not reported on Cloud yet.",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.omitted": {
+      "text": "{count} और खाते नहीं दिखाए गए।",
+      "en": "{count} more accounts not shown.",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.refresh": {
+      "text": "रीफ़्रेश करें",
+      "en": "Refresh",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.refreshing": {
+      "text": "जाँच हो रही है",
+      "en": "Checking",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.refreshed": {
+      "text": "जाँच हो गई",
+      "en": "Checked",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.refreshFailed": {
+      "text": "उपयोग नहीं जाँचा जा सका। फिर से कोशिश करें।",
+      "en": "Could not check usage. Try again.",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.windowHours": {
+      "text": "{count} घंटे की अवधि",
+      "en": "{count}-hour window",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.windowDays": {
+      "text": "{count} दिन की अवधि",
+      "en": "{count}-day window",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.windowPlan": {
+      "text": "प्लान की अवधि",
+      "en": "Plan window",
+      "verdict": "pass"
+    },
+    "hi:settings.fluxSpendLimits": {
+      "text": "यहाँ खर्च की सीमाएँ Flux पर लागू होती हैं। जब कोई बॉट तुम्हारे अपने साइन-इन या कुंजी का उपयोग करता है, तो वह प्रदाता तुमसे शुल्क लेता है और उसकी अपनी सीमाएँ लागू होती हैं।",
+      "en": "Spend limits here cover Flux. When a bot uses your own sign-in or key, that provider bills you and its own limits apply.",
+      "verdict": "fail",
+      "note": "Rule 5: “तुम्हारे” and “तुमसे” conflict with the set’s respectful “आप” register."
+    },
+    "ja:settings.l6.usage.plan.title": {
+      "text": "プランの使用状況",
+      "en": "Plan usage",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.hint": {
+      "text": "各エンジンアカウントがプランの上限について最後に報告した内容です。",
+      "en": "What each engine account last reported about its plan limits.",
+      "verdict": "fail",
+      "note": "Rule 1: “エンジンアカウント” is technical jargon."
+    },
+    "ja:settings.l6.usage.plan.you": {
+      "text": "あなた",
+      "en": "you",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.rowName": {
+      "text": "{engine} · {bot}",
+      "en": "{engine} · {bot}",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.used": {
+      "text": "{percent}% 使用",
+      "en": "{percent}% used",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.notMeasured": {
+      "text": "割合は報告されていません",
+      "en": "Percent not reported",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.stale": {
+      "text": "最終報告: {percent}% 使用、{ago}に確認。",
+      "en": "Last reported: {percent}% used, checked {ago}.",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.staleNoPercent": {
+      "text": "最終報告、{ago}に確認。",
+      "en": "Last reported, checked {ago}.",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.resetsIn": {
+      "text": "{time}後にリセット、{when}。",
+      "en": "Resets in {time}, {when}.",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.about": {
+      "text": "約 {time}",
+      "en": "about {time}",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.resetUnknown": {
+      "text": "リセット時刻は不明です。",
+      "en": "Reset time not available.",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.resetReached": {
+      "text": "報告されたリセット時刻になりました。次の使用状況の報告を待っています。",
+      "en": "Reported reset time reached. Waiting for the next usage report.",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.resetReachedLive": {
+      "text": "報告されたリセット時刻になりました。使用状況を確認しています。",
+      "en": "Reported reset time reached, checking usage.",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.lessThanMinute": {
+      "text": "1分未満",
+      "en": "less than a minute",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.m": {
+      "text": "{minutes}分",
+      "en": "{minutes} min",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.hm": {
+      "text": "{hours}時間{minutes}分",
+      "en": "{hours} h {minutes} min",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.dh": {
+      "text": "{days}日{hours}時間",
+      "en": "{days} d {hours} h",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.today": {
+      "text": "今日",
+      "en": "Today",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.tomorrow": {
+      "text": "明日",
+      "en": "tomorrow",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.checked": {
+      "text": "{ago}に確認。",
+      "en": "Checked {ago}.",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.checking": {
+      "text": "使用状況を確認しています。",
+      "en": "Checking usage.",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.limitReached": {
+      "text": "このアカウントは上限に達しました。",
+      "en": "This account reached its limit.",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.notAvailableRow": {
+      "text": "このアカウントのプランの使用状況はまだありません。",
+      "en": "Plan usage not available for this account yet.",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.empty": {
+      "text": "プランの使用状況はまだありません。Codex が報告すると表示されます。",
+      "en": "Plan usage not available yet. Usage appears when Codex reports it.",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.cloud": {
+      "text": "Cloud ではプランの使用状況はまだ報告されません。",
+      "en": "Plan usage is not reported on Cloud yet.",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.omitted": {
+      "text": "ほかに {count} 件のアカウントは表示されていません。",
+      "en": "{count} more accounts not shown.",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.refresh": {
+      "text": "更新",
+      "en": "Refresh",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.refreshing": {
+      "text": "確認中",
+      "en": "Checking",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.refreshed": {
+      "text": "確認しました",
+      "en": "Checked",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.refreshFailed": {
+      "text": "使用状況を確認できませんでした。もう一度お試しください。",
+      "en": "Could not check usage. Try again.",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.windowHours": {
+      "text": "{count}時間の期間",
+      "en": "{count}-hour window",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.windowDays": {
+      "text": "{count}日の期間",
+      "en": "{count}-day window",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.windowPlan": {
+      "text": "プランの期間",
+      "en": "Plan window",
+      "verdict": "pass"
+    },
+    "ja:settings.fluxSpendLimits": {
+      "text": "ここでの支出上限はFluxに適用されます。ボットがあなた自身のログインやキーを使う場合、そのプロバイダーが請求し、そのプロバイダーの上限が適用されます。",
+      "en": "Spend limits here cover Flux. When a bot uses your own sign-in or key, that provider bills you and its own limits apply.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.title": {
+      "text": "Uso do plano",
+      "en": "Plan usage",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.hint": {
+      "text": "O que cada conta de motor informou por último sobre os limites do plano.",
+      "en": "What each engine account last reported about its plan limits.",
+      "verdict": "fail",
+      "note": "Rules 1 and 5: “Conta de motor” is technical and unnatural in this context."
+    },
+    "pt-br:settings.l6.usage.plan.you": {
+      "text": "você",
+      "en": "you",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.rowName": {
+      "text": "{engine} · {bot}",
+      "en": "{engine} · {bot}",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.used": {
+      "text": "{percent}% usado",
+      "en": "{percent}% used",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.notMeasured": {
+      "text": "Porcentagem não informada",
+      "en": "Percent not reported",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.stale": {
+      "text": "Último relato: {percent}% usado, verificado {ago}.",
+      "en": "Last reported: {percent}% used, checked {ago}.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.staleNoPercent": {
+      "text": "Último relato, verificado {ago}.",
+      "en": "Last reported, checked {ago}.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.resetsIn": {
+      "text": "Reinicia em {time}, {when}.",
+      "en": "Resets in {time}, {when}.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.about": {
+      "text": "cerca de {time}",
+      "en": "about {time}",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.resetUnknown": {
+      "text": "Horário de reinício não disponível.",
+      "en": "Reset time not available.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.resetReached": {
+      "text": "O horário de reinício informado chegou. Aguardando o próximo relato de uso.",
+      "en": "Reported reset time reached. Waiting for the next usage report.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.resetReachedLive": {
+      "text": "O horário de reinício informado chegou, verificando o uso.",
+      "en": "Reported reset time reached, checking usage.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.lessThanMinute": {
+      "text": "menos de um minuto",
+      "en": "less than a minute",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.m": {
+      "text": "{minutes} min",
+      "en": "{minutes} min",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.hm": {
+      "text": "{hours} h {minutes} min",
+      "en": "{hours} h {minutes} min",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.dh": {
+      "text": "{days} d {hours} h",
+      "en": "{days} d {hours} h",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.today": {
+      "text": "Hoje",
+      "en": "Today",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.tomorrow": {
+      "text": "amanhã",
+      "en": "tomorrow",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.checked": {
+      "text": "Verificado {ago}.",
+      "en": "Checked {ago}.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.checking": {
+      "text": "Verificando o uso.",
+      "en": "Checking usage.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.limitReached": {
+      "text": "Esta conta atingiu o limite.",
+      "en": "This account reached its limit.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.notAvailableRow": {
+      "text": "O uso do plano ainda não está disponível para esta conta.",
+      "en": "Plan usage not available for this account yet.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.empty": {
+      "text": "O uso do plano ainda não está disponível. Ele aparece quando o Codex informa.",
+      "en": "Plan usage not available yet. Usage appears when Codex reports it.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.cloud": {
+      "text": "O uso do plano ainda não é informado no Cloud.",
+      "en": "Plan usage is not reported on Cloud yet.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.omitted": {
+      "text": "Mais {count} contas não são mostradas.",
+      "en": "{count} more accounts not shown.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.refresh": {
+      "text": "Atualizar",
+      "en": "Refresh",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.refreshing": {
+      "text": "Verificando",
+      "en": "Checking",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.refreshed": {
+      "text": "Verificado",
+      "en": "Checked",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.refreshFailed": {
+      "text": "Não foi possível verificar o uso. Tente de novo.",
+      "en": "Could not check usage. Try again.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.windowHours": {
+      "text": "Período de {count} horas",
+      "en": "{count}-hour window",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.windowDays": {
+      "text": "Período de {count} dias",
+      "en": "{count}-day window",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.windowPlan": {
+      "text": "Período do plano",
+      "en": "Plan window",
+      "verdict": "pass"
+    },
+    "pt-br:settings.fluxSpendLimits": {
+      "text": "Os limites de gastos aqui cobrem o Flux. Quando um bot usa seu próprio login ou chave, esse provedor cobra de você e os limites dele se aplicam.",
+      "en": "Spend limits here cover Flux. When a bot uses your own sign-in or key, that provider bills you and its own limits apply.",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.title": {
+      "text": "套餐用量",
+      "en": "Plan usage",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.hint": {
+      "text": "每个引擎账户最近一次报告的套餐限额情况。",
+      "en": "What each engine account last reported about its plan limits.",
+      "verdict": "fail",
+      "note": "Rule 1: “引擎账户” is technical jargon."
+    },
+    "zh:settings.l6.usage.plan.you": {
+      "text": "你",
+      "en": "you",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.rowName": {
+      "text": "{engine} · {bot}",
+      "en": "{engine} · {bot}",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.used": {
+      "text": "已用 {percent}%",
+      "en": "{percent}% used",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.notMeasured": {
+      "text": "未报告百分比",
+      "en": "Percent not reported",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.stale": {
+      "text": "最近报告：已用 {percent}%，{ago}检查。",
+      "en": "Last reported: {percent}% used, checked {ago}.",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.staleNoPercent": {
+      "text": "最近报告，{ago}检查。",
+      "en": "Last reported, checked {ago}.",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.resetsIn": {
+      "text": "{time}后重置，{when}。",
+      "en": "Resets in {time}, {when}.",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.about": {
+      "text": "约 {time}",
+      "en": "about {time}",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.resetUnknown": {
+      "text": "重置时间不可用。",
+      "en": "Reset time not available.",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.resetReached": {
+      "text": "已到报告的重置时间。正在等待下一次用量报告。",
+      "en": "Reported reset time reached. Waiting for the next usage report.",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.resetReachedLive": {
+      "text": "已到报告的重置时间，正在检查用量。",
+      "en": "Reported reset time reached, checking usage.",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.lessThanMinute": {
+      "text": "不到一分钟",
+      "en": "less than a minute",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.m": {
+      "text": "{minutes} 分钟",
+      "en": "{minutes} min",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.hm": {
+      "text": "{hours} 小时 {minutes} 分钟",
+      "en": "{hours} h {minutes} min",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.dh": {
+      "text": "{days} 天 {hours} 小时",
+      "en": "{days} d {hours} h",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.today": {
+      "text": "今天",
+      "en": "Today",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.tomorrow": {
+      "text": "明天",
+      "en": "tomorrow",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.checked": {
+      "text": "{ago}检查。",
+      "en": "Checked {ago}.",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.checking": {
+      "text": "正在检查用量。",
+      "en": "Checking usage.",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.limitReached": {
+      "text": "此账户已达到限额。",
+      "en": "This account reached its limit.",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.notAvailableRow": {
+      "text": "此账户的套餐用量暂不可用。",
+      "en": "Plan usage not available for this account yet.",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.empty": {
+      "text": "套餐用量暂不可用。Codex 报告后会显示用量。",
+      "en": "Plan usage not available yet. Usage appears when Codex reports it.",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.cloud": {
+      "text": "Cloud 上暂不报告套餐用量。",
+      "en": "Plan usage is not reported on Cloud yet.",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.omitted": {
+      "text": "还有 {count} 个账户未显示。",
+      "en": "{count} more accounts not shown.",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.refresh": {
+      "text": "刷新",
+      "en": "Refresh",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.refreshing": {
+      "text": "正在检查",
+      "en": "Checking",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.refreshed": {
+      "text": "已检查",
+      "en": "Checked",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.refreshFailed": {
+      "text": "无法检查用量。请重试。",
+      "en": "Could not check usage. Try again.",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.windowHours": {
+      "text": "{count} 小时周期",
+      "en": "{count}-hour window",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.windowDays": {
+      "text": "{count} 天周期",
+      "en": "{count}-day window",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.windowPlan": {
+      "text": "套餐周期",
+      "en": "Plan window",
+      "verdict": "pass"
+    },
+    "zh:settings.fluxSpendLimits": {
+      "text": "这里的支出限额适用于 Flux。当机器人使用你自己的登录账号或密钥时，由该服务商向你收费，并适用其自身的限额。",
+      "en": "Spend limits here cover Flux. When a bot uses your own sign-in or key, that provider bills you and its own limits apply.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

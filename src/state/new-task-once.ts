@@ -9,6 +9,35 @@
 //
 // Behaviour ported from upstream d124292a2 (OpenMausBot, MIT).
 
+/** How long a New conversation request may take before it is given up: the guard above holds the button while it runs, so a
+ *  request that never answers would leave it dead. */
+export const NEW_TASK_DEADLINE_MS = 20_000;
+
+/** A New conversation request that did not answer in time. The guard is free again, and the owner can try again. */
+export class NewTaskStalled extends Error {
+  constructor() {
+    super("new conversation stalled");
+    this.name = "NewTaskStalled";
+  }
+}
+
+/** Runs `run` with a signal that is aborted after `ms`; the result rejects with NewTaskStalled then, even if `run` never
+ *  settles (a stall before the request is sent). */
+export function withDeadline<T>(ms: number, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const stop = new AbortController();
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const stalled = new NewTaskStalled();
+      stop.abort(stalled);
+      reject(stalled);
+    }, ms);
+    Promise.resolve()
+      .then(() => run(stop.signal))
+      .then(resolve, reject)
+      .finally(() => clearTimeout(timer));
+  });
+}
+
 export function createNewTaskOnce() {
   const beingMade = new Map<string, { cwd: string | undefined; done: Promise<void> }>();
   /** Folders with a kept click waiting, per bot: a second click for one is the same action. */

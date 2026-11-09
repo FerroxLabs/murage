@@ -46,7 +46,8 @@ export interface EngineHealthRow { id: string; label: string; state: EngineHealt
 /** The Flux Router figures from the same cached /key/info answer: only from a valid check, never a stale or made-up figure. */
 export interface FluxHealthInfo { spendPct: number | null; expires: string | null }
 /** `primary` falls back to a ready engine for Today's tag; `defaultId` is the engine actually chosen as the default, or null. */
-export interface EngineHealthAnswer { engines: EngineHealthRow[]; primary: EngineHealthRow | null; defaultId: string | null; flux: FluxHealthState; fluxInfo: FluxHealthInfo | null; checkedAt: number }
+/** `fuigoVersion`: the installed Fuigo's version (its install receipt, else what the engine reports), or null. */
+export interface EngineHealthAnswer { engines: EngineHealthRow[]; primary: EngineHealthRow | null; defaultId: string | null; flux: FluxHealthState; fluxInfo: FluxHealthInfo | null; fuigoVersion: string | null; checkedAt: number }
 
 /** The parts of a described instance (GET /api/instances) this route reads. */
 export interface EngineHealthInstance {
@@ -55,7 +56,7 @@ export interface EngineHealthInstance {
   enabled?: boolean;
   /** The bundled Fuigo is a client: a missing login is a key, and Flux state speaks for it (server/setup.ts). */
   driverKind?: string;
-  snapshot: { state: "available" | "unavailable"; authenticated?: boolean; authUnverified?: true; reason?: string };
+  snapshot: { state: "available" | "unavailable"; authenticated?: boolean; authUnverified?: true; reason?: string; version?: string | null };
 }
 
 export interface EngineHealthDeps {
@@ -70,6 +71,8 @@ export interface EngineHealthDeps {
   refused?: (key: string) => boolean;
   /** The engine each bot runs on (one id per bot), for `usedBy`. Read from memory: no scan. */
   botEngineIds?: () => readonly string[];
+  /** The installed version of this Fuigo instance (server/engine-management.ts installedFuigoVersion), never a pinned number. */
+  fuigoVersion?: (instance: EngineHealthInstance) => Promise<string | null>;
   /** Drops every cached Flux key answer (flux-key-health.ts requestFluxKeyRecheck). */
   recheck?: () => void;
   now?: () => number;
@@ -124,11 +127,11 @@ export function usedByCounts(ids: readonly string[]): Map<string, number> {
   return counts;
 }
 
-export function engineHealthBody(instances: readonly EngineHealthInstance[], primaryId: string | null, flux: FluxHealthState, checkedAt: number, extra: { usedBy?: ReadonlyMap<string, number>; fluxInfo?: FluxHealthInfo | null } = {}): EngineHealthAnswer {
+export function engineHealthBody(instances: readonly EngineHealthInstance[], primaryId: string | null, flux: FluxHealthState, checkedAt: number, extra: { usedBy?: ReadonlyMap<string, number>; fluxInfo?: FluxHealthInfo | null; fuigoVersion?: string | null } = {}): EngineHealthAnswer {
   const engines = instances.map((instance) => engineRow(instance, extra.usedBy?.get(instance.instanceId) ?? 0));
   const primary = (primaryId ? engines.find((row) => row.id === primaryId) : undefined) ?? engines.find((row) => row.state === "ready") ?? engines[0] ?? null;
   const defaultId = primaryId && engines.some((row) => row.id === primaryId) ? primaryId : null;
-  return { engines, primary, defaultId, flux, fluxInfo: flux === "none" || flux === "key-problem" ? null : extra.fluxInfo ?? null, checkedAt };
+  return { engines, primary, defaultId, flux, fluxInfo: flux === "none" || flux === "key-problem" ? null : extra.fluxInfo ?? null, fuigoVersion: extra.fuigoVersion ?? null, checkedAt };
 }
 
 async function boundedCheck(key: string, check: (key: string) => Promise<FluxKeyCheck>): Promise<FluxKeyCheck | null> {
@@ -167,7 +170,9 @@ export async function engineHealthRoute(req: { method: string; url: URL; content
   const flux = fluxHealthFrom(key, key ? (deps.refused ?? fluxKeyRefused)(key) : false, check);
   let usedBy: Map<string, number> | undefined;
   try { usedBy = deps.botEngineIds ? usedByCounts(deps.botEngineIds()) : undefined; } catch { usedBy = undefined; }
-  const body = engineHealthBody(instances, deps.primaryId(), flux, now(), { usedBy, fluxInfo: fluxInfoFrom(check) });
+  const fuigo = instances.find((instance) => instance.driverKind === "fuigoAgent");
+  const fuigoVersion = fuigo && deps.fuigoVersion ? await deps.fuigoVersion(fuigo).catch(() => null) : null;
+  const body = engineHealthBody(instances, deps.primaryId(), flux, now(), { usedBy, fluxInfo: fluxInfoFrom(check), fuigoVersion });
   // A read that started before the memo was dropped answers its caller but is not kept.
   if (deps.memo && (deps.memo.gen ?? 0) === gen) { deps.memo.at = body.checkedAt; deps.memo.body = body; }
   return { status: 200, body };
