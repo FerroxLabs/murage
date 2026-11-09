@@ -24,7 +24,7 @@ import { IMAGE_LIBRARY_CONTACT_REFUSAL, imageLibraryOwnerAudience, imageLibraryR
 import { IMAGE_LIBRARY_ENV, IMAGE_LIBRARY_TOOLS } from "../shared/image-library-audience.ts";
 import { TURN_PROMPTS, imageToolsPrompt, skillLayers } from "./bot-shapes.ts";
 import { loadBundledSkills } from "./skill-library.ts";
-import { CLAUDE_TOOL_SURFACE, FUIGO_TOOL_SURFACE, renderMurageTools } from "./murage-tool-surface.ts";
+import { CLAUDE_TOOL_SURFACE, CODEX_TOOL_SURFACE, FUIGO_TOOL_SURFACE, PI_TOOL_SURFACE, NEUTRAL_TOOL_SURFACE, NO_TOOL_SURFACE, murageTool, renderMurageTools } from "./murage-tool-surface.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 beforeEach(() => {
@@ -143,6 +143,13 @@ describe("the agents proxy on a contact turn", () => {
 describe("the images line on a contact turn", () => {
   it("leaves the saved library out, and the owner's line exactly as it was", () => {
     expect(imageToolsPrompt(true)).toBe(TURN_PROMPTS.imageTools);
+    // B5: every audience and engine surface receives the scoped Markdown rule.
+    const sentence = " A supported picture in this conversation's folder can show in chat when you write its path, or outputs/<name>, as a Markdown image. Pictures outside the folder stay as cards. Save or copy the picture into the folder first, or register it with register_artifact.";
+    for (const audience of [true, false]) for (const surface of [CLAUDE_TOOL_SURFACE, CODEX_TOOL_SURFACE, FUIGO_TOOL_SURFACE, PI_TOOL_SURFACE, NEUTRAL_TOOL_SURFACE, NO_TOOL_SURFACE]) {
+      const shown = renderMurageTools(imageToolsPrompt(audience), surface, { agents: "agents" });
+      expect(shown).toContain(renderMurageTools(sentence.replace("register_artifact", murageTool("register_artifact")), surface, { agents: "agents" }));
+      expect(shown).not.toContain("a file path written in your reply does not show as a picture in chat");
+    }
     const contact = imageToolsPrompt(false);
     expect(contact.length).toBeLessThan(TURN_PROMPTS.imageTools.length);
     expect(TURN_PROMPTS.imageTools.startsWith(contact)).toBe(true);

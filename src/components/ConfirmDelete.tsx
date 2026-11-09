@@ -8,6 +8,8 @@
 // The user types the NAME rather than the word "delete" on purpose: it confirms
 // WHICH thing is going, not merely that they meant to click. Muscle memory can
 // type "delete" on the wrong row; it cannot type the wrong name by accident.
+import { useFocusTrap } from "@/lib/focus-trap";
+import { LayerSurface } from "@/components/LayerSurface";
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 
@@ -46,27 +48,24 @@ export function ConfirmDelete({
   const matches = typed.trim().toLowerCase() === name.trim().toLowerCase();
   const counts = useDeletionCounts(preview);
 
-  useEffect(() => inputRef.current?.focus(), []);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onCancel(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onCancel]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const layer = useFocusTrap(dialogRef, true, { name: "confirm-delete", kind: "dialog", initialFocus: "input", onEscape: onCancel });
 
-  return (
-    <div
+  return <LayerSurface handle={layer}><div
       // C5: this dialog autofocuses its "type the name to confirm" field, so a
       // software keyboard is always up while it is open. `inset-0` resolves
       // against the layout viewport, which iOS does not shrink, and would centre
       // the dialog in the full pre-keyboard height with the confirm button
       // behind the keys. See the overlay convention in styles.css.
-      className="overlay-inset fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/60 p-6"
+      className="overlay-inset fixed inset-x-0 top-0 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/60 p-6"
       onClick={onCancel}
       role="presentation"
     >
       <div
         className={`${BOX_FRAME} max-h-[calc(var(--vvh,100dvh)-3rem)] w-full max-w-[420px] rounded-2xl border border-hairline/40 bg-panel`}
         onClick={(e) => e.stopPropagation()}
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-delete-title"
@@ -127,8 +126,7 @@ export function ConfirmDelete({
         </div>
         </BoxFoot>
       </div>
-    </div>
-  );
+    </div></LayerSurface>;
 }
 
 /** How many messages and saved files a Delete takes with it; null until known. */

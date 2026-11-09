@@ -1,3 +1,4 @@
+import { fixtureLearningBot } from "../testing/learning-bot-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -17,6 +18,7 @@ import { correctMemory, ownerMemoryTicket } from "./authority.ts";
 import { extractCandidates, groundMemoryClaim, type TextOnlyExtractor } from "./extract.ts";
 import { clearPinQuarantineForTests, pinnedCall, resolveLearningConnection } from "./extractor-connections.ts";
 import { FLUX_PINNED_LEARNING_MODEL } from "./extraction-outcomes.ts";
+import { resetFluxKeyModelsForTests, setFluxKeyCatalog } from "../flux-key-models.ts";
 import { forgetMemory } from "./forget.ts";
 import { isMemorySendFenced } from "./learning-send-fence.ts";
 import { learningGate, sampleLearningFence, type HeldRefs, type LearningGate, type LearningPurpose } from "./learning-send.ts";
@@ -30,7 +32,7 @@ import { leasedFeedbackClassifier } from "./learning-wiring.ts";
 import { storeAnchorMessage } from "./testing/anchor-message.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); clearPinQuarantineForTests(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); clearPinQuarantineForTests(); resetFluxKeyModelsForTests(); setFluxKeyCatalog(() => ["flux-auto", "flux-fast", FLUX_PINNED_LEARNING_MODEL]); });
 afterEach(() => { vi.restoreAllMocks(); });
 
 const owner = ownerMemoryTicket();
@@ -68,7 +70,7 @@ function fakeEngine(wait: () => Promise<void> = async () => undefined) {
     respondToRequest: async () => "rejected", interruptTurn: async () => undefined, resetSession: async () => undefined,
   };
   const instance = { instanceId: "codex-fixture", driverKind: "codex", displayName: "Codex", enabled: true, adapter, dispose: async () => undefined } as unknown as ProviderInstance;
-  return { instance: withCliMemoryLearning(instance), written, emitFor };
+  return { instance: fixtureLearningBot(withCliMemoryLearning(instance)), written, emitFor };
 }
 const extractorOf = (instance: ProviderInstance) => resolveLearningConnection({ selected: instance.instanceId, instances: [instance], readKey: () => null, defaultOn: true }).extractor!;
 const signal = () => new AbortController().signal;
@@ -139,7 +141,7 @@ describe("the learning send fence", () => {
     // the shape of claude.ts memorySession: waits (one-shot pause, version probe, env), then admits through the gate and writes stdin
     const run = (): MemorySessionRunner => async (prompt, _signal, { gate }) => { await held; gate?.admit(); writes.push(prompt); gate?.wrote(); return JSON.stringify({ supported: true }); };
     const adapter = { onEvent: () => () => undefined };
-    const instance = withCliMemoryLearning({ instanceId: "claude-fixture", driverKind: "claude", enabled: true, adapter, dispose: async () => undefined } as unknown as ProviderInstance, { run });
+    const instance = fixtureLearningBot(withCliMemoryLearning({ instanceId: "claude-fixture", driverKind: "claude", enabled: true, adapter, dispose: async () => undefined } as unknown as ProviderInstance, { run }));
     const gate = gateOver({ records: [{ id, version: 1 }] });
     const queued = instance.groundMemory!(grounding(SECRET), 64, signal(), gate);
     await tick();

@@ -25,6 +25,8 @@ import type {
 } from "../contracts.ts";
 import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
+import { providerCloseDeadlineMs } from "./child-teardown.ts";
+import { createStopGate, GateStopped } from "./stop-gate.ts";
 import { BOX_AGENT_API, BOX_RUN_DONE, BOX_RUN_ENDED, CLOUD_COMPUTER_UNNAMED_TURN, cloudTurnFinished, cloudTurnStrict, sendCloudPrompt, stopCloudTurn } from "../cloud-computer-turns.ts";
 
 const DRIVER_KIND = "boxAgent";
@@ -84,6 +86,9 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
       turnId,
       createdAt: new Date().toISOString(),
     });
+    // STOP-NONACP-DISPOSE: the one stop gate. Every turn ending and turn.started goes through the entry (finish, markStarted); a Stop
+    // (interruptTurn, stopAll) is `gate.ask`, a dispose is `gate.close`, and the gate alone decides which ending a turn gets.
+    const gate = createStopGate({ engineName: "the Cloud computer", emit: (event) => emit(event as unknown as RuntimeEvent), base });
 
     const api = async (path: string, opts: RequestInit = {}) => {
       const res = await fetch(`${BOX_API}${path}`, {
@@ -109,6 +114,11 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
       }
       if (active.has(threadId)) throw new Error("a turn is already running on this thread");
       const turnId = newId();
+      // The turn's gate entry, from here to its single ending. A Stop, Stop All or dispose before the POST has no `active` entry to reach
+      // (it is set after the POST), so the entry carries the mark: the fence below refuses the POST once it is marked.
+      const entry = gate.enter(threadId, { turnId });
+      // Failures with no mark stay rejections (busy, a refused send, a box refusal); a marked turn ends through the entry.
+      return gate.run(entry, async () => {
       const model = turn.model || MODELS.default;
 
       const prompt = [
@@ -120,15 +130,48 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
         .filter((s) => s !== undefined)
         .join("\n");
 
+      let cancelled = false;
+      // Stop ends every wait of this turn at once, including the wait for room on the bus
+      const stopped = new AbortController();
+      const unlessStopped = (wait: Promise<void>): Promise<void> => stopped.signal.aborted ? Promise.resolve() : new Promise<void>((resolve, reject) => {
+        const onStop = () => resolve();
+        stopped.signal.addEventListener("abort", onStop, { once: true });
+        wait.then(() => { stopped.signal.removeEventListener("abort", onStop); resolve(); }, (error: unknown) => { stopped.signal.removeEventListener("abort", onStop); reject(error); });
+      });
+      /** The live handle of this turn (the prompt is on the box): a mark reaching the entry calls it. Idempotent. */
+      const cancel = () => {
+        if (cancelled) return;
+        cancelled = true;
+        stopped.abort();
+        // C5, section 8: no interrupt from here. The interrupt is box-wide, so it is sent only by stopCloudTurn, under the box lock, when no
+        // other turn on the box still needs it; the Stop is confirmed by the prompt's own status, or the box is fenced until it is cleared
+        void stopCloudTurn(turnId, token).catch((error) => console.error("cloud computer: the Stop could not be confirmed", error));
+      };
+      entry.stopLive = cancel;
+      /** The submission fence: a mark (a Stop or a dispose) refuses the POST. Nothing is awaited between this and the POST's launch. */
+      const refuseIfMarked = () => {
+        const why = gate.why(entry);
+        if (why || entry.done) throw new GateStopped(why);
+      };
+
       // CLOUD-COMPUTER-BOOT-105 C3: the send runs under the box's lock. Work a restart or a failed Stop left on this box is confirmed
       // stopped first (or the send is refused), the events listed now are taken as seen, and the prompt is on disk before it is sent.
       // The submission fence (SendTurnInput.beforeSubmit) is called right before the POST's fetch, with no await between them: a refusal
-      // throws, nothing is sent.
-      const sent = await sendCloudPrompt({
+      // throws, nothing is sent. The caller's fence may itself dispose or stop synchronously, so the mark is read again after it.
+      let sent: Awaited<ReturnType<typeof sendCloudPrompt>>;
+      try {
+      sent = await gate.step(entry, sendCloudPrompt({
         turnId, boxId, threadId, token,
-        ...(turn.beforeSubmit ? { beforeSubmit: turn.beforeSubmit } : {}),
+        stop: { gate, entry },
+        beforeSubmit: () => {
+          refuseIfMarked();
+          turn.beforeSubmit?.();
+          refuseIfMarked();
+        },
         events: async () => { const listed: any = await api(`/boxes/${boxId}/events`); return listed?.events ?? listed?.items ?? []; },
-        post: async () => {
+        // the irreversible call: the entry is live once the box ACCEPTED the prompt (liveWhen: a refused POST, an HTTP error status or a body
+        // saying ok:false, never goes live; a mark that landed during the POST is read by the step below)
+        post: () => gate.launch(entry, async () => {
           const res = await fetch(`${BOX_API}/boxes/${boxId}/prompt`, {
             method: "POST",
             headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -136,8 +179,27 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
             signal: AbortSignal.timeout(30_000),
           });
           return { status: res.status, body: await res.json().catch(() => null) };
+        }, { liveOn: "resolve", liveWhen: (res) => res.status >= 200 && res.status < 300 && (res.body as { ok?: unknown } | null)?.ok !== false }),
+      }), {
+        // a Stop or a dispose landed while the box was answering: the prompt is on the box, so it is Stopped now and the turn ends
+        // through the entry (the stopped pair, or the engine closing), never from a poll that was not started
+        onStopped: (posted) => {
+          if (posted.promptId) {
+            cancel();
+            cloudTurnFinished(turnId, "ended", { terminal: false });   // left to the Stop's confirmation
+          } else {
+            cloudTurnFinished(turnId, "unproven");                    // named no prompt: nothing to stop by id, fenced (E1)
+          }
+          entry.finish({ ok: false, stopReason: "exit_before_result" });
         },
       });
+      } catch (error) {
+        // the step above already ended this turn (the mark landed during the POST): nothing is left to settle, and no late-rejection noise
+        if (error instanceof GateStopped && entry.done) return { turnId };
+        // the box answered but did not take the prompt (a refusal, an HTTP error): liveWhen kept the entry not live, so nothing is left for a
+        // Stop to reach; the failure is the turn's (rethrown, or ended by the mark's precedence)
+        throw error;
+      }
       const started: any = sent.body;
       appendNative(threadId, { dir: "out", source: "box.prompt", msg: { model, prompt, response: started } });
       // real shape (2026-08): {type:"prompt.queued", promptId, promptRun:{id,…},
@@ -147,40 +209,21 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
       // fenced (the next send clears it by the no-id rule) and the turn ends here, saying so.
       if (!promptId) {
         cloudTurnFinished(turnId, "unproven");
-        emit({ ...base(threadId, turnId), type: "turn.started" });
-        emit({ ...base(threadId, turnId), type: "runtime.error", message: CLOUD_COMPUTER_UNNAMED_TURN });
-        emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "error", cost: null });
+        entry.finish({ ok: false, stopReason: "error", error: CLOUD_COMPUTER_UNNAMED_TURN });
         return { turnId };
       }
 
-      let cancelled = false;
-      // Stop ends every wait of this turn at once, including the wait for room on the bus
-      const stopped = new AbortController();
-      const unlessStopped = (wait: Promise<void>): Promise<void> => stopped.signal.aborted ? Promise.resolve() : new Promise<void>((resolve, reject) => {
-        const onStop = () => resolve();
-        stopped.signal.addEventListener("abort", onStop, { once: true });
-        wait.then(() => { stopped.signal.removeEventListener("abort", onStop); resolve(); }, (error: unknown) => { stopped.signal.removeEventListener("abort", onStop); reject(error); });
-      });
-      active.set(threadId, {
-        turnId,
-        boxId,
-        cancel: () => {
-          cancelled = true;
-          stopped.abort();
-          // C5, section 8: no interrupt from here. The interrupt is box-wide, so it is sent only by stopCloudTurn, under the box lock, when no
-          // other turn on the box still needs it; the Stop is confirmed by the prompt's own status, or the box is fenced until it is cleared
-          void stopCloudTurn(turnId, token).catch((error) => console.error("cloud computer: the Stop could not be confirmed", error));
-        },
-      });
-      emit({ ...base(threadId, turnId), type: "turn.started" });
+      active.set(threadId, { turnId, boxId, cancel });
+      entry.markStarted();
       emit({ ...base(threadId, turnId), type: "session.started", sessionId: promptId, model });
 
-      // poll events + run status until the prompt settles
+      // poll events + run status until the prompt settles. A post-launch loop: a Stop or a dispose reaches it through `cancel` (the entry's
+      // stopLive), every await below is a cleanup step (it never throws on a mark), and the one ending is `entry.finish`.
       (async () => {
         // C3: what the box listed before this prompt is never this turn's work
         const seen = new Set<string>(sent.before.map(eventId));
         /** Waits for the bus to have room for this thread before the next poll or the next emitted event. */
-        const gate = async () => { if (!cancelled && !isIntakeOpen(threadId)) await unlessStopped(awaitIntake(threadId)); };
+        const roomOnBus = async () => { if (!cancelled && !isIntakeOpen(threadId)) await unlessStopped(awaitIntake(threadId)); };
         // No clock of its own (0.1.61): every new box event reaches the
         // thread as activity, and the thread's silence watch (the owner's
         // room setting in a room) stops a run that goes quiet, through
@@ -219,17 +262,17 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
           for (;;) {
             if (cancelled) break;
             // the bus is full for this thread: stop polling until it has room, so a box that keeps producing cannot grow it
-            await gate();
+            await gate.cleanupStep(entry, roomOnBus());
             if (cancelled) break;
-            await unlessStopped(new Promise<void>((r) => setTimeout(r, config.pollMs)));
-            await gate();
+            await gate.cleanupStep(entry, unlessStopped(new Promise<void>((r) => setTimeout(r, config.pollMs))));
+            await gate.cleanupStep(entry, roomOnBus());
             if (cancelled) break;
-            const events: any = await api(`/boxes/${boxId}/events`, { signal: AbortSignal.any([stopped.signal, AbortSignal.timeout(30_000)]) }).catch(() => null);
+            const events: any = await gate.cleanupStep(entry, api(`/boxes/${boxId}/events`, { signal: AbortSignal.any([stopped.signal, AbortSignal.timeout(30_000)]) }).catch(() => null));
             // a Stop that landed while the events call was in flight: nothing from it is processed or emitted
             if (cancelled) break;
             const list: any[] = events?.events ?? events?.items ?? [];
             for (const ev of list) {
-              await gate();
+              await gate.cleanupStep(entry, roomOnBus());
               if (cancelled) break;
               const id = eventId(ev);
               if (seen.has(id)) continue;
@@ -267,9 +310,9 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
             }
             if (cancelled) break;
             {
-              await gate();
+              await gate.cleanupStep(entry, roomOnBus());
               if (cancelled) break;
-              const status: any = await api(`/boxes/${boxId}/prompts/${promptId}`, { signal: AbortSignal.any([stopped.signal, AbortSignal.timeout(30_000)]) }).catch(() => null);
+              const status: any = await gate.cleanupStep(entry, api(`/boxes/${boxId}/prompts/${promptId}`, { signal: AbortSignal.any([stopped.signal, AbortSignal.timeout(30_000)]) }).catch(() => null));
               // same for the status call: a stopped turn never settles ok:true with fresh text
               if (cancelled) break;
               appendNative(threadId, { dir: "in", source: "box.prompt.status", msg: status });
@@ -288,7 +331,8 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
                 if (silent) emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", origin: "murage", text: "(finished)" });
                 active.delete(threadId);
                 cloudTurnFinished(turnId, "ended");
-                emit({ ...base(threadId, turnId), type: "turn.completed", ok: true, stopReason: null, cost: null });
+                // stopReason null: the box's own completion
+                entry.finish({ ok: true, stopReason: null });
                 return;
               }
               if (BOX_RUN_ENDED.test(state)) {
@@ -297,29 +341,32 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
                 cloudTurnFinished(turnId, "ended");
                 // A box run that ended because Murage interrupted it is the
                 // user's Stop, not a failure (STOP1); a box that stopped on
-                // its own keeps its own state as the failure reason.
-                if (cancelled) emit({ ...base(threadId, turnId), type: "turn.completed", ok: true, stopReason: "cancelled", cost: null });
-                else emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: state, cost: null });
+                // its own keeps its own state as the failure reason. The
+                // entry reads the mark at emission: the stopped pair or the
+                // engine closing when marked, the box's state otherwise.
+                entry.finish({ ok: false, stopReason: state });
                 return;
               }
             }
           }
           // Murage stopped the turn: the shared cancelled state every driver
-          // settles a user Stop with (STOP1), not an engine failure.
+          // settles a user Stop with (STOP1), not an engine failure. A
+          // dispose nobody asked for ends through the same call as the
+          // engine closing: the entry decides, this loop never names it.
           flushAssistantText();
           active.delete(threadId);
           cloudTurnFinished(turnId, "ended", { terminal: false }); // marked stopping by the Stop: left to its confirmation; no status read, so a quarantine stays
-          emit({ ...base(threadId, turnId), type: "turn.completed", ok: true, stopReason: "cancelled", cost: null });
-        } catch (e) {
+          entry.finish({ ok: false, stopReason: "exit_before_result" });
+        } catch (error) {
           flushAssistantText();
           active.delete(threadId);
           cloudTurnFinished(turnId, "lost");                  // nothing watches the prompt now: fenced (C6)
-          emit({ ...base(threadId, turnId), type: "runtime.error", message: (e as Error).message });
-          emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "error", cost: null });
+          entry.finish({ ok: false, stopReason: "error", error: (error as Error).message });
         }
       })();
 
       return { turnId };
+      }, () => null);
     };
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
@@ -346,19 +393,22 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
         mcpToolSurface: NO_TOOL_SURFACE,
         capabilities: { sessionModelSwitch: "in-session" },
         sendTurn,
-        interruptTurn: async (threadId) => active.get(threadId)?.cancel(),
+        // the gate first, before anything else: a send before its POST has no live handle, only the mark; a live turn's handle is its stopLive
+        interruptTurn: async (threadId) => { gate.ask(threadId); },
         respondToRequest: async () => "unavailable" as const, // this engine has no asks to answer
         hasSession: (threadId) => active.has(threadId),
-        stopAll: async () => {
-          for (const { cancel } of active.values()) cancel();
-        },
+        stopAll: async () => { gate.ask(); },
         onEvent: (listener) => {
           listeners.add(listener);
           return () => listeners.delete(listener);
         },
       },
       dispose: async () => {
+        gate.close();
         for (const { cancel } of active.values()) cancel();
+        // every turn ends (closing, or the stopped pair when a Stop reached it first) before the listeners go; bounded, never an optimistic hang
+        const open = await gate.drain(providerCloseDeadlineMs());
+        gate.settleOutstanding(open);
         listeners.clear();
       },
     };

@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Broad inject matrix — every local host × every agent writer, plus the
 // model-id dialects those CLIs actually speak. Catches day-one failures
 // like Hermes auto-routing to OpenRouter (HTTP 401 Missing Authentication
@@ -448,7 +450,7 @@ describe("Qwen / Hermes ACP turns", () => {
     });
     const recorder = recordEvents(instance.adapter);
     try {
-      await instance.adapter.sendTurn({ threadId: "t-qwen", text: "hi", model: "omlx::gemma-4-31b-it-bf16" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-qwen", text: "hi", model: "omlx::gemma-4-31b-it-bf16" });
       await recorder.until((e) => e.type === "turn.completed");
       const seen = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[]; env: Record<string, string> };
       expect(withoutQwenIsolation(seen.argv)).toEqual(["--acp", "--auth-type", "openai", "-m", "gemma-4-31b-it-bf16"]);
@@ -483,7 +485,7 @@ describe("Qwen / Hermes ACP turns", () => {
     });
     const recorder = recordEvents(instance.adapter);
     try {
-      await instance.adapter.sendTurn({ threadId: "t-hermes", text: "hi", model: "omlx::gemma-4-31b-it-bf16" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-hermes", text: "hi", model: "omlx::gemma-4-31b-it-bf16" });
       await recorder.until((e) => e.type === "turn.completed");
       const seen = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[]; env: Record<string, string> };
       // every Hermes spawn names its profile (62184a14f): a bare `hermes acp` runs the sticky active profile
@@ -520,7 +522,7 @@ describe("room turns must pass the picker model", () => {
     });
     const recorder = recordEvents(instance.adapter);
     try {
-      await instance.adapter.sendTurn({ threadId: "t-qwen-bare", text: "hi" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-qwen-bare", text: "hi" });
       await recorder.until((e) => e.type === "turn.completed");
       const seen = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[] };
       expect(withoutQwenIsolation(seen.argv)).toEqual(["--acp"]);
@@ -542,7 +544,7 @@ describe("room turns must pass the picker model", () => {
     });
     const recorder = recordEvents(instance.adapter);
     try {
-      await instance.adapter.sendTurn({ threadId: "t-hermes-bare", text: "hi" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-hermes-bare", text: "hi" });
       await recorder.until((e) => e.type === "turn.completed");
       let configCalls: Array<{ method: string }> = [];
       try {
@@ -598,3 +600,6 @@ describe("Cloud vs Local catalog access", () => {
     expect(DroidAgentDriver.metadata.access ?? "subscription").toBe("subscription");
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

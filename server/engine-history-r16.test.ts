@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "./testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -370,7 +372,7 @@ describe("D: a hold and a running turn cannot miss each other, and an idle teard
     const holds = new InstanceHolds();
     const fake = fakeInstance("claude-1");
     const decorated = decorateHoldInstance(fake.instance, holds);
-    const sending = decorated.adapter.sendTurn({ threadId: "T1", text: "hi" } as never); // admission is synchronous when nothing is held
+    const sending = decorated.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "T1", text: "hi" } as never); // admission is synchronous when nothing is held
     const held = await holds.hold(["claude-1"], 30, async () => { fake.events.push("holdIdle"); return undefined; });
     await sending;
     expect(held.busy).toEqual(["claude-1"]);
@@ -383,7 +385,7 @@ describe("D: a hold and a running turn cannot miss each other, and an idle teard
     const fake = fakeInstance("claude-1");
     const decorated = decorateHoldInstance(fake.instance, holds);
     const held = holds.hold(["claude-1"], 30, async () => undefined); // installed synchronously
-    const sending = decorated.adapter.sendTurn({ threadId: "T1", text: "hi" } as never);
+    const sending = decorated.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "T1", text: "hi" } as never);
     const result = await held;
     expect(result.busy).toEqual([]);
     await delay(20);
@@ -494,3 +496,6 @@ describe("E: a retry that throws while the record is pending arms the next one",
   });
 });
 
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

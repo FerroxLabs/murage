@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -157,3 +158,5 @@ it("Astra r2 #17: a room turn nobody proved is the owner's does not reach the ro
   expect(access("cole", "launch-chat").scopeIds).toContain(ensureScope("conversation", "launch-goal"));
   expect(access("cole", "launch-chat", { notOwnerAudience: true }).scopeIds).not.toContain(ensureScope("conversation", "launch-goal"));
 });
+
+useOutsideStoreFixture();

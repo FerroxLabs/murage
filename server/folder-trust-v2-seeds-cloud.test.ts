@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // FUIGO-TRUST-V2 r7 addendum 2026-11-01: an unrouted Cloud Fuigo turn's launcher-made home counts
 // as fresh for R4 and R5. The real core and Fuigo support run against the fake ACP CLI with only the
@@ -157,3 +158,6 @@ posixOnly("an unrouted turn on the real Fuigo driver", () => {
     expect(log().filter((entry) => entry.event === "request")).toHaveLength(1);
   }, 60_000);
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

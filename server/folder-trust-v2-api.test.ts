@@ -207,7 +207,9 @@ posixOnly("FUIGO-TRUST-V2 through the harness (generation 2, pooled)", () => {
     const asked = requestsFor(K_TOPOLOGY());
     expect(await forget(K_TOPOLOGY())).toMatchObject({ status: 200, body: { ok: true } });
     expect(stored()[K_TOPOLOGY()]).toBeUndefined();
-    await expect.poll(() => decisions().some((row) => row.decision === "folder-forgotten" && row.summary === K_TOPOLOGY()), { timeout: 5_000 }).toBe(true);
+    // ql2 sink fold (was summary === the folder key): a decision row's summary is the fixed label, the key is not written
+    await expect.poll(() => decisions().some((row) => row.decision === "folder-forgotten" && row.summary === "folder" && row.tool === "folder-trust"), { timeout: 5_000 }).toBe(true);
+    expect(JSON.stringify(decisions().filter((row) => row.decision === "folder-forgotten"))).not.toContain(K_TOPOLOGY());
 
     await send(other, "again");
     const open = await card(other);

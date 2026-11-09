@@ -37,8 +37,8 @@ import { AskForwards, handlePhoneAsk, handlePhoneBearer, handlePhoneBootstrap, i
 import { tmpdir } from "node:os";
 import { join as joinPath } from "node:path";
 import { createHarnessCall, createHarnessStream, handlePushBearer, handlePushSession, isPushSessionRoute, pushBearerExempt, pushBearerScope, readLimited } from "./push-door.ts";
-import { approvalDeviceHeaders, hasLaunchCredential, BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isCloudDesktopJoin, isImageUpload, isInboxRoute, isPresenceRoute, doorForwardHeaders, isRoutineWrite, isStreamTicket, browserProofHeaders, isScriptAccessRoute, needsLaunchProof } from "./routes.ts";
-import { STREAM_UPGRADE_PATH, forwardStreamUpgrade, redactedRequest, rejectUpgrade } from "./stream-upgrade.ts";
+import { approvalDeviceHeaders, hasLaunchCredential, BROWSER_STATIC, MERMAID_FRAME_FILE, denyReason, isCloudDesktopJoin, isImageUpload, isInboxRoute, isPresenceRoute, doorForwardHeaders, isRoutineWrite, callSourceHeaders, isCallSourceRoute, isStreamTicket, browserProofHeaders, isScriptAccessRoute, needsLaunchProof } from "./routes.ts";
+import { CALL_CHANNEL_UPGRADE, STREAM_UPGRADE_PATH, forwardStreamUpgrade, redactedRequest, rejectUpgrade } from "./stream-upgrade.ts";
 import { createSseScrubber, isJson, scrub } from "./wire.ts";
 import { compressBuffer, compressStream, isCompressible, MIN_COMPRESS_BYTES, negotiateEncoding, type Encoding } from "./encoding.ts";
 
@@ -2096,12 +2096,13 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
             ...browserProofHeaders(method, path, options.companionToken),
             // Not owner proof: tells the harness this came through the door (audit C5).
             ...doorForwardHeaders(options.companionToken),
+            ...callSourceHeaders(method, path, req.headers["x-murage-call-id"]),
             // SEC-006: which device is answering, from the registry by the session, beside the launch proof only.
             ...(hasLaunchCredential(options.companionToken) && resolved ? approvalDeviceHeaders(method, path, options.devices.approvalIdentity(resolved.device.id)) : {}),
             ...(carriesProof ? { "x-murage-companion-token": options.companionToken! } : {}),
             // the streaming ticket is bound to this session; a client's own copy
             // of the header never gets here (forwardedHeaders is an allowlist)
-            ...(isStreamTicket(method, path) && resolved ? { "x-murage-stream-principal": `companion:${resolved.device.id}:${resolved.sessionId}` } : {}),
+            ...((isStreamTicket(method, path) || isCallSourceRoute(method, path)) && resolved ? { "x-murage-stream-principal": `companion:${resolved.device.id}:${resolved.sessionId}` } : {}),
           },
         },
         (harness) => {
@@ -2913,11 +2914,13 @@ export function browserDoorLocation(
  *  or revoke ends it. */
 export function createBrowserStreamUpgrade(options: BrowserDoorOptions) {
   const slots = new Map<string, number>();
+  const callSlots = new Map<string, number>();
   return (req: IncomingMessage, socket: Duplex, head: Buffer): void => {
     // Node takes its own error listener off an upgrade socket
     socket.on("error", () => socket.destroy());
     const path = (req.url ?? "/").split("?")[0];
-    if (path !== STREAM_UPGRADE_PATH) return void socket.destroy();
+    const callChannel = CALL_CHANNEL_UPGRADE.test(path);
+    if (path !== STREAM_UPGRADE_PATH && !callChannel) return void socket.destroy();
     const identity = options.identity();
     // originGate logs req.url under MURAGE_DOOR_DIAGNOSE=1: never with the ticket or keyterms in it (Astra I20)
     const gate = originGate(redactedRequest(req), identity);
@@ -2932,7 +2935,8 @@ export function createBrowserStreamUpgrade(options: BrowserDoorOptions) {
       harnessPort: options.harnessPort,
       companionToken: options.companionToken,
       principal: `companion:${resolved.device.id}:${resolved.sessionId}`,
-      slots,
+      callChannel,
+      slots: callChannel ? callSlots : slots,
       maxOpen: replace ? 2 : 1,
       onOpen: (disconnect) => options.connected?.(resolved.device.id, disconnect, resolved.sessionId) ?? (() => {}),
       live: () => options.devices.sessionDeadline(resolved.sessionId) !== null,

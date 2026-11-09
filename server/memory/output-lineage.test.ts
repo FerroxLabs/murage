@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Output lineage in every memory mode (memory schema v6, round 3 item 3).
 // A reply made with no receipt (memory off) rests on the replies its context
 // carried. Its roots are the replies made under a receipt, copied flat into
@@ -216,3 +217,5 @@ it("an OFF engine session that was shown a memory-derived reply is not resumed a
   expect(retainedSessionInvalid(LineageAllowance.tool(), thread, "claude", "s-off", why)).toBe(true);
   expect(why.reason).toBe("session-roots");
 });
+
+useOutsideStoreFixture();

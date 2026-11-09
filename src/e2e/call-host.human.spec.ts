@@ -10,6 +10,9 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
+import { REST_ON_SCREEN } from "../../server/tts/speech-source.ts";
+import { CallSpeechSource } from "../../server/tts/call-speech-source.ts";
+import { protectedHostUtterances } from "../../server/voice/voice-host.ts";
 
 let server: ViteDevServer, origin: string, cache: string;
 
@@ -47,7 +50,10 @@ window.__actions = [];
 window.__config = { flux: { configured: true }, tts: { configured: true, ready: true, routes: { host: "flux", lookup: "flux", speech: "flux", transcribe: "flux" } } };
 // a call with the voice host off (no Flux host route)
 if (window.__hostOff) delete window.__config.tts.routes.host;
-window.__setBot = (patch) => { window.__bot = { ...window.__bot, ...patch }; for (const l of listeners) l(); };
+// A bot text reply that lands is sealed by the server, which then says call.speech.ready on the call's live
+// channel (D24: the call hears only server-released audio for a sealed source); __sealReply is the harness's server.
+const sealReplies = () => { for (const m of window.__bot.messages || []) if (m.role === "bot" && m.kind === "text" && typeof m.text === "string") window.__sealReply?.(m.id, m.text, window.__bot.threadId, window.__bot.id); };
+window.__setBot = (patch) => { window.__bot = { ...window.__bot, ...patch }; sealReplies(); for (const l of listeners) l(); };
 const subscribe = (l) => { listeners.add(l); return () => listeners.delete(l); };
 export const visibleMessages = (bot) => bot.messages;
 export const olderOpenCards = (owner, visible) => visible;
@@ -138,6 +144,8 @@ HTMLMediaElement.prototype.play = function () {
     void Promise.resolve().then(() => this.onplaying?.());
     return Promise.resolve();
   }
+  // a real browser fires "playing" once the sound starts, before "ended"; the product counts a cut clip as heard only after it (tts/index.ts onPlaying)
+  void Promise.resolve().then(() => this.onplaying?.());
   const clip = clips.get(this) ?? { left: window.__clipMs };
   clip.at = Date.now();
   clip.playing = true;
@@ -274,10 +282,13 @@ test.beforeAll(async () => {
     server: { host: "127.0.0.1", watch: null, hmr: false },
     plugins: [tailwindcss(), {
       name: "call-host-fixture", enforce: "pre",
-      resolveId(id) {
+      resolveId(id, importer) {
         const map: Record<string, string> = { "@/state/store": "store", "@/lib/call": "call", "@/lib/push-to-talk": "push", "@/components/DesktopCapabilities": "caps" };
         for (const [alias, key] of Object.entries(map)) if (id === alias || id.endsWith("/src/" + alias.slice(2))) return "\0host-" + key;
         // CallView imports it by a relative path
+        // src/lib modules (bot-call-session.ts, push-to-talk.ts) import the call module as "./call": one call
+        // module for the whole page, the fake one, as in the app
+        if (id === "./call" && importer?.includes("/src/lib/")) return "\0host-call";
         if (id === "./DesktopCapabilities") return "\0host-caps";
         // Silero: the fake mic plays a tone, not speech. Sound counts as
         // speech unless the page says it is noise (window.__vadNoise).
@@ -291,7 +302,9 @@ test.beforeAll(async () => {
         // Call a bot" request, unrelated to this spec — stubbed as "never
         // requested" so it mounts without one, same as a real page nobody
         // clicked that button on.
-        if (id === "\0host-call") return `export const useOnCall=()=>"bot-1";export const currentCall=()=>"bot-1";export const deferCallCleanup=()=>{};export const endCall=()=>{};export const startCall=()=>{};export const takeCallRequest=()=>false;export const useCallRequest=()=>null;`;
+        // useCallBudgetEnded/dismissCallBudgetEnded/callBudgetEnded: the Flux budget stop notice,
+        // stubbed as "no budget stop" so the page mounts as an ordinary call.
+        if (id === "\0host-call") return `export const useOnCall=()=>"bot-1";export const currentCall=()=>"bot-1";export const onCallChange=()=>()=>{};export const deferCallCleanup=()=>{};export const endCall=()=>{};export const startCall=()=>{};export const takeCallRequest=()=>false;export const useCallRequest=()=>null;export const useCallBudgetEnded=()=>null;export const callBudgetEnded=()=>null;export const dismissCallBudgetEnded=()=>{};`;
         if (id === "\0host-push") return `export const usePushToTalk=()=>false;`;
         if (id === "\0host-vad") return `export const SPEECH_CONFIDENCE=0.7;export class SileroVad{static async load(){if(window.__noVad)throw new Error("no model");return new SileroVad()}async push(f){window.__vadFrames=(window.__vadFrames||0)+1;let s=0;for(const x of f)s+=x*x;const loud=Math.sqrt(s/f.length)>0.01;if(window.__vadNoise)return 0;if(window.__vadSparse)return window.__vadFrames%6===0?1:0;return ["linux","ios"].includes(new URLSearchParams(location.search).get("os"))?(loud?1:0):1}reset(){}}`;
         // a Mac (on-device dictation) unless the page says otherwise
@@ -389,6 +402,125 @@ function silentWav(samples = 1200): Buffer {
 // "Mm." is the instant cue the call prefetches through the same route.
 const ACK_PHRASES = new Set(["Mm.", "Let me have a look.", "One sec.", "Okay, give me a moment.", "Sure, let me see."]);
 
+/**
+ * D24 server-owned call speech, faked the way the server keeps it. A call holds a server session
+ * (bot-call-session.ts holdCallSession), so the session routes answer as the server does (open -> callId, ticket,
+ * end) and the live channel echoes each call.alive. The server releases a reply only as framed audio for a sealed
+ * source: call.speech.ready on the live channel for an engine reply (sealReply), an `audio` event at the end of a
+ * voice-host stream for the host's own sealed reply (voice-host-route.ts, presentation.finish), and
+ * POST /api/tts/call/reply streams one clip per utterance, once (call-reply-route.ts). Each utterance released here is
+ * recorded in `spoken`, as /api/tts/speak's text is.
+ */
+// one __sealReply binding per page; a second harness on the same page (the test reloads it) takes it over
+const sealers = new WeakMap<Page, (messageId: string, text: string, threadId: string, botId: string) => void>();
+/** A failed brief's protected fallback, released by the server's own source: CallSpeechSource seal(), fallback() and
+ *  drain() (the protected projection, its opening capped at 450 characters with REST_ON_SCREEN). */
+function briefFallback(raw: string): string[] {
+  const sources = new CallSpeechSource();
+  const call = sources.open("owner", "thread");
+  const reply = sources.begin(call, "bot", "fallback");
+  sources.append(call, reply, 0, raw);
+  sources.seal(call, reply);
+  sources.fallback(call, reply);
+  return [...sources.drain(call, reply)];
+}
+/** What the server releases for a sealed reply: CallSpeechSource seal() and drain(), with the host's own projection
+ *  for a host turn (call-coordinator.ts: an engine reply seals its items, a host turn seals with protectedHostUtterances). */
+function sealedUtterances(raw: string, project?: (text: string) => string[]): string[] {
+  const sources = new CallSpeechSource();
+  const call = sources.open("owner", "thread");
+  const reply = sources.begin(call, "bot", "sealed");
+  sources.append(call, reply, 0, raw);
+  sources.seal(call, reply, undefined, project);
+  return [...sources.drain(call, reply)];
+}
+async function callSpeechServer(page: Page, spoken: string[], allowed: (route: Route) => boolean) {
+  const CALL_ID = "call-1";
+  const utterances = new Map<string, string[]>();
+  const engineTexts = new Map<string, string>();
+  const sealed = new Set<string>();
+  // each reply's thread, and replies claimed or closed: a reply is claimed once, for its own thread, and never comes back
+  const threads = new Map<string, string>();
+  const consumed = new Set<string>();
+  const pendingFrames: string[] = [];
+  let live: { send(message: string): void } | null = null;
+  let hostReplyIds = 0, handDownIds = 0;
+  // the thread the call's session was opened for (bot-call-session.ts posts it); the server binds the call to it
+  let sessionThread: string | undefined;
+  const tell = (frame: Record<string, unknown>) => { const text = JSON.stringify(frame); if (live) live.send(text); else pendingFrames.push(text); };
+  await page.route("**/api/calls/sessions**", async (route: Route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (route.request().method() !== "POST") return route.fulfill({ status: 405 });
+    if (path === "/api/calls/sessions") {
+      const thread = JSON.parse(route.request().postData() ?? "{}")?.threadId;
+      sessionThread = typeof thread === "string" ? thread : undefined;
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ callId: CALL_ID }) });
+    }
+    if (path.endsWith("/ticket")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ticket: "ticket" }) });
+    if (path.endsWith("/end")) return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    return route.fulfill({ status: 404 });
+  });
+  await page.routeWebSocket(/\/api\/calls\/sessions\/[^/]+\/live/, (ws) => {
+    live = ws;
+    for (const text of pendingFrames.splice(0)) ws.send(text);
+    ws.onMessage((message) => {
+      let frame: { type?: unknown; seq?: unknown } = {};
+      try { frame = JSON.parse(String(message)); } catch { return; }
+      if (frame.type === "call.alive") ws.send(JSON.stringify({ type: "call.live", seq: frame.seq }));
+    });
+  });
+  // the page's fake store calls this for every bot text reply that lands: the server seals it and says so
+  const seal = (messageId: string, text: string, threadId: string, botId: string) => {
+    if (sealed.has(messageId)) return;
+    sealed.add(messageId);
+    const replyId = `engine-${messageId}`;
+    engineTexts.set(replyId, text);
+    utterances.set(replyId, sealedUtterances(text));
+    threads.set(replyId, threadId);
+    tell({ type: "call.speech.ready", callId: CALL_ID, threadId, botId, messageId, replyId, bootId: "boot-1" });
+  };
+  if (!sealers.has(page)) await page.exposeFunction("__sealReply", (messageId: string, text: string, threadId: string, botId: string) => sealers.get(page)!(messageId, text, threadId, botId));
+  sealers.set(page, seal);
+  await page.route("**/api/tts/call/reply", async (route: Route) => {
+    if (!allowed(route)) return route.fulfill({ status: 403, contentType: "application/json", body: '{"error":"desktop only"}' });
+    const body = JSON.parse(route.request().postData() ?? "{}");
+    // as call-reply-route.ts answers: a malformed body is 400 (exactly the three identifiers, each /^[\w-]{1,128}$/), a
+    // caller without that call, or for another thread than its session's, is 404 (server/index.ts principal), and a
+    // reply it cannot claim (unknown, another thread's, or already claimed) is 409
+    const refuse = (status: number) => route.fulfill({ status, contentType: "application/json", body: '{"error":"call speech unavailable"}' });
+    if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).length !== 3 || ["callSessionId", "threadId", "replyId"].some((key) => typeof body[key] !== "string" || !/^[\w-]{1,128}$/.test(body[key]))) return refuse(400);
+    if (body.callSessionId !== CALL_ID || sessionThread === undefined || body.threadId !== sessionThread) return refuse(404);
+    const said = threads.get(body.replyId) === body.threadId && !consumed.has(body.replyId) ? utterances.get(body.replyId) : undefined;
+    if (!said) return refuse(409);
+    utterances.delete(body.replyId);
+    consumed.add(body.replyId);
+    spoken.push(...said);
+    const frames = [...said.map((text) => ({ type: "clip", mime: "audio/wav", data: silentWav().toString("base64"), text })), { type: "complete" }];
+    await route.fulfill({ status: 200, contentType: "application/x-ndjson", body: frames.map((f) => `${JSON.stringify(f)}\n`).join("") });
+  });
+  /** The voice-host stream the server sends for a turn's events. */
+  const hostStream = (body: Record<string, any>, given: HostReply): string => {
+    // The server names every hand-down it emits (voice-host-route.ts presentation.handDown).
+    const events: HostReply = given.map((e) => e.type === "hand_down" && typeof e.id !== "string" ? { ...e, id: `hand-down-${++handDownIds}` } : e);
+    // presentation.finish: a successful turn that spoke seals the host's reply (and closes a brief's engine reply); a
+    // failed brief releases the engine reply's protected fallback (briefFallback: its opening, capped at 450)
+    // instead; anything else releases nothing.
+    const sentences = events.filter((e) => e.type === "sentence").map((e) => String(e.text));
+    const success = events.some((e) => e.type === "done") && !events.some((e) => e.type === "error");
+    let audio: string | undefined;
+    if (success && sentences.some((s) => s.trim())) {
+      utterances.set((audio = `host-${++hostReplyIds}`), sealedUtterances(sentences.join("\n"), protectedHostUtterances));
+      threads.set(audio, body.threadId);
+      if (body.brief) { utterances.delete(body.replyId); consumed.add(body.replyId); }
+    } else if (body.brief && engineTexts.has(body.replyId) && !consumed.has(body.replyId)) {
+      utterances.set((audio = body.replyId), briefFallback(engineTexts.get(body.replyId)!));
+    }
+    const stream = audio ? [...events, { type: "audio", callSessionId: CALL_ID, threadId: body.threadId, replyId: audio }] : events;
+    return stream.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("");
+  };
+  return { hostStream };
+}
+
 async function harness(page: Page, os: "mac" | "linux" | "ios" = "mac", options: { query?: string; ready?: boolean } = {}) {
   const spoken: string[] = [];
   const cues: string[] = [];
@@ -414,14 +546,15 @@ async function harness(page: Page, os: "mac" | "linux" | "ios" = "mac", options:
     const headers = route.request().headers();
     return headers["x-murage-surface"] === "desktop" && headers["x-murage-surface-secret"] === "fixture-surface-secret";
   };
+  const speech = await callSpeechServer(page, spoken, desktop);
   await page.route("**/api/bots/bot-1/voice-host", async (route: Route) => {
     if (!desktop(route)) return route.fulfill({ status: 403, contentType: "application/json", body: '{"error":"desktop only"}' });
     const body = JSON.parse(route.request().postData() ?? "{}");
     hostBodies.push(body);
     if (body.warm) return route.fulfill({ status: 202, contentType: "application/json", body: "{}" });
     if (h.delayMs) await new Promise((r) => setTimeout(r, h.delayMs));
-    const events = replies.shift() ?? [{ type: "done" }];
-    await route.fulfill({ status: 200, contentType: "text/event-stream", body: events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("") });
+    const events: HostReply = replies.shift() ?? [{ type: "done" }];
+    await route.fulfill({ status: 200, contentType: "text/event-stream", body: speech.hostStream(body, events) });
   });
   const transcribed: number[] = [];
   const heard: string[] = [];
@@ -453,7 +586,8 @@ test("the host answers first, hands work down through the ordinary send, and kee
   // 1. answered by the host, spoken sentence by sentence, nothing sent
   h.replies.push([{ type: "sentence", text: "Three meetings today." }, { type: "sentence", text: "Two approvals are waiting." }, { type: "done" }]);
   await page.evaluate(() => (window as any).__say("What's on the board?"));
-  await expect.poll(() => h.spoken).toEqual(["Three meetings today.", "Two approvals are waiting."]);
+  // the server releases the host's sealed reply as protectedHostUtterances clips: short sentences share one clip
+  await expect.poll(() => h.spoken).toEqual(["Three meetings today. Two approvals are waiting."]);
   // listening again, with a recognizer session running for the owner
   await expect(page.getByText("Listening", { exact: true })).toBeVisible();
   await expect.poll(() => page.evaluate(() => (window as any).__speech.running)).toBe(true);
@@ -555,8 +689,12 @@ test("a long answer from the engine is told as a brief, and a failed brief reads
   const long = `## Today's AI news\n\n${"- A long bullet about a launch that goes on for a while. ".repeat(12)}`;
   h.replies.push([{ type: "sentence", text: "Three big stories today." }, { type: "sentence", text: "The full version is in the chat." }, { type: "done" }]);
   await page.evaluate((text) => (window as any).__setBot({ messages: [{ id: "n1", role: "bot", kind: "text", at: 1, text }] }), long);
-  await expect.poll(() => h.spoken).toEqual(["Three big stories today.", "The full version is in the chat."]);
-  expect(h.hostBodies.filter((b) => !b.warm).at(-1)).toMatchObject({ brief: true, text: long, threadId: "thread-1" });
+  await expect.poll(() => h.spoken).toEqual(["Three big stories today. The full version is in the chat."]);
+  // D24 (server-owned call speech): the page names the sealed engine reply and the server reads its protected
+  // source, so the answer's text never leaves the page for the host
+  const brief = h.hostBodies.filter((b) => !b.warm).at(-1);
+  expect(brief).toMatchObject({ brief: true, text: "", replyId: "engine-n1", threadId: "thread-1", history: [] });
+  expect(JSON.stringify(brief)).not.toContain("A long bullet");
 
   // the fast model is unreachable: the owner still hears the answer. It
   // lands while the brief is still being told, so it waits its turn.
@@ -565,6 +703,9 @@ test("a long answer from the engine is told as a brief, and a failed brief reads
   const second = long.replace("Today's", "Tonight's");
   await page.evaluate((text) => (window as any).__setBot({ messages: [{ id: "n2", role: "bot", kind: "text", at: 2, text }] }), second);
   await expect.poll(() => h.spoken.join(" ")).toContain("Tonight's AI news");
+  // the fallback is the protected opening, capped, with the rest left on screen
+  expect(h.spoken.join(" ").length).toBeLessThanOrEqual(450);
+  expect(h.spoken.at(-1)!.endsWith(REST_ON_SCREEN)).toBe(true);
 
   // a short answer is read as written, without asking the host
   h.spoken.length = 0;
@@ -827,21 +968,25 @@ test("on a Mac the recognizer is fed the echo-cancelled microphone and the owner
 test("a stray word pauses the bot and it carries on; the owner's words stop it, and the host is told only what was heard", async ({ page }) => {
   const h = await harness(page);
   await page.evaluate(() => ((window as any).__clipMs = 4_000));
-  h.replies.push([{ type: "sentence", text: "Here is a long summary of the whole board." }, { type: "sentence", text: "It goes on for a while." }, { type: "done" }]);
+  // two sentences too long to share one server clip (protectedHostUtterances joins clips up to 320 characters), so
+  // the reply is two clips and the owner cuts in during the second
+  const first = "Here is a long summary of the whole board, starting with the three meetings on your calendar today, the two approvals still waiting for you, and the invoice that came in overnight from the printer.";
+  const second = "It goes on for a while, because after that come the four new messages from the team, the shipping update for the client order, and a reminder that the quarterly report is due at the end of the week.";
+  h.replies.push([{ type: "sentence", text: first }, { type: "sentence", text: second }, { type: "done" }]);
   await page.evaluate(() => (window as any).__say("What's on the board?"));
-  await expect(page.getByText("Here is a long summary of the whole board.")).toBeVisible();
+  await expect(page.getByText("Here is a long summary of the whole board,")).toBeVisible();
 
   // one word (a cough the recognizer guessed at): paused, then resumed
   await page.evaluate(() => (window as any).__say("uh", true));
   await expect.poll(() => page.evaluate(() => (window as any).__pauses)).toBe(1);
   await page.waitForTimeout(2_600);
-  await expect(page.getByText("Here is a long summary of the whole board.")).toBeVisible();
+  await expect(page.getByText("Here is a long summary of the whole board,")).toBeVisible();
   expect(await actions(page)).toEqual([]);
 
-  // the second sentence plays after the first finishes: the call carried on.
+  // the second sentence plays after the first: the call carried on.
   // The read-along shows the sentence still to come as dim text before it
   // sounds, so "being spoken" is the current line, not any text on screen.
-  await expect(page.locator('[data-read-along="current"]')).toContainText("It goes on for a while.", { timeout: 8_000 });
+  await expect(page.locator('[data-read-along="current"]')).toContainText("It goes on for a while,", { timeout: 8_000 });
 
   // two words: the owner. Stopped, and the host learns what was heard
   await page.evaluate(() => (window as any).__say("hold on", true));
@@ -851,7 +996,7 @@ test("a stray word pauses the bot and it carries on; the owner's words stop it, 
   await expect.poll(() => h.hostBodies.at(-1)?.text).toBe("hold on, just the first meeting");
   expect(h.hostBodies.at(-1).history.at(-1)).toEqual({
     role: "host",
-    text: "Here is a long summary of the whole board. It goes on for a while… [the owner cut in here]",
+    text: `${first} ${second.replace(/[.!?]+$/, "")}… [the owner cut in here]`,
   });
 });
 
@@ -2100,7 +2245,11 @@ window.__config = { tts: { configured: true, ready: true, routes: { host: "flux"
 if (window.__hostOff) delete window.__config.tts.routes.host;
 window.__streaming = {};
 const notify = () => { for (const l of listeners) l(); };
-window.__setGroup = (patch) => { window.__room = { ...window.__room, group: { ...window.__room.group, ...patch } }; notify(); };
+window.__setGroup = (patch) => { window.__room = { ...window.__room, group: { ...window.__room.group, ...patch } }; 
+  // the server seals each member's text reply and says call.speech.ready (D24); __sealReply is the harness's server
+  for (const m of window.__room.group.messages || []) if (m.role === "bot" && m.kind === "text" && !m.widget && m.text?.trim() && m.from?.botId) window.__sealReply?.(m.id, m.text, window.__room.group.threadId, m.from.botId);
+  notify();
+};
 const subscribe = (l) => { listeners.add(l); return () => listeners.delete(l); };
 const dispatch = (a) => {
   window.__actions.push(a);
@@ -2126,16 +2275,17 @@ export const useFixtureRoom = () => useSyncExternalStore(subscribe, () => window
       server: { host: "127.0.0.1", watch: null, hmr: false },
       plugins: [tailwindcss(), {
         name: "room-call-fixture", enforce: "pre",
-        resolveId(id) {
+        resolveId(id, importer) {
           const map: Record<string, string> = { "@/state/store": "store", "@/lib/call": "call", "@/lib/push-to-talk": "push" };
           for (const [alias, key] of Object.entries(map)) if (id === alias || id.endsWith("/src/" + alias.slice(2))) return "\0room-" + key;
+          if (id === "./call" && importer?.includes("/src/lib/")) return "\0room-call";
           if (id === "/__room.js") return "\0room-entry";
         },
         load(id) {
           if (id.endsWith("/src/styles.css")) return readFileSync(id, "utf8").replace('@import "tailwindcss";', '@import "tailwindcss" source(none);\n@source "./components";');
           if (id === "\0room-store") return ROOM_STORE;
           if (id === "\0room-push") return `export const usePushToTalk=()=>false;`;
-          if (id === "\0room-call") return `export const useOnCall=()=>"room1";export const currentCall=()=>"room1";export const deferCallCleanup=()=>{};export const endCall=()=>{};export const startCall=()=>{};export const takeCallRequest=()=>false;export const useCallRequest=()=>null;`;
+          if (id === "\0room-call") return `export const useOnCall=()=>"room1";export const currentCall=()=>"room1";export const onCallChange=()=>()=>{};export const deferCallCleanup=()=>{};export const endCall=()=>{};export const startCall=()=>{};export const takeCallRequest=()=>false;export const useCallRequest=()=>null;`;
           if (id !== "\0room-entry") return;
           return `
 import React from "react"; import { createRoot } from "react-dom/client";
@@ -2182,13 +2332,14 @@ createRoot(document.getElementById("root")).render(React.createElement(Fixture))
       const text = JSON.parse(route.request().postData() ?? "{}").text;
       await route.fulfill({ contentType: "application/json", body: JSON.stringify({ ready: true, utterances: [text] }) });
     });
+    const speech = await callSpeechServer(page, spoken, () => true);
     await page.route("**/api/bots/*/voice-host", async (route: Route) => {
       const body = JSON.parse(route.request().postData() ?? "{}");
       if (body.warm) return route.fulfill({ status: 202, contentType: "application/json", body: "{}" });
       hostBodies.push(body);
       hostBots.push(new URL(route.request().url()).pathname.split("/")[3]);
-      const events = replies.shift() ?? [{ type: "done" }];
-      await route.fulfill({ status: 200, contentType: "text/event-stream", body: events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("") });
+      const events: HostReply = replies.shift() ?? [{ type: "done" }];
+      await route.fulfill({ status: 200, contentType: "text/event-stream", body: speech.hostStream(body, events) });
     });
     await page.goto(`${roomOrigin}/__room`);
     await expect(page.locator('button[aria-label="Hang up"]')).toBeVisible();
@@ -2352,8 +2503,9 @@ createRoot(document.getElementById("root")).render(React.createElement(Fixture))
     });
     await roomSay(page, "Sable, check the deploy");
     await expect.poll(() => page.evaluate(() => (window as any).__hostSent)).toBe(true);
-    // another member is speaking when the owner cuts in
-    await page.route("**/api/tts/speak", async () => {});
+    // another member is speaking when the owner cuts in: its reply audio (D24: the server releases it through
+    // /api/tts/call/reply) never finishes
+    await page.route("**/api/tts/call/reply", async () => {});
     await page.evaluate(() => (window as any).__setGroup({ messages: [{ id: "m9", role: "bot", kind: "text", text: "Almost there.", from: { botId: "moss", name: "Moss", color: "blue" }, at: Date.now() }] }));
     await page.getByRole("button", { name: "Interrupt" }).click();
     await expect.poll(() => page.evaluate(() => (window as any).__hostAborted)).toBe(true);

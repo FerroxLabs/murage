@@ -18,6 +18,7 @@ vi.resetModules();
 const { alwaysAskCommand } = await import("./always-ask.ts");
 const { autoVerdict, isCommandTool } = await import("./auto-approve.ts");
 const { classifyStopLine } = await import("./stop-line.ts");
+const { expectOrdinary } = await import("./testing/marks-doubt-free.ts");
 type StopLinePlace = import("./stop-line.ts").StopLinePlace;
 type AutoContext = import("./auto-approve.ts").AutoContext;
 
@@ -90,7 +91,8 @@ describe("A-b1-1: attached inline code, POSIX reader", () => {
     expect(posixRule(attached)).toBe(twin);
   });
   it.each(POSIX_ORDINARY)("%s stays ordinary", (cmd) => {
-    expect(posixRule(cmd)).toBeNull();
+    // MARKS r12 re-baseline: the doubt-free read is clean; the strict read adds at most a closed-list doubt (non-owner No limits turns)
+    expectOrdinary(cmd, CWD);
   });
 });
 
@@ -113,7 +115,7 @@ describe("perl -l takes no word: the code after it is read", () => {
     expect(posixRule(flagged)).toBe(twin);
   });
   it.each(["perl -l -e 'print 1'", "perl -l -ne 'print'", "ruby -l -e 'puts 1'"])("%s stays ordinary", (cmd) => {
-    expect(posixRule(cmd)).toBeNull();
+    expectOrdinary(cmd, CWD); // MARKS r12 re-baseline: the doubt-free read is clean; the strict read adds at most a closed-list doubt (non-owner No limits turns)
   });
   // 1.0.5 r8: lua's `-l` loads a module first, from `./?.lua` too: it asks
   it("lua -l socket -e 'print(1)' asks: the module loads first", () => {
@@ -214,7 +216,7 @@ describe("H2: perl digit bundles read their code", () => {
     expect(posixRule(digits)).toBe(twin);
   });
   it.each(["perl -0777pe 's/a/b/g' notes.txt", "perl -0ne 'print' notes.txt", "perl -l0e 'print 1'"])("%s stays ordinary", (cmd) => {
-    expect(posixRule(cmd)).toBeNull();
+    expectOrdinary(cmd, CWD); // MARKS r12 re-baseline: the doubt-free read is clean; the strict read adds at most a closed-list doubt (non-owner No limits turns)
   });
   it("PowerShell reads a digit bundle as inline code", () => {
     expect(pwshRule("perl -0777pe 'print'")).toBe(pwshRule("perl -pe 'print'"));

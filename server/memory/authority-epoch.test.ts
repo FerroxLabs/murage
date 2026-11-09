@@ -237,3 +237,65 @@ it("a bundle reads the owner's pins once while nothing about a pin changed, and 
     expect(pinned.pinned.map(row => row.id)).toContain(String(record.id));
   } finally { pinReads.restore(); }
 });
+
+// A conversation deletion is a durable scoped denial, not a new global access epoch.
+it("two conversation deletes preserve B's prepared receipt, deny A even after restart, and fence background publication", async () => {
+  const { captureThreadDeletion } = await import("./capture.ts");
+  const { assertMemoryAccess, reconcileMemoryRoster } = await import("./policy.ts");
+  const { learningDeletionEpoch, sourceDenied } = await import("./deny.ts");
+  const { closeDatabase } = await import("../database.ts");
+  const roster = { bots: [{ id: "bot", threadId: THREAD }, { id: "other", threadId: "other-thread" }], groups: [] };
+  reconcileMemoryRoster(roster);
+  const a = accessFor(roster).access, b = accessFor(roster, "other", "other-thread").access;
+  const { sourceId } = captureAndPublish("Private words from A.");
+  const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("hello", b, emptyBridge, { allowance: LineageAllowance.tool() }), b, "engine");
+  const own = new MemoryDispatchReceipt(await buildMemoryBundle("private", a, emptyBridge, { allowance: LineageAllowance.tool() }), a, "engine");
+  const clock = learningDeletionEpoch(sql());
+  transaction(db => captureThreadDeletion(db, THREAD));
+  expect(() => assertMemoryAccess(a)).toThrow("MEMORY_CONTEXT_REVOKED");
+  expect(() => own.assertCurrent()).toThrow("MEMORY_CONTEXT_REVOKED");
+  expect(sourceDenied(sql(), sourceId)).toBe(true);
+  expect(() => receipt.assertCurrent()).not.toThrow();
+  expect(() => receipt.accepted()).not.toThrow();
+  expect(learningDeletionEpoch(sql())).toBe(clock + 1);
+  transaction(db => captureThreadDeletion(db, "another-deleted-thread"));
+  expect(() => receipt.assertCurrent()).not.toThrow();
+  expect(learningDeletionEpoch(sql())).toBe(clock + 2);
+  transaction(db => captureThreadDeletion(db, THREAD)); // idempotent boot replay
+  expect(learningDeletionEpoch(sql())).toBe(clock + 2);
+  closeDatabase();
+  expect(sourceDenied(sql(), sourceId)).toBe(true);
+  expect(learningDeletionEpoch(sql())).toBe(clock + 2);
+  expect(() => assertMemoryAccess(accessFor(roster).access)).toThrow("MEMORY_CONTEXT_REVOKED");
+  expect(() => assertMemoryAccess(accessFor(roster, "other", "other-thread").access)).not.toThrow();
+});
+
+it("B still refuses a prepared frame that actually cites deleted A, including stale search hits after restart", async () => {
+  const { captureThreadDeletion } = await import("./capture.ts");
+  const { reconcileMemoryRoster } = await import("./policy.ts");
+  const { closeDatabase } = await import("../database.ts");
+  const roster = { bots: [{ id: "bot", threadId: THREAD, tasks: [{ threadId: "other-thread" }] }], groups: [] };
+  reconcileMemoryRoster(roster);
+  const { sourceId } = captureAndPublish("ZEBRA-PRIVATE launch date is Friday.");
+  const row = sql().prepare("SELECT id,version FROM memory_records LIMIT 1").get()!;
+  const bridge = { search: async () => ({ hits: [{ id: String(row.id), version: Number(row.version), score: 1, lexical: true }], vectorRows: 1, coverageComplete: true }) };
+  const b = accessFor(roster, "bot", "other-thread").access;
+  const bundle = await buildMemoryBundle("launch date", b, bridge, { allowance: LineageAllowance.tool() });
+  expect(bundle.recordVersions.map(r => r.id)).toContain(String(row.id));
+  const receipt = new MemoryDispatchReceipt(bundle, b, "engine");
+  // A source-only lookup receipt must also refuse before cleanup changes source state.
+  const { assertMemoryDisclosureCurrent } = await import("./disclosures.ts");
+  sql().prepare("UPDATE memory_disclosures SET record_versions='[]',source_versions=? WHERE bundle_id=?").run(JSON.stringify([{ id: sourceId, revision: 1 }]), bundle.bundleId);
+  expect(() => assertMemoryDisclosureCurrent(bundle.bundleId, b)).not.toThrow();
+  const { INLINE_REVOCATION } = await import("./memory-revocation.ts");
+  const ms = INLINE_REVOCATION.ms;
+  try { INLINE_REVOCATION.ms = 0; transaction(db => captureThreadDeletion(db, THREAD)); }
+  finally { INLINE_REVOCATION.ms = ms; }
+  expect(sql().prepare("SELECT state FROM memory_sources WHERE id=?").get(sourceId)!.state).toBe("active");
+  expect(() => assertMemoryDisclosureCurrent(bundle.bundleId, b)).toThrow("MEMORY_CONTEXT_REVOKED");
+  expect(() => receipt.assertCurrent()).toThrow();
+  closeDatabase();
+  const after = await buildMemoryBundle("launch date", accessFor(roster, "bot", "other-thread").access, bridge, { allowance: LineageAllowance.tool() });
+  expect(after.text).not.toContain("ZEBRA-PRIVATE");
+  expect(after.recordVersions.map(r => r.id)).not.toContain(String(row.id));
+});

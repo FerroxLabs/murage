@@ -1,10 +1,15 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Thread recall handler (THREAD-RECALL-DESIGN r6 rules 1 to 9, 11 to 17, 21, 23a and 23a's tests; seal S1). The handler is driven through its
 // host interface with a real database, real message store, real lineage-write and a real memory policy; only the turn registry is a stand-in.
-import { mkdirSync, readFileSync } from "node:fs";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { beginOutsideTurn, forgetOutsideState, markTurnOutside, turnOutsideRead, wireOutsideStore } from "./email/external-marks.ts";
+import { fileOutsideStore } from "./outside-store.ts";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database, transaction } from "./database.ts";
 import { appendMessage, closeMessageDb, insertMessageBefore, readMessage } from "./message-db.ts";
@@ -328,6 +333,29 @@ describe("thread_list (rule 7)", () => {
 });
 
 describe("thread_read (rule 8)", () => {
+  it.each(["around", "before", "after"] as const)("C2-LOW: %s keeps an anchor above a corrupt ancestor checking", async (direction) => {
+    for (let i = 0; i < 6; i++) put("t-task", `m${i}`, `chain ${i}`, 1000 + i, { role: "user" });
+    const r = rig();
+    r.state.released.set("m0", "t-task");
+    db().exec("DELETE FROM thread_key; DELETE FROM seg; DELETE FROM msg_branch; DELETE FROM line; DELETE FROM fill_pending");
+    db().prepare("UPDATE messages SET json = ? WHERE thread_id = ? AND id = 'm2'").run("{broken", "t-task");
+    const { body } = await r.call("thread_read", { message_id: "m0", direction });
+    expect(body.status).not.toBe("not-reachable");
+    expect(body).toEqual({ rows: [], more: true, checking: 1, unavailable: 0, notes: [CHECKING_LINE] });
+    expect(r.events).not.toContain("seal");
+    expect(r.state.released.size).toBe(1);
+  });
+  it("C2-LOW: a complete unprepared branch reports an off-branch anchor not-reachable", async () => {
+    put("t-task", "root", "root", 1000, { role: "user" });
+    put("t-task", "off", "off branch", 1001, { role: "user" });
+    put("t-task", "leaf", "active", 1002, { role: "user", parentId: "root" });
+    const r = rig();
+    r.state.released.set("off", "t-task");
+    db().exec("DELETE FROM thread_key; DELETE FROM seg; DELETE FROM msg_branch; DELETE FROM line; DELETE FROM fill_pending");
+    for (const direction of ["around", "before", "after"] as const) {
+      expect((await r.call("thread_read", { message_id: "off", direction })).body).toEqual({ rows: [], status: "not-reachable" });
+    }
+  });
   function conversation() {
     for (let i = 0; i < 12; i++) put("t-task", `r${String(i).padStart(2, "0")}`, `line ${i} about needle`, 1000 + i, { role: i % 2 ? "bot" : "user" });
   }
@@ -862,3 +890,28 @@ describe("a line the owner forgot is never returned (106 recall-forgotten)", () 
     expect((await r.call("thread_list")).body.threads.find((entry: Json) => entry.threadId === "t-task").lastAt).toBe(new Date(4000).toISOString());
   });
 });
+
+// NOLIMITS v1 1.0.19 4.2 r3 (U3c): a thread tool marks the reading turn only by what it released: a row of a turn that was
+// marked (test T), never the call itself
+describe("NOLIMITS 4.2 r3 (U3c): thread recall marks on evidence", () => {
+  afterEach(() => forgetOutsideState());
+  it("clean rows are released and leave the turn clean; a row of a marked turn marks it memory", async () => {
+    let now = 1_000;
+    expect(wireOutsideStore(fileOutsideStore(join(mkdtempSync(join(tmpdir(), "recall-outside-")), "o.jsonl")), () => now)).toBe(true);
+    seed();
+    beginOutsideTurn("t-main", "claude", undefined, false);
+    const r = rig();
+    expect((await r.call("thread_search", { query: "vault" })).body.hits.length).toBeGreaterThan(0);
+    expect((await r.call("thread_read", { message_id: "b1", direction: "around" })).body.rows.length).toBeGreaterThan(0);
+    expect((await r.call("thread_list")).body.threads.length).toBeGreaterThan(0);
+    expect(turnOutsideRead("t-main")).toBeNull();
+    // the trip task had a marked turn when b2 was written
+    now = 3_000; beginOutsideTurn("t-task", "claude", undefined, false); markTurnOutside("t-task", "web page");
+    now = 900_000; beginOutsideTurn("t-main", "claude", undefined, false);
+    expect(turnOutsideRead("t-main")).toBeNull();
+    expect((await r.call("thread_search", { query: "vault" })).body.hits.map((hit: Json) => hit.messageId)).toContain("b2");
+    expect(turnOutsideRead("t-main")).toBe("memory");
+  });
+});
+
+useOutsideStoreFixture();

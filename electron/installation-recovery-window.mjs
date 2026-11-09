@@ -4,7 +4,7 @@ import { createInstallationRecoveryController } from "./installation-recovery-co
 import { readBackupIdentity } from "./backup-mode.mjs";
 
 const CHANNEL = "installation-recovery:action";
-export function openInstallationRecoveryWindow({ BrowserWindow, ipcMain, dialog, baseDir, context, isAvailable, canRestoreSeparate, canCaptureSeparate, runCaptureSeparate, planSeparate, runSeparate, runEncryptedSeparate, encryptedAvailable, verifyEncrypted, retainedDestination, run, retry, openDiagnostics, onClosed }) {
+export function openInstallationRecoveryWindow({ BrowserWindow, ipcMain, dialog, baseDir, context, isAvailable, canRestoreSeparate, canCaptureSeparate, runCaptureSeparate, planSeparate, runSeparate, runEncryptedSeparate, encryptedAvailable, verifyEncrypted, retainedDestination, run, retry, relaunchAfterRestore, updatePause, returnRevoked, openDiagnostics, onClosed }) {
   const page = path.join(baseDir, "recovery", "index.html");
   const pageUrl = pathToFileURL(page).href;
   const win = new BrowserWindow({
@@ -29,7 +29,7 @@ export function openInstallationRecoveryWindow({ BrowserWindow, ipcMain, dialog,
     return result;
   });
   const controller = createInstallationRecoveryController({
-    isTrustedSender: trusted, isAvailable, canRestoreSeparate, canCaptureSeparate, runCaptureSeparate, planSeparate, runSeparate, runEncryptedSeparate, encryptedAvailable, retainedDestination, run: runAndFollow, retry, openDiagnostics,
+    isTrustedSender: trusted, isAvailable, canRestoreSeparate, canCaptureSeparate, runCaptureSeparate, planSeparate, runSeparate, runEncryptedSeparate, encryptedAvailable, retainedDestination, run: runAndFollow, retry, relaunchAfterRestore, updatePause, returnRevoked, openDiagnostics,
     chooseEncryptedBackup: async () => {
       const picked=await dialog.showOpenDialog(win,{title:"Choose the backup to restore",properties:["openFile"],filters:[{name:"Encrypted Murage backup",extensions:["age"]}]});
       return picked.canceled||picked.filePaths.length!==1?null:{path:picked.filePaths[0],name:path.basename(picked.filePaths[0])};

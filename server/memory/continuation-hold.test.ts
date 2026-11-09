@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -60,6 +61,8 @@ function countStatements(match: (text: string) => boolean) {
   (db as unknown as { prepare: unknown }).prepare = (text: string) => { if (match(text)) n++; return real(text); };
   return { get n() { return n; }, reset: () => { n = 0; }, restore: () => { (db as unknown as { prepare: unknown }).prepare = real; } };
 }
+// Continuations try current hydration first and may fall back to disclosed hydration.
+const continuationHydrations = (text: string) => text.startsWith("SELECT * FROM memory_records WHERE id=? AND version=? AND state");
 const hydrations = (text: string) => text.startsWith("SELECT * FROM memory_records WHERE id=? AND version=? AND state='active'");
 
 describe("a change between two turns is seen at the next one", () => {
@@ -181,11 +184,14 @@ describe("a direct write to each covered table moves the epoch", () => {
       db.prepare("INSERT OR IGNORE INTO memory_tombstones(id,target_type,target_id,revision,content_hash,epoch,reason,created_at) VALUES('t0','record','y',NULL,NULL,1,'r',1)").run();
       db.prepare("INSERT OR IGNORE INTO memory_disclosure_outputs VALUES('F1','chat','m1')").run();
       db.prepare("INSERT OR IGNORE INTO memory_output_roots VALUES('chat','m1','s1')").run();
-      const before = authorityStamp(), hardBefore = authorityParts()!.hard;
+      const before = authorityStamp(), partsBefore = authorityParts()!, hardBefore = partsBefore.hard;
       const result = db.prepare(sql).run();
       expect(Number(result.changes), `${sql} touched nothing`).toBeGreaterThan(0);
       expect(authorityStamp(), name).not.toBe(before);
-      expect(authorityParts()!.hard, `${name} must be a hard change`).not.toBe(hardBefore);
+      if(name==="disclosures: revoke"){
+        expect(authorityParts()!.hard).toBe(hardBefore);
+        expect([...softChangedSince(partsBefore.seq)!]).toContain("thread:chat");
+      }else expect(authorityParts()!.hard, `${name} must be a hard change`).not.toBe(hardBefore);
     });
   }
 
@@ -199,7 +205,7 @@ describe("a direct write to each covered table moves the epoch", () => {
     expect([...softChangedSince(before.seq)!]).toEqual([made.sourceId]);
   });
 
-  it("a lookup companion replaced by its grown successor is soft; a receipt deleted any other way is hard", () => {
+  it("a lookup companion replacement is quiet; deleting it logs its thread dependency", () => {
     const made = newRecord(), second = newRecord();
     receipt("F1", [{ id: made.record, version: 1 }]);
     expect(noteMemoryLookup("F1", "F1:lookup", [{ id: made.record, version: 1, evidence: [] }], [])).toBe(true);
@@ -208,7 +214,8 @@ describe("a direct write to each covered table moves the epoch", () => {
     expect(authorityParts()!.hard).toBe(before.hard);
     const mid = authorityParts()!;
     database().prepare("DELETE FROM memory_disclosures WHERE bundle_id='F1:lookup'").run();
-    expect(authorityParts()!.hard).not.toBe(mid.hard);
+    expect(authorityParts()!.hard).toBe(mid.hard);
+    expect([...softChangedSince(mid.seq)!]).toEqual(["thread:chat"]);
   });
 
   it("nothing is cached inside a transaction", () => {
@@ -261,3 +268,34 @@ describe("a session's turns judge only what is new", () => {
     expect(work[495]!).toBeLessThanOrEqual(work[100]! * 1.3);
   });
 });
+
+
+it.each(["revoke","delete"])("%s logs the receipt thread, rechecks its session and preserves an unrelated hold", operation => {
+  const made=newRecord();
+  receipt("F1",[{id:made.record,version:1}]);sessionRow();
+  receipt("unrelated",[{id:made.record,version:1}]);
+  database().prepare("UPDATE memory_disclosures SET thread_id='older',native_session='U' WHERE bundle_id='unrelated'").run();
+  recordSessionRoots("older","engine","U",outputRootsFor(LineageAllowance.tool(1_000_000_000),[]));
+  stampFreshSession(database(),"older","engine","U");
+  const registry=new InternalCapabilities();registry.begin("bot","older","g");
+  const other=memoryAccess(registry,registry.resolve(`Bearer ${registry.mint({botId:"bot",threadId:"older",generation:"g",depth:0,kind:"memory",skillAuthoring:false})}`)!,()=>roster);
+  const otherCheck=()=>continuationMemoryRevoked(LineageAllowance.tool(),"older","engine","U",other);
+  const spy=countStatements(continuationHydrations);
+  try {
+    expect(check()).toBe(false);
+    spy.reset();
+    // Positive control: a cold continuation must hydrate its disclosed record.
+    expect(otherCheck()).toBe(false);
+    expect(spy.n).toBeGreaterThan(0);
+    spy.reset();
+    const before=authorityParts()!;
+    database().prepare(operation==="revoke"?"UPDATE memory_disclosures SET state='revoked' WHERE bundle_id='F1'":"DELETE FROM memory_disclosures WHERE bundle_id='F1'").run();
+    expect(authorityParts()!.hard).toBe(before.hard);
+    expect([...softChangedSince(before.seq)!]).toEqual(["thread:chat"]);
+    expect(otherCheck()).toBe(false);expect(spy.n).toBe(0);
+    // A revoked receipt must refuse. A removed last receipt must also invalidate its old proof.
+    expect(check()).toBe(true);
+  } finally {spy.restore();}
+});
+
+useOutsideStoreFixture();

@@ -12,6 +12,7 @@ import { PhoneCall } from "lucide-react";
 import { api, type Bot, type Message } from "@/state/store";
 import { startCall } from "@/lib/call";
 import { BOT_CALL_WORDS, cardActions, receiptLines, type CallView } from "@/lib/bot-calls";
+import { localizeCallCardText } from "@/lib/outside-note";
 import { CALL_PROTOCOL } from "../../shared/bot-calls-contract";
 
 const button = "min-h-9 rounded-lg border border-hairline/50 bg-control px-3 text-[12.5px] text-ink hover:bg-raised disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
@@ -81,7 +82,7 @@ export function BotCallCard({ bot, message }: { bot: Bot; message: Message }) {
     <div ref={ref} data-testid="bot-call-card" className="w-full max-w-[34rem] rounded-xl border border-hairline/40 bg-card p-3">
       <div className="flex items-start gap-2 text-[13.5px] text-ink">
         <PhoneCall size={15} aria-hidden="true" className="mt-0.5 shrink-0 text-ink-secondary" />
-        <div className="min-w-0 whitespace-pre-line">{message.text}</div>
+        <div className="min-w-0 whitespace-pre-line">{localizeCallCardText(message.text ?? "")}</div>
       </div>
       {actions.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">
