@@ -63,6 +63,8 @@ export function TelegramSettings() {
     if (status.configured || linked) return;
     // Opening this screen leaves focus on the button that was pressed, so only another text field counts as the owner's choice.
     const active = document.activeElement;
+    // A tab the owner moved to by keyboard keeps focus: the Apps page shows this screen as its Messaging tab.
+    if (active?.closest('[role="tab"]')) return;
     if (active && active !== tokenInput.current && active.closest("input, textarea, select, [contenteditable]:not([contenteditable=false])")) return;
     tokenInput.current?.focus();
   }, [status, busy, linked]);
@@ -91,8 +93,8 @@ export function TelegramSettings() {
   };
   const startPair = () => run("pair", version => pairWork(version, expired));
   const username = pair?.username && /^[A-Za-z0-9_]{5,32}$/.test(pair.username) ? pair.username : null;
-  return <section aria-labelledby="telegram-settings-title" className="rounded-xl border border-hairline/40 bg-card p-4">
-    <h3 id="telegram-settings-title" className="text-[15px] font-semibold text-ink">Telegram</h3>
+  return <section aria-labelledby="telegram-settings-name" className="rounded-xl border border-hairline/40 bg-card p-4">
+    <h3 id="telegram-settings-name"className="text-[15px] font-semibold text-ink">Telegram</h3>
     <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">Message your Chief of Staff from Telegram. Messages share the Chief's current conversation. Keep Murage running to receive messages. Your completed pairing reconnects automatically after Murage restarts.</p>
     <p role="status" className="mt-3 text-[12px] font-medium text-ink">{telegramHealthLabel(status, expired, waiting)}</p>
     <h4 className="mt-4 text-[13px] font-medium text-ink">1. Create a Telegram bot</h4>

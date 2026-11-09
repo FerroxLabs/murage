@@ -49,15 +49,40 @@ describe("the Windows build", () => {
     expect(() => msvcCommand("cl.exe", ['/Fe"x'], { env: {}, environmentFile: "C:\\VS\\VsDevCmd.bat" })).toThrow(/UNSAFE/);
   });
 
+  it("--all-arch builds x64 and arm64 with the right machine and developer environment, and compiles anchored-win.c into both", () => {
+    const outputRoot = scratch();
+    const calls = [];
+    const receipts = buildEngineExclusion({ platform: "win32", env: {}, allArch: true, environmentFile: "C:\\VS\\Common7\\Tools\\VsDevCmd.bat", headerDirectory: headers(), outputRoot, exec: (command, args) => { calls.push(args.join(" ")); fs.writeFileSync(path.join(outputRoot, calls.length <= 2 ? "win32-x64" : "win32-arm64", "engine-exclusion.node"), "MZ"); } });
+    expect(receipts.map((r) => r.target)).toEqual(["win32-x64", "win32-arm64"]);
+    expect(calls).toHaveLength(4);
+    expect(calls[0]).toContain("-arch=x64");
+    expect(calls[2]).toMatch(/-arch=arm64 -host_arch=\w+ && lib\.exe/);
+    expect(calls[2]).toContain("/machine:arm64");
+    expect(calls[3]).toContain("anchored-win.c");
+    expect(calls[3]).not.toContain("ANCHOR_TEST_HOOKS");
+    expect(receipts[0].sourceSha256).toBe(receipts[1].sourceSha256);
+    expect(fs.readFileSync(path.join(outputRoot, "win32-x64", "node.def"), "utf8")).toContain("napi_create_function");
+  });
+
+  it("--test-hooks defines ANCHOR_TEST_HOOKS, builds the oplock fixture, and is refused off Windows", () => {
+    const outputRoot = scratch();
+    const calls = [];
+    buildEngineExclusion({ platform: "win32", env: { VSCMD_ARG_TGT_ARCH: process.arch === "arm64" ? "arm64" : "x64" }, testHooks: true, headerDirectory: headers(), outputRoot, exec: (command, args) => { calls.push(args.join(" ")); fs.writeFileSync(path.join(outputRoot, `win32-${process.arch}`, "engine-exclusion.node"), "MZ"); } });
+    expect(calls[1]).toContain("/DANCHOR_TEST_HOOKS");
+    expect(calls[2]).toContain("oplock-holder.c");
+    expect(() => buildEngineExclusion({ platform: "linux", testHooks: true, headerDirectory: headers(), outputRoot })).toThrow(/WINDOWS_ONLY/);
+  });
+
   it("the Linux build is compiled with -Wall -Werror", () => {
     expect(ENGINE_EXCLUSION_BUILD_SCRIPT).toContain('-Wall -Werror -fPIC');
   });
 
-  it("both loaders require addon v10 and Windows requires the privilege-drop export", () => {
+  it("both loaders require addon v11 and Windows requires the privilege-drop and the seven anchor exports", () => {
     const source = fs.readFileSync(new URL("../native/engine-exclusion/exclusion.c", import.meta.url), "utf8");
-    expect(ADDON_VERSION).toBe(10);
+    expect(ADDON_VERSION).toBe(11);
     expect(WINDOWS_NATIVE_VERSION).toBe(ADDON_VERSION);
-    expect(source).toMatch(/^#define ADDON_VERSION 10$/m);
+    expect(source).toMatch(/^#define ADDON_VERSION 11$/m);
+    for (const name of ["anchorBegin", "anchorOpen", "anchorList", "anchorRead", "anchorStat", "anchorClose", "anchorEnd"]) expect(WINDOWS_NATIVE_FUNCTIONS).toContain(name);
     expect(WINDOWS_NATIVE_FUNCTIONS).toContain("dropShutdownPrivileges");
     expect(source).toContain('add(env, exports, "dropShutdownPrivileges", drop_shutdown_privileges);');
   });

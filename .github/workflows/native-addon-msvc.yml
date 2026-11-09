@@ -4,6 +4,9 @@ name: Native addon MSVC compile
 # the Windows package uses). mingw accepts header mixes (<winternl.h> with <ntsecapi.h>) that MSVC rejects with C2371, so this runs on
 # every PR and push that touches native/ or the build script, ahead of the 90-minute Package Windows run. No packaging, no signing. It also refuses a build that imports anything but system DLLs
 # (a /MD build imported VCRUNTIME140.dll and failed to load on a clean Windows machine) and uploads the built files.
+# The x64 job builds win32-x64 and cross-compiles win32-arm64 (--all-arch); the arm64 job builds and tests the addon natively on a
+# windows-11-arm runner. Both also build the test-hooks variant (dist-native/engine-exclusion-test, never packaged) and run the
+# anchored-open helper's direct tests (CONTRACTS-B 1.3, R1-R22) against it.
 on:
   pull_request:
     paths:
@@ -15,6 +18,7 @@ on:
       - 'electron/backup-windows-acl*.mjs'
       - 'electron/backup-remote-*.mjs'
       - 'shared/windows-sddl.mjs'
+      - 'server/claude-code-import*.ts'
       - '.github/workflows/native-addon-msvc.yml'
   push:
     paths:
@@ -26,6 +30,7 @@ on:
       - 'electron/backup-windows-acl*.mjs'
       - 'electron/backup-remote-*.mjs'
       - 'shared/windows-sddl.mjs'
+      - 'server/claude-code-import*.ts'
       - '.github/workflows/native-addon-msvc.yml'
   workflow_dispatch:
 
@@ -38,9 +43,9 @@ concurrency:
 
 jobs:
   compile:
-    name: engine-exclusion addon (cl.exe)
+    name: engine-exclusion addon (cl.exe, x64 and arm64 cross)
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -55,15 +60,39 @@ jobs:
           curl -fsSL "https://nodejs.org/dist/$v/SHASUMS256.txt" -o "$dir/sums"
           (cd "$dir" && want=$(grep " node-$v-headers.tar.gz\$" sums | cut -d' ' -f1) && echo "$want  h.tgz" | sha256sum -c - && tar xzf h.tgz)
           echo "NODE_HEADERS_DIR=$(cygpath -w "$dir/node-$v/include/node")" >> "$GITHUB_ENV"
-      - name: Compile the addon with MSVC
+      - name: Compile the addon with MSVC (x64, and arm64 by cross-compile)
         shell: bash
-        run: node scripts/build-engine-exclusion.mjs
+        run: node scripts/build-engine-exclusion.mjs --all-arch
+      - name: Compile the test-hooks addon and the oplock fixture (never packaged)
+        shell: bash
+        run: node scripts/build-engine-exclusion.mjs --test-hooks
       - name: Build the Fuigo launcher with MSVC
         shell: bash
         run: node scripts/build-fuigo-probe.mjs
       - name: Refuse any import beyond Windows system DLLs
         shell: bash
-        run: node scripts/windows-native-imports.mjs dist-native/engine-exclusion/win32-x64/engine-exclusion.node dist-native/fuigo-probe/win32-x64/launcher.exe
+        run: node scripts/windows-native-imports.mjs dist-native/engine-exclusion/win32-x64/engine-exclusion.node dist-native/engine-exclusion/win32-arm64/engine-exclusion.node dist-native/engine-exclusion-test/win32-x64/engine-exclusion.node dist-native/engine-exclusion-test/win32-x64/oplock-holder.exe dist-native/fuigo-probe/win32-x64/launcher.exe
+      - name: ReFS volume on a virtual disk (the helper's local-storage rule must pass on ReFS too, R16)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $vhd = Join-Path $env:RUNNER_TEMP 'refs.vhdx'
+          $script = "create vdisk file=`"$vhd`" maximum=2048 type=expandable`nattach vdisk`ncreate partition primary`nformat fs=refs quick label=ANCHORREFS`nassign letter=R`n"
+          $file = Join-Path $env:RUNNER_TEMP 'refs.diskpart'
+          Set-Content -Path $file -Value $script -Encoding ascii
+          diskpart /s $file
+          if (-not (Test-Path 'R:\')) { throw 'ReFS volume was not created' }
+          "ANCHOR_REFS_ROOT=R:\" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Token privileges of this runner (the helper refuses an enabled SeBackupPrivilege or SeRestorePrivilege)
+        shell: bash
+        run: |
+          /c/Windows/System32/whoami.exe /priv | grep -i "SeBackup\|SeRestore"
+          node -e "console.log(require('child_process').execSync('whoami /priv').toString())" | grep -i "SeBackup\|SeRestore"
+      - name: Anchored-open helper direct tests (real Windows, x64, with the test-hooks build)
+        shell: bash
+        env:
+          CI: "1"
+        run: node --expose-gc --test native/engine-exclusion/anchored-win.node-test.mjs
       - name: Real-Windows owner-only ACL tests on the built addon
         # The quality-gates job builds no addon, so these skip there (a source checkout without it refuses, by design). Here the
         # addon is the one just built: the runner's built-in Administrator is SDDL "LA", which only the addon's domainSids resolves,
@@ -77,5 +106,50 @@ jobs:
           name: native-addon-msvc
           path: |
             dist-native/engine-exclusion/win32-x64/engine-exclusion.node
+            dist-native/engine-exclusion/win32-arm64/engine-exclusion.node
             dist-native/fuigo-probe/win32-x64/launcher.exe
+          retention-days: 3
+
+  arm64:
+    name: engine-exclusion addon (cl.exe, native arm64)
+    runs-on: windows-11-arm
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Node headers for the engine-exclusion addon
+        shell: bash
+        run: |
+          v=$(node -p process.version)
+          dir="$(cygpath -u "$RUNNER_TEMP")/node-headers"; mkdir -p "$dir"
+          curl -fsSL "https://nodejs.org/dist/$v/node-$v-headers.tar.gz" -o "$dir/h.tgz"
+          curl -fsSL "https://nodejs.org/dist/$v/SHASUMS256.txt" -o "$dir/sums"
+          (cd "$dir" && want=$(grep " node-$v-headers.tar.gz\$" sums | cut -d' ' -f1) && echo "$want  h.tgz" | sha256sum -c - && tar xzf h.tgz)
+          echo "NODE_HEADERS_DIR=$(cygpath -w "$dir/node-$v/include/node")" >> "$GITHUB_ENV"
+      - name: Which Node is this
+        shell: bash
+        run: node -p "process.arch + ' ' + process.version"
+      - name: Compile the addon with MSVC (host architecture)
+        shell: bash
+        run: node scripts/build-engine-exclusion.mjs
+      - name: Compile the test-hooks addon and the oplock fixture (never packaged)
+        shell: bash
+        run: node scripts/build-engine-exclusion.mjs --test-hooks
+      - name: Refuse any import beyond Windows system DLLs
+        shell: bash
+        run: node scripts/windows-native-imports.mjs dist-native/engine-exclusion/win32-arm64/engine-exclusion.node dist-native/engine-exclusion-test/win32-arm64/engine-exclusion.node dist-native/engine-exclusion-test/win32-arm64/oplock-holder.exe
+      - name: Token privileges of this runner
+        shell: cmd
+        run: whoami /priv
+      - name: Anchored-open helper direct tests (real Windows, arm64, with the test-hooks build)
+        shell: bash
+        env:
+          CI: "1"
+        run: node --expose-gc --test native/engine-exclusion/anchored-win.node-test.mjs
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-addon-msvc-arm64
+          path: dist-native/engine-exclusion/win32-arm64/engine-exclusion.node
           retention-days: 3
