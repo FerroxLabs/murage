@@ -20,6 +20,7 @@
 // `view.complete` waits for the backup step, so the one press for it lives
 // where the first run ends.
 
+import { LazyOverlay } from "@/components/LazyOverlay";
 import { LazyFirstRunPhoneCard } from "./FirstRunPhoneCardLazy";
 import { useEffect, useState } from "react";
 
@@ -27,7 +28,7 @@ import { FIRST_RUN_COPY } from "@/lib/first-run-copy";
 import { composeIo } from "@/lib/compose-link";
 import { firstRunPhoneVariant } from "@/lib/first-run-phone";
 import { useDesktopSurface } from "@/lib/use-surface";
-import { useStore, type Bot } from "@/state/store";
+import type { Bot } from "@/state/store";
 import {
   FIRST_RUN_CHIP,
   FIRST_RUN_FOCUS,
@@ -36,8 +37,13 @@ import {
   FirstRunLine,
 } from "./FirstRunChrome";
 import { LazyFirstRunBackupsRow } from "./FirstRunBackupsRowLazy";
+import { BringYourAiRow } from "./BringYourAi";
 import { useFirstRunBackupRun } from "./first-run-backup-run";
 import { companionBridge } from "@/lib/companion-bridge";
+import { retryableLazy } from "./LazyBoundary";
+
+// UX-L6A part 2 (FIRSTRUN 1.8): Hire a bot opens the one-sentence Hire sheet, loaded on first use.
+const HireBotDialog = retryableLazy(() => import("./hire/HireBotDialog").then((module) => ({ default: module.HireBotDialog })));
 
 const copy = FIRST_RUN_COPY.routines.done;
 
@@ -68,12 +74,11 @@ function DoneRow({ title, line, button, onPress, primary = false, disabled = fal
 }
 
 export function FirstRunNextCard({ bot }: { bot: Bot }) {
-  const { dispatch } = useStore();
   const desktop = useDesktopSurface();
   // The backup step starts here, on mount, from always-loaded code; only the
   // row that reports it loads on first use.
   const backup = useFirstRunBackupRun();
-  const [hired, setHired] = useState(false);
+  const [hireOpen, setHireOpen] = useState(false);
   const [phoneOpen, setPhoneOpen] = useState(false);
   // null until the read-only probe answers; then whether a code can be made.
   const [pairable, setPairable] = useState<boolean | null>(null);
@@ -99,13 +104,8 @@ export function FirstRunNextCard({ bot }: { bot: Bot }) {
     };
   }, [desktop]);
 
-  const hire = () => {
-    if (hired) return;
-    setHired(true);
-    // The ordinary send, in the owner's voice: the Chief sets the teammate up
-    // for their yes. The one-sentence Hire sheet replaces this in 1.0.13.
-    dispatch({ type: "send", botId: bot.id, text: copy.hire.say, threadId: bot.threadId });
-  };
+  // The sheet is the owner's yes: one sentence, a suggested name, Hire this bot.
+  const hire = () => setHireOpen(true);
 
   const phone = pairable === false ? copy.phoneNeeds : null;
 
@@ -120,7 +120,7 @@ export function FirstRunNextCard({ bot }: { bot: Bot }) {
           primary
           onPress={() => composeIo.focus(bot.id)}
         />
-        <DoneRow title={copy.hire.title} line={copy.hire.line} button={copy.hire.button} disabled={hired} onPress={hire} />
+        <DoneRow title={copy.hire.title} line={copy.hire.line} button={copy.hire.button} onPress={hire} />
         {desktop === true && pairable !== null && !phoneOpen && (
           <DoneRow
             title={phone ? phone.title : copy.phone.title}
@@ -129,6 +129,9 @@ export function FirstRunNextCard({ bot }: { bot: Bot }) {
             onPress={() => setPhoneOpen(true)}
           />
         )}
+        {/* Optional, and last: our engines already lead; this only opens the
+            existing Grok import and Learn about me screens (BringYourAi.tsx). */}
+        {desktop === true && <BringYourAiRow />}
       </ul>
       {phoneOpen && (
         <div className="mt-3">
@@ -141,6 +144,11 @@ export function FirstRunNextCard({ bot }: { bot: Bot }) {
       {/* Backups are a smart default, and one press. The row reads the real
           schedule before it says anything. */}
       <LazyFirstRunBackupsRow backup={backup} />
+      {hireOpen && (
+        <LazyOverlay name="hire-bot-first-run" kind="dialog" covers="while-loading" onRetry={HireBotDialog.retry} onDismiss={() => setHireOpen(false)}>
+          {loadedLayer => (<HireBotDialog.Component layerLifecycle={loadedLayer} onClose={loadedLayer.dismiss} />)}
+        </LazyOverlay>
+      )}
     </FirstRunBubble>
   );
 }

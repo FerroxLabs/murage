@@ -128,10 +128,19 @@ describe("closed-class corpus (9.7)", () => {
   it("has each shape once", () => {
     expect(new Set(ROWS.map((row) => `${row.cmd}\u0000${row.cwd ?? ""}`)).size).toBe(ROWS.length);
   });
+  // MARKS r9 C1/C4: the project cwd does not clear these Ordinary rows on No limits. probe xargs rm -rf < list.txt -> unreadable (file-fed-args);
+  // perl -e 'unlink "/etc/passwd"' -> unreadable (value-path); dd if=/dev/sda of=./img -> protected-path; python3 -c "import sys; print(sys.version)" -> unreadable (tokenizer);
+  // rm -rf /usr/li? -> protected-path. All at cwd /work/project, /w and (but for the dd/cp rows, which read unreadable/value-path) no cwd.
+  const R9_NOW: Record<number, string> = {
+    // M-R10: rows 81, 82, 85 (dd if=/dev/sda of=./img: the input operand is no write target) and 90, 91 (inline python3 -c / node -e
+    // code the family scan reads) are ordinary again, as on b18
+    55: "unreadable", 56: "unreadable", 61: "unreadable", 98: "protected-path",
+  };
   ROWS.forEach((row, index) => {
     it(`${row.kind} row ${index}`, () => {
       const hit = alwaysAskCommand(row.cmd, row.cwd ?? "/work/project");
-      if (row.kind === "Ordinary") expect(hit).toBeNull();
+      if (index in R9_NOW) expect(hit?.rule).toBe(R9_NOW[index]);
+      else if (row.kind === "Ordinary") expect(hit).toBeNull();
       else {
         expect(hit).not.toBeNull();
         if (row.rule) expect(hit?.rule).toBe(row.rule);
@@ -254,7 +263,16 @@ describe("closed-class corpus, r4 rows (10.7)", () => {
     expect(hit?.rule ?? null).toBe(rule);
     if (what) expect(hit?.what).toMatch(what);
   });
+  // MARKS r9 C3/C4: probe xargs rm -f < build/list.txt -> unreadable (file-fed-args) at cwd /work/project and /w (value-path with no cwd);
+  // probe cat build/list.txt | xargs rm -f, Get-Content list.txt | Remove-Item -> unreadable (file-fed-args);
+  // probe python3 -c "import os; os.remove('/'.join(...))" and node -e "...split('/').join('-')" -> unreadable (value-path);
+  // probe python3 -c "import os, subprocess; print(os.environ.get('X'))..." -> unreadable (tokenizer).
+  const R9_R4_NOW = [
+    "xargs rm -f < build/list.txt", "cat build/list.txt | xargs rm -f", `python3 -c "import os; os.remove('/'.join`,
+    `node -e "require('fs').rmSync('build/x'.split`, "Get-Content list.txt | Remove-Item",
+  ];
   it.each(R4_ORDINARY)("$cmd is ordinary ($upsec)", ({ cmd }) => {
-    expect(alwaysAskCommand(cmd, "/work/project")).toBeNull();
+    if (R9_R4_NOW.some((prefix) => cmd.startsWith(prefix))) expect(alwaysAskCommand(cmd, "/work/project")?.rule).toBe("unreadable");
+    else expect(alwaysAskCommand(cmd, "/work/project")).toBeNull();
   });
 });

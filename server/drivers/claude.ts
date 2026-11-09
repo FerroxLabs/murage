@@ -1,10 +1,16 @@
+import { recordOutsideInstallChange } from "../outside-wire.ts";
+import { cliFluxBudget } from "./cli-flux-budget.ts";
+import { nativeTurnModel } from "../default-engine.ts";
+import { botFolderOrThrow, BotFolderUnavailableError } from "../bot-folder.ts";
 import type { ExecEnv } from "../../shared/mount-identity.ts";
+import { phoneAskLine } from "./phone-tool-schemas.ts";
 import { claudeModelExtras } from "./claude-model-extras.ts";
 import { oneShots } from "../engine-one-shots.ts";
 import { engineFailure, withCliMemoryLearning, type MemorySessionRunner } from "./cli-memory-learning.ts";
+import { ENGINE_CHECK_CLAUDE_MD_EXCLUDES, isEngineCheckFolder } from "../engine-reply-check.ts";
 import { isMemorySendFenced } from "../memory/learning-send-fence.ts";
 import { isMemorySendBusy, type LearningGate } from "../memory/learning-send.ts";
-import { CLOUD_BROKER_DIR, CLOUD_RENDER_MCP, CLOUD_RENDER_SYSTEM_PROMPT, CLOUD_WORKSPACE_ROOT, cloudEngineHome, cloudTurnBot, cloudTurnEnvironment, cloudTurnRender, isCloudRenderPlaceholder } from "../cloud-home/turn-process.ts";
+import { CLOUD_BROKER_DIR, CLOUD_RENDER_MCP, CLOUD_RENDER_SYSTEM_PROMPT, CLOUD_WORKSPACE_ROOT, cloudTurnBot, cloudTurnEnvironment, cloudTurnRender, isCloudRenderPlaceholder } from "../cloud-home/turn-process.ts";
 import { cloudMcpStanza, cloudRenderMcp } from "../cloud-home/engine-render.ts";
 import { cloudHomeCopy } from "../cloud-home/copy.ts";
 import { cloudClaudeRenewalDue } from "../cloud-home/bot-state.ts";
@@ -26,11 +32,11 @@ import { applyProviderRoute, type ProviderTurnRoute } from "../provider-routing.
 import { claudeTextOnlyTurn } from "./headless-text-only.ts";
 import { claudeBrowserMount } from "./claude-browser-mount.ts";
 import { execFile, execFileSync } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { parseDocument as parseYamlDocument } from "yaml";
 import { createConnection as createNetConnection, createServer as createNetServer } from "node:net";
-import { CLAUDE_UPDATE_MESSAGE, claudeExecutableIdentity, claudeLaunchRefusal, claudeLaunchRefusalError, ClaudeUpdateRequired, claudeVersionVerdict, knownClaudeCliVersion, requireClaudeCliVersion, type ClaudeLaunchRefusal } from "./claude-guards.ts";
+import { CLAUDE_UPDATE_MESSAGE, claudeExecutableIdentity, claudeLaunchRefusal, claudeLaunchRefusalError, ClaudeUpdateRequired, ClaudeProbeMissing, claudeVersionVerdict, knownClaudeCliVersion, requireClaudeCliVersion, type ClaudeLaunchRefusal } from "./claude-guards.ts";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, dirname, win32 } from "node:path";
 import { backgroundCapNote, backgroundWaitCapMs, SubtaskTracker } from "../subtasks.ts";
@@ -118,12 +124,15 @@ import { BROKER_UNAVAILABLE_NOTE, brokerPathForArgv } from "../permission-pipe.t
 import { normalizeEngineCommands } from "../engine-commands.ts";
 import { engineCommandText } from "../../shared/engine-commands.ts";
 import { engineClosedLine } from "./stop-copy.ts";
+import { createStopGate, GateStopped, type GateEntry, type Verdict } from "./stop-gate.ts";
 import { EngineStderrCapture, engineStderrRedacted } from "./acp/core.ts";
 import { connectedAppsServerName } from "../../shared/connected-app-names.ts";
 import type { McpMountRecord } from "../../shared/mount-identity.ts";
 import { OWN_BUILTINS, OWN_UNASKED, ownToolListedOnTurn, type OwnBuiltin } from "../../shared/own-servers.ts";
 import { EMAIL_TOOLS_ENV } from "./email-tool-schemas.ts";
 import { inProjectCheck, realDir, realPathInOrder, walkRoot } from "../../shared/in-project.ts";
+import { gateHit } from "../../shared/gate-files.ts";
+import { relative as relativePath } from "node:path";
 import { SENSITIVE_TEXT, claudeSensitiveAskRules } from "../../shared/sensitive-paths.ts";
 import { execEnvHanded, execEnvNow, handedEngineEnv, ownedTurnNames, type HandedEnv } from "../engine-env.ts";
 import { gitBashDiscovery, type GitBashFound, type GitBashMiss } from "../tool-discovery.ts";
@@ -380,6 +389,15 @@ const childExited = (child: { exitCode: number | null; signalCode: unknown; once
 class StoppedBeforeLaunch extends Error {
   constructor() { super("the turn was stopped before it launched"); }
 }
+/** A prewarm is no user send: its gate entry is keyed apart from the thread, so a thread's Stop never reaches it (a Stop All, a reset-free dispose does). */
+const PREWARM_GATE_KEY = "prewarm\u0000";
+/** A stopped predecessor's close, or the deadline, whichever comes first: true when the deadline came first. sendTurn awaits it only through stopGate.step. */
+const closedOrPastDeadline = (closed: Promise<void>, ms: number): Promise<boolean> =>
+  new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(true), ms);
+    timer.unref?.();
+    closed.then(() => { clearTimeout(timer); resolve(false); }, () => { clearTimeout(timer); resolve(false); });
+  });
 
 /** Point one ALREADY-STRIPPED claude env at whatever backend `model` names,
  * and report the model id the CLI itself should be asked for.
@@ -434,7 +452,7 @@ export interface ClaudeConfig {
 
 // model catalog ported from upstream packages/contracts/src/model.ts
 export const STATIC_CLAUDE_MODELS: ModelCatalog = {
-  default: "claude-sonnet-5",
+  default: "claude-sonnet-5-5",
   options: [
     { id: "claude-fable-5-1", label: "Claude Fable 5.1" },
     { id: "claude-fable-5", label: "Claude Fable 5" },
@@ -520,7 +538,12 @@ export function readClaudeModelCatalog(env: Record<string, string | undefined> =
   // spawn, so a row for it would be a phantom (see "ambient ANTHROPIC_MODEL" test).
   extras.push(...claudeModelExtras(nestedEnv, CLAUDE_MODEL_ID));
 
-  return withClaudeExtras(extras);
+  const catalog = withClaudeExtras(extras);
+  // Saved aliases and future IDs remain effective even when the picker does not list them.
+  if (typeof settings.model === "string" && CLAUDE_MODEL_ID.test(settings.model)) {
+    catalog.default = settings.model;
+  }
+  return catalog;
 }
 
 function withClaudeExtras(extras: Array<{ id: string; label: string }>) {
@@ -659,6 +682,8 @@ function askSummary(ask: Ask): string {
   const input = ask.input;
   if (ask.questions?.length) return ask.questions[0]!.question.slice(0, 300);
   if (!input) return "";
+  const phone = phoneAskLine(ask.tool, input as Record<string, unknown>);
+  if (phone) return phone;
   if (typeof input.question === "string") return input.question.slice(0, 300);
   if (typeof input.command === "string") return approvalSummary(input.command);
   if (typeof input.url === "string") return input.url.slice(0, 200);
@@ -1006,6 +1031,8 @@ export async function createPermissionBroker(opts: {
     },
     /** Cards this turn's engine is waiting on. */
     openAsks: () => pending.size,
+    /** NOLIMITS v1 V5: the ask is still waiting (not answered, not ended by a stop or a close). */
+    isPending: (askId: string): boolean => pending.has(askId),
     pause() {
       drain();
     },
@@ -1493,8 +1520,11 @@ export function claudeIsolationSettings(env: NodeJS.ProcessEnv, cwd: string, pla
     }
   }
   const excludes = personal.flatMap((dir) => [join(dir, "CLAUDE.md"), join(dir, "rules", "**")]);
+  // The set-up check runs in a folder outside home (ENGINE-CHECK-FOLDER-1018). Belt and braces: Claude Code reads CLAUDE.md,
+  // CLAUDE.local.md, AGENTS.md and .claude/AGENTS.md from the folder and every ancestor, so nothing above it may reach the check.
+  if (isEngineCheckFolder(cwd, { platform })) excludes.push(...ENGINE_CHECK_CLAUDE_MD_EXCLUDES);
   // the CLI matches these as globs; on Windows give the forward-slash spelling too
-  const claudeMdExcludes = [...new Set(platform === "win32" ? excludes.flatMap((p) => [p, p.replace(/\\/g, "/")]) : excludes)];
+  const claudeMdExcludes = [...new Set(platform === "win32" ? excludes.flatMap((p) => [p, p.replace(/\\/g, "/"), p.replace(/\//g, "\\")]) : excludes)];
   return {
     disableAllHooks: true,
     enabledPlugins: Object.fromEntries([...plugins].sort().map((id) => [id, false])),
@@ -2593,6 +2623,162 @@ export const CLAUDE_BARE_ASK_TOOLS = ["Read", "Edit", "Write", "MultiEdit", "Not
 
 const CLAUDE_SEARCH_TOOLS = new Set(["Grep", "Glob"]);
 
+// ---------------------------------------------------------------------------------------------------------------------
+// NOLIMITS v1 V5 (designs/NOLIMITS-V1-CUT.md; r4 3.6): Claude's items come on stdout and its asks through the broker, two
+// channels with no order between them. On a No limits owner turn (the lane) the broker holds an ask until stdout has
+// delivered the item.started of the same tool and input, at most CLAUDE_ASK_ITEM_WAIT_MS; past that the ask opens with
+// `itemUnseen` and the turn is marked. Off the lane nothing waits and nothing changes.
+
+/** off: not an owner No limits turn (today's path, byte for byte); clean / marked: the lane, and its mark. */
+export type ClaudeLaneState = "off" | "clean" | "marked";
+export interface ClaudeLaneHooks {
+  laneMarked(threadId: string, turnId: string | undefined): ClaudeLaneState;
+  /** the ask's item did not arrive in time: mark the turn now (also when the in-project shortcut settles the ask) */
+  itemUnseen(threadId: string): void;
+}
+let laneHooks: ClaudeLaneHooks | null = null;
+/** index.ts sets these at boot; tests set and clear them. None set: every turn is off the lane. */
+export function setClaudeLaneHooks(hooks: ClaudeLaneHooks | null): void { laneHooks = hooks; }
+const laneStateOf = (threadId: string, turnId: string | undefined): ClaudeLaneState => {
+  if (!laneHooks) return "off";
+  try { return laneHooks.laneMarked(threadId, turnId); } catch { return "marked"; }
+};
+
+export const CLAUDE_ASK_ITEM_WAIT_MS = 2_000;
+/** NLMI-MARKS 6: the hold counts readable time, ticks of this length that each pass a poll phase before they count. */
+export const CLAUDE_ASK_ITEM_TICK_MS = 50;
+/** NLMI-MARKS 6: the wall-clock ceiling from the first tick; a loop stalled past it ends the hold as unseen. */
+export const CLAUDE_ASK_ITEM_WALL_MS = 10_000;
+/** What one ask hold measured, for its log line (fixed numbers, never the call). */
+export interface AskHold { seen: boolean; readableMs: number; wallMs: number; ticks: number; ceiling: boolean }
+
+const stableJson = (value: unknown): string => {
+  if (value === null || typeof value !== "object") return JSON.stringify(value ?? null);
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
+};
+/** Astra r1 H1: the key's secret for this process (never stored, never sent), so a key names a call without carrying it. */
+const CALL_KEY_SECRET = randomBytes(32);
+/** One engine call: an opaque digest (keyed HMAC-SHA256) of its tool name and its input with sorted keys. Equal for the
+ *  same call, so the ask and its item meet; it holds neither the name nor the input, and stays in the server. */
+export function claudeToolKey(tool: unknown, input: unknown): string {
+  return createHmac("sha256", CALL_KEY_SECRET).update(`${typeof tool === "string" ? tool : ""}\u0000${stableJson(input)}`).digest("base64url");
+}
+
+/** Per thread: the tool keys stdout has started on the running turn, and the asks waiting for one. */
+interface KeyWaiter { key: string; done: (seen: boolean) => void }
+/** 1.0.19 A3 (Opus r3 M): a per-key count, so an ask whose key two started items share is known to be ambiguous */
+interface KeySlot { turn: string | undefined; keys: Map<string, number>; waiters: Set<KeyWaiter>; unseen: Set<string> }
+class StartedToolKeys {
+  private readonly threads = new Map<string, KeySlot>();
+  private slot(threadId: string, turn: string | undefined): KeySlot {
+    let slot = this.threads.get(threadId);
+    if (!slot || slot.turn !== turn) {
+      if (!slot && this.threads.size >= 1024) this.forget(this.threads.keys().next().value!);
+      const waiters: Set<KeyWaiter> = slot?.waiters ?? new Set<KeyWaiter>();
+      slot = { turn, keys: new Map<string, number>(), waiters, unseen: new Set() };
+      this.threads.set(threadId, slot);
+    }
+    return slot;
+  }
+  note(threadId: string, turn: string | undefined, key: string): void {
+    const slot = this.slot(threadId, turn);
+    if (slot.keys.size >= 512 && !slot.keys.has(key)) slot.keys.delete(slot.keys.keys().next().value!);
+    slot.keys.set(key, (slot.keys.get(key) ?? 0) + 1);
+    for (const waiter of [...slot.waiters]) if (waiter.key === key) { slot.waiters.delete(waiter); waiter.done(true); }
+  }
+  has(threadId: string, turn: string | undefined, key: string): boolean {
+    const slot = this.threads.get(threadId);
+    return slot !== undefined && slot.turn === turn && slot.keys.has(key);
+  }
+  late(threadId: string, turn: string | undefined, key: string): boolean {
+    const slot = this.threads.get(threadId);
+    return slot?.turn === turn && slot?.unseen.has(key) === true;
+  }
+  /** how many items of the running turn started with this key */
+  count(threadId: string, turn: string | undefined, key: string): number {
+    const slot = this.threads.get(threadId);
+    return slot !== undefined && slot.turn === turn ? slot.keys.get(key) ?? 0 : 0;
+  }
+  /** NLMI-MARKS 6: hold until stdout started this key, for `ms` of READABLE time: a tick of CLAUDE_ASK_ITEM_TICK_MS counts
+   *  only after a poll phase has run (setTimeout, then setImmediate), so an item already in the pipe when the loop comes
+   *  back from a stall is read before any tick is counted, whichever phase the stall was in. A wall-clock ceiling of
+   *  `wallMs` from the first tick ends the hold too. Either end runs one more poll and a final check before `seen: false`. */
+  wait(threadId: string, turn: string | undefined, key: string, ms: number, wallMs = CLAUDE_ASK_ITEM_WALL_MS, tickMs = CLAUDE_ASK_ITEM_TICK_MS): Promise<AskHold> {
+    const started = performance.now();
+    if (this.has(threadId, turn, key)) return Promise.resolve({ seen: true, readableMs: 0, wallMs: 0, ticks: 0, ceiling: false });
+    const slot = this.slot(threadId, turn);
+    return new Promise((resolve) => {
+      let readable = 0, ticks = 0, settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let immediate: ReturnType<typeof setImmediate> | undefined;
+      const finish = (seen: boolean, ceiling: boolean) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        if (immediate) clearImmediate(immediate);
+        slot.waiters.delete(waiter);
+        if (!seen) slot.unseen.add(key);
+        resolve({ seen, readableMs: readable, wallMs: Math.round(performance.now() - started), ticks, ceiling });
+      };
+      const waiter: KeyWaiter = { key, done: (seen: boolean) => { finish(seen, false); } };
+      const end = (ceiling: boolean) => {
+        // the re-check after a poll: an item that landed in the same loop turn as the last tick is still seen
+        immediate = setImmediate(() => { finish(this.has(threadId, turn, key), ceiling); });
+      };
+      const tick = () => {
+        timer = setTimeout(() => {
+          immediate = setImmediate(() => {
+            if (settled) return;
+            ticks += 1;
+            readable += tickMs;
+            const ceiling = performance.now() - started >= wallMs;
+            if (readable >= ms || ceiling) end(ceiling && readable < ms);
+            else tick();
+          });
+        }, tickMs);
+        timer.unref?.();
+      };
+      slot.waiters.add(waiter);
+      tick();
+    });
+  }
+  forget(threadId: string): void {
+    const slot = this.threads.get(threadId);
+    if (!slot) return;
+    for (const waiter of [...slot.waiters]) waiter.done(false);
+    this.threads.delete(threadId);
+  }
+}
+const startedToolKeys = new StartedToolKeys();
+
+/** NLMI-MARKS 6: one server line per held ask, fixed words and numbers only (no tool, no input). */
+function logAskHold(threadId: string, hold: AskHold): void {
+  try {
+    const thread = /^[\w-]{1,128}$/.test(threadId) ? threadId : "unknown";
+    console.info(`approvals: v5-hold thread=${thread} seen=${hold.seen ? 1 : 0} readableMs=${hold.readableMs} wallMs=${hold.wallMs} ticks=${hold.ticks} ceiling=${hold.ceiling ? 1 : 0}`);
+  } catch { /* the hold stands */ }
+}
+
+/** V5 (b): on a marked lane turn the in-project shortcut does not take a call whose path has a segment, inside the
+ *  working folder, that starts with `.`, a path outside the folder, or a gate file (the 6.1.3 test). */
+export function claudeLaneShortcutSkip(tool: unknown, input: unknown, cwd: string): boolean {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return true;
+  const call = input as Record<string, unknown>;
+  const named = ["file_path", "notebook_path", "path"].map((key) => call[key]).filter((value): value is string => typeof value === "string" && value !== "");
+  if (named.length === 0 && (tool === "Grep" || tool === "Glob")) return false;
+  if (named.length === 0) return true;
+  const root = cwd.replace(/[\\/]+$/, "") || "/";
+  for (const p of named) {
+    if (!isAbsolute(p)) return true;
+    const rel = relativePath(root, p);
+    if (rel.startsWith("..") || isAbsolute(rel)) return true;
+    if (rel.split(/[\\/]+/).some((part) => part.startsWith("."))) return true;
+  }
+  return gateHit(named) !== null;
+}
+
 /** Rule 63 / 69 for the broker: a Read, Edit, Write, MultiEdit, NotebookEdit, Grep or Glob ask
  * whose every path passes the in-project check (placement by real path, the sensitive list, the
  * template carve-out, the content read whole and free of secret shapes) runs with no card. Any
@@ -2714,7 +2900,7 @@ export function acquireClaudeOverlay(text: string, store: Pick<ClaudeOverlayStor
     // The app log's only line for this: the code and where the helper was looked for (an install path), never the overlay's content.
     const helperPath = (error as { helperPath?: unknown }).helperPath;
     console.warn(`claude private folder setup refused: ${code} helper=${typeof helperPath === "string" ? JSON.stringify(helperPath) : "unknown"}`);
-    throw new LocalSetupError("windows-helper", `Claude needs Murage's Windows helper (murage-browser-host.exe) to start (${code}). If your antivirus moved it to quarantine, restore it, or reinstall Murage. Then send your message again. Codex and Fuigo keep working.`, { cause: error });
+    throw new LocalSetupError("windows-helper", `Claude needs Murage's Windows helper (murage-browser-host.exe) to start (${code}). If your antivirus moved it to quarantine, restore it, or reinstall Murage. Then send your message again. Fuigo and Codex keep working.`, { cause: error });
   }
 }
 
@@ -3446,6 +3632,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       turnId,
       createdAt: new Date().toISOString(),
     });
+    // STOP-NONACP-DISPOSE (design r3 + r3.1): one stop gate. An asked Stop (interruptTurn, stopAll, resetSession) ends a turn as the stopped
+    // pair, a dispose nobody asked for ends it as the engine closing, and the precedence lives in the entry's finish only.
+    const stopGate = createStopGate({ engineName: ENGINE, emit: (event) => emit(event as unknown as RuntimeEvent), base });
+    /** The gate entry of each turn in flight, by turn id: how settle (the live close path) reaches the entry that finishes the turn. */
+    const turnEntries = new Map<string, GateEntry>();
+    /** A turn's one ending, through its entry (a mark that reached the turn decides what it says). */
+    const endTurn = (turnId: string, v: Verdict) => {
+      const entry = turnEntries.get(turnId);
+      if (!entry) return;
+      entry.finish(v);
+      turnEntries.delete(turnId);
+    };
     /** 14.3 item 2: the sign-in card, a question never auto-answered (like the folder-trust card): true only on the owner's
      * Allow. A Stop, the 30 minute note (only on a turn nobody is at) or a prewarm, which nobody sees, is no. */
     const askClaudeSignin = (threadId: string, turnId: string, stopped: Promise<void>, note: boolean): Promise<{ allowed: boolean; byOwner: boolean }> => {
@@ -3569,111 +3767,145 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
      * command are dropped; the resume cursor is refreshed when a turn settles. */
     const lastTurns = createTurnMemory<SendTurnInput>();
     const prewarming = createPrewarmGate();
+    /** STOP-NONACP-DISPOSE: every user send enters the stop gate before its first await (stopGate.enter), so an asked Stop (interruptTurn,
+     * stopAll, resetSession: stopGate.ask) and dispose (stopGate.close) reach it wherever it waits. Every await on the dispatch path is
+     * stopGate.step; the ending is the entry's finish (asked: the stopped pair, closing: the engine-closed line), never an inline emit. */
     const sendTurn = async (turn: SendTurnInput, relaunch?: { turnId: string }) => {
+      turn = { ...turn, model: nativeTurnModel({ driverKind: "claudeAgent", models }, turn.model) };
+      // a draft-only turn runs in its own empty private folder (claudeDraftOnlyCwd below) and never in the bot's folder, so it needs none
+      if (!turn.draftOnly) turn = { ...turn, cwd: botFolderOrThrow(turn) };
       const { threadId } = turn;
       if (turn.background) backgroundThreads.add(threadId); else backgroundThreads.delete(threadId);
       if (!turn.background && !relaunch) {
         warmPool.noteUserActivity(); warmPool.sent(threadId);
         lastTurns.remember(threadId, spawnInputsOf(turn));
       }
-      // An intent warm is still starting this thread's engine: take it over, never fail as busy.
-      if (!relaunch && prewarming.has(threadId)) {
-        if (!(await prewarming.wait(threadId))) {
-          const stuck = active.get(threadId);
-          if (stuck) { try { stuck.stop(); } catch {} }
-        }
-      }
-      const running = active.get(threadId);
-      // A relaunch runs under its own logical turn's stop handle (U06), which
-      // the retry path left in place so Stop stays reachable during setup.
-      if (running && !(relaunch && running.turnId === relaunch.turnId)) {
-        if (!running.stopRequested()) throw new Error("a turn is already running on this thread");
-        // A Stop is "requested, not observed": interruptTurn returns as soon
-        // as the kill is sent, the harness reads the thread idle, and the
-        // person's next message can arrive while the stopped child is still
-        // closing — the real CLI tears down its MCP children and flushes
-        // first, and Windows ends it through an asynchronous taskkill. That
-        // turn is not "already running": wait for its close, bounded by the
-        // same deadline the harness gives a stopped child, then proceed.
-        let pastDeadline = false;
-        await Promise.race([
-          running.closed,
-          new Promise<void>((resolve) => {
-            const timer = setTimeout(() => { pastDeadline = true; resolve(); }, providerCloseDeadlineMs());
-            timer.unref?.();
-            void running.closed.finally(() => clearTimeout(timer));
-          }),
-        ]);
-        // Past the deadline the old process is not confirmed stopped: that is
-        // the quarantine path, not a dead end. Quarantine settles the stopped
-        // turn (freeing the thread); the dispatch below then waits, bounded,
-        // for the confirmation before it launches anything.
-        if (pastDeadline && active.get(threadId) === running) sessions.get(threadId)?.quarantine?.();
-        if (pastDeadline && active.has(threadId)) throw new Error("the stopped turn has not closed yet; wait a moment and send again");
-        if (active.has(threadId)) throw new Error("a turn is already running on this thread");
-      }
       const turnId = relaunch?.turnId ?? newId();
-      // Reserve the thread BEFORE the first await on the dispatch path (model
-      // lookup, settle check, broker bind), so a Stop that lands during setup
-      // has an entry to reach and a rival dispatch is refused or waits for it.
-      // A relaunch already holds its own entry (the retry path's handle).
-      let reservation: ActiveTurn | null = null;
-      let stoppedBeforeLaunch = false;
-      let wake = () => {};
-      const stopped = new Promise<void>((resolve) => { wake = resolve; });
-      if (!relaunch) {
-        reservation = activeTurn(turnId, undefined, () => { stoppedBeforeLaunch = true; wake(); }, () => stoppedBeforeLaunch);
-        active.set(threadId, reservation);
-      }
-      try {
-        return await dispatchTurn(turn, relaunch, { turnId, reservation, stopped, isStopped: () => stoppedBeforeLaunch });
-      } catch (error) {
+      // A relaunch continues its logical turn under the entry the first launch made (the retry path keeps it in turnEntries).
+      const e = relaunch ? turnEntries.get(turnId) : stopGate.enter(turn.prewarm ? `${PREWARM_GATE_KEY}${threadId}` : threadId, { turnId, announceStart: !turn.prewarm });
+      if (!e) return { turnId };
+      if (!relaunch) turnEntries.set(turnId, e);
+      if (turn.prewarm && !relaunch) prewarmTurns.add(turnId);
+      /** A failure after the launch that the caller must still see (a refused submission): it rides out of the gate wrapper. */
+      const late: { has: boolean; error?: unknown } = { has: false };
+      const body = async (): Promise<{ turnId: string }> => {
+        // An intent warm is still starting this thread's engine: take it over, never fail as busy.
+        if (!relaunch && prewarming.has(threadId)) {
+          if (!(await stopGate.step(e, prewarming.wait(threadId)))) {
+            const stuck = active.get(threadId);
+            if (stuck) { try { stuck.stop(); } catch {} }
+          }
+        }
+        const running = active.get(threadId);
+        // A relaunch runs under its own logical turn's stop handle (U06), which
+        // the retry path left in place so Stop stays reachable during setup.
+        if (running && !(relaunch && running.turnId === relaunch.turnId)) {
+          // busy: a rejection with no mark (under a mark the gate wrapper turns it into the stopped pair or the closing ending)
+          if (!running.stopRequested()) throw new Error("a turn is already running on this thread");
+          // A Stop is "requested, not observed": interruptTurn returns as soon
+          // as the kill is sent, the harness reads the thread idle, and the
+          // person's next message can arrive while the stopped child is still
+          // closing — the real CLI tears down its MCP children and flushes
+          // first, and Windows ends it through an asynchronous taskkill. That
+          // turn is not "already running": wait for its close, bounded by the
+          // same deadline the harness gives a stopped child, then proceed.
+          const pastDeadline = await stopGate.step(e, closedOrPastDeadline(running.closed, providerCloseDeadlineMs()));
+          // Past the deadline the old process is not confirmed stopped: that is
+          // the quarantine path, not a dead end. Quarantine settles the stopped
+          // turn (freeing the thread); the dispatch below then waits, bounded,
+          // for the confirmation before it launches anything.
+          if (pastDeadline && active.get(threadId) === running) sessions.get(threadId)?.quarantine?.();
+          if (pastDeadline && active.has(threadId)) throw new Error("the stopped turn has not closed yet; wait a moment and send again");
+          if (active.has(threadId)) throw new Error("a turn is already running on this thread");
+        }
+        // Reserve the thread BEFORE the first await on the dispatch path (model
+        // lookup, settle check, broker bind), so a Stop that lands during setup
+        // has an entry to reach and a rival dispatch is refused or waits for it.
+        // A relaunch already holds its own entry (the retry path's handle).
+        let reservation: ActiveTurn | null = null;
+        let stoppedBeforeLaunch = false;
+        let wake = () => {};
+        const stopped = new Promise<void>((resolve) => { wake = resolve; });
+        if (!relaunch) {
+          reservation = activeTurn(turnId, undefined, () => { stoppedBeforeLaunch = true; wake(); }, () => stoppedBeforeLaunch);
+          active.set(threadId, reservation);
+          // a Stop or a dispose that landed in the waits above, before this reservation existed: it reaches the reservation now
+          if (stopGate.why(e) !== null) { stoppedBeforeLaunch = true; wake(); }
+        }
+        try {
+          return await dispatchTurn(turn, relaunch, { turnId, reservation, stopped, isStopped: () => stoppedBeforeLaunch, entry: e });
+        } catch (error) {
+          // a live turn's ending belongs to its close path (settle): nothing here releases or ends it
+          if (e.live && error instanceof GateStopped) throw error;
+          const verdictKind = error instanceof StoppedBeforeLaunch || error instanceof GateStopped
+            || (!turn.prewarm && (error instanceof ClaudeProbeMissing || error instanceof ClaudeUpdateRequired || error instanceof ClaudeTurnRefused));
+          if (verdictKind) {
+            if (active.get(threadId)?.turnId === turnId) forgetActive(threadId);
+            retryState.delete(threadId);
+          } else if (reservation && active.get(threadId) === reservation) {
+            // Any other failure before launch releases the reservation it made.
+            forgetActive(threadId);
+          }
+          if (e.live && !relaunch) { late.has = true; late.error = error; return { turnId }; }
+          throw error;
+        }
+      };
+      /** The turn's own verdicts before launch, as Verdicts: the entry's finish applies the precedence (a Stop or a dispose that reached the turn
+       * wins over a version card, a refusal or a plain cancel that arrives after the mark). */
+      const classify = (error: unknown): Verdict | null => {
         if (error instanceof StoppedBeforeLaunch) {
           // The user's Stop reached this turn during setup: nothing launched.
-          if (active.get(threadId)?.turnId === turnId) forgetActive(threadId);
-          retryState.delete(threadId);
-          if (!relaunch) emit({ ...base(threadId, turnId), type: "turn.started" });
+          if (!relaunch) e.markStarted();
           if (warmPool.consumeColdWake(threadId)) {
             // the warm engine was released while idle: say so instead of waiting silently
             console.info(`claude wake thread=${threadId} cold=true`);
             emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "murage", itemId: `wake-${turnId}`, title: "Waking up: starting a fresh engine after a quiet spell" });
             emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId: `wake-${turnId}`, ok: true });
           }
-          emit({ ...base(threadId, turnId), type: "turn.completed", ok: true, stopReason: "cancelled", cost: null });
-          return { turnId };
+          return { ok: true, stopReason: "cancelled" };
         }
+        if (turn.prewarm) return null;
+        if (error instanceof ClaudeProbeMissing) return { ok: false, stopReason: "spawn_error", error: error.message };
         // A Claude Code older than the qualified minimum: the same update offer a refused model gets.
-        if (error instanceof ClaudeUpdateRequired && !turn.prewarm) {
-          if (active.get(threadId)?.turnId === turnId) forgetActive(threadId);
-          retryState.delete(threadId);
-          if (!relaunch) emit({ ...base(threadId, turnId), type: "turn.started" });
-          emit({ ...base(threadId, turnId), type: "runtime.error", message: error.message, setup: true, claudeUpdate: true });
-          emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "update_required", cost: null });
-          return { turnId };
-        }
+        if (error instanceof ClaudeUpdateRequired) return { ok: false, stopReason: "update_required", error: { message: error.message, setup: true, claudeUpdate: true } };
         // A turn refused before launch (macOS or Linux with no bash or zsh for the wrapper, or a settings file whose "env" Murage
         // cannot restate): the refusal is the turn's own failure, said in its cause, and no process is started. Windows with no
         // Git Bash is not refused: Claude runs on its PowerShell tool (powershell-inherit).
-        if (error instanceof ClaudeTurnRefused && !turn.prewarm) {
-          if (active.get(threadId)?.turnId === turnId) forgetActive(threadId);
-          retryState.delete(threadId);
-          if (!relaunch) emit({ ...base(threadId, turnId), type: "turn.started" });
-          emit({ ...base(threadId, turnId), type: "runtime.error", message: error.refusal.cause ?? error.message, setup: true });
-          emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "refused", cost: null });
-          return { turnId };
+        if (error instanceof ClaudeTurnRefused) return { ok: false, stopReason: "refused", error: { message: error.refusal.cause ?? error.message, setup: true } };
+        return null;
+      };
+      try {
+        if (relaunch) {
+          // the relaunch has no gate wrapper of its own: the entry is the first launch's, and its failures end it here
+          try {
+            return await body();
+          } catch (error) {
+            if (e.done) return { turnId };
+            if (e.live && error instanceof GateStopped) return { turnId };
+            const v: Verdict | null = error instanceof GateStopped ? { ok: false, stopReason: "refused" } : classify(error);
+            if (v) { e.finish(v); return { turnId }; }
+            if (stopGate.why(e) !== null) { e.finish({ ok: false, stopReason: "refused" }); return { turnId }; }
+            throw error;
+          }
         }
-        // Any other failure before launch releases the reservation it made.
-        if (reservation && active.get(threadId) === reservation) forgetActive(threadId);
-        throw error;
+        const out = await stopGate.run(e, body, classify);
+        if (late.has) throw late.error;
+        return out as { turnId: string };
+      } finally {
+        if (!relaunch && (e.done || !e.live)) {
+          turnEntries.delete(turnId);
+          if (turn.prewarm && !e.live) prewarmTurns.delete(turnId);
+        }
       }
     };
 
     const dispatchTurn = async (
       turn: SendTurnInput,
       relaunch: { turnId: string } | undefined,
-      ctl: { turnId: string; reservation: ActiveTurn | null; stopped: Promise<void>; isStopped: () => boolean },
+      ctl: { turnId: string; reservation: ActiveTurn | null; stopped: Promise<void>; isStopped: () => boolean; entry: GateEntry },
     ): Promise<{ turnId: string }> => {
       const { threadId } = turn;
+      const e = ctl.entry;
       // A draft-only turn (server/draft-only.ts) keeps only Murage's connected-app relay and no extra folders, whatever reached
       // the driver (the registry decorator has already cut it down; this holds for a relaunch and a prewarm too).
       if (turn.draftOnly) turn = { ...turn, integrations: turn.integrations?.composio ? { composio: turn.integrations.composio } : undefined, addDirs: undefined };
@@ -3760,15 +3992,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         active.set(threadId, entry);
         if (previous && previous === ctl.reservation) previous.close();
       };
-      const turnModel = turn.providerRoute ? turn.providerRoute.model : await resolveClaudeTurnModel(turn.model, turnEnvironment);
+      const turnModel = turn.providerRoute ? turn.providerRoute.model : await stopGate.step(e, resolveClaudeTurnModel(turn.model, turnEnvironment));
       assertSoleDispatch();
-      // The isolation flags were qualified from 2.1.280 up (the floor 1.0.1 already had); an older CLI is refused before anything
+      // Sonnet 5.5 is qualified from 2.1.292; an older CLI is refused before anything
       // is written or launched (claude-guards.ts CLAUDE_MIN_VERSION). Held per executable identity;
       // a Stop during the probe ends the wait and assertSoleDispatch reports it.
       const probeStop = new AbortController();
       void ctl.stopped.then(() => probeStop.abort());
       const probeBase = claudeEnvironment(undefined, turnEnvironment);
-      await requireClaudeCliVersion(config.cli, probeBase, probeStop.signal, execCli, () => claudeProbeEnv(probeBase, config.configDir));
+      await stopGate.step(e, requireClaudeCliVersion(config.cli, probeBase, probeStop.signal, execCli, () => claudeProbeEnv(probeBase, config.configDir)));
       assertSoleDispatch();
       // argv and the process-reuse key below must come from the SAME routing
       // decision the spawn env gets from `claudeEnvironment`. A throwaway copy
@@ -3858,6 +4090,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         mcpServers.phoneJobs = { ...turn.integrations.phoneJobs };
         allowed.push(...claudeOwnUnaskedTools("phoneJobs"));
       }
+      // native HighLevel (HL-S2, read only): its read tools are pre-allowed; the host checks the grant on every call and
+      // lists no change tool.
+      if (turn.integrations?.highlevel) {
+        mcpServers.highlevel = { ...turn.integrations.highlevel };
+        allowed.push(...claudeOwnUnaskedTools("highlevel"));
+      }
       if (turn.integrations?.browser) {
         mcpServers.browser = claudeBrowserMount(turn);
         allowed.push(...claudeOwnUnaskedTools("browser"));
@@ -3929,6 +4167,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // in the warm key below and forces a respawn. The usage tags (bot, feature, conversation) ride the same header value.
       const fluxMemory = fluxTurnDecision(turn);
       const env = claudeEnvironment(turnModel, turnEnvironment, turn.providerRoute, fluxMemory);
+      const budgetRoute = turn.providerRoute ? (turn.providerRoute.preset === "flux" ? { key: turn.providerRoute.apiKey, baseUrl: turn.providerRoute.baseUrl } : null) : isFluxModel(turnModel) ? { key: env.ANTHROPIC_AUTH_TOKEN ?? env.ANTHROPIC_API_KEY ?? "", baseUrl: env.ANTHROPIC_BASE_URL ?? "https://api.fluxrouter.ai/v1" } : null;
       // MCP start-up is Murage's to wait for (gateMcpServers, before the prompt):
       // the CLI's own first-prompt hold is off, and a connect or reconnect ends
       // at the reconnect bound, so neither can hold a turn past the budgets in
@@ -3942,7 +4181,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       Object.assign(env, claudeMcpStartupEnv(claudeMcpStatusSupport.get(cliIdentity) !== "unsupported"));
       // The launcher scopes this turn's state by bot and refuses a non-probe turn without one.
       cloudTurnBot(env, turn.warmIdentity?.botId);
-      const cwd = turn.draftOnly ? claudeDraftOnlyCwd(threadId) : turn.cwd ?? (process.env.MURAGE_CLOUD_ROLE === "home" ? cloudEngineHome("claudeAgent") : homedir());
+      const cwd = turn.draftOnly ? claudeDraftOnlyCwd(threadId) : botFolderOrThrow(turn);
       // The owner's own Claude setup stays out of the bot's turns (claudeIsolation); with no Murage
       // server mounted the strict flag still needs an (empty) config to mean "none". The isolation
       // settings file is named by its content hash and its path stays in the key's argv, so a change
@@ -3959,7 +4198,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       for (const [name, value] of Object.entries(env)) if (typeof value === "string" && name !== "PATH" && baseline[name] !== value) claudeNames[name] = value;
       // The captured map loses every name this turn's settings own, and gets this turn's values of them back.
       const stripOwned = (map: Record<string, string | undefined>) => stripClaudeOwnedEnv(map, process.env.MURAGE_CLOUD_ROLE === "home" ? undefined : config.configDir);
-      const handed = await handedEngineEnv({
+      const handed = await stopGate.step(e, handedEngineEnv({
         cwd,
         strip: (map) => {
           for (const name of Object.keys(baseline)) if (!(name in env)) delete map[name];
@@ -3972,12 +4211,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           return map;
         },
         extra: { ...ownedTurnNames(env, stripOwned), ...claudeNames, CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: "1" },
-      }, env); // a Cloud home hands the pins on top of this turn's cloudTurnEnvironment map
+      }, env)); // a Cloud home hands the pins on top of this turn's cloudTurnEnvironment map
       // WIN-NOBASH-DESIGN-r2 section 1: the shell is found from the handed map (no pin names it, so writing the mode's names
       // after the pins undoes none); each mode enforces its tools
       const discoveryGeneration = envGeneration();
-      const discovered = await claudeShellDiscovery(process.platform, handed.env, discoveryGeneration,
-        process.platform === "win32" ? { launchCheck: (shell) => claudeExecLaunchCheck(shell, handed.env, cwd, discoveryGeneration) } : {});
+      const discovered = await stopGate.step(e, claudeShellDiscovery(process.platform, handed.env, discoveryGeneration,
+        process.platform === "win32" ? { launchCheck: (shell) => claudeExecLaunchCheck(shell, handed.env, cwd, discoveryGeneration) } : {}));
       if (discovered.reason === "wrapper-failed") console.info(`claude shell=powershell-inherit reason=wrapper-failed thread=${threadId} ${discovered.detail ?? ""}`.trim());
       const shellRefusal = claudeShellRefusal(process.platform, discovered.bash);
       if (shellRefusal) throw new ClaudeTurnRefused(shellRefusal);
@@ -4017,7 +4256,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         const settingsFiles = claudeSettingsEnvFiles(isolationEnv, cwd);
         const managedFiles = claudeManagedSettingsFiles();
         // the probed CLI version picks each version-keyed table (claudeTableFor: an unknown or newer version uses the newest known)
-        const cliVersion = await knownClaudeCliVersion(config.cli);
+        const cliVersion = await stopGate.step(e, knownClaudeCliVersion(config.cli));
         const overlay = claudeOverlayEnv(process.platform, shellMode, handed.env, settingsFiles, managedFiles, cliVersion);
         if ("refusal" in overlay) throw new ClaudeTurnRefused(refusalOf(overlay.refusal));
         managedEnv = overlay.managed;
@@ -4041,7 +4280,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           } else if (turn.prewarm) {
             allowed = false;
           } else {
-            const answer = await askClaudeSignin(threadId, turnId, ctl.stopped, turn.unattendedAskNote === true);
+            const answer = await stopGate.step(e, askClaudeSignin(threadId, turnId, ctl.stopped, turn.unattendedAskNote === true));
             allowed = answer.allowed;
             byOwner = answer.byOwner;
             if (answer.byOwner) claudeSigninAnswers.remember(scope, answer.allowed);
@@ -4058,7 +4297,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       }
       // 3.5: on the inherit path a command card opens with the hand and an informational provenance, never a U20 check
       const inheritProvenance = shellMode.kind === "powershell-inherit"
-        ? await knownClaudeCliVersion(config.cli).then((cli) => ({ kind: "inherited" as const, cli: cli ?? "unknown", adds: claudeTableFor(CLAUDE_INHERIT_ADDS, cli), unenforceable: CLAUDE_UNENFORCEABLE_ABSENT, ...(ownerRouting.length ? { ownerRouting } : {}) }))
+        ? await stopGate.step(e, knownClaudeCliVersion(config.cli).then((cli) => ({ kind: "inherited" as const, cli: cli ?? "unknown", adds: claudeTableFor(CLAUDE_INHERIT_ADDS, cli), unenforceable: CLAUDE_UNENFORCEABLE_ABSENT, ...(ownerRouting.length ? { ownerRouting } : {}) })))
         : undefined;
       assertSoleDispatch();
       // 5.4: the real-engine gate's hashed record of the hand (only when the gate names a file)
@@ -4125,7 +4364,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // can be kept; the answer comes before this turn picks a process.
       if (live?.settleCheck) {
         // A Stop during the wait ends it at once: nothing is launched for it.
-        await Promise.race([live.settleCheck, ctl.stopped]);
+        await stopGate.step(e, Promise.race([live.settleCheck, ctl.stopped]));
         // The await let a Stop or another dispatch on this thread in: neither
         // may go on to recycle or reuse the first turn's process.
         try {
@@ -4142,10 +4381,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           // A reset in progress finishes first (a Stop ends the wait at once);
           // a reset that left the old tree unconfirmed is retried, bounded.
           while (resetBarriers.has(threadId)) {
-            await Promise.race([resetBarriers.get(threadId)!, ctl.stopped]);
+            await stopGate.step(e, Promise.race([resetBarriers.get(threadId)!, ctl.stopped]));
             assertSoleDispatch();
           }
-          await awaitResetUnblocked(threadId);
+          await stopGate.step(e, awaitResetUnblocked(threadId));
           assertSoleDispatch();
         } catch (error) {
           if (mcpConfigPath) {
@@ -4229,19 +4468,22 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           };
           startedTurn = started;
           live.turn = started;
-          claimActive(activeTurn(turnId, live.broker, () => {
+          const stopThis = () => {
             started.stopRequested = true;
             stopSession(live);
-          }, () => started.stopRequested === true));
-          emit({ ...base(threadId, turnId), type: "turn.started" });
+          };
+          claimActive(activeTurn(turnId, live.broker, stopThis, () => started.stopRequested === true));
+          // the turn is bound to a live process from here: a mark reaches it (stopLive), and its ending is settle's
+          stopGate.bindLive(e, { stop: stopThis, kept: () => { const held = started.bg?.waiting ? { ...started.bg.usage } : undefined; return held ? { usage: held } : undefined; } });
+          e.markStarted();
           // an intent-warmed engine's init frame arrived before any turn existed: report it now
           const held = heldStarted.get(threadId);
           if (held) { heldStarted.delete(threadId); emit({ ...held, turnId, eventId: newEventId(), createdAt: new Date().toISOString() } as RuntimeEvent); }
           return started;
         };
         const gateStartedAt = Date.now();
-        const reused = await gateMcpServers(live, threadId, Object.keys(mcpServers), () => startLiveTurn().turnId,
-          () => ctl.isStopped() || (startedTurn as SessionTurn | null)?.stopRequested === true, true);
+        const reused = await stopGate.step(e, gateMcpServers(live, threadId, Object.keys(mcpServers), () => startLiveTurn().turnId,
+          () => ctl.isStopped() || (startedTurn as SessionTurn | null)?.stopRequested === true, true), { onStopped: () => dropConfig() });
         const gateMs = Date.now() - gateStartedAt;
         const early = startedTurn as SessionTurn | null;
         if (early) {
@@ -4284,6 +4526,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             forgetActive(threadId);
             retryState.delete(threadId);
             withdrawCredentials();
+            // the refusal is the caller's (the harness re-runs the turn): no ending, the entry leaves
+            stopGate.leave(e);
+            turnEntries.delete(turnId);
             if (sessions.get(threadId) === live) closeSession(threadId, "submission refused", refusalName(error));
           } else if (withdrawCredentials()) armIdle(threadId);
           throw error;
@@ -4294,8 +4539,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         if (reused.missing.length) liveTurn.toolsUnavailable = reused.missing;
         if (reused.readiness === "unknown" && reused.required.length) liveTurn.mcpReadiness = "unknown";
         // A Stop inside the turn.started listeners writes nothing.
-        liveTurn.submission = liveTurn.stopRequested ? Promise.resolve(false) : writeUser(live, threadId, withToolsNotice(turnPrompt, reused, Boolean(turn.engineCommand)), liveTurn.boundary, turn.images);
-        const written = await liveTurn.submission;
+        liveTurn.submission = liveTurn.stopRequested ? Promise.resolve(false) : (() => {
+          try {
+            return stopGate.launch(e, () => writeUser(live, threadId, withToolsNotice(turnPrompt, reused, Boolean(turn.engineCommand)), liveTurn.boundary, turn.images));
+          } catch (error) {
+            if (!(error instanceof GateStopped)) throw error;
+            // a mark landed before the write: nothing is written, the stop reaches the process, its close settles the turn
+            liveTurn.stopRequested = true;
+            stopSession(live);
+            return Promise.resolve(false);
+          }
+        })();
+        const written = await stopGate.step(e, liveTurn.submission, { onStopped: () => dropConfig() });
         if (written) {
           noteSubmitted(threadId, liveTurn, turn, live.spare ? "spare" : "reused", null, dispatchAt, gateMs);
           // a routine that lands on a spare took it from the owner: that is not a spare serving a turn
@@ -4370,7 +4625,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           // remembers which tool each pending ask came from, so the resolved
           // event can scope approvals to real desktop-control tools only
           const askTools = new Map<string, string | undefined>();
-          broker = await createPermissionBroker({
+          broker = await stopGate.step(e, createPermissionBroker({
             socketPaths: brokerSocketCandidates(threadId, turn.warmIdentity?.botId),
             // never while an earlier turn's continuation is playing: its asks
             // are not this turn's to open a card for
@@ -4380,9 +4635,49 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               const eventTurnId = sessions.get(threadId)?.turn?.turnId ?? turnId;
               askTools.set(ask.id, typeof ask.tool === "string" ? ask.tool : undefined);
               if (ask.kind === "permission") askCalls.set(`${threadId}\u0000${ask.id}`, { turn: eventTurnId, tool: ask.tool ?? "", text: JSON.stringify(ask.input ?? null) });
+              // NOLIMITS v1 V5 (a): on the lane, hold the ask until stdout delivered this call's own item.started, at
+              // most CLAUDE_ASK_ITEM_WAIT_MS; past that the call is judged on a marked turn. Off the lane: no wait.
+              const key = ask.kind === "permission" ? claudeToolKey(ask.tool, ask.input) : undefined;
+              if (key !== undefined && laneStateOf(threadId, eventTurnId) !== "off" && !startedToolKeys.has(threadId, eventTurnId, key)) {
+                void startedToolKeys.wait(threadId, eventTurnId, key, CLAUDE_ASK_ITEM_WAIT_MS).then((hold) => {
+                  logAskHold(threadId, hold);
+                  // the turn ended or the ask was answered meanwhile: nothing to open
+                  if (!broker?.isPending(ask.id)) return;
+                  // NLMI-MARKS 6: an unseen item marks THIS ask (request.opened carries itemUnseen), not the turn; a late
+                  // item marks the turn through the ordinary item path when its tool is outside
+                  if (!hold.seen) {
+                    try { laneHooks?.itemUnseen(threadId); } catch { /* the ask is judged marked by itemUnseen either way */ }
+                  }
+                  judgeAsk(ask, eventTurnId, !hold.seen);
+                });
+                return;
+              }
+              judgeAsk(ask, eventTurnId, false);
+            },
+            onResolve: (resolved) => {
+              const eventTurnId = sessions.get(threadId)?.turn?.turnId ?? turnId;
+              emit({
+                ...base(threadId, eventTurnId),
+                type: "request.resolved",
+                requestId: resolved.id,
+                behavior: resolved.behavior,
+                source: resolved.source,
+                approvalScope:
+                  controlsHost && typeof askTools.get(resolved.id) === "string" && askTools.get(resolved.id)!.startsWith("mcp__computer") ? "local-computer" : undefined,
+              });
+              askTools.delete(resolved.id);
+            },
+          }), { onStopped: (made) => made.close() });
+          function judgeAsk(ask: Ask, eventTurnId: string, itemUnseen: boolean): void {
+              if (ask.kind === "permission" && !recordOutsideInstallChange(threadId, { origin: "engine", title: ask.tool ?? "", input: ask.input }, cwd)) {
+                broker?.settle(ask.id, "deny", "Murage could not record this change. Check available disk space.", "auto");
+                return;
+              }
               // Rule 63: an ordinary in-project file call runs with no card and no verdict round
               // trip; the decision log records it. Anything else goes on to the verdict.
-              if (ask.kind === "permission" && claudeInProjectAllow(ask.tool, ask.input, cwd)) {
+              // V5 (b): on a marked lane turn (or one whose ask item never came) a dot path or a gate file is not taken.
+              const laneMarked = ask.kind === "permission" && (itemUnseen || laneStateOf(threadId, eventTurnId) === "marked");
+              if (ask.kind === "permission" && claudeInProjectAllow(ask.tool, ask.input, cwd) && !(laneMarked && claudeLaneShortcutSkip(ask.tool, ask.input, cwd))) {
                 appendDecision(DATA_DIR, { threadId, requestId: ask.id, tool: ask.tool, summary: askSummary(ask), decision: "auto-approved", source: "own-workspace" });
                 if (broker?.settle(ask.id, "allow", undefined, "auto", ask.input)) return;
               }
@@ -4402,6 +4697,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                 type: "request.opened",
                 requestId: ask.id,
                 ...(localHold ? { localHold: localHold.slice(0, 80) } : {}),
+                ...(itemUnseen ? { itemUnseen: true } : {}),
+                // 1.0.19 A3: the call's key, and whether two started items of this turn share it
+                ...(ask.kind === "permission" ? (() => {
+                  const key = claudeToolKey(ask.tool, ask.input);
+                  return { callKey: key, ...(startedToolKeys.count(threadId, eventTurnId, key) > 1 ? { callKeyAmbiguous: true } : {}) };
+                })() : {}),
                 requestType: ask.kind,
                 tool: ask.tool ?? "",
                 summary: askSummary(ask),
@@ -4438,21 +4739,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               else if (ask.kind === "permission" && (ask.tool === "Bash" || ask.tool === "PowerShell")) void execEnvNow(threadId, shellForm, childHanded, cwd).then((record) => open(withManaged(record)), () => open(undefined));
               else if (ask.kind === "permission") open(withManaged(execEnvHanded(childHanded, cwd, shellForm)));
               else open(undefined);
-            },
-            onResolve: (resolved) => {
-              const eventTurnId = sessions.get(threadId)?.turn?.turnId ?? turnId;
-              emit({
-                ...base(threadId, eventTurnId),
-                type: "request.resolved",
-                requestId: resolved.id,
-                behavior: resolved.behavior,
-                source: resolved.source,
-                approvalScope:
-                  controlsHost && typeof askTools.get(resolved.id) === "string" && askTools.get(resolved.id)!.startsWith("mcp__computer") ? "local-computer" : undefined,
-              });
-              askTools.delete(resolved.id);
-            },
-          });
+          }
           // A fallback bind means the deterministic pipe is still held by an
           // earlier process's child. The proxy learns its path from argv, so
           // point it at the pipe we actually bound. argsKey deliberately keeps
@@ -4467,7 +4754,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // thread meanwhile. Give up (the catch below closes the broker).
         assertSoleDispatch();
         // Headroom for one more engine: evicts an idle one if needed, never refuses.
-        await warmPool.beforeSpawn();
+        await stopGate.step(e, warmPool.beforeSpawn());
         assertSoleDispatch();
         // A quarantine or reset that arose during setup: wait for it to clear
         // (bounded), then revalidate ownership and the Stop fence before the
@@ -4480,9 +4767,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             const barrier = resetBarriers.get(threadId);
             if (barrier) {
               let timer: NodeJS.Timeout | undefined;
-              await Promise.race([barrier, ctl.stopped, new Promise<void>((resolve) => { timer = setTimeout(resolve, remaining); })]).finally(() => clearTimeout(timer));
+              await stopGate.step(e, Promise.race([barrier, ctl.stopped, new Promise<void>((resolve) => { timer = setTimeout(resolve, remaining); })]).finally(() => clearTimeout(timer)));
             } else {
-              await awaitResetUnblocked(threadId, remaining);
+              await stopGate.step(e, awaitResetUnblocked(threadId, remaining));
             }
             assertSoleDispatch();
           }
@@ -4550,14 +4837,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // Section 14: the overlay is written for this launch and held by it (released when it exits, below)
         overlayHeld = overlayText === null ? null : acquireClaudeOverlay(overlayText);
         const launchCli = engineLaunchFile(config.cli, launchPath);
-        child = spawnCli(launchCli, args, {
+        child = stopGate.launch(e, () => spawnCli(launchCli, args, {
           cwd,
           env,
           stdio: ["pipe", "pipe", "pipe"],
           // S4 power (design section 2): the Windows job and the privilege removal; no hostPower on Mac or Linux, where the
           // block does not nest with the CLI's own command sandbox.
-        }, engineJob({ posixHostPower: false }));
+        }, engineJob({ posixHostPower: false }), undefined, threadId));
       } catch (error) {
+        // no child exists: the gate read the entry live at the call, a failed or refused launch gives that back
+        e.live = false;
         // The fence above released the prompt to a write that will not happen (turn-attribution.ts, I14).
         turn.notWritten?.();
         releaseOverlay();
@@ -4617,6 +4906,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         stopReason: string | null,
         total: number | null = null,
         usage?: { input: number; output: number; cachedInput?: number },
+        /** `final`: the ending is emitted as is under any mark (a stop that could not be confirmed says so). */
+        opts?: { final?: true; error?: string },
       ) => {
         const t = session.turn;
         if (!t || t.settled) return;
@@ -4730,9 +5021,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             session.settleCheck = check;
           }
         }
-        emit({ ...base(threadId, t.turnId), type: "turn.completed", ok, stopReason, cost, ...(usage ? { usage } : {}), ...(t.toolsUnavailable?.length ? { toolsUnavailable: t.toolsUnavailable } : {}), ...(t.mcpReadiness ? { mcpReadiness: t.mcpReadiness } : {}) });
+        endTurn(t.turnId, { ok, stopReason: stopReason as string, ...opts, extra: { cost, ...(usage ? { usage } : {}), ...(t.toolsUnavailable?.length ? { toolsUnavailable: t.toolsUnavailable } : {}), ...(t.mcpReadiness ? { mcpReadiness: t.mcpReadiness } : {}) } });
       };
       const currentTurnId = () => session.turn?.turnId ?? turnId;
+      /** The failure line that precedes a settle. Under a mark (an asked Stop, a dispose) the entry's finish says the ending (the pair, or the engine-closed line). */
+      const turnError = (detail: Record<string, unknown>) => {
+        const at = currentTurnId();
+        const entry = turnEntries.get(at);
+        if (entry && stopGate.why(entry) !== null) return;
+        emit({ ...base(threadId, at), type: "runtime.error", ...detail } as RuntimeEvent);
+      };
       /** A card this session's engine is waiting on. No timer of ours settles a turn while this is true. */
       const cardOpen = () => humanWaitOpen(threadId) || Boolean(session.broker?.openAsks()) || [...elicitAsks.keys()].some((key) => key.startsWith(`${threadId}\u0000`));
       const emitSubtask = (t: SessionTurn, subtask: ReturnType<SubtaskTracker["end"]>) => {
@@ -4818,7 +5116,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           session.startupTimer = null;
           if (!session.turn) dropStartFiles();
         }
-        appendNative(threadId, { dir: "in", source: "claude.sdk.message", msg: o });
+        appendNative(threadId, { dir: "in", source: "claude.sdk.message", msg: o }, { rawChars: line.length });
         // A retired session (closing, or replaced in the thread's slot) with
         // no open turn can no longer speak for the thread: its system/init must
         // not become session.started, which writes the thread's resume cursor.
@@ -4975,6 +5273,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           case "assistant": {
             const msg = o.message ?? {};
             const text = firstText(msg.content);
+            const providerError = o.is_api_error_message ? cliFluxBudget({ ...o, message: text }, budgetRoute) : undefined;
+            if (providerError) {
+              emit({ ...base(threadId, currentTurnId()), type: "runtime.error", message: "This Flux key has reached its budget.", providerError });
+              break;
+            }
             if (claudeAuthFailure(o, text)) {
               if (session.turn) session.turn.authFailed = true;
               emit({ ...base(threadId, currentTurnId()), type: "runtime.error",
@@ -5004,7 +5307,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             for (const b of Array.isArray(msg.content) ? msg.content : []) {
               if (b.type === "tool_use") {
                 if (typeof b.id === "string" && typeof b.name === "string" && toolNameByUse.size < 512) toolNameByUse.set(b.id, b.name);
-                emit({ ...base(threadId, currentTurnId()), type: "item.started", itemType: "tool", origin: "engine", itemId: b.id, title: b.name, input: b.input });
+                const callKey = claudeToolKey(b.name, b.input);
+                emit({ ...base(threadId, currentTurnId()), type: "item.started", itemType: "tool", origin: "engine", itemId: b.id, title: b.name, input: b.input, callKey, ...(startedToolKeys.late(threadId, currentTurnId(), callKey) ? { lateFrame: true } : {}) });
+                // V5: after the item is emitted (its mark is set in that handler), release an ask waiting for it
+                startedToolKeys.note(threadId, currentTurnId(), callKey);
               }
             }
             if (msg.usage) {
@@ -5034,7 +5340,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                   // here with the reason in chat (the frame-overflow pattern below), and recycle the process: the next turn starts a
                   // fresh one with its own broker.
                   if (session.turn && !session.turn.settled) {
-                    emit({ ...base(threadId, currentTurnId()), type: "runtime.error", message: BROKER_LOST_MESSAGE });
+                    turnError({ message: BROKER_LOST_MESSAGE });
                     settle(false, BROKER_LOST);
                   }
                   if (sessions.get(threadId) === session) closeSession(threadId, BROKER_LOST);
@@ -5248,7 +5554,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           // replay — settle() clears the retry budget and the turn), then end
           // this retained process so no later frame is read out of context.
           if (session.turn && !session.turn.settled) {
-            emit({ ...base(threadId, currentTurnId()), type: "runtime.error", message: frameOverflowMessage("Claude", overflow) });
+            turnError({ message: frameOverflowMessage("Claude", overflow) });
             settle(false, FRAME_TOO_LARGE);
           }
           if (sessions.get(threadId) === session) closeSession(threadId, FRAME_TOO_LARGE);
@@ -5263,13 +5569,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       });
 
       child.on("error", (e) => {
-        emit({ ...base(threadId, currentTurnId()), type: "runtime.error", ...describeSpawnFailure(e, config.cli) });
+        turnError({ ...describeSpawnFailure(e, config.cli) });
         settle(false, "spawn_error");
       });
 
       // a turn still running when the process died is a failed turn; a
       // process that exited between turns (idle close, contract change)
       // is just a session ending
+      // the usage the first result reported while background helpers still run is held on the turn: a Stop or a close keeps it on the ending
+      const heldBgUsage = () => (session.turn?.bg?.waiting ? { ...session.turn.bg.usage } : undefined);
       const onChildClose = (code: number | null) => {
         warmPool.release(session);
         prewarmTurns.delete(turnId);
@@ -5281,7 +5589,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           // drivers, with no runtime error card and no Retry. A stopped turn
           // is never replayed (U-17).
           retryState.delete(threadId);
-          settle(true, "cancelled");
+          settle(true, "cancelled", null, heldBgUsage());
         } else if (session.turn?.updateRequired && !session.turn.settled) {
           // The CLI already said it is too old for the model and then exited
           // with no result frame: that is the whole answer. A second, generic
@@ -5295,8 +5603,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           // generic exit card. A process that got as far as `init` is never read this way.
           const refusal = claudeLaunchRefusal(session.stderr.text)!;
           retryState.delete(threadId);
-          emit({
-            ...base(threadId, currentTurnId()), type: "runtime.error", message: refusal.message, setup: true,
+          turnError({
+            message: refusal.message, setup: true,
             ...(refusal.claudeUpdate ? { claudeUpdate: true } : {}), ...(refusal.errorKind ? { errorKind: refusal.errorKind } : {}),
           });
           settle(false, refusal.stopReason);
@@ -5357,19 +5665,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             });
             void (async () => {
               const wait = interruptibleDelay(delayMs * retryScale, retryAbort.signal);
-              await wait.promise;
+              await stopGate.cleanupStep(e, wait.promise);
               // an interrupt during the backoff landed here via stop(); the
-              // turn settles as cancelled and no zombie relaunch happens
-              if (retry.cancelled) {
+              // turn settles as cancelled and no zombie relaunch happens.
+              // A dispose during the backoff ends the turn here too (closing, by the entry's finish).
+              if (retry.cancelled || e.done || stopGate.why(e) !== null) {
                 forgetActive(threadId);
                 retryState.delete(threadId);
-                emit({
-                  ...base(threadId, turnId),
-                  type: "turn.completed",
-                  ok: true,
-                  stopReason: "cancelled",
-                  cost: null,
-                });
+                endTurn(turnId, { ok: true, stopReason: "cancelled" });
                 return;
               }
               // The logical turn continues across the relaunch (U06): its
@@ -5387,38 +5690,29 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                 const cursor = session.sessionId ?? sessionId ?? undefined;
                 // The reset was consumed by the first launch. The retry
                 // resumes the new session, never the context it replaced.
-                await sendTurn({ ...turn, sessionReset: false, resumeCursor: cursor }, { turnId });
-              } catch (e) {
+                // the backoff is over: no process of this turn is live until the relaunch spawns one
+                e.live = false;
+                await stopGate.cleanupStep(e, sendTurn({ ...turn, sessionReset: false, resumeCursor: cursor }, { turnId }));
+              } catch (failure) {
                 if (active.get(threadId)?.turnId === turnId) forgetActive(threadId);
                 retryState.delete(threadId);
                 // A refused relaunch wrote nothing: the harness re-runs the
                 // turn on a reset session, so there is no engine error to show.
-                const refused = typeof e === "object" && e !== null && submissionRefusals.has(e);
-                if (!refused) emit({
-                  ...base(threadId, turnId),
-                  type: "runtime.error",
-                  message: e instanceof Error ? e.message : String(e),
-                });
-                emit({
-                  ...base(threadId, turnId),
-                  type: "turn.completed",
+                const refused = typeof failure === "object" && failure !== null && submissionRefusals.has(failure);
+                endTurn(turnId, {
                   ok: false,
                   stopReason: refused ? "submission_refused" : "exit_before_result",
-                  cost: null,
+                  ...(refused ? {} : { error: failure instanceof Error ? failure.message : String(failure) }),
                 });
               }
             })();
             return;
           }
           retryState.delete(threadId);
-          emit({
-            ...base(threadId, currentTurnId()),
-            type: "runtime.error",
-            message: shown,
-          });
+          turnError({ message: shown });
           // the process died before the prompt was even attempted (the baseline
           // wait) or its write was refused: the prompt never reached the CLI
-          settle(false, closingTurn.boundary.submission === "refused" || closingTurn.submission === null ? "stdin_write_failed" : "exit_before_result");
+          settle(false, closingTurn.boundary.submission === "refused" || closingTurn.submission === null ? "stdin_write_failed" : "exit_before_result", null, heldBgUsage());
         }
         flushQueuedSteers(session, threadId, false);
         if (session.idleTimer) clearTimeout(session.idleTimer);
@@ -5446,8 +5740,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         if (!resetBlocked.has(threadId)) resetBlocked.set(threadId, session);
         const open = session.turn;
         if (open && !open.settled) {
-          emit({ ...base(threadId, currentTurnId()), type: "runtime.error", message: NOT_STOPPED_MESSAGE });
-          settle(false, "session_not_stopped");
+          // the stop could not be confirmed: said as it is, under any mark (a refusal-class final ending)
+          settle(false, "session_not_stopped", null, undefined, { final: true, error: NOT_STOPPED_MESSAGE });
         }
       };
       session.quarantine = quarantineSession;
@@ -5462,10 +5756,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           if (closeFinalized) return;
           const closingTurn = session.turn;
           if (closingTurn && !closingTurn.settled && closingTurn.boundary.submission === "in-flight" && closingTurn.submission) {
-            await closingTurn.submission;
+            await stopGate.cleanupStep(e, closingTurn.submission);
           }
           const confirmed = session.stopProven ? Promise.resolve(true) : awaitCliTreeStopped(child, undefined, CLI_CALLER_DEADLINE_MS);
-          if (!(await confirmed)) {
+          if (!(await stopGate.cleanupStep(e, confirmed))) {
             quarantineSession();
             watchLateStop(session);
             return;
@@ -5491,9 +5785,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // The pool let this thread's engine go while it was idle: this send starts a fresh one,
       // so say why the wait is longer (a prewarm or a retry's relaunch announces nothing).
       const coldWake = warmPool.consumeColdWake(threadId);
+      // the child is live: a mark reaching this entry now stops it (the same stop an interrupt or a dispose calls)
+      // the gate's settleOutstanding after a drain timeout carries the usage held for background helpers (ruling U): a sync getter, nothing awaited
+      stopGate.bindLive(e, { stop: () => stop(), kept: () => { const held = heldBgUsage(); return held ? { usage: held } : undefined; } });
       if (!turn.prewarm) {
         claimActive(activeTurn(turnId, broker, stop, () => launchTurn.stopRequested === true || retry.cancelled));
-        emit({ ...base(threadId, turnId), type: "turn.started" });
+        // a relaunch's launch announces itself again, with the same turn id (turn.retrying precedes it); a Stop before it does not
+        if (relaunch) e.started = false;
+        e.markStarted();
         if (coldWake && !relaunch) {
           console.info(`claude wake thread=${threadId} cold=true`);
           emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "murage", itemId: `wake-${turnId}`, title: "Waking up: starting a fresh engine after a quiet spell" });
@@ -5567,10 +5866,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       }
       // The new process connects its MCP servers in the background: wait
       // (bounded) for the ones this turn needs before the prompt goes in.
-      let gate: GateOutcome;
+      let mcpGate: GateOutcome;
       const gateStartedAt = Date.now();
       try {
-        gate = await gateMcpServers(session, threadId, Object.keys(mcpServers), () => turnId, cancelledBeforeWrite);
+        mcpGate = await stopGate.step(e, gateMcpServers(session, threadId, Object.keys(mcpServers), () => turnId, cancelledBeforeWrite));
       } catch (error) {
         turn.notWritten?.();
         throw error;
@@ -5596,14 +5895,27 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         session.turn = null;
         forgetActive(threadId);
         retryState.delete(threadId);
+        // the refusal is the caller's (the harness re-runs the turn): no ending, the entry leaves
+        stopGate.leave(e);
+        turnEntries.delete(turnId);
         noteRefused(threadId, turnId, turn, "submission refused");
         if (sessions.get(threadId) === session) closeSession(threadId, "submission refused", refusalName(error));
         throw error;
       }
-      if (gate.missing.length) launchTurn.toolsUnavailable = gate.missing;
-      if (gate.readiness === "unknown" && gate.required.length) launchTurn.mcpReadiness = "unknown";
-      launchTurn.submission = writeUser(session, threadId, withToolsNotice(turnPrompt, gate, Boolean(turn.engineCommand)), launchTurn.boundary, turn.images);
-      const launchWritten = await launchTurn.submission;
+      if (mcpGate.missing.length) launchTurn.toolsUnavailable = mcpGate.missing;
+      if (mcpGate.readiness === "unknown" && mcpGate.required.length) launchTurn.mcpReadiness = "unknown";
+      try {
+        launchTurn.submission = stopGate.launch(e, () => writeUser(session, threadId, withToolsNotice(turnPrompt, mcpGate, Boolean(turn.engineCommand)), launchTurn.boundary, turn.images));
+      } catch (error) {
+        if (!(error instanceof GateStopped)) throw error;
+        // a mark landed before the write: nothing is written, the stop reaches the child, its close settles the turn
+        launchTurn.stopRequested = true;
+        launchTurn.submission = Promise.resolve(false);
+        turn.notWritten?.();
+        stop();
+        return { turnId };
+      }
+      const launchWritten = await stopGate.step(e, launchTurn.submission);
       if (launchWritten) noteSubmitted(threadId, launchTurn, turn, "spawned", spawnReason, dispatchAt, gateMs);
       else noteRefused(threadId, turnId, turn, "stdin write failed");
       if (!launchWritten) {
@@ -5636,6 +5948,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       const held = sessions.get(threadId);
       if (idleHeld > 0 || !mem || active.has(threadId) || resetBarriers.has(threadId) || resetBlocked.has(threadId) || (held && !held.closing && held.child.exitCode === null) || !prewarming.begin(threadId)) return false;
       const turnId = newId();
+      // a prewarm is gate-checked like a send (a dispose or a Stop All reaches it), but it announces nothing: no turn exists
+      const pe = stopGate.enter(`${PREWARM_GATE_KEY}${threadId}`, { turnId, announceStart: false });
+      turnEntries.set(turnId, pe);
       const spare = reuseStats.spare();
       startingSpares.set(threadId, spare);
       let stoppedBeforeLaunch = false;
@@ -5644,15 +5959,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       const reservation = activeTurn(turnId, undefined, () => { stoppedBeforeLaunch = true; wake(); }, () => stoppedBeforeLaunch);
       active.set(threadId, reservation);
       try {
-        await dispatchTurn({ ...mem, prewarm: true, background: false, sessionReset: false }, undefined, { turnId, reservation, stopped, isStopped: () => stoppedBeforeLaunch });
+        await dispatchTurn({ ...mem, prewarm: true, background: false, sessionReset: false }, undefined, { turnId, reservation, stopped, isStopped: () => stoppedBeforeLaunch, entry: pe });
         const parked = sessions.get(threadId);
         return parked?.turn === null && !parked.closing;
       } catch (error) {
-        if (!(error instanceof StoppedBeforeLaunch)) console.info(`claude prewarm thread=${threadId} failed=${error instanceof Error ? error.message : String(error)}`);
+        if (!(error instanceof StoppedBeforeLaunch) && !(error instanceof GateStopped)) console.info(`claude prewarm thread=${threadId} failed=${error instanceof Error ? error.message : String(error)}`);
         if (active.get(threadId) === reservation) forgetActive(threadId);
         prewarmTurns.delete(turnId);
         return false;
       } finally {
+        stopGate.leave(pe);
+        turnEntries.delete(turnId);
         startingSpares.delete(threadId);
         if (sessions.get(threadId)?.spare !== spare) spare.lost("not parked");
         prewarming.end(threadId);
@@ -5729,7 +6046,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (!("version" in probe)) return { state: "unavailable", reason: probe.reason };
       const { version } = probe;
       // Below the qualified minimum a turn would be refused: offer the update, not a sign-in.
-      if (claudeVersionVerdict(version) === "below") return { state: "unavailable", version, reason: CLAUDE_UPDATE_MESSAGE };
+      if (claudeVersionVerdict(version) !== "ok") return { state: "unavailable", version, reason: CLAUDE_UPDATE_MESSAGE };
       // The probe runs with the flags a turn gets, so it judges the login a turn will have.
       // (A Cloud home's launcher refuses the inline isolation flags; its rendered settings carry the same policy.)
       const auth = await claudeAuthStatus(config.cli, probeEnv, execCli, process.env.MURAGE_CLOUD_ROLE === "home" ? [] : ["--mcp-config", '{"mcpServers":{}}', ...claudeIsolation(env, process.cwd())]);
@@ -5753,33 +6070,34 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
      * `claude -p "prompt"` shape is not safe for review. No tools or MCP
      * servers are mounted in this isolated process. */
     // A background run of the engine: a conversation deletion pauses these, and one it stopped starts again afterwards (engine-one-shots.ts).
-    const generateReview = (prompt: string, signal?: AbortSignal, proposalModel?: string, botId?: string, memory?: { cwd: string; gate?: LearningGate; sent?: boolean }): Promise<string> =>
+    const generateReview = (prompt: string, signal?: AbortSignal, proposalModel?: string, botId?: string, memory?: { gate?: LearningGate; sent?: boolean }, folder?: string): Promise<string> =>
       oneShots.run("claude", signal, async (runSignal) => {
         // Below the qualified minimum the call is refused with code update_required, before any launch.
         const probeBase = claudeEnvironment(proposalModel ?? "claude-haiku-4-5", accountEnvironment());
         await requireClaudeCliVersion(config.cli, probeBase, runSignal, execCli, () => claudeProbeEnv(probeBase, config.configDir));
-        return runReview(prompt, runSignal, proposalModel, botId, memory);
+        return runReview(prompt, runSignal, proposalModel, botId, memory, folder);
       }, true);
-    /** Learning on this login (cli-memory-learning.ts): the review call with every tool off, no session file, an empty working folder. */
-    const memorySession: MemorySessionRunner = async (prompt, signal, { gate }) => {
-      const cwd = mkdtempSync(join(tmpdir(), "murage-learning-"));
-      const memory: { cwd: string; gate?: LearningGate; sent?: boolean } = { cwd, ...(gate ? { gate } : {}) };
-      try { return await generateReview(prompt, signal, "claude-haiku-4-5", undefined, memory); }
+    /** Learning on this login (cli-memory-learning.ts): the review call with every tool off, no session file, the resolved bot folder. */
+    const memorySession: MemorySessionRunner = async (prompt, signal, { gate, cwd: folder }) => {
+      botFolderOrThrow({ cwd: folder });
+      const memory: { gate?: LearningGate; sent?: boolean } = { ...(gate ? { gate } : {}) };
+      try { return await generateReview(prompt, signal, "claude-haiku-4-5", undefined, memory, folder); }
       catch (error) {
         // the fence refused a re-run (a deletion's one-shot pause stopped an attempt that had written): that attempt was sent, so this is
         // an interrupted call, not "nothing sent"; a refusal before any write stays the typed, content-free refusal
+        if (error instanceof BotFolderUnavailableError) throw error;
         if (isMemorySendFenced(error) || isMemorySendBusy(error)) throw memory.sent || (gate?.released ?? 0) > 0 ? Object.assign(new Error("MEMORY_EXTRACTION_REQUEST_FAILED"), { interrupted: true }) : error;
         throw error instanceof Error && !("status" in error) ? Object.assign(engineFailure(error.message), "code" in error ? { code: error.code } : {}) : error;
       }
-      finally { rmSync(cwd, { recursive: true, force: true }); }
     };
-    const runReview = async (prompt: string, signal?: AbortSignal, proposalModel?: string, botId?: string, memory?: { cwd: string; gate?: LearningGate; sent?: boolean }): Promise<string> => {
+    const runReview = async (prompt: string, signal?: AbortSignal, proposalModel?: string, botId?: string, memory?: { gate?: LearningGate; sent?: boolean }, folder?: string): Promise<string> => {
+      const cwd = botFolderOrThrow({ cwd: folder });
       const turnEnv = claudeEnvironment(proposalModel ?? "claude-haiku-4-5", accountEnvironment());
       // The bot this review or proposal is for: the launcher refuses a Cloud run that names none.
       cloudTurnBot(turnEnv, botId);
       // Same isolation as a turn: no MCP server, hook, plugin or personal CLAUDE.md of the
       // owner's, with the owner's login untouched. A proposal also gets no tools at all.
-      const isolation = process.env.MURAGE_CLOUD_ROLE === "home" ? [] : claudeIsolation(turnEnv, memory?.cwd ?? process.cwd());
+      const isolation = process.env.MURAGE_CLOUD_ROLE === "home" ? [] : claudeIsolation(turnEnv, cwd);
       // Rule 74: the review CLI is handed the pins like a turn, on the finished map (a Cloud home: on top of this call's
       // cloudTurnEnvironment map, which handedEngineEnv refuses to be handed without).
       const baseline: NodeJS.ProcessEnv = process.env;
@@ -5787,7 +6105,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       for (const [name, value] of Object.entries(turnEnv)) if (typeof value === "string" && name !== "PATH" && baseline[name] !== value) names[name] = value;
       const stripOwned = (map: Record<string, string | undefined>) => stripClaudeOwnedEnv(map, process.env.MURAGE_CLOUD_ROLE === "home" ? undefined : config.configDir);
       const handed = await handedEngineEnv({
-        cwd: memory?.cwd ?? process.cwd(),
+        cwd,
         strip: (map) => {
           for (const name of Object.keys(baseline)) if (!(name in turnEnv)) delete map[name];
           stripOwned(map);
@@ -5824,7 +6142,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           {
             stdio: ["pipe", "pipe", "pipe"],
             env,
-            ...(memory ? { cwd: memory.cwd } : {}),
+            cwd,
           },
           // S4 power (design sections 1 and 7): the Windows job, as the turn spawn; no hostPower on Mac or Linux.
           engineJob({ posixHostPower: false }),
@@ -5941,6 +6259,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         prewarm,
         steer,
         interruptTurn: async (threadId) => {
+          stopGate.ask(threadId);
           active.get(threadId)?.stop();
           // A replaced predecessor still shutting down is this thread's too.
           if (retiringByThread.has(threadId)) await requireRetiredStopped(threadId);
@@ -5966,6 +6285,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           return { confirmed, release: () => { if (!released) { released = true; idleHeld = Math.max(0, idleHeld - 1); } } };
         },
         resetSession: async (threadId, why) => {
+          stopGate.ask(threadId);
           // The barrier is installed before this function's first await, so no
           // send or prewarm can slip in beside the tree being reset.
           let release = () => {};
@@ -6023,6 +6343,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         },
         hasSession: (threadId) => active.has(threadId),
         stopAll: async () => {
+          stopGate.ask();
           for (const { stop } of active.values()) stop();
           for (const threadId of [...sessions.keys()]) closeSession(threadId, "stopAll");
           await requireRetiredStopped();
@@ -6032,14 +6353,19 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           return () => listeners.delete(listener);
         },
       },
-      generateText: (prompt, botId) => generateReview(prompt, undefined, undefined, botId),
-      reviewPermission: (prompt, signal, botId) => generateReview(prompt, signal, undefined, botId),
-      proposeProject: (prompt, signal, model, botId) => generateReview(prompt, signal, model, botId),
+      generateText: async (prompt, botId, cwd) => generateReview(prompt, undefined, undefined, botId, undefined, botFolderOrThrow({ cwd })),
+      reviewPermission: async (prompt, signal, botId, cwd) => generateReview(prompt, signal, undefined, botId, undefined, botFolderOrThrow({ cwd })),
+      proposeProject: async (prompt, signal, model, botId, cwd) => generateReview(prompt, signal, model, botId, undefined, botFolderOrThrow({ cwd })),
       dispose: async () => {
+        // closing for every turn now and every turn that enters later, before anything else
+        stopGate.close();
         for (const { stop } of active.values()) stop();
         for (const threadId of [...sessions.keys()]) closeSession(threadId, "dispose");
-        listeners.clear();
+        // every turn ends before listeners clear: the drain waits (bounded), the rest end closing
+        const open = await stopGate.drain(providerCloseDeadlineMs());
+        stopGate.settleOutstanding(open);
         await requireRetiredStopped();
+        listeners.clear();
       },
     }, { run: () => memorySession });
   },

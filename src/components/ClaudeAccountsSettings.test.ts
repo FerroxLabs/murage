@@ -206,7 +206,7 @@ describe("claudeAccountChanger", () => {
     // section's own list, which was drawn — and how to probe it again.
     const refresh = section({ fleet: () => { refresh.log.push("fleet"); return Promise.reject(new Error("offline")); } });
     await refresh.change("DELETE", "claude-work");
-    expect(refresh.log).toEqual(["busy true", "request DELETE", "draw DELETE", "load", "busy false", "fleet", "error Saved, but the engine list could not refresh. Switch to another window and back to probe the engines again."]);
+    expect(refresh.log).toEqual(["busy true", "request DELETE", "draw DELETE", "load", "busy false", "fleet", "error Saved, but the engine list could not refresh. Switch to another window and back to check the engines again."]);
     // The section's own list failing keeps its own message.
     const list = section({ load: async () => { throw new Error("offline"); } });
     await list.change("PATCH", "claude-work", { displayName: "Work" });

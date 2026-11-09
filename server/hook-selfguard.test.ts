@@ -1,3 +1,4 @@
+// secret-scan: fixture (fake home path under test)
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -17,11 +18,22 @@ import { removeTempDir } from "./testing/cleanup.ts";
 import { globKeyRead } from "../shared/sensitive-globs.ts";
 import { inProjectCheck, walkRoot } from "../shared/in-project.ts";
 import { SENSITIVE_PATHS } from "../shared/sensitive-paths.ts";
+import { ruleRowId } from "../shared/gate-files.ts";
 
 const full: AutoApprover = { autoApprove: true, fullAccess: true, alwaysAllow: [] };
 const unlimited: AutoApprover = { autoApprove: true, fullAccess: true, noLimits: true, alwaysAllow: [] };
 const granted: AutoApprover = { autoApprove: true, fullAccess: true, alwaysAllow: ["write_to_file", "run_command", "edit", "Bash:cp"] };
 const at = (name: string, input: unknown): AutoContext => ({ stopLine: null, call: { toolCall: { name, input } } });
+// NL-SELFGUARD-RULING-1018: a No limits turn without the owner's proof keeps the strict read, so its card reads always-ask
+// (unreadable) where Full access reads sensitive-guard. Both are cards and neither is a grant.
+const OWNER = { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null } satisfies Partial<AutoContext>;
+const atOwner = (name: string, input: unknown): AutoContext => ({ ...OWNER, call: { toolCall: { name, input } } });
+function expectCard(bot: AutoApprover, verdict: ReturnType<typeof autoVerdict>, label: string): void {
+  if (bot.noLimits) {
+    expect(verdict.approve, label).toBeNull();
+    expect(["always-ask", "sensitive-guard"], label).toContain(verdict.source);
+  } else expect(verdict, label).toMatchObject({ approve: null, source: "sensitive-guard" });
+}
 
 const data = "/Users/jo/.murage";
 const relayDir = `${data}/native/antigravity-relay/agy-t1`;
@@ -62,7 +74,7 @@ describe("Full access never answers a call that names a Murage hook", () => {
     ]) {
       for (const bot of [full, unlimited, granted]) {
         const verdict = autoVerdict(bot, "run_command", command, at("run_command", { command }));
-        expect(verdict, command).toMatchObject({ approve: null, source: "sensitive-guard" });
+        expectCard(bot, verdict, command);
       }
       expect(looksSensitive(command) || globKeyRead(command) !== null, command).toBe(true);
     }
@@ -114,7 +126,7 @@ describe("Full access never answers a call that names a Murage hook", () => {
       ["run_command", "cp a.md .agents/agents/", { command: "cp a.md .agents/agents/" }],
     ] as const) {
       for (const bot of [full, unlimited, granted]) {
-        expect(autoVerdict(bot, tool, summary, at(tool, input)), summary).toMatchObject({ approve: null, source: "sensitive-guard" });
+        expectCard(bot, autoVerdict(bot, tool, summary, at(tool, input)), summary);
       }
     }
   });
@@ -290,7 +302,7 @@ describe("agy-workspace-hooks reads the root folder only as a path", () => {
         // `rm -rf` is held by the destructive guard first; the key guard still names it at Full and No limits
         const verdict = autoVerdict(bot, "run_command", command, at("run_command", { command }));
         expect(verdict, command).toMatchObject({ approve: null });
-        expect(["sensitive-guard", "destructive-guard"], command).toContain(verdict.source);
+        expect(bot === unlimited ? ["sensitive-guard", "destructive-guard", "always-ask"] : ["sensitive-guard", "destructive-guard"], command).toContain(verdict.source);
       }
     }
   });
@@ -388,7 +400,7 @@ describe("a call that names Murage's Hermes overlay folder is held at every leve
         const v = autoVerdict(bot, tool, summary, at(tool, input));
         // `rm -rf …/native/hermes-ask` is held by the destructive guard before the sensitive guard sees it: either holds.
         if (summary.startsWith("rm -rf")) expect(v.approve, `${summary} ${JSON.stringify(bot)}`).toBeNull();
-        else expect(v, `${summary} ${JSON.stringify(bot)}`).toMatchObject({ approve: null, source: "sensitive-guard" });
+        else expectCard(bot, v, `${summary} ${JSON.stringify(bot)}`);
       }
     }
   });
@@ -402,5 +414,95 @@ describe("a call that names Murage's Hermes overlay folder is held at every leve
     expect(row.re.test("server/drivers/acp/hermes-ask-normal.test.ts")).toBe(false);
     const ordinary = "npx vitest run server/drivers/acp/hermes-ask-normal.test.ts";
     expect(autoVerdict(full, "terminal", ordinary, at("terminal", { command: ordinary })).approve).toBeTruthy();
+  });
+});
+
+// NL-SELFGUARD-RULING-1018 (a): on the owner's clean No limits turn the gate rows run and are recorded by their row
+// (NOLIMITS-MEANS-IT 2.3), except Murage's own hook programs (`murage-engine-hooks`), which keep the card: an honest bot
+// never needs to write them, and a write is the one route where a clean turn changes the guard for another bot's live turn.
+describe("NL-SELFGUARD: the owner's clean No limits turn", () => {
+  const gateRow = (v: ReturnType<typeof autoVerdict>) => ruleRowId(v.rule);
+  const ownerRun = (tool: string, summary: string, input: unknown, bot: AutoApprover = unlimited, patch: Partial<AutoContext> = {}) =>
+    autoVerdict(bot, tool, summary, { ...atOwner(tool, input), ...patch });
+  const heldHooks = [
+    ["run_command", `cp /tmp/x ${relay}`],
+    ["run_command", `mv /tmp/x ${relayEnv}`],
+    ["run_command", `cat /tmp/x | tee ${relay}`],
+    ["run_command", `echo 'allow' > ${relay}`],
+    ["run_command", `cp /tmp/x ${codexHook}`],
+    ["run_command", `cp /tmp/x ${data}/native/antigravity-ask/ask-hook-0123456789abcdef.cjs`],
+    ["run_command", `cp /tmp/x ${data}/native/hermes-ask/overlay-0123456789abcdef/config.yaml`],
+  ] as const;
+
+  it("keeps the card for a write to Murage's own hook programs: the relay, the Ask hooks, the Codex hook, the Hermes overlay", () => {
+    for (const [tool, command] of heldHooks) {
+      const v = ownerRun(tool, command, { command });
+      expect(v, command).toMatchObject({ approve: null, source: "sensitive-guard" });
+      expect(gateRow(v), command).toBe("murage-engine-hooks");
+    }
+    const target = relay;
+    const v = ownerRun("write_to_file", `write_to_file ${target}`, { TargetFile: target, CodeContent: "x" });
+    expect(v).toMatchObject({ approve: null, source: "sensitive-guard" });
+    expect(gateRow(v)).toBe("murage-engine-hooks");
+  });
+
+  it("keeps the card for a Codex apply_patch on murage-hook.mjs", () => {
+    const root = mkdtempSync(join(tmpdir(), "mb-selfguard-owner-"));
+    try {
+      const project = join(root, "project");
+      const scope = join(root, "native", "codex-scope", "abc123");
+      mkdirSync(project, { recursive: true });
+      mkdirSync(scope, { recursive: true });
+      const patch = ["*** Begin Patch", `*** Update File: ${join(scope, "murage-hook.mjs")}`, "@@", "-old", "+new", "*** End Patch"].join("\n");
+      const route = routeDelivery({ tool_name: "apply_patch", tool_input: { command: patch }, tool_use_id: "u1", turn_id: "t1", cwd: project }, { project, home: root, mounts: [] });
+      expect(route.route).toBe("ask");
+      if (route.route !== "ask") return;
+      const v = autoVerdict(unlimited, route.tool, route.summary, atOwner(route.toolCall.name, route.toolCall.input));
+      expect(v).toMatchObject({ approve: null, source: "sensitive-guard" });
+      expect(gateRow(v)).toBe("murage-engine-hooks");
+    } finally {
+      removeTempDir(root);
+    }
+  });
+
+  it("runs a workspace hooks file write (.agents/hooks.json) and records held=gate:agy-workspace-hooks", () => {
+    const expected = { approve: "auto-approved run_command (no limits)", source: "no-limits", rule: "held=gate:agy-workspace-hooks" };
+    for (const command of ["cat x > .agents/hooks.json", "echo '{}' > .agents/hooks.json"]) {
+      expect(ownerRun("run_command", command, { command }), command).toMatchObject(expected);
+    }
+    const target = "/Users/jo/work/app/.agents/hooks.json";
+    expect(ownerRun("write_to_file", `write_to_file ${target}`, { TargetFile: target, CodeContent: "{}" })).toMatchObject({ ...expected, approve: "auto-approved write_to_file (no limits)" });
+  });
+
+  it("still runs every other gate row and records it: cat ~/.zshrc is held=gate:shell-rc", () => {
+    expect(ownerRun("run_command", "cat ~/.zshrc", { command: "cat ~/.zshrc" })).toMatchObject({ approve: "auto-approved run_command (no limits)", source: "no-limits", rule: "held=gate:shell-rc" });
+  });
+
+  it("keeps every negative: marked, no proof, another origin, unattended, automated, cut call, Full access, Windows shell", () => {
+    const writes = [
+      ["run_command", `cp /tmp/x ${relay}`, { command: `cp /tmp/x ${relay}` }],
+      ["run_command", "cat x > .agents/hooks.json", { command: "cat x > .agents/hooks.json" }],
+      ["run_command", "cat ~/.zshrc", { command: "cat ~/.zshrc" }],
+    ] as const;
+    for (const [tool, summary, input] of writes) {
+      const base = { ...OWNER, call: { toolCall: { name: tool, input } } } as AutoContext;
+      // marked turns: outsideRead absent, and a web read
+      const { outsideRead: _absent, ...unmarked } = base;
+      expect(autoVerdict(unlimited, tool, summary, unmarked), summary).toMatchObject({ approve: null });
+      expect(autoVerdict(unlimited, tool, summary, { ...base, outsideRead: ["web page" as const] }), summary).toMatchObject({ approve: null });
+      for (const patch of [
+        { ownerStarted: undefined }, { fullAccessOrigin: "other" }, { unattended: true }, { automated: true }, { routineLevel: true },
+        { channelOwner: true }, { inputTruncated: true },
+      ] as Partial<AutoContext>[]) {
+        expect(autoVerdict(unlimited, tool, summary, { ...base, ...patch }).approve, `${summary} ${JSON.stringify(patch)}`).toBeNull();
+      }
+      // Full access with the owner's proof still cards the gate and hook rows
+      expect(autoVerdict(full, tool, summary, base), summary).toMatchObject({ approve: null, source: "sensitive-guard" });
+      // a call cut before it arrived whole keeps its card
+      expect(autoVerdict(unlimited, tool, summary, { ...base, call: { toolCall: { name: tool, input }, inputMissing: "cut" } as AutoContext["call"] }).approve, summary).toBeNull();
+    }
+    // a Windows shell call keeps the card for a gate file
+    const win = "cmd /c copy x .agents\\hooks.json";
+    expect(ownerRun("run_command", win, { command: win }).approve).toBeNull();
   });
 });

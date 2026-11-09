@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // A direct turn's replay check reads lineage rows in proportion to the receipts of the
 // thread, not to the pairs a resumed session lists (every reply on every earlier receipt),
 // and nothing at all when no line it asks about was made under a receipt. Verdicts are
@@ -154,3 +155,5 @@ it("a whole-thread check that runs out of replay budget before reaching the line
   for (const id of generated) expect(cut.has(id)).toBe(true);
   expect(cut.has("ask-1")).toBe(false);
 });
+
+useOutsideStoreFixture();

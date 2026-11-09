@@ -1,7 +1,8 @@
+import { fixtureBotFolder } from "./testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// U24 (1.0.4), Windows engine stop (design: 104-lastresort-evidence/designs/U24-ENGINE-STOP.md). The OS seams are injected;
+// U24 (1.0.4), Windows engine stop (design: U24-ENGINE-STOP.md). The OS seams are injected;
 // the real job, launcher and taskkill are proven on the Windows gate box (the lane record). Covered here: the launcher's fixed
 // environment and frame (R2), the taskkill cap and the route watchdog (R6), one deadline budget end to end (R7), and that
 // a route answering after the stop settled arms no stray timer.
@@ -51,12 +52,12 @@ describe("U24 the launcher's fixed environment and frame (R2)", () => {
   });
 
   it("the frame carries the turn's whole environment and cwd, length-prefixed, so the CLI gets exactly what the driver built", () => {
-    const frame = launcherFrame({ NODE_OPTIONS: "--max-old-space-size=100", MURAGE_TOKEN: "secret" }, "C:\\work").toString("utf8");
+    const frame = launcherFrame({ NODE_OPTIONS: "--max-old-space-size=100", MURAGE_TOKEN: "secret" }, fixtureBotFolder()).toString("utf8");
     const newline = frame.indexOf("\n");
     const length = Number(frame.slice(0, newline));
     const body = frame.slice(newline + 1);
     expect(Buffer.byteLength(body)).toBe(length);
-    expect(JSON.parse(body)).toEqual({ env: { NODE_OPTIONS: "--max-old-space-size=100", MURAGE_TOKEN: "secret" }, cwd: "C:\\work" });
+    expect(JSON.parse(body)).toEqual({ env: { NODE_OPTIONS: "--max-old-space-size=100", MURAGE_TOKEN: "secret" }, cwd: fixtureBotFolder() });
   });
 });
 

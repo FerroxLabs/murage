@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "x4rb-d3d481e43",
+  "date": "2026-11-08",
+  "base": "349891571",
+  "scope": "X4 typed-by-hand model label, all locales",
+  "strings": {
+    "en:model.typedByHand": {
+      "text": "{id} · typed by hand",
+      "en": "{id} · typed by hand",
+      "verdict": "pass",
+      "note": "Clearly marks a manually typed ID and preserves {id} and the middle dot."
+    },
+    "de:model.typedByHand": {
+      "text": "{id} · von Hand eingegeben",
+      "en": "{id} · typed by hand",
+      "verdict": "pass",
+      "note": "Natural German for manual entry, preserving {id} and the middle dot."
+    },
+    "es:model.typedByHand": {
+      "text": "{id} · introducido manualmente",
+      "en": "{id} · typed by hand",
+      "verdict": "pass",
+      "note": "Natural Spanish for manual entry, preserving {id} and the middle dot."
+    },
+    "fr:model.typedByHand": {
+      "text": "{id} · saisi à la main",
+      "en": "{id} · typed by hand",
+      "verdict": "pass",
+      "note": "Clearly conveys manual entry in French, preserving {id} and the middle dot."
+    },
+    "hi:model.typedByHand": {
+      "text": "{id} · हाथ से दर्ज किया गया",
+      "en": "{id} · typed by hand",
+      "verdict": "pass",
+      "note": "Clearly conveys manual entry in Hindi, preserving {id} and the middle dot."
+    },
+    "ja:model.typedByHand": {
+      "text": "{id} · 手動入力",
+      "en": "{id} · typed by hand",
+      "verdict": "pass",
+      "note": "Concise, natural Japanese for manual input, preserving {id} and the middle dot."
+    },
+    "pt-br:model.typedByHand": {
+      "text": "{id} · digitado à mão",
+      "en": "{id} · typed by hand",
+      "verdict": "pass",
+      "note": "Clearly conveys manual typing in Brazilian Portuguese, preserving {id} and the middle dot."
+    },
+    "zh:model.typedByHand": {
+      "text": "{id} · 手动输入",
+      "en": "{id} · typed by hand",
+      "verdict": "pass",
+      "note": "Standard Chinese for manual input, preserving {id} and the middle dot."
+    }
+  },
+  "files": {}
+}

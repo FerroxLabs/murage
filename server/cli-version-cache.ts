@@ -1,3 +1,4 @@
+import { probeFolder } from "./probe-folder.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -41,13 +42,24 @@ export function cachedCliVersion(cli: string, env: NodeJS.ProcessEnv, run: Exec 
   if (held && held.identity === identity && (held.at === 0 || Date.now() - held.at <= CLI_VERSION_TTL_MS)) return held.probe;
   const entry: Entry = { identity, at: 0, probe: Promise.resolve({ error: null, stdout: "", stderr: "" }) };
   entries.set(key, entry);
+  // the entry and its promise exist now (two callers in one task share one probe); the spawn itself runs in its own macrotask, not in the
+  // caller's (ALL.eld250 B9: the start-up snapshot scan reached it inside the pre-listen task). A runner that throws settles the probe as a
+  // failed run, the same shape callers already read (B15).
   entry.probe = new Promise<CliVersionProbe>((resolve) => {
-    run(cli, ["--version"], { timeout, env }, (error, stdout, stderr) => {
-      const result: CliVersionProbe = { error: error ?? null, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") };
+    const settle = (result: CliVersionProbe) => {
       if (entries.get(key) === entry) {
         if (!result.error && result.stdout.trim()) entry.at = Date.now(); else entries.delete(key);
       }
       resolve(result);
+    };
+    setImmediate(() => {
+      try {
+        run(cli, ["--version"], { timeout, env, cwd: probeFolder() }, (error, stdout, stderr) => {
+          settle({ error: error ?? null, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
+        });
+      } catch (error) {
+        settle({ error: error instanceof Error ? error : new Error(String(error)), stdout: "", stderr: "" });
+      }
     });
   });
   return entry.probe;

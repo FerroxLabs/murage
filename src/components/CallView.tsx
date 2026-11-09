@@ -28,7 +28,7 @@
 // ask how it is going or talk about something else; a soft pulse fills the
 // silence instead of narration. When the host is unavailable the call is
 // the engine-only call it always was.
-import { holdCallSession, sayOpener, takeBotCallOpener } from "@/lib/bot-call-session";
+import { callSpeechReply, holdCallSession, sayOpener, takeBotCallOpener } from "@/lib/bot-call-session";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Loader2, Mic, MicOff, PhoneOff, X } from "lucide-react";
@@ -41,9 +41,10 @@ import { useCallSlot } from "@/lib/call-slot";
 import { callStartHeard, heardReplyAfter, unheardMessages } from "@/lib/scrollback";
 import { speaker } from "@/lib/tts";
 import { CueCache } from "@/lib/tts/cue-cache";
+import type { CallReplyHeard } from "@/lib/tts";
 import { ACK_KEYS, AckGate, cueMayPlay, phaseAfterCue, pickAck, type AckKey } from "@/lib/call-ack";
 import { languageCode, t } from "@/lib/i18n";
-import { BRIEF_OVER_CHARS, callRouteHeaders, HOST_OFF_FOR_CALL, hostTurn, openingOf, plainFailure, warmHost, type CallHandDown, type HostTurnInput } from "@/lib/voice-host";
+import { BRIEF_OVER_CHARS, callRouteHeaders, HOST_OFF_FOR_CALL, hostTurn, isBudgetFailure, plainFailure, warmHost, type CallHandDown, type HostTurnInput } from "@/lib/voice-host";
 import { WorkingPulse } from "@/lib/working-pulse";
 import { callMicKind, createFallbackMic, type CallMic, type MicLine } from "@/lib/call-mic";
 import { CallAudio, micFor, offerResumeWhenHeld, type CallAudioPath } from "@/lib/call-audio";
@@ -77,7 +78,7 @@ import { useDesktopCapabilities } from "./DesktopCapabilities";
  * sentence that merely contained the word "sure". */
 /** Unmistakable as heard, even mid-utterance: "stop", "shut up", "be quiet". */
 /** Pre-synthesized acknowledgement clips, kept across calls (see call-ack.ts). */
-const cueCache = new CueCache((text, o) => speaker.fetchClip(text, o));
+const cueCache = new CueCache((text, o) => speaker.fetchClip(text, { ...o, call: true }));
 
 const STOP_NOW = /^(?:(?:ok(?:ay)?|please|hey|no|just)[,.!\s]*)*(?:(?:stop(?: talking)?|shut up|be quiet|quiet|enough|that'?s enough)[,.!\s]*)+$/i;
 /** Only asking for quiet: "stop", "stop, stop, stop", "shut up", "enough". */
@@ -214,7 +215,7 @@ export function Call({
    *  first. A queue, not a slot: a second answer used to overwrite the first
    *  and the owner never heard it (Pipecat and LiveKit both queue results
    *  owed to the user until the conversation is idle). */
-  const deferredReplies = useRef<string[]>([]);
+  const deferredReplies = useRef<Array<string | { messageId: string; length: number }>>([]);
   /** Call speech waits until begin() has chosen where it is heard, so nothing
    *  said as the call opens goes to the wrong player (spec §4.3.5). */
   const outputReady = useRef(false);
@@ -274,7 +275,8 @@ export function Call({
   const openAttempt = useRef(0);
   // A line held for the rest of the owner's sentence counts too: the owner is
   // mid-thought, and anything said now would be cut by the send that follows.
-  const gated = () => !outputReady.current || heldRef.current || Boolean(heldLine.current?.holding);
+  const budgetStopped = useRef(false);
+  const gated = () => budgetStopped.current || !outputReady.current || heldRef.current || Boolean(heldLine.current?.holding);
   const pulse = useRef<WorkingPulse | null>(null);
   /** The host's sentences are being voiced; an engine reply waits for them. */
   const hostSpeaking = useRef(false);
@@ -489,7 +491,7 @@ export function Call({
 
   /** Make sure a recognition turn is running, without changing phase. */
   const openTurn = useCallback(() => {
-    if (!alive.current || currentCall() !== bot.id || micLive.current) return;
+    if (budgetStopped.current || !alive.current || currentCall() !== bot.id || micLive.current) return;
     // nothing to hear before the microphone is open, or while the call is held
     if (!outputReady.current || heldRef.current) return;
     // an answered call's opener is still playing: the owner's turn starts after its end (sayOpener)
@@ -512,7 +514,7 @@ export function Call({
   }, [bot.id]);
 
   const listen = useCallback(() => {
-    if (!alive.current || currentCall() !== bot.id) return;
+    if (budgetStopped.current || !alive.current || currentCall() !== bot.id) return;
     // held: resume picks the call up again (resumeFromHold)
     if (heldRef.current) return;
     move("listening");
@@ -620,22 +622,54 @@ export function Call({
     }
   }, []);
 
+  const stopForBudget = useCallback(() => {
+    if (budgetStopped.current || !alive.current || currentCall() !== bot.id) return;
+    budgetStopped.current = true;
+    // The native microphone owns the audio session: closing it also retires
+    // its player. Let the bounded closing line use the page player and
+    // outlive this view, just as it does for web calls. Clear ownership now
+    // so unmount cannot stop that line while retiring the native player.
+    if (nativePlayer.current) {
+      speaker.stop();
+      speaker.useOutput(null);
+      nativePlayer.current = null;
+    }
+    micRef.current?.close();
+    dispatch({ type: "interrupt", botId: bot.id, threadId: threadRef.current });
+    ackGate.current?.cancel();
+    heldLine.current?.drop("stop");
+    hostAbort.current?.abort();
+    hostOn.current = false;
+    hostOffForCall.current = true;
+    ++sayGeneration.current;
+    hush();
+    speaker.stop();
+    deferredReplies.current = [];
+    owed.current = [];
+    setLookingUp(false);
+    move("speaking");
+    endCall(bot.id, "budget");
+    // If the closing line cannot be spoken, the same words show in the app's banner (the store's, so it outlives the call view that
+    // endCall just closed), and the person still reads why the call ended.
+    void speaker.speak(t("call.budgetStop"), { botId: bot.id, budgetClosing: true }).catch(() => dispatch({ type: "error", message: t("call.budgetStop") }));
+  }, [bot.id, dispatch, hush, move]);
+
   /** Speak. With an echo-cancelled microphone it stays open, so the owner can
    * talk over the bot; on the fallback it closes for the duration (an open,
    * uncancelled mic during playback is a feedback loop). */
   const say = useCallback(
     async (text: string, onPlaying?: () => void) => {
-      if (!alive.current || currentCall() !== bot.id) return false;
+      if (budgetStopped.current || !alive.current || currentCall() !== bot.id) return false;
       if (gated()) return false;
       const mine = ++sayGeneration.current;
       // Move first. stopSpeech() finishes asynchronously, and its close must
       // never observe an old "listening" phase and reopen the mic.
       move("speaking");
       if (!duplex()) hush();
-      await speaker.speak(text, { botId: bot.id, voiceId: voiceRef.current, ...(onPlaying ? { onPlaying } : {}) });
+      await speaker.speak(text, { botId: bot.id, voiceId: voiceRef.current, call: true, onBudget: stopForBudget, ...(onPlaying ? { onPlaying } : {}) });
       return alive.current && currentCall() === bot.id && sayGeneration.current === mine;
     },
-    [bot.id, hush, move],
+    [bot.id, hush, move, stopForBudget],
   );
 
   const sayThenListen = useCallback(
@@ -677,48 +711,48 @@ export function Call({
    *  do on the phone (each item in a sentence, then "details are in the chat")
    *  through the host; a short one, or any failure, is read out as written. */
   const tellReply = useCallback(
-    async (text: string) => {
-      if (gated()) {
-        deferredReplies.current.unshift(text);
-        return;
-      }
-      // the engine's reply is what the pending engine stamp times: only here
-      // is it taken, never by a prompt or a "still on it" line
+    async (reply: string | { messageId: string; length: number }) => {
+      if (budgetStopped.current) return;
+      if (typeof reply === "string") return sayThenListen(reply);
+      if (gated()) { deferredReplies.current.unshift(reply); return; }
       const logEngine = takeEngineTurn();
       const onPlaying = logEngine ? () => logEngine(Date.now()) : undefined;
-      if (!hostOn.current || text.length <= BRIEF_OVER_CHARS) return sayThenListen(text, undefined, onPlaying);
       if (!alive.current || currentCall() !== bot.id) return;
       const mine = ++sayGeneration.current;
       const startedAt = Date.now();
+      const sentences: string[] = [];
+      const told: CallReplyHeard = { heard: [], playingAt: null, ended: 0, cut: false };
+      const controller = new AbortController();
+      hostAbort.current?.abort(); hostAbort.current = controller;
+      const identity = await callSpeechReply(reply.messageId, threadRef.current!, controller.signal);
+      if (!identity || controller.signal.aborted || sayGeneration.current !== mine) return;
       move("speaking");
       if (!duplex()) hush();
-      let stream: ReturnType<typeof speaker.stream> | null = null;
-      await hostTurn(
-        bot.id,
-        { text, threadId: threadRef.current, history: hostHistory.current, handDowns: handDowns.current, brief: true },
-        (event) => {
-          if (!alive.current || currentCall() !== bot.id || sayGeneration.current !== mine) return;
-          if (event.type === "sentence") {
-            if (!stream) {
-              hostSpeaking.current = true;
-              stream = speaker.stream({ botId: bot.id, voiceId: voiceRef.current, ...(onPlaying ? { onPlaying } : {}) });
-              void stream.done.finally(() => {
-                hostSpeaking.current = false;
-              });
-            }
-            stream.push(event.text);
-          }
-        },
-      );
-      if (!alive.current || currentCall() !== bot.id || sayGeneration.current !== mine) return;
-      if (!stream) return sayThenListen(openingOf(text), undefined, onPlaying);
-      const told = stream as ReturnType<typeof speaker.stream>;
-      told.end();
-      const heardAll = await told.done;
-      hostHistory.current = [
-        ...hostHistory.current,
-        { role: "host" as const, text: `${told.heard().join(" ")}${heardAll || ownerCutInAt.current < startedAt ? "" : " [the owner cut in here]"}`.trim() },
-      ].slice(-12);
+      hostSpeaking.current = true;
+      let playback: Promise<boolean> | undefined;
+      try {
+        if (!hostOn.current || reply.length <= BRIEF_OVER_CHARS) {
+          playback = speaker.playCallReply(identity, { botId: bot.id, voiceId: voiceRef.current, call: true, onBudget: stopForBudget, onPlaying }, controller.signal, told);
+        } else {
+          await hostTurn(bot.id,
+            { text: "", replyId: identity.replyId, threadId: identity.threadId, history: [], handDowns: handDowns.current, brief: true },
+            event => {
+              if (!alive.current || currentCall() !== bot.id || sayGeneration.current !== mine) return;
+              if (event.type === "error" && event.reason === "budget") { stopForBudget(); return; }
+              if (event.type === "sentence") sentences.push(event.text);
+              if (event.type === "audio" && !playback && !controller.signal.aborted && sayGeneration.current === mine && event.callSessionId === identity.callSessionId && event.threadId === identity.threadId) {
+                playback = speaker.playCallReply(event, { botId: bot.id, voiceId: voiceRef.current, call: true, onBudget: stopForBudget, onPlaying }, controller.signal, told);
+              }
+            }, controller.signal);
+        }
+        const heardAll = await playback;
+        if (sentences.length) hostHistory.current = [...hostHistory.current, { role: "host" as const,
+          text: `${told.heard.join(" ")}${heardAll || ownerCutInAt.current < startedAt ? "" : " [the owner cut in here]"}`.trim(),
+        }].slice(-12);
+      } finally {
+        if (hostAbort.current === controller) hostAbort.current = null;
+        hostSpeaking.current = false;
+      }
       // A genuine barge-in has already left "speaking" and bumped the
       // generation (bargeIn); a clip that merely failed or stalled has done
       // neither, and must not strand the call in "speaking" for good.
@@ -735,7 +769,7 @@ export function Call({
     // depending on the live bot.threadId here would recreate this callback
     // (and every effect that depends on it) on a task-drift push
     // (callbar-rereview.md N3).
-    [bot.id, hush, listen, move, sayThenListen, takeOwed],
+    [bot.id, hush, listen, move, sayThenListen, takeOwed, stopForBudget],
   );
   const tellNext = useRef(tellReply);
   tellNext.current = tellReply;
@@ -805,7 +839,8 @@ export function Call({
     for (;;) {
       const next = takeOwed() ?? deferredReplies.current.shift();
       if (!next) break;
-      if (!(await say(next))) return;
+      if (typeof next === "string") { if (!(await say(next))) return; }
+      else await tellNext.current(next);
     }
     if (alive.current && phaseRef.current === "speaking") move("listening");
   }, [move, say, takeOwed]);
@@ -913,6 +948,8 @@ export function Call({
    *  quietly while the call went on saying it was on it. */
   const sendFromCall = useCallback(
     (text: string, said: string, handDownId?: string) => {
+      // the key's budget is used up and the call is ending: no fresh turn
+      if (budgetStopped.current) return;
       const record = handDownId ? handDowns.current.find((h) => h.id === handDownId) : undefined;
       dispatch({
         type: "send",
@@ -924,7 +961,9 @@ export function Call({
         },
         onError: (error: unknown) => {
           if (!alive.current || currentCall() !== bot.id) return false;
-          const reason = plainFailure(error instanceof Error ? error.message : String(error));
+          const details = error instanceof Error ? error.message : String(error);
+          if (isBudgetFailure((error as { providerError?: unknown })?.providerError)) { stopForBudget(); return true; }
+          const reason = plainFailure(details);
           if (record) {
             record.state = "refused";
             record.reason = reason;
@@ -946,7 +985,7 @@ export function Call({
         },
       });
     },
-    [bot.id, dispatch], // threadRef is a ref; see tellReply's comment above
+    [bot.id, dispatch, stopForBudget], // threadRef is a ref; see tellReply's comment above
   );
   /** A log entry for work sent from the call, unless the send was refused. */
   const sentEntry = (said: string, outcome: "handed_down" | "engine", detail?: string) => {
@@ -959,6 +998,7 @@ export function Call({
    * the owner's words to the engine exactly as a call did before. */
   const hostReply = useCallback(
     async (said: string, approvalOpen?: string, timing?: { endedAt?: number; lineAt: number }) => {
+      if (budgetStopped.current) return;
       if (!alive.current || currentCall() !== bot.id) return;
       move("sending");
       if (!duplex()) hush();
@@ -967,11 +1007,13 @@ export function Call({
       hostAbort.current = controller;
       const mine = ++sayGeneration.current;
       let stream: ReturnType<typeof speaker.stream> | null = null;
+      let hostPlayback: Promise<boolean> | undefined;
+      const hostHeard: CallReplyHeard = { heard: [], playingAt: null, ended: 0, cut: false };
       const turn: NonNullable<typeof turnInFlight.current> = {
         said,
         sentAt: Date.now(),
         controller,
-        playingAt: () => (stream as ReturnType<typeof speaker.stream> | null)?.playingAt() ?? null,
+        playingAt: () => (stream as ReturnType<typeof speaker.stream> | null)?.playingAt() ?? hostHeard.playingAt,
         acted: false,
         superseded: false,
         history: [],
@@ -986,7 +1028,7 @@ export function Call({
         if (!stream) {
           if (!quiet) move("speaking");
           hostSpeaking.current = true;
-          const own = speaker.stream({ botId: bot.id, voiceId: voiceRef.current });
+          const own = speaker.stream({ botId: bot.id, voiceId: voiceRef.current, call: true, onBudget: stopForBudget });
           stream = own;
           // the engine cue is the only audio: tracked so an engine turn that
           // ends while it sounds can stop it and listen at once
@@ -1037,7 +1079,7 @@ export function Call({
         };
         if (cached) play(cached);
         else
-          void speaker.fetchClip(t(key), { botId: bot.id, voiceId }).then((clip) => {
+          void speaker.fetchClip(t(key), { botId: bot.id, voiceId, call: true, onBudget: stopForBudget }).then((clip) => {
             cueCache.put({ botId: bot.id, voiceId, locale: languageCode(), key }, clip);
             play(clip);
           }, () => undefined);
@@ -1059,6 +1101,8 @@ export function Call({
           { text: said, threadId: threadRef.current, history: hostHistory.current, handDowns: handDowns.current, ...(approvalOpen ? { approval: approvalOpen } : {}) },
           (event) => {
             if (!alive.current || currentCall() !== bot.id || turn.superseded) return;
+            if (budgetStopped.current) return;
+            if (event.type === "error" && event.reason === "budget") { gate.cancel(); stopForBudget(); return; }
             if (event.type === "lookup") {
               lookedUp = true;
               setLookingUp(true);
@@ -1070,12 +1114,20 @@ export function Call({
               firstSentenceAt ??= Date.now();
               firstPiece ??= { kind: event.clause ? "clause" : "sentence", chars: event.text.length };
               spoken += `${event.text} `;
-              if (sayGeneration.current === mine) voice().push(event.text);
+            } else if (event.type === "audio" && !hostPlayback && sayGeneration.current === mine && event.threadId === threadRef.current) {
+              stream?.end();
+              hostSpeaking.current = true;
+              move("speaking");
+              hostPlayback = (async () => {
+                await stream?.done;
+                if (controller.signal.aborted || sayGeneration.current !== mine) return false;
+                return speaker.playCallReply(event, { botId: bot.id, voiceId: voiceRef.current, call: true, onBudget: stopForBudget }, controller.signal, hostHeard);
+              })();
             } else if (event.type === "hand_down" && !handed) {
               handed = true;
               turn.acted = true;
               handedRequest = event.request;
-              handedId = crypto.randomUUID();
+              handedId = event.id;
               handDowns.current = [...handDowns.current, { id: handedId, request: event.request, at: Date.now(), state: "sending" as const }].slice(-12);
               sendFromCall(event.request, said, handedId);
             } else if (event.type === "cancel") {
@@ -1094,6 +1146,7 @@ export function Call({
           controller.signal,
         );
         if (hostAbort.current === controller) hostAbort.current = null;
+        if (budgetStopped.current) return;
         // joined to the owner's next line and asked again as one turn: that
         // turn records and speaks everything
         if (turn.superseded) return;
@@ -1166,6 +1219,16 @@ export function Call({
         } else {
           entry.text = spoken.trim();
         }
+        if (hostPlayback) {
+          // as heard, as above: the server's audio for this turn, cut where the owner cut in
+          const heardAll = await hostPlayback;
+          hostSpeaking.current = false;
+          if (turn.superseded) return;
+          const cutIn = !heardAll && ownerCutInAt.current >= turn.sentAt;
+          entry.text = `${[entry.text && stream ? entry.text : "", ...hostHeard.heard].filter(Boolean).join(" ")}${cutIn ? " [the owner cut in here]" : ""}`.trim();
+          if (!alive.current || currentCall() !== bot.id || sayGeneration.current !== mine) return;
+        }
+        hostSpeaking.current = false;
         if (!entry.text && !entry.handDown) hostHistory.current = hostHistory.current.filter((e) => e !== entry);
         if (phaseRef.current === "speaking" || phaseRef.current === "sending") listenOrCatchUp();
       } finally {
@@ -1195,7 +1258,7 @@ export function Call({
         }
       }
     },
-    [bot.id, dispatch, hush, listenOrCatchUp, move, sendFromCall], // threadRef is a ref
+    [bot.id, dispatch, hush, listenOrCatchUp, move, sendFromCall, stopForBudget], // threadRef is a ref
   );
 
   /**
@@ -1350,8 +1413,10 @@ export function Call({
     const first = pickAck(null, Math.random);
     const keys = [first, pickAck(first, Math.random)];
     ackPool.current = keys;
-    void cueCache.prewarm({ botId: bot.id, voiceId: bot.voice, locale: languageCode(), keys });
-  }, [bot.id, bot.voice]);
+    const controller = new AbortController();
+    void cueCache.prewarm({ botId: bot.id, voiceId: bot.voice, locale: languageCode(), keys, signal: controller.signal, onBudget: stopForBudget });
+    return () => controller.abort();
+  }, [bot.id, bot.voice, stopForBudget]);
 
   // ── the microphone ───────────────────────────────────────────────────
   useEffect(() => {
@@ -1781,6 +1846,7 @@ export function Call({
       }
     });
     offEnd = mic.onEnd(({ code, reason }) => {
+      if (reason === "budget") { stopForBudget(); return; }
       micLive.current = false;
       // a failed transcription ends its utterance with no line
       if (code !== 0) utteranceBegan.current = 0;
@@ -1852,6 +1918,7 @@ export function Call({
     // closed it) checks this and does nothing instead of double-attaching
     // or overwriting the retry's own note (callbar-review.md I2).
     const begin = (attempt: number) => {
+      if (budgetStopped.current) return;
       if (cancelled || attempt !== openAttempt.current) return;
       const audio = audioRef.current!;
       micRef.current = audio.mic;
@@ -1867,6 +1934,7 @@ export function Call({
       }
       setAudioPath(audio.path);
       const ready = () => {
+        if (budgetStopped.current || cancelled || currentCall() !== bot.id) return;
         attach(micRef.current!);
         // Speech may start now. Anything owed or held back as the call opened
         // (an approval already open, say) is asked first.
@@ -1884,18 +1952,21 @@ export function Call({
       opener.current = null;
       if (!opening) return ready();
       void opening.then(async (text) => {
+        if (budgetStopped.current) return;
         if (cancelled || attempt !== openAttempt.current) return;
         if (text && !heldRef.current) {
           outputReady.current = true;
           setConnecting(false);
           // no recognition until the opener has ENDED (or the cap): the duplex effect would open a turn on "speaking"
           await sayOpener(() => sayRef.current(text), openerPlaying);
+          if (budgetStopped.current) return;
           if (cancelled || attempt !== openAttempt.current) return;
         }
         ready();
       });
     };
     const openCall = () => {
+      if (budgetStopped.current) return;
       openAttempt.current += 1;
       const attempt = openAttempt.current;
       const audio = audioRef.current!;
@@ -1916,6 +1987,7 @@ export function Call({
       void audio.open().then(
         () => begin(attempt),
         (error: unknown) => {
+          if (budgetStopped.current) return;
           if (cancelled || attempt !== openAttempt.current) return;
           // Our own retryOpen closed this attempt to start a fresh one:
           // expected, not a failure, and the fresh attempt already owns
@@ -1952,6 +2024,7 @@ export function Call({
       );
     };
     retryOpen.current = () => {
+      if (budgetStopped.current) return;
       micUnavailable.current = false;
       setNoteRetry("listen");
       setNote(null);
@@ -2002,6 +2075,10 @@ export function Call({
     // collapsed to the bar for exactly this case (callbar-rereview.md N3);
     // this is the same guard for what it might otherwise say or decide.
     if (bot.threadId !== threadRef.current) return;
+    if (started.current && unheardMessages(messages, spokenIds.current, bot.messages).some(message => message.kind === "activity" && message.tool?.ok === false && isBudgetFailure(message.tool.providerError))) {
+      stopForBudget();
+      return;
+    }
     // The request may be resolved from the normal approval UI or by another
     // client while this call is open. Do not keep treating future speech as
     // an answer to a card that no longer exists.
@@ -2162,8 +2239,8 @@ export function Call({
       const busyTalking =
         hostOn.current &&
         (hostSpeaking.current || phaseRef.current === "sending" || (phaseRef.current === "listening" && heardRef.current));
-      if (busyTalking || gated()) deferredReplies.current.push(reply.text);
-      else void tellReply(reply.text);
+      if (busyTalking || gated()) deferredReplies.current.push({ messageId: reply.id, length: reply.text.length });
+      else void tellReply({ messageId: reply.id, length: reply.text.length });
     } else if (chip?.tool?.spoken && phase === "working" && !hostOn.current) {
       if (gated()) deferredReplies.current.push(chip.tool.spoken);
       else {

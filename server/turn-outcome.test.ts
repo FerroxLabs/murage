@@ -3,7 +3,7 @@
 // replies, routine status, memory settlement) reads these three helpers, so
 // their answers for each shape an engine can settle with are pinned here.
 import { describe, expect, it } from "vitest";
-import { turnAskStopped, turnOutcome, turnStopped, turnSucceeded } from "./turn-outcome.ts";
+import { turnAskStopped, turnEndedByClose, turnOutcome, turnStopped, turnSucceeded } from "./turn-outcome.ts";
 import { ASK_STOP_REASONS } from "./drivers/ask-stop.ts";
 import { ANTIGRAVITY_ASK_STOP_REASON } from "./drivers/antigravity.ts";
 import { hostStoppedActivityName, hostStoppedReason, HOST_STOPPED_PREFIX } from "../shared/host-stop.ts";
@@ -25,7 +25,9 @@ describe("turn outcome", () => {
     expect(classify({ ok: true })).toEqual({ stopped: false, succeeded: true, outcome: "completed" });
   });
 
-  it("an engine that still reports an interrupt as ok:false is a failure, not a stop", () => {
+  // NAMED expectation change (MurageMain ruling, STOP-FENCE goal line): Muse no longer reports a Stop BEFORE its prompt as ok:false
+  // "interrupted" (that is the stopped pair above). An interrupt Muse did not confirm AFTER its prompt was written still is, and still a failure.
+  it("an interrupt the engine did not confirm after its prompt was written (ok:false) is a failure, not a stop", () => {
     expect(classify({ ok: false, stopReason: "interrupted" })).toEqual({ stopped: false, succeeded: false, outcome: "failed" });
   });
 
@@ -72,5 +74,23 @@ describe("host-stop notice name", () => {
     expect(hostStoppedReason("stopped:")).toBeUndefined();
     expect(hostStoppedReason(undefined)).toBeUndefined();
     expect(hostStoppedReason(null)).toBeUndefined();
+  });
+});
+
+describe("a turn the closing server ended (STOP-NONACP): its queued handoffs are kept, an asked Stop's are not", () => {
+  it("the dispose's engine-closed line (ok:false) while closing is a close, not a Stop", () => {
+    expect(turnEndedByClose({ ok: false, stopReason: "engine_closed" }, true)).toBe(true);
+    expect(turnEndedByClose({ ok: false }, true)).toBe(true);
+  });
+  it("a Stop whose completion lands after the close began (ok:true cancelled) is still the owner's Stop: never a close", () => {
+    expect(turnEndedByClose({ ok: true, stopReason: "cancelled" }, true)).toBe(false);
+    // Murage's own Ask stop is a stop too
+    for (const reason of ASK_STOP_REASONS) expect(turnEndedByClose({ ok: true, stopReason: reason }, true)).toBe(false);
+  });
+  it("a failure or a Stop while the server is open is never a close, and a finished turn never is", () => {
+    expect(turnEndedByClose({ ok: false, stopReason: "engine_closed" }, false)).toBe(false);
+    expect(turnEndedByClose({ ok: true, stopReason: "cancelled" }, false)).toBe(false);
+    expect(turnEndedByClose({ ok: true, stopReason: "end_turn" }, true)).toBe(false);
+    expect(turnEndedByClose({ ok: true }, true)).toBe(false);
   });
 });

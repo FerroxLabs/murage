@@ -54,12 +54,15 @@ export class HighLevelError extends Error {
   readonly outcome: HighLevelOutcome;
   /** The connection needs Reconnect; the tool answer tells the bot to ask the person. */
   readonly signedOut: boolean;
-  constructor(message: string, options: { status?: number; outcome?: HighLevelOutcome; signedOut?: boolean } = {}) {
+  /** HighLevel's own words quoted in the message (apiMessage), if any: outside content wherever the message reaches a bot. */
+  readonly providerDetail: string | undefined;
+  constructor(message: string, options: { status?: number; outcome?: HighLevelOutcome; signedOut?: boolean; providerDetail?: string } = {}) {
     super(message);
     this.name = "HighLevelError";
     this.status = options.status;
     this.outcome = options.outcome ?? "not_applied";
     this.signedOut = options.signedOut === true;
+    this.providerDetail = options.providerDetail || undefined;
   }
 }
 
@@ -318,12 +321,12 @@ function refusal(status: number, operation: HighLevelOperation, body: unknown, s
   const scope = HIGHLEVEL_ENDPOINTS[operation].scope;
   const permission = HIGHLEVEL_PERMISSION_NAMES[scope] ? `${HIGHLEVEL_PERMISSION_NAMES[scope]} permission (${scope})` : `${scope} permission`;
   if ((status === 401 && isScopeRefusal(body)) || status === 403) {
-    return new HighLevelError(`HighLevel refused this (${status}): the connection lacks the ${permission}. The owner can Reconnect and allow it.${said}`, { status });
+    return new HighLevelError(`HighLevel refused this (${status}): the connection lacks the ${permission}. The owner can Reconnect and allow it.${said}`, { status, providerDetail: detail });
   }
   if (status === 401) return new HighLevelError(HIGHLEVEL_RECONNECT_TEXT, { status, signedOut: true });
   if (status === 404) return new HighLevelError(`HighLevel has no ${thing(operation)} with that id (404).`, { status });
   if (status === 429) return new HighLevelError("HighLevel is limiting requests right now, so this was not done. Try again in a minute.", { status });
-  return new HighLevelError(`HighLevel rejected this (${status})${detail ? `: ${detail}` : "."}`, { status });
+  return new HighLevelError(`HighLevel rejected this (${status})${detail ? `: ${detail}` : "."}`, { status, providerDetail: detail });
 }
 
 function unknownOutcome(operation: HighLevelOperation, cause: string, status?: number): HighLevelError {

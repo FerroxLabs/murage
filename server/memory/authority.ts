@@ -11,7 +11,8 @@ import { learningGate, recordDigest, sampleLearningFence, sourceDigest } from ".
 import { readMemoryLearning } from "./learning-policy.ts";
 import { activateGroundedMemory, holdMemoryCandidate, ownerLearningRefusal, invitedCanonRefusal, type MemoryClaimType } from "./automatic-learning.ts";
 import { evidenceEmailDerived, markRecordEmailDerived, recordEmailDerived } from "./email-derived.ts";
-import { turnEmailDerived } from "../email/external-marks.ts";
+import { turnEmailDerived, turnOutsideRead } from "../email/external-marks.ts";
+import { markRecordOutsideDerived } from "./outside-derived.ts";
 import { assertMemoryAccess, type MemoryAccess, type MemoryRoster } from "./policy.ts";
 import { enqueueProcedureCorrectionReview } from "./procedure-review.ts";
 import { isPipKind } from "./pip-kinds.ts";
@@ -23,6 +24,8 @@ import { ensureScope } from "./policy.ts";
 import { memoryState } from "./repository.ts";
 import { ownerNoteId, type LamDatePrecision } from "../../shared/learn-about-me/origin.ts";
 import type { LamProvider } from "../../shared/learn-about-me/parse.ts";
+import { memoryLookup } from "./deny-read.ts";
+import { learningDeletionEpoch } from "./deny.ts";
 import { insertMemoryRecord } from "./record-write.ts";
 
 const ownerTickets = new WeakSet<object>();
@@ -68,6 +71,7 @@ function saveCandidate(text: string, evidence: MemoryEvidenceHandle[], key: stri
   assertMemoryAccess(access);
   if (!text.trim() || text.length > 4096 || !evidence.length || evidence.length > 20 || !/^[\w-]{1,160}$/.test(key)) throw new Error("INVALID_MEMORY_CANDIDATE");
   return transaction(db => {
+    assertEvidenceAllowed(db,evidence);
     const scopes = new Set<string>();
     for (const handle of evidence) {
       const source = db.prepare("SELECT s.scope_id,s.state,s.revision,s.kind,s.outcome,v.payload FROM memory_sources s JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=? WHERE s.id=?").get(handle.revision,handle.sourceId);
@@ -90,6 +94,9 @@ function saveCandidate(text: string, evidence: MemoryEvidenceHandle[], key: stri
         canonical(saved.map(h=>[h.source_id,h.source_revision,h.start_byte,h.end_byte]))!==canonical(evidence.map(h=>[h.sourceId,h.revision,h.startByte,h.endByte])))throw new Error("MEMORY_IDEMPOTENCY_CONFLICT");
       return id;
     }
+    // NOLIMITS v1 F2 (r4 O4): saved on a marked turn at any level: the outside origin is bound to the record id (data only; kept
+    // in the outside store, so it never moves the learning fence)
+    if (turnOutsideRead(access.threadId) !== null) markRecordOutsideDerived(db,id,String(scope));
     insertMemoryRecord(db,{id,version:1,scopeId:String(scope),kind:"fact",text:safeText,assertion:"assistant-inference",state:"candidate",validFrom:Date.now(),createdAt:Date.now()});
     for (const h of evidence) { db.prepare("INSERT INTO memory_evidence VALUES(?,1,?,?,?,?)").run(id,h.sourceId,h.revision,h.startByte,h.endByte); inheritEdge(db,{kind:"record",id,version:1},{kind:"source",id:h.sourceId}); }
     // bot email (5.4): a memory saved during a marked turn (it read outside mail or carried a marked row), or quoting a marked row,
@@ -129,7 +136,7 @@ export async function saveGroundedMemory(text:string,evidence:MemoryEvidenceHand
   const db=database(),learningRevision=readMemoryLearning(db).revision;
   // sampled before the evidence words are read: the support check below is dropped unsent if a Forget, delete or edit commits before
   // its send (memory/learning-send.ts)
-  const fenceAt=sampleLearningFence();
+  const fenceAt=sampleLearningFence(), deletionAt=learningDeletionEpoch(db);
   if(db.prepare("SELECT supersedes_id FROM memory_records WHERE id=? AND version=1").get(id)?.supersedes_id){transaction(()=>holdMemoryCandidate(db,id,"correction-review"));return id;}
   {
     const reason=ownerInvitation?invitedCanonRefusal(db,evidence,ownerInvitation,access.botId):ownerLearningRefusal(db,cited);
@@ -151,6 +158,7 @@ export async function saveGroundedMemory(text:string,evidence:MemoryEvidenceHand
   if(needsGrounding&&options.budgetGate&&!options.budgetGate(String(source.scope_id))){transaction(()=>holdMemoryCandidate(db,id,"project-budget-reached"));return id;}
   const support=needsGrounding?await groundMemoryClaim({text,quote,claimType,speaker:String(source.speaker),outcome:String(source.outcome),ownerInvitation:invitation},extractor,new AbortController().signal,undefined,learningGate("grounding",fenceAt,{records:[{id,version:1,digest:recordDigest(db,id,1)}],sources:[{id:String(source.id),revision:Number(source.revision),digest:sourceDigest(db,String(source.id),Number(source.revision))},...(ownerInvitation?[{id:ownerInvitation.sourceId,revision:ownerInvitation.revision,digest:sourceDigest(db,ownerInvitation.sourceId,ownerInvitation.revision)}]:[])]})):undefined;
   return transaction(()=>{
+    if(learningDeletionEpoch(db)!==deletionAt)throw new Error("MEMORY_CONSOLIDATION_REVOKED");
     assertMemoryAccess(access,String(source.scope_id));assertEvidenceCurrent(db,id,1);
     if(readMemoryLearning(db).revision!==learningRevision)throw new Error("MEMORY_CONSOLIDATION_REVOKED");
     if(ownerInvitation){
@@ -195,11 +203,19 @@ export function readCorrectionTarget(db: DatabaseSync, id: string, version: numb
   return {status:"current",target};
 }
 
+/** Durable source denies and pending lineage apply even while source cleanup has not changed its active state. */
+function assertEvidenceAllowed(db: DatabaseSync, handles: ReadonlyArray<{sourceId:string;revision:number}>) {
+  const refs=handles.map(h=>({kind:"source" as const,id:h.sourceId,version:h.revision}));
+  for(const verdict of memoryLookup(db,refs,{audience:null,ownFlag:true}).values()) {
+    if(verdict.state!=="shown")throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
+  }
+}
 /** Evidence must still be exactly what the owner reviewed: active sources at
  * the recorded revision, not tombstoned, spans inside the stored text. */
 function assertEvidenceCurrent(db: DatabaseSync, id: string, version: number) {
   const handles = db.prepare("SELECT source_id,source_revision,end_byte FROM memory_evidence WHERE record_id=? AND record_version=?").all(id,version);
   if (!handles.length) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
+  assertEvidenceAllowed(db,handles.map(h=>({sourceId:String(h.source_id),revision:Number(h.source_revision)})));
   for (const handle of handles) {
     const source = db.prepare("SELECT s.state,s.revision,v.payload FROM memory_sources s JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=? WHERE s.id=?").get(handle.source_revision,handle.source_id);
     if (!source || source.state !== "active" || source.revision !== handle.source_revision) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");

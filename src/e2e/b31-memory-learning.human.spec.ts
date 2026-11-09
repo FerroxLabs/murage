@@ -91,8 +91,8 @@ test("learning choices persist, stale edits require refresh, and workspace activ
   const advanced = page.getByRole("region", { name: "Advanced", exact: true });
   await expect(advanced.getByText(/Counts cover the whole workspace/)).toBeVisible();
   await expect(advanced.getByText("No activity recorded", { exact: false }).first()).toBeVisible();
-  await expect(advanced.getByText(/Synthesis: disabled/)).toBeVisible();
-  await expect(advanced.getByText("Supplied to turns", { exact: true })).toBeVisible();
+  await expect(advanced.getByText(/Combining memories: disabled/)).toBeVisible();
+  await expect(advanced.getByText("Memory references sent to bots", { exact: true })).toBeVisible();
   for (const width of [390, 820, 1440]) {
     await inspectWidth(page, width, panel, controls, facts);
     await page.keyboard.press("Space"); await expect(facts).toBeChecked(); await expect(facts).toBeEnabled(); await page.keyboard.press("Space"); await expect(facts).not.toBeChecked(); await expect(facts).toBeEnabled();
@@ -120,7 +120,7 @@ test("owner assigns, conflicts and revokes an actual verified Slack person throu
 
   const panel = await openWorkspaceMemory(page);
   const people = panel.getByRole("region", { name: "Verified people and accounts", exact: true });
-  const account = people.getByRole("group", { name: "Slack account · user ID UOTHER · authority TEAM", exact: true });
+  const account = people.getByRole("group", { name: "Slack account · user ID UOTHER · account provider ID TEAM", exact: true });
   await expect(account).toContainText("Needs an owner decision");
   await expect(people.getByText("1 verified platform account is waiting for an owner decision.", { exact: true })).toBeVisible();
   const separate = account.getByRole("button", { name: "Separate person", exact: true });
@@ -136,14 +136,14 @@ test("owner assigns, conflicts and revokes an actual verified Slack person throu
   await expect.poll(async () => (await api("/api/slack/status")).humanPersonId).toBe(person.personId);
 
   // Owner shares a room audience with the separate person; the control shows only what the server reads back.
-  const shared = people.getByRole("group", { name: "Shared audiences for Slack account · user ID UOTHER · authority TEAM", exact: true });
+  const shared = people.getByRole("group", { name: "Shared audiences for Slack account · user ID UOTHER · account provider ID TEAM", exact: true });
   await expect(shared).toContainText("No shared audiences");
   await shared.getByRole("combobox", { name: "Share an audience" }).selectOption({ label: "Channel: Harbour room" });
   const granted = page.waitForResponse(response => response.url().endsWith("/api/memory/action") && response.request().postDataJSON()?.action === "human-share");
   await shared.getByRole("button", { name: "Share audience", exact: true }).click(); expect((await granted).ok()).toBe(true);
   const room = (await api("/api/memory/status")).scopes.find((scope: any) => scope.kind === "room" && scope.label === "Harbour room");
   await expect.poll(async () => (await api("/api/memory/action", { action: "humans" })).shares).toEqual([{ personId: person.personId, scopeId: room.id, granted: true, revision: 1 }]);
-  const stop = shared.getByRole("button", { name: "Stop sharing Channel: Harbour room with Slack account · user ID UOTHER · authority TEAM", exact: true });
+  const stop = shared.getByRole("button", { name: "Stop sharing Channel: Harbour room with Slack account · user ID UOTHER · account provider ID TEAM", exact: true });
   await expect(stop).toBeVisible();
   await audit(page, info, "people-share");
   await page.screenshot({ path: info.outputPath("b31-people-share.png"), fullPage: true });

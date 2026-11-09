@@ -31,11 +31,15 @@ import { copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync,
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { DATA_DIR } from "../config.ts";
-import { memoDeps, pathExists } from "./isolation-cache.ts";
+import { dataRoots } from "../data-roots.ts";
+import { prefixRebaseLinks } from "../link-removal.ts";
+import { memoDeps, pathExists, trackPath } from "./isolation-cache.ts";
 import { LoginLinkUnavailableError, linkSharedEntry, nodeLinkIo, sharesFile, type LinkIo, type LinkMode } from "./shared-login-link.ts";
 import { ownProcessRecord, processRunning, type ProcessRecord } from "./process-identity.ts";
 
 export interface ScopedCliHomeSpec {
+  /** OpenCode config copies track owner file changes and scope identity, without folder timestamps. */
+  configDependencies?: true;
   /** Cache and folder name: native/<kind>-scope/<hash>. */
   kind: string;
   realHome: string;
@@ -472,7 +476,7 @@ const scopeRootOfPath = (path: string): string => (GEN_DIR.test(basename(path)) 
 
 /** Names that belong to the scope's bookkeeping, never carried into a generation. */
 const bookkeeping = (name: string): boolean =>
-  name === SCOPE_MARKER || name.startsWith(`${SCOPE_MARKER}.`) || name === LOGIN_ASIDE_DIR || name.startsWith(`.${GENERATION_PREFIX}`) || GEN_DIR.test(name);
+  /^.+\.murage-relink-.+$/.test(name) || name === SCOPE_MARKER || name.startsWith(`${SCOPE_MARKER}.`) || name === LOGIN_ASIDE_DIR || name.startsWith(`.${GENERATION_PREFIX}`) || GEN_DIR.test(name);
 
 /** One entry of an earlier generation, linked into a newer one: a symlink to where the entry really is (a directory junction on
  *  Windows without symlink rights); a file falls back to a hardlink, then a copy. False when the source is gone. */
@@ -493,13 +497,21 @@ function carryEntry(source: string, dest: string): boolean {
  *  its own. A link whose target is gone is removed. Never touches the earlier folders. */
 function carryInto(sources: readonly string[], dest: string, skip: (name: string) => boolean): void {
   mkdirSync(dest, { recursive: true, mode: 0o700 });
+  prefixRebaseLinks.sweep(dest);
   const have = new Set<string>();
   for (const name of readdirSync(dest)) {
     have.add(name);
     if (skip(name)) continue;
     const path = join(dest, name);
     try {
-      if (lstatSync(path).isSymbolicLink()) { try { statSync(path); } catch { unlinkSync(path); have.delete(name); } }
+      if (lstatSync(path).isSymbolicLink()) {
+        // Carry kind comes only from the new target; never inspect the old target for rebasing.
+        prefixRebaseLinks.relink(path, {
+          site: 10, dataDir: DATA_DIR, previousRoots: dataRoots().previousRoots(), kind: "new-target",
+          create: (target, dest, kind) => symlinkSync(target, dest, kind === "dir" ? "junction" : "file"),
+        });
+        try { statSync(path); } catch { unlinkSync(path); have.delete(name); }
+      }
     } catch { /* gone */ }
   }
   for (const source of sources) {
@@ -675,7 +687,7 @@ function scopeSession(spec: ScopedCliHomeSpec, now: number, resolveGeneration: b
     // The durable deletion record: every name removed so far and not recreated since. Every carry and rotation excludes these.
     const deleted = [...new Set([...earlierDeleted, ...earlierGenerated.filter((name) => !(name in generated))])].filter((name) => !(name in generated));
     // Recorded as dependencies, so the scope is rebuilt when the owner's folder or one of its logins appears.
-    const realFolder = pathExists(spec.realHome);
+    const realFolder = pathExists(spec.realHome, spec.configDependencies ? "identity" : undefined);
     for (const name of spec.share) {
       if (name in generated) continue;
       const scoped = join(base, name);
@@ -712,10 +724,15 @@ function scopeSession(spec: ScopedCliHomeSpec, now: number, resolveGeneration: b
     }
     // The generated copies follow the owner's source: written by replacing the file (never through a link or a hardlink that an earlier
     // generation or the owner shares), so a removal or recreation of the source reaches the current generation too.
-    for (const [name, text] of Object.entries(generated)) replaceGenerated(join(genBase, name), text);
-    pathExists(base); // a removed scope is rebuilt on the next turn
+    for (const [name, text] of Object.entries(generated)) {
+      const target = join(genBase, name);
+      replaceGenerated(target, text);
+      if (spec.configDependencies) trackPath(target, "type");
+    }
+    pathExists(base, spec.configDependencies ? "identity" : undefined); // a removed scope is rebuilt on the next turn
+    if (spec.configDependencies && genBase !== base) trackPath(genBase, "identity");
     return root;
-  });
+  }, spec.configDependencies ? { sourceSignatures: true } : undefined);
   // A login shared as a hardlink (no symlink allowed) must still be ONE file with the owner's before the engine starts.
   // When it is not, the scope moves to a new generation (the older one is left exactly as it is).
   home = resolveGeneration ? verifyScopeLogins(result, spec.kind, now) : result;
@@ -787,11 +804,14 @@ export function verifyScopeLogins(root: string, kind = basename(dirname(root)).r
   // a login that is missing or split in it is never created, relinked or repaired there: a new generation is made.
   const established = marker.launched === true || current > 0;
   if (current > 0) { try { mkdirSync(home, { recursive: true, mode: 0o700 }); } catch { /* the engine makes it */ } }
+  prefixRebaseLinks.sweep(home, now);
   for (const name of marker.share as unknown[]) {
     if (!validLoginName(name) || locks.has(name) || generated.has(name)) continue;
     const mode = modes[name];
     const real = join(marker.realHome, name);
     const scoped = join(home, name);
+    // Rebase a recorded old login path through LinkIo before the existing owner check.
+    sharesFile(real, scoped, linkIo);
     const scopedStat = statOrNull(scoped, false);
     const owner = statOrNull(real, true);
     if (mode === "hardlink") {

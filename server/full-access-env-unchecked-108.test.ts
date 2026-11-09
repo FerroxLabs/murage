@@ -110,10 +110,32 @@ describe("E1 unchecked environment waiver: the owner and a routine at Full acces
         ? "Murage could not start the shell to check its environment" : "the environment check took too long") });
     }
     for (const bot of levels.slice(2)) {
+      // NL-SELFGUARD-RULING-1018 (c): without the owner's proof No limits keeps the strict read (always-ask, unreadable), the
+      // matching-pin row included; with it (an owner turn, clean) U19 and U20 run and are recorded as held=unread. Full access
+      // keeps the unread-call card for them and runs the matching pin.
+      const owner = { ownerStarted: true, stopLine: null, outsideRead: null } satisfies Partial<AutoContext>;
       for (const command of ["PAGER=less git log", 'GIT_SSH_COMMAND="other-ssh" git fetch']) {
-        expect(verdict(bot, record, command)).toMatchObject({ approve: null, source: "unread-call", rule: expect.stringContaining("changes a setting") });
+        if (bot.noLimits) {
+          expect(verdict(bot, record, command)).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
+          expect(verdict(bot, record, command, owner), command).toMatchObject({ approve: "auto-approved shell (no limits)", source: "no-limits", rule: "held=unread" });
+          // a marked turn (outsideRead absent, or a web read) keeps the card
+          for (const marked of [{ ownerStarted: true, stopLine: null }, { ownerStarted: true, stopLine: null, outsideRead: ["web page" as const] }] as Partial<AutoContext>[]) {
+            expect(verdict(bot, record, command, marked), command).toMatchObject({ approve: null, source: "outside-turn" });
+          }
+          // no ownerStarted, another origin, unattended, automated, routine: card
+          for (const patch of [{ ...owner, ownerStarted: undefined }, { ...owner, fullAccessOrigin: "other" }, { ...owner, unattended: true }, { ...owner, automated: true }, { ...owner, routineLevel: true }] as Partial<AutoContext>[]) {
+            expect(verdict(bot, record, command, patch).approve, `${command} ${JSON.stringify(patch)}`).toBeNull();
+          }
+        } else {
+          expect(verdict(bot, record, command)).toMatchObject({ approve: null, source: "unread-call", rule: expect.stringContaining("changes a setting") });
+        }
       }
-      for (const command of ["PAGER=cat git log", `GIT_SSH_COMMAND="${hand.env.GIT_SSH_COMMAND}" git fetch`]) expect(verdict(bot, record, command).approve, command).not.toBeNull();
+      for (const command of ["PAGER=cat git log", `GIT_SSH_COMMAND="${hand.env.GIT_SSH_COMMAND}" git fetch`]) {
+        if (bot.noLimits) {
+          expect(verdict(bot, record, command)).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
+          expect(verdict(bot, record, command, owner).approve, command).not.toBeNull();
+        } else expect(verdict(bot, record, command).approve, command).not.toBeNull();
+      }
       // ISSUE-PERMS-1010 A (murage-releases #7a): a routine run judged at Full access or No limits is waived like the owner's turn
       for (const patch of [
         { fullAccessOrigin: "routine", routineLevel: true },

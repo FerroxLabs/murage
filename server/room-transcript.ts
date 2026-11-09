@@ -19,7 +19,8 @@ import { database } from "./database.ts";
 import { messageMadeWithMemory, messageSourceForgotten, replayExclusions, threadHoldsMemoryLines, type LineageAllowance } from "./memory/replay-lineage.ts";
 import { GROUP_CONTEXT_MESSAGES, withholdRoomReplies } from "./room-context.ts";
 import type { Message } from "./store.ts";
-import type { LineageRef, PromptPart } from "./memory/lineage-types.ts";
+import type { LineageReader, LineageRef, PromptPart } from "./memory/lineage-types.ts";
+import { denyLookup } from "./memory/deny-read.ts";
 import { lineRefs, promptPart } from "./memory/prompt-parts.ts";
 
 export interface RoomTranscript {
@@ -67,7 +68,7 @@ function forgottenReplies(threadId: string, messages: readonly Message[], withhe
  * memory stopped: the content rule still applies, as a withheld line for the
  * owner's turn and as a dropped line for anyone else. A room that never used
  * memory (no receipt, no copy, no reply with output roots) is read as it is. */
-export function roomTranscriptWithoutMemory(allowance: LineageAllowance, threadId: string, messages: readonly Message[], ownerAudience: boolean, pinnedMessageId?: string, unprovenInOwnerRoom = false, options: { byId?: MessageById; whole?: boolean } = {}): { messages: Message[]; withheld: Set<string>; forgotten: Set<string>; checking: Set<string>; checked: Set<string> } | undefined {
+export function roomTranscriptWithoutMemory(allowance: LineageAllowance, threadId: string, messages: readonly Message[], ownerAudience: boolean, pinnedMessageId?: string, unprovenInOwnerRoom = false, options: { byId?: MessageById; whole?: boolean; reader?: LineageReader } = {}): { messages: Message[]; withheld: Set<string>; forgotten: Set<string>; checking: Set<string>; checked: Set<string> } | undefined {
   // `whole`: a direct conversation's replay window, already bounded by the caller (botWindow); a room is cut to what a member prompt shows.
   const candidates = options.whole ? [...messages] : promptCandidates(messages, pinnedMessageId, GROUP_CONTEXT_MESSAGES, options.byId);
   // A thread with no receipt of its own may still hold replies built on
@@ -75,9 +76,15 @@ export function roomTranscriptWithoutMemory(allowance: LineageAllowance, threadI
   // context): those are checked too (Astra r4 #3).
   // A thread that captured a reply and then had it forgotten (capture only: no receipt, no root) is not read as it is either: its
   // forgotten lines are withheld below. Two seeks of the thread's own rows (its sources, its source tombstones), never history.
+  // A last resort for a non-owner audience (`reader`): the lines that reader would be refused at the send fence are dropped here too, before
+  // the early return below, so a thread with nothing memory-made still gets an explicit floor. Only ever withholds more.
+  const audDrop = options.reader?.audience ? audienceDrops(threadId, candidates, options.reader) : undefined;
   if (!database().prepare("SELECT 1 FROM memory_disclosures WHERE thread_id=? LIMIT 1").get(threadId) && !candidates.some(m => m.copyOf)
     && !threadHoldsMemoryLines(threadId)
-    && !threadHasForgottenSource(threadId)) return undefined;
+    && !threadHasForgottenSource(threadId)) {
+    if (!audDrop) return undefined;
+    return { messages: candidates.filter(m => !audDrop.has(m.id)), withheld: new Set(), forgotten: new Set(), checking: new Set(), checked: new Set(candidates.map(m => m.id)) };
+  }
   const checking = new Set<string>();
   const withheld = replayExclusions(allowance, threadId, candidates, null, { failClosed: true, checking });
   // (a forgotten owner line is already excluded by replayExclusions: 1.0.2 revoke-bounded r3)
@@ -85,12 +92,22 @@ export function roomTranscriptWithoutMemory(allowance: LineageAllowance, threadI
   // Words nobody proved are the owner's, in the owner's room, with no memory
   // access to check a reply against: no reply made with memory is shown.
   if (unprovenInOwnerRoom) for (const m of candidates) if (m.role !== "user" && messageMadeWithMemory(threadId, m.id)) { withheld.add(m.id); checking.delete(m.id); }
+  if (audDrop) for (const id of audDrop) { withheld.add(id); checking.delete(id); }
   const checked = new Set(candidates.map(m => m.id));
   if (!ownerAudience) return { messages: candidates.filter(m => !withheld.has(m.id)), withheld: new Set(), forgotten: new Set(), checking: new Set(), checked };
   const forgotten = forgottenReplies(threadId, candidates, withheld);
   // a line the owner forgot is withdrawn, whatever else ran out
   for (const id of forgotten) checking.delete(id);
   return { messages: withholdRoomReplies(candidates, withheld, forgotten, checking), withheld, forgotten, checking, checked };
+}
+
+/** The ids of `candidates` the write-time lookup does not show `reader` (an audience reader): withheld or still checking. Fails closed: a line
+ * with no verdict, or a lookup that cannot be read, is dropped. Synchronous reads only. */
+function audienceDrops(threadId: string, candidates: readonly Message[], reader: LineageReader): Set<string> {
+  try {
+    const verdicts = denyLookup(database(), { threadId, lines: candidates.map(m => ({ messageId: m.id, author: m.role === "user" ? "owner" as const : "generated" as const, withheldFromBots: Boolean(m.withheldFromBots) })) }, reader);
+    return new Set(candidates.filter(m => verdicts.get(m.id)?.state !== "shown").map(m => m.id));
+  } catch { return new Set(candidates.map(m => m.id)); }
 }
 
 /** Whether any message line of this thread was forgotten: tombstoned by id (the message source ids of a thread share the prefix

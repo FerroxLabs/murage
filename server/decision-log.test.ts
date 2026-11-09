@@ -108,8 +108,13 @@ describe("appendDecision / readDecisions", () => {
     const rows = readDecisions(dir, 10);
     expect(rows).toHaveLength(2);
     expect(rows[0].decision).toBe("auto-approved");
-    expect(rows[0].rule).toBe("Bash:git");
-    expect(rows[0].botName).toBe("Scout");
+    // Astra r1 H11 (was "Bash:git"): a rule is logged as the tool family it names, the summary as a fixed label
+    expect(rows[0].rule).toBe("Bash");
+    expect(rows[0].summary).toBe("shell");
+    expect(JSON.stringify(rows)).not.toContain("git");
+    // ql2 sink fold (was botName "Scout"): the bot is named by its id, its typed name is not written
+    expect(rows[0].botId).toBe("b1");
+    expect(JSON.stringify(rows)).not.toContain("Scout");
     expect(Number.isNaN(new Date(rows[0].at).getTime())).toBe(false);
     expect(rows[1].decision).toBe("card-shown");
     expect(rows[1].source).toBe("no-grant");
@@ -131,8 +136,9 @@ describe("appendDecision / readDecisions", () => {
     await flushDecisionLog(dir);
     const raw = readFileSync(file(), "utf8");
     expect(raw).not.toContain(secret);
-    expect(raw).toContain("redacted");
-    expect(readDecisions(dir, 10)[0].summary).toContain("redacted");
+    // Astra r1 H11 (was: the summary is kept, redacted): no part of the command is written, the summary is the fixed label
+    expect(raw).not.toContain("STRIPE_API_KEY");
+    expect(readDecisions(dir, 10)[0].summary).toBe("shell");
   });
 
   it.skipIf(process.platform === "win32")("creates the file private (0600)", async () => {

@@ -183,3 +183,82 @@ it("persists write-once procedure pins per direct task and room responder",()=>{
   expect(restored.taskByThread(first.id,firstThread)?.procedurePin).toEqual(pin);
   expect(restored.groupTaskByThread(room.id,room.threadId)?.procedurePins).toEqual({[first.id]:pin,[second.id]:other});
 });
+it("clearing resume cursors in one batch leaves the same records as one setResumeCursor per cursor, with one change per bot (ALL.eld250)",()=>{
+  // the second task is detached (not activated), so the batch must reach a background task, not only the active one (Astra p1 Low)
+  const seed=fresh(),one=seed.createBot(),two=seed.createBot(),oneSecond=seed.createTask(one.id,"second",false)!;
+  expect(oneSecond.threadId).not.toBe(one.threadId);
+  expect(seed.bot(one.id)?.threadId).toBe(one.threadId);
+  seed.setResumeCursor(one.id,"engine-one","s1",one.threadId,"owner",3,true,2,1);
+  seed.setResumeCursor(one.id,"engine-two","s2",oneSecond.threadId,undefined,4);
+  seed.patchTask(one.id,one.threadId,{effortSent:{instanceId:"engine-one",effort:"high"}});
+  seed.patchTask(one.id,oneSecond.threadId,{effortSent:{instanceId:"engine-two",effort:"low"}});
+  seed.setResumeCursor(two.id,"engine-one","s3",two.threadId,undefined,undefined,true);
+  seed.setResumeCursor(two.id,"engine-two","kept",two.threadId);
+  expect(seed.taskByThread(one.id,one.threadId)?.resumeSeals?.["engine-one"]).toBeDefined();
+  expect(seed.taskByThread(one.id,oneSecond.threadId)?.effortSent?.instanceId).toBe("engine-two");
+  // an existing bot with a gone task, and a gone bot
+  // each clear names the cursor and incarnation it judged (ELD250 B3)
+  const clears=[{botId:one.id,instanceId:"engine-one",threadId:one.threadId,cursor:"s1",incarnation:2},{botId:one.id,instanceId:"engine-two",threadId:oneSecond.threadId,cursor:"s2",incarnation:undefined},
+    {botId:two.id,instanceId:"engine-one",threadId:two.threadId,cursor:"s3",incarnation:undefined},{botId:two.id,instanceId:"engine-one",threadId:"no-such-task",cursor:"s3",incarnation:undefined},
+    {botId:"gone",instanceId:"engine-one",threadId:"nowhere",cursor:"s1",incarnation:undefined}];
+  fresh(); // lands the seed's deferred save
+  const original=readFileSync(join(DATA_DIR,"bots.json"),"utf8");
+  const perCall=fresh(),perCallChanges:string[]=[];perCall.onChange(change=>{if(change.type==="bot")perCallChanges.push(change.botId);});
+  for(const clear of clears)perCall.setResumeCursor(clear.botId,clear.instanceId,undefined,clear.threadId);
+  const expected=JSON.stringify(perCall.bots),expectedShape=structuredClone(perCall.bots);
+  fresh(); // lands the per-call store's deferred save before the file is put back
+  writeFileSync(join(DATA_DIR,"bots.json"),original);
+  const batch=fresh(),batchChanges:string[]=[],order:string[]=[];
+  batch.onChange(change=>{if(change.type==="bot"){batchChanges.push(change.botId);order.push(`bot:${change.botId}`);}});
+  type Saver={saveBots:(...args:unknown[])=>void};
+  const realSave=(Store.prototype as unknown as Saver).saveBots;
+  const saves=vi.spyOn(batch as unknown as Saver,"saveBots").mockImplementation(function(this:unknown,...args:unknown[]){order.push("save");return realSave.apply(this,args);});
+  // three slots cleared on two bots; the gone task and the gone bot are skipped (B13: counted apart)
+  expect(batch.clearResumeCursors(clears)).toEqual({cleared:3,botsMoved:2,skipped:2});
+  // exact record shape, undefined-valued properties included, before any reload
+  expect(batch.bots).toStrictEqual(expectedShape);
+  expect(JSON.stringify(batch.bots)).toBe(expected);
+  expect(perCallChanges).toEqual([one.id,one.id,two.id,two.id]);
+  expect(batchChanges).toEqual([one.id,two.id]);
+  // one deferred save, before the changes are announced
+  expect(saves).toHaveBeenCalledTimes(1);
+  expect(saves.mock.calls[0]?.[1]).toEqual({defer:true});
+  expect(order).toEqual(["save",`bot:${one.id}`,`bot:${two.id}`]);
+  saves.mockRestore();
+  // the cleared fields went (on the active and the detached task), the kept cursor stayed, and the batch saved them
+  const restored=fresh();
+  expect(restored.taskByThread(one.id,one.threadId)?.resumeCursors["engine-one"]).toBeUndefined();
+  expect(restored.taskByThread(one.id,one.threadId)?.resumeContracts?.["engine-one"]).toBeUndefined();
+  expect(restored.taskByThread(one.id,one.threadId)?.resumeSeals?.["engine-one"]).toBeUndefined();
+  expect(restored.taskByThread(one.id,one.threadId)?.effortSent).toBeUndefined();
+  expect(restored.taskByThread(one.id,oneSecond.threadId)?.resumeCursors["engine-two"]).toBeUndefined();
+  expect(restored.taskByThread(one.id,oneSecond.threadId)?.resumeContracts?.["engine-two"]).toBeUndefined();
+  expect(restored.taskByThread(one.id,oneSecond.threadId)?.effortSent).toBeUndefined();
+  expect(restored.taskByThread(two.id,two.threadId)?.resumeCursors["engine-two"]).toBe("kept");
+  expect(JSON.stringify(restored.bots)).toBe(expected);
+  expect(batch.clearResumeCursors([])).toEqual({cleared:0,botsMoved:0,skipped:0});
+});
+it("a batched cursor clear applies only while the task still holds the cursor and incarnation it judged (ELD250 B3, B13)",()=>{
+  // rejects: a clear that ignores the judged value (a slot changed between judgment and clear loses its new session)
+  const store=fresh(),bot=store.createBot();
+  store.setResumeCursor(bot.id,"engine-one","old",bot.threadId,"owner",undefined,false,2);
+  store.setResumeCursor(bot.id,"engine-two","two",bot.threadId,"owner");
+  store.setResumeCursor(bot.id,"engine-three","three",bot.threadId,"owner",undefined,false,3);
+  const judged=[{botId:bot.id,instanceId:"engine-one",threadId:bot.threadId,cursor:"old",incarnation:2},
+    {botId:bot.id,instanceId:"engine-two",threadId:bot.threadId,cursor:"two",incarnation:undefined},
+    {botId:bot.id,instanceId:"engine-three",threadId:bot.threadId,cursor:"three",incarnation:3}];
+  // between judgment and clear: engine-one moved to a new session, engine-three to a new incarnation of the same id
+  store.setResumeCursor(bot.id,"engine-one","new",bot.threadId,"owner");
+  store.setResumeCursor(bot.id,"engine-three","three",bot.threadId,"owner",undefined,false,4);
+  const changes:string[]=[];store.onChange(change=>{if(change.type==="bot")changes.push(change.botId);});
+  expect(store.clearResumeCursors(judged)).toEqual({cleared:1,botsMoved:1,skipped:2});
+  const task=store.taskByThread(bot.id,bot.threadId)!;
+  expect(task.resumeCursors["engine-one"]).toBe("new");
+  expect(task.resumeCursors["engine-two"]).toBeUndefined();
+  expect(task.resumeCursors["engine-three"]).toBe("three");
+  expect(task.resumeIncarnations?.["engine-three"]).toBe(4);
+  expect(changes).toEqual([bot.id]);
+  // nothing applies: no save is owed and no change is announced
+  expect(store.clearResumeCursors(judged.slice(0,1))).toEqual({cleared:0,botsMoved:0,skipped:1});
+  expect(changes).toEqual([bot.id]);
+});

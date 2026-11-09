@@ -1,3 +1,4 @@
+import { botFolderOrThrow, BotFolderUnavailableError } from "../bot-folder.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -5,22 +6,18 @@
 // `withCliMemoryLearning` gives such an instance BOTH `extractMemory` and `groundMemory`, with the prompt and output contracts of
 // openai-compat (memory/extract.ts: memoryExtractionMessages, memoryGroundingMessages), and routes `dispatch.purpose` to the
 // inference contract the way requestMemoryInference does (same output caps). Each call is one background session of the signed-in
-// engine: JSON out, an empty working directory, no MCP mounts, a bounded answer.
+// engine: JSON out, the resolved bot folder, no MCP mounts, a bounded answer.
 //
 // Pacing (the engine spends the person's own subscription): one extraction session at a time per engine; it starts only while the
 // engine has no interactive turn, and waits otherwise; a limit or refusal reaches the caller as an error carrying `status`
 // (429 and `limit` for a limit, 401 for a sign-in the engine refused), which extractor-connections.ts turns into a pause with a
 // plain status line ("Learning waits while <engine> is at its limit").
 import { randomUUID } from "node:crypto";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
 import {
   CONTINUITY_OUTPUT_CAP, CONTINUITY_REQUEST_TIMEOUT_MS, memoryExtractionMessages, memoryGroundingMessages,
   type MemoryExtractionDispatch, type MemoryGroundingInput,
 } from "../memory/extract.ts";
-import { safeWipe } from "../testing/safe-wipe.mjs";
 import { MemorySendFenced } from "../memory/learning-send-fence.ts";
 import type { LearningGate } from "../memory/learning-send.ts";
 import { fixedPrompt } from "../memory/fixed-prompt.ts";
@@ -60,13 +57,12 @@ function runtimeFailure(event: Extract<RuntimeEvent, { type: "runtime.error" }>)
  * (memory/learning-send.ts): the runner admits through it (check and release under the write lock) immediately before it writes the
  * prompt to the engine, with no await between, on every write (a relaunch's too), withdraws an admission that wrote nothing
  * (`notWritten`), and marks each write (`wrote`); a refusal writes nothing and the session rejects with that error. */
-export type MemorySessionRunner = (prompt: string, signal: AbortSignal, limits: { maxBytes: number; gate?: LearningGate }) => Promise<string>;
+export type MemorySessionRunner = (prompt: string, signal: AbortSignal, limits: { maxBytes: number; gate?: LearningGate; cwd?: string }) => Promise<string>;
 
 export interface CliMemoryLearningOptions {
-  /** How one session runs. Default: a hidden tool-free turn on the instance's adapter in an empty folder. */
+  /** How one session runs. Default: a hidden turn on the instance's adapter in its bot folder. */
   run?: (instance: ProviderInstance) => MemorySessionRunner;
-  /** The default session's parent folder, inside the OS temp folder (OpenCode: a git folder of Murage's own, so the engine never
-   * files a one-off under the person's own history). Unset or failing: the OS temp folder itself. */
+  /** Legacy session storage hook. It never chooses the launch folder. */
   oneShotFolder?: () => Promise<string>;
 }
 
@@ -92,7 +88,7 @@ export function withCliMemoryLearning<T extends ProviderInstance>(live: T, optio
     if (event.type === "turn.started") interactive.add(event.threadId);
     else if (event.type === "turn.completed" || event.type === "session.exited") { interactive.delete(event.threadId); wake(); }
   });
-  const runner = options.run ? options.run(live) : hiddenTurnRunner(live, options.oneShotFolder);
+  const runCli = options.run ? options.run(live) : hiddenTurnRunner(live, options.oneShotFolder);
 
   const untilIdle = async (signal: AbortSignal): Promise<void> => {
     while (interactive.size > 0) {
@@ -111,7 +107,7 @@ export function withCliMemoryLearning<T extends ProviderInstance>(live: T, optio
     tail = next.catch(() => undefined);
     return next;
   };
-  const session = (text: string, maximumOutputTokens: number, signal: AbortSignal, messages: ReadonlyArray<Message>, cap: number, fence?: MemorySendFence): Promise<string> => {
+  const session = (text: string, maximumOutputTokens: number, signal: AbortSignal, messages: ReadonlyArray<Message>, cap: number, fence?: MemorySendFence, cwd?: string): Promise<string> => {
     if (!text.trim() || Buffer.byteLength(text) > MAX_SOURCE_BYTES || !Number.isSafeInteger(maximumOutputTokens) || maximumOutputTokens < 1 || maximumOutputTokens > cap)
       return Promise.reject(new Error("MEMORY_EXTRACTION_LIMIT"));
     // No gate, no send (r6 section 0, no exemption): a learning call without its gate is refused here and nothing reaches the engine.
@@ -124,24 +120,24 @@ export function withCliMemoryLearning<T extends ProviderInstance>(live: T, optio
       // The words waited in this queue: a Forget, delete or edit that committed meanwhile drops the call here (a cheap exit), and the
       // runner admits through the same gate, under the write lock, right before its write.
       fence.check();
-      const answer = stripFence(await runner(flattenMemoryMessages(messages), signal, { maxBytes, gate: fence }));
+      const answer = stripFence(await runCli(flattenMemoryMessages(messages), signal, { maxBytes, gate: fence, cwd }));
       if (!answer || Buffer.byteLength(answer) > maxBytes) throw new Error(answer ? "MEMORY_EXTRACTION_RESPONSE_LIMIT" : "MEMORY_EXTRACTION_EMPTY_REPLY");
       return answer;
     });
   };
 
   live.extractMemory = (text, maximumOutputTokens, signal, dispatch?: MemoryExtractionDispatch) => {
-    if (!dispatch?.purpose) return session(text, maximumOutputTokens, signal, dispatch?.messages ?? memoryExtractionMessages(text), 2000, dispatch?.fence);
+    if (!dispatch?.purpose) return session(text, maximumOutputTokens, signal, dispatch?.messages ?? memoryExtractionMessages(text), 2000, dispatch?.fence, dispatch?.cwd);
     // the inference contract: the host's own messages, the purpose's output cap (extract.ts requestMemoryInference)
     const cap = dispatch.purpose === "reflection" ? 8000 : dispatch.purpose === "continuity" ? CONTINUITY_OUTPUT_CAP : 2000;
-    return session(text, maximumOutputTokens, signal, dispatch.messages, cap, dispatch.fence);
+    return session(text, maximumOutputTokens, signal, dispatch.messages, cap, dispatch.fence, dispatch.cwd);
   };
-  live.groundMemory = (input: MemoryGroundingInput, maximumOutputTokens, signal, fence?: MemorySendFence) =>
-    session(JSON.stringify(input), maximumOutputTokens, signal, memoryGroundingMessages(input), 2000, fence);
+  live.groundMemory = (input: MemoryGroundingInput, maximumOutputTokens, signal, fence?: MemorySendFence, cwd?: string) =>
+    session(JSON.stringify(input), maximumOutputTokens, signal, memoryGroundingMessages(input), 2000, fence, cwd);
   // A press, not a pace: it does not wait for a running turn, and a caller that gave up before its place in line spends nothing.
-  live.checkReply = (signal) => exclusive(async () => {
+  live.checkReply = (signal, cwd) => exclusive(async () => {
     if (signal.aborted) throw new Error("MEMORY_EXTRACTION_ABORTED");
-    return runner(fixedPrompt(ENGINE_REPLY_PROMPT), signal, { maxBytes: 4_096 });
+    return runCli(fixedPrompt(ENGINE_REPLY_PROMPT), signal, { maxBytes: 4_096, cwd });
   });
   Object.defineProperty(live, CLI_LEARNING, { value: true, enumerable: false });
 
@@ -153,13 +149,12 @@ export function withCliMemoryLearning<T extends ProviderInstance>(live: T, optio
 const ANSWER_TEXT_LIMIT = MAX_ANSWER_BYTES * 2;
 
 /** The default session for engines that only offer a turn (Codex, ACP): one hidden turn on a thread that exists nowhere else, in an
- * empty temporary folder, with no integrations mounted, the most restrictive mode the engine offers, every ask denied, and the
+ * resolved bot folder, with no integrations mounted, the most restrictive mode the engine offers, every ask denied, and the
  * engine's retained session for the thread retired when it ends. */
-export const hiddenTurnRunner = (live: ProviderInstance, oneShotFolder?: () => Promise<string>): MemorySessionRunner => async (prompt, signal, { maxBytes, gate }) => {
+export const hiddenTurnRunner = (live: ProviderInstance, _oneShotFolder?: () => Promise<string>): MemorySessionRunner => async (prompt, signal, { maxBytes, gate, cwd: folder }) => {
   const adapter = live.adapter;
   const threadId = `${MEMORY_LEARNING_THREAD_PREFIX}${randomUUID()}`;
-  const parent = (oneShotFolder ? await oneShotFolder().catch(() => undefined) : undefined) ?? tmpdir();
-  const cwd = mkdtempSync(join(parent, "murage-learning-"));
+  const cwd = botFolderOrThrow({ cwd: folder });
   const items: string[] = [];
   let pending = "", size = 0;
   const state: { failure: Error | null; fenced: Error | null } = { failure: null, fenced: null };
@@ -189,7 +184,7 @@ export const hiddenTurnRunner = (live: ProviderInstance, oneShotFolder?: () => P
     const notWritten = gate ? () => gate.notWritten() : undefined;
     const sending = adapter.sendTurn({ threadId, text: prompt, sessionReset: true, cwd, stopLine: true, proposalOnly: true, background: true, usageFeature: "memory", ...(beforeSubmit ? { beforeSubmit, notWritten } : {}) });
     // sendTurn may stay pending until the turn ends: the wait is on the turn's own end, never on it.
-    sending.catch(error => { state.failure ??= engineFailure(error instanceof Error ? error.message : String(error)); finish(); });
+    sending.catch(error => { state.failure ??= error instanceof BotFolderUnavailableError ? error : engineFailure(error instanceof Error ? error.message : String(error)); finish(); });
     await finished;
     gate?.wrote();
     // refused or busy with nothing released on any attempt: that typed error (settled at nothing); after a release, an interrupted
@@ -205,9 +200,6 @@ export const hiddenTurnRunner = (live: ProviderInstance, oneShotFolder?: () => P
     signal.removeEventListener("abort", onAbort);
     unsubscribe();
     void Promise.resolve().then(() => adapter.interruptTurn(threadId)).catch(() => undefined)
-      .then(() => adapter.resetSession?.(threadId)).catch(() => undefined)
-      // The guarded delete: the session folder is admitted only as an OS temp path, never a home or data directory.
-      // A refusal leaves the empty folder in the temp dir rather than deleting anything it cannot vouch for.
-      .finally(() => safeWipe(cwd).catch(() => undefined));
+      .then(() => adapter.resetSession?.(threadId)).catch(() => undefined);
   }
 };

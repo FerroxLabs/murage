@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The shell's slots for other lanes' components (handoffs/HANDOFF-1013-UX-L2A.md,
+// The shell's slots for other lanes' components (HANDOFF-1013-UX-L2A.md,
 // shell contract). App.tsx and Today import ONLY from here. When a lane merges,
 // its line below changes to point at the lane's real module; the names and
 // props are the contract's and do not change.
@@ -16,8 +16,8 @@
 export { NeedsYouPage, useNeedsSummary } from "@/components/needs/NeedsYouPage";
 export { HealthPage } from "@/components/health/HealthPage";
 export { useHealthStatus } from "@/components/health/health-status";
-export { FirstRunTodayCard } from "./stubs/cards-stub";
-export { MonthCard, useMonthTag } from "./stubs/cards-stub";
-export { ClientsCard, useClientsTag } from "./stubs/cards-stub";
+// L6A's FirstRunTodayCard: TodayView lazy-loads it straight from its module (UX-L7 part 2, bundle budget).
+export { MonthCard, useMonthTag } from "@/components/today/MonthCard";
+export { ClientsCard, useClientsTag } from "@/components/agency/ClientsCard";
 export { OtherWorkspacesStrip } from "./stubs/cards-stub";
-export { PhoneTabs } from "./stubs/cards-stub";
+export { PhoneTabs } from "@/components/phone/PhoneTabs";

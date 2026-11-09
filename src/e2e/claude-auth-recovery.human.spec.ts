@@ -9,7 +9,7 @@ import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 let server:ViteDevServer,cache:string,origin:string;
 test.beforeAll(async()=>{
  const root=fileURLToPath(new URL("../../",import.meta.url));cache=mkdtempSync(join(tmpdir(),"murage-auth-card-"));
- server=await createServer({configFile:false,root,cacheDir:cache,envFile:false,optimizeDeps:{noDiscovery:true,include:["react","react-dom/client","react/jsx-runtime","react/jsx-dev-runtime","lucide-react"]},resolve:{alias:{"@":`${root}/src`}},server:{host:"127.0.0.1",watch:null,hmr:false},plugins:[tailwindcss(),{name:"auth-card-fixture",enforce:"pre",
+ server=await createServer({configFile:false,root,cacheDir:cache,envFile:false,optimizeDeps:{noDiscovery:true,include:["react","react-dom","react-dom/client","react/jsx-runtime","react/jsx-dev-runtime","lucide-react"]},resolve:{alias:{"@":`${root}/src`}},server:{host:"127.0.0.1",watch:null,hmr:false},plugins:[tailwindcss(),{name:"auth-card-fixture",enforce:"pre",
   resolveId(id){if(id==="@/state/store"||id.endsWith('/src/state/store'))return "\0auth-store";if(id==="/__auth.js")return "\0auth-entry";},
   load(id){
    if(id.endsWith('/src/styles.css'))return readFileSync(id,'utf8').replace('@import "tailwindcss";','@import "tailwindcss" source(none);\n@source "./components";');

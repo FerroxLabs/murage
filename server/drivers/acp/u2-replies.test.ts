@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -101,9 +102,18 @@ describe("U2 C7: a reply re-sent with its reasoning under the same messageId", (
     expect(replies()).toEqual([`The answer is 42.${reasoned}\u{1F4AD} x\nThe answer is 42.The answer is 42.`]);
   }, 20_000);
 
+  it("shows once when an earlier message of the same turn came before it (U2-C7-PER-MESSAGEID)", async () => {
+    await start(ReplayDriver as unknown as ProviderDriver<AcpConfig>, [say(20, "Let me work it out. ", "m0"), say(30, "The answer", "m1"), say(35, " is 42.", "m1"), say(40, reasoned, "m1"), endTurn(60)]);
+    expect(await completed()).toMatchObject({ ok: true });
+    expect(replies()).toEqual(["Let me work it out. The answer is 42."]);
+  }, 20_000);
+
   it("any other engine appends it", async () => {
     await start(PlainDriver as unknown as ProviderDriver<AcpConfig>, [say(20, "The answer is 42.", "m1"), say(30, reasoned, "m1"), endTurn(60)]);
     expect(await completed()).toMatchObject({ ok: true });
     expect(replies()).toEqual([`The answer is 42.${reasoned}`]);
   }, 20_000);
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

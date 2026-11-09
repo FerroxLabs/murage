@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -8,6 +9,13 @@
 // bypasses (T15a) must each fail the scan.
 //
 // Regenerate the sink and caller pins (never the chains or timers) with LEARNING_SINKS_WRITE=1; a reviewer reads the diff.
+//
+// Scope (MurageMain ruling, 1.0.18): this lint's threat model is ACCIDENTAL misuse by our own in-repo code: a new send path that forgets
+// the gate, a direct call, a copy-pasted helper, a write moved into a timer or a promise reaction. It is NOT a defence against adversarial
+// code inside the repo (a Proxy over the gate, a look-alike class built to dodge it): a static lint cannot be complete against that, and
+// the runtime StopGate (server/drivers/stop-gate.ts) stays the real guard. A stopGate.launch(entry, fn) callback counts as same-tick only
+// for the proven call shape (a non-async function expression, argument 2, on a value whose type is declared in stop-gate.ts), because
+// launch calls fn synchronously (stop-gate.ts launch); chain hops may name same-file write helpers in `via`.
 //
 // Reasons: `learning-path` is a pin that carries the learning payload on an admitted path, and the scan proves the admission:
 // `admittedBy: "chain:<name>"` (the call is a hop of that linted chain) or `"fence:<prop>"` (the call hands the engine a `<prop>` hook
@@ -28,7 +36,9 @@ const PINS_FILE = join(ROOT, "ci", "learning-sinks.json");
 type Reason = "fixed-text" | "not-learning" | "adapter-write" | "log-excluded" | "learning-path" | "learning-local";
 interface Pin { file: string; fn: string; anchor: string; kind: string; n?: number; reason: Reason; admittedBy?: string }
 interface CallerPin { file: string; fn: string; anchor: string; callee: string; n?: number; reason: Reason; admittedBy?: string }
-interface Hop { file: string; fn: string; from: string; to: string; payload: string[] }
+/** `via` (optional, only on a hook hop): the names of the same-file helper functions that hold the write(s) `to` names. The lint proves each
+ *  is called synchronously after the hook, inside the hook's function, and that its own path to the write is synchronous. */
+interface Hop { file: string; fn: string; from: string; to: string; payload: string[]; via?: string[] }
 interface Chain { name: string; admittedBy: string; hops: Hop[] }
 interface TimerPin { file: string; fn: string; anchor: string }
 interface Pins { sinks: Pin[]; callers: CallerPin[]; chains: Chain[]; timers: TimerPin[]; pinnedCallers: Array<{ file: string; name: string }> }
@@ -91,6 +101,29 @@ const runsInline = (fn: ts.Node): boolean => {
   if (ts.isNewExpression(p)) return p.expression.getText() === "Promise" && p.arguments?.[0] === fn;
   return ts.isCallExpression(p) && p.arguments.some(a => a === fn) && ts.isPropertyAccessExpression(p.expression) && SYNC_CALLBACKS.has(p.expression.name.text);
 };
+/** A stop gate: a value whose type's `launch`, `step`, `cleanupStep`, `handoff` and `bindLive` are all declared in server/drivers/stop-gate.ts
+ *  (createStopGate's own object). The shape alone is not enough: a look-alike declared anywhere else, with the same five names, is not it. */
+const STOP_GATE_FILE = "/server/drivers/stop-gate.ts";
+const isStopGate = (t: ts.Type): boolean => t.isUnion() ? t.types.every(isStopGate) : ["launch", "step", "cleanupStep", "handoff", "bindLive"].every(name => !!t.getProperty(name)?.declarations?.some(d => fwd(d.getSourceFile().fileName).endsWith(STOP_GATE_FILE)));
+/** Every possible receiver must be the stop gate (a union with a look-alike member fails; `null`/`undefined` members are dropped by the caller). */
+const receiverIsStopGate = (checker: ts.TypeChecker, e: ts.Expression): boolean => isStopGate(checker.getNonNullableType(checker.getTypeAtLocation(e)));
+/** A function boundary: anything that may run its body later than the code around it (arrow, function expression, declaration, method,
+ *  accessor, constructor, static block; a generator's body runs on `.next()`, an async function's after its first await). */
+const execBoundary = (n: ts.Node): boolean => ts.isFunctionLike(n) || ts.isClassStaticBlockDeclaration(n) || ts.isClassLike(n);
+/** The members a stop gate is made of: no one outside stop-gate.ts may write, delete, define or proxy them. */
+const GATE_MEMBERS = new Set(["launch", "step", "cleanupStep", "handoff", "bindLive"]);
+/** An expression without the wrappers that change only its type: parentheses, `!`, `as`, `<T>` and `satisfies`. */
+const peel = (e: ts.Expression): ts.Expression => (ts.isParenthesizedExpression(e) || ts.isNonNullExpression(e) || ts.isAsExpression(e) || ts.isTypeAssertionExpression(e) || ts.isSatisfiesExpression(e)) ? peel(e.expression) : e;
+const isGenerator = (n: ts.Node): boolean => !!(n as ts.FunctionLikeDeclaration).asteriskToken;
+/** The one call shape of a stop gate's launch the chain lint accepts as same-tick: a non-async function expression passed as the second
+ *  argument of `<stop gate>.launch(entry, fn, ...)`. StopGate.launch reads the gate and then calls fn synchronously, in the same tick
+ *  (server/drivers/stop-gate.ts launch; designs/STOP-NONACP-DISPOSE-r3.1.md, the gate sits on the write). Anything else (an async callback,
+ *  a launch-like call on a value that is not a stop gate, a callback of another call) is a deferral as before. */
+const isGateLaunchCallback = (checker: ts.TypeChecker, fn: ts.Node): boolean => {
+  if (!(ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) || isAsyncFn(fn) || isGenerator(fn)) return false;
+  const p = fn.parent;
+  return ts.isCallExpression(p) && p.arguments[1] === fn && ts.isPropertyAccessExpression(p.expression) && p.expression.name.text === "launch" && receiverIsStopGate(checker, p.expression.expression);
+};
 const deferralName = (fn: ts.Node): string => {
   if (isAsyncFn(fn)) return "async function";
   const p = fn.parent;
@@ -130,6 +163,10 @@ function localSinkNames(sf: ts.SourceFile): Set<string> {
 }
 
 interface Scan { sinks: Pin[]; callers: CallerPin[]; problems: string[] }
+/** The stop-gate protection findings (hand-built gates, writes to a gate, proxies, untyped flows) per parsed file. A planted program reuses
+ *  the base program's parsed trees for every file it does not override (parsedFiles), so those files' findings are computed once; a planted
+ *  file is a new tree and is checked afresh. Without it each planted program re-asked the checker about every expression in the server. */
+const gateCache = new WeakMap<ts.SourceFile, string[]>();
 
 function scan(prog: ts.Program, pins: Pins): Scan {
   const checker = prog.getTypeChecker();
@@ -251,7 +288,7 @@ function scan(prog: ts.Program, pins: Pins): Scan {
   };
   const onChain = (pin: { file: string; fn: string; anchor: string }, name: string): boolean => {
     const chain = pins.chains.find(c => c.name === name);
-    return !!chain && chain.hops.some(h => h.file === pin.file && pin.anchor.startsWith(squash(h.to)) && hopFn(h) === pin.fn);
+    return !!chain && chain.hops.some(h => h.file === pin.file && pin.anchor.startsWith(squash(h.to)) && (hopFn(h) === pin.fn || !!h.via?.includes(pin.fn)));
   };
   /** The call hands the engine a `prop` hook (`{ beforeSubmit }`) bound to a function that admits on a learning gate, and a linted
    *  chain runs a hook of that name before its write. */
@@ -374,6 +411,7 @@ function scan(prog: ts.Program, pins: Pins): Scan {
   for (const sf of prog.getSourceFiles()) {
     const rel = relFwd(sf.fileName);
     if (!rel.startsWith("server/") || isTest(rel)) continue;
+    const cachedGate = gateCache.get(sf), freshGate: string[] = [];
     const local = localSinkNames(sf);
     const visit = (node: ts.Node) => {
       const identKind = identSink(node, local);
@@ -402,6 +440,37 @@ function scan(prog: ts.Program, pins: Pins): Scan {
         if (insideEmit(node)) problems.push(`nested gate send at ${where(node)}`);
         if (fnName(node) === "pinnedCall" && rel === "server/memory/extractor-connections.ts") problems.push(`send inside pinnedCall at ${where(node)}`);
       }
+      // the stop gate is recognised by type (isGateLaunchCallback), so only createStopGate may make one: outside stop-gate.ts no object
+      // literal, type assertion or class may stand in for it (a value annotated StopGate whose launch defers would launder a deferred write)
+      if (rel !== "server/drivers/stop-gate.ts" && !cachedGate) {
+        const problems = freshGate; // this file's findings are kept for the later programs that reuse its parsed tree (see gateCache)
+        if (ts.isObjectLiteralExpression(node)) { const ctx = checker.getContextualType(node); if (ctx && isStopGate(checker.getNonNullableType(ctx))) problems.push(`a hand-built stop gate at ${where(node)}`); }
+        if ((ts.isAsExpression(node) || ts.isTypeAssertionExpression(node)) && isStopGate(checker.getTypeFromTypeNode(node.type)) && !isStopGate(checker.getTypeAtLocation(node.expression))) problems.push(`a stop gate made by a type assertion at ${where(node)}`);
+        if (ts.isClassLike(node) && (node.heritageClauses ?? []).some(h => h.types.some(t => isStopGate(checker.getTypeAtLocation(t.expression))))) problems.push(`a class standing in for the stop gate at ${where(node)}`);
+        // ...and no one may change a real one: no write to, delete of, define on or proxy over a stop gate member or value
+        const isStopGateValue = (e: ts.Expression): boolean => isStopGate(checker.getNonNullableType(checker.getTypeAtLocation(peel(e))));
+        const gateOrAny = (e: ts.Expression): boolean => { const t = checker.getTypeAtLocation(peel(e)); return !!(t.flags & ts.TypeFlags.Any) || isStopGate(checker.getNonNullableType(t)); };
+        // a member named like a gate's, on a receiver that is a stop gate or untyped (`step` and `handoff` are ordinary names elsewhere)
+        const memberOf = (e: ts.Expression): boolean => {
+          const x = peel(e);
+          if (ts.isPropertyAccessExpression(x)) return GATE_MEMBERS.has(x.name.text) && gateOrAny(x.expression);
+          return ts.isElementAccessExpression(x) && ts.isStringLiteralLike(x.argumentExpression) && GATE_MEMBERS.has(x.argumentExpression.text) && gateOrAny(x.expression);
+        };
+        if (ts.isBinaryExpression(node) && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment && memberOf(node.left)) problems.push(`a write to a stop gate member at ${where(node)}`);
+        if (ts.isDeleteExpression(node) && memberOf(node.expression)) problems.push(`a delete of a stop gate member at ${where(node)}`);
+        if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression) && (node.expression.expression.text === "Object" || node.expression.expression.text === "Reflect")) {
+          const callee = `${node.expression.expression.text}.${node.expression.name.text}`, [first, second] = node.arguments;
+          if (/^Object\.(assign|defineProperties|setPrototypeOf)$/.test(callee) && first && (isStopGateValue(first) || (gateOrAny(first) && node.arguments.some(a => ts.isObjectLiteralExpression(peel(a)) && (peel(a) as ts.ObjectLiteralExpression).properties.some(p => !!p.name && p.name.getText() === "launch"))))) problems.push(`${callee} on a stop gate at ${where(node)}`);
+          if (/^(Object\.defineProperty|Reflect\.(set|defineProperty|deleteProperty|setPrototypeOf))$/.test(callee) && first && (isStopGateValue(first) || (gateOrAny(first) && second && ts.isStringLiteralLike(second) && GATE_MEMBERS.has(second.text)))) problems.push(`${callee} on a stop gate at ${where(node)}`);
+        }
+        if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Proxy" && node.arguments?.[0] && gateOrAny(node.arguments[0])) problems.push(`a Proxy over the stop gate at ${where(node)}`);
+        // an untyped value must not flow into a place that expects the stop gate (argument, initializer, return, assignment)
+        if (ts.isExpression(node) && (ts.isCallExpression(node.parent) || ts.isNewExpression(node.parent) || ts.isVariableDeclaration(node.parent) || ts.isReturnStatement(node.parent) || ts.isBinaryExpression(node.parent) || ts.isPropertyAssignment(node.parent) || ts.isArrowFunction(node.parent))) {
+          // the cheap test first: only an `any`-typed expression can be this, and most are not
+          const ctx = checker.getTypeAtLocation(node).flags & ts.TypeFlags.Any ? checker.getContextualType(node) : undefined;
+          if (ctx && isStopGate(checker.getNonNullableType(ctx))) problems.push(`an untyped value flows into a stop gate at ${where(node)}`);
+        }
+      }
       // other checks (section 4): adapterText only at its sites; fixedPrompt only on module-level constants; the r3 builders are gone
       if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "fixedPrompt") {
         const arg = node.arguments[0];
@@ -413,6 +482,8 @@ function scan(prog: ts.Program, pins: Pins): Scan {
       ts.forEachChild(node, visit);
     };
     visit(sf);
+    if (cachedGate) problems.push(...cachedGate);
+    else if (rel !== "server/drivers/stop-gate.ts") { gateCache.set(sf, freshGate); problems.push(...freshGate); }
   }
   return { sinks, callers, problems };
 }
@@ -429,6 +500,7 @@ function lintHop(prog: ts.Program, hop: Hop, timers: TimerPin[]): string[] {
   if (hop.from && froms.length !== 1) return [`${hop.file}: the hook anchor ${hop.from} matches ${froms.length} calls`];
   const from = froms[0];
   const fn = from ? fnName(from) : hop.fn;
+  if (hop.via?.length) return from ? lintViaHop(prog, sf, hop, from, fn, calls, timers) : [`${hop.file}: a via hop needs its hook anchor`];
   const to = calls.find(c => fnName(c) === fn && anchorOf(c).startsWith(squash(hop.to)) && (!from || c.getStart() > from.getEnd()));
   if (!to) return [`${hop.file} ${fn}: write anchor moved (${hop.from || "start"} -> ${hop.to})`];
   let fnNode: ts.Node | undefined = to.parent;
@@ -440,13 +512,82 @@ function lintHop(prog: ts.Program, hop: Hop, timers: TimerPin[]): string[] {
   let hookFn: ts.Node = fnNode;
   if (from) for (let cur: ts.Node = from.parent; cur && cur !== fnNode; cur = cur.parent) if (fnLike(cur)) { hookFn = cur; break; }
   if (!(to.getStart() >= hookFn.getStart() && to.getEnd() <= hookFn.getEnd())) out.push(`${hop.file} ${fn}: the write is outside the hook's function`);
-  for (let cur: ts.Node = to.parent; cur && cur !== hookFn && cur !== fnNode; cur = cur.parent) {
-    if (ts.isArrowFunction(cur) || ts.isFunctionExpression(cur)) {
-      const executor = ts.isNewExpression(cur.parent) && cur.parent.expression.getText() === "Promise" && cur.parent.arguments?.[0] === cur && !cur.modifiers?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword);
-      if (!executor) out.push(`${hop.file} ${fn}: the write sits in a deferred function`);
+  deferredBetween(prog, to, to.getStart() >= hookFn.getStart() && to.getEnd() <= hookFn.getEnd() ? hookFn : fnNode, hop.file, fn, out);
+  lintRange(prog, hop, fn, fnNode, from ? from.getEnd() : (fnNode as ts.FunctionLikeDeclaration).body!.getStart(), to, timers, out);
+  return out;
+}
+/** Whether a function between a write and its chain function may run after the write's caller returns. The only functions that run
+ *  inline are a synchronous Promise executor and a non-async stop-gate launch callback (isGateLaunchCallback). */
+function deferredBetween(prog: ts.Program, from: ts.Node, stop: ts.Node, hopFile: string, fn: string, out: string[]): void {
+  const checker = prog.getTypeChecker();
+  for (let cur: ts.Node = from.parent; cur && cur !== stop; cur = cur.parent) {
+    // any function between them, a declaration or a method too: a declared function may be handed to a timer or a then
+    if (execBoundary(cur)) {
+      const executor = (ts.isArrowFunction(cur) || ts.isFunctionExpression(cur)) && ts.isNewExpression(cur.parent) && cur.parent.expression.getText() === "Promise" && cur.parent.arguments?.[0] === cur && !isAsyncFn(cur) && !isGenerator(cur);
+      if (!executor && !isGateLaunchCallback(checker, cur)) out.push(`${hopFile} ${fn}: the write sits in a deferred function`);
     }
   }
-  const start = from ? from.getEnd() : (fnNode as ts.FunctionLikeDeclaration).body!.getStart(), end = to.getStart();
+}
+/** Every function in the file declared under `name`: `function name`, or `const name = () => ...` / `= function ...`. */
+function declsNamed(sf: ts.SourceFile, name: string): ts.FunctionLikeDeclaration[] {
+  const out: ts.FunctionLikeDeclaration[] = [];
+  const v = (n: ts.Node) => {
+    if (ts.isFunctionDeclaration(n) && n.name?.text === name) out.push(n);
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === name && n.initializer && (ts.isArrowFunction(n.initializer) || ts.isFunctionExpression(n.initializer))) out.push(n.initializer);
+    ts.forEachChild(n, v);
+  };
+  v(sf);
+  return out;
+}
+/** A hook hop whose write sits in same-file helpers (`via`). Each named helper must be a non-async function that a call inside the hook's
+ *  function reaches after the hook, outside any deferred function; the path to the write inside the helper is then linted as a hop of its own. */
+function lintViaHop(prog: ts.Program, sf: ts.SourceFile, hop: Hop, from: ts.CallExpression, fn: string, calls: ts.CallExpression[], timers: TimerPin[]): string[] {
+  const out: string[] = [];
+  const isFn = (n: ts.Node): n is ts.FunctionLikeDeclaration => execBoundary(n);
+  let fnNode: ts.Node | undefined = from.parent;
+  while (fnNode && !(isFn(fnNode) && nameOfFn(fnNode) === fn)) fnNode = fnNode.parent;
+  if (!fnNode) return [`${hop.file} ${fn}: enclosing function not found`];
+  let hookFn: ts.Node = fnNode;
+  for (let cur: ts.Node = from.parent; cur && cur !== fnNode; cur = cur.parent) if (isFn(cur)) { hookFn = cur; break; }
+  for (const name of hop.via ?? []) {
+    // the helper's declaration, and EVERY reference to it in the file: each must be a plain call, after the hook and inside the hook's
+    // function. A reference that is not a call (`.then(helper)`, `helper.bind(...)`, `const f = helper`) could run it later, and a call
+    // outside the hook's function or before the hook writes without the admission.
+    const decls = declsNamed(sf, name);
+    const helper = decls.length === 1 ? decls[0] : undefined;
+    if (!helper || !helper.body) { out.push(`${hop.file} ${fn}: helper ${name} is not exactly one same-file function`); continue; }
+    if (isAsyncFn(helper)) out.push(`${hop.file} ${fn}: helper ${name} is async`);
+    if (isGenerator(helper)) out.push(`${hop.file} ${fn}: helper ${name} is a generator`);
+    // by NAME, not by symbol: any identifier spelled like the helper (a shorthand property, a property access, a rebinding) is a reference
+    const refs: ts.Identifier[] = [];
+    const collect = (n: ts.Node) => { if (ts.isIdentifier(n) && n.text === name && n !== helper.name && n !== (helper.parent as ts.VariableDeclaration).name) refs.push(n); ts.forEachChild(n, collect); };
+    collect(sf);
+    const sites: ts.CallExpression[] = [];
+    for (const ref of refs) {
+      if (ts.isCallExpression(ref.parent) && ref.parent.expression === ref) sites.push(ref.parent);
+      else out.push(`${hop.file} ${fn}: helper ${name} is referenced other than by a plain call at ${relFwd(sf.fileName)}:${sf.getLineAndCharacterOfPosition(ref.getStart()).line + 1}`);
+    }
+    for (const site of sites) if (!(site.getStart() >= hookFn.getStart() && site.getEnd() <= hookFn.getEnd() && site.getStart() > from.getEnd())) out.push(`${hop.file} ${fn}: the write is outside the hook's function (helper ${name} is called outside it or before the hook)`);
+    const inside = sites.filter(c => c.getStart() >= hookFn.getStart() && c.getEnd() <= hookFn.getEnd() && c.getStart() > from.getEnd());
+    if (!inside.length) { if (!sites.length) out.push(`${hop.file} ${fn}: helper ${name} is never called after the hook`); continue; }
+    for (const site of inside) {
+      deferredBetween(prog, site, hookFn, hop.file, fn, out);
+      lintRange(prog, hop, fn, fnNode, from.getEnd(), site, timers, out);
+    }
+    const writes = callsInNode(helper.body).filter(c => anchorOf(c).startsWith(squash(hop.to)));
+    if (!writes.length) { out.push(`${hop.file} ${name}: write anchor moved (${hop.to})`); continue; }
+    for (const write of writes) {
+      deferredBetween(prog, write, helper, hop.file, name, out);
+      lintRange(prog, hop, name, helper, helper.body.getStart(), write, timers, out);
+    }
+  }
+  return out;
+}
+function callsInNode(root: ts.Node): ts.CallExpression[] { const out: ts.CallExpression[] = []; const v = (n: ts.Node) => { if (ts.isCallExpression(n)) out.push(n); ts.forEachChild(n, v); }; v(root); return out; }
+/** The synchronous lint of the code between `start` and `to` inside `fnNode`: nothing awaits (but the write call itself), every timer is
+ *  pinned and none captures the payload, no callback is handed the payload, and the payload is not stored outside the function. */
+function lintRange(prog: ts.Program, hop: Hop, fn: string, fnNode: ts.Node, start: number, to: ts.CallExpression, timers: TimerPin[], out: string[]): void {
+  const end = to.getStart();
   const payload = new Set(hop.payload.map(squash));
   const captures = (node: ts.Node): boolean => { let hit = false; const v = (n: ts.Node) => { if ((ts.isIdentifier(n) || ts.isPropertyAccessExpression(n)) && payload.has(squash(n.getText()))) hit = true; if (!hit) ts.forEachChild(n, v); }; v(node); return hit; };
   const fnStart = fnNode.getStart(), fnEnd = fnNode.getEnd();
@@ -472,7 +613,6 @@ function lintHop(prog: ts.Program, hop: Hop, timers: TimerPin[]): string[] {
     if (node.getEnd() > start && at < end) ts.forEachChild(node, walk);
   };
   ts.forEachChild(fnNode, walk);
-  return out;
 }
 function nameOfFn(node: ts.Node): string {
   if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) && node.name) return node.name.getText();
@@ -496,7 +636,14 @@ function diff(found: Scan, pins: Pins): string[] {
   // the gate's admit hook (GrokBuild r1), so it can never be pinned under another reason
   for (const e of [...found.sinks, ...pins.sinks]) if (e.file === "server/drivers/cli-memory-learning.ts" && e.kind === "sendTurn" && pins.sinks.find(p => keyOf(p) === keyOf(e))?.admittedBy !== "fence:beforeSubmit") out.push(`a learning sendTurn without the beforeSubmit fence: ${keyOf(e)}`);
   const writes = pins.sinks.filter(e => e.reason === "adapter-write").length;
-  if (writes !== pins.chains.length) out.push(`adapter-write pins (${writes}) and linted chains (${pins.chains.length}) differ`);
+  // one write per chain, or one per helper a chain's last hop names in `via`
+  const sites = pins.chains.reduce((n, c) => n + (c.hops[c.hops.length - 1]?.via?.length || 1), 0);
+  if (writes !== sites) out.push(`adapter-write pins (${writes}) and linted chain writes (${sites}) differ`);
+  // and each helper a chain names in `via` has its own adapter-write pin (one pin per verified write, not just the same total)
+  for (const c of pins.chains) {
+    const last = c.hops[c.hops.length - 1];
+    for (const name of last?.via ?? []) if (!pins.sinks.some(e => e.reason === "adapter-write" && e.file === last.file && e.fn === name && e.anchor.startsWith(squash(last.to)))) out.push(`chain ${c.name}: no adapter-write pin for its helper ${name}`);
+  }
   return out;
 }
 function lintChains(prog: ts.Program, pins: Pins): string[] { return pins.chains.flatMap(chain => chain.hops.flatMap(hop => lintHop(prog, hop, pins.timers).map(p => `${chain.name}: ${p}`))); }
@@ -545,6 +692,135 @@ describe("the learning send boundary (section 4)", () => {
       expect(bad).not.toBe(text);
       expect(planted({ [file]: bad }).join("\n")).toMatch(/codex: .*await on the hook chain/);
     }, 600_000);
+    it("Muse admission cannot move ahead of an await, outside the write function or into a timer", () => {
+      const file = "server/drivers/muse-code.ts", text = read(file);
+      const awaited = text.replace("admitted = true;", "await Promise.resolve(); admitted = true;");
+      expect(awaited).not.toBe(text);
+      expect(planted({ [file]: awaited }).join("\n")).toMatch(/muse: .*await on the hook chain/);
+      const moved = text.replace("p.beforeSubmit?.();", "(() => { p.beforeSubmit?.(); })();");
+      expect(planted({ [file]: moved }).join("\n")).toMatch(/muse: .*outside the hook's function/);
+      const prompt = 'submit();\n              child.stdin.write(bytes, "utf8", onWritten);';
+      const deferred = text.replace(prompt, 'submit();\n              setTimeout(() => child.stdin.write(bytes, "utf8", onWritten), 0);');
+      expect(deferred).not.toBe(text);
+      expect(planted({ [file]: deferred }).join("\n")).toMatch(/muse: .*deferred function/);
+    }, 600_000);
+    describe("a stop gate's launch callback is same-tick only for its proven call shape (STOP-NONACP)", () => {
+      // the controls: the shipped code (a non-async callback of the stop gate's launch) is accepted by the chain lint
+      it("accepts the shipped muse and codex launch callbacks", () => { expect(lintChains(base, pins).filter(p => /^(muse|codex):/.test(p))).toEqual([]); });
+      it("rejects a genuinely async muse launch callback", () => {
+        const file = "server/drivers/muse-code.ts", text = read(file);
+        const bad = text.replace("gate.launch(prompt.entry, () => {", "gate.launch(prompt.entry, async () => {");
+        expect(bad).not.toBe(text);
+        expect(planted({ [file]: bad }).join("\n")).toMatch(/muse: .*deferred function/);
+      }, 600_000);
+      it("rejects a deferred muse write inside the launch callback", () => {
+        const file = "server/drivers/muse-code.ts", text = read(file);
+        const bad = text.replace("gate.launch(prompt.entry, () => {\n              submit();\n              child.stdin.write(bytes, \"utf8\", onWritten);", "gate.launch(prompt.entry, () => {\n              submit();\n              void Promise.resolve().then(() => child.stdin.write(bytes, \"utf8\", onWritten));");
+        expect(bad).not.toBe(text);
+        expect(planted({ [file]: bad }).join("\n")).toMatch(/muse: .*deferred function/);
+      }, 600_000);
+      it("rejects a muse write helper that is called outside the hook's function", () => {
+        const file = "server/drivers/muse-code.ts", text = read(file);
+        const bad = text.replace("p.beforeSubmit?.();", "(() => { p.beforeSubmit?.(); })();");
+        expect(bad).not.toBe(text);
+        expect(planted({ [file]: bad }).join("\n")).toMatch(/muse: .*outside the hook's function/);
+      }, 600_000);
+      it("rejects a genuinely async codex launch callback", () => {
+        const file = "server/drivers/codex.ts", text = read(file);
+        const bad = text.replace("gate.launch(entry, () => request(method, commandParams ?? {", "gate.launch(entry, async () => request(method, commandParams ?? {");
+        expect(bad).not.toBe(text);
+        expect(planted({ [file]: bad }).join("\n")).toMatch(/codex: .*deferred function/);
+      }, 600_000);
+      it("rejects a look-alike that has all five of the stop gate's names but is not declared in stop-gate.ts", () => {
+        const file = "server/drivers/codex.ts", text = read(file);
+        const bad = text.replace("gate.launch(entry, () => request(method, commandParams ?? {", "lookalike.launch(entry, () => request(method, commandParams ?? {")
+          + "\nconst lookalike = { launch: (_entry: unknown, f: () => unknown) => setTimeout(f, 0), step: undefined, cleanupStep: undefined, handoff: undefined, bindLive: undefined };\n";
+        expect(bad).not.toBe(text);
+        expect(planted({ [file]: bad }).join("\n")).toMatch(/codex: .*deferred function/);
+      }, 600_000);
+      const MUSE = "server/drivers/muse-code.ts";
+      const PROMPT_CALL = "if (p && MUSE_PROMPT_METHODS.has(String(frame.method))) writePrompt(p as PromptFrame, chunk);";
+      const CONTROL_CALL = "else writeControl(controlFrame(chunk, frame));";
+      it("rejects the prompt helper called from a declared function handed to a then", () => {
+        const text = read(MUSE), bad = text.replace(PROMPT_CALL, "if (p && MUSE_PROMPT_METHODS.has(String(frame.method))) { function later() { writePrompt(p as PromptFrame, chunk); } Promise.resolve().then(later); }");
+        expect(bad).not.toBe(text);
+        expect(planted({ [MUSE]: bad }).join("\n")).toMatch(/muse: .*deferred function/);
+      }, 600_000);
+      it("rejects the prompt helper handed on without a plain call (a bound reference), whatever else calls it", () => {
+        const text = read(MUSE), bad = text.replace(CONTROL_CALL, `${CONTROL_CALL}\n        Promise.resolve().then(writePrompt.bind(null, p as PromptFrame, chunk));`);
+        expect(bad).not.toBe(text);
+        expect(planted({ [MUSE]: bad }).join("\n")).toMatch(/muse: .*helper writePrompt is referenced other than by a plain call/);
+      }, 600_000);
+      it("rejects an async write helper", () => {
+        const text = read(MUSE), bad = text.replace("const writePrompt = (prompt: PromptFrame, bytes: string) => {", "const writePrompt = async (prompt: PromptFrame, bytes: string) => {");
+        expect(bad).not.toBe(text);
+        expect(planted({ [MUSE]: bad }).join("\n")).toMatch(/muse: .*helper writePrompt is async/);
+      }, 600_000);
+      it("rejects a deferred call of the control write helper", () => {
+        const text = read(MUSE), bad = text.replace(CONTROL_CALL, "else setTimeout(() => writeControl(controlFrame(chunk, frame)), 0);");
+        expect(bad).not.toBe(text);
+        expect(planted({ [MUSE]: bad }).join("\n")).toMatch(/muse: .*deferred function/);
+      }, 600_000);
+      it("rejects a union receiver when any member is not the stop gate", () => {
+        const file = "server/drivers/codex.ts", text = read(file);
+        const bad = text.replace("gate.launch(entry, () => request(method, commandParams ?? {", "pick.launch(entry, () => request(method, commandParams ?? {")
+          + "\ndeclare const real: import(\"./stop-gate.ts\").StopGate;\nconst lookalike = { launch: (_entry: unknown, f: () => unknown) => Promise.resolve().then(f), step: undefined, cleanupStep: undefined, handoff: undefined, bindLive: undefined };\nconst pick = Math.random() > 2 ? real : lookalike;\n";
+        expect(bad).not.toBe(text);
+        expect(planted({ [file]: bad }).join("\n")).toMatch(/codex: .*deferred function/);
+      }, 600_000);
+      it("rejects the prompt helper escaping through a shorthand property", () => {
+        const text = read(MUSE), bad = text.replace(CONTROL_CALL, `${CONTROL_CALL}\n        const escaped = { writePrompt };\n        Promise.resolve().then(() => escaped.writePrompt(p as PromptFrame, chunk));`);
+        expect(bad).not.toBe(text);
+        expect(planted({ [MUSE]: bad }).join("\n")).toMatch(/muse: .*helper writePrompt is referenced other than by a plain call/);
+      }, 600_000);
+      it("rejects a generator write helper", () => {
+        const text = read(MUSE), bad = text.replace("const writePrompt = (prompt: PromptFrame, bytes: string) => {", "const writePrompt = function* (prompt: PromptFrame, bytes: string) {");
+        expect(bad).not.toBe(text);
+        expect(planted({ [MUSE]: bad }).join("\n")).toMatch(/muse: .*helper writePrompt is a generator/);
+      }, 600_000);
+      it("rejects a write moved into an accessor the helper hands to a then", () => {
+        const text = read(MUSE), original = "const writeControl = (bytes: ControlFrame) => {\n          submit();\n          child.stdin.write(bytes, \"utf8\", onWritten);\n        };";
+        const bad = text.replace(original, "const writeControl = (bytes: ControlFrame) => {\n          submit();\n          const lazy = { get value() { return child.stdin.write(bytes, \"utf8\", onWritten); } };\n          void Promise.resolve().then(() => lazy.value);\n        };");
+        expect(bad).not.toBe(text);
+        expect(planted({ [MUSE]: bad }).join("\n")).toMatch(/muse: .*deferred function/);
+      }, 600_000);
+      it("rejects a hand-built value annotated as the stop gate whose launch defers", () => {
+        const text = read(MUSE);
+        const bad = text.replace("gate.launch(prompt.entry, () => {", "const delayed: StopGate = { ...gate, launch(_entry: unknown, fn: () => unknown) { void Promise.resolve().then(fn); throw new Error(\"queued\"); } };\n            delayed.launch(prompt.entry, () => {");
+        expect(bad).not.toBe(text);
+        expect(planted({ [MUSE]: bad }).join("\n")).toMatch(/a hand-built stop gate at server\/drivers\/muse-code\.ts/);
+        const asserted = text.replace("gate.launch(prompt.entry, () => {", "const delayed = { launch: (_entry: unknown, fn: () => unknown) => Promise.resolve().then(fn) } as unknown as StopGate;\n            delayed.launch(prompt.entry, () => {");
+        expect(asserted).not.toBe(text);
+        expect(planted({ [MUSE]: asserted }).join("\n")).toMatch(/a stop gate made by a type assertion at server\/drivers\/muse-code\.ts/);
+      }, 600_000);
+      it("rejects replacing, proxying or defining over a real stop gate's launch, and an untyped value passed as the gate", () => {
+        const file = "server/drivers/codex.ts", text = read(file);
+        const call = "await gate.step(entry, gate.launch(entry, () => request(method, commandParams ?? {";
+        const replaced = text.replace(call, `gate.launch = new Proxy(gate.launch, { apply: (target, self, args) => Promise.resolve().then(() => Reflect.apply(target, self, args)) });\n        ${call}`);
+        expect(replaced).not.toBe(text);
+        expect(planted({ [file]: replaced }).join("\n")).toMatch(/a write to a stop gate member at server\/drivers\/codex\.ts/);
+        const cast = text.replace(call, `(gate as unknown as { launch: unknown }).launch = () => undefined;\n        ${call}`);
+        expect(planted({ [file]: cast }).join("\n")).toMatch(/a write to a stop gate member at server\/drivers\/codex\.ts/);
+        const defined = text.replace(call, `Object.defineProperty(gate, "launch", { value: () => undefined });\n        ${call}`);
+        expect(planted({ [file]: defined }).join("\n")).toMatch(/Object\.defineProperty on a stop gate at server\/drivers\/codex\.ts/);
+        const muse = read(MUSE);
+        const proxied = muse.replace("gate.launch(prompt.entry, () => {", "const g2 = new Proxy(gate, {});\n            g2.launch(prompt.entry, () => {");
+        expect(proxied).not.toBe(muse);
+        expect(planted({ [MUSE]: proxied }).join("\n")).toMatch(/a Proxy over the stop gate at server\/drivers\/muse-code\.ts/);
+        const untyped = muse.replace("gate.launch(prompt.entry, () => {", "const fake: any = {};\n            const g3: StopGate = fake;\n            g3.launch(prompt.entry, () => {");
+        expect(untyped).not.toBe(muse);
+        expect(planted({ [MUSE]: untyped }).join("\n")).toMatch(/an untyped value flows into a stop gate at server\/drivers\/muse-code\.ts/);
+      }, 600_000);
+      it("rejects the prompt helper called from a class field initializer", () => {
+        const text = read(MUSE), bad = text.replace(PROMPT_CALL, "if (p && MUSE_PROMPT_METHODS.has(String(frame.method))) { class Later { sent = writePrompt(p as PromptFrame, chunk); } void Promise.resolve().then(() => new Later()); }");
+        expect(bad).not.toBe(text);
+        expect(planted({ [MUSE]: bad }).join("\n")).toMatch(/muse: .*deferred function/);
+      }, 600_000);
+      it("rejects a chain whose helper has no pin of its own", () => {
+        const unpinned = { ...pins, sinks: pins.sinks.map(e => e.file === MUSE && e.fn === "writeControl" ? { ...e, reason: "not-learning" as const, admittedBy: "" } : e) };
+        expect(diff(found, unpinned).join("\n")).toMatch(/chain muse: no adapter-write pin for its helper writeControl/);
+      });
+    });
     it("a new unpinned timer on the ACP prompt path", () => {
       const file = "server/drivers/acp/core.ts", text = read(file);
       const bad = text.replace("send({ jsonrpc: \"2.0\", id, method, params });", "setImmediate(() => undefined); send({ jsonrpc: \"2.0\", id, method, params });");
@@ -577,12 +853,20 @@ describe("the learning send boundary (section 4)", () => {
     }, 600_000);
     it("a deferral in a same-file helper the emit calls, under an unchanged pin (H5)", () => {
       const file = "server/drivers/headless-text-only.ts", text = read(file);
-      const spawn = `spawnCli(o.cli, o.args, { cwd: o.cwd, env, stdio: ["pipe", "pipe", "pipe"] }, job)`;
-      const bad = text.replace(`const spawnIt = () => ${spawn};`, `const spawnIt = (): ReturnType<typeof spawnCli> => { let late!: ReturnType<typeof spawnCli>; setImmediate(() => { late = ${spawn}; }); return late; };`);
+      const write = `writeFileSync(o.temp.promptFile, promptBytes, { mode: 0o600 })`;
+      const bad = text.replace(`${write};`, `setImmediate(() => { ${write}; });`);
       expect(bad).not.toBe(text);
       const out = planted({ [file]: bad }).join("\n");
-      expect(out).toMatch(/deferred write in helper spawnIt \(setImmediate\)/);
-      expect(out).not.toMatch(/headless-text-only\.ts\|spawnIt\|spawn\|/); // the pin itself still matches: only the helper walk sees it
+      expect(out).toMatch(/deferred write in helper writeAndSpawn \(setImmediate\)/);
+      expect(out).not.toMatch(/unpinned sink:|vanished or moved sink pin:/); // the pin still matches: only the helper walk sees the deferral
+    }, 600_000);
+    it("the voice host SSE emit without projectEvent (D24CH)", () => {
+      const file = "server/voice/voice-host-route.ts", text = read(file);
+      const bad = text.replace("JSON.stringify(projectEvent(event))", "JSON.stringify(event)");
+      expect(bad).not.toBe(text);
+      const out = planted({ [file]: bad }).join("\n");
+      expect(out).toMatch(/unpinned sink: server\/voice\/voice-host-route\.ts\|emit\|stream-write\|/);
+      expect(out).toMatch(/vanished or moved sink pin: server\/voice\/voice-host-route\.ts\|emit\|stream-write\|/);
     }, 600_000);
     it("an unchanged-anchor gate payload at a pinned not-learning ACP send( caller and at the interjection (H5)", () => {
       const file = "server/drivers/acp/core.ts", text = read(file);
@@ -638,3 +922,6 @@ describe("the learning send boundary (section 4)", () => {
     }, 600_000);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();
