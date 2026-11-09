@@ -1,3 +1,4 @@
+import { fixtureBotFolder } from "./testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { spawn } from "node:child_process";
@@ -11,7 +12,7 @@ const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catc
 describe.skipIf(process.platform === "win32")("forced stop of an owned CLI tree (POSIX)", () => {
   it("an already-closed root with a SIGTERM-resistant child is killed at once, not after the 3 s grace", async () => {
     // The root prints its child's pid and exits; the child ignores SIGTERM.
-    const root = spawnCli("sh", ["-c", "(trap '' TERM; exec sleep 30 >/dev/null 2>&1 </dev/null) & echo $!; exit 0"], { stdio: ["pipe", "pipe", "pipe"] });
+    const root = spawnCli("sh", ["-c", "(trap '' TERM; exec sleep 30 >/dev/null 2>&1 </dev/null) & echo $!; exit 0"], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
     root.stdout.on("data", (chunk: Buffer) => { out += chunk.toString(); });
     await once(root, "close"); // the close listener has begun the ordinary 3 s stop
@@ -25,7 +26,7 @@ describe.skipIf(process.platform === "win32")("forced stop of an owned CLI tree 
   }, 15_000);
 
   it("a plain stop keeps its SIGTERM grace (the escalation is only for a forced one)", async () => {
-    const root = spawnCli("sh", ["-c", "(trap '' TERM; exec sleep 30 >/dev/null 2>&1 </dev/null) & echo $!; exit 0"], { stdio: ["pipe", "pipe", "pipe"] });
+    const root = spawnCli("sh", ["-c", "(trap '' TERM; exec sleep 30 >/dev/null 2>&1 </dev/null) & echo $!; exit 0"], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
     root.stdout.on("data", (chunk: Buffer) => { out += chunk.toString(); });
     await once(root, "close");
@@ -39,7 +40,7 @@ describe.skipIf(process.platform === "win32")("forced stop of an owned CLI tree 
 
 describe.skipIf(process.platform === "win32")("a confirmation that never resolves is bounded (POSIX)", () => {
   const closedRoot = async () => {
-    const root = spawnCli("sh", ["-c", "exit 0"], { stdio: ["pipe", "pipe", "pipe"] });
+    const root = spawnCli("sh", ["-c", "exit 0"], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] });
     await once(root, "close"); // the close listener starts a stop whose platform answer is controlled by the test
     return root;
   };
@@ -130,7 +131,7 @@ describe.skipIf(process.platform === "win32")("a confirmation that never resolve
 // CLOSE-STOP-1014: on the Windows job route an empty job confirms the tree gone before the root's close lands; dispose waits for
 // that close here, so a driver's close handler (which ends the stopped turn) has run before its listeners are cleared.
 describe("the root's close after a confirmed stop", () => {
-  const holder = () => spawnCli(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: ["pipe", "pipe", "pipe"] });
+  const holder = () => spawnCli(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] });
 
   it("resolves only once the root's close landed, after a close handler registered before it", async () => {
     const root = holder();

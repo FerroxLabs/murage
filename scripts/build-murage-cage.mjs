@@ -34,6 +34,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { fetchPinned } from "./download-retry.mjs";
 import { CAGE_BUILD_IMAGE, floorDockerArgs, verifyGlibcFloor, verifyNeededLibraries } from "./linux-floor.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -161,7 +162,7 @@ export async function buildMurageCage({ arch = process.arch, platform = process.
     const archive = path.join(work, `bubblewrap-${BUBBLEWRAP_VERSION}.tar.xz`);
     if (tarball) copyFileSync(path.resolve(tarball), archive);
     else {
-      const response = await fetcher(BUBBLEWRAP_URL, { signal: AbortSignal.timeout(120000) });
+      const response = await fetchPinned(BUBBLEWRAP_URL, {}, { fetchImpl: fetcher, timeoutMs: 120000, sha256: BUBBLEWRAP_SHA256 });
       if (!response.ok) throw new Error(`CAGE_SOURCE_DOWNLOAD: HTTP ${response.status}`);
       writeFileSync(archive, Buffer.from(await response.arrayBuffer()));
     }

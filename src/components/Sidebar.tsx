@@ -1,6 +1,8 @@
+import { canHandleLayerEscape, useFocusTrap } from "@/lib/focus-trap";
+import { LayerSurface } from "@/components/LayerSurface";
+import { LazyOverlay } from "@/components/LazyOverlay";
 import { Suspense } from "react";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
-import { LazyFallback } from "./LazyFallback";
 const NewProject = retryableLazy(() => import("./NewProjectDialog"));
 import { useProject } from "@/lib/use-project";
 import { projectSurfaceEnabled } from "@/lib/project-client";
@@ -84,7 +86,7 @@ import { ConfirmDelete } from "./ConfirmDelete";
 import { isMascotAnimated, stateForBot } from "@/lib/mascot";
 import { botUnreadThreadIds, markBotRead } from "@/lib/bot-read";
 import { useUpdaterState } from "@/lib/updater";
-import { openUpdateCard, showUpdatePopup } from "@/lib/update-card";
+import { openUpdateCard, showUpdatePopup, updatePopupAnchorRef } from "@/lib/update-card";
 import { cn } from "@/lib/cn";
 import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 import { skillRecorderAvailable } from "@/lib/feature-flags";
@@ -164,15 +166,20 @@ import type { HealthStatus, NeedsSummary, ShellDoor } from "./shell/shell-contra
 import { railWorkingTip, workingNow } from "@/lib/working-now";
 import { SidebarYouMenu, type YouMenuItem } from "./SidebarYouMenu";
 import { t } from "@/lib/i18n";
+import { railFold, loadOpenRailFolds, saveOpenRailFolds, railSearchEscape, railRecency, railBotsLimit, RAIL_VISIBLE_BOTS } from "@/lib/rail-fold";
 import { existingTeams, projectSection } from "@/lib/project-team";
 import { modShortcut } from "@/lib/mod-shortcut";
 import { OPEN_SHORTCUTS_EVENT, OPEN_WHATS_NEW_EVENT, openCommandPalette } from "@/lib/app-events";
 import { openFirstRun } from "@/lib/first-run";
 // The shortcut list loads when someone asks for it, not with the first paint.
+// Only a section past eight bots draws the fold row, so it loads on first use (first-paint budget).
+const RailFoldRowLazy = retryableLazy(() => import("./RailBotList").then((module) => ({ default: module.RailFoldRow })));
 const ShortcutsDialog = retryableLazy(() => import("./KeyboardShortcutsDialog").then((module) => ({ default: module.KeyboardShortcutsDialog })));
 // Opened from a menu, never on the first paint: each loads on first use.
 const TeamExportDialog = retryableLazy(() => import("./TeamExportDialog").then((module) => ({ default: module.TeamExportDialog })));
 const NewFromTemplateDialog = retryableLazy(() => import("./NewFromTemplateDialog").then((module) => ({ default: module.NewFromTemplateDialog })));
+// UX-L6A part 2: hire in one sentence has its own entry in the New Bot chooser; New Bot itself opens the chooser.
+const HireBotDialog = retryableLazy(() => import("./hire/HireBotDialog").then((module) => ({ default: module.HireBotDialog })));
 // The team library (explore, import, scout) opens on a tap: its chunk loads then.
 const TeamLibraryPanel = retryableLazy(() => import("./TeamLibraryPanel").then((module) => ({ default: module.TeamLibraryPanel })));
 import { WhatsNewHost } from "./WhatsNewHost";
@@ -194,7 +201,7 @@ import { NewTeamDialog } from "./NewTeamDialog";
 import { taskCount } from "@/lib/task-window";
 import { LEADERSHIP_BLOCKED_HINT, leadershipPromotionBlocked } from "@/lib/new-team";
 import { hiddenPatchFrom } from "@/lib/record-numbers";
-import { isUnseenRoutineProblem } from "../../shared/routine-problems";
+import { hasRoutineAttention } from "@/lib/routine-attention";
 import { copyOrReport } from "@/lib/copy-text";
 import { preloadGroupView } from "@/lib/group-view-preload";
 import { raiseTransientError } from "@/state/chat-error";
@@ -911,7 +918,7 @@ function RoomContextMenu({
 }
 
 /** Pick members and an optional Work/Personal/project context, then create. */
-function NewRoomPanel({ onClose, kind = "channel" }: { onClose: () => void; kind?: "channel" | "project" }) {
+export function NewRoomPanel({ onClose, kind = "channel" }: { onClose: () => void; kind?: "channel" | "project" }) {
   const { state, dispatch } = useStore();
   const [name, setName] = useState("");
   const [section, setSection] = useState("");
@@ -945,21 +952,21 @@ function NewRoomPanel({ onClose, kind = "channel" }: { onClose: () => void; kind
   };
   // Portalled: the phone drawer is translated, so a fixed overlay inside it
   // is laid out against the drawer, not the screen.
-  return createPortal(
-    <div
-      className="overlay-inset fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40"
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const layer = useFocusTrap(dialogRef, true, { name: project ? "new-project-form" : "new-channel-form", kind: "dialog", initialFocus: "input", onEscape: onClose });
+  return <LayerSurface handle={layer}><div
+      className="overlay-inset fixed inset-x-0 top-0 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       {/* Esc closes the panel from any control in it, its bot buttons too, and is used up here so the drawer and the
           page under it stay (src/lib/escape-layer.ts). */}
-      <div role="dialog" aria-modal="true" aria-labelledby="new-channel-title" className={cn(BOX_FRAME, "max-h-[calc(var(--vvh,100dvh)-24px)] w-[340px] max-w-[calc(100vw-24px)] rounded-2xl border border-hairline/50 bg-card shadow-2xl")} onKeyDown={(e) => { if (e.key === "Escape" && !e.nativeEvent.isComposing) { e.preventDefault(); e.stopPropagation(); onClose(); } }}>
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="new-channel-title" className={cn(BOX_FRAME, "max-h-[calc(var(--vvh,100dvh)-24px)] w-[340px] max-w-[calc(100vw-24px)] rounded-2xl border border-hairline/50 bg-card shadow-2xl")} >
         <BoxHead className="px-4 pt-4"><div id="new-channel-title" className="text-[15px] font-semibold text-ink">{project ? "New Project" : "New Channel"}</div></BoxHead>
         <BoxBody className="px-4 pb-3 pt-0.5">
         <p className="mb-3 text-[12.5px] text-ink-secondary">
           {project ? "A place for work, files and chat. A goal is optional." : "A chat with some bots."}
         </p>
         <input
-          autoFocus
           aria-label={project ? "Project name" : "Channel name"}
           maxLength={100}
           value={name}
@@ -1039,9 +1046,7 @@ function NewRoomPanel({ onClose, kind = "channel" }: { onClose: () => void; kind
         </button>
         </BoxFoot>
       </div>
-    </div>,
-    document.body,
-  );
+    </div></LayerSurface>;
 }
 
 /** Move-to-section popover: existing sections as chips (checkmark on the
@@ -1272,9 +1277,11 @@ export function sidebarBotVisible(bot: Pick<Bot, "hidden" | "sidebarHidden">, sh
  * it drags, collapses and saves its position like every other one. */
 export const PROJECTS_SECTION_ID = "builtin:projects";
 
-/** Section headings, with the one this file adds. Everything else comes
- * from the shared layout module unchanged. */
+/** Section headings, with the one this file adds. The rail calls the bots
+ * section "Your team" (spec 2.1 item 2: "Your team · 18" when folded).
+ * Everything else comes from the shared layout module unchanged. */
 export function sectionLabel(id: string): string {
+  if (id === BOTS_SECTION_ID) return "Your team";
   return id === PROJECTS_SECTION_ID ? "Projects" : sidebarSectionLabel(id);
 }
 
@@ -1793,7 +1800,7 @@ export function archivedBotsDeleteItems(bots: Bot[]): string[] {
  * typed from muscle memory for a different list. */
 export const archivedBotsDeletePhrase = (count: number) => `delete ${count} bots`;
 
-function ArchivedBotsPanel({
+export function ArchivedBotsPanel({
   bots,
   groups,
   onClose,
@@ -1817,14 +1824,6 @@ function ArchivedBotsPanel({
   const [error, setError] = useState("");
   const working = Boolean(busyId) || restoringAll || deleting;
 
-  useEffect(() => {
-    dialogRef.current?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !working && !pendingDelete) onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose, pendingDelete, working]);
 
   const restore = async (bot: Bot) => {
     setBusyId(bot.id);
@@ -1894,9 +1893,9 @@ function ArchivedBotsPanel({
     }
   };
 
-  return createPortal(
-    <div
-      className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px] sm:p-6"
+  const layer = useFocusTrap(dialogRef, true, { name: "archived-bots", kind: "dialog", initialFocus: null, onEscape: () => { if (!working && !pendingDelete) onClose(); } });
+  return <LayerSurface handle={layer}><div
+      className="overlay-inset fixed inset-0 flex items-center justify-center bg-black/55 p-4 backdrop-blur-[2px] sm:p-6"
       onMouseDown={(event) => event.target === event.currentTarget && !working && !pendingDelete && onClose()}
     >
       <div
@@ -1996,9 +1995,7 @@ function ArchivedBotsPanel({
           onConfirm={() => void deleteBots(pendingDelete)}
         />
       )}
-    </div>,
-    document.body,
-  );
+    </div></LayerSurface>;
 }
 
 /** One line per archived channel, so the person can read every name before
@@ -2018,7 +2015,7 @@ function heldMessageCount(group: Group): string {
 /** The way back from Archive, mirroring Archived bots: the same dialog, the
  * same Restore, the same promise that nothing was thrown away. A channel
  * archived by mistake must never feel like a channel that is gone. */
-function ArchivedChannelsPanel({
+export function ArchivedChannelsPanel({
   groups,
   onClose,
   onRestored,
@@ -2035,14 +2032,6 @@ function ArchivedChannelsPanel({
   const [error, setError] = useState("");
   const working = Boolean(busyId) || restoringAll;
 
-  useEffect(() => {
-    dialogRef.current?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !working && !pendingDelete) onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose, pendingDelete, working]);
 
   const restore = async (group: Group) => {
     setBusyId(group.id);
@@ -2079,9 +2068,9 @@ function ArchivedChannelsPanel({
     }
   };
 
-  return createPortal(
-    <div
-      className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4"
+  const layer = useFocusTrap(dialogRef, true, { name: "archived-channels", kind: "dialog", initialFocus: null, onEscape: () => { if (!working && !pendingDelete) onClose(); } });
+  return <LayerSurface handle={layer}><div
+      className="overlay-inset fixed inset-0 flex items-center justify-center bg-black/55 p-4"
       onMouseDown={(event) => event.target === event.currentTarget && !working && !pendingDelete && onClose()}
     >
       <div
@@ -2180,16 +2169,15 @@ function ArchivedChannelsPanel({
           }}
         />
       )}
-    </div>,
-    document.body,
-  );
+    </div></LayerSurface>;
 }
 
 /** A Sidebar mounted on its own (a spec harness, a future host) has no count and no level yet: say "not known", never a made-up zero. */
 const NO_NEEDS: Pick<NeedsSummary, "count" | "stale"> = { count: undefined, stale: false };
 const NO_HEALTH: HealthStatus = { level: "unknown", line: "" };
 
-export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health = NO_HEALTH }: {
+export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health = NO_HEALTH, onLayoutChange }: {
+  onLayoutChange?: (layout: { sectionOrder: string[]; showHidden: boolean }) => void;
   open: boolean;
   onClose: () => void;
   onReturnFocus?: () => void;
@@ -2212,8 +2200,7 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
   const { state, dispatch } = useStore();
   const desktop = useDesktopSurface();
   const { capabilities } = useDesktopCapabilities();
-  const importReturnRef = useRef<HTMLButtonElement>(null);
-  const [menu, setMenu] = useState<MenuState | null>(null);
+  const importReturnRef = useRef<HTMLButtonElement>(null);  const [menu, setMenu] = useState<MenuState | null>(null);
   const [sectionPicker, setSectionPicker] = useState<MenuState | null>(null);
   const [roomMenu, setRoomMenu] = useState<({ groupId: string } & MenuAnchor) | null>(null);
   // Deleting a bot or a room is irreversible and was one click. The dialog
@@ -2228,10 +2215,13 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
   // null = closed. The value says which of the two the "+" menu asked for,
   // because a project and a channel are made by the same panel.
   const [newRoom, setNewRoom] = useState<"channel" | "project" | null>(null);
+  // New project whose chunk is loading or failed never mounted, so it cannot hand focus back: its opener gets it.
+  const dismissNewProject = () => { setNewRoom(null); };
   const [archivedChannelsOpen, setArchivedChannelsOpen] = useState(false);
   const [newTeamOpen, setNewTeamOpen] = useState(false);
   /** The New Bot / New Team chooser that is open, if any. */
   const [chooser, setChooser] = useState<TemplateKind | null>(null);
+  const [hireOpen, setHireOpen] = useState(false);
   const [teamInstallUrl, setTeamInstallUrl] = useState<string | null>(null);
   const [archivedBotsOpen, setArchivedBotsOpen] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
@@ -2312,10 +2302,30 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
   const lastExpandedDensity = useRef<Exclude<SidebarDensity, "icons">>(densityPrefs.density === "icons" ? DEFAULT_SIDEBAR_DENSITY as Exclude<SidebarDensity, "icons"> : densityPrefs.density);
   if (densityPrefs.density !== "icons") lastExpandedDensity.current = densityPrefs.density;
   const [collapsedSections, setCollapsedSections] = useState<string[]>(() => loadCollapsedSections());
+  // Past eight bots a section folds (UX L6B); which folds are open is kept on this device.
+  const [openRailFolds, setOpenRailFolds] = useState<string[]>(() => loadOpenRailFolds());
+  // Opening a fold puts keyboard focus in the search box (the spec's filter at
+  // the top of the opened list); Esc there folds it again.
+  const railSearchRef = useRef<HTMLInputElement>(null);
+  const setRailFolds = (next: string[]) => {
+    setOpenRailFolds(next);
+    saveOpenRailFolds(next);
+  };
+  const toggleRailFold = (id: string) => {
+    const opening = !openRailFolds.includes(id);
+    setRailFolds(opening ? [...openRailFolds, id] : openRailFolds.filter((open) => open !== id));
+    // Icons density hides the box, so focus stays on the fold row there.
+    if (opening && density !== "icons") railSearchRef.current?.focus();
+  };
   // The section order is the computer's, the same on every device
   // (lib/sidebar-order-sync.ts); localStorage is this device's cache of it.
   // Collapsed sections stay per device on purpose.
   const [sectionOrder, setSectionOrder] = useState<string[]>(() => loadSectionOrder());
+  // Publish before keyboard events can observe a newly painted rail. Persistence
+  // may still be pending or fail; neither changes the layout shown here.
+  useLayoutEffect(() => {
+    onLayoutChange?.({ sectionOrder, showHidden });
+  }, [onLayoutChange, sectionOrder, showHidden]);
   const initialOrderUploaded = useRef(false);
   useEffect(() => {
     const shown = shownSectionOrder(state.sidebarSectionOrder, sectionOrder);
@@ -2399,9 +2409,10 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [plusOpen]);
 
+  // An owner inside the drawer (rail search, + menu, any other) that used the key has prevented it: the drawer stays.
   useEffect(() => {
     if (!open) return;
-    const closeOnEscape = (event: KeyboardEvent) => { takeDrawerEscape(event, document, () => { setPlusOpen(false); onClose(); }); };
+    const closeOnEscape = (event: KeyboardEvent) => { if (!event.defaultPrevented) takeDrawerEscape(event, document, () => { setPlusOpen(false); onClose(); }); };
     document.addEventListener("keydown", closeOnEscape);
     return () => document.removeEventListener("keydown", closeOnEscape);
   }, [open, onClose]);
@@ -2604,7 +2615,7 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
   // User sections keep first-appearance order. The saved layout keeps an
   // empty section's former slot so it returns there when content comes back.
   const sectionNames: string[] = [];
-  for (const bot of sectionedBots) {
+  for (const bot of matchingBots.filter((bot) => !bot.chiefOfStaff && bot.section && !bot.pinned)) {
     if (!sectionNames.includes(bot.section!)) sectionNames.push(bot.section!);
   }
   for (const bot of sectionChiefs) {
@@ -2835,6 +2846,7 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
     <aside
       ref={asideRef}
       aria-label="Bots and navigation"
+      data-phone-drawer-open={open ? "" : undefined}
       inert={closedDrawerInert(narrow, open) || undefined}
       data-native-view-overlay
       style={resizable ? ({ "--sidebar-width": `${widthRef.current ?? densityWidth}px` } as React.CSSProperties) : undefined}
@@ -2893,16 +2905,19 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
             setResizing(false);
             if (widthRef.current !== null) keepWidth(widthRef.current);
           }}
-          onPointerCancel={() => {
+          onPointerCancel={(event) => {
             setResizing(false);
             keepWidth(sidebarWidth);
+            // the drag wrote the value by hand; React still holds the committed one and would not write it again
+            event.currentTarget.setAttribute("aria-valuenow", String(shownWidth));
           }}
           // a double click puts back the density's own width
           onDoubleClick={() => keepWidth(null)}
           onKeyDown={(event) => {
             if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
             event.preventDefault();
-            keepWidth(clampSidebarWidth(shownWidth + (event.key === "ArrowRight" ? SIDEBAR_WIDTH_STEP : -SIDEBAR_WIDTH_STEP), window.innerWidth));
+            // from the width on screen, which mid-drag is the dragged one, not the last kept one
+            keepWidth(clampSidebarWidth((resizing && widthRef.current !== null ? widthRef.current : shownWidth) + (event.key === "ArrowRight" ? SIDEBAR_WIDTH_STEP : -SIDEBAR_WIDTH_STEP), window.innerWidth));
           }}
         />
       )}
@@ -2954,8 +2969,11 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
               <div className="fixed inset-0 z-30" onMouseDown={() => setPlusOpen(false)} />
               {/* An Esc inside the menu is its own (intake.human.spec.ts:55): it closes the menu alone, the phone
                   drawer stays and focus goes back to +. With focus outside it, the listener below closes it. */}
+              {/* Astra r3 High 2: it asks the layer registry first, so an open layer above (the empty palette
+                  among them) keeps its Esc: the menu, its state and focus stay as they are. */}
               <div id="sidebar-create-options" data-create-menu="" onKeyDown={(event) => {
-                if (event.key === "Escape") {
+                if (event.key === "Escape" && canHandleLayerEscape(null, event.nativeEvent)) {
+                  event.preventDefault();
                   event.stopPropagation();
                   setPlusOpen(false);
                   importReturnRef.current?.focus();
@@ -3043,9 +3061,19 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
         <div className="flex items-center gap-2 rounded-lg bg-raised/70 px-3 py-1.5">
           <Search size={16} className="shrink-0 text-ink-secondary" aria-hidden="true" />
           <input
+            ref={railSearchRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Escape" && setQuery("")}
+            onKeyDown={(e) => {
+              if (e.key !== "Escape" || e.nativeEvent.isComposing) return;
+              const next = railSearchEscape(query, openRailFolds);
+              if (!next) return;
+              // Handled here: the phone drawer's Esc must not also close the drawer.
+              e.preventDefault();
+              e.stopPropagation();
+              if (next.query !== query) setQuery(next.query);
+              else setRailFolds(next.folds);
+            }}
             placeholder={t("settings.search")}
             aria-label={t("nav.searchAria")}
             className="min-h-7 w-full bg-transparent text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
@@ -3074,7 +3102,7 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
           lit={doorForView(state.activeView)}
           needs={needs}
           iconsOnly={density === "icons"}
-          routinesAttention={state.routineRuns.some(isUnseenRoutineProblem)}
+          routinesAttention={hasRoutineAttention(state.routineRuns, state.routines, state.bots, state.groups)}
           onOpen={(door) => { openDoor(door); onNavigate(); }}
         />
       </div>
@@ -3129,6 +3157,11 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
                     ? sectionedBots.filter((bot) => bot.section === sectionName)
                     : [];
             const collapsed = sectionCollapsed(id);
+            const foldOpen = openRailFolds.includes(id);
+            const pins = id === PINNED_SECTION_ID;
+            const foldLimit = id === BOTS_SECTION_ID ? railBotsLimit(sectionCollapsed(PINNED_SECTION_ID) ? 0 : pinnedBots.length) : RAIL_VISIBLE_BOTS;
+            const fold = railFold(sectionBotItems, { open: Boolean(q) || foldOpen, keep: (bot) => rowSelected(bot.id), weigh: (bot) => sidebarBotAttention(bot, threadAttention, Date.now()), limit: foldLimit, rank: pins ? undefined : railRecency });
+            const showFoldRow = !q && (fold.hidden.length > 0 || (foldOpen && sectionBotItems.length > foldLimit));
             const attention = collapsed
               ? sidebarSectionAttention(
                   [...sectionChiefItems, ...sectionBotItems].map((bot) => sidebarBotAttention(bot, threadAttention, Date.now()).bot),
@@ -3165,6 +3198,7 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
                   <SidebarSectionHeader
                     name={sectionLabel(id)}
                     collapsed={collapsed}
+                    count={(collapsed || fold.hidden.length > 0) && sectionBotItems.length ? sectionChiefItems.length + sectionBotItems.length : undefined}
                     attention={attention}
                     onToggle={layoutInteractive ? () => toggleSection(id) : undefined}
                     reorderable={layoutInteractive && sectionIds.length > 1}
@@ -3210,7 +3244,7 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
                         onMenu={setRoomMenu}
                       />
                     ))}
-                    {sectionBotItems.map((bot) => (
+                    {fold.visible.map((bot) => (
                       <BotListItem
                         key={bot.id}
                         onNavigate={navigateRow}
@@ -3225,6 +3259,19 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
                         onBotDragEnd={dragEndRow}
                       />
                     ))}
+                    {showFoldRow && (
+                      <LazyBoundary inline onRetry={RailFoldRowLazy.retry}>
+                        <Suspense fallback={null}>
+                          <RailFoldRowLazy.Component
+                            hidden={fold.hidden.length}
+                            attention={fold.attention}
+                            open={foldOpen}
+                            iconsOnly={density === "icons"}
+                            onToggle={() => toggleRailFold(id)}
+                          />
+                        </Suspense>
+                      </LazyBoundary>
+                    )}
                     {sectionName && density !== "icons" && <SidebarSharedRows section={sectionName} onNavigate={onNavigate} />}
                   </>
                 )}
@@ -3258,7 +3305,7 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
 
       {/* Footer. Below md the drawer runs to the bottom of the screen, so the
           last row owes the home indicator its inset. */}
-      <div data-update-popup-anchor="" className={cn("pb-3 pt-2 max-md:pb-[calc(0.75rem+var(--inset-bottom))]", density === "icons" ? "px-2" : "px-3")}>
+      <div data-update-popup-anchor="" ref={updatePopupAnchorRef} className={cn("pb-3 pt-2 max-md:pb-[calc(0.75rem+var(--inset-bottom))]", density === "icons" ? "px-2" : "px-3")}>
         {/* Announcements: an info notice is a banner here; an important or
             security one opens as a card, after What's new has closed. */}
         <AnnouncementsHost desktop={desktop} request={api} showBanner={density !== "icons"} suspended={whatsNew.open} onNavigate={onNavigate} />
@@ -3321,13 +3368,13 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
           onClose={() => setSnoozeTarget(null)}
         />
       )}
-      {exportTeamOpen && <LazyBoundary onRetry={TeamExportDialog.retry} onDismiss={() => setExportTeamOpen(false)}><Suspense fallback={null}><TeamExportDialog.Component initialBotIds={state.groups.find(group => group.id === state.selectedId)?.memberIds ?? (state.bots.some(bot => bot.id === state.selectedId) ? [state.selectedId!] : [])} onClose={() => setExportTeamOpen(false)} onExported={exported => {
+      {exportTeamOpen && <LazyOverlay opener={importReturnRef.current} name="team-export" kind="dialog" covers="while-loading" onRetry={TeamExportDialog.retry} onDismiss={() => setExportTeamOpen(false)}>{loadedLayer => (<TeamExportDialog.Component layerLifecycle={loadedLayer} initialBotIds={state.groups.find(group => group.id === state.selectedId)?.memberIds ?? (state.bots.some(bot => bot.id === state.selectedId) ? [state.selectedId!] : [])} onClose={loadedLayer.dismiss} onExported={exported => {
         track("team_exported", { members: exported.members, scope: "selected" });
         setTeamFeedback({ error: false, text: `${exported.members} bots exported` });
-      }} /></Suspense></LazyBoundary>}
+      }} />)}</LazyOverlay>}
       {/* Portalled: Settings > About & updates opens these while a phone's
           drawer is shut, and a shut drawer is inert, dialogs and all. */}
-      {shortcutsOpen && createPortal(<LazyBoundary onRetry={ShortcutsDialog.retry} onDismiss={() => setShortcutsOpen(false)}><Suspense fallback={null}><ShortcutsDialog.Component open onClose={() => setShortcutsOpen(false)} returnFocusRef={youTriggerRef} /></Suspense></LazyBoundary>, document.body)}
+      {shortcutsOpen && createPortal(<LazyOverlay name="keyboard-shortcuts-load" kind="dialog" covers="while-loading" opener={youTriggerRef.current} onRetry={ShortcutsDialog.retry} onDismiss={() => setShortcutsOpen(false)}>{loadedLayer => (<ShortcutsDialog.Component layerLifecycle={loadedLayer} open onClose={loadedLayer.dismiss} returnFocusRef={youTriggerRef} />)}</LazyOverlay>, document.body)}
       {filesOpen && <FilesDialog key={`${filesOpen.botId ?? ""}:${filesOpen.threadId ?? ""}:${filesOpen.artifactId ?? ""}`} {...filesOpen} onClose={() => setFilesOpen(null)} />}
       {instructionsEditor && (
         <SectionContextDialog
@@ -3387,7 +3434,7 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
       )}
       {newRoom === "channel" && <NewRoomPanel kind="channel" onClose={() => setNewRoom(null)} />}
       {newRoom === "project" && desktop === false && <NewRoomPanel kind="project" onClose={() => setNewRoom(null)} />}
-      {newRoom === "project" && desktop === true && <LazyBoundary onRetry={NewProject.retry}><Suspense fallback={<LazyFallback />}><NewProject.Component returnFocusRef={importReturnRef} onClose={() => setNewRoom(null)} /></Suspense></LazyBoundary>}
+      {newRoom === "project" && desktop === true && <LazyOverlay name="new-project" kind="dialog" covers="while-loading" opener={importReturnRef.current} onRetry={NewProject.retry} onDismiss={dismissNewProject}>{loadedLayer => (<NewProject.Component layerLifecycle={loadedLayer} returnFocusRef={importReturnRef} onClose={loadedLayer.dismiss} />)}</LazyOverlay>}
       {whatsNew.open && createPortal(<WhatsNewHost whatsNew={whatsNew} onNavigate={onNavigate} />, document.body)}
       {archivedChannelsOpen && (
         <ArchivedChannelsPanel
@@ -3415,10 +3462,18 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
           onDeleted={(message) => setTeamFeedback({ error: false, text: message })}
         />
       )}
+      {hireOpen && (
+        <LazyOverlay opener={importReturnRef.current} name="hire-bot-sidebar" kind="dialog" covers="while-loading" onRetry={HireBotDialog.retry} onDismiss={() => setHireOpen(false)}>{loadedLayer => (<HireBotDialog.Component layerLifecycle={loadedLayer}
+          onClose={loadedLayer.dismiss}
+          returnFocusTo={importReturnRef.current}
+          onBrowseTemplates={() => { setHireOpen(false); setChooser("bot"); }}
+        />)}</LazyOverlay>
+      )}
       {chooser && (
-        <LazyBoundary onRetry={NewFromTemplateDialog.retry} onDismiss={() => setChooser(null)}><Suspense fallback={null}><NewFromTemplateDialog.Component
+        <LazyOverlay opener={importReturnRef.current} name="new-from-template" kind="dialog" covers="while-loading" onRetry={NewFromTemplateDialog.retry} onDismiss={() => setChooser(null)}>{loadedLayer => (<NewFromTemplateDialog.Component layerLifecycle={loadedLayer}
           kind={chooser}
-          onClose={() => setChooser(null)}
+          onClose={loadedLayer.dismiss}
+          onHire={() => { setChooser(null); setHireOpen(true); }}
           onBlank={() => {
             const kind = chooser;
             setChooser(null);
@@ -3435,10 +3490,10 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
             setChooser(null);
             setTeamFeedback(teamImportFeedback(result));
           }}
-        /></Suspense></LazyBoundary>
+        />)}</LazyOverlay>
       )}
       {state.teamLibrary.open && (
-        <LazyBoundary onRetry={TeamLibraryPanel.retry} onDismiss={() => { dispatch({ type: "hideTeamLibrary" }); setTeamInstallUrl(null); }}><Suspense fallback={<LazyFallback />}><TeamLibraryPanel.Component
+        <LazyOverlay name="team-library" kind="window" covers="always" opener={importReturnRef.current} onRetry={TeamLibraryPanel.retry} onDismiss={() => { dispatch({ type: "hideTeamLibrary" }); setTeamInstallUrl(null); }}><TeamLibraryPanel.Component
           returnFocusRef={importReturnRef}
           preselectedBotId={state.teamLibrary.botId}
           initialView={state.teamLibrary.view}
@@ -3453,7 +3508,7 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
             setTeamInstallUrl(null);
             setTeamFeedback(teamImportFeedback(result));
           }}
-        /></Suspense></LazyBoundary>
+        /></LazyOverlay>
       )}
       {teamFeedback &&
         createPortal(

@@ -15,6 +15,7 @@ import { consolidateMemorySource, pendingMemoryConsolidationJobs, promoteDueSkip
 import { extractCandidates, groundMemoryClaim, isNetworkFailure, type TextOnlyExtractor } from "./extract.ts";
 import { clearPinQuarantineForTests, PIN_QUARANTINE_MS, resolveLearningConnection, resolveMemoryExtractor, setLearningClockForTests } from "./extractor-connections.ts";
 import { extractionOutcomes, FLUX_PINNED_LEARNING_MODEL } from "./extraction-outcomes.ts";
+import { resetFluxKeyModelsForTests, setFluxKeyCatalog } from "../flux-key-models.ts";
 import { claimMemoryJob, publishMemoryWork, resetMemoryClaimCursor } from "./jobs.ts";
 import { readMemoryLearning, updateMemoryLearning } from "./learning-policy.ts";
 import { reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
@@ -22,8 +23,12 @@ import { setMemoryMode } from "./repository.ts";
 import { storeAnchorMessage } from "./testing/anchor-message.ts";
 
 const roster = { bots: [{ id: "bot", threadId: "thread" }], groups: [] } as unknown as MemoryRoster;
+// What a key's own Flux catalog lists. A paid key lists the pinned learning model; a never-paid key lists flux-fast and flux-auto only.
+const PAID_CATALOG = ["flux-auto", "flux-fast", "flux-standard", "flux-reasoning", "flux-pinned-gpt-5-nano"];
+const FREE_CATALOG = ["flux-auto", "flux-fast"];
 beforeEach(() => {
   extractionOutcomes.clear(); clearPinQuarantineForTests(); setLearningClockForTests(null);
+  resetFluxKeyModelsForTests(); setFluxKeyCatalog(() => PAID_CATALOG);
   closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   reconcileMemoryRoster(roster); setMemoryMode("capture"); resetMemoryClaimCursor();
   const db = database(); updateMemoryLearning(db, { callsPerMinute: 60 }, readMemoryLearning(db).revision);
@@ -229,6 +234,41 @@ it.each([403, 400, 404])("a %i on the pin, refused before routing: flux-fast ans
   wire.models.length = 0;
   await connection("other").extractor!("text", 100, signal(), fenced());
   expect(wire.models[0]).toBe("flux-pinned-gpt-5-nano");
+});
+
+// FLUX-FREE-MODEL 1.0.18. A Masterclass customer's never-paid key asked Flux for flux-pinned-gpt-5-nano on its first learning call and got
+// this 403 (recorded from Flux, flux-router src/model_access_message.py). A free key may call flux-fast and flux-auto only.
+const RECORDED_403 = () => new Response(JSON.stringify({ error: { message: "key not allowed to access model. This key can only access models=['flux-auto', 'flux-fast']. Tried to access flux-pinned-gpt-5-nano", type: "auth_error", param: "model", code: "403" } }), { status: 403 });
+const RECORDED_403_SHAPED = () => new Response(JSON.stringify({ error: { message: "flux-pinned-gpt-5-nano is not on the Flux free plan. Upgrade at https://fluxrouter.ai/home/billing to unlock it. Your key can use: flux-auto, flux-fast.", type: "auth_error", param: "model", code: "403" } }), { status: 403 });
+
+it.each([["a free-plan catalog", FREE_CATALOG], ["no catalog yet", null]] as const)("a key with %s never asks for a flux-pinned-* id: extraction and support checks run on flux-fast", async (_name, catalog) => {
+  vi.spyOn(console, "info").mockImplementation(() => {});
+  setFluxKeyCatalog(() => catalog);
+  const wire = fluxWire(model => model.startsWith("flux-pinned-") ? RECORDED_403() : body("[]")), { extractor } = connection("never-paid");
+  expect(extractor!.learningModel!()).toBe("flux-fast");
+  await extractor!("text", 100, signal(), fenced());
+  await extractor!.ground!({ text: "a", quote: "b", claimType: "fact", speaker: "owner", outcome: "x" }, 64, signal(), openLearningGate("grounding"));
+  expect(wire.models).toEqual(["flux-fast", "flux-fast"]);
+  expect(wire.models.some(model => model.startsWith("flux-pinned-"))).toBe(false);
+});
+
+it("only the key's own catalog counts: a paid key keeps the pin while a free key beside it never sends it", async () => {
+  vi.spyOn(console, "info").mockImplementation(() => {});
+  setFluxKeyCatalog(key => key === "paid" ? PAID_CATALOG : FREE_CATALOG);
+  const wire = fluxWire(() => body("[]"));
+  await connection("paid").extractor!("text", 100, signal(), fenced());
+  await connection("never-paid").extractor!("text", 100, signal(), fenced());
+  expect(wire.models).toEqual(["flux-pinned-gpt-5-nano", "flux-fast"]);
+});
+
+it.each([["LiteLLM's refusal", RECORDED_403], ["Flux's free-plan sentence", RECORDED_403_SHAPED]] as const)("after Flux's recorded 403 (%s) the same call is sent again exactly once, on a free-plan model, and the pin is not asked again", async (_name, refused) => {
+  vi.spyOn(console, "info").mockImplementation(() => {}); vi.spyOn(console, "warn").mockImplementation(() => {});
+  const wire = fluxWire(model => model.startsWith("flux-pinned-") ? refused() : body("[]")), { extractor } = connection();
+  expect(await extractor!("text", 100, signal(), fenced())).toBe("[]");
+  expect(wire.models).toEqual(["flux-pinned-gpt-5-nano", "flux-fast"]);
+  expect(["flux-fast", "flux-auto"]).toContain(wire.models[1]);
+  await extractor!("text", 100, signal(), fenced());
+  expect(wire.models).toEqual(["flux-pinned-gpt-5-nano", "flux-fast", "flux-fast"]);
 });
 
 it.each([

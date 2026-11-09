@@ -6,7 +6,7 @@
 // window of the save, through the filesystem calls the save itself makes, and require the bot's words to survive and the editor to get a
 // conflict. The save never moves, links, deletes or follows the live notebook (Grok r3 H1, H2), and it says saved only after reading its
 // own text back from the path (r3 M).
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -29,6 +29,7 @@ vi.resetModules();
 const realFs = await vi.importActual<typeof import("node:fs")>("node:fs");
 const { ensureWorkspace, loadMemory, readMemoryFile, saveMemoryFile, workspaceDir, writeMemoryFile, WORKSPACES_DIR } = await import("./workspace.ts");
 const { removeTempDirSync } = await import("./testing/cleanup.ts");
+const { resetDataRootsForTest } = await import("./data-roots.ts");
 
 const BOT = "bot-notebook-race";
 const file = () => join(workspaceDir(BOT), "MEMORY.md");
@@ -36,7 +37,10 @@ const onDisk = () => realFs.readFileSync(file(), "utf8");
 const leftovers = () => realFs.readdirSync(workspaceDir(BOT)).filter(name => /\.(save|held|tmp)$/.test(name));
 /** The bot's own file tool replacing the notebook: its temp file, renamed over the path (a new inode). */
 const botReplaces = (text: string) => { const tmp = `${file()}.bot-${Math.random()}`; realFs.writeFileSync(tmp, text); realFs.renameSync(tmp, file()); };
-const isPublish = (from: string, to: string) => to === file() && /\.save$/.test(from);
+/** S5: the save publishes to the canonical spelling of the notebook folder (Windows can spell one temp folder two ways, short 8.3 or by case), so the hooks compare the folder as the file system names it. */
+const canon = (p: string) => join(realFs.realpathSync.native(dirname(p)), basename(p));
+const sameSpot = (p: string) => p === file() || canon(p) === canon(file());
+const isPublish = (from: string, to: string) => sameSpot(to) && /\.save$/.test(from);
 /** How Windows refuses a rename over a file another handle still holds open (after the save's own retries). */
 const WINDOWS_BUSY = /EPERM|EACCES|EBUSY/;
 
@@ -44,6 +48,7 @@ describe("U33: a bot write during a notebook save is never overwritten", () => {
   beforeEach(() => {
     hooks.fsync = hooks.rename = hooks.link = undefined; hooks.noHardLinks = false;
     removeTempDirSync(WORKSPACES_DIR);
+    resetDataRootsForTest();
     ensureWorkspace(BOT);
     writeMemoryFile(BOT, "- likes tea\n");
   });
@@ -75,7 +80,7 @@ describe("U33: a bot write during a notebook save is never overwritten", () => {
     try {
       const write = () => realFs.writeSync(botFd, "- written through an open handle\n", realFs.fstatSync(botFd).size);
       hooks.rename = (from, to) => { if (isPublish(from, to)) write(); };
-      hooks.link = (_from, to) => { if (to === file()) write(); };
+      hooks.link = (_from, to) => { if (sameSpot(to)) write(); };
       if (process.platform === "win32") {
         // Windows refuses the swap itself while the bot's handle is open: the save fails, and the bot's write through its handle lands on
         // the notebook it kept
@@ -117,7 +122,7 @@ describe("U33: a bot write during a notebook save is never overwritten", () => {
     const opened = readMemoryFile(BOT);
     const bot = () => botReplaces("- the bot wrote after the save\n");
     hooks.rename = (from, to) => { if (isPublish(from, to)) bot(); };
-    hooks.link = (_from, to) => { if (to === file()) bot(); };
+    hooks.link = (_from, to) => { if (sameSpot(to)) bot(); };
     const saved = saveMemoryFile(BOT, "- the editor's note\n", opened.revision);
     expect(onDisk()).toBe("- the bot wrote after the save\n");
     expect(saved.saved).toBe(false);
@@ -143,13 +148,34 @@ describe("U33: a bot write during a notebook save is never overwritten", () => {
     expect(leftovers()).toEqual([]);
   });
 
+  it("stages beside the canonical notebook when workspaces is a link", () => {
+    const target = realFs.mkdtempSync(join(tmpdir(), "notebook-workspaces-"));
+    removeTempDirSync(WORKSPACES_DIR);
+    realFs.symlinkSync(target, WORKSPACES_DIR, process.platform === "win32" ? "junction" : "dir");
+    resetDataRootsForTest();
+    try {
+      ensureWorkspace(BOT);
+      const opened = readMemoryFile(BOT);
+      const stagedDirs: string[] = [];
+      hooks.rename = (from) => { if (/\.save$/.test(from)) stagedDirs.push(dirname(from)); };
+      expect(saveMemoryFile(BOT, "- saved through a linked root\n", opened.revision).saved).toBe(true);
+      expect(stagedDirs).toEqual([join(realFs.realpathSync.native(target), BOT)]);
+      expect(leftovers()).toEqual([]);
+    } finally {
+      hooks.rename = undefined;
+      realFs.unlinkSync(WORKSPACES_DIR);
+      resetDataRootsForTest();
+      removeTempDirSync(target);
+    }
+  });
+
   // Grok r3 High 1: the notebook is never moved aside, so a bot create can never cost the only copy
   it("without hard links, a stale save while the bot creates the path never deletes the notebook", () => {
     const opened = readMemoryFile(BOT);
     realFs.writeFileSync(file(), "- likes tea\n- the bot's newer note\n");
     hooks.noHardLinks = true;
     // if the save ever moved the notebook away, the bot's tool would recreate the path (even empty) at once
-    hooks.rename = (from) => { if (from === file()) realFs.writeFileSync(file(), ""); };
+    hooks.rename = (from) => { if (sameSpot(from)) realFs.writeFileSync(file(), ""); };
     const saved = saveMemoryFile(BOT, "- the editor's note\n", opened.revision);
     expect(saved.saved).toBe(false);
     expect(onDisk()).toBe("- likes tea\n- the bot's newer note\n");

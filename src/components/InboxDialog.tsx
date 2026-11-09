@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { useNativeDialogLayer } from "@/lib/native-dialog-layer";
 import { useStore } from "@/state/store";
 import { openInboxLink } from "@/lib/open-inbox-link";
 import { Inbox } from "./Inbox";
@@ -12,7 +13,8 @@ export function InboxDialog({ onClose, initialView }: { onClose: () => void; ini
   const gate = useRef(false);
   const { state, dispatch } = useStore();
   const [error, setError] = useState<string>();
-  useEffect(() => { dialog.current?.showModal(); }, []);
+  const native = useNativeDialogLayer(dialog, { name: "inbox-native" });
+  useLayoutEffect(() => { native.show(); }, []);
   const openSource = async (link: InboxLink) => {
     if (link.artifactId) { openFiles({ artifactId: link.artifactId }); onClose(); return; }
     if (gate.current) return;

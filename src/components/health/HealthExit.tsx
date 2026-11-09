@@ -7,7 +7,7 @@
 //
 // The header is one piece, HealthHeadTop, drawn the same while the page loads, after it failed to load, and once it
 // is up. Loading and failure sit in the body under it (HealthFrame), never over it, so a phone always has a way out.
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
 import { ArrowLeft, Loader2, X } from "lucide-react";
 import { t } from "@/lib/i18n";
 import { BOX_FRAME, BoxBody, BoxHead } from "@/components/ui/BoxShell";
@@ -36,9 +36,11 @@ export function HealthExitButtons({ onLeave }: { onLeave: () => void }) {
 /** The top of Health's header: the phone's bot-list button (`menu`, each caller draws its own <OpenBotListButton />,
  * as every main view does), Back and close, then the title. `dot` is the status dot once the page knows it. */
 export function HealthHeadTop({ onLeave, menu, dot }: { onLeave: () => void; menu: ReactNode; dot?: ReactNode }) {
+  const row = useRef<HTMLDivElement>(null);
+  useCarriedHeadFocus(row);
   return (
     <>
-      <div className="flex w-full items-center gap-1">
+      <div ref={row} className="flex w-full items-center gap-1">
         <div className="md:hidden">{menu}</div>
         <HealthExitButtons onLeave={onLeave} />
       </div>
@@ -47,6 +49,44 @@ export function HealthHeadTop({ onLeave, menu, dot }: { onLeave: () => void; men
       </h1>
     </>
   );
+}
+
+/** HEALTH-EXIT-FOLLOWUPS: the header is drawn twice, once by the loading frame and once by the loaded page, so the
+ * button a person had focused (Back, close, the bot list) would drop to <body> when the body arrives. The header row
+ * that goes away notes which of its buttons held focus; the row that replaces it in the same commit focuses the
+ * same one. The note lasts only to the end of that commit (a microtask), so leaving Health carries nothing. */
+let carriedHeadButton: number | null = null;
+
+type HeadRow = { querySelectorAll: (selector: string) => ArrayLike<unknown> } | null;
+
+/** The index of the header button that holds focus, or null when focus is elsewhere. */
+export function focusedHeadButton(row: HeadRow, active: unknown): number | null {
+  if (!row || !active) return null;
+  const at = Array.prototype.indexOf.call(row.querySelectorAll("button"), active);
+  return at >= 0 ? at : null;
+}
+
+/** Focuses the carried header button in a newly drawn row; returns whether it did. */
+export function focusCarriedHeadButton(row: HeadRow, carried: number | null): boolean {
+  if (!row || carried === null) return false;
+  const button = row.querySelectorAll("button")[carried] as { focus?: (options?: FocusOptions) => void } | undefined;
+  if (!button?.focus) return false;
+  button.focus({ preventScroll: true });
+  return true;
+}
+
+function useCarriedHeadFocus(row: RefObject<HTMLDivElement | null>) {
+  useLayoutEffect(() => {
+    const box = row.current;
+    focusCarriedHeadButton(box, carriedHeadButton);
+    carriedHeadButton = null;
+    return () => {
+      const at = focusedHeadButton(box, globalThis.document?.activeElement);
+      if (at === null) return;
+      carriedHeadButton = at;
+      queueMicrotask(() => { carriedHeadButton = null; });
+    };
+  }, [row]);
 }
 
 /** Health before its body is up, loading or failed to load: the same header, and what is happening in the body. */

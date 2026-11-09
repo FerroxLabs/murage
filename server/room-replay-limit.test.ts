@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -130,3 +131,5 @@ it("recall of a reply in a room past the limit still follows the content rule", 
   forgetMemory(ownerMemoryTicket(), { kind: "record", id: record });
   expect(() => hydrateMemoryRecord(chunk.id, chunk.version, access("finch", "busy-room"), {allowance: LineageAllowance.tool(1_000_000_000)})).toThrow("MEMORY_EVIDENCE_UNAVAILABLE");
 });
+
+useOutsideStoreFixture();

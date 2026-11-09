@@ -1,3 +1,4 @@
+import { classifyFluxRefusal, fluxRefusalCode } from "../../shared/flux-refusal.ts";
 // Where each part of a call goes: Flux by default, the owner's own keys
 // otherwise.
 //
@@ -97,6 +98,20 @@ export function voiceEndpoint(part: VoicePart, source: ConnectionSource): VoiceE
  *  take over; the caller marks this one with `markUnavailable`. */
 export class VoiceUnavailable extends Error {}
 
+/** Flux uses both {error: {code, message}} and {error: code, message}. */
+export const voiceRefusalCode = fluxRefusalCode;
+
+/** Only structured error fields count; ordinary model text is never a refusal. */
+export function isVoiceBudgetFrame(body: unknown): boolean {
+  const code = voiceRefusalCode(body);
+  if (code === "premium_locked") return false;
+  if (classifyFluxRefusal(0, body) === "budget") return true;
+  if (!body || typeof body !== "object") return false;
+  const value = body as Record<string, unknown>;
+  const error = value.error && typeof value.error === "object" ? value.error as Record<string, unknown> : value;
+  return Boolean(value.error) && [error.status, error.status_code, value.status, value.status_code].includes(402);
+}
+
 /** A 403 that says the key is fine but may not use this feature (Flux,
  *  2026-09-23: "This key is not permitted to use flux-voice-speak. The key
  *  itself is valid"). That is a capability not switched on, like a 404, and
@@ -118,13 +133,33 @@ export function markUnavailable(endpoint: VoiceEndpoint, now = Date.now()): void
 export function isUnavailable(endpoint: VoiceEndpoint, now = Date.now()): boolean {
   return (unavailable.get(sourceId(endpoint)) ?? 0) > now;
 }
-/** Forget one source's refusal, for an owner asking to check again now. */
+/** Keys whose budget Flux said is used up (a 402 that is not premium_locked),
+ *  and until when to stop asking. Held per key, not per model: every voice on
+ *  the key gets the same answer, and without this each sentence of every
+ *  message paid a refused request (VOICE-402-STOP). A new key is never held;
+ *  "Check again" and a route change clear it; it is rechecked after ten minutes. */
+const budgetReached = new Map<string, number>();
+const keyId = (e: VoiceEndpoint) => {
+  let base = e.baseUrl.replace(/\/+$/, "");
+  if (e.via === "flux") { try { base = new URL(base.replace(/^ws/, "http")).origin; } catch { /* keep the configured identity */ } }
+  return `${e.via} ${base} ${e.key}`;
+};
+export function markBudgetReached(endpoint: VoiceEndpoint, now = Date.now()): void {
+  budgetReached.set(keyId(endpoint), now + UNAVAILABLE_MS);
+}
+export function isBudgetReached(endpoint: VoiceEndpoint, now = Date.now()): boolean {
+  return (budgetReached.get(keyId(endpoint)) ?? 0) > now;
+}
+/** Forget one source's refusal, and its key's budget stop, for an owner
+ *  asking to check again now. */
 export function clearUnavailable(endpoint: VoiceEndpoint): void {
   unavailable.delete(sourceId(endpoint));
+  budgetReached.delete(keyId(endpoint));
 }
-/** Test seam: forget every refusal. */
+/** Forget every refusal (routes re-wired, and the test seam). */
 export function resetUnavailable(): void {
   unavailable.clear();
+  budgetReached.clear();
 }
 
 /** What the app may know: which provider serves each part, nothing more. */

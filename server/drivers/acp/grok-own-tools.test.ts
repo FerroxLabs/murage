@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -70,7 +72,7 @@ describe("Murage's own tools through Grok Build's use_tool", () => {
     process.env.FAKE_ACP_PERMISSION_TOOLCALL = JSON.stringify(toolCall);
     instance = await driver.create({ instanceId: "acp-test", displayName: "ACP Test", environment: {}, enabled: true, config: { cli: FAKE_CLI, fullAuto: false } });
     recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: id, text: "go", integrations } as any);
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: id, text: "go", integrations } as any);
     const opened = (await recorder.until((e) => e.type === "request.opened")) as any;
     await instance.adapter.respondToRequest(id, opened.requestId, { behavior: "deny" });
     await recorder.until((e) => e.type === "turn.completed");
@@ -245,3 +247,6 @@ describe("Murage's own tools through Grok Build's use_tool", () => {
     expect(core.acpStampedIdentity({ _meta: frame.params.update._meta })).toEqual({ namespace: "fuigo_build", name: "use_tool", kind: "use_tool" });
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

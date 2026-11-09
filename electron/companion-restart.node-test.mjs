@@ -47,6 +47,42 @@ test("a restart that does not come up is retried, within the cap", async () => {
   assert.equal(starts, MAX_CRASHES_IN_WINDOW);
 });
 
+const timedOutRestart = { enabled: false, error: "the companion did not come up in time" };
+test("a failed restart whose child already exited on its own counts that crash once (U3-G17-F1)", async () => {
+  let gen = 0; let decides = 0; const timers = [];
+  const supervisor = { decide: () => { decides++; return { action: "restart", delayMs: 1_000, attempt: decides }; } };
+  let r;
+  let starts = 0;
+  r = createCompanionRestarter({
+    start: async () => {
+      starts++;
+      gen++;
+      if (starts === 1) {
+        // The restarted child dies while start probes it: the listener moves
+        // the generation and hands the exit to onExit before start resolves.
+        gen++;
+        r.onExit({ expected: false, wasEnabled: true });
+        return timedOutRestart;
+      }
+      return { enabled: true };
+    },
+    shuttingDown: () => false,
+    generation: () => gen,
+    supervisor,
+    schedule: (fn) => timers.push(fn),
+  });
+  gen++; r.onExit({ expected: false, wasEnabled: true }); // the first crash
+  assert.equal(decides, 1);
+  timers.shift()(); await new Promise((res) => setImmediate(res));
+  // The child's own exit was counted once; the failed start adds no second count.
+  assert.equal(decides, 2);
+  assert.equal(timers.length, 1);
+  timers.shift()(); await new Promise((res) => setImmediate(res));
+  assert.equal(starts, 2);
+  assert.equal(decides, 2);
+  assert.equal(timers.length, 0);
+});
+
 // Launch start retries (G17): one owner for every automatic start.
 const up = { enabled: true };
 const timedOut = { enabled: false, error: "the companion did not come up in time" };

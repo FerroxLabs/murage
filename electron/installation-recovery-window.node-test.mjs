@@ -110,3 +110,30 @@ test("an Undo in the same folder keeps naming that folder", async () => {
   const wc = opened.window.webContents;
   assert.equal((await handler({ sender: wc, senderFrame: wc.mainFrame }, { action: "rollback" })).context.dataDirectory, data);
 });
+
+test("T23 renderer hides every unavailable update-pause control even with stale selections",()=>{
+ const elements=new Map(),actions=["retry","diagnostics","backup","restore","restore-separate","restore-encrypted-new","activate","capture-separate"],buttons=actions.map(action=>({dataset:{action},addEventListener(){}}));
+ const context={document:{documentElement:{dataset:{}},querySelectorAll:()=>buttons,getElementById:id=>{if(!elements.has(id))elements.set(id,{dataset:{}});return elements.get(id);}},murageRecoveryMessages:{sentence:()=>"",skippedLines:()=>[]}};
+ vm.createContext(context);const renderer=readFileSync(new URL("./recovery/renderer.js",import.meta.url),"utf8");vm.runInContext(renderer.slice(0,renderer.indexOf("async function action(")),context);
+ context.state={allowedActions:["state","diagnostics"],available:true,encryptedAvailable:true,separateAvailable:true,captureAvailable:true,selection:{separate:true,encrypted:true},review:{files:1,bytes:2},context:{updatePause:true}};
+ vm.runInContext("render(state)",context);
+ for(const b of buttons)assert.equal(b.hidden,b.dataset.action!=="diagnostics");
+ for(const id of ["preview","activation-review","capture-recovery","separate-recovery","encrypted-backup"])assert.equal(elements.get(id).hidden,true);
+});
+test("update recovery translations and source hashes cover every shipped locale",async()=>{
+ const {createHash}=await import("node:crypto");const {updateRecoveryCopy,updateRecoveryWords}=await import("./update-recovery-copy.mjs");
+ const hashes=JSON.parse(readFileSync(new URL("../src/locales/source-hashes.json",import.meta.url),"utf8"));
+ for(const locale of ["en","de","es","fr","pt-br","ja","zh","hi"]){
+  const words=updateRecoveryWords(locale),catalog=JSON.parse(readFileSync(new URL(`../src/locales/${locale}.json`,import.meta.url),"utf8"));
+  for(const [key,english] of Object.entries(updateRecoveryCopy)){assert.equal(words[key],catalog['updateRecovery.'+key]);if(locale!=="en")assert.equal(hashes.locales[locale]['updateRecovery.'+key],createHash("sha256").update(english).digest("hex"));}
+ }
+});
+
+test('F9 update pause hides whole restore sections and uses update waiting copy',()=>{
+ const elements=new Map(),html=readFileSync(new URL('./recovery/index.html',import.meta.url),'utf8');
+ const context={document:{documentElement:{dataset:{}},querySelectorAll:()=>[],getElementById:id=>{if(!elements.has(id))elements.set(id,{dataset:{}});return elements.get(id);}},murageRecoveryMessages:{sentence:()=>'',skippedLines:()=>[]}};vm.createContext(context);
+ const renderer=readFileSync(new URL('./recovery/renderer.js',import.meta.url),'utf8');vm.runInContext(renderer.slice(0,renderer.indexOf('async function action(')),context);
+ context.state={busy:true,context:{updatePause:true,updateMessages:{'update-wait':'Please wait for this step.'}}};vm.runInContext('render(state)',context);
+ for(const id of ['legacy-recovery','activation-section']){assert.match(html,new RegExp('<section id="'+id+'"'));assert.equal(elements.get(id)?.hidden,true);}
+ assert.equal(elements.get('status').textContent,'Please wait for this step.');assert.doesNotMatch(elements.get('status').textContent,/large backup/);
+});

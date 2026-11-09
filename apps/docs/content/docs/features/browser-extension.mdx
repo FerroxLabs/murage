@@ -34,3 +34,13 @@ Murage must remain running. Revoking a client or disabling external access inval
 Windows native helper and branded-browser checks have passed in isolated profiles. The paired companion approval flow has passed in the actual app at phone width, including Allow, Deny and revoked-session rejection. This is not physical-device qualification. macOS Chrome, Edge and Brave also passed isolated native checks using a temporary internal launcher fixture. On macOS, Brave and Chrome share the native helper registration; removing it affects both browser choices. Isolated browser and native-backend process restart checks pass, including Stop persistence and no replay of an uncertain action. A physical macOS sleep/wake check also passed with Brave, including preserved Stop, stale-reference refusal and no action replay. Windows sleep/wake, full installed-app lifecycle and update recovery remain unqualified. The request-tracking defect is repaired and the existing browser-tool compatibility checks pass. The isolated extension reload recovery checks pass.
 
 The older Chrome remote-debugging route remains an explicit separate choice. A stopped or denied extension task never silently falls back to it.
+
+## Use my Chrome setup
+
+A bot's Browser panel opens **Use my Chrome** with three steps, and it shows you which one you are on.
+
+1. **Add Murage for Chrome.** Open the Chrome Web Store from the step, add it, then press I have added it.
+2. **Connect it.** Press Connect my browser, then click the Murage for Chrome icon at the top of your browser. Your bot connects by itself. For Edge or Brave, choose it from the picker first. If the connection needs repair, use Repair connection.
+3. **Choose how your bot asks.** Ask each step, Ask once per task (Recommended), or Full access (a danger zone). Whatever you choose, your bot never agrees to terms or cookies, answers a human check, enters passwords, codes, card or ID details, or presses the final pay button. It hands those to you.
+
+When setup is done the panel shows how your bot asks. Press Change to choose again.

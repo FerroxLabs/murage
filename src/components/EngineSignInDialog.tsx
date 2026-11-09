@@ -4,6 +4,8 @@
 // The sign-in dialog behind EngineSignInButton. It opens by a press and most people press it once, so it and the session it
 // runs load on that press, not with the first paint (src/first-paint.test.ts). Opening starts nothing: it names the engine
 // and the account folder, and only the press inside starts the engine's own login.
+import { useNativeDialogLayer } from "@/lib/native-dialog-layer";
+import type { LoadedLayerProps } from "@/components/LazyOverlay";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { TerminalSquare } from "lucide-react";
 
@@ -96,12 +98,14 @@ export function EngineSignInBody({ state, name, command, actions }: { state: Loc
   );
 }
 
-export function EngineSignInDialog({ bridge, instanceId, name, command, onClose }: { bridge: LocalEngineLoginBridge; instanceId: string; name: string; command?: string; onClose(): void }) {
+export function EngineSignInDialog({ layerLifecycle, bridge, instanceId, name, command, onClose: requestedClose }: { bridge: LocalEngineLoginBridge; instanceId: string; name: string; command?: string; onClose(): void } & { layerLifecycle?: LoadedLayerProps }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const native = useNativeDialogLayer(dialog, { name: "engine-sign-in", returnFocusTo: layerLifecycle?.opener, lease: layerLifecycle?.lease });
+  const onClose = () => native.dismiss(requestedClose);
   const session = useRef<LocalLoginSession | null>(null);
   const [state, setState] = useState<LocalLoginState>(LOCAL_LOGIN_START);
   const [attempt, setAttempt] = useState(0);
-  useEffect(() => { dialog.current?.showModal(); }, []);
+  useEffect(() => { native.show(); }, []);
   useEffect(() => {
     // StrictMode mounts, unmounts and mounts again: opening reads a preview and starts nothing, so a second read costs nothing.
     const current = openLocalLogin({ bridge, instanceId, onState: setState });
@@ -114,7 +118,7 @@ export function EngineSignInDialog({ bridge, instanceId, name, command, onClose 
     retry: () => { setState(LOCAL_LOGIN_START); setAttempt((current) => current + 1); },
   };
   const live = state.phase === "waiting" || state.phase === "finishing";
-  return <dialog ref={dialog} aria-label={t("engineSignIn.title", { label: state.label || name })} data-engine-signin-dialog onCancel={onClose} onClose={onClose}
+  return <dialog ref={dialog} aria-label={t("engineSignIn.title", { label: state.label || name })} data-engine-signin-dialog onCancel={onClose} onClose={() => { if (!dialog.current?.open) onClose(); }}
     className={`${BOX_DIALOG} m-auto w-[min(480px,calc(100vw-24px))] rounded-2xl border border-hairline bg-panel p-0 text-ink shadow-2xl backdrop:bg-black/60`}>
     <BoxHead className="border-b border-hairline/40 px-4 py-3"><h2 className="min-w-0 break-words text-[15px] font-semibold">{t("engineSignIn.title", { label: state.label || name })}</h2></BoxHead>
     <BoxBody className="p-4"><EngineSignInBody state={state} name={name} command={command} actions={actions} /></BoxBody>

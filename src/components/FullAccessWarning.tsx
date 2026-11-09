@@ -1,4 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useFocusTrap } from "@/lib/focus-trap";
+import { LayerSurface } from "@/components/LayerSurface";
+import { useRef } from "react";
 import { t } from "@/lib/i18n";
 import { AlertTriangle } from "lucide-react";
 import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
@@ -35,23 +37,25 @@ export const FULL_ACCESS_ASKS_UNLESS_ALLOWED =
 export const FULL_ACCESS_ON_THIS_COMPUTER =
   "On this computer that includes your own screen, mouse and keyboard.";
 
-/** Shown once per bot before No limits is switched on. */
-export const NO_LIMITS_WARNING =
-  "In conversations you start at the Murage app or your paired phone, this bot runs commands and uses tools without asking. That includes reading and sending your keys and passwords and deleting files outside its folder, so one of those could do anything, even wipe this computer. A page or message it reads can steer it. It still asks before a wipe it can read, before an unknown program touches your home folder or a whole disk, before a command names the files that shape how commands run, and before text downloaded from an https address goes to an administrator run. Publishing, browser payments and steps, and new email recipients keep their own approvals. Follow-on work after you answer a sign-in or setup card can still ask. Messages from other people, group chats, other bots, webhooks, routines, and your own Telegram, Slack and Discord messages keep the cards they have now.";
+/** Shown once per bot before No limits is switched on (NOLIMITS v1 copy W; every pack has `noLimits.v1.warning`). */
+export const NO_LIMITS_WARNING = t("noLimits.v1.warning");
 
 /** The line above the warning when an owner who already had No limits reads the new terms (NOLIMITS-MEANS-IT section 6). */
 export const NO_LIMITS_TERMS_LINE = "No limits changed. Read this once and it applies to every bot.";
 
-export function FullAccessWarning({
+function FullAccessWarningOpen({
   open,
   botName,
   level = "full",
   scope,
   onThisComputer,
   terms = false,
+  openClaw = false,
   onCancel,
   onConfirm,
 }: {
+  /** the bot runs on OpenClaw, which runs commands without asking Murage (copy O) */
+  openClaw?: boolean;
   open: boolean;
   botName: string;
   /** which level this confirms: Full access, or No limits above it */
@@ -68,28 +72,18 @@ export function FullAccessWarning({
 }) {
   const cancelRef = useRef<HTMLButtonElement>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    // Cancel is the default: this is the one switch that removes every stop.
-    cancelRef.current?.focus();
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onCancel();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onCancel]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const layer = useFocusTrap(dialogRef, open, { name: "full-access-warning", kind: "dialog", initialFocus: "[data-layer-cancel]", onEscape: onCancel });
 
   if (!open) return null;
 
-  return (
-    <div
-      className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
+  return <LayerSurface handle={layer}><div
+      className="overlay-inset fixed inset-0 flex items-center justify-center bg-black/50 p-6"
       onMouseDown={(event) => event.target === event.currentTarget && onCancel()}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="full-access-warning-title"
@@ -105,7 +99,9 @@ export function FullAccessWarning({
         <BoxBody className="pl-[50px] pr-5">
             <div id="full-access-warning-body" className="mt-1.5 flex flex-col gap-1.5 text-[13px] leading-relaxed text-ink-secondary">
               {terms && <p className="font-medium text-ink">{NO_LIMITS_TERMS_LINE}</p>}
-              <p className="font-medium text-ink">{level === "unlimited" ? NO_LIMITS_WARNING : FULL_ACCESS_WARNING}</p>
+              <p className="font-medium text-ink">{level === "unlimited" ? t("noLimits.v1.warning") : FULL_ACCESS_WARNING}</p>
+              {level === "unlimited" && openClaw && <p>{t("noLimits.v1.openclaw")}</p>}
+              {level === "unlimited" && <p>{t("noLimits.v1.windows")}</p>}
               {level === "full" && <p>{FULL_ACCESS_STOP_LINE}</p>}
               {onThisComputer && <p>{FULL_ACCESS_ON_THIS_COMPUTER}</p>}
               {scope && <p>{fullAccessScopeNote(scope)}</p>}
@@ -119,7 +115,7 @@ export function FullAccessWarning({
         </BoxBody>
         <BoxFoot className="px-5 pb-5 pt-4">
           <button
-            ref={cancelRef}
+            ref={cancelRef} data-layer-cancel
             type="button"
             onClick={onCancel}
             className="rounded-xl px-4 py-2 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
@@ -135,6 +131,8 @@ export function FullAccessWarning({
           </button>
         </BoxFoot>
       </div>
-    </div>
-  );
+    </div></LayerSurface>;
+}
+export function FullAccessWarning(props: Parameters<typeof FullAccessWarningOpen>[0]) {
+  return props.open ? <FullAccessWarningOpen {...props} /> : null;
 }

@@ -1,17 +1,18 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { LazyOverlay } from "@/components/LazyOverlay";
 //
 // The button a chat link becomes (ENGINE-SIGNIN-SIMPLE-1014). A press shows a dialog or a Settings page and nothing else:
 // only the press inside the dialog starts anything. The press hands the link to one host in App, because a reply's bubble
 // is replaced when it stops streaming and a row can leave the transcript, and a dialog in there would close with it.
 // What a press shows loads on that press (EngineChatLinkDialog.tsx): this file ships with every chat.
-import { Suspense, useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { parseEngineChatLink } from "@/lib/engine-chat-link";
 import { currentLocalEngineLogin, engineSignInSurface } from "@/lib/engine-signin-surface";
 import { t } from "@/lib/i18n";
 import type { LocalEngineLoginBridge } from "@/lib/local-engine-login";
-import { LazyBoundary, retryableLazy } from "./LazyBoundary";
+import { retryableLazy } from "./LazyBoundary";
 
 export const OPEN_ENGINE_CHAT_LINK_EVENT = "murage:engine-chat-link";
 
@@ -50,5 +51,5 @@ export function EngineChatLinkHost() {
     return () => window.removeEventListener(OPEN_ENGINE_CHAT_LINK_EVENT, open);
   }, []);
   if (!press) return null;
-  return <LazyBoundary onRetry={Pressed.retry} onDismiss={() => setPress(null)}><Suspense fallback={null}><EngineChatLinkPress press={press} /></Suspense></LazyBoundary>;
+  return <LazyOverlay name="engine-chat-link-load" kind="dialog" covers="while-loading" onRetry={Pressed.retry} onDismiss={() => setPress(null)}>{loadedLayer => (<EngineChatLinkPress layerLifecycle={loadedLayer} onClose={loadedLayer.dismiss} press={press} />)}</LazyOverlay>;
 }

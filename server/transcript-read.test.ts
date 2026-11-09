@@ -98,6 +98,8 @@ it("ships the read worker, routes the prune's lookup through it with a bounded i
   // Search stays on its own path: the /api/search route calls message-db's searchMessagesWithMeta directly, never the
   // transcript read worker. fix/rc12-search2 added the reader's audience ({ owner: desktop }) as a fourth argument; the 1.0.6 chats
   // view (47456b4dd, merged 5f538b096) caps its hits at 40, answers the owner's All chats as the owner and leaves forgotten lines out.
-  expect(source).toContain("searchMessagesWithMeta(q, chatsView ? Math.min(limit, 40) : limit, scope, { owner: desktop || chatsView, ...(chatsView ? { excludeForgotten: true } : {}) })");
+  // 1dbb9c513 (C2-PREVIEWS-1018, handoffs/designs/C2-PREVIEWS-1018.md:36): the route also hands the query a `rendered` predicate (searchRowRendered on the
+  // active branch), so a hit always has a transcript row to land on; the route still never touches the transcript read worker.
+  expect(source).toContain("searchMessagesWithMeta(q, limit, scope, { owner: desktop || chatsView, rendered, ...(chatsView ? { excludeForgotten: true } : {}) }, before?.at, before?.threadId ? Number(before.threadId) : undefined)");
   expect(source).not.toContain("transcriptReader.search(");
 });

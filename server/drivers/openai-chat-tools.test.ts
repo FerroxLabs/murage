@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
 //
@@ -15,12 +17,14 @@ import { ensureDirs, NATIVE_DIR } from "../config.ts";
 import type { ProviderInstance, RuntimeEvent, SendTurnInput } from "../contracts.ts";
 import { createGracefulShutdown, SERVER_SHUTDOWN_TIMEOUT_MS } from "../graceful-shutdown.ts";
 import { loggedRuntimeEvent } from "../runtime-event-out.ts";
+import { EventBus } from "../harness/bus.ts";
 import { recordEvents } from "../testing/events.ts";
 import { ProviderStopUnconfirmedError } from "./child-teardown.ts";
 import { GrokDriver } from "./grok.ts";
 import { MinimaxDriver } from "./minimax.ts";
 import { OpenAICompatDriver } from "./openai-compat.ts";
 import { fixedPrompt } from "../memory/fixed-prompt.ts";
+import { engineSeenInFull } from "../email/external-marks.ts";
 import { openLearningGate } from "../testing/open-learning-gate.ts";
 import {
   MAX_CHAT_ROUNDS, MAX_TURN_TOOL_CALLS, NUDGE_ANNOUNCED_ACTION, PERMISSION_DENIED, TEXT_ONLY_NOTICE, TOOL_CALLS_TO_HELPER,
@@ -255,7 +259,7 @@ const allowAll = (instance: ProviderInstance) => answer(instance, () => ({ behav
 
 const start = async (instance: ProviderInstance, input: SendTurnInput) => {
   const recorder = recordEvents(instance.adapter);
-  const { turnId } = await instance.adapter.sendTurn(input);
+  const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), ...input });
   const events = recorder.events as unknown as Loose[];
   const done = () => recorder.until((event) => event.type === "turn.completed" && event.turnId === turnId).then((event) => event as unknown as Loose);
   return { turnId, events, done, recorder };
@@ -386,6 +390,25 @@ describe.each(NAMES)("%s: tool round loop (OPENAI-TOOLS-109 s11)", (name) => {
     // each item.started follows its own allow
     const order = events.filter((event) => ["request.opened", "request.resolved", "item.started"].includes(event.type)).map((event) => event.type);
     expect(order).toEqual(["request.opened", "request.resolved", "item.started", "request.opened", "request.resolved", "item.started"]);
+  });
+
+  // NOLIMITS v1 V7 (MurageMain ruling 11-06 (a)): this engine's every tool call is a Murage tool that Murage runs, each its own
+  // ask and its own started item with the tool's identity, so the engine is counted as seen in full (no blanket turn mark)
+  it("2a. V7: each tool call reaches Murage as its own ask and item, so the engine is seen in full", async () => {
+    const instance = await make(name);
+    const log = newLog();
+    answer(instance, () => ({ behavior: "allow" }));
+    script = [
+      () => callsReply([{ id: "v7_a", name: "fake_echo", args: { text: "a" } }, { id: "v7_b", name: "fake_echo", args: { text: "b" } }]),
+      () => textReply("both ran"),
+    ];
+    const { completed, events } = await run(instance, { threadId: threadId(), text: "v7", integrations: { custom: { fake: mount(log) } } });
+    expect(completed.ok).toBe(true);
+    expect(ran(log).map((call) => call.arguments)).toEqual([{ text: "a" }, { text: "b" }]);
+    expect(ofType(events, "request.opened").map((event) => (event as unknown as Loose).toolIdentity))
+      .toEqual([{ namespace: "mcp", name: "fake__echo" }, { namespace: "mcp", name: "fake__echo" }]);
+    expect(ofType(events, "item.started", "tool").map((event) => event.itemId)).toEqual(["v7_a", "v7_b"]);
+    expect(engineSeenInFull(instance.driverKind)).toBe(true);
   });
 
   it("2b. agents_ask_user reaches the owner only through the permission card", async () => {
@@ -830,7 +853,9 @@ describe.each(NAMES)("%s: tool round loop (OPENAI-TOOLS-109 s11)", (name) => {
     expect(nativeText(thread)).not.toContain(key.slice(0, 8));
     // the persisted event log (the live toolCall.input dropped by loggedRuntimeEvent)
     expect(JSON.stringify(turn.events.map((event) => loggedRuntimeEvent(event as unknown as RuntimeEvent)))).not.toContain(prefix);
-    if (spec.logsMessages) expect(nativeText(thread)).toContain("[redacted]");
+    // GrokBuild case 20: the call is in the native trace by name; its arguments are projected to paths (none here), so the
+    // scrubbed copy no longer appears at all
+    if (spec.logsMessages) expect(nativeText(thread)).toContain("fake_noop");
   });
 
   it("11c. a mounted password holding a quote and a backslash, in an ordinary field, is absent from the native log and the event log", async () => {
@@ -844,8 +869,32 @@ describe.each(NAMES)("%s: tool round loop (OPENAI-TOOLS-109 s11)", (name) => {
     expect(ofType(turn.events, "request.opened")[0]!.toolCall.input).toEqual({ note: PASSWORD });
     expect(ran(log)[0]!.arguments).toEqual({ note: PASSWORD });
     expect(nativeText(thread)).not.toContain(PASSWORD_CORE);
-    if (spec.logsMessages) expect(nativeText(thread)).toContain("[redacted]");
+    // GrokBuild case 20: the call is logged by name, its arguments projected away
+    if (spec.logsMessages) expect(nativeText(thread)).toContain("fake_noop");
     expect(JSON.stringify(turn.events.map((event) => loggedRuntimeEvent(event as unknown as RuntimeEvent)))).not.toContain(PASSWORD_CORE);
+  });
+
+  it("11c2. NOLIMITS L4 (design 4.4 row 7): a call over 16 KiB keeps its bounded string live; the event log line has no input", async () => {
+    const SECRET = "confidential-plan-text-7f3a";
+    const instance = await make(name);
+    allowAll(instance);
+    const log = newLog();
+    const thread = threadId();
+    const args = { path: "/w/a.md", content: SECRET.repeat(1000) };
+    script = [() => callsReply([{ id: "big_write", name: "fake_noop", args }]), () => textReply("written")];
+    const turn = await run(instance, { threadId: thread, text: "big", integrations: { custom: { fake: mount(log) } } });
+    expect(turn.completed.ok).toBe(true);
+    const live = ofType(turn.events, "item.started", "tool");
+    expect(live).toHaveLength(1);
+    // the driver is unchanged (LOGGER-REDESIGN 2.3): the live input IS the bounded string
+    expect(typeof live[0]!.input).toBe("string");
+    const writes: string[] = [];
+    const bus = new EventBus(((_file: string, data: string) => { writes.push(data); }) as never);
+    bus.publish(live[0] as unknown as RuntimeEvent);
+    const row = JSON.parse(writes.join("").trim()) as Record<string, unknown>;
+    expect(row.type).toBe("item.started");
+    expect(Object.hasOwn(row, "input")).toBe(false);
+    expect(writes.join("")).not.toContain(SECRET);
   });
 
   it("11d. reasoning: a request key and a mounted token split across reasoning deltas never stream", async () => {
@@ -1260,3 +1309,6 @@ describe("openai-compat: a Local models server receives the mounted tools", () =
     expect(answers(events)).toEqual(["hello from the local model"]);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

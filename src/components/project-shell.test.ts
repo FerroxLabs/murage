@@ -21,7 +21,7 @@ const project: ProjectRead = {
 };
 it("keeps goal, paused state, decision count and accessible usage in the compact strip", () => {
   const html = renderToStaticMarkup(createElement(ProjectStrip, { project, title: "Project", groupId: "g", onBoard: vi.fn() }));
-  expect(html).toContain("Finish the launch"); expect(html).toContain("Paused"); expect(html).toContain("2 needs you");
+  expect(html).toContain("Finish the launch"); expect(html).toContain("Paused"); expect(html).toContain("Needs you: 2");
   expect(html).toContain('aria-expanded="false"'); expect(html).toContain('aria-live="polite"'); expect(html).toContain('aria-label="Usage details"');
   expect(html).not.toContain("Finch answering");
 });
@@ -70,7 +70,7 @@ it("uses the theme foreground for selected tabs in light and dark themes", () =>
 it("describes requests with member names and plain states", () => {
   const members = [{ id: "jax", name: "Jax" }];
   expect(projectRequestLabel({ verb: "owner_send", state: "waiting_owner", toBotId: null }, members)).toBe("Your message: waiting for you");
-  expect(projectRequestLabel({ verb: "ask", state: "queued", toBotId: "jax" }, members)).toBe("Ask to Jax: queued");
+  expect(projectRequestLabel({ verb: "ask", state: "queued", toBotId: "jax" }, members)).toBe("Question for Jax: queued");
   expect(projectRequestLabel({ verb: "room_turn", state: "waiting_bot", toBotId: "jax" }, members)).toBe("Reply from Jax: waiting for a bot");
   expect(projectRequestLabel({ verb: "ask", state: "unknown", toBotId: "deleted-id" }, members)).toBe("Ask: interrupted at restart");
   for (const verb of ["message", "assign", "review", "wake", "routine"] as const) {

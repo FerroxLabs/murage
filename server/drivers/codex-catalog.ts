@@ -1,3 +1,5 @@
+import { versionAtLeast } from "./codex-hook.ts";
+import { probeFolder } from "../probe-folder.ts";
 // Codex model catalog — official ChatGPT rows stay in the main picker;
 // everything the user already wired in ~/.codex (providers, profiles,
 // cached catalogs, live /v1/models) is tagged `custom` so ModelPicker
@@ -10,13 +12,13 @@ import { basename, isAbsolute, join } from "node:path";
 
 import type { ModelCatalog } from "../contracts.ts";
 import { mergeFluxCatalog } from "../flux-surface.ts";
-import { killCliTree, spawnCli } from "../procs.ts";
+import { execCli, killCliTree, spawnCli } from "../procs.ts";
 import "./codex-scope-spec.ts"; // registers how a scope this process did not build is rebuilt
 import { currentScopeHome, scopedCliHomeRoot, withScopeRetry } from "./scoped-cli-home.ts";
 import { mergeLocalInject } from "./local-inject.ts";
 
 export const STATIC_CODEX_MODELS: ModelCatalog = {
-  default: "gpt-5.6-sol",
+  default: "gpt-6.1-sol",
   options: [
     // gpt-6-astra: OpenAI's id, from developers.openai.com/api/docs/models and
     // the Sep 3 2026 changelog entry. Listed first because it is the newest;
@@ -24,6 +26,9 @@ export const STATIC_CODEX_MODELS: ModelCatalog = {
     // Program and most keys cannot run it yet -- a default that 404s is worse
     // than one that is merely a version behind.
     { id: "gpt-6-astra", label: "GPT-6 Astra" },
+    // Verified in Cloud home's pinned Codex 0.162.1 and public 0.167.0 catalogs.
+    // Desktop installs Codex separately; a live CLI catalog remains authoritative.
+    { id: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
     // gpt-6-sol / gpt-6-luna: released 2026-09-22 (ids per models.dev). Same
     // reasoning as Astra for not defaulting to them on release day.
     { id: "gpt-6-sol", label: "GPT-6 Sol" },
@@ -109,7 +114,7 @@ function spawnCatalog(
 ): Promise<ModelCatalog | null> {
   return new Promise((resolve) => {
     const child = spawnCli(cli, ["app-server"], {
-      cwd: process.env.MURAGE_CLOUD_ROLE === "home" ? launchEnv.HOME : homedir(),
+      cwd: probeFolder(),
       env: launchEnv,
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -398,14 +403,27 @@ async function probeProviderModels(
   }
 }
 
+export class CodexCatalogUpdateRequired extends Error {
+  constructor() { super("Update Codex to 0.162.1 or newer: model support could not be established from the installed engine."); }
+}
+
 /** Local slugs Codex already knows, plus the authoritative visible CLI rows. */
 export async function readCodexModelCatalog(
   env: Record<string, string | undefined> = process.env,
   fetchImpl: typeof fetch = fetch,
   cli?: string,
-  officialFallback: ModelCatalog = STATIC_CODEX_MODELS,
+  officialFallback?: ModelCatalog,
 ): Promise<ModelCatalog> {
-  const official = (cli ? await readCodexAppServerModelCatalog(cli, env) : null) ?? officialFallback;
+  let official = cli ? await readCodexAppServerModelCatalog(cli, env) : null;
+  if (!official && !officialFallback && cli) {
+    // The pinned cloud binary establishes this support floor. A successful live
+    // list or a previously qualified catalog needs no static fallback assumption.
+    const version = await new Promise<string | undefined>(resolve => {
+      execCli(cli, ["--version"], { timeout: 8000, env }, (error, stdout) => resolve(error ? undefined : stdout));
+    });
+    if (!versionAtLeast(version, [0, 162, 1])) throw new CodexCatalogUpdateRequired();
+  }
+  official ??= officialFallback ?? STATIC_CODEX_MODELS;
   const home = codexHome(env);
   const mainText = readText(join(home, "config.toml"));
   // Flux rows are gated per engine and are emitted `flux::flux-auto` style —
@@ -425,9 +443,11 @@ export async function readCodexModelCatalog(
     // A local provider may expose the same slug as an official OpenAI model.
     // Keep that provider-qualified row; otherwise selecting the configured
     // default would decode the bare slug back to the OpenAI provider.
+    // Official rows already listed or retained below as the saved choice stay bare.
     if (
       provider === OFFICIAL_CODEX_PROVIDER &&
-      official.options.some((option) => option.id === model)
+      (official.options.some((option) => option.id === model) ||
+        ((!main.modelProvider || main.modelProvider === OFFICIAL_CODEX_PROVIDER) && main.model === model))
     ) return;
     extras.push({ provider, model });
   };
@@ -457,6 +477,11 @@ export async function readCodexModelCatalog(
   for (const row of live.flat()) remember(row.provider, row.model);
 
   const options = official.options.map((option) => ({ ...option }));
+  // A saved official choice remains selectable even when model/list omits it.
+  const savedOfficial = (!main.modelProvider || main.modelProvider === OFFICIAL_CODEX_PROVIDER) && main.model && MODEL_ID.test(main.model)
+    ? STATIC_CODEX_MODELS.options.find(option => option.id === main.model) ?? { id: main.model, label: main.model }
+    : undefined;
+  if (savedOfficial && !options.some(option => option.id === savedOfficial.id)) options.push({ ...savedOfficial });
   const seen = new Set(options.map((option) => option.id));
   for (const extra of extras) {
     const id = encodeCodexSelection(extra.provider, extra.model);
@@ -471,7 +496,7 @@ export async function readCodexModelCatalog(
 
   const configured = main.model && main.modelProvider
     ? main.modelProvider === OFFICIAL_CODEX_PROVIDER &&
-      official.options.some((option) => option.id === main.model)
+      options.some((option) => option.id === main.model)
       ? main.model
       : encodeCodexSelection(main.modelProvider, main.model)
     : main.model && seen.has(main.model)

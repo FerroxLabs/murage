@@ -25,6 +25,9 @@ const BINDING = "5d0f7a2e-3b1c-4e8a-9f6d-1c2b3a4d5e6f";
 const MATRIX = ["x1", "x1c", "x2", "x5", "x6", "x7", "x8a", "x8b", "x9a", "x9b"];
 const WITHHELD_TEXT = "[phone turn text withheld]";
 const WITHHELD_RESULT = "[phone result withheld]";
+import { REPLY_LOGGED_TEXT } from "./runtime-event-out.ts";
+// 9b335afc0 (NOLIMITS 1.0.18 logger, one sink allowlist): an engine reply is logged as REPLY_LOGGED_TEXT and a native-trace text becomes a label, so an unmarked
+// thread shows that label (never the reply), and a marked one still shows the phone withheld text: the two stay distinguishable.
 let fixture: VerificationServer;
 let headers: Record<string, string> = {};
 let dir = "";
@@ -225,7 +228,7 @@ posixOnly("phone tools flag-on end to end (S23)", () => {
     await withheldAfter(bot, "ZEBRA-E2E-later-turn");
     const plain = await createBot("E2E plain", "tools", null);
     await plainTurn(plain, "no phone here", "OTTER-E2E-visible");
-    await expect.poll(() => assistantTexts(plain.threadId).includes("OTTER-E2E-visible"), { timeout: 30000 }).toBe(true);
+    await expect.poll(() => assistantTexts(plain.threadId).includes(REPLY_LOGGED_TEXT), { timeout: 30000 }).toBe(true);
     await genericDone(plain.threadId, false);
   }, 300000);
 
@@ -405,7 +408,7 @@ posixOnly("phone tools flag-on end to end (S23)", () => {
     await withheldAfter(bot, "ZEBRA-E2E-flag-off");
     await genericDone(bot.threadId, true);
     await plainTurn(other, "plain turn with the flag off", "OTTER-E2E-flag-off");
-    await expect.poll(() => assistantTexts(other.threadId).includes("OTTER-E2E-flag-off"), { timeout: 30000 }).toBe(true);
+    await expect.poll(() => assistantTexts(other.threadId).includes(REPLY_LOGGED_TEXT), { timeout: 30000 }).toBe(true);
     await genericDone(other.threadId, false);
     expect((await api("PATCH", "/api/config", { features: { phoneTools: true } })).status).toBe(200);
   }, 300000);

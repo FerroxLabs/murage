@@ -1,21 +1,23 @@
+import { useNativeDialogLayer } from "@/lib/native-dialog-layer";
+import type { LoadedLayerProps } from "@/components/LazyOverlay";
 import { useLayoutEffect, useRef, useState } from "react";
 import { Keyboard, X } from "lucide-react";
 import { filterShortcuts, shortcutKeys, shortcutPlatformIsMac } from "@/lib/keyboard-shortcuts";
 import { returnFocus } from "@/lib/return-focus";
 import { BOX_DIALOG, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 
-export function KeyboardShortcutsDialog({ open, onClose, returnFocusRef }: {
+export function KeyboardShortcutsDialog({ layerLifecycle, open, onClose: requestedClose, returnFocusRef }: {
   open: boolean; onClose: () => void; returnFocusRef?: { current: HTMLElement | null };
-}) {
+} & { layerLifecycle?: LoadedLayerProps }) {
   const dialog = useRef<HTMLDialogElement>(null), input = useRef<HTMLInputElement>(null);
+  const native = useNativeDialogLayer(dialog, { name: "keyboard-shortcuts", returnFocusTo: layerLifecycle?.opener ?? returnFocusRef?.current, lease: layerLifecycle?.lease, returnTo: target => returnFocus(target as Element | null) });
+  const onClose = () => native.dismiss(requestedClose);
   const firstControl = useRef<HTMLButtonElement>(null), lastControl = useRef<HTMLButtonElement>(null);
   const [query, setQuery] = useState("");
   const mac = shortcutPlatformIsMac();
   useLayoutEffect(() => {
     if (!open || !dialog.current) return;
-    const element = dialog.current, previous = document.activeElement;
-    setQuery(""); element.showModal(); input.current?.focus();
-    return () => { element.close(); returnFocus(returnFocusRef?.current ?? previous); };
+    setQuery(""); native.show(); input.current?.focus();
   }, [open, returnFocusRef]);
   if (!open) return null;
   const groups = filterShortcuts(query, mac);
