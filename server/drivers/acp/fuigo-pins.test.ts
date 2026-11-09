@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -177,3 +178,6 @@ describe("the spawned engine", () => {
     expect(env.FUIGO_UNCHARGED_401_PARK).toBeUndefined();
   }, 30000);
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

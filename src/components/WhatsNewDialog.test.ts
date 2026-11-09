@@ -128,7 +128,7 @@ describe("what's new cards", () => {
 
   it("closes on Escape through the dialog's cancel, and respects reduced motion", () => {
     expect(source).toContain("onCancel={(event) => { event.preventDefault(); onClose(); }}");
-    expect(source).toContain("element.showModal()");
+    expect(source).toContain("native.show()");
     const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\s*\.whats-new-card \{ animation: none; \}/);
   });

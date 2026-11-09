@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -84,7 +86,7 @@ describe("the captured shell map on a Claude turn", () => {
     await claude();
     const dump = join(scratch, "claude.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
-    await instance!.adapter.sendTurn({ threadId: "t-captured-sub", text: "hi" });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-captured-sub", text: "hi" });
     await recorder!.until((e) => e.type === "turn.completed");
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     for (const name of Object.keys(SHELL_ONLY)) expect(seen.env[name], name).toBeUndefined();
@@ -94,7 +96,7 @@ describe("the captured shell map on a Claude turn", () => {
     await claude({ UNSLOTH_STUDIO_AUTH_TOKEN: "fake-unsloth-0004-not-real" });
     const dump = join(scratch, "claude-inject.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
-    await instance!.adapter.sendTurn({ threadId: "t-captured-inject", text: "hi", model: "unsloth::local-model" });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-captured-inject", text: "hi", model: "unsloth::local-model" });
     await recorder!.until((e) => e.type === "turn.completed");
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:8888");
@@ -109,9 +111,12 @@ describe("the captured shell map on a Codex turn", () => {
     process.env.FAKE_CODEX_DUMP = dump;
     instance = await CodexDriver.create({ instanceId: "codex-captured", displayName: "Codex", environment: {}, enabled: true, config: { cli: FAKE_CODEX, fullAuto: false } });
     recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: "t-captured-codex", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-captured-codex", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     for (const name of Object.keys(SHELL_ONLY)) expect(seen.env[name], name).toBeUndefined();
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

@@ -66,6 +66,8 @@ export interface EmailRuntimeOptions {
   capsFile?: string;
   /** Told after every capability read lands, so the app reads the status again (the emailStatus socket frame). */
   onStatus?: () => void;
+  /** NOLIMITS v1 V6 (b): a marked No limits lane turn; its sends always wait on the Send / Don't send card. */
+  holdForOwner?: (threadId: string, botId: string, generation: string) => boolean;
 }
 
 type Services = { db: DatabaseSync; store: EmailStore; send: EmailSendService; tools: EmailTools; bindings: EmailBindingService; cards: EmailCards | null; events: EmailEventReader };
@@ -193,6 +195,7 @@ export class EmailRuntime {
     const tools = new EmailTools({
       store, send, client: this.client, workspaceRoot: this.options.workspaceRoot, bot: this.options.bot, now: this.options.now,
       onRefusal: code => { void this.probe.noteRefusal(code).catch(() => undefined); },
+      ...(this.options.holdForOwner ? { holdForOwner: this.options.holdForOwner } : {}),
       onUnknownCode: code => this.options.log?.(`[email] Flux answered an unlisted code: ${code.replace(/[^\w.-]/g, "").slice(0, 60)}`),
     });
     const events = new EmailEventReader({

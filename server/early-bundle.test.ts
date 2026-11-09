@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { EarlyBundle } from "./early-bundle.ts";
+import { EarlyBundle, bundleFailureCause } from "./early-bundle.ts";
+
+describe("bundleFailureCause", () => {
+  it("names only the bundle's own codes, never text from the error", () => {
+    expect(bundleFailureCause(new Error("MEMORY_PIN_UNAVAILABLE: repair or unpin the owner constraint before dispatch"))).toBe("MEMORY_PIN_UNAVAILABLE");
+    expect(bundleFailureCause(new Error("MEMORY_PIN_BUDGET: 3/2"))).toBe("MEMORY_PIN_BUDGET");
+    expect(bundleFailureCause(new Error("SECRETWORD is what the user typed"))).toBe("other");
+    expect(bundleFailureCause(Object.assign(new Error("boom"), { name: "/home/me/private" }))).toBe("other");
+    expect(bundleFailureCause("MEMORY_PIN_BUDGET")).toBe("other");
+  });
+});
 
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
@@ -33,7 +43,9 @@ describe("EarlyBundle", () => {
     const onUnhandled = (reason: unknown) => unhandled.push(reason);
     process.on("unhandledRejection", onUnhandled);
     early.start(async s => { signal = s; await sleep(30); s.throwIfAborted(); return "x"; });
-    early.cancel(); // a mount failed or the turn was cancelled
+    early.cancel("setup-failed"); // a mount failed or the turn was cancelled
+    early.cancel("spent");
+    expect(early.cancelledBy).toBe("setup-failed"); // the step that really stopped it
     expect(signal.aborted).toBe(true);
     expect(early.take()).toBeUndefined();
     await sleep(80);

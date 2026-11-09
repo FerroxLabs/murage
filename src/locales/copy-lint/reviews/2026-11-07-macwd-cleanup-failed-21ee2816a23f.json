@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "macwd-765476c70",
+  "date": "2026-11-07",
+  "base": "cb69c0c6d",
+  "scope": "Backup upgrade cleanup failed message",
+  "strings": {
+    "en:updateRecovery.BACKUP_UPGRADE_CLEANUP_FAILED": {
+      "text": "Murage could not finish closing its background work. Your backup is kept. Try again, or open the diagnostics folder for help.",
+      "en": "Murage could not finish closing its background work. Your backup is kept. Try again, or open the diagnostics folder for help.",
+      "verdict": "pass",
+      "note": "Matches the reference and applicable UI style rules."
+    },
+    "de:updateRecovery.BACKUP_UPGRADE_CLEANUP_FAILED": {
+      "text": "Murage konnte seine Hintergrundarbeit nicht vollständig beenden. Dein Backup bleibt erhalten. Versuche es erneut oder öffne den Diagnoseordner, um Hilfe zu erhalten.",
+      "en": "Murage could not finish closing its background work. Your backup is kept. Try again, or open the diagnostics folder for help.",
+      "verdict": "pass",
+      "note": "Preserves the meaning and consistently uses informal du."
+    },
+    "es:updateRecovery.BACKUP_UPGRADE_CLEANUP_FAILED": {
+      "text": "Murage no pudo terminar de cerrar su trabajo en segundo plano. Tu copia de seguridad se conserva. Inténtalo de nuevo o abre la carpeta de diagnósticos para obtener ayuda.",
+      "en": "Murage could not finish closing its background work. Your backup is kept. Try again, or open the diagnostics folder for help.",
+      "verdict": "pass",
+      "note": "Preserves the meaning and tú register; copia de seguridad means backup."
+    },
+    "fr:updateRecovery.BACKUP_UPGRADE_CLEANUP_FAILED": {
+      "text": "Murage n’a pas pu terminer l’arrêt de ses tâches en arrière-plan. Ta sauvegarde est conservée. Réessaie ou ouvre le dossier de diagnostics pour obtenir de l’aide.",
+      "en": "Murage could not finish closing its background work. Your backup is kept. Try again, or open the diagnostics folder for help.",
+      "verdict": "pass",
+      "note": "Preserves the meaning and consistently uses informal tu."
+    },
+    "hi:updateRecovery.BACKUP_UPGRADE_CLEANUP_FAILED": {
+      "text": "Murage अपना बैकग्राउंड काम पूरी तरह बंद नहीं कर सका। आपका बैकअप रखा गया है। फिर कोशिश करें, या मदद के लिए डायग्नोस्टिक्स फ़ोल्डर खोलें।",
+      "en": "Murage could not finish closing its background work. Your backup is kept. Try again, or open the diagnostics folder for help.",
+      "verdict": "pass",
+      "note": "Preserves the meaning and respectful आप register; पूरी तरह conveys completion. Fixed from the MACWD text, which dropped \"finish\"."
+    },
+    "ja:updateRecovery.BACKUP_UPGRADE_CLEANUP_FAILED": {
+      "text": "Murage はバックグラウンド処理の終了を完了できませんでした。バックアップは保持されます。もう一度試すか、診断フォルダを開いてサポートを受けてください。",
+      "en": "Murage could not finish closing its background work. Your backup is kept. Try again, or open the diagnostics folder for help.",
+      "verdict": "pass",
+      "note": "Preserves the incomplete shutdown, retained backup, and both recovery options."
+    },
+    "pt-br:updateRecovery.BACKUP_UPGRADE_CLEANUP_FAILED": {
+      "text": "O Murage não conseguiu terminar de encerrar o trabalho em segundo plano. Seu backup será mantido. Tente novamente ou abra a pasta de diagnósticos para obter ajuda.",
+      "en": "Murage could not finish closing its background work. Your backup is kept. Try again, or open the diagnostics folder for help.",
+      "verdict": "pass",
+      "note": "Preserves the meaning and você register; será mantido assures continued backup retention."
+    },
+    "zh:updateRecovery.BACKUP_UPGRADE_CLEANUP_FAILED": {
+      "text": "Murage 无法完成后台任务的关闭。你的备份会保留。请重试，或打开诊断文件夹寻求帮助。",
+      "en": "Murage could not finish closing its background work. Your backup is kept. Try again, or open the diagnostics folder for help.",
+      "verdict": "pass",
+      "note": "Preserves the incomplete shutdown, retained backup, and both recovery options."
+    }
+  },
+  "files": {}
+}

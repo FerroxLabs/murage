@@ -727,7 +727,7 @@ function normalizeDevice(record: Partial<DeviceRecord> & { id: string; tokenHash
  * loaded once at construction and written on every change. */
 /** What the phone is told when the new device could not be written to disk. */
 export const PAIRING_SAVE_FAILED =
-  "This computer could not save the pairing, so this device is not signed in. Check that the computer has free disk space, then try again.";
+  "This computer could not save the pairing, so this device is not signed in. Check that the computer has available disk space, then try again.";
 
 /** Demo pairing: a fixed, reusable code for app-store reviewers.
  *

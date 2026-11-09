@@ -22,10 +22,11 @@ module.exports = {
     { pid: process.ppid, ppid: 1, mine: true, uid: typeof process.getuid === "function" ? process.getuid() : null, start: 1, comm: "test-parent", exe: "/usr/bin/test-parent", argv: ["test-parent"] },
     ...extraProcesses(),
   ],
-  // never over an existing name: a file is linked then unlinked (atomic and refusing to replace), a folder checked then renamed
+  // never over an existing name: a file is linked then unlinked (atomic and refusing to replace), a folder or a link checked then
+  // renamed (macOS link(2) follows a symlink, so a hard link to a link to a folder is EPERM there)
   renameNoReplace: (from, to) => {
     const stat = fs.lstatSync(from);
-    if (stat.isDirectory()) {
+    if (stat.isDirectory() || stat.isSymbolicLink()) {
       try { fs.lstatSync(to); return 1; } catch (error) { if (error.code !== "ENOENT") throw error; }
       fs.renameSync(from, to);
       return 0;

@@ -77,14 +77,18 @@ describe("EventBus", () => {
   it("redacts credential-shaped content before writing the NDJSON log", () => {
     const key = `sk-ant-api03-${"abcdefghijklmnopqrstuvwxyz0123456789"}`;
     const bus = new EventBus();
+    // ql2 sink fold: an error's message is a fixed label now (was: the message, redacted); a credential in a field the allowlist
+    // keeps (an identifier-shaped engineCode) is still redacted after the projection
     bus.publish(testEvent({
       threadId: "redacted-log",
       type: "runtime.error",
       message: `provider returned ${key}`,
+      engineCode: key,
     }));
 
     const logged = readFileSync(join(EVENTS_DIR, "redacted-log.ndjson"), "utf8");
     expect(logged).not.toContain(key);
+    expect(logged).not.toContain("provider returned");
     expect(logged).toContain("«redacted");
   });
 

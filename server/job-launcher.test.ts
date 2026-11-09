@@ -72,7 +72,7 @@ describe("job launcher", () => {
 
   it("a CLI that cannot start is reported on fd 3 as Node reports it, and the launcher exits 127", async () => {
     const run = launch(join(base ?? tmpdir(), "no-such-cli"), []);
-    run.child.stdin!.write(launcherFrame({ PATH: process.env.PATH ?? "" }, undefined));
+    run.child.stdin!.write(launcherFrame({ PATH: process.env.PATH ?? "" }, base));
     await expect(run.exit).resolves.toBe(127);
     await settle(50);
     const report = JSON.parse(run.report().trim()) as { error: { code: string; syscall: string; path: string } };

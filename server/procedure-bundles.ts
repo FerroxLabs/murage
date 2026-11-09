@@ -2,9 +2,11 @@ import { executionStore, isHomePartition, threadPartition, partitionScopeKey } f
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { LocalSetupError } from "./local-setup-failure.ts";
 import { DATA_DIR } from "./config.ts";
+import { ownedPath, WorkspaceTreeError, type RootSnapshot } from "./data-roots.ts";
 import { taskWorkspacePath } from "./workspace.ts";
-import { relinkDirectory, removeLinkWithRetry } from "./link-removal.ts";
+import { linkMoves, ownLinkTail, readLinkIdentity, sameLinkIdentity, removeLinkChecked, relinkDirectoryChecked, LinkIdentityError, NotALinkError, type LinkIdentity, removeLinkWithRetry } from "./link-removal.ts";
 import { skillAvailableForAudience, listSkills, snapshotProceduralSkill, assertSkillProcedureEvidence, type SkillProcedureContext, type SkillProcedureEvidence, fitSkillIndex, skillIndexOmissionNotice, nativeLinkPointsToSkill, onSkillsSwitchedOff, sweepBotSkills } from "./skills.ts";
 import { skillFileText, skillsForAudience, type BundledSkill } from "./skill-library.ts";
 import type { InstalledPlaybook } from "./store.ts";
@@ -27,7 +29,12 @@ interface ProcedureBundle {
   ownerTurn?:boolean;
 }
 const digest=(bytes:string|Buffer)=>createHash("sha256").update(bytes).digest("hex");
-const fail=():never=>{throw new Error("Pinned procedures are unavailable or changed; no replacement instructions were used");};
+export class PinnedProceduresError extends LocalSetupError {
+  constructor(cause?:unknown){super("pinned-procedures","Pinned procedures are unavailable or changed; no replacement instructions were used",{cause});}
+}
+const fail=():never=>{throw new PinnedProceduresError();};
+const pinErrnos=new Set(["ENOENT","EACCES","EPERM","EISDIR","ENOTDIR","ELOOP","EBUSY"]);
+function pinRead<T>(read:()=>T):T {try{return read();}catch(error){if(pinErrnos.has((error as NodeJS.ErrnoException).code??""))throw new PinnedProceduresError(error);throw error;}}
 const safeId=(id:string)=>/^[\w-]+$/.test(id);
 function ownedDirectory(path:string):void {
   // `relative()` emits the platform's own separator, so testing for "/" let a
@@ -37,12 +44,10 @@ function ownedDirectory(path:string):void {
   // a separator so an ordinary directory named "..data" is not refused.
   const rel=relative(DATA_DIR,path);
   if(isAbsolute(rel)||rel===".."||rel.startsWith(".."+sep)||rel.startsWith("../"))fail();
-  let at=DATA_DIR;
-  for(const part of rel.split(/[\\/]/).filter(Boolean)){
-    at=join(at,part);
-    if(!existsSync(at))mkdirSync(at,{mode:0o700});
-    const stat=lstatSync(at);if(!stat.isDirectory()||stat.isSymbolicLink())fail();
-  }
+  // C3 (S5-DATADIR-PATHS r4.1 DR4): the one walker. A linked `workspaces` root is walked from its canonical target; a link below
+  // a root, or any link under skill-state (not a root), still fails as at b17. A root that changed or cannot be opened keeps its own card.
+  try{ownedPath(path,{create:true});}
+  catch(error){if(error instanceof WorkspaceTreeError&&error.code.startsWith("root-"))throw error;fail();}
 }
 function regularBytes(path:string):Buffer {
   const before=lstatSync(path);if(!before.isFile()||before.isSymbolicLink()||before.nlink!==1||before.size>64*1024*1024)fail();
@@ -121,7 +126,8 @@ export function createProcedurePin(botId:string,threadId:string,catalogue:Bundle
   else {const temp=join(root,`.${randomUUID()}.json`);writeFileSync(temp,bytes,{flag:"wx",mode:0o600});renameSync(temp,path);}
   return {schema:1,bundleId};
 }
-export function readProcedureBundle(botId:string,threadId:string,pin:ProcedurePin):ProcedureBundle {
+export function readProcedureBundle(botId:string,threadId:string,pin:ProcedurePin):ProcedureBundle {return pinRead(()=>readProcedureBundleInner(botId,threadId,pin));}
+function readProcedureBundleInner(botId:string,threadId:string,pin:ProcedurePin):ProcedureBundle {
   if(pin.schema!==1||!/^[a-f0-9]{64}$/.test(pin.bundleId))fail();
   const root=stateRoot(botId,threadId);ownedDirectory(root);
   const bytes=regularBytes(join(root,`${pin.bundleId}.json`));if(digest(bytes)!==pin.bundleId)fail();
@@ -141,9 +147,76 @@ function earlierPinLink(link:string,procedures:string,name:string):boolean {
     return parts.length===3&&/^[a-f0-9]{64}$/.test(parts[0]!)&&parts[1]==="skills"&&parts[2]===name;
   }catch{return false;}
 }
+const stagingFailure=(cause?:unknown):never=>{throw new LocalSetupError("skill-link-staging","Murage could not stage this skill link.",{cause});};
+const foreignFailure=(cause?:unknown):never=>{throw new LocalSetupError("skill-link-foreign","Murage could not check or replace this skill link.",{cause});};
+function stagingDirectory(desk:string):string {
+  try {
+    const dev=lstatSync(desk).dev,procedures=join(desk,".murage-procedures");
+    const check=(path:string)=>{const stat=lstatSync(path);if(stat.isSymbolicLink()||!stat.isDirectory()||stat.dev!==dev)stagingFailure();};
+    check(procedures);
+    const staging=join(ownedPath(procedures).canonical,".relink");
+    try{lstatSync(staging);}catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;mkdirSync(staging,{mode:0o700});}
+    check(staging);return staging;
+  }catch(error){return stagingFailure(error);}
+}
+function checkedRemoval(path:string,identity:LinkIdentity,retry=false):void {
+  try{removeLinkChecked(path,identity,retry);}
+  catch(error){if(error instanceof LinkIdentityError||error instanceof NotALinkError)stagingFailure(error);throw new LocalSetupError("working-folder","Murage could not remove the link for the skill, so the turn did not start. Try again.",{cause:error});}
+}
+function sweepRelinks(desk:string,threadId:string,root:string):void {
+  const staging=stagingDirectory(desk);
+  let entries:string[];try{entries=readdirSync(staging);}catch(error){return stagingFailure(error);}
+  for(const entry of entries){
+    const match=/^(claude|agents|grok)\.([a-z0-9]+(?:-[a-z0-9]+)*)\.([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/.exec(entry);
+    if(!match)stagingFailure();
+    const name=match![2]!,path=join(staging,entry);
+    let identity:LinkIdentity;
+    try{identity=readLinkIdentity(path);if(ownLinkTail(identity.text,{threadId,name,target:join(root,"skills",name)})==="foreign")stagingFailure();}
+    catch(error){return stagingFailure(error);}
+    checkedRemoval(path,identity);
+  }
+}
+/** Same-user residuals: a discovery directory swapped after ownedDirectory, or .murage-procedures / .relink swapped for
+ * a directory link between S1 and R2-R5, can redirect a path walk. Node has no dirfd here. The final compare-to-unlink
+ * window also remains (including the no-addon earlier-pin path); removeLink still refuses real files and folders. */
+function replaceOwnLink(desk:string,threadId:string,dirTag:string,name:string,link:string,target:string,identity:LinkIdentity|undefined,pinned:boolean):boolean {
+  let quarantine:string|undefined,moved:LinkIdentity|undefined;
+  if(identity){
+    const earlier=earlierPinLink(link,join(desk,".murage-procedures"),name);
+    let result:"ok"|"exists"|"unsupported"="unsupported";
+    if(linkMoves.available()){
+      quarantine=join(stagingDirectory(desk),`${dirTag}.${name}.${randomUUID()}`);
+      try{result=linkMoves.moveNoReplace(link,quarantine);}catch(error){return stagingFailure(error);}
+    }
+    if(result==="unsupported"){
+      if(!earlier){if(pinned)stagingFailure();return true;}
+      if(!pinned){checkedRemoval(link,identity,true);return true;}
+      quarantine=undefined;
+    }else{
+      if(result!=="ok")stagingFailure();
+      try{moved=readLinkIdentity(quarantine!);if(!sameLinkIdentity(identity,moved)||ownLinkTail(moved.text,{threadId,name,target})!=="ours")stagingFailure();}
+      catch(error){return stagingFailure(error);}
+    }
+  }
+  if(pinned){
+    try{relinkDirectoryChecked(link,target,quarantine?undefined:identity);}
+    catch(error){
+      if(error instanceof LinkIdentityError||error instanceof NotALinkError||(error as NodeJS.ErrnoException).code==="EEXIST")stagingFailure(error);
+      let occupied:boolean;try{occupied=Boolean(lstatSync(link,{throwIfNoEntry:false}));}catch(check){return stagingFailure(check);}
+      if(occupied&&(quarantine||!identity))stagingFailure(error);
+      if(occupied)throw new LocalSetupError("working-folder",`Murage could not move the link for the skill "${name}" to this task's pinned copy, so the turn did not start. Try again.`,{cause:error});
+      // F4 is an explicit exception to F2: retain the quarantine and run with linkNotice.
+      return false;
+    }
+  }
+  if(quarantine&&moved)checkedRemoval(quarantine,moved);
+  return true;
+}
 /** Never targets custom CWD. The explicit index works there without changing
  * the selected engine folder or writing a discovery directory into it. */
-export function preparePinnedProcedures(botId:string,threadId:string,pin:ProcedurePin,native:boolean,context?:SkillProcedureContext) {
+export function preparePinnedProcedures(botId:string,threadId:string,pin:ProcedurePin,native:boolean,context?:SkillProcedureContext,snapshot?:RootSnapshot) {
+  const desk=taskWorkspacePath(DATA_DIR,botId,threadId);
+  ownedPath(desk,{create:false,snapshot});
   context=partitionProcedureContext(botId,threadId,context);
   const bundle=readProcedureBundle(botId,threadId,pin);
   try {
@@ -154,16 +227,23 @@ export function preparePinnedProcedures(botId:string,threadId:string,pin:Procedu
       assertSkillProcedureEvidence(context,skill.evidence??[]);
     }
   }catch(error){revokePinnedMaterialization(botId,threadId,pin,bundle);throw error;}
-  const desk=taskWorkspacePath(DATA_DIR,botId,threadId);
-  const root=join(desk,".murage-procedures",pin.bundleId);ownedDirectory(root);
+  const root=join(desk,".murage-procedures",pin.bundleId);
+  if(native){
+    ownedDirectory(desk);
+    const procedures=join(desk,".murage-procedures");
+    if(!lstatSync(procedures,{throwIfNoEntry:false}))ownedDirectory(procedures);
+    stagingDirectory(desk);
+  }
+  const owned=bundle.files.filter(file=>file.path.startsWith("owner/"));
+  const ownerRoot=owned.length?ownerProjectionRoot(botId,threadId,pin.bundleId):undefined;
+  const at=(path:string)=>path.startsWith("owner/")?join(ownerRoot!,path):join(root,path);
+  pinRead(()=>{
+  ownedDirectory(root);
   // The owner's own skills (`owner/`) are only in an owner turn's pin, and their copy is written to app state
   // beside the bundle, never to the desk: a turn that does not answer the owner runs in this same desk, and
   // is never given the owner folder. Nothing has to leave the desk for it (OWNER-PIN-AUDIENCE-108.md).
-  const owned=bundle.files.filter(file=>file.path.startsWith("owner/"));
   if(owned.length&&bundle.ownerTurn!==true)fail();
-  const ownerRoot=owned.length?ownerProjectionRoot(botId,threadId,pin.bundleId):undefined;
   if(ownerRoot)ownedDirectory(ownerRoot);
-  const at=(path:string)=>path.startsWith("owner/")?join(ownerRoot!,path):join(root,path);
   const published=join(root,".complete");
   const isPublished=existsSync(published);
   for(const file of bundle.files){
@@ -182,6 +262,7 @@ export function preparePinnedProcedures(botId:string,threadId:string,pin:Procedu
   if(ownerRoot)inspect(ownerRoot,new Set(owned.map(file=>file.path)));
   if(!isPublished)writeFileSync(published,pin.bundleId,{flag:"wx",mode:0o400});
   else if(regularBytes(published).toString()!==pin.bundleId)fail();
+  });
   // Native discovery dirs exist only when a skill is linked into them, as
   // skills.ts does: an empty app-created `.agents/skills` would otherwise be
   // scanned as a trust-sensitive source of every private workspace and raise
@@ -198,35 +279,29 @@ export function preparePinnedProcedures(botId:string,threadId:string,pin:Procedu
   // user which skills it affected. A link it could not remove refuses it.
   const unlinked:string[]=[];
   if(native){
-    const procedures=join(desk,".murage-procedures"),pinned=new Set(bundle.imported.map(skill=>skill.name));
+    const pinned=new Set(bundle.imported.map(skill=>skill.name));
+    sweepRelinks(desk,threadId,root);
     for(const dir of [".claude/skills",".agents/skills",".grok/skills"]){
-      const directory=join(desk,dir);
-      // With nothing pinned, never create a discovery dir, and leave one that
-      // is not ours alone rather than refuse a turn that links nothing.
+      const directory=join(desk,dir),dirTag=dir.split("/")[0]!.slice(1);
       if(!bundle.imported.length){if(!existsSync(directory))continue;try{ownedDirectory(directory);}catch{continue;}}
       else ownedDirectory(directory);
       for(const name of readdirSync(directory)){
-        if(pinned.has(name)||!earlierPinLink(join(directory,name),procedures,name))continue;
-        // A skill this pin no longer carries must not stay discoverable.
-        try{removeLinkWithRetry(join(directory,name));}
-        catch{throw new Error(`Murage could not remove the link for the skill "${name}", which this task no longer uses, so the turn did not start. Try again.`);}
+        if(pinned.has(name))continue;
+        const link=join(directory,name),target=join(root,"skills",name);
+        let identity:LinkIdentity;try{identity=readLinkIdentity(link);}catch{continue;}
+        if(ownLinkTail(identity.text,{threadId,name,target})!=="ours")continue;
+        replaceOwnLink(desk,threadId,dirTag,name,link,target,identity,false);
       }
       for(const skill of bundle.imported){
         const link=join(directory,skill.name),target=join(root,"skills",skill.name);
-        let stat:ReturnType<typeof lstatSync>|undefined;
-        try{stat=lstatSync(link);}catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;}
-        if(stat){
-          if(!stat.isSymbolicLink())fail();
-          if(nativeLinkPointsToSkill(link,target))continue;
-          if(!earlierPinLink(link,procedures,skill.name))fail();
+        let identity:LinkIdentity|undefined;
+        try{const stat=lstatSync(link,{throwIfNoEntry:false});if(stat)identity=readLinkIdentity(link);}catch(error){foreignFailure(error);}
+        if(identity){
+          const kind=ownLinkTail(identity.text,{threadId,name:skill.name,target});
+          if(kind==="current")continue;
+          if(kind==="foreign")foreignFailure();
         }
-        try{relinkDirectory(link,target);}
-        catch{
-          // The earlier pin's link still standing would keep that copy
-          // discoverable under this pin: refuse the turn rather than run on it.
-          if(lstatSync(link,{throwIfNoEntry:false}))throw new Error(`Murage could not move the link for the skill "${skill.name}" to this task's pinned copy, so the turn did not start. Try again.`);
-          if(!unlinked.includes(skill.name))unlinked.push(skill.name);
-        }
+        if(!replaceOwnLink(desk,threadId,dirTag,skill.name,link,target,identity,true)&&!unlinked.includes(skill.name))unlinked.push(skill.name);
       }
     }
   }

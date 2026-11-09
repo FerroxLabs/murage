@@ -48,7 +48,7 @@ it("after a completed reclaim the downgrade leaves no retained provider session 
   const dir = await fixture(1);
   // the session row was deleted by the reclaim, and nothing else names the session: 1.0.1 would resume it
   expect(v101Resumes(dir, "th", "drv", "sess-1")).toBe(true);
-  downgradeInstallationMemorySchema(dir, 6);
+  downgradeInstallationMemorySchema(dir, 6, { testOnlyBefore102: true });
   expect(v101Resumes(dir, "th", "drv", "sess-1")).toBe(false);
   const bots = JSON.parse(readFileSync(join(dir, "bots.json"), "utf8"));
   expect(bots[0].resumeCursors).toEqual({});
@@ -57,7 +57,7 @@ it("after a completed reclaim the downgrade leaves no retained provider session 
 
 it("a file the reclaim never touched keeps its retained sessions", async () => {
   const dir = await fixture(0);
-  downgradeInstallationMemorySchema(dir, 6);
+  downgradeInstallationMemorySchema(dir, 6, { testOnlyBefore102: true });
   expect(v101Resumes(dir, "th", "drv", "sess-1")).toBe(true);
 });
 
@@ -85,7 +85,7 @@ it("the step back waits for a connection still leaving the file instead of faili
   const file = join(dir, "messages.db");
   const left = holdFileUntilClose(file, 400);
   const started = Date.now();
-  downgradeInstallationMemorySchema(dir, 6); // the first statement meets the held file: it waits, then goes ahead
+  downgradeInstallationMemorySchema(dir, 6, { testOnlyBefore102: true }); // the first statement meets the held file: it waits, then goes ahead
   expect(Date.now() - started).toBeGreaterThanOrEqual(300);
   await left;
   expect(v101Resumes(dir, "th", "drv", "sess-1")).toBe(false);

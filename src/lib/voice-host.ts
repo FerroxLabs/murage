@@ -15,8 +15,9 @@ export function callRouteHeaders(): Record<string, string> {
 }
 
 export type HostEvent =
+  | { type: "audio"; callSessionId: string; threadId: string; replyId: string }
   | { type: "sentence"; text: string; /** first piece cut at a clause; for the timing line only */ clause?: true }
-  | { type: "hand_down"; request: string }
+  | { type: "hand_down"; request: string; id: string }
   /** A web lookup started; its answer follows as sentences. */
   | { type: "lookup"; query: string }
   | { type: "cancel" }
@@ -49,6 +50,7 @@ export interface HostTurnInput {
   approval?: string;
   /** `text` is a finished answer to tell in a few sentences, not speech. */
   brief?: boolean;
+  replyId?: string;
   /** A room call: the channel this member is answering in (server builds a
    *  room snapshot). */
   groupId?: string;
@@ -70,6 +72,18 @@ export const BRIEF_OVER_CHARS = 450;
 /** The host failures that will not fix themselves during this call: stop
  *  asking the host and let the engine take every turn, as calls did before. */
 export const HOST_OFF_FOR_CALL = new Set(["key", "auth", "premium", "unavailable"]);
+
+/** L-COPY call.budgetStop: said once when a turn on a call fails because the
+ *  key's budget or balance is used up; the call then ends (VOICE-402-STOP). */
+export const CALL_BUDGET_STOP = "The call ended because this Flux key has reached its budget. You can start another call when the budget resets or changes.";
+
+/** Only a typed refusal from a known Flux adapter ends a call for budget.
+ * Owner billing failures, premium access and ordinary prose are not this signal. */
+export function isBudgetFailure(info: unknown): boolean {
+  if (!info || typeof info !== "object") return false;
+  const value = info as { fluxBudget?: unknown; provider?: unknown };
+  return value.fluxBudget === true && value.provider === "flux-router";
+}
 
 /** Wake the model when a call starts. Fire and forget. */
 export function warmHost(botId: string): void {
@@ -107,7 +121,10 @@ export async function hostTurn(
   }
   if (!res.ok || !res.body) {
     const body = await res.json().catch(() => ({}));
-    onEvent({ type: "error", reason: "upstream", message: body?.error ?? `the harness returned ${res.status}` });
+    const code = body?.error?.code ?? body?.code ?? body?.error;
+    const message = typeof body?.error === "string" ? body.error : body?.error?.message ?? body?.message;
+    const reason = res.status === 402 ? (code === "premium_locked" ? "premium" : "budget") : "upstream";
+    onEvent({ type: "error", reason, message: typeof message === "string" ? message : `the harness returned ${res.status}` });
     return;
   }
   const reader = res.body.getReader();
@@ -124,15 +141,25 @@ export async function hostTurn(
         buffer = buffer.slice(end + 2);
         const data = frame.startsWith("data:") ? frame.slice(5).trim() : "";
         if (!data) continue;
+        let event: HostEvent;
         try {
-          onEvent(JSON.parse(data) as HostEvent);
+          event = JSON.parse(data) as HostEvent;
         } catch {
           // a malformed frame is skipped, not fatal
+          continue;
         }
+        // A terminal refusal must retire the reader even if the UI callback throws.
+        if (event?.type === "error" && event.reason === "budget") {
+          try { onEvent(event); } finally { return; }
+        }
+        onEvent(event);
       }
     }
   } catch {
     if (!signal?.aborted) onEvent({ type: "error", reason: "upstream", message: "The reply was cut off." });
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
 }
 
@@ -151,17 +178,4 @@ export function plainFailure(details: string): string {
   const first = text.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? text;
   const clipped = first.replace(/…$/, "").trim();
   return clipped.length > 220 ? `${clipped.slice(0, 217).replace(/\s+\S*$/, "")}.` : clipped || "The engine reported an error.";
-}
-
-/**
- * What to read out when a long answer could not be told briefly: its first
- * paragraph of prose (not a heading, not a list), then that the rest is in
- * the chat. Heard live: a failed brief read out a whole calendar, markdown
- * and all.
- */
-export function openingOf(answer: string): string {
-  const paragraphs = answer.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
-  const prose = paragraphs.find((p) => !/^(#|[-*+]\s|\d+[.)]\s|\*\*[^*]+\*\*\s*$|\|)/.test(p)) ?? paragraphs[0] ?? "";
-  const clipped = prose.length > 450 ? `${prose.slice(0, 450).replace(/\s+\S*$/, "")}…` : prose;
-  return clipped ? `${clipped} The rest is in the chat.` : "It's in the chat.";
 }

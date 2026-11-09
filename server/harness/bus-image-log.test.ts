@@ -35,10 +35,14 @@ describe("the canonical event log", () => {
     expect(written).not.toContain(bigImage);
     // the shape survives, so the log still shows an image happened
     expect(written).toContain("assistant_image");
-    expect(written).toContain("50000 base64 chars");
+    // ql2 sink fold (was a "50000 base64 chars" stand-in): an image's data is not a logged field, so nothing of it is written
+    expect(written).not.toContain("AAAA");
+    expect(Object.hasOwn(JSON.parse(written.trim()), "data")).toBe(false);
   });
 
-  it("leaves ordinary events untouched", () => {
+  // ql2 sink fold (was "leaves ordinary events untouched", the text on disk): an ordinary reply keeps its envelope and the fixed
+  // reply label (runtime-event-out.ts REPLY_LOGGED_TEXT), never its words
+  it("writes an ordinary reply as its envelope, never its words", () => {
     const { bus, writes } = captureAppend();
 
     bus.publish({
@@ -49,6 +53,7 @@ describe("the canonical event log", () => {
       data: "an ordinary reply",
     } as never);
 
-    expect(writes.join("")).toContain("an ordinary reply");
+    expect(writes.join("")).toContain("assistant_text");
+    expect(writes.join("")).not.toContain("an ordinary reply");
   });
 });
