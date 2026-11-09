@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Engine sign-in on this computer (1.0.14, handoffs/designs/ENGINE-SIGNIN-SIMPLE-1014.md). Runs in Electron MAIN only.
+// Engine sign-in on this computer (1.0.14, design ENGINE-SIGNIN-SIMPLE-1014.md). Runs in Electron MAIN only.
 // The rule: no sign-in output enters Murage. The server hands a fixed recipe; main starts the engine's own login with all
 // three stdio on ignore; the engine opens the owner's browser and stores its own token; the probe says when it is done.
 //   - Opening the dialog starts nothing. preview reads the engine and folder; only the press inside the dialog calls start.

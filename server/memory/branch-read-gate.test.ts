@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -90,3 +91,5 @@ it("the read gate is a keyed seek whose plan is the same at 10 and at 100,000 so
   }
   expect(plans[1]).toBe(plans[0]);
 });
+
+useOutsideStoreFixture();

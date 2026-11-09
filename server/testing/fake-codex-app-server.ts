@@ -300,6 +300,10 @@ const finishTurn = () => {
     notify("item/agentMessage/delta", { itemId: "m1", delta: "done from " });
     notify("item/agentMessage/delta", { itemId: "m1", delta: "fake codex" });
   }
+  if (mode === "big-frame") {
+    notify("fake/bigFrame", { text: `BIGFRAME-CANARY ${"x".repeat(70_000)}` });
+    notify("item/completed", { item: { id: "img2", type: "imageGeneration", status: "completed", result: "A".repeat(70_000), savedPath: "/tmp/provider-owned-path-must-not-be-read.png" } });
+  }
   if (mode === "image") {
     notify("item/completed", {
       item: {
@@ -699,6 +703,7 @@ process.stdin.on("data", (chunk) => {
           void waitForGate(process.env.FAKE_CODEX_EXIT_MID_TURN).then(() => {
             out({ jsonrpc: "2.0", id: ackId, result: turnResult() });
             notify("item/reasoning/textDelta", { itemId: "m1", delta: "still thinking" });
+            if (process.env.FAKE_CODEX_USAGE_MID_TURN) notify("thread/tokenUsage/updated", { tokenUsage: { last: { inputTokens: 11, outputTokens: 2 }, total: { inputTokens: 11, outputTokens: 2 } } });
             void waitForGate(process.env.FAKE_CODEX_EXIT_MID_TURN_KILL).then(() => process.kill(process.pid, "SIGKILL"));
           });
           break;
@@ -770,6 +775,14 @@ process.stdin.on("data", (chunk) => {
               message: "unexpected status 401 Unauthorized: Missing bearer or basic authentication in header",
             },
           });
+          break;
+        }
+        if (mode.startsWith("flux-budget-")) {
+          const code = mode.slice("flux-budget-".length);
+          out({ jsonrpc: "2.0", id: msg.id, result: turnResult() });
+          const error = { message: `unexpected status 402: ${JSON.stringify({ error: code })}`, codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 402 } } };
+          notify("error", { error });
+          notify("turn/completed", { turn: { status: "failed", error } });
           break;
         }
         if (mode === "terminal-error" || mode === "terminal-error-duplicate") {

@@ -90,6 +90,10 @@ export const FLUX_ANTHROPIC_BASE = "https://api.fluxrouter.ai/anthropic";
  *    carries its own gateway and model; Murage sends it no key; Cline runs the
  *    provider chosen in `cline auth`). No evidence either way,
  *    and an unclassified engine is not routable, so this fails closed.
+ *  - `museCode` — NEVER Flux, by Meta's terms rather than missing evidence:
+ *    Meta's Terms s.10.1(i) bar aggregators, gateways and proxies, so Muse
+ *    Code talks only to Meta on the owner's own sign-in or key. Do not add a
+ *    row for it (GAP-MUSE-CHECK-1101.md section 2).
  *
  * TWO CORRECTIONS to what this comment used to say, both wrong on the facts:
  *  - it claimed `opencodeGo` is vendor-locked. It is not. OpenCode is

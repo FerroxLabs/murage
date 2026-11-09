@@ -22,6 +22,12 @@ describe("LimitTurns.observe: Murage's own chips are not engine activity", () =>
     return turns.get("t1")!;
   };
 
+  it("1.0.18 Astra r4: a runtime.error keeps the driver's structured HTTP status (a plain HTTP-driver 429 can reach the busy card)", () => {
+    const kept = seen({ type: "runtime.error", threadId: "t1", turnId: "p1", message: "The request limit was reached.", providerError: { httpStatus: 429 } });
+    expect(kept.httpStatus).toBe(429);
+    expect(seen({ type: "runtime.error", threadId: "t1", turnId: "p1", message: "x", providerError: { httpStatus: "429" } }).httpStatus).toBeUndefined();
+  });
+
   it("the folder trust chip, started with origin murage and completed without, leaves the turn inactive", () => {
     expect(seen(...chip("folder-trust-p1-1")).activity).toBe(false);
   });

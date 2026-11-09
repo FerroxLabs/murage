@@ -1,11 +1,11 @@
 // trackVisualViewport with a fake visualViewport. No DOM library is set up in
 // this repo, so window and document are small stand-ins.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isKeyboardOpen, trackVisualViewport } from "./visual-viewport";
+import { isKeyboardOpen, isPinchZoomed, trackVisualViewport } from "./visual-viewport";
 
 type Listener = () => void;
 
-function setup(vv: { height: number; offsetTop: number } | undefined, innerHeight = 800) {
+function setup(vv: { height: number; offsetTop: number; scale?: number } | undefined, innerHeight = 800) {
   const style = new Map<string, string>();
   const dataset: Record<string, string> = {};
   const vvListeners = new Map<string, Listener>();
@@ -77,6 +77,31 @@ describe("trackVisualViewport", () => {
     expect(style.get("--vvt")).toBe("0px");
   });
 
+  it("data-zoomed follows a pinch in and back out, with the keyboard up throughout", () => {
+    const { dataset, visualViewport, vvListeners, flush } = setup({ height: 450, offsetTop: 0, scale: 1 });
+    trackVisualViewport();
+    expect(dataset.keyboard).toBe("open");
+    expect(dataset.zoomed).toBeUndefined();
+    visualViewport!.scale = 2;
+    vvListeners.get("resize")!();
+    flush();
+    expect(dataset.keyboard).toBe("open");
+    expect(dataset.zoomed).toBe("");
+    visualViewport!.scale = 1;
+    vvListeners.get("resize")!();
+    flush();
+    expect(dataset.keyboard).toBe("open");
+    expect(dataset.zoomed).toBeUndefined();
+  });
+
+  it("teardown removes data-zoomed", () => {
+    const { dataset } = setup({ height: 450, offsetTop: 0, scale: 2 });
+    const teardown = trackVisualViewport();
+    expect(dataset.zoomed).toBe("");
+    teardown();
+    expect(dataset.zoomed).toBeUndefined();
+  });
+
   it("visualViewport absent: does nothing and returns a teardown that is safe to call", () => {
     const { style, dataset } = setup(undefined);
     const teardown = trackVisualViewport();
@@ -90,6 +115,15 @@ describe("trackVisualViewport", () => {
     trackVisualViewport()();
     expect(vvListeners.size).toBe(0);
     expect(winListeners.size).toBe(0);
+  });
+});
+
+describe("isPinchZoomed", () => {
+  it("is true only past a hair above 1, and a browser with no scale reads as not zoomed", () => {
+    expect(isPinchZoomed({ scale: 1 })).toBe(false);
+    expect(isPinchZoomed({ scale: 1.005 })).toBe(false);
+    expect(isPinchZoomed({ scale: 1.5 })).toBe(true);
+    expect(isPinchZoomed({})).toBe(false);
   });
 });
 

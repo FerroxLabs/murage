@@ -10,11 +10,13 @@
 // Fixture strings are inert data, never executed.
 import { posix } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { nlh0 } from "./testing/marks-nlh0.ts";
 
 process.env.HOME = "/home/tester";
 process.env.USERPROFILE = "/home/tester";
 vi.resetModules();
 const { alwaysAskCommand } = await import("./always-ask.ts");
+const { withoutDoubts, ownerMarks } = await import("./shell/marks.ts");
 const { autoVerdict } = await import("./auto-approve.ts");
 const { classifyStopLine } = await import("./stop-line.ts");
 
@@ -30,35 +32,38 @@ type Level = keyof typeof LEVELS;
 // on-disk cases are server/nolimits-node-109.test.ts
 const STUB = { realpath: (path: string) => path, stat: () => ({ isFile: () => true, isDirectory: () => true }) };
 const nix = (cwd: string) => ({ cwd, roots: [cwd, "/tmp"], home: "/home/tester", knownRecipients: new Set<string>(), realpath: (p: string) => posix.normalize(p) });
-const verdict = (level: Level, cmd: string, cwd = CWD) =>
-  autoVerdict(LEVELS[level], "Bash", cmd, { commandText: cmd, commandCwd: cwd, stopLine: classifyStopLine("Bash", { command: cmd }, "", nix(cwd)), unseen: { fs: STUB, platform: "posix" } });
+// r13 owner-started proof (auto-approve.ts ownerOwnTurn) plus a clean outside read (outsideRead null, as CLEAN in nolimits-means-it-1020): the helpers mean the owners own clean turn
+const OWNER_TURN = { fullAccessOrigin: "owner", ownerStarted: true, outsideRead: null } as const;
+const verdict = (level: Level, cmd: string, cwd = CWD, proof: object = OWNER_TURN) =>
+  autoVerdict(LEVELS[level], "Bash", cmd, { ...proof, commandText: cmd, commandCwd: cwd, stopLine: classifyStopLine("Bash", { command: cmd }, "", nix(cwd)), unseen: { fs: STUB, platform: "posix" } });
 const pwshVerdict = (level: Level, cmd: string) =>
   autoVerdict(LEVELS[level], "PowerShell", cmd, { commandText: cmd, commandCwd: "C:\\work" });
 const everywhere = (cmd: string, cwd = CWD) => {
   for (const level of Object.keys(LEVELS) as Level[]) expect(verdict(level, cmd, cwd), `${level}: ${cmd}`).toMatchObject({ approve: null });
 };
 
+// MARKS r14: the dummy script operand is ./noop, not /dev/null: a system device named as a script is a protected path now (D2-b), and these rows test the loader finding
 describe("code an interpreter loads first from a folder or a variable asks at every level (POSIX)", () => {
   it.each([
     // Grok r7 High 1: ruby -I, and RUBYLIB
-    "ruby -I./evil -rjson /dev/null",
-    "ruby -I ./evil -rjson /dev/null",
-    "ruby -I./evil /dev/null",
-    "RUBYLIB=./evil ruby -rjson /dev/null",
+    "ruby -I./evil -rjson ./noop",
+    "ruby -I ./evil -rjson ./noop",
+    "ruby -I./evil ./noop",
+    "RUBYLIB=./evil ruby -rjson ./noop",
     // Grok r7 High 2: loader variables on the command
-    "NODE_OPTIONS=--require=./evil.js node /dev/null",
-    "RUBYOPT=-r./evil.rb ruby /dev/null",
-    "PERL5OPT=-MEvil perl /dev/null",
-    "PYTHONSTARTUP=./evil.py python /dev/null",
-    "BASH_ENV=./evil.sh bash /dev/null",
+    "NODE_OPTIONS=--require=./evil.js node ./noop",
+    "RUBYOPT=-r./evil.rb ruby ./noop",
+    "PERL5OPT=-MEvil perl ./noop",
+    "PYTHONSTARTUP=./evil.py python ./noop",
+    "BASH_ENV=./evil.sh bash ./noop",
     // the same variables set before, exported, through env, or by a name a value gives
-    "export NODE_OPTIONS=--require=./evil.js; node /dev/null",
+    "export NODE_OPTIONS=--require=./evil.js; node ./noop",
     "NODE_OPTIONS=--require=./evil.js; export NODE_OPTIONS; node -e 1",
     "env PYTHONPATH=./evil python -c 'print(1)'",
     "export BASH_ENV=./evil.sh && bash -c 'echo hi'",
     "declare -x PERL5OPT=-MEvil; perl -e 1",
-    "n=NODE_OPTIONS; export \"$n=--require=./evil.js\"; node /dev/null",
-    "LD_PRELOAD=./evil.so python3 /dev/null",
+    "n=NODE_OPTIONS; export \"$n=--require=./evil.js\"; node ./noop",
+    "LD_PRELOAD=./evil.so python3 ./noop",
     "ZDOTDIR=./evil zsh -c 'echo hi'",
     "PHPRC=./evil php -r 'echo 1;'",
     // a loader variable set after the call is still read as set
@@ -73,12 +78,12 @@ describe("code an interpreter loads first from a folder or a variable asks at ev
     "python3 -m runpy tool.py",
     "python3 -m pdb tool.py",
     "python3 -mtrace --run tool.py",
-    "perl -wMEvil /dev/null",
-    "ruby -wI./evil -rjson /dev/null",
-    "ruby -wr./evil.rb /dev/null",
+    "perl -wMEvil ./noop",
+    "ruby -wI./evil -rjson ./noop",
+    "ruby -wr./evil.rb ./noop",
     "php -ndauto_prepend_file=./evil.php -r 'echo 1;'",
-    "export $'NODE_OPT\\x49ONS'=--require=./evil.js; node /dev/null",
-    "env $'NODE_OPT\\x49ONS=--require=./evil.js' node /dev/null",
+    "export $'NODE_OPT\\x49ONS'=--require=./evil.js; node ./noop",
+    "env $'NODE_OPT\\x49ONS=--require=./evil.js' node ./noop",
     "node -e 1 -r ./evil.js",
     // a startup file the text itself writes, then a shell or an interpreter that reads it
     "printf 'rm -rf ~' > ~/.zshenv; zsh -c 'echo hi'",
@@ -97,9 +102,7 @@ describe("code an interpreter loads first from a folder or a variable asks at ev
     "ruby -wI./evil -rjson -e 'puts 1'",
     "ruby -wr./evil.rb -e 'puts 1'",
     "php -B 'echo 1;'",
-    "python3 -c 'open(__import__(\"os\").path.expanduser(\"~\")+\"/.zshe\"+\"nv\",\"w\").write(\"x\")'; zsh -c true",
     "echo x > \"$HOME/.zshe\"nv; zsh -c true",
-    "f=$(mktemp); echo x > \"$f\"; bash -lc true",
     "PS0='$(touch /tmp/owned)' bash -ic 'echo hi'",
     "PS1='$(touch /tmp/owned)' zsh -ic 'echo hi'",
     // 1.0.5 r8c: any ruby bundle with I or r asks
@@ -164,7 +167,11 @@ describe("what stays as it was", () => {
     "python3 -c 'print(1)'; python3 -c 'print(2)'",
     "ruby -w -e 'puts 1'",
   ])("`%s` is an ordinary command", (cmd) => {
-    expect(alwaysAskCommand(cmd, CWD)).toBeNull();
+    // MARKS r11: the doubt-free read (Full access, and the owner's own No limits turn) is b18's; the strict read may only add a
+    // closed-list doubt, never a named rule
+    expect(withoutDoubts(() => alwaysAskCommand(cmd, CWD))).toBeNull();
+    const strict = alwaysAskCommand(cmd, CWD);
+    if (strict) expect(strict, cmd).toMatchObject({ rule: "unreadable", doubt: expect.any(String) });
   });
   // Sean's relief: one script on disk, and the venv shapes, after a cd joined by `;` too
   // 1.0.9: the `cd` names its folder `./…` and is joined with `&&` (NOLIMITS-NODE-109-CUT R3)
@@ -187,8 +194,42 @@ describe("what stays as it was", () => {
       const held = autoVerdict(LEVELS[level], "other", "bash ./build.sh", { commandText: "bash ./build.sh", commandCwd: CWD, call: wrapped("sudo rm -rf /home") });
       expect(held, level).toMatchObject({ approve: null, source: "always-ask" });
       expect(held.rule, level).not.toBe("unreadable");
-      const ok = autoVerdict(LEVELS[level], "other", "bash ./build.sh", { commandText: "bash ./build.sh", commandCwd: CWD, call: wrapped("ls -la"), unseen: { fs: STUB, platform: "posix" } });
+      const ok = autoVerdict(LEVELS[level], "other", "bash ./build.sh", { ...OWNER_TURN, commandText: "bash ./build.sh", commandCwd: CWD, call: wrapped("ls -la"), unseen: { fs: STUB, platform: "posix" } });
       expect(ok.source, level).not.toBe("always-ask");
     }
+  });
+});
+
+describe("MARKS r13 owner-started proof (fail-closed)", () => {
+  it("an unseen script runs at No limits on an owner-started turn and asks without the proof", () => {
+    expect(verdict("No limits", "bash ./build.sh").approve).toBeTruthy();
+    for (const missing of [{}, { fullAccessOrigin: "owner", ownerStarted: true }, { ownerStarted: false, fullAccessOrigin: "owner" }, { ownerStarted: true, fullAccessOrigin: "other" }]) {
+      expect(verdict("No limits", "bash ./build.sh", CWD, missing).approve).toBeNull();
+    }
+  });
+});
+
+// MARKS r14: two rows that used to ask now deny, by authorised spec rows (MARKS-r14 section 3): FD4 (a write target the
+// code computes cannot be read, unsupported executable code is a hard finding) and D1-a (an unresolved write target is
+// no fixed binding). A deny never runs at any level and never shows an Allow card; they stay in this file as the
+// fail-closed pair of the loader rows above.
+describe("a computed or unresolved write target before a startup-file reader is a hard deny (FD4, D1-a)", () => {
+  it.each([
+    "python3 -c 'open(__import__(\"os\").path.expanduser(\"~\")+\"/.zshe\"+\"nv\",\"w\").write(\"x\")'; zsh -c true",
+    "f=$(mktemp); echo x > \"$f\"; bash -lc true",
+  ])("`%s`", (cmd) => {
+    // R1 (G5): outside the owner's clean No limits turn the plain read is NLH0's (pinned); the rows below state the owner's read
+    nlh0(`reader-loaders-105|${cmd}|read`, alwaysAskCommand(cmd, CWD));
+    if (cmd.startsWith("f=$(mktemp)")) {
+      // FIX A migration (ruling (ii), coordinator 11-08): a plain write to a value-only temp path is no delete/disk/mirror verb and
+      // names no protected path: a could-not-read (card at Full access and elsewhere), waived on the owner's clean No limits turn
+      expect(ownerMarks(() => alwaysAskCommand(cmd, CWD))).toMatchObject({ classification: "ask", couldNotRead: true });
+      const at = (bot: Record<string, unknown>) => autoVerdict(bot as never, "Bash", cmd, { commandText: cmd, commandCwd: CWD, workFolder: CWD, fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null } as never);
+      expect(at({ id: "x", autoApprove: true, fullAccess: true })).toMatchObject({ approve: null, source: "always-ask" });
+      expect(at({ id: "x", autoApprove: true, fullAccess: true, noLimits: true }).approve).toBeTruthy();
+      return;
+    }
+    expect(ownerMarks(() => alwaysAskCommand(cmd, CWD))).toMatchObject({ classification: "deny" });
+    everywhere(cmd);
   });
 });

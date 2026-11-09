@@ -21,6 +21,7 @@ vi.resetModules();
 const { alwaysAskCommand } = await import("./always-ask.ts");
 const { autoVerdict } = await import("./auto-approve.ts");
 const { classifyStopLine } = await import("./stop-line.ts");
+const { expectOrdinary } = await import("./testing/marks-doubt-free.ts");
 const claude = (await import("./drivers/claude.ts")) as unknown as Record<string, any>;
 type StopLinePlace = import("./stop-line.ts").StopLinePlace;
 
@@ -94,7 +95,8 @@ describe("U17: a script on disk the reader does not see asks, as under PowerShel
       // 1.0.5 r6: the script path is placed from the command's folder (every
       // local turn has one); with no folder a relative path asks
       if (BELOW_FULL.has(cmd)) {
-        expect(autoVerdict(bot, "Bash", cmd, { commandText: cmd, commandCwd: "/work/project", unseen: { fs: STUB, platform: "posix" } }).approve, cmd).toBeTruthy();
+        // MARKS r13 (Astra H2): the owner's own turn carries its proof (ownerStarted), as server/index.ts gives it
+        expect(autoVerdict(bot, "Bash", cmd, { commandText: cmd, commandCwd: "/work/project", unseen: { fs: STUB, platform: "posix" }, fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null }).approve, cmd).toBeTruthy();
         expect(autoVerdict(bot, "Bash", cmd)).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
       } else expect(autoVerdict(bot, "Bash", cmd)).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
     }
@@ -121,7 +123,7 @@ describe("U17: a script on disk the reader does not see asks, as under PowerShel
     "git status",
   ];
   it.each(ORDINARY)("%s stays ordinary", (cmd) => {
-    expect(alwaysAskCommand(cmd, CWD)).toBeNull();
+    expectOrdinary(cmd, CWD); // MARKS r12 re-baseline: the doubt-free read is clean; the strict read adds at most a closed-list doubt (non-owner No limits turns)
   });
 });
 

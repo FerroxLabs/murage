@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 import { afterEach, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -103,7 +105,7 @@ it(`${wrapped?"wrapped ":""}refuses a permission request for another session wit
 it(`${wrapped?"wrapped ":""}a resumed turn gets a fresh alias and cannot reuse the preceding turn's automatic permission`, async () => {
   const f = await fixture("two-turns", "memory_search", wrapped), first = await f.instance.adapter.sendTurn(f.turn);
   await f.recorder.until(event => event.type === "turn.completed" && event.turnId === first.turnId);
-  const second = await f.instance.adapter.sendTurn({ ...f.turn, resumeCursor: "memory-fixture-session" });
+  const second = await f.instance.adapter.sendTurn({ cwd: fixtureBotFolder(), ...f.turn, resumeCursor: "memory-fixture-session" });
   const opened = await f.recorder.until(event => event.type === "request.opened" && event.turnId === second.turnId);
   if (opened.type !== "request.opened" || typeof opened.requestId !== "string") throw Error("missing request");
   await f.instance.adapter.respondToRequest(f.threadId, opened.requestId, { behavior: "deny" });
@@ -149,3 +151,6 @@ it("allows the three thread tools once under the rotated alias and refuses a wro
     expect(`${alias}__${tool}`.length).toBeLessThanOrEqual(61);
   }
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

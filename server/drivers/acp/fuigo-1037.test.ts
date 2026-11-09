@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 // Fuigo 1.0.37 checks a call approved without a grant in an ACP client terminal: folder trust, shell, then the
 // environment, and it can refuse. Fuigo uses a client terminal only when the client says it has one
 // (select_terminal_backend_kind, resolve_client_io_caps) or a leader injects `clientTerminal`. Murage says neither
@@ -79,3 +80,6 @@ describe("Fuigo 1.0.37: an ACP client terminal is never on offer", () => {
     noClientTerminal(run);
   }, 30000);
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

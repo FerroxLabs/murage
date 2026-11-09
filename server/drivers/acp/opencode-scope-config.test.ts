@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The bot's scoped copy of an OpenCode config folder follows the owner's source: a deleted config removes the copy, an unreadable one
 // removes it and rejects the turn (never stale settings), and config-relative file references are rebased to the source folder.
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ensureDirs } from "../../config.ts";
-import { resetIsolationCache } from "../isolation-cache.ts";
-import { ScopeUnavailableError, resetScopeBookkeeping, scopeLocalFailureOf } from "../scoped-cli-home.ts";
+import { isolationStats, readText, resetIsolationCache } from "../isolation-cache.ts";
+import { ScopeUnavailableError, resetScopeBookkeeping, scopedCliHome, scopeLocalFailureOf } from "../scoped-cli-home.ts";
 import { filterOpenCodeConfigFile, isolateOpenCodeGlobalInstructions, rebaseOpenCodeFileRefs } from "./opencode-go.ts";
 import { removeTempDirSync } from "../../testing/cleanup.ts";
 
@@ -113,5 +113,98 @@ describe("config-relative references are rebased to the source folder", () => {
   it("still drops the keys that start or load the owner's own things, and reports an unreadable text as null", () => {
     expect(JSON.parse(filterOpenCodeConfigFile('{"model":"a","mcp":{"x":{}},"plugin":["p"],"instructions":["i"]}', source)!)).toEqual({ model: "a" });
     expect(filterOpenCodeConfigFile("{ nope", source)).toBeNull();
+  });
+});
+
+describe("OpenCode scope dependency signatures", () => {
+  it("keeps engine additions and in-place schema edits without rebuilding copies", () => {
+    const owner = tmp();
+    writeFileSync(join(owner, "opencode.json"), '{"model":"p/m"}');
+    const scope = scopeOf(owner, "settled");
+    const initial = isolationStats("opencode-config-scope").builds;
+    writeFileSync(join(scope, ".gitignore"), "node_modules\n");
+    writeFileSync(join(scope, "opencode.json"), '{"model":"p/m","$schema":"fixture"}');
+    scopeOf(owner, "settled");
+    expect(isolationStats("opencode-config-scope").builds).toBe(initial);
+    expect(JSON.parse(readFileSync(join(scope, "opencode.json"), "utf8")).$schema).toBe("fixture");
+    // An unrelated owner folder entry also must not rewrite the copies.
+    writeFileSync(join(owner, "unrelated"), "x");
+    scopeOf(owner, "settled");
+    expect(isolationStats("opencode-config-scope").builds).toBe(initial);
+  });
+
+  it("notices a same-size owner edit with its mtime restored", () => {
+    const owner = tmp();
+    const source = join(owner, "opencode.json");
+    writeFileSync(source, '{"model":"p/a"}');
+    utimesSync(source, new Date(1_000_000), new Date(1_000_000));
+    const stamp = statSync(source);
+    const scope = scopeOf(owner, "restore");
+    writeFileSync(source, '{"model":"p/b"}');
+    utimesSync(source, stamp.atime, stamp.mtime);
+    scopeOf(owner, "restore");
+    expect(JSON.parse(readFileSync(join(scope, "opencode.json"), "utf8")).model).toBe("p/b");
+  });
+
+  it("rebuilds a deleted copy, a copy replaced by a link, and a removed scope", () => {
+    const owner = tmp();
+    writeFileSync(join(owner, "opencode.json"), '{"model":"p/m"}');
+    const scope = scopeOf(owner, "removed");
+    const copy = join(scope, "opencode.json");
+    rmSync(copy);
+    scopeOf(owner, "removed");
+    expect(existsSync(copy)).toBe(true);
+    const other = join(owner, "other");
+    writeFileSync(other, '{"model":"p/other"}');
+    rmSync(copy);
+    symlinkSync(other, copy);
+    scopeOf(owner, "removed");
+    expect(lstatSync(copy).isSymbolicLink()).toBe(false);
+    expect(JSON.parse(readFileSync(copy, "utf8")).model).toBe("p/m");
+    removeTempDirSync(scope);
+    scopeOf(owner, "removed");
+    expect(JSON.parse(readFileSync(copy, "utf8")).model).toBe("p/m");
+  });
+
+  it("rejects a source replaced after its read and rebuilds on the next call", () => {
+    const owner = tmp();
+    const source = join(owner, "opencode.json");
+    writeFileSync(source, "old");
+    let replace = true;
+    const spec = {
+      kind: "opencode-config", configDependencies: true as const, realHome: owner,
+      botId: "racing", share: [], generated: () => {
+        const text = readText(source);
+        if (replace) { replace = false; writeFileSync(source, "new content"); }
+        return { "opencode.json": text };
+      },
+    };
+    expect(() => scopedCliHome(spec)).toThrow("OpenCode config changed while preparing this turn");
+    const scope = scopedCliHome(spec);
+    expect(readFileSync(join(scope, "opencode.json"), "utf8")).toBe("new content");
+    scopedCliHome(spec);
+    expect(isolationStats("opencode-config-scope")).toEqual({ builds: 2, hits: 1 });
+  });
+
+  it("keeps the existing post-build recording and folder tracking for other specs", () => {
+    const owner = tmp();
+    const source = join(owner, "config");
+    writeFileSync(source, "old");
+    const spec = {
+      kind: "x4-legacy", realHome: owner, share: [], generated: () => {
+        const text = readText(source);
+        writeFileSync(source, "new content");
+        return { config: text };
+      },
+    };
+    const scope = scopedCliHome(spec);
+    scopedCliHome(spec);
+    expect(isolationStats("x4-legacy-scope")).toEqual({ builds: 1, hits: 1 });
+    expect(readFileSync(join(scope, "config"), "utf8")).toBe("old");
+    writeFileSync(join(scope, "added"), "x");
+    const future = new Date(Date.now() + 5000);
+    utimesSync(scope, future, future);
+    scopedCliHome(spec);
+    expect(isolationStats("x4-legacy-scope").builds).toBe(2);
   });
 });

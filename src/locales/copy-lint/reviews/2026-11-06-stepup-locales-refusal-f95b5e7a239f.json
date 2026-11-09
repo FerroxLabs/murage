@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "claude-opus-stepup-locales",
+  "date": "2026-11-06",
+  "base": "9e509f029b07a30bd613d878107d8814a7c557a8",
+  "scope": "Engine check refusal says why and what to do",
+  "strings": {
+    "stepup/en:line.programRefused": {
+      "text": "This can't be confirmed, so nothing was run. The program's location is missing, too long or has characters this window can't show exactly, such as Hebrew or Arabic letters. Run the check on the computer itself instead.",
+      "en": "This can't be confirmed, so nothing was run. The program's location is missing, too long or has characters this window can't show exactly, such as Hebrew or Arabic letters. Run the check on the computer itself instead.",
+      "verdict": "pass",
+      "note": "Read in round 7."
+    },
+    "stepup/de:line.programRefused": {
+      "text": "Das lässt sich nicht bestätigen, deshalb wurde nichts ausgeführt. Der Speicherort des Programms fehlt, ist zu lang oder enthält Zeichen, die dieses Fenster nicht genau anzeigen kann, zum Beispiel hebräische oder arabische Buchstaben. Führe die Prüfung stattdessen direkt auf dem Computer aus.",
+      "en": "This can't be confirmed, so nothing was run. The program's location is missing, too long or has characters this window can't show exactly, such as Hebrew or Arabic letters. Run the check on the computer itself instead.",
+      "verdict": "pass",
+      "note": "Read in round 7."
+    },
+    "stepup/es:line.programRefused": {
+      "text": "No se puede confirmar, así que no se ejecutó nada. La ubicación del programa falta, es demasiado larga o tiene caracteres que esta ventana no puede mostrar con exactitud, como letras hebreas o árabes. Haz la comprobación en el propio ordenador.",
+      "en": "This can't be confirmed, so nothing was run. The program's location is missing, too long or has characters this window can't show exactly, such as Hebrew or Arabic letters. Run the check on the computer itself instead.",
+      "verdict": "pass",
+      "note": "Read in round 7."
+    },
+    "stepup/fr:line.programRefused": {
+      "text": "Impossible de confirmer, donc rien n'a été lancé. L'emplacement du programme manque, est trop long ou contient des caractères que cette fenêtre ne peut pas afficher exactement, comme des lettres hébraïques ou arabes. Fais plutôt la vérification sur l'ordinateur lui-même.",
+      "en": "This can't be confirmed, so nothing was run. The program's location is missing, too long or has characters this window can't show exactly, such as Hebrew or Arabic letters. Run the check on the computer itself instead.",
+      "verdict": "pass",
+      "note": "Read in round 7."
+    },
+    "stepup/hi:line.programRefused": {
+      "text": "इसकी पुष्टि नहीं हो सकती, इसलिए कुछ नहीं चला। प्रोग्राम की लोकेशन नहीं है, बहुत लंबी है या उसमें ऐसे अक्षर हैं जो यह विंडो ठीक-ठीक नहीं दिखा सकती, जैसे हिब्रू या अरबी अक्षर। इसकी जगह यह जांच उसी कंप्यूटर पर चलाएं।",
+      "en": "This can't be confirmed, so nothing was run. The program's location is missing, too long or has characters this window can't show exactly, such as Hebrew or Arabic letters. Run the check on the computer itself instead.",
+      "verdict": "pass",
+      "note": "Read in round 7."
+    },
+    "stepup/ja:line.programRefused": {
+      "text": "確認できないため、何も実行されませんでした。プログラムの場所がないか、長すぎるか、ヘブライ文字やアラビア文字など、このウィンドウでは正確に表示できない文字が含まれています。代わりに、そのコンピューター上で確認を実行してください。",
+      "en": "This can't be confirmed, so nothing was run. The program's location is missing, too long or has characters this window can't show exactly, such as Hebrew or Arabic letters. Run the check on the computer itself instead.",
+      "verdict": "pass",
+      "note": "Read in round 7."
+    },
+    "stepup/pt-br:line.programRefused": {
+      "text": "Não dá para confirmar, então nada foi executado. O local do programa está faltando, é longo demais ou tem caracteres que esta janela não consegue mostrar com exatidão, como letras hebraicas ou árabes. Faça a verificação no próprio computador.",
+      "en": "This can't be confirmed, so nothing was run. The program's location is missing, too long or has characters this window can't show exactly, such as Hebrew or Arabic letters. Run the check on the computer itself instead.",
+      "verdict": "pass",
+      "note": "Read in round 7."
+    },
+    "stepup/zh:line.programRefused": {
+      "text": "无法确认，因此没有运行任何内容。程序位置缺失、太长，或包含此窗口无法准确显示的字符，例如希伯来文或阿拉伯文。请改为在那台电脑上直接运行检查。",
+      "en": "This can't be confirmed, so nothing was run. The program's location is missing, too long or has characters this window can't show exactly, such as Hebrew or Arabic letters. Run the check on the computer itself instead.",
+      "verdict": "pass",
+      "note": "Read in round 7."
+    }
+  },
+  "files": {}
+}

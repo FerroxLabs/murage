@@ -1,7 +1,8 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Fuigo 1.0.32 driver-facing changes (104-lastresort-evidence/FUIGO-1032-DRIVER-CHANGES.md), held on a
+// Fuigo 1.0.32 driver-facing changes (FUIGO-1032-DRIVER-CHANGES.md), held on a
 // driver that must also run 1.0.31:
 //   - `--permission-mode acceptEdits` now approves workspace edits by itself. Murage never passes it,
 //     at any level: Murage's own approval layer keeps deciding every edit.
@@ -253,3 +254,6 @@ describe("Fuigo 1.0.38 never evaluates a folder's .envrc on a bot turn", () => {
     expect(Object.entries(windows).filter(([name]) => name.toUpperCase() === "FUIGO_ENVRC_TIMEOUT_SECS")).toEqual([["FUIGO_ENVRC_TIMEOUT_SECS", "0"]]);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

@@ -3,7 +3,8 @@
 // acceptance rows L1 to L8 and R1.9's server half.
 import { mkdirSync, mkdtempSync, promises as fsp, readFileSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { removeTempDirSync } from "./testing/cleanup.ts";
@@ -221,6 +222,23 @@ describe("snapshots and paging (R1.3, R1.4)", () => {
     const first = ok(await list.list({ limit: "1" }));
     list.forget();
     expect(await list.list({ limit: "1", snapshot: first.snapshot, cursor: "1" })).toEqual({ status: 409, body: { error: STALE_SNAPSHOT_MESSAGE } });
+  });
+  it("a Remove or a cleanup during a walk: that walk's snapshot is not kept", async () => {
+    const { fs: inner } = fakeFs([{ name: `${uuid(1)}.png` }, { name: `${uuid(2)}.png` }]);
+    let open!: () => void;
+    const gate = new Promise<void>(resolve => { open = resolve; });
+    const fs: WalkFs = { ...inner, async opendir(...args: Parameters<WalkFs["opendir"]>) { await gate; return inner.opendir(...args); } };
+    const list = makeList("/x", undefined, { fs });
+    const walking = list.list({ limit: "1" });
+    list.forget(); // a file went while the folder was being read
+    open();
+    const first = ok(await walking);
+    expect(list.holdsSnapshot).toBe(false);
+    expect((await list.list({ limit: "1", snapshot: first.snapshot, cursor: "1" })).status).toBe(409);
+  });
+  it("the deletion service's file step forgets the Storage list", () => {
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "index.ts"), "utf8");
+    expect(source).toContain("deleteAttachment: (path) => { try { deleteAttachment(path); } finally { storageAttachmentList.forget(); } },");
   });
   it("a snapshot is dropped after five minutes even when nobody asks again", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });

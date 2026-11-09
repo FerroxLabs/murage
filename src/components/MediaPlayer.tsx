@@ -23,7 +23,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { AlertTriangle, Download, FileAudio, FileVideo } from "lucide-react";
 
 import { mediaHintForPath } from "@/lib/composer-attachments";
-import { forgetLocalMedia, localMedia, type LocalMediaRequest, type LocalMediaResolution, type MediaApi, type MediaUnplayableReason } from "@/lib/media-resolve";
+import { refreshLocalMedia, retainLocalMediaGeneration, subscribeLocalMedia, localMedia, type LocalMediaRequest, type LocalMediaResolution, type MediaApi, type MediaUnplayableReason } from "@/lib/media-resolve";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { reportSaveFailure, saveUrl } from "@/lib/save-file";
@@ -258,6 +258,7 @@ export function MediaPlayerCard({ asset, url, expiresAt, refresh, className, pro
   // One automatic refresh per failure; a successful play resets it.
   const refreshed = useRef(false);
   const refreshing = useRef<Promise<MediaSource | null> | null>(null);
+  const downloading = useRef(false);
 
   // Capture the element at mount: React may have detached the ref by the time
   // a deletion's cleanup runs, and a player that outlives its card is exactly
@@ -300,13 +301,15 @@ export function MediaPlayerCard({ asset, url, expiresAt, refresh, className, pro
     // The link in the page carries a capability the harness would refuse.
     // Fetch a fresh one and save through it; the person clicked once.
     event.preventDefault();
+    if (downloading.current) return;
+    downloading.current = true;
     setSaveLine({ kind: "working", text: MEDIA_SAVE_WORKING });
     void askAgain().then(next => {
       if (!next) { setSaveLine({ kind: "error", text: MEDIA_SAVE_FAILED }); return; }
       setSaveLine(null);
       setSource(next);
       void saveUrl(next.url, asset.name).catch(reportSaveFailure);
-    });
+    }).finally(() => { downloading.current = false; });
   };
 
   // Every "Save a copy" this card shows — beside the player, on the
@@ -389,6 +392,14 @@ export function localMediaRequestFor(scope: WorkspaceScopeRef | undefined, path:
   return { scope: { botId: scope.botId, threadId: scope.threadId }, absolutePath: path };
 }
 
+export function playerResolution(value: LocalMediaResolution): value is Extract<LocalMediaResolution, { state: "ready" | "unplayable" }> {
+  return (value?.state === "ready" || value?.state === "unplayable") && !!value.asset
+    && (value.asset.kind === "audio" || value.asset.kind === "video")
+    && typeof value.asset.id === "string" && typeof value.asset.name === "string" && typeof value.asset.mime === "string"
+    && typeof value.asset.capabilities?.download === "boolean"
+    && (value.state !== "ready" || (typeof value.url === "string" && value.url.length > 0));
+}
+
 /** A path a transcript carried. Renders `fallback` — the caller's existing,
  * already safe affordance — unless and until the harness proves the file is
  * this conversation's and playable. The path itself is never used as a URL,
@@ -412,11 +423,16 @@ export function LocalMedia({ scope, path, fallback, api = defaultApi, resolve = 
     const request = localMediaRequestFor(botId === undefined || threadId === undefined ? undefined : { botId, threadId }, path);
     if (!request) { current.current = null; return; }
     current.current = request;
+    const unsubscribe = subscribeLocalMedia(request, () => {});
     let alive = true;
     setResolution(null);
     void resolve(request, api).then(value => { if (alive) setResolution(value); });
-    return () => { alive = false; };
+    return () => { alive = false; current.current = null; unsubscribe(); };
   }, [botId, threadId, path, api, resolve]);
+
+  useEffect(() => {
+    if (resolution?.state === "ready") return retainLocalMediaGeneration(resolution);
+  }, [resolution]);
 
   // The card asks for this when its capability stopped working: the same
   // three questions again, with the cached answer dropped first. A file that
@@ -424,15 +440,15 @@ export function LocalMedia({ scope, path, fallback, api = defaultApi, resolve = 
   const refresh = useCallback(async (): Promise<MediaSource | null> => {
     const request = current.current;
     if (!request) return null;
-    forgetLocalMedia(request);
-    const next = await resolve(request, api);
+    const next = await refreshLocalMedia(request, resolution?.state === "ready" ? resolution.generation : 0, "player", { kind: "player" }, api);
     if (current.current !== request) return null;
-    if (next.state === "ready") return { url: next.url, ...(next.expiresAt !== undefined ? { expiresAt: next.expiresAt } : {}) };
+    setResolution(next);
+    if (playerResolution(next) && next.state === "ready") return { url: next.url, ...(next.expiresAt !== undefined ? { expiresAt: next.expiresAt } : {}) };
     setResolution(next);
     return null;
-  }, [api, resolve]);
+  }, [api, resolution]);
 
-  if (!eligible || !resolution || resolution.state === "unavailable") return <>{fallback}</>;
+  if (!eligible || !resolution || !playerResolution(resolution)) return <>{fallback}</>;
   if (resolution.state === "unplayable") {
     // The bytes are not coming, so the caller's own action is the one that
     // still works. Say why rather than replacing it with a dead player.
@@ -449,7 +465,7 @@ export function LocalMedia({ scope, path, fallback, api = defaultApi, resolve = 
   // element rather than inheriting the old one's failure or position.
   return (
     <MediaPlayerCard
-      key={`${resolution.asset.id}:${resolution.asset.revision ?? ""}`}
+      key={`${botId}:${threadId}:${path}:${resolution.asset.id}:${resolution.asset.revision}`}
       asset={resolution.asset}
       url={resolution.url}
       expiresAt={resolution.expiresAt}
