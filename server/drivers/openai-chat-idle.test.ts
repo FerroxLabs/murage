@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Renewable idle budget over a real loopback HTTP/SSE transport (U02). The
 // runtime's fetch talks to a node:http server on 127.0.0.1, so aborts, socket
 // closes and chunk timing are the real ones. Waits that are the quantity under
@@ -124,7 +126,7 @@ describe("createOpenAIChatRuntime idle budget over loopback HTTP", () => {
   const runTurn = async (instance: ProviderInstance, threadId: string, idleMs = IDLE_MS) => {
     const recorder = recordEvents(instance.adapter);
     const started = performance.now();
-    await instance.adapter.sendTurn({ threadId, text: "question" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "question" });
     const completed = await recorder.until((event) => event.type === "turn.completed", 15_000);
     const settledAt = performance.now();
     const settledMs = settledAt - started;
@@ -306,7 +308,7 @@ describe("createOpenAIChatRuntime idle budget over loopback HTTP", () => {
     };
     const instance = create({ timeoutMs: 20_000 });
     const recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: "t-stop", text: "question" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stop", text: "question" });
     await received.promise;
     await recorder.until((event) => event.type === "content.delta");
     const stoppedAt = performance.now();
@@ -340,7 +342,7 @@ describe("createOpenAIChatRuntime idle budget over loopback HTTP", () => {
       const instance = create();
       const recorder = recordEvents(instance.adapter);
       full = true; // the bus is full before the first read
-      await instance.adapter.sendTurn({ threadId: "t-wait", text: "question" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-wait", text: "question" });
       await first.promise;
       await delay(IDLE_MS * 2); // far longer than the idle budget, all of it our own queue
       full = false; valve.evaluate();
@@ -361,8 +363,8 @@ describe("createOpenAIChatRuntime idle budget over loopback HTTP", () => {
       handler = (_req, res) => { sse(res); res.write(content("a ")); setTimeout(() => res.end(content("b ") + finish + DONE), 50); };
       const instance = create();
       const recorder = recordEvents(instance.adapter);
-      await instance.adapter.sendTurn({ threadId: "t-blocked", text: "q1" });
-      await instance.adapter.sendTurn({ threadId: "t-free", text: "q2" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-blocked", text: "q1" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-free", text: "q2" });
       await recorder.until((event) => event.type === "turn.completed" && event.threadId === "t-free", 10_000);
       await delay(400);
       // the blocked thread never read past the wait: no terminal event for it yet
@@ -382,7 +384,7 @@ describe("createOpenAIChatRuntime idle budget over loopback HTTP", () => {
       handler = (_req, res) => { sse(res); res.write(content("held ")); received.open(); };
       const instance = create({ timeoutMs: 20_000 });
       const recorder = recordEvents(instance.adapter);
-      await instance.adapter.sendTurn({ threadId: "t-stop-wait", text: "question" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stop-wait", text: "question" });
       await received.promise;
       await delay(100);
       const stoppedAt = performance.now();
@@ -436,3 +438,6 @@ describe("createOpenAIChatRuntime idle budget over loopback HTTP", () => {
     expect(requests).toBe(1);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

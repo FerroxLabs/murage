@@ -1,3 +1,4 @@
+import { botFolderOrThrow } from "../bot-folder.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
 //
@@ -60,13 +61,14 @@ export interface ChatMcpSession {
   readonly closed: boolean;
 }
 export interface OpenChatMcpOptions {
+  cwd?: string;
   signal?: AbortSignal;
   startupMs?: number;
   /** Called synchronously for every child the moment it is spawned, before any await, so the caller tracks even a child
    *  whose startup then fails. */
   onSpawn?(server: string, teardown: ChildTeardown): void;
   /** Test hook. Default: spawnCli under engineJob(). */
-  spawn?: (command: string, args: string[], env: Record<string, string>) => ChildProcess;
+  spawn?: (command: string, args: string[], env: Record<string, string>, cwd: string) => ChildProcess;
 }
 
 export const SECRET_ENV_NAME = /key|token|password|secret|authorization|cookie/i;
@@ -131,8 +133,8 @@ function parseEntry(entry: unknown): Launch | null {
   return { command: entry.command, args: args as string[], env: entry.env };
 }
 
-const defaultSpawn = (command: string, args: string[], env: Record<string, string>): ChildProcess =>
-  spawnCli(command, args, { stdio: ["pipe", "pipe", "pipe"], env }, engineJob());
+const defaultSpawn = (command: string, args: string[], env: Record<string, string>, cwd: string): ChildProcess =>
+  spawnCli(command, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env }, engineJob());
 
 const noop = () => { /* drained */ };
 const validId = (id: unknown): boolean => typeof id === "number" || typeof id === "string" || id === null;
@@ -570,6 +572,7 @@ export async function openChatMcpServers(
 ): Promise<{ sessions: ChatMcpSession[]; failed: string[] }> {
   const { signal } = options;
   if (signal?.aborted) return { sessions: [], failed: [] };
+  const cwd = botFolderOrThrow(options);
   const spawn = options.spawn ?? defaultSpawn;
   const startupMs = typeof options.startupMs === "number" && options.startupMs > 0 ? options.startupMs : CHAT_MCP_STARTUP_MS;
   const slots: Array<{ name: string; connection?: ChatMcpConnection }> = [];
@@ -579,7 +582,7 @@ export async function openChatMcpServers(
     if (!launch) { slots.push({ name }); continue; }
     let child: ChildProcess;
     try {
-      child = spawn(launch.command, launch.args, chatMcpChildEnv(launch.env));
+      child = spawn(launch.command, launch.args, chatMcpChildEnv(launch.env), cwd);
     } catch {
       slots.push({ name });
       continue;

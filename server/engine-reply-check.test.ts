@@ -1,7 +1,17 @@
+import { fixtureLearningBot } from "./testing/learning-bot-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { describe, expect, it, vi } from "vitest";
-import { checkEngineReply, engineLine, replyCheckFailure } from "./engine-reply-check.ts";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { removeTempDirSync } from "./testing/cleanup.ts";
+import { checkEngineReply, engineCheckHost, engineLine, replyCheckFailure } from "./engine-reply-check.ts";
+
+// The check folder lives in a temp system root here, never in the machine's real /tmp.
+const checkRoot = mkdtempSync(join(tmpdir(), "engine-reply-root-"));
+beforeEach(() => { vi.spyOn(engineCheckHost, "systemRoot").mockReturnValue(checkRoot); });
+afterAll(() => { vi.restoreAllMocks(); removeTempDirSync(checkRoot); });
 import { engineFailure, ENGINE_REPLY_PROMPT, hiddenTurnRunner, withCliMemoryLearning } from "./drivers/cli-memory-learning.ts";
 import type { ProviderInstance, RuntimeEvent } from "./contracts.ts";
 
@@ -48,7 +58,7 @@ describe("one real reply decides", () => {
   it("uses the engine's one-shot where it has no hidden session, and stops waiting at the limit", async () => {
     const generateText = vi.fn(async () => "ready");
     expect(await checkEngineReply({ instanceId: "text", generateText })).toEqual({ result: "ready" });
-    expect(generateText).toHaveBeenCalledWith(ENGINE_REPLY_PROMPT);
+    expect(generateText).toHaveBeenCalledWith(ENGINE_REPLY_PROMPT, undefined, expect.stringMatching(/murage-engine-check-[^/]+\/run$/));
     expect((await checkEngineReply({ instanceId: "stuck", displayName: "Pi", generateText: () => new Promise<string>(() => {}) }, 20))).toEqual({ result: "refused", line: "Pi did not answer in time. Try again." });
     expect((await checkEngineReply({ instanceId: "none", displayName: "Box" })).result).toBe("refused");
   });
@@ -68,7 +78,7 @@ describe("the hidden session", () => {
       sendTurn: async (input: { threadId: string }) => { sent.push(input); queueMicrotask(() => script(input.threadId, event => { for (const listener of listeners) listener(event); })); return {}; },
       respondToRequest: async () => {}, interruptTurn: async () => {}, resetSession: async () => {},
     } } as unknown as ProviderInstance;
-    return { live: withCliMemoryLearning(live, { run: hiddenTurnRunner }), sent };
+    return { live: fixtureLearningBot(withCliMemoryLearning(live, { run: hiddenTurnRunner })), sent };
   }
   const event = (threadId: string, fields: Record<string, unknown>) => ({ threadId, ...fields }) as unknown as RuntimeEvent;
 

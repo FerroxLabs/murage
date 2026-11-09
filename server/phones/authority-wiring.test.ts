@@ -104,7 +104,11 @@ describe("phone authority wiring in server/index.ts", () => {
   });
 
   it("the bot messages route states ownerActs from the owner proof, and the revoke functions revoke phone authority", () => {
-    expect(source).toContain("...(viaStanding ? { ownerActs: false, ...viaStanding } : { typedStop: true, ownerActs: mayApprove(req, url) }) });");
+    // VENUE-POST-1017 (b8b26791a) spreads the owner's Post in… pick after it; the pick is typed to its two fields, so it can never
+    // carry ownerActs or typedStop past the owner proof
+    expect(source).toContain("...(viaStanding ? { ownerActs: false, ...viaStanding } : { typedStop: true, ownerActs: mayApprove(req, url) }), ...(pick ?? {}) });");
+    expect(source).toContain("function parsePostPick(raw: unknown, quote: unknown): { postTo: PostTo; quoteMessageId?: string } | undefined {");
+    expect(countOf("...(pick ?? {})")).toBe(1);
     expect(bodyOf("function revokeInternalGeneration(")).toContain("phoneAuthorities.revokeGeneration(generation)");
     expect(bodyOf("function revokeInternalThread(")).toContain("phoneAuthorities.revokeThread(threadId)");
     expect(bodyOf("function revokeInternalBot(")).toContain("phoneAuthorities.revokeBot(botId)");

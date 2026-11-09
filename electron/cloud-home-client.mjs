@@ -21,6 +21,13 @@
 import { createHash, createPrivateKey, createPublicKey, sign, verify } from "node:crypto";
 
 import { describeStepUp } from "./cloud-step-up-label.mjs";
+import { STEP_UP_LANGUAGES, stepUpText } from "./step-up-locale.mjs";
+
+// The step-up confirm's read-only lookups (fetchHomeInfo): exactly these two GETs, each capped in time and size.
+const INFO_PATHS = new Set(["/api/bots?messages=0"]);
+const INFO_TIMEOUT_MS = 2000;
+const INFO_MAX_BYTES = 256 * 1024;
+const BOT_NAME_MAX = 256;
 import { parseDoorLink, ticketClaims, MAX_LINK_LENGTH } from "./cloud-door-link.mjs";
 import { HOME_ID, generateDeviceKeys } from "./cloud-home-store.mjs";
 import { CLOUD_HOME_CP } from "./cloud-control-plane.mjs";
@@ -31,6 +38,7 @@ export const COPY = Object.freeze({
   pinMismatch: "This isn't the Cloud home you paired with. Pair it again.",
   needsRepair: "Your Cloud home no longer knows this computer. Pair it again.",
   stepUpCancelled: "You cancelled the confirmation, so nothing was changed.",
+  stepUpRefused: "This can't be confirmed, so nothing was run. Run the check on the computer itself instead.",
   notPaired: "This computer isn't paired with that Cloud home.",
   pairingRefused: "Your Cloud home would not connect this computer. Try again.",
   // Door v2 (Connect from the browser)
@@ -41,7 +49,7 @@ export const COPY = Object.freeze({
   lostAnswer: "Your home may have connected this computer, but the answer didn't arrive. Press Connect again; it uses the same key, so no new 72-hour check.",
   tookTooLong: "That took longer than ten minutes. Press Connect to start again.",
   removeOnMyCloud: "If this computer appears on My Cloud, remove it there.",
-  otherConnect: "This link was made for another Connect. Press Connect again.",
+  otherConnect: "This link was created for a different connection attempt. Press Connect again.",
   notLive: "Murage Cloud isn't available for this app yet. Update Murage and try again.",
   linkExpired: "This link has expired. Press Connect again.",
   badLink: "That is not a Murage connect link.",
@@ -141,20 +149,55 @@ export function parseDeviceCodePackage(text) {
  * route, a short summary of the body such as which bot and which settings), never "approve this request".
  * Touch ID on a Mac that can prompt, otherwise a confirm dialog. Resolves true only on an explicit yes.
  * `body` is main's own parsed copy of the bytes it will sign and send; nothing here can change them.
- * `resolveBotName(homeId, botId)` is optional and best effort (two seconds): a bot's display name for the summary.
+ * `resolveBotName(homeId, botId, { signal })` is optional and best effort: a bot's display name for the summary. It
+ * gets ONE absolute deadline (`lookupMs`, two seconds) and an AbortController that is aborted before the prompt opens,
+ * so it can never hold the prompt, outlive it or start a request while it shows
+ * (design STEPUP-LOOKUPS-R2-1018.md).
+ * `language` is optional: a code, or `() => code` read at each confirmation (main.mjs: THIS desktop's saved language,
+ * then the system language, then English). A security confirmation never takes its language from the home it is
+ * confirming a change on, so a home can never make it unreadable. Anything not a shipped language reads in English.
  */
-export function createNativeStepUpConfirm({ systemPreferences, dialog, platform = process.platform, getWindow = () => undefined, resolveBotName }) {
+export function createNativeStepUpConfirm({ systemPreferences, dialog, platform = process.platform, getWindow = () => undefined, resolveBotName, language, lookupMs = 2000 }) {
+  const pickLanguage = () => {
+    try {
+      const code = typeof language === "function" ? language() : language;
+      // Not awaited: a promise is not a language. A rejected one is consumed so it never surfaces as unhandled.
+      if (typeof code?.then === "function") Promise.resolve(code).catch(() => {});
+      return STEP_UP_LANGUAGES.includes(code) ? code : "en";
+    } catch { return "en"; }
+  };
   return async ({ homeId, method, path, body }) => {
-    let botName;
     const botId = /^\/api\/bots\/([\w-]+)(?:\/|\?|$)/.exec(String(path))?.[1];
+    let botName;
     if (botId && typeof resolveBotName === "function") {
-      try { botName = await Promise.race([resolveBotName(homeId, botId), new Promise((resolve) => setTimeout(() => resolve(undefined), 2000).unref?.())]); } catch { botName = undefined; }
+      const controller = new AbortController();
+      let timer;
+      const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve(undefined), lookupMs); timer.unref?.(); });
+      try {
+        let started;
+        try { started = Promise.resolve(resolveBotName(homeId, botId, { signal: controller.signal })); } catch { started = Promise.resolve(undefined); }
+        botName = await Promise.race([started.catch(() => undefined), deadline]);
+      } finally {
+        clearTimeout(timer);
+        controller.abort();
+      }
     }
-    const described = describeStepUp({ method, path, body, botName: typeof botName === "string" ? botName : undefined });
-    if (platform === "darwin" && systemPreferences?.canPromptTouchID?.()) {
+    if (typeof botName !== "string" || botName.length > BOT_NAME_MAX) botName = undefined;
+    const code = pickLanguage();
+    const t = stepUpText(code);
+    const described = describeStepUp({ method, path, body, botName: typeof botName === "string" ? botName : undefined, language: code });
+    // What would run cannot be shown exactly, so there is nothing to approve: one Close button, then a refusal. The
+    // refusal holds even if the notice cannot open.
+    if (described.refused) {
+      const notice = { type: "warning", buttons: [t("dialog.close")], defaultId: 0, cancelId: 0, title: t("dialog.title"), message: t("line.programRefused") };
+      try { const window = getWindow(); await (window ? dialog.showMessageBox(window, notice) : dialog.showMessageBox(notice)); } catch { /* still refused below */ }
+      throw new CloudHomeError("step-up-refused", COPY.stepUpRefused);
+    }
+    // Touch ID shows one line only; when that line had to be cut (the bot or a flag would be lost) the dialog is used.
+    if (described.reasonComplete && platform === "darwin" && systemPreferences?.canPromptTouchID?.()) {
       try { await systemPreferences.promptTouchID(described.reason); return true; } catch { return false; }
     }
-    const options = { type: "question", buttons: ["Confirm", "Cancel"], defaultId: 1, cancelId: 1, title: "Confirm on your Cloud", message: described.label, detail: [...described.lines, "", described.request].join("\n") };
+    const options = { type: "question", buttons: [t("dialog.confirm"), t("dialog.cancel")], defaultId: 1, cancelId: 1, title: t("dialog.title"), message: described.label, detail: [...described.lines, "", described.request].join("\n") };
     const window = getWindow();
     const result = await (window ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options));
     return result.response === 0;
@@ -169,7 +212,15 @@ export function createCloudHomeClient({
 }) {
   if (!store || typeof fetchImpl !== "function" || !appVersion || typeof confirmStepUp !== "function") throw new TypeError("store, fetch, appVersion and confirmStepUp are required");
   /** homeId -> { record, token, tokenAt, healthAt, refreshing } . MAIN MEMORY ONLY. */
-  const sessions = new Map();
+  // NOTIFY-EVERYWHERE-1019 S4a: a per-home session generation, bumped only when a session is established, replaced, refreshed
+  // or removed (set, delete, a token refresh, deactivate, forgetTokens). A per-request connect() that reuses the live session
+  // leaves it unchanged, so an action's own validation read never invalidates its token.
+  const generations = new Map();
+  const bumpGeneration = (homeId) => { generations.set(homeId, (generations.get(homeId) ?? 0) + 1); };
+  const sessions = new (class extends Map {
+    set(homeId, state) { bumpGeneration(homeId); return super.set(homeId, state); }
+    delete(homeId) { bumpGeneration(homeId); return super.delete(homeId); }
+  })();
 
   const unreachable = () => new CloudHomeError("unreachable", COPY.unreachable);
   const SESSION_INVALID = new Set(["Open this on a device you've paired with your Cloud.", "Sign in required"]);
@@ -268,6 +319,7 @@ export function createCloudHomeClient({
     const result = await homeJson(record.publicOrigin, "POST", "/api/cloud/refresh", { deviceId: record.deviceId, challenge: challenge.body.challenge, at, signature: signWith(record.sessionPrivateKey, message) });
     if (result.status !== 200 || typeof result.body?.accessToken !== "string") throw refusedSignIn(result);
     state.token = result.body.accessToken; state.tokenAt = now();
+    bumpGeneration(record.homeId);
     arm(state);
   }
 
@@ -324,19 +376,70 @@ export function createCloudHomeClient({
   const toBytes = (body) => body === undefined || body === null ? undefined : Buffer.from(typeof body === "string" ? body : body instanceof Uint8Array ? body : JSON.stringify(body));
 
   /**
+   * STEPUP-LOCALES (design STEPUP-LOOKUPS-R2-1018.md): the read-only lookup a step-up confirmation
+   * makes while it is open (a bot's display name). Exactly one GET with the token the step-up itself just
+   * used. It never connects, refreshes, checks health, retries or steps up, so a home that answers "step-up required"
+   * here cannot start another confirmation. Resolves the parsed JSON, or undefined for anything else; never rejects
+   * except for a path off the list (a programming error).
+   */
+  async function fetchHomeInfo(homeId, path, { signal } = {}) {
+    if (!INFO_PATHS.has(path)) throw new TypeError("not a lookup path");
+    const state = sessions.get(homeId);
+    if (!state?.token || !state.record?.publicOrigin || signal?.aborted) return undefined;
+    // Bound to the session that is open now: a Disconnect, re-pair or re-pin while the lookup runs discards its answer.
+    const { record, token } = state;
+    const sameSession = () => sessions.get(homeId) === state && state.record.publicOrigin === record.publicOrigin && state.record.generation === record.generation;
+    const combined = signal ? AbortSignal.any([signal, AbortSignal.timeout(INFO_TIMEOUT_MS)]) : AbortSignal.timeout(INFO_TIMEOUT_MS);
+    let response, reader;
+    const stop = () => { try { (reader ?? response?.body)?.cancel?.()?.catch?.(() => {}); } catch { /* already closed or locked */ } };
+    combined.addEventListener("abort", stop, { once: true });
+    try {
+      response = await fetchImpl(record.publicOrigin + path, {
+        method: "GET", redirect: "manual", signal: combined,
+        headers: { accept: "application/json", authorization: `Bearer ${token}` },
+      });
+      if (response?.status !== 200 || Number(response.headers?.get?.("content-length")) > INFO_MAX_BYTES || combined.aborted) return undefined;
+      reader = response.body?.getReader?.();
+      if (!reader) return undefined;
+      const chunks = []; let size = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (combined.aborted) return undefined;
+        if (done) break;
+        size += value.byteLength;
+        if (size > INFO_MAX_BYTES) return undefined;
+        chunks.push(value);
+      }
+      if (!sameSession()) return undefined;
+      return JSON.parse(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8"));
+    } catch { return undefined; }
+    finally {
+      combined.removeEventListener("abort", stop);
+      // Every exit that did not read to the end cancels the body; nothing here waits for that to finish.
+      stop();
+      try { reader?.releaseLock?.(); } catch { /* a read is still settling */ }
+    }
+  }
+
+  /**
    * Step-up aware fetch to a paired home. `path` is a path+query on the home ("/api/bots?x=1").
    * Returns the raw Response (streamable). The body is held here as bytes, so a 401 refresh-retry and a
    * 403 step-up retry send exactly what the caller sent. Never queues: unreachable throws at once.
    */
-  async function fetchHome(homeId, path, { method = "GET", headers = {}, body, signal } = {}) {
+  async function fetchHome(homeId, path, { method = "GET", headers = {}, body, signal, beforeSend } = {}) {
     if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")) throw new TypeError("path must be a path on the home");
     const state = await connect(homeId);
     const origin = state.record.publicOrigin, verb = method.toUpperCase();
     const bytes = toBytes(body);
-    const attempt = (extra = {}) => send(origin + path, {
-      method: verb, body: bytes, signal: signal ?? AbortSignal.timeout(requestTimeoutMs),
-      headers: { ...headers, ...(verb === "GET" || verb === "HEAD" ? {} : { origin }), ...extra, authorization: `Bearer ${state.token}` },
-    });
+    // `beforeSend` runs immediately before EVERY network send (the first, the 401 refresh retry, the step-up retry); a throw stops it.
+    // The hook is SYNCHRONOUS and `send` is called in the same tick: nothing yields between the guard passing and the request leaving.
+    const attempt = (extra = {}) => {
+      try { if (typeof beforeSend === "function") beforeSend(); } catch (error) { return Promise.reject(error); }
+      return send(origin + path, {
+        method: verb, body: bytes, signal: signal ?? AbortSignal.timeout(requestTimeoutMs),
+        headers: { ...headers, ...(verb === "GET" || verb === "HEAD" ? {} : { origin }), ...extra, authorization: `Bearer ${state.token}` },
+      });
+    };
     let response = await attempt();
     // An invalid access token is a 401, or (on /api routes the home answers anonymous callers with) a 403 "paired device required".
     // Either way: one refresh, one retry with the same bytes. A second refusal is returned as it is.
@@ -880,7 +983,9 @@ export function createCloudHomeClient({
     queuesWrites: false,
     listHomes, pairWithDeviceCode, mintDeviceCode, status, pairedHomes,
     startConnect, cancelConnect, connectStatus, acceptDoorLink, pasteDoorLink, resume, disconnect, settleUnfinished,
-    fetch: fetchHome, stepUpRetry,
+    fetch: fetchHome, stepUpRetry, fetchHomeInfo,
+    /** Per-home session generation (see above); an action captures it at mint time and compares it in beforeSend. */
+    sessionGeneration: (homeId) => generations.get(homeId) ?? 0,
     /** For WP1's proxy, in main only. Verifies pin + version, refreshes when due, returns the Bearer token. */
     async getAccessToken(homeId) { return (await connect(homeId)).token; },
     /** Sync, from the pin. Null when the home is not loaded; call getAccessToken/connect first or use loadedOrigin. */
@@ -904,7 +1009,7 @@ export function createCloudHomeClient({
     /** Drop the in-memory token (sign-out, lock). The pin and keys stay. */
     /** Load the pin, verify it, fetch a token and keep it fresh in memory. Call once per home when the Cloud window opens. */
     async activate(homeId) { const state = await connect(homeId); state.active = true; arm(state); await retryRevocations(); },
-    deactivate(homeId) { const state = sessions.get(homeId); if (state) { state.active = false; if (state.timer) clearTimeout(state.timer); state.token = null; state.tokenAt = 0; } },
+    deactivate(homeId) { const state = sessions.get(homeId); if (state) { state.active = false; if (state.timer) clearTimeout(state.timer); state.token = null; state.tokenAt = 0; bumpGeneration(homeId); } },
     /** WP1's CloudHomeProvider: (homeId) => { homeId, origin, getAccessToken() (sync, memory only) } | null. Null until activate(). */
     provider(homeId) {
       if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(String(homeId))) return null;
@@ -916,6 +1021,6 @@ export function createCloudHomeClient({
       const state = sessions.get(homeId); if (!state) return false;
       try { await ensureFresh(state, true); return true; } catch { return false; }
     },
-    forgetTokens() { for (const state of sessions.values()) { state.token = null; state.tokenAt = 0; } },
+    forgetTokens() { for (const [homeId, state] of sessions) { state.token = null; state.tokenAt = 0; bumpGeneration(homeId); } },
   };
 }

@@ -53,7 +53,7 @@ describe("route B: the facts block for a turn with no agents mount", () => {
     const out = renderMurageTurn(turn(channelQuestion), NO_TOOL_SURFACE, {});
     expect(out.text.startsWith(CAPABILITY_FACTS_HEADER)).toBe(true);
     expect(out.text).toContain(record("bots.channel-turns").title);
-    expect(out.text).toContain("Settings → Bots → Advanced → Channel turn timeout");
+    expect(out.text).toContain("Settings → Bots → Advanced → Time limit for bot activity in channels");
     expect(out.text.endsWith(channelQuestion)).toBe(true);
     const lines = out.text.split("\n\n")[0].split("\n").slice(1);
     expect(lines.length).toBeGreaterThan(0);

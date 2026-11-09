@@ -58,7 +58,7 @@ describe("memory-downgrade", () => {
     closeDatabase();
     const routine = { id: "r-app", botId: "b", schedule: { type: "app_event", triggerId: "754ff2fc-423d-5573-bded-ccf9fb7cde23" } };
     writeFileSync(join(DATA_DIR, "routines.json"), JSON.stringify({ routines: [routine] }));
-    downgradeInstallationMemorySchema(DATA_DIR, to);
+    downgradeInstallationMemorySchema(DATA_DIR, to, { testOnlyBefore102: true });
     const after = new DatabaseSync(join(DATA_DIR, "messages.db"), { readOnly: true });
     try { expect(objects(after).filter(name => APP_TRIGGER_OBJECTS.includes(name))).toEqual([]); } finally { after.close(); }
     expect((JSON.parse(readFileSync(join(DATA_DIR, "routines.json"), "utf8")) as { routines: unknown[] }).routines).toEqual([routine]);

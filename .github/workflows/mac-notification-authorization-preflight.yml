@@ -40,15 +40,40 @@ jobs:
           cp dist-native/notification-authorization/x64/build.json "$RUNNER_TEMP/notification-auth-evidence/x64-build.json"
           lipo dist-native/notification-authorization/arm64/notification-authorization.node -verify_arch arm64
           lipo dist-native/notification-authorization/x64/notification-authorization.node -verify_arch x86_64
-      - name: Load arm64 exports without invoking notification APIs
+      - name: Load notification addon and record all six exports
+        shell: bash
+        run: |
+          node --input-type=commonjs - <<'NODE'
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          assert.equal(process.platform, 'darwin');
+          assert.equal(process.arch, 'arm64');
+          const binding = require('./dist-native/notification-authorization/arm64/notification-authorization.node');
+          const expected = ['status', 'request', 'registerCategories', 'post', 'remove', 'onResponse'];
+          const exports = Object.getOwnPropertyNames(binding).sort();
+          for (const name of expected) assert.equal(typeof binding[name], 'function', name);
+          assert.deepEqual(exports, [...expected].sort());
+          const build = JSON.parse(fs.readFileSync('./dist-native/notification-authorization/arm64/build.json', 'utf8'));
+          fs.writeFileSync(process.env.RUNNER_TEMP + '/notification-auth-evidence/export-load.json', JSON.stringify({
+            loaded: true, node: process.version, arch: process.arch, exports,
+            sourceSha256: build.sourceSha256, sha256: build.sha256,
+            statusExport: true, requestExport: true,
+            addonMethodsCalled: false, authorizationMethodsCalled: false, osPermissionRequested: false
+          }, null, 2) + '\n');
+          NODE
+      - name: Verify notification banner and presence guard build and source contracts
+        run: node --test scripts/build-notification-authorization.node-test.mjs electron/notification-banners-native-contract.node-test.mjs scripts/build-presence-guard.node-test.mjs electron/presence-guard-native-contract.node-test.mjs
+      - name: Compile and verify both presence guard architectures
         run: |
           set -euo pipefail
-          node --input-type=commonjs - <<'NODE'
-          const fs = require('node:fs');
-          const binding = require('./dist-native/notification-authorization/arm64/notification-authorization.node');
-          if (typeof binding.status !== 'function' || typeof binding.request !== 'function') throw Error('NATIVE_EXPORTS_MISSING');
-          fs.writeFileSync(process.env.RUNNER_TEMP + '/notification-auth-evidence/export-load.json', JSON.stringify({loaded: true, node: process.version, arch: process.arch, statusExport: true, requestExport: true, authorizationMethodsCalled: false, osPermissionRequested: false}) + '\n');
-          NODE
+          node scripts/build-presence-guard.mjs
+          lipo dist-native/presence-guard/darwin-arm64/presence-guard.node -verify_arch arm64
+          lipo dist-native/presence-guard/darwin-x64/presence-guard.node -verify_arch x86_64
+      - name: EVIDENCE - load arm64 presence guard in plain Node
+        run: |
+          set -euo pipefail
+          test "$(node -p process.arch)" = arm64
+          node scripts/presence-guard-evidence.mjs dist-native/presence-guard/darwin-arm64/presence-guard.node dist-native/presence-guard/darwin-arm64/presence-evidence.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
@@ -56,5 +81,10 @@ jobs:
           path: |
             ${{ runner.temp }}/notification-auth-evidence/
             dist-native/notification-authorization/*/notification-authorization.node
+            dist-native/presence-guard/darwin-arm64/presence-guard.node
+            dist-native/presence-guard/darwin-arm64/build.json
+            dist-native/presence-guard/darwin-arm64/presence-evidence.json
+            dist-native/presence-guard/darwin-x64/presence-guard.node
+            dist-native/presence-guard/darwin-x64/build.json
           if-no-files-found: warn
           retention-days: 7

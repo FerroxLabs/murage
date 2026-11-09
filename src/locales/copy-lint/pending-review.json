@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "note": "Strings waiting for a review record. Must be empty at the release cut (scripts/copy-pending-check.mjs).",
+  "strings": {}
+}

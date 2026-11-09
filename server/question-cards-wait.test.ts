@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -23,6 +24,7 @@ describe("question cards wait for the owner", () => {
     const sendTurn = vi.fn(async () => ({ turnId: "t" }));
     const live = { instanceId: "i", adapter: { sendTurn, other: () => "kept" } } as unknown as ProviderInstance;
     const decorated = decorateAskNoteInstance(live);
+    // This adapter-only mock never launches an engine or requires a folder.
     await decorated.adapter.sendTurn({ threadId: "routine", text: "go" } as SendTurnInput);
     expect(sendTurn).toHaveBeenCalledWith({ threadId: "routine", text: "go", unattendedAskNote: true });
     expect((decorated.adapter as unknown as { other(): string }).other()).toBe("kept");
@@ -46,3 +48,6 @@ describe("question cards wait for the owner", () => {
     expect(env.grok_ask_user_question_timeout_enabled).toBeUndefined();
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

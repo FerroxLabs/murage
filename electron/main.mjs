@@ -2,6 +2,9 @@ import { enforceProxyLaunchGuard } from "./proxy-launch-guard.mjs";
 // 1.0.9 Sentinel: right after the guard module (which only defines the guard), so a Windows Sentinel task launch runs
 // its one scan and exits before any other module of the app evaluates.
 import "./sentinel-trampoline-entry.mjs";
+import { createDeferredStartup } from "./deferred-startup.mjs";
+import { settleDesktopStartup, fallbackDesktopStartup, terminalDesktopStartup, startupFailureCode } from "./startup-settle.mjs";
+import {backupStartupDispatch, explicitBackupReturn} from "./backup-startup.mjs";
 import { createSentinelHost } from "./sentinel-host.mjs";
 import { FluxSigninError, assertFluxDesktopSigninEnabled, cancelFluxDesktopSignin, readEmailOwnerToken, runFluxDesktopSignin } from "./flux-desktop-signin.mjs";
 import { writeCallTrace } from "./call-trace.mjs";
@@ -16,6 +19,7 @@ import { createDesktopTrace } from "./desktop-trace.mjs";
 import { app, BaseWindow, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, MenuItem, Notification, Tray, nativeImage, nativeTheme, net, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess, webContents } from "electron";
 import { protocol as electronProtocol } from "electron";
 import { crashReporter } from "electron";
+import { globalShortcut } from "electron";
 import { createCrashDumpLinker, crashDumpNamesInLog, includeCrashDumpOnRequest, pruneCrashDumps, startLocalCrashReporter, unnamedCrashDumps } from "./crash-dumps.mjs";
 import { installCloudHome, cloudHomeEnabled } from "./cloud-home-window.mjs";
 import { resolveCloudControlPlane } from "./cloud-control-plane.mjs";
@@ -23,6 +27,8 @@ import { createCloudLiveGate } from "./cloud-live.mjs";
 import { channelClass } from "./ipc-channel-classes.mjs";
 import { writeClipboardText } from "./clipboard-write.mjs";
 import { COPY as CLOUD_COPY, createCloudHomeClient, createNativeStepUpConfirm } from "./cloud-home-client.mjs";
+import { desktopStepUpLanguage } from "./step-up-locale.mjs";
+import { voiceFinishingDialog } from "./prepare-voice-finishing.mjs";
 import { createCloudHomeStore } from "./cloud-home-store.mjs";
 import { registerCloudHomeIpc } from "./cloud-home-ipc.mjs";
 import { doorLinkFromCommandLine, doorLinkFromDeepLink, parseDoorLink, parseOpenCloudLink } from "./cloud-door-link.mjs";
@@ -41,7 +47,7 @@ import { cloudNoticeStore, createRecoveryKeyFlow, defaultRecoveryKeyFolder, host
 import { CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readClosedBackupDescriptor,closedProfileEnvironment,assertClosedProfileBinding,closedInstallationIdentity } from "./backup-closed-profile.mjs";
 import { createClosedBackupController,closedControlDirectory } from "./backup-closed-controller.mjs";
 import { tightenOwnedDirectory } from "./private-directory.mjs";
-import { relaunchBlockedCode, relaunchDesktop } from "./desktop-relaunch.mjs";
+import { acknowledgedRelaunchHandoff, relaunchBlockedCode, relaunchDesktop } from "./desktop-relaunch.mjs";
 import { backupRefusal } from "./backup-waiting.mjs";
 import { announceBackupFailure, announceBackupResult, backupStopCommitted, serialAnnouncer } from "./backup-failure-notice.mjs";
 import { windowsElevated } from "./windows-elevation.mjs";
@@ -55,6 +61,18 @@ import { remoteWorkDirectory,remoteSshDirectory,prepareRemoteFolder,remoteContro
 import { packagedResticPath } from "./backup-restic-attestation.mjs";
 import { execFile, spawn } from "node:child_process";
 import { createBackgroundLifecycle, linuxTrayHostAvailable } from "./background-lifecycle.mjs";
+import { createNotifySurfaces } from "./notify-surfaces.mjs";
+import { notifyCapabilities, linuxSessionType } from "./notify-capabilities.mjs";
+import { createGlobalShortcut, enableGlobalShortcutPortal, globalShortcutPortalAvailable } from "./global-shortcut.mjs";
+import { createBadgeSurfaces, parseMurageTask, routeMurageTask } from "./badge-surfaces.mjs";
+import { badgeSurfaceText } from "./badge-surface-copy.mjs";
+import { createAttentionActions } from "./attention-actions.mjs";
+import { createAttentionMain } from "./attention-main.mjs";
+import { createPresenceGuard } from "./presence-guard.mjs";
+import { createAttentionIpc } from "./attention-ipc.mjs";
+import { createCloudTransport, createLocalTransport } from "./attention-transport.mjs";
+import { createLockState } from "./lock-state.mjs";
+import { createLockReader, createLogindWatcher, wireAttentionInvalidation } from "./attention-wiring.mjs";
 import { watchInboxChanges } from "./inbox-watch.mjs";
 import { applyLoginProfileArguments, createBackgroundLogin } from "./background-login.mjs";
 import { createStartupSplash, splashPage, firstStartOfVersion, noteVersionStarted, FIRST_AFTER_UPDATE_NOTE } from "./startup-splash.mjs";
@@ -70,7 +88,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { startCua, stopCua, registerCuaIpc, setCuaStateListener } from "./cua.mjs";
 import { createAndroidDeviceController } from "./android-device.mjs";
 import { assemblyAICredential, mintAssemblyAIStreamingToken } from "./assemblyai.mjs";
-import { feedSpeech, finishSpeech, startSpeech, stopSpeech, speechActive } from "./speech.mjs";
+import { feedSpeech, finishSpeech, startSpeech, stopSpeech, speechActive, speechToken } from "./speech.mjs";
 import {
   recorderPermissionStatus,
   recorderActive,
@@ -85,6 +103,9 @@ import { launchRecipeTerminal } from "./engine-login-terminal.mjs";
 import { attachUpdaterWindow, checkForUpdatesNow, startUpdater, registerUpdaterIpc } from "./updater.mjs";
 import { hasCustomUpdaterProfile, prepareUpdaterRestart } from "./updater-restart.mjs";
 import { prepareBackedUpInstall, resumeBackedUpInstall } from "./preupgrade-continuation.mjs";
+import { createMacInstallerFallback, nativeContractSupported, observeRequestedInstall, decideRequestedInstall, landedArgument, LANDED_ARGUMENT_PREFIX, newer, OFFER_MAX_AGE_MS } from "./mac-install-guard.mjs";
+import { runStartGate, refusal } from "./update-start-gate.mjs";
+import { backupSentenceWords, updateRecoveryWords } from "./update-recovery-copy.mjs";
 import {
   buildDiagnosticsReport,
   collectChannelDiagnostics,
@@ -96,6 +117,7 @@ import {
 } from "./diagnostics.mjs";
 import { desktopFluxEnvironment, migrateMcpServerSecrets, migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
 import { EMAIL_OWNER_MESSAGE, EMAIL_OWNER_SCOPE, isEmailSecretsSave, withEmailOwner, withEmailSecrets } from "./email-secrets.mjs";
+import { phoneKeyMessage, phoneSecretsEnv, withPhoneKey } from "./phone-secrets.mjs";
 import { assertIncidentExportSender, prepareSelectedIncidentReport, saveDiagnosticsReport, validateIncidentSelection } from "./incident-export.mjs";
 import { activateExistingWindow } from "./single-instance.mjs";
 import { pollServerIdentity } from "./server-boot-probe.mjs";
@@ -107,7 +129,7 @@ import { assertRestoreReviewed } from "./restore-review.mjs";
 import { restoredConnectionProfile, restoredHarnessEnvironment, restoredBrowserPartition } from "./restored-connections.mjs";
 import { openInstallationRecoveryWindow } from "./installation-recovery-window.mjs";
 import { backupProgressKind, openBackupProgressWindow } from "./backup-progress-window.mjs";
-import { createBackupReturn, runOfflineBackup } from "./backup-offline-return.mjs";
+import { createBackupReturn, createReturnAuthority, joinExplicitQuit, revokeReturn, runOfflineBackup } from "./backup-offline-return.mjs";
 import { runInstallationRecoveryWorker } from "./installation-recovery-runner.mjs";
 import { captureRecoveryCopy } from "./installation-recovery-snapshot.mjs";
 import { resolveInstallationSelection, retireUndoneInstallationSelection, planSeparateInstallation, allocateSeparateInstallation, publishInstallationSelection } from "./installation-selection.mjs";
@@ -212,6 +234,7 @@ if (process.env.MURAGE_USER_DATA !== undefined) {
 const { desktopCapabilities, nativeDesktopActions } = capabilitiesModule;
 // Keep this outside the profile-isolation slice, but before Electron is ready.
 configureLinuxPasswordStore({ commandLine: app.commandLine });
+if(process.platform==="linux"&&linuxSessionType(process.env)==="wayland")enableGlobalShortcutPortal(app.commandLine);
 // Local crash dumps, started before "ready" as Electron requires and after any
 // user-data move so they land in this profile's app.getPath("crashDumps").
 // Uploads are off and there is no server address (crash-dumps.mjs).
@@ -258,16 +281,25 @@ const cloudCp = resolveCloudControlPlane({ env: process.env, qualification: clou
 const CLOUD_CP_ENVIRONMENT = cloudCp?.environment ?? "prod";
 const cloudLive = createCloudLiveGate({ resolve: () => resolveCloudControlPlane({ env: process.env }), cacheDir: () => app.getPath("userData"), warn: (m) => console.warn(`[cloud-live] ${m}`),
   hardOff: () => process.env.MURAGE_DESKTOP_CLOUD === "0" });
+// NOTIFY-EVERYWHERE-1019 S4a: set at app ready (initializeAttentionActions); the callbacks below tolerate null.
+let attentionActions=null,attentionWiring=null,attentionMain=null;
 const cloudHome = installCloudHome({ liveGate: cloudLive, packaged: app.isPackaged, protocol: electronProtocol, session, BrowserWindow, shell, net, env: process.env,
   userDataDir: () => app.getPath("userData"), distDir: path.join(__dirname, "..", "dist"), warn: (m) => console.warn(`[cloud-home] ${m}`),
   createClient: () => createCloudHomeClient({ cp: cloudCp ? { [cloudCp.environment]: cloudCp } : {}, appVersion: app.getVersion(), cpEnvironment: CLOUD_CP_ENVIRONMENT,
     openExternal: (url) => shell.openExternal(url),
     store: createCloudHomeStore({ safeStorage, directory: cloudHomesDirectory() }),
     confirmStepUp: createNativeStepUpConfirm({ systemPreferences, dialog, getWindow: () => mainWindow,
-      resolveBotName: async (homeId, botId) => { // best effort: a bot's display name in the step-up sentence
-        const response = await cloudHome?.client?.fetch(homeId, "/api/bots?messages=0", { headers: { accept: "application/json" } });
-        return response?.ok ? (await response.json()).bots?.find((bot) => bot?.id === botId)?.name : undefined; } }) }),
-  cloudPreload: path.join(__dirname, "preload-cloud.cjs"), onWindowClosed: () => applyUnreadBadge() });
+      // Security confirmations always use THIS computer's language: its saved app language, then the system language,
+      // then English (step-up-locale.mjs). Never the home's, so a home cannot make the dialog unreadable (MurageMain
+      // 2026-11-06, design STEPUP-LOOKUPS-R2-1018.md).
+      language: () => desktopStepUpLanguage({ system: systemLanguage(),
+        readDesktopConfig: () => fs.readFileSync(path.join(ownedDesktopDataDir(), "config.json"), "utf8") }),
+      // The bot-name lookup uses fetchHomeInfo, which never steps up, connects or refreshes.
+      resolveBotName: async (homeId, botId, { signal }) => { // best effort: a bot's display name in the step-up sentence
+        const list = await cloudHome?.client?.fetchHomeInfo(homeId, "/api/bots?messages=0", { signal });
+        const name = Array.isArray(list?.bots) ? list.bots.find((bot) => bot?.id === botId)?.name : undefined;
+        return typeof name === "string" ? name : undefined; } }) }),
+  cloudPreload: path.join(__dirname, "preload-cloud.cjs"), onWindowClosed: (homeId) => { attentionWiring?.cloudWindowChanged(); attentionMain?.homeGone(homeId); applyUnreadBadge(); }, onWindowOpened: (homeId) => { attentionWiring?.cloudWindowChanged(); attentionMain?.homeGone(homeId); } });
 // 127.0.0.1 explicitly — vite binds IPv4; a bare "localhost" here can
 // resolve to ::1 and paint a black window
 const DEV_URL = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:5199";
@@ -322,7 +354,6 @@ let mainWindow = null;
 let gpuLostAt = 0;
 const GPU_LOSS_REPLACE_WINDOW_MS = 60_000;
 const GPU_LOSS_SETTLE_MS = 3_000;
-const WINDOW_REVEAL_FALLBACK_MS = 15_000;
 let mainRendererRecovering = false;
 // The swap in progress: the window being replaced, its replacement, and what
 // the person wants once the replacement shows (tray, close and focus during
@@ -331,6 +362,18 @@ let pendingSwap = null;
 let replacingMainWindow = false;
 let lastWindowReplaceAt = 0;
 let quitRequested = false;
+let shutdownCause = null;
+let startupFailureExit = false;
+function noteShutdownCause(cause) {
+  if (!shutdownCause || (shutdownCause === "automatic" && cause !== "automatic")) shutdownCause = cause;
+}
+function requestOwnerQuit() { noteShutdownCause("owner"); app.quit(); }
+function recordStartupRefusal(error) {
+  const code = startupFailureCode(error);
+  recordDesktopCrash({ kind: "startup-refused", code });
+  slog(`desktop startup refused (${code})`);
+}
+
 // Windows created to be shown that have not shown yet (startup reveal pending).
 const pendingRevealWindows = new WeakSet();
 // Hidden windows that should maximize when next shown (carried across swaps).
@@ -363,6 +406,110 @@ const ipcMain = createOwnedMainIpc({
 if (cloudHome?.client) registerEngineLoginIpc({ ipcMain, active: () => cloudHome.active(), relay: createEngineLoginRelay({ client: cloudHome.client,
   createSocket: (url, options) => new EngineLoginWebSocket(url, options), openExternal: (url) => shell.openExternal(url), log: slog }) });
 let backgroundLifecycle=null;
+// NOTIFY-EVERYWHERE-1019 S2: the device file that says which outside-the-app surfaces this computer uses. Decided from disk
+// before the server spawns (the server creates messages.db), so an upgrade is never mistaken for a new install.
+// NOTIFY-EVERYWHERE-1019 S4a: the one action path and the lock state. The lock state starts UNKNOWN (which counts as locked: Allow and
+// Reply refused) and is fed an explicit boolean: getSystemIdleState on Mac and Windows, logind LockedHint on Linux. Every event that must
+// kill outstanding tokens (lock, suspend, server restart, data-owner change, Cloud window swap, previews change) is wired here.
+function initializeAttentionActions(){
+  if(attentionActions)return;
+  void initializeGlobalShortcut();
+  initializeBadgeSurfaces();
+  const logind=process.platform==="linux"?createLogindWatcher({spawn}):null;
+  const lock=createLockState({powerMonitor,readLocked:createLockReader({platform:process.platform,getSystemIdleState:seconds=>powerMonitor.getSystemIdleState(seconds),execFile,env:process.env,healthy:()=>logind?.healthy()??true})});
+  attentionActions=createAttentionActions({lock,log:line=>slog(line)});
+  attentionWiring=wireAttentionInvalidation({actions:attentionActions,lock,powerMonitor,logind});
+  // NOTIFY-EVERYWHERE-1019 S3: the router. Windows send routing ids only; main answers with the decision and, for the notification rungs,
+  // tells the offering window to show it (S4a/b/c replace that with native actionable banners). Presence (full screen, sharing, Focus,
+  // locked) is S3B's (electron/presence-guard.mjs): read once at each decision, and polled only while something is held.
+  const presenceRun=(file,args)=>new Promise((resolve,reject)=>execFile(file,args,{timeout:1500,maxBuffer:65536,env:process.env},(error,stdout)=>error?reject(error):resolve(String(stdout))));
+  const presenceGuard=createPresenceGuard({platform:process.platform,resourcesPath:process.resourcesPath,env:process.env,run:presenceRun,lock,log:line=>slog(line)});
+  attentionMain=createAttentionMain({
+    prefs:()=>notifySurfaces?.get()??null,
+    presence:()=>presenceGuard.quiet(),beforeDecision:()=>presenceGuard.refresh(),watchPresence:()=>presenceGuard.watch(),
+    sendShow:(home,ref)=>attentionSend(home,{type:"show",ref}),sendClose:(home,ref)=>attentionSend(home,{type:"close",ref}),sendPreviews:(home,previews)=>attentionSend(home,{type:"previews",previews}),
+    transportFor:attentionTransportFor,
+    invalidateTokens:()=>{},
+    onPreviewsChanged:()=>attentionWiring?.previewsChanged(),
+    readPreviews:async home=>{
+      let config;
+      if(home==="local")config=await harnessJson("/api/config");
+      else{const client=cloudHome?.client;if(!client)return null;const response=await client.fetch(home,"/api/config");if(response.status!==200)return null;config=JSON.parse(await response.text());}
+      return config?.notifications?.previewContent!==false;
+    },
+    onCounts:()=>{},pillAvailable:()=>false,pinnedBotId:()=>notifySurfaces?.get()?.pinnedBotId??null,
+    log:line=>slog(line)});
+  lock.onChange(locked=>{if(!locked){void attentionMain.reconcile();void attentionMain.quietChanged();}});
+  presenceGuard.onChange(()=>{void attentionMain.quietChanged();});
+  powerMonitor.on("resume",()=>{void attentionMain.reconcile();});
+  // The attention windows' OWN gate (never the owned-main gate): no window is registered until the slices that create them (S6+),
+  // so every call is refused today. Registered on Electron's ipcMain directly, on purpose.
+  const unavailable=()=>({ok:false,reason:"unavailable"});
+  createAttentionIpc({urlFor:()=>null}).install(electronIpcMain,{
+    items:()=>({ok:true,items:[]}),
+    act:(info,token,action,text)=>attentionActions.act(token,action,text,{windowId:info.windowId}),
+    open:unavailable,sendToChief:unavailable,pauseAutomations:unavailable,sendToPinned:unavailable});
+}
+/** One message to the window that owns a home (the local window or that home's Cloud window): a show, a close or a previews change. */
+function attentionSend(home,message){
+  const win=home==="local"?mainWindow:cloudHome?.windows().get(home);
+  if(!win||win.isDestroyed())return false;
+  win.webContents.send(home==="local"?"attention:show":"cloud-attention:show",message);return true;
+}
+/** The transport an attention read or action uses for one home, captured now: null when that home cannot be reached right now. */
+function attentionTransportFor(home){
+  if(home==="local"){
+    const owner=desktopDataOwner,secret=desktopSurfaceSecret,proc=serverProc,port=SERVER_PORT;
+    if(!secret||!proc||!serverReady||desktopShutdownStarted||desktopRecoveryMode)return null;
+    const identity=()=>owner===desktopDataOwner&&secret===desktopSurfaceSecret&&proc===serverProc&&serverReady&&!desktopShutdownStarted&&!desktopRecoveryMode?`${port}|${proc.pid??"p"}`:"gone";
+    return createLocalTransport({origin:`http://127.0.0.1:${port}`,secret,identity});
+  }
+  const client=cloudHome?.client,win=cloudHome?.windows().get(home);
+  if(!client||!win||win.isDestroyed())return null;
+  return createCloudTransport({client,homeId:home,windowId:()=>win.isDestroyed()?-1:win.webContents.id});
+}
+let notifySurfaces=null;
+let shortcutOwner=null,shortcutReady=null;
+function initializeGlobalShortcut(){
+  if(shortcutReady)return shortcutReady;
+  shortcutReady=(async()=>{
+    const wayland=process.platform==="linux"&&linuxSessionType(process.env)==="wayland";
+    const portalAvailable=wayland?await globalShortcutPortalAvailable(execFile):false;
+    shortcutOwner=createGlobalShortcut({globalShortcut,platform:process.platform,isWayland:()=>wayland,
+      portal:{available:()=>portalAvailable,register:(accelerator,callback)=>{
+        if(!globalShortcut.register(accelerator,callback))return null;
+        return()=>globalShortcut.unregister(accelerator);
+      }},onTrigger:openShortcut,log:slog});
+    if(desktopShutdownStarted){shortcutOwner.dispose();return shortcutOwner;}
+    const state=notifySurfaces?.get();
+    shortcutOwner.sync(state?.surfaces.shortcut?state.shortcut:null);
+    return shortcutOwner;
+  })();
+  return shortcutReady;
+}
+/** S9 can replace this body with its quick chat window without changing shortcut ownership. */
+function openPinnedQuickChat(){
+  backgroundLifecycle?.open();
+  const botId=notifySurfaces?.get()?.pinnedBotId;
+  if(botId)openTarget({kind:"compose",botId});
+}
+async function openShortcut(){
+  if(desktopShutdownStarted||desktopRecoveryMode)return;
+  // Read on the press, so an old tray snapshot cannot send the owner to a settled card.
+  let summary;
+  try{summary=await harnessJson("/api/desktop/tray");}catch{summary=null;}
+  if(desktopShutdownStarted||desktopRecoveryMode)return;
+  if(summary?.needsYou===0){openPinnedQuickChat();return;}
+  // Needs you and unknown state both use the tray's existing Inbox open path.
+  backgroundLifecycle?.open();
+  sendWhenLoaded("startup-background:open-inbox");
+}
+function initializeNotifySurfaces(){
+  if(notifySurfaces)return;
+  let profileDir=null;
+  try{profileDir=desktopDataDir??(process.env.MURAGE_DATA_DIR&&process.env.MURAGE_USER_DATA?fs.realpathSync(process.env.MURAGE_DATA_DIR):null);}catch{profileDir=null;}
+  notifySurfaces=createNotifySurfaces({profileDir,platform:process.platform,onError:error=>slog(`notify-surfaces: ${error.message}`)});
+}
 let backupScheduleHost=null;
 // 1.0.9 Sentinel host (electron/sentinel-host.mjs): the health/ producer root, the desktop producer and the OS schedule.
 let sentinelHost=null;
@@ -389,13 +536,78 @@ let backupRemoteHost=null;
 let backupProgress=null; // the "Backing up your workspace" window while the offline capture runs
 // The one way back from a backup-mode capture (backup-offline-return.mjs). Defined
 // here because the host's relaunch and the run's own ending both use it.
+const returnAuthority=createReturnAuthority();
+let updateRequester=false;
+let updateNativeLaunched=false;
+returnAuthority.markInstallPending=()=>{updateRequester=true;};
+returnAuthority.markNativeLaunch=()=>{updateNativeLaunched=true;updateRequester=true;};
+returnAuthority.releasePendingInstall=()=>{if(!updateNativeLaunched)updateRequester=false;};
+let startupDecisionPending=false;
+let updateRecoveryDescriptor=null;
+const takeBackupProgress=()=>{const progress=backupProgress;backupProgress=null;return progress;};
+const normalArgs=()=>withoutBackupBudgetArgument(process.argv.slice(1)).filter(arg=>arg!==BACKUP_MODE_ARGUMENT&&!arg.startsWith(LANDED_ARGUMENT_PREFIX));
+function finishUpdateWait(){startupDecisionPending=false;closeStartupSplash();}
+const presentedCleanupFailures=new WeakSet();
+function cleanupFailed(error){
+  if(error&&typeof error==="object"){if(presentedCleanupFailures.has(error))return;presentedCleanupFailures.add(error);}
+  takeBackupProgress()?.destroy();
+  let committedHandoff;
+  try{const status=backupScheduleHost?.internalStatus();if(status?.phase==="return-pending"&&status.job?.receipt)committedHandoff=status.job.handoff?.id;}catch{/* Cleanup failure must remain visible without diagnostics. */}
+  pauseForReview("BACKUP_UPGRADE_CLEANUP_FAILED",{cleanupFailure:true,cleanupOnly:true,committedHandoff,detail:`${desktopCleanupStage}: ${error?.message??error?.code}`});
+}
+
+let internalBackupQuit=false;
+// Both APIs name the same flag, including boundedExit's synchronous quit.
+Object.defineProperty(returnAuthority,"internalQuit",{get:()=>internalBackupQuit,set:value=>{internalBackupQuit=value;}});
+function quitAfterBackup(){const previous=internalBackupQuit;internalBackupQuit=true;try{noteShutdownCause("automatic");app.murageShutdownCause = "automatic";app.quit();}finally{internalBackupQuit=previous;}}
 const returnToWorkspaceAfterBackup=createBackupReturn({
-  app,
-  cleanup:()=>{serverStopReason.note("backup");return cleanupDesktopForExit();},
-  relaunch:()=>relaunchDesktop({app,args:withoutBackupBudgetArgument(process.argv.slice(1)).filter(arg=>arg!==BACKUP_MODE_ARGUMENT)}),
-  takeProgress:()=>{const progress=backupProgress;backupProgress=null;return progress;},
+  app,authority:returnAuthority,shutdownStarted:()=>desktopShutdownStarted,
+  cleanup:()=>{noteShutdownCause("automatic");serverStopReason.note("backup");return cleanupDesktopForExit("internal").catch(error=>{throw Object.assign(error,{code:"BACKUP_UPGRADE_CLEANUP_FAILED"});});},
+  relaunch:destination=>relaunchDesktop({app,args:destination?.kind==="backup"?destination.args:destination?.kind==="landed"?[...normalArgs(),landedArgument(destination.version)]:normalArgs()}),
+  takeProgress:takeBackupProgress,onFailure:cleanupFailed,onLeaving:finishUpdateWait,
   log:line=>slog(line),
 });
+function settleUpdate(){
+  if(updateRequester)throw refusal("BACKUP_UPGRADE_REVIEW_REQUIRED");
+  if(process.platform!=="darwin")return {kind:"review"};
+  return backupScheduleHost.settleRequestedInstall({runningVersion:app.getVersion(),argv:process.argv,
+    // Release evidence is required before supported absence can authorize cancellation.
+    observe:()=>observeRequestedInstall({execPath:process.execPath,home:app.getPath("home"),supported:nativeContractSupported({electronVersion:process.versions.electron,appVersion:app.getVersion()})}),decide:decideRequestedInstall});
+}
+function prepareUpdateReturn(explicit=false, verdict){
+  if(returnAuthority.userQuitRequested)throw refusal("BACKUP_UPGRADE_ACTION_UNAVAILABLE");
+  if(updateRequester)throw refusal("BACKUP_UPGRADE_REVIEW_REQUIRED");
+  const pending=backupScheduleHost?.pendingUpgrade();
+  if(pending?.offerInvalid||pending?.hopsInvalid)throw refusal("BACKUP_UPGRADE_REVIEW_REQUIRED");
+  if(pending?.phase==="install-requested"){
+    try { verdict??=settleUpdate(); } catch(error) {throw refusal(/BUSY/.test(error?.message)?"BACKUP_BUSY":"BACKUP_UPGRADE_REVIEW_REQUIRED");}
+    if(verdict.kind==="installing")throw refusal("BACKUP_UPGRADE_STAGED");
+    if(verdict.kind==="landed"||(explicit&&verdict.reason==="landed-not-running"&&verdict.candidateOnDisk)){
+      try {
+        if(!backupScheduleHost.spendLandedHop(explicit?"explicit":"automatic",explicit?randomUUID():undefined,verdict))throw refusal("BACKUP_UPGRADE_REVIEW_REQUIRED");
+      } catch(error) { throw refusal(/BUSY/.test(error?.code??error?.message)?"BACKUP_BUSY":"BACKUP_UPGRADE_REVIEW_REQUIRED"); }
+      return {kind:"landed",version:verdict.version};
+    }
+    if(verdict.kind==="review")throw refusal("BACKUP_UPGRADE_REVIEW_REQUIRED");
+  }else if(pending)backupScheduleHost.returnUpgradeToWorkspace();
+  backupScheduleHost?.prepareWorkspaceReturn();
+  return {kind:"normal"};
+}
+function pauseForReview(why,{cleanupFailure=false,cleanupOnly=false,committedHandoff,detail}={}){
+  if(!cleanupFailure&&(returnAuthority.userQuitRequested||returnAuthority.leaving))return;
+  returnAuthority.cancelGate?.();
+  showDesktopRecovery(why,{updatePause:true,cleanupFailure,cleanupOnly,committedHandoff,detail,returnRevoked:returnAuthority.userQuitRequested||updateRequester});
+}
+function startUpdateGate(){
+  runStartGate({authority:returnAuthority,settle:settleUpdate,
+    startReturn:verdict=>returnToWorkspaceAfterBackup({prepare:()=>prepareUpdateReturn(false,verdict)}).catch(error=>{if(error?.code!=="BACKUP_UPGRADE_CLEANUP_FAILED")pauseForReview(error?.code??"BACKUP_UPGRADE_REVIEW_REQUIRED");}),
+    pause:(why,detail)=>pauseForReview(why,{detail})});
+}
+function reopenUpdateRecoveryIfNeeded(){
+  if(!updateRecoveryDescriptor||returnAuthority.userQuitRequested||returnAuthority.leaving)return false;
+  if(recoveryWindow&&!recoveryWindow.isDestroyed()){recoveryWindow.focus();return true;}
+  showDesktopRecovery(updateRecoveryDescriptor.reasonCode,updateRecoveryDescriptor);return true;
+}
 let backupToolSettleUntil=0; // set at each server start: a tool check that fails before this is pending, not failed
 let backupRemoteInitializing=false; // the off-site host is still starting: its status reads checking, not unavailable
 let backupRemoteReady=Promise.resolve();
@@ -428,7 +640,7 @@ function finishClosedBackup(result){
   closedBackupFinish=(async()=>{
     closedTrace("finishing");
     serverStopReason.note("backup");
-    try{await cleanupDesktopForExit();closedTrace("cleaned up");}
+    try{await cleanupDesktopForExit("internal");closedTrace("cleaned up");}
     catch{
       closedTrace(`cleanup unconfirmed at ${String(desktopCleanupStage??"").replace(/[^\w -]/g,"").slice(0,60)}`);
       // Retain ownership if child shutdown is unconfirmed. Never claim a clean
@@ -441,17 +653,22 @@ function finishClosedBackup(result){
 }
 let desktopUpdater=null;
 function ensureDesktopUpdater(scheduleChecks=true){
-  desktopUpdater=startUpdater({scheduleChecks,beforeInstall:candidate=>prepareBackedUpInstall(candidate,{
+  const fallback=process.platform==="darwin"?createMacInstallerFallback({execPath:process.execPath,getuid:()=>process.getuid(),offerFile:path.join(app.getPath("userData"),"installer-offer.json"),
+    recover:async()=>{if(returnAuthority.userQuitRequested)return {status:"stopped"};if(!cuaCleanedUp){cleanupFailed(refusal("BACKUP_UPGRADE_CLEANUP_FAILED"));return;}return returnToWorkspaceAfterBackup();},log:line=>slog(line)}):null;
+  const installerFallback=fallback?{...fallback,
+    peekPendingOffer:running=>{const offer=backupScheduleHost?.peekInstallerOffer();if(offer){if(offer.at>Date.now()||Date.now()-offer.at>OFFER_MAX_AGE_MS||!newer(offer.version,running)){backupScheduleHost.acknowledgeInstallerOffer(offer);return fallback.peekPendingOffer(running);}return offer;}return fallback.peekPendingOffer(running);},
+    acknowledgePendingOffer:offer=>{if(offer.handoffId){backupScheduleHost.acknowledgeInstallerOffer(offer);if(fallback.peekPendingOffer(app.getVersion())?.version===offer.version)fallback.acknowledgePendingOffer();}else fallback.acknowledgePendingOffer();}}:null;
+  desktopUpdater=startUpdater({scheduleChecks,installerFallback,returnAuthority,beforeInstall:candidate=>prepareBackedUpInstall(candidate,{
     backup:backupScheduleHost,
-    prepareNormal:()=>prepareUpdaterRestart({
+    prepareNormal:()=>{return prepareUpdaterRestart({
       environment:process.env,isClosing:()=>desktopShutdownStarted,isCleanedUp:()=>cuaCleanedUp,
       readActivity:async()=>{
         if(backupMode.isPreparing()||backupScheduleHost?.isPreparing()||!serverReady||!desktopSurfaceSecret)throw Error("Updater activity check unavailable");
         const response=await fetch(`http://127.0.0.1:${SERVER_PORT}/api/bots?messages=0`,{
           headers:{"x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},signal:AbortSignal.timeout(5000),redirect:"error"});
         if(!response.ok)throw Error("Updater activity check unavailable");return response.json();
-      },cleanup:()=>{serverStopReason.note("update");return cleanupDesktopForExit();},
-    }),
+      },cleanup:()=>{serverStopReason.note("update");return cleanupDesktopForExit("internal").catch(error=>{returnAuthority.releasePendingInstall();cleanupFailed(error);throw refusal("BACKUP_UPGRADE_CLEANUP_FAILED");});},
+    });},
   })});
   return desktopUpdater;
 }
@@ -487,9 +704,9 @@ function backupUnavailableReason() {
 }
 /** The close before a backup's restart. When it can't finish, this window can
  * no longer back up: say so, instead of every later click just failing. */
-async function cleanupForBackupRestart() {
+async function cleanupForBackupRestart(token) {
   serverStopReason.note("backup");
-  try { await cleanupDesktopForExit(); }
+  try { await cleanupDesktopForExit("internal",token); }
   catch (error) {
     desktopBackupCleanupFailed = true;
     slog(`backup restart cleanup incomplete (${desktopCleanupStage}); installation ownership retained`);
@@ -533,7 +750,8 @@ const backupMode = createBackupModeController({
   restart: async () => {
     await cleanupForBackupRestart();
     relaunchDesktop({ app, args:[...withoutBackupBudgetArgument(process.argv.slice(1)).filter(arg=>arg!==BACKUP_MODE_ARGUMENT),BACKUP_MODE_ARGUMENT] });
-    app.quit();
+    noteShutdownCause("automatic");
+    quitAfterBackup();
   },
 });
 ipcMain.handle("backup-mode:status", (_event,...args) => { if(args.length)throw new Error("INVALID_BACKUP_REQUEST");return backupMode.status(); });
@@ -704,6 +922,12 @@ ipcMain.handle("approval-notification:show", (event, payload) => {
   const homeId = cloudHome?.senderHomeId(event);
   return homeId ? cloudApprovalNotifier(homeId)(payload) : showApprovalNotification(payload);
 });
+// NOTIFY-EVERYWHERE-1019 S3: a window offers an event or reports what is on screen by ROUTING IDS only. The local window calls
+// attention:*; a Cloud window calls cloud-attention:*, and main derives its home from the registered Cloud window, never the payload.
+ipcMain.handle("attention:offer",(_event,payload)=>attentionMain?attentionMain.offer("local",payload):{ok:false});
+ipcMain.handle("attention:visible",(_event,payload)=>attentionMain?attentionMain.visible("local",payload):{ok:false});
+ipcMain.handle("cloud-attention:offer",(event,payload)=>{const home=cloudHome?.senderHomeId(event);return home&&attentionMain?attentionMain.offer(home,payload):{ok:false};});
+ipcMain.handle("cloud-attention:visible",(event,payload)=>{const home=cloudHome?.senderHomeId(event);return home&&attentionMain?attentionMain.visible(home,payload):{ok:false};});
 // B3 WP4: the pairing UI's channels (local window) and the Cloud window's reachability check. Flag off: not registered at all.
 if (cloudHome) cloudHome.onActiveChange((live) => { for (const win of BrowserWindow.getAllWindows()) { try { if (!win.isDestroyed() && win === mainWindow) win.webContents.send("cloud-home:live", { live }); } catch {} } });
 // A Cloud link waiting while Cloud was not live drains the moment the gate flips on.
@@ -797,20 +1021,38 @@ function installWindowStatePersistence(win) {
   win.on("close", flush);
 }
 
+let badgeSurfaces = null;
+function initializeBadgeSurfaces() {
+  if (badgeSurfaces) return;
+  const language = desktopStepUpLanguage({ system: systemLanguage(),
+    readDesktopConfig: () => fs.readFileSync(path.join(ownedDesktopDataDir(), "config.json"), "utf8") });
+  badgeSurfaces = createBadgeSurfaces({ app, Menu, platform: process.platform,
+    prefs: () => notifySurfaces?.get(), onTask: dispatchBadgeTask,
+    t: (key, values) => badgeSurfaceText(language, key, values), window: () => mainWindow,
+    overlayIcon: () => (unreadOverlayIcon ??= nativeImage.createFromPath(APP_ICON).resize({ width: 16, height: 16 })),
+  });
+  refreshBadgePreferences();
+}
+function refreshBadgePreferences() {
+  badgeSurfaces?.refreshMenu();
+  applyUnreadBadge();
+}
+function dispatchBadgeTask(task) {
+  if (!task) return;
+  // A launch action can arrive before the server and tray are ready. Resolve the preference at dispatch time.
+  void desktopStartup.then(() => {
+    if (desktopRecoveryMode || desktopShutdownStarted || !backgroundLifecycle) return;
+    return routeMurageTask({ task, badgeMenuOn: notifySurfaces?.get()?.badgeMenu,
+      open: () => backgroundLifecycle.open(), openNeedsYou: () => backgroundLifecycle.openNeedsYou(),
+      newChiefTask: () => backgroundLifecycle.newChiefTask(), pauseAutomations: () => backgroundLifecycle.pauseAutomations(),
+    });
+  }).catch(error => { slog(`badge task: ${error.message}`); backgroundLifecycle?.open(); });
+}
 function applyUnreadBadge(win = mainWindow) {
   let cloudTotal = 0;
   for (const homeId of cloudHome ? cloudHome.windows().keys() : []) cloudTotal += cloudUnreadCounts.get(homeId) ?? 0;
-  const count = normalizeUnreadCount(normalizeUnreadCount(unreadCount) + cloudTotal);
-  if (process.platform === "win32") {
-    if (!win || win.isDestroyed()) return;
-    unreadOverlayIcon ??= nativeImage.createFromPath(APP_ICON).resize({ width: 16, height: 16 });
-    win.setOverlayIcon(
-      count > 0 && !unreadOverlayIcon.isEmpty() ? unreadOverlayIcon : null,
-      count > 0 ? `${count} unread conversation${count === 1 ? "" : "s"}` : "No unread conversations",
-    );
-    return;
-  }
-  if (process.platform === "darwin" || process.platform === "linux") app.setBadgeCount(count);
+  const unread = normalizeUnreadCount(normalizeUnreadCount(unreadCount) + cloudTotal);
+  badgeSurfaces?.apply({ unread, needsYou: backgroundLifecycle?.summary()?.needsYou }, win);
 }
 
 // GNOME groups the window with its installed desktop entry only when both
@@ -940,12 +1182,13 @@ app.on("open-url", (event, url) => {
 
 // Windows/Linux cold start: the OS passes the link as the launch argument. A door link is handed over at ready (sealed,
 // relaunched without it, see cloud-link-handoff.mjs) so its ticket leaves the command line; the others carry no secret.
+const ownedRelaunchHelpers = new Set();
 const launchCloudLink = doorLinkFromCommandLine(process.argv);
 /** At ready: hand a cold-start door link over (true: this process is exiting), else queue what this launch brought. */
 async function takeLaunchCloudLink() {
   if (cloudHome && launchCloudLink && needsDoorHandoff({ link: launchCloudLink })) {
     const handedOver = await handOffDoorLink({ app, safeStorage, directory: cloudHomesDirectory(), url: launchCloudLink.url,
-      relaunch: (args) => relaunchDesktop({ app, args: withoutBackupBudgetArgument(args) }), blocked: () => relaunchBlockedCode() });
+      relaunch: (args) => acknowledgedRelaunchHandoff({ app, args: withoutBackupBudgetArgument(args), register: helper => ownedRelaunchHelpers.add(helper) }), blocked: () => relaunchBlockedCode() });
     if (handedOver) return true;
     console.log("[cloud] door: handoff-skipped");
   }
@@ -963,6 +1206,9 @@ app.on("second-instance", (_event, commandLine) => {
   if (cloudLink) { queueCloudLink(cloudLink); activateExistingWindow(BrowserWindow.getAllWindows()); return; }
   const packageUrl = packageUrlFromCommandLine(commandLine);
   if (packageUrl) pendingPackageInstallUrl = packageUrl;
+  if(reopenUpdateRecoveryIfNeeded())return;
+  const task = parseMurageTask(commandLine);
+  if (task) { dispatchBadgeTask(task); return; }
   activateExistingWindow(BrowserWindow.getAllWindows());
   const target = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed());
   deliverPackageInstall(target);
@@ -981,8 +1227,8 @@ const serverStopReason = createServerStopReason((line) => slog(line));
 const sessionEnd = createSessionEndHandler({
   // every harness this app owns that has not exited, from the moment it is forked (not only once it answered health)
   children: () => [...ownedServerChildren].filter((child) => !child.exited),
-  beginQuit: () => { serverStopReason.note("system-shutdown"); backgroundLifecycle?.beginQuit(); },
-  quit: () => app.quit(),
+  beginQuit: () => { noteShutdownCause("system"); serverStopReason.note("system-shutdown"); backgroundLifecycle?.beginQuit(); },
+  quit: () => { noteShutdownCause("system"); app.quit(); },
   ackDir: os.tmpdir(),
   log: (line) => slog(line),
 });
@@ -992,6 +1238,12 @@ let sessionStandIn = null;
 app.on("browser-window-created", (_event, win) => {
   win.on("query-session-end", () => sessionEnd.query());
   win.on("session-end", () => sessionEnd.end());
+  win.on("close", () => {
+    if (desktopShutdownStarted || startupSplashClosing) return;
+    if (BrowserWindow.getAllWindows().filter(window => !window.isDestroyed()).length !== 1) return;
+    if (backgroundLifecycle?.keepAliveWithoutWindows()) return;
+    noteShutdownCause("owner");
+  });
   // the first real window hears the session from now on; the hidden stand-in goes (after this event, so it is never the last window)
   const standIn = sessionStandIn;
   sessionStandIn = null;
@@ -1040,6 +1292,8 @@ function publishServerLifecycle(next) {
 function superviseServerChild(proc, lifecycle) {
   proc.once("exit", (code) => {
     if (proc !== serverProc) return; // superseded by a later child
+    attentionWiring?.serverChanged(); // a dead server's cards are not answered
+    attentionMain?.serverChanged();
     const decision = serverSupervisor.decide({ code, intentional: desktopShutdownStarted || lifecycle?.stopRequested === true });
     if (decision.action === "stay-down") {
       slog(`server supervisor: staying down (${decision.reason})`);
@@ -2034,7 +2288,7 @@ function showMemoryUpgradeProgress(status, percent) {
     if (!status && !upgradeScreen) return;
     if (status && !startupSplash) {
       // an unpackaged run, or one opened at login, has no splash: the upgrade still needs somewhere to be seen
-      startupSplash = createStartupSplash({ BrowserWindow, dark: nativeTheme.shouldUseDarkColors, icon: APP_ICON, language: systemLanguage(), onUserClose: () => app.quit() });
+      startupSplash = createStartupSplash({ BrowserWindow, dark: nativeTheme.shouldUseDarkColors, icon: APP_ICON, language: systemLanguage(), onUserClose: requestOwnerQuit });
     }
     upgradeScreen ??= createUpgradeScreen({ language: systemLanguage(), describeBytes });
     const view = upgradeScreen.update(status, percent, { copiedBytes: status && desktopDataDir ? copiedBytes(status, desktopDataDir) : null });
@@ -2043,12 +2297,13 @@ function showMemoryUpgradeProgress(status, percent) {
     if (json !== lastUpgradeView) { lastUpgradeView = json; startupSplash.set(view); }
   } catch { /* a screen glitch never blocks the upgrade */ }
 }
-/** The upgrade is over. When the app is coming up (ready) the same window simply carries on as the splash; otherwise it goes, and the recovery
- * page or the retry shows its own. */
+/** The upgrade is over. Keep its splash until the main window paints or
+ * recovery creates a replacement. Closing the only window here can quit
+ * Linux/Windows while the failed child is still being stopped. */
 function closeMemoryUpgradeWindow(ready = false) {
   if (ready) return;
   upgradeScreen = null; lastUpgradeView = "";
-  if (startupSplash?.upgrading) closeStartupSplash();
+  // showDesktopRecovery or the main window reveal owns the splash close.
 }
 
 function syncBrowserConnection(proc) {
@@ -2208,6 +2463,9 @@ async function startServerOn(port) {
     // the server prefers these over config.json, whose plaintext fields
     // the boot migration has deleted
     ...workspaceCredentialEnv(secureCredentials),
+    // The phone-call key (BOT-CALLS-1020 3a): always set here, "{}" with no key, so only a desktop run offers phone calls.
+    // The server reads and deletes it before any child is spawned (WORKSPACE_CREDENTIAL_ENV).
+    MURAGE_PHONE_CALL_SECRETS: phoneSecretsEnv(secureCredentials),
   }, { fluxBrokerUrl: fluxComposioBrokerUrlValue(), legacyUntil: composioLegacyUntilValue() });
   Object.assign(childEnv, packagedGepaManifestEnvironment({ packaged: app.isPackaged, appPath: app.getAppPath() }));
   delete childEnv.MURAGE_BROWSER_CONNECTION;
@@ -2414,6 +2672,8 @@ async function startServerPackaged() {
         serverProc = started.proc;
         SERVER_PORT = port;
         superviseServerChild(started.proc, started.lifecycle);
+        attentionWiring?.serverChanged(); // a new server run: tokens minted against the old one die
+        attentionMain?.serverChanged();
         // The owner's own MCP servers: hand the new harness every saved doc
         // (each naming its origin), then refresh what expired while closed.
         void mcpServers.resume().catch((error) => slog(`mcp server secrets resume failed: ${error?.message ?? error}`));
@@ -3017,21 +3277,44 @@ ipcMain.on("desktop:unread-count", (event, value) => {
 // First-paint splash (packaged only). Inert: it never loads the app, so Send
 // stays impossible until the real window exists, and that window is still
 // created only after /api/health succeeded (serverReady).
+let desktopStartupFulfilled = false;
+const deferredStartup = createDeferredStartup({
+  record: recordStartupRefusal,
+  changed: () => { if (desktopStartupFulfilled) closeSplashWhenNoMainWindow(); },
+  failure: error => {
+    if (startupDecisionPending) {
+      recordStartupRefusal(error);
+      try { pauseForReview("BACKUP_UPGRADE_REVIEW_REQUIRED"); return; } catch (presentationError) { error = presentationError; }
+    }
+    void settleDesktopStartup(Promise.reject(error), startupSettleDeps).catch(error => terminalDesktopStartup(error, startupSettleDeps)); },
+});
+function deferredStartupWork(run, options) {
+  const operation = deferredStartup.begin(options);
+  operation.observe(Promise.resolve().then(() => { operation.assertActive(); return run(operation); }));
+  return operation;
+}
 let startupSplash = null;
 let startupSplashClosing = false;
+let startupSplashCloseAttempt = null;
 function closeStartupSplash({ afterMainWindowClosed = false } = {}) {
+  if (afterMainWindowClosed) startupSplashClosing = false;
   if (!startupSplash) return;
-  // Closing the splash is not "the user closed the last window": never let it
-  // trigger window-all-closed's quit when a faceless startup path follows.
-  // Only a splash that is the last open window can trigger that event, so the
-  // guard is held only then; a main window closed during the guard would
-  // otherwise leave the app running with no window.
-  const lastWindow = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed()).length <= 1;
-  startupSplash.close();
-  startupSplash = null;
-  if (afterMainWindowClosed || !lastWindow) return;
-  startupSplashClosing = true;
-  setTimeout(() => { startupSplashClosing = false; }, 1000).unref?.();
+  const splash = startupSplash;
+  const win = splash.win;
+  const live = win && !win.isDestroyed();
+  const windows = BrowserWindow.getAllWindows().filter(w => !w.isDestroyed());
+  const lastWindow = live && windows.length === 1 && windows[0] === win;
+  const attempt = {};
+  startupSplashCloseAttempt = attempt;
+  startupSplashClosing = Boolean(!afterMainWindowClosed && lastWindow);
+  if (startupSplashClosing) setImmediate(() => {
+    if (startupSplashCloseAttempt === attempt) startupSplashClosing = false;
+  });
+  try { splash.close(); }
+  finally {
+    startupSplash = null;
+    if (!live || !win.isDestroyed()) startupSplashClosing = false;
+  }
 }
 
 /** Help menu: one step back to Murage 1.0.2 after the memory v11 upgrade. Quits
@@ -3047,12 +3330,17 @@ async function prepareForPreviousVersion() {
     if (confirm.response !== 0 || desktopRecoveryMode || desktopShutdownStarted) return;
     desktopRecoveryMode = true;
     let failure = null;
-    try { await runDesktopRecovery("memory-downgrade", {}); } catch (error) { if (error?.code !== "MEMORY_DATABASE_MISSING" && error?.message !== "MEMORY_DATABASE_MISSING") failure = typeof error?.code === "string" && /^[A-Z][A-Z0-9_]{0,100}$/.test(error.code) ? error.code : "RECOVERY_OPERATION_FAILED"; }
+    let phoneCallsPreservedAt;
+    try { const result = await runDesktopRecovery("memory-downgrade", {}); phoneCallsPreservedAt = result?.phoneCallsPreservedAt; } catch (error) { if (error?.code !== "MEMORY_DATABASE_MISSING" && error?.message !== "MEMORY_DATABASE_MISSING") failure = typeof error?.code === "string" && /^[A-Z][A-Z0-9_]{0,100}$/.test(error.code) ? error.code : "RECOVERY_OPERATION_FAILED"; }
     // work that is still owed is named in plain words, with nothing to look up
-    const PREPARE_WAITING = { DOWNGRADE_WORK_PENDING: "Some messages are still waiting to send or restore. Open Murage, send or cancel them, then try again.", DOWNGRADE_CARD_DELIVERY_OWED: "Some card results have not reached their room yet. Reopen this version of Murage to retry delivery, then try again." };
-    if (failure && PREPARE_WAITING[failure]) await dialog.showMessageBox({ type: "warning", buttons: ["Quit"], title: "Murage", message: "Murage will be ready for 1.0.2 once this is done.", detail: `Your chats and memories are as they were. ${PREPARE_WAITING[failure]}` });
+    const PREPARE_WAITING = { PHONE_CALLS_PENDING: "Some phone calls are unfinished or their status is unknown. Reopen this version of Murage, finish or cancel them in Phone calls settings, then try again.", PHONE_CALLS_UNREADABLE: "Murage could not read your phone call history. Keep this version installed and repair or restore the data before trying again.", DOWNGRADE_WORK_PENDING: "Some messages, bot posts or other work are still waiting. Open Murage, send, post or decline what is waiting, let the rest finish, then try again.", DOWNGRADE_CARD_DELIVERY_OWED: "Some card results have not reached their room yet. Reopen this version of Murage to retry delivery, then try again." };
+    // a voice reply still finishing: the minutes left, in the app's language (prepare-voice-finishing.mjs)
+    const finishing = voiceFinishingDialog(failure, (() => { try { return desktopStepUpLanguage({ system: systemLanguage(), readDesktopConfig: () => fs.readFileSync(path.join(ownedDesktopDataDir(), "config.json"), "utf8") }); } catch { return "en"; } })());
+    if (finishing) await dialog.showMessageBox(finishing);
+    else if (failure && PREPARE_WAITING[failure]) await dialog.showMessageBox({ type: "warning", buttons: ["Quit"], title: "Murage", message: "Murage will be ready for 1.0.2 once this is done.", detail: `Your chats and memories are as they were. ${PREPARE_WAITING[failure]}` });
     else if (failure) await dialog.showMessageBox({ type: "warning", buttons: ["Quit"], title: "Murage", message: "Murage will be ready for 1.0.2 after another start.", detail: `Your chats and memories are as they were. The next start of this version picks up where it left off. Code: ${failure}` });
-    else await dialog.showMessageBox({ type: "info", buttons: ["Quit"], title: "Murage", message: "Ready for Murage 1.0.2.", detail: "Install it now; your chats and memories are kept." });
+    else await dialog.showMessageBox({ type: "info", buttons: ["Quit"], title: "Murage", message: "Ready for Murage 1.0.2.", detail: "Install it now; your chats and memories are kept." + (typeof phoneCallsPreservedAt === "string" ? ` Phone call history and settings were saved in ${phoneCallsPreservedAt}. Keep this folder to restore them after upgrading again.` : "") });
+    noteShutdownCause("automatic");
     app.quit();
   } finally { prepareForPreviousVersion.running = false; }
 }
@@ -3066,19 +3354,30 @@ ipcMain.handle("update:prepare-previous-version", (_event, ...args) => {
   return { started: true };
 });
 
-function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
+let recoveryAttempt = null;
+function showDesktopRecovery(reasonCode = "STARTUP_FAILED", descriptor = {}) {
+  if(descriptor.updatePause)updateRecoveryDescriptor={...descriptor,reasonCode};
+  startupDecisionPending=false;
   desktopRecoveryMode = true;
-  closeStartupSplash();
   serverReady = false;
-  if (recoveryWindow && !recoveryWindow.isDestroyed()) { recoveryWindow.focus(); return recoveryWindow; }
+  if (recoveryWindow && !recoveryWindow.isDestroyed()) {
+    if(!descriptor.updatePause){recoveryWindow.focus();return recoveryWindow;}
+    recoveryWindow.destroy();recoveryWindow=null;
+  }
   const ownership = reasonCode === "LEASE_FOREIGN_HOST" && desktopDataDir ? inspectDataDirLease(desktopDataDir) : null;
   // A backup that stopped now says what stopped it, on the page the person is
   // looking at. Stage and code only, both from closed sets, so nothing from
   // the failure itself — no path, no filename, no secret — can be printed.
-  let captureFailure = null, backupError = null;
-  try { const status = backupScheduleHost?.internalStatus(); captureFailure = status?.captureFailure ?? null; backupError = status?.error ?? null; } catch { /* A missing note never blocks recovery. */ }
-  const reason = reasonCode === "BACKUP_REQUESTED"
-    ? (captureFailure ? captureFailureSentence(captureFailure) + " " : backupError ? "Murage could not complete this backup. Choose Return to workspace to continue. " : "")
+  let captureFailure = null, backupError = null, recoveryStatus = null;
+  try { const status = recoveryStatus = backupScheduleHost?.internalStatus(); captureFailure = status?.captureFailure ?? null; backupError = status?.error ?? null; } catch { /* A missing note never blocks recovery. */ }
+  const words=updateRecoveryWords(app.getLocale?.());
+  const reason = descriptor.updatePause ? [
+    descriptor.cleanupFailure&&recoveryStatus?.phase==="upgrade-cancelled"?words[descriptor.returnRevoked?"settled-stopped":"return-unconfirmed"]:null,
+    descriptor.returnRevoked&&descriptor.cleanupFailure?words["cleanup-stopped"]:words[descriptor.detail]??words[reasonCode]??words.BACKUP_UPGRADE_REVIEW_REQUIRED,
+    descriptor.cleanupFailure&&descriptor.detail?String(descriptor.detail):null,
+    descriptor.returnRevoked?words["return-revoked"]:null,
+  ].filter(Boolean).join(" ") : reasonCode === "BACKUP_REQUESTED"
+    ? (captureFailure ? captureFailureSentence(captureFailure, { translate: () => words[captureFailure.code] ?? captureFailureSentence(captureFailure) }) + " " : backupError ? "Murage could not complete this backup. Choose Return to workspace to continue. " : "")
       + "You are in Backup mode. Your bots, schedules and messaging apps are paused while you are here. Restore a backup or make one, or choose Return to workspace."
     : reasonCode === "LEASE_FOREIGN_HOST"
     ? "Murage's data folder says it was last used on a computer with a different name. That does not mean anything is damaged, and reinstalling Murage won't change it."
@@ -3091,9 +3390,12 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
     : reasonCode === "PORT_CONFLICT"
       ? "Another program is using Murage's ports. Quit it, then choose Retry startup. Restoring a backup won't help with this."
       : "Murage couldn't finish starting. Your data is kept as it is. Choose Retry startup, or restore a backup.";
+  const attempt = {};
   const recovery = openInstallationRecoveryWindow({
     BrowserWindow, ipcMain: electronIpcMain, dialog, baseDir: __dirname,
-    context: { reason, ownership, backupMode: reasonCode === "BACKUP_REQUESTED", dataDirectory: desktopDataDir, skin: readPersistedSkin() ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light") },
+    updatePause:()=>descriptor.updatePause===true,returnRevoked:()=>returnAuthority.userQuitRequested||updateRequester,
+    relaunchAfterRestore:()=>returnToWorkspaceAfterBackup({prepare:()=>{backupScheduleHost?.prepareWorkspaceReturn();return {kind:"normal"};}}),
+    context: { reason, returnRevoked:descriptor.returnRevoked===true, updateMessages:words, updatePause:descriptor.updatePause===true, ownership, backupMode: reasonCode === "BACKUP_REQUESTED", dataDirectory: desktopDataDir, skin: readPersistedSkin() ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light") },
     isAvailable: () => Boolean(desktopDataOwner && desktopDataDir && !desktopShutdownStarted),
     canRestoreSeparate: canRestoreSeparateInstallation,
     canCaptureSeparate: canCaptureSeparateInstallation,
@@ -3106,24 +3408,32 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
     encryptedAvailable: () => Boolean(desktopDataOwner && desktopBackupTool.currentTool()),
     verifyEncrypted: requireDesktopBackupTool,
     retry: async () => {
-      backupScheduleHost?.prepareWorkspaceReturn();
-      if(backupScheduleHost?.pendingUpgrade())await backupScheduleHost.returnUpgradeToWorkspace();
-      // The same single attempt as a backup's own return: cleanup first, one
-      // relaunch however often this is pressed, then a bounded quit.
-      await returnToWorkspaceAfterBackup();
+      if(returnAuthority.userQuitRequested)throw refusal("BACKUP_UPGRADE_ACTION_UNAVAILABLE");
+      if(descriptor.updatePause&&updateRequester)throw refusal("BACKUP_UPGRADE_REVIEW_REQUIRED");
+      if(descriptor.cleanupOnly)return returnToWorkspaceAfterBackup({retry:true});
+      if(!descriptor.updatePause){
+        await explicitBackupReturn(backupScheduleHost,returnToWorkspaceAfterBackup);return;
+      }
+      backupScheduleHost?.noteStop?.();
+      if(backupScheduleHost?.reconcileStartup?.().blocked)throw refusal("BACKUP_STATE_SAVE_FAILED");
+      try { await returnToWorkspaceAfterBackup({retry:true,prepare:()=>prepareUpdateReturn(true)}); }
+      catch(error){if(error?.code)throw error;throw refusal("BACKUP_UPGRADE_CLEANUP_FAILED");}
     },
     openDiagnostics: async () => { const error = await shell.openPath(LOG_DIR); if (error) throw new Error("DIAGNOSTICS_UNAVAILABLE"); },
-    onClosed: () => { recoveryWindow = null; },
+    onClosed: () => { if (recoveryAttempt === attempt) { recoveryAttempt = null; recoveryWindow = null; } },
   });
+  recoveryAttempt = attempt;
   recoveryWindow = recovery.window;
+  deferredStartup.presented();
   closeStartupSplash();
-  void recovery.loaded.catch(() => {
-    dialog.showErrorBox("Murage recovery could not open", "Installation data was preserved. Check the local diagnostics, then reopen Murage.");
-    app.quit();
-  });
+  void recovery.loaded.catch(error => {
+    if (recoveryAttempt !== attempt || recoveryWindow !== recovery.window) { recordStartupRefusal(error); return; }
+    return fallbackDesktopStartup(error, startupSettleDeps);
+  }).catch(error => terminalDesktopStartup(error, startupSettleDeps));
   if (!recoveryActivateRegistered) {
     recoveryActivateRegistered = true;
     app.on("activate", () => {
+      if(reopenUpdateRecoveryIfNeeded())return;
       if (desktopRecoveryMode && !desktopShutdownStarted && !recoveryWindow) showDesktopRecovery(reasonCode);
     });
   }
@@ -3296,6 +3606,7 @@ function sendWhenLoaded(channel,...args){
   const send=()=>{if(!win.isDestroyed())win.webContents.send(channel,...args);};
   if(win.webContents.isLoadingMainFrame())win.webContents.once("did-finish-load",send);else send();
 }
+function openTarget(target){sendWhenLoaded("tray:open",target);}
 /** The tray menu's reads and answers: the desktop surface, like the app. */
 async function harnessJson(route,body){
   if(!serverReady||!desktopSurfaceSecret||desktopShutdownStarted)throw new Error("Murage is not ready yet.");
@@ -3308,7 +3619,8 @@ async function harnessJson(route,body){
 }
 // The tray's Inbox change watcher (electron/inbox-watch.mjs), bound to this
 // process's server port and desktop surface proof.
-const watchTrayInbox=onChange=>watchInboxChanges(onChange,{
+const watchTrayInbox=onChange=>watchInboxChanges(change=>{attentionMain?.reconcile();if(change?.scale===undefined)void attentionMain?.previewsCheck("local");onChange(change);},{
+  onFrame:frame=>attentionMain?.watcherFrame(frame),
   ready:()=>serverReady&&Boolean(desktopSurfaceSecret)&&!desktopShutdownStarted,
   url:()=>`http://127.0.0.1:${SERVER_PORT}/api/events?screens=off`,
   headers:()=>({accept:"text/event-stream","x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret}),
@@ -3337,15 +3649,15 @@ function initializeBackgroundLifecycle(){
     };})(),
     harness:{get:route=>harnessJson(route),post:(route,body)=>harnessJson(route,body)},
     watch:watchTrayInbox,
-    openTarget:target=>sendWhenLoaded("tray:open",target),
+    openTarget,
     checkForUpdates:app.isPackaged?()=>{checkForUpdatesNow();}:undefined,
     setTrayMenu:(tray,items)=>tray.setContextMenu(Menu.buildFromTemplate(items)),
     probeTray:tray=>process.platform==="linux"?linuxTrayHostAvailable(execFile):(()=>{try{const bounds=tray.getBounds();return bounds.width>0&&bounds.height>0;}catch{return false;}})(),
     openWindow:()=>{if(pendingSwap&&!pendingSwap.done){pendingSwap.wantVisible=true;pendingSwap.wantFocus=true;const old=pendingSwap.old;if(!old.isDestroyed()){if(old.isMinimized())old.restore();old.show();old.focus();}return;}const win=mainWindow&&!mainWindow.isDestroyed()?mainWindow:createWindow();if(win.isMinimized())win.restore();win.show();win.focus();},
     openInbox:()=>sendWhenLoaded("startup-background:open-inbox"),
     explainClose:async win=>{const options={type:"info",title:"Murage stays available",message:"Closing this window keeps Murage running.",detail:"Use the Murage menu bar or tray icon to reopen it, open Inbox or quit. Automatic work only runs while Murage is open and this computer is awake. Change this in Settings → General → Startup & background.",buttons:["Keep running","Quit Murage"],defaultId:0,cancelId:0};const result=win?await dialog.showMessageBox(win,options):await dialog.showMessageBox(options);return result.response===1?"quit":"keep";},
-    automationStatus:()=>automation(),setAutomationsPaused:paused=>automation(paused),quit:()=>app.quit(),
-    onChange:state=>{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send("startup-background:changed",state);},
+    automationStatus:()=>automation(),setAutomationsPaused:paused=>automation(paused),quit:requestOwnerQuit,
+    onChange:state=>{applyUnreadBadge();if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send("startup-background:changed",state);},
     onError:error=>{slog(`startup/background: ${error.message}`);},
   });
   return {lifecycle:backgroundLifecycle,login};
@@ -3356,6 +3668,41 @@ function backgroundForEvent(event){
 }
 ipcMain.handle("startup-background:status",event=>backgroundForEvent(event).status());
 ipcMain.handle("startup-background:update",(event,patch)=>backgroundForEvent(event).update(patch));
+// Device notification surfaces: the main window only (local-only class); one key per set, validated in main.
+const notifySurfacesForEvent=()=>{initializeNotifySurfaces();return notifySurfaces;};
+ipcMain.handle("notify-surfaces:get",()=>notifySurfacesForEvent().get());
+ipcMain.handle("notify-surfaces:set",async(_event,key,value)=>{
+  const prefs=notifySurfacesForEvent();
+  if(key!=="shortcut"&&key!=="surfaces.shortcut"){const state=prefs.set(key,value);refreshBadgePreferences();return state;}
+  const owner=await initializeGlobalShortcut(),before=prefs.get();
+  let result;
+  if(key==="shortcut")result=value===null?owner.sync(null):owner.trySet(value);
+  else if(value===true)result=owner.trySet(before.shortcut);
+  else if(value===false)result=owner.sync(null);
+  else return {ok:false,reason:"invalid"};
+  if(!result.ok)return result;
+  try{
+    const state=prefs.set(key,value);
+    // Recording tests the key even when the surface is off; enabling the row activates it.
+    if(!state.surfaces.shortcut||state.shortcut===null)owner.sync(null);
+    refreshBadgePreferences();
+    return state;
+  }catch(error){owner.sync(before.surfaces.shortcut?before.shortcut:null);throw error;}
+});
+ipcMain.handle("notify-surfaces:reset",()=>{
+  const state=notifySurfacesForEvent().reset();
+  shortcutOwner?.sync(null);
+  refreshBadgePreferences();
+  return state;
+});
+// The Mac permission prompt, asked only from the first-run chooser's Continue click (design 3.1); nothing to ask on other systems.
+ipcMain.handle("notify-surfaces:ensure-permission",async()=>{notifySurfacesForEvent();if(process.platform!=="darwin")return{authorized:true};try{const result=await notificationAuthorization.ensure();return{authorized:result?.authorized===true};}catch{return{authorized:false};}});
+ipcMain.handle("notify-surfaces:capabilities",async()=>{
+  const caps=notifyCapabilities({platform:process.platform,env:process.env,trayHost:process.platform==="linux"?await linuxTrayHostAvailable(execFile).catch(()=>null):null});
+  const owner=await initializeGlobalShortcut();
+  if(owner.status().disabledReason)caps.surfaces.shortcut={available:false,reason:"portal-needed"};
+  return caps;
+});
 
 // The origin the owned main window should show, read lazily because the
 // packaged server port is chosen at boot. null (never trusted) if unparsable.
@@ -3406,11 +3753,11 @@ function createWindow({quiet=false}={}) {
   desktopMark("window.created");
   win.once("ready-to-show", () => { desktopMark("window.ready-to-show"); noteVersionStarted({ userData: () => app.getPath("userData"), appVersion: () => app.getVersion() }); });
   // The bar reaches 100% when the real window exists; the window appears, and
-  // the splash goes, once the page can paint. The fallback guarantees a window
-  // even if the first paint never reports.
+  // the splash goes, once the page can paint. Elapsed time alone cannot
+  // prove that a slow load has content to show.
   if (startupSplash) {
     startupSplash.stage("ready");
-    if (quiet) { win.once("ready-to-show", closeStartupSplash); setTimeout(closeStartupSplash, WINDOW_REVEAL_FALLBACK_MS).unref?.(); }
+    if (quiet) win.once("ready-to-show", closeStartupSplash);
   }
   if (!quiet) {
     pendingRevealWindows.add(win);
@@ -3423,7 +3770,6 @@ function createWindow({quiet=false}={}) {
       closeStartupSplash();
     };
     win.once("ready-to-show", reveal);
-    setTimeout(reveal, WINDOW_REVEAL_FALLBACK_MS).unref?.();
   }
   win.on("close",event=>backgroundLifecycle?.handleClose(event));
   attachUpdaterWindow(win);
@@ -3982,7 +4328,7 @@ ipcMain.handle("desktop:open-external", createOpenExternalHandler({
 const isTermsQuitSender = ownedMainSenderGate({ window: () => mainWindow, origin: trustedRendererOrigin });
 ipcMain.handle("desktop:quit", (event) => {
   if (isTermsQuitSender(event) !== true) throw new Error("Quit is available only from the main Murage window");
-  app.quit();
+  requestOwnerQuit();
 });
 
 // The Box VNC viewer must be a top-level page for its token exchange. A
@@ -4066,7 +4412,8 @@ ipcMain.handle("speech:start", (event, options) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win) return;
   if (!nativeActions.appleSpeech) {
-    win.webContents.send("speech:end", { code: 2, reason: "unsupported-platform" });
+    const session = speechToken(options?.session);
+    win.webContents.send("speech:end", session === undefined ? { code: 2, reason: "unsupported-platform" } : { code: 2, reason: "unsupported-platform", session });
     return;
   }
   return startSpeech(win, options);
@@ -4080,11 +4427,11 @@ function reportNativeHelperStop(kind, operation) {
     throw error;
   });
 }
-ipcMain.handle("speech:stop", () => {
-  if (nativeActions.appleSpeech) return reportNativeHelperStop("dictation", stopSpeech());
+ipcMain.handle("speech:stop", (_event, token) => {
+  if (nativeActions.appleSpeech) return reportNativeHelperStop("dictation", stopSpeech(token));
 });
-ipcMain.handle("speech:finish", () => {
-  if (nativeActions.appleSpeech) finishSpeech();
+ipcMain.handle("speech:finish", (_event, token) => {
+  if (nativeActions.appleSpeech) finishSpeech(token);
 });
 // Call audio for a fed recognizer session: fire-and-forget, one message per
 // ~64 ms of 16 kHz PCM, so it is `on`, not `handle`.
@@ -4188,6 +4535,7 @@ const CREDENTIAL_PATCH = {
   tavilySearchApiKey: (value) => ({ webSearch: { tavilyApiKey: value } }),
   exaSearchApiKey: (value) => ({ webSearch: { exaApiKey: value } }),
   firecrawlSearchApiKey: (value) => ({ webSearch: { firecrawlApiKey: value } }),
+  highlevelPrivateToken: (value) => ({ highlevel: { privateToken: value } }),
   telegramBotToken: (value) => ({ telegram: { botToken: value } }),
   slackAppToken: (value) => ({ slack: { appToken: value } }),
   slackBotToken: (value) => ({ slack: { botToken: value } }),
@@ -4260,6 +4608,7 @@ ipcMain.handle("flux-connection:restart-app", (_event, ...args) => {
   if (relaunchBlockedCode()) throw new Error("Murage can't restart itself on this computer. Quit and open it again.");
   serverStopReason.note("restart");
   relaunchDesktop({ app, args: process.argv.slice(1).filter(arg => arg !== BACKUP_MODE_ARGUMENT) });
+  noteShutdownCause("automatic");
   app.quit();
 });
 
@@ -4302,6 +4651,25 @@ ipcMain.handle("email-owner-signin:start", async () => {
   }
 });
 ipcMain.handle("email-owner-signin:cancel", () => { cancelFluxDesktopSignin(); });
+
+// Phone calls (BOT-CALLS-1020 3a): the owner pastes the Vapi private key in the Settings key box (never chat). Main keeps it in the
+// encrypted credential document, bound to https://api.vapi.ai, and hands it to the server over the private port. Nothing returns
+// the key to the renderer, and it never goes to config.json, an engine, an MCP server or a child environment.
+ipcMain.handle("phone-key:save", async (_event, input) => {
+  if (credentialStoreUnavailable) return { ok: false, code: "store_unavailable", message: "Murage could not keep the key on this computer." };
+  const key = typeof input?.key === "string" ? input.key : "";
+  let next;
+  try { next = withPhoneKey({}, key); } catch { return { ok: false, code: "bad_key", message: "That does not look like a Vapi private key." }; }
+  await updateSecureCredentialDocument((current) => withPhoneKey(current, next.phoneCallSecrets), undefined, { skipUnchanged: true });
+  serverProc?.postMessage(phoneKeyMessage(next));
+  return { ok: true };
+});
+ipcMain.handle("phone-key:remove", async () => {
+  if (credentialStoreUnavailable) return { ok: false, code: "store_unavailable", message: "Murage could not change the key on this computer." };
+  await updateSecureCredentialDocument((current) => withPhoneKey(current, null), undefined, { skipUnchanged: true });
+  serverProc?.postMessage(phoneKeyMessage({}));
+  return { ok: true };
+});
 
 // The consent button in Connected apps. It is the ONLY trigger for a shared
 // (team) FluxRouter account, because every holder of that account's keys would
@@ -4504,7 +4872,7 @@ async function announceLastBackupFailureNow(){
   for(let tries=0;tries<120&&!(serverReady&&desktopSurfaceSecret)&&!desktopShutdownStarted;tries++)await new Promise(resolve=>setTimeout(resolve,1000));
   if(!backupScheduleHost||desktopShutdownStarted||desktopRecoveryMode||!serverReady||!desktopSurfaceSecret)return;
   let folderName;try{folderName=await backupScheduleHost.destinationLabel();}catch{/* the sentence says "your backup folder" */}
-  await announceBackupFailure({status:backupScheduleHost.internalStatus(),folderName,userData:app.getPath("userData"),post:body=>harnessJson("/api/backup-failure-notice",body),
+  await announceBackupFailure({status:backupScheduleHost.internalStatus(),folderName,userData:app.getPath("userData"),post:body=>harnessJson("/api/backup-failure-notice",body),words:backupSentenceWords(app.getLocale?.()),
     showNotice:sentence=>{
       if(!Notification.isSupported())return;
       const notice=new Notification({title:"The last backup didn't finish",body:sentence});
@@ -4704,7 +5072,8 @@ async function initializeBackupScheduleHost(){
   }
   const choose=async(properties,title,defaultPath)=>{const answer=await dialog.showOpenDialog(mainWindow??undefined,{title,properties,...(defaultPath?{defaultPath}:{})});return answer.canceled?null:answer.filePaths[0]??null;};
   backupScheduleHost=createBackupScheduleHost({
-    coordinator,installation:()=>installation,
+    coordinator,installation:()=>installation,shutdownStarted:()=>desktopShutdownStarted,
+    publishCommitted:()=>sentinelHost?.backupCommitted(coordinator.committedState()),
     assertUpgradeAllowed:()=>{
       if(!app.isPackaged||hasCustomUpdaterProfile(process.env)||desktopSelectionActive||!desktopUpdater?.supportsInstallContinuation)throw Error("BACKUP_PREUPGRADE_UNAVAILABLE");
     },
@@ -4782,7 +5151,11 @@ async function initializeBackupScheduleHost(){
     capture:parameters=>runDesktopRecovery("backup-encrypted",parameters),
     argv:()=>process.argv,
     noteBudget:budget=>sentinelHost?.backupBudget(budget),
-    relaunch:async(mode,budgetArgument)=>{
+    restartForBackup:(arm,token)=>{
+      const args=[...normalArgs(),BACKUP_MODE_ARGUMENT];
+      return returnToWorkspaceAfterBackup({destination:{kind:"backup",args},afterCleanup:()=>{if(token?.cancelled)throw Error("BACKUP_ADMISSION_STOPPED");const budget=arm();if(budget)args.push(budget);}});
+    },
+    relaunch:async(mode,budgetArgument,token)=>{
       // Back to the workspace after a backup-mode capture, whatever its
       // outcome: one relaunch, the progress window destroyed before the quit,
       // and a bounded exit if the quit is still held (backup-offline-return.mjs).
@@ -4790,12 +5163,21 @@ async function initializeBackupScheduleHost(){
       const args=withoutBackupBudgetArgument(process.argv.slice(1)).filter(arg=>arg!==BACKUP_MODE_ARGUMENT);
       serverStopReason.note(mode==="backup"?"backup":"restart");
       if(mode==="backup"){args.push(BACKUP_MODE_ARGUMENT);if(budgetArgument)args.push(budgetArgument);}
-      relaunchDesktop({app,args});app.quit();
+      return await new Promise((resolve,reject)=>{
+        const queued=setImmediate(()=>{
+          if(token?.cancelled){reject(Error("BACKUP_ADMISSION_STOPPED"));return;}
+          try{
+            Promise.resolve(returnToWorkspaceAfterBackup({destination:{kind:mode==="backup"?"backup":"normal",args},
+              afterCleanup:()=>{if(token?.cancelled)throw Error("BACKUP_ADMISSION_STOPPED");}})).then(resolve,reject);
+          }catch(error){reject(error);}
+        });
+        if(token)token.cancelQueued=()=>{clearImmediate(queued);reject(Error("BACKUP_ADMISSION_STOPPED"));};
+      });
     },
   });
   // 1.0.9 Sentinel: publish the committed backup state once, now that the folder/key check exists, so a restart or an
   // upgrade states it again (before the first backup: on or off and when one is due, never a verification).
-  try{sentinelHost?.backupCommitted(coordinator.committedState());}catch{/* Health metadata never changes a backup. */}
+  // Publication occurs only after backupStartupDispatch reconciles the raw state.
 }
 // The OS ending the session is heard from the first moment, before any window (session-end.mjs): Linux/macOS through powerMonitor,
 // Windows through a hidden stand-in window until the first real one. Queued ahead of the boot block, like the sleep hook below.
@@ -4816,6 +5198,8 @@ const desktopStartup = app.whenReady().then(async () => {
   assertDesktopStartupActive();
   if(closedBackupRequested){
     closedTrace("ready");acquireDesktopDataOwner();closedTrace("owner");await initializeSentinelHost({closed:true});await initializeBackupScheduleHost();closedTrace("host");desktopRecoveryMode=true;
+    const dispatch=backupStartupDispatch({host:backupScheduleHost,closed:true,publish:()=>backupScheduleHost?.publishCommitted()});
+    if(dispatch.route==="closed-blocked"){void finishClosedBackup({status:"unavailable",reason:"state-unavailable"});return;}
     // The worker waits for desktopStartup; never await it from this callback.
     void desktopStartup.then(()=>desktopBackupTool.waitReady().catch(()=>{})).then(()=>{closedTrace("run");return backupScheduleHost.runClosedDue();}).then(result=>{closedTrace(`result ${result?.status}${result?.reason?" "+result.reason:""}`);return finishClosedBackup(result);}).catch(()=>{closedTrace("failed");return finishClosedBackup({status:"unavailable"});});
     return;
@@ -4826,13 +5210,21 @@ const desktopStartup = app.whenReady().then(async () => {
   if (app.isPackaged && !process.argv.includes(BACKUP_MODE_ARGUMENT) && !process.argv.includes("--murage-login")) {
     let wasOpenedAtLogin = false;
     try { wasOpenedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin === true; } catch { /* unsupported platform */ }
-    if (!wasOpenedAtLogin) { startupSplash = createStartupSplash({ BrowserWindow, dark: nativeTheme.shouldUseDarkColors, icon: APP_ICON, language: app.getLocale?.(), onUserClose: () => app.quit(), note: firstStartOfVersion({ userData: () => app.getPath("userData"), appVersion: () => app.getVersion() }) ? FIRST_AFTER_UPDATE_NOTE : "" }); desktopMark("splash.shown"); }
+    if (!wasOpenedAtLogin) { startupSplash = createStartupSplash({ BrowserWindow, dark: nativeTheme.shouldUseDarkColors, icon: APP_ICON, language: app.getLocale?.(), onUserClose: requestOwnerQuit, note: firstStartOfVersion({ userData: () => app.getPath("userData"), appVersion: () => app.getVersion() }) ? FIRST_AFTER_UPDATE_NOTE : "" }); desktopMark("splash.shown"); }
   }
   const connectionError = error => dialog.showErrorBox("Murage server connection", error.message);
   const serverConnections = createServerConnections({ BrowserWindow, session, onError: connectionError });
   const serverMenu = Menu.buildFromTemplate([{ label: "Server", submenu: [{ label: "Connect to server…", click: () => openServerPrompt({ BrowserWindow, session, connections: serverConnections, parent: mainWindow ?? undefined, onError: connectionError }) }] }]);
+  function ownerQuitMenu(menu) {
+    const items = menu.items.map(item => {
+      if (item.submenu) ownerQuitMenu(item.submenu);
+      return item.role === "quit" ? new MenuItem({ label: item.label, accelerator: item.accelerator, click: requestOwnerQuit }) : item;
+    });
+    menu.clear(); for (const item of items) menu.append(item);
+  }
   const applicationMenu = Menu.getApplicationMenu();
   if (applicationMenu) {
+    ownerQuitMenu(applicationMenu);
     applicationMenu.append(serverMenu.items[0]);
     Menu.setApplicationMenu(applicationMenu);
   } else Menu.setApplicationMenu(serverMenu);
@@ -4846,7 +5238,13 @@ const desktopStartup = app.whenReady().then(async () => {
   if (app.isPackaged) { acquireDesktopDataOwner(); await initializeSentinelHost(); }
   await initializeBackupScheduleHost();
   desktopMark("backup-host.ready");
-  if(backupScheduleHost?.internalStatus().phase==="handoff-armed"){
+  initializeNotifySurfaces();
+  initializeAttentionActions();
+  const backupDispatch=backupStartupDispatch({host:backupScheduleHost,backupMode:process.argv.includes(BACKUP_MODE_ARGUMENT),publish:()=>backupScheduleHost?.publishCommitted()});
+  if(backupDispatch.blocked){showDesktopRecovery("BACKUP_REQUESTED");return;}
+  // A settled wait whose installer offer or landed hops were unreadable pauses for review (BW-B9).
+  if(backupDispatch.offerInvalid||backupDispatch.hopsInvalid){ensureDesktopUpdater(false);pauseForReview("BACKUP_UPGRADE_REVIEW_REQUIRED");return;}
+  if(backupDispatch.route==="offline"){
     // No normal writers or credential migrations start before this private claim.
     desktopRecoveryMode=true;
     // A slow first check of the backup tool (macOS still assessing the app)
@@ -4857,42 +5255,51 @@ const desktopStartup = app.whenReady().then(async () => {
     // a thrown error or the ceiling destroy the progress window and relaunch
     // normally (the failure notice follows once it is open); only a run that
     // never got as far as closing anything shows the Backup mode page.
+    const operation = deferredStartup.begin({ deadlineMs: backupScheduleHost.offlineCeilingMs() + 30_000 });
     void runOfflineBackup({
+      operation,
       run:()=>desktopStartup.then(()=>desktopBackupTool.waitReady().catch(()=>{})).then(()=>backupScheduleHost.resumeOffline()),
       abandon:()=>backupScheduleHost.abandonOffline(),
       ceilingMs:backupScheduleHost.offlineCeilingMs(),
       returnToWorkspace:returnToWorkspaceAfterBackup,
       shutdownStarted:()=>desktopShutdownStarted,
+      showCleanupFailure:cleanupFailed,
       showBackupMode:()=>showDesktopRecovery("BACKUP_REQUESTED"),
       destroyProgress:()=>{const progress=backupProgress;backupProgress=null;progress?.destroy();},
       log:line=>slog(line),
-    }).then(outcome=>slog(`backup-mode run ended: ${outcome}`)).catch(()=>{});
+    }).then(result => operation.observe(Promise.resolve(result)), error => operation.fail(error));
     return;
   }
   // W-D7: say so when the last backup stopped, once the harness is up.
   if(backupScheduleHost)void desktopStartup.then(announceLastBackupFailure).catch(()=>{});
   // 1.0.7: and say so when the Back up now that closed Murage worked.
   if(backupScheduleHost)void desktopStartup.then(announceLastBackupResult).catch(()=>{});
+  if(["handoff-prepared","offline-claimed","capturing"].includes(backupScheduleHost?.internalStatus().phase))backupScheduleHost.interruptIncomplete();
   const upgrade=backupScheduleHost?.pendingUpgrade();
   if(upgrade){
     const updater=ensureDesktopUpdater(false);
+    if(upgrade.offerInvalid||upgrade.hopsInvalid){pauseForReview("BACKUP_UPGRADE_REVIEW_REQUIRED");return;}
     if(upgrade.phase==="install-requested"&&upgrade.candidate.version===app.getVersion()){
-      await backupToolCheck; // a pending upgrade is the one launch that needs the tool before the fork
+      await backupToolCheck;
       await backupScheduleHost.completeUpgrade(app.getVersion());
     }else{
       desktopRecoveryMode=true;
-      // Wait for this startup promise to settle before cleanup can await it.
-      void desktopStartup.then(()=>resumeBackedUpInstall({backup:backupScheduleHost,updater,currentVersion:app.getVersion(),cleanup:()=>{serverStopReason.note("update");return cleanupDesktopForExit();}})).catch(()=>{
-        if(!desktopShutdownStarted){
-          showDesktopRecovery("BACKUP_REQUESTED");
-          dialog.showErrorBox("Update paused","Murage couldn't confirm the update could carry on after the backup, so it stopped and will not try again by itself. Your data is unchanged. Open the diagnostics folder and contact support before returning to your workspace.");
-        }
-      });
+      startupDecisionPending=true;
+      startupSplash?.set({title:"Murage",line:updateRecoveryWords(app.getLocale?.())["installer-wait"],controls:{quit:updateRecoveryWords(app.getLocale?.()).quit},keepOpen:true});
+      if(upgrade.phase==="install-requested"&&process.platform!=="darwin"){
+        showDesktopRecovery("BACKUP_REQUESTED");
+        dialog.showErrorBox("Update paused","Murage couldn't confirm the update could carry on after the backup, so it stopped and will not try again by itself. Your data is unchanged. Open the diagnostics folder and contact support before returning to your workspace.");
+      }else if(upgrade.phase==="install-requested")void desktopStartup.then(startUpdateGate).catch(()=>pauseForReview("BACKUP_UPGRADE_REVIEW_REQUIRED"));
+      else{
+        const operation = deferredStartup.begin();
+        void desktopStartup.then(()=>resumeBackedUpInstall({backup:backupScheduleHost,updater,currentVersion:app.getVersion(),operation,cleanup:()=>{noteShutdownCause("automatic");serverStopReason.note("update");return cleanupDesktopForExit("internal").catch(error=>{returnAuthority.releasePendingInstall();cleanupFailed(error);throw refusal("BACKUP_UPGRADE_CLEANUP_FAILED");});}})).then(result => { operation.observe(Promise.resolve(result)); }, error => { if(error?.code==="BACKUP_UPGRADE_CLEANUP_FAILED")operation.terminal();else operation.fail(error); });
+      }
       return;
     }
   }
+
   if(!process.argv.includes(BACKUP_MODE_ARGUMENT))backupScheduleHost?.completeReturn();
-  if (app.isPackaged && process.argv.includes(BACKUP_MODE_ARGUMENT)) {
+  if (app.isPackaged && backupDispatch.route==="recovery") {
     await backupToolCheck; // the recovery page reads the tool once on load, so it must be settled first
     showDesktopRecovery("BACKUP_REQUESTED");
     return;
@@ -4911,7 +5318,7 @@ const desktopStartup = app.whenReady().then(async () => {
   }
   if (app.isPackaged) app.setAsDefaultProtocolClient("murage");
   // Linux AppImage: nothing registers murage:// unless something integrates it; write the handler for this copy at ready.
-  if (app.isPackaged && process.platform === "linux") void ensureLinuxUrlHandler({ app }).then((outcome) => { if (outcome.reason === "failed") console.warn("[cloud] linux url handler: not registered"); });
+  if (app.isPackaged && process.platform === "linux") void ensureLinuxUrlHandler({ app }).then((outcome) => { if (outcome.reason === "failed") console.warn("[cloud] linux url handler: not registered"); }).catch(() => console.warn("[cloud] linux url handler: not registered"));
   configureRestoredDesktopConnections();
   if (process.platform === "darwin") app.dock.setIcon(APP_ICON);
   secureCredentials = await loadSecureCredentials();
@@ -5142,39 +5549,56 @@ void androidDevice.reclaimOrphan().catch(() => {});
     if (!desktopShutdownStarted)backgroundLifecycle?.open();
   });
 });
-// With a main window, its reveal (ready-to-show or the 15 s fallback) closes the splash; this is only for paths that never make one.
-function closeSplashWhenNoMainWindow() { if (!mainWindow || mainWindow.isDestroyed()) closeStartupSplash(); }
-void desktopStartup.finally(closeSplashWhenNoMainWindow).catch(()=>{});
+// With a main window, its first-paint reveal closes the splash; this is only for paths that never make one.
+function closeSplashWhenNoMainWindow() {
+  if (startupDecisionPending) return;
+  if (recoveryWindow && !recoveryWindow.isDestroyed()) { closeStartupSplash(); return; }
+  if (mainWindow && !mainWindow.isDestroyed()) return; // its reveal owns the splash
+  if (desktopStartupFulfilled && deferredStartup.size === 0) closeStartupSplash();
+}
 // A Cloud link that arrived during startup drains once startup is through (and again on window load and the live flip).
 void desktopStartup.then(() => cloudLinks.drain()).catch(() => {});
+dispatchBadgeTask(parseMurageTask(process.argv));
 void desktopStartup.then(()=>{if(!desktopRecoveryMode&&!desktopShutdownStarted){backupScheduleHost?.start();void backupRemoteReady.then(()=>{if(!desktopRecoveryMode&&!desktopShutdownStarted)startAutomaticRemoteBackups();});}}).catch(()=>{});
-void desktopStartup.catch((error) => {
-  if(closedBackupRequested){closedTrace(`startup failed ${String(error?.name??"Error").replace(/[^\w]/g,"").slice(0,40)} ${String(error?.code??error?.message??"").replace(/[^A-Z0-9_]/g,"").slice(0,60)}`);void finishClosedBackup({status:error?.name==="DataDirLeaseError"?"busy":"unavailable"});return;}
-  if (!desktopShutdownStarted) {
-    // Lease errors are sanitized by the lease module; arbitrary child/errors
-    // may carry credentials or paths and must not be echoed to diagnostics.
-    const recoveryError = error?.name === "DataDirLeaseError" || error?.name === "DataDirMigrationError";
-    const detail = recoveryError
-      ? `${error.message} Close the other Murage process or resolve the installation ownership problem, then reopen Murage. No new workspace was created.`
-      : "Murage could not finish desktop startup. Installation data was preserved. Check the local startup diagnostics, then reopen Murage.";
-    slog(`desktop startup refused (${recoveryError ? error.code : "STARTUP_FAILED"})`);
-    if (app.isPackaged) {
-      try {
-        showDesktopRecovery(error?.code === "RESTORE_REVIEW_REQUIRED" ? "RESTORE_REVIEW_REQUIRED"
-          : recoveryError && error.code === "LEASE_FOREIGN_HOST" ? "LEASE_FOREIGN_HOST" : "STARTUP_FAILED");
-        return;
-      } catch { /* The native error box remains the last-resort fallback. */ }
+const startupSettleDeps = {
+  record: recordStartupRefusal,
+  cause: () => shutdownCause,
+  automatic: () => { noteShutdownCause("automatic"); startupFailureExit = true; },
+  closedBackup: () => closedBackupRequested,
+  finishClosedBackup: error => {
+    closedTrace(`startup failed ${String(error?.name??"Error").replace(/[^\w]/g,"").slice(0,40)} ${String(error?.code??error?.message??"").replace(/[^A-Z0-9_]/g,"").slice(0,60)}`);
+    return finishClosedBackup({status:error?.name==="DataDirLeaseError"?"busy":"unavailable"});
+  },
+  success: () => { desktopStartupFulfilled = true; closeSplashWhenNoMainWindow(); },
+  packaged: () => app.isPackaged,
+  shutdownStarted: () => desktopShutdownStarted,
+  closeSplash: closeStartupSplash,
+  showRecovery: error => showDesktopRecovery(error?.code === "RESTORE_REVIEW_REQUIRED" ? "RESTORE_REVIEW_REQUIRED"
+    : error?.code === "LEASE_FOREIGN_HOST" ? "LEASE_FOREIGN_HOST" : "STARTUP_FAILED"),
+  showError: () => dialog.showErrorBox("Murage could not open this installation", "Murage could not finish desktop startup. Installation data was preserved. Check the local startup diagnostics, then reopen Murage."),
+  cleanup: cleanupDesktopForExit,
+  retain: retry => {
+    void dialog.showMessageBox({ title: "Murage is still closing", buttons: ["Quit"],
+      message: `Cleanup is waiting on ${desktopCleanupStage}. Installation ownership was kept. Wait, then try Quit again. You can force quit through your operating system, but that is not a verified clean shutdown.`
+    }).then(retry).catch(recordStartupRefusal);
+  },
+  exit: code => app.exit(code),
+};
+void settleDesktopStartup(desktopStartup, startupSettleDeps).catch(error => terminalDesktopStartup(error, startupSettleDeps));
+
+app.on("window-all-closed", () => {
+  if(startupSplashClosing){startupSplashClosing=false;return;}
+  if(backgroundLifecycle?!backgroundLifecycle.keepAliveWithoutWindows():process.platform!=="darwin") {
+    if (!shutdownCause && !desktopStartupFulfilled) {
+      noteShutdownCause("automatic");
+      recordStartupRefusal({ code: "STARTUP_WINDOW_CLOSED" });
     }
-    dialog.showErrorBox("Murage could not open this installation", detail);
+    noteShutdownCause("automatic");
     app.quit();
   }
 });
-
-app.on("window-all-closed", () => {
-  if(startupSplashClosing)return;
-  if(backgroundLifecycle?!backgroundLifecycle.keepAliveWithoutWindows():process.platform!=="darwin")app.quit();
-});
 app.on("will-quit",()=>backgroundLifecycle?.dispose());
+app.on("will-quit",()=>shortcutOwner?.dispose());
 
 // EMBEDDING.md lifecycle rule: defer the first quit until the embedded
 // daemon's async cleanup completes — it can't run after the host exits.
@@ -5195,6 +5619,7 @@ let signalQuitRequested = false;
 const requestSignalQuit = () => {
   if (signalQuitRequested) return;
   signalQuitRequested = true;
+  noteShutdownCause("system");
   app.quit();
 };
 process.once("SIGINT", requestSignalQuit);
@@ -5233,7 +5658,9 @@ function startDeskPresenceReporting(){
   });
 }
 
-function cleanupDesktopForExit() {
+function cleanupDesktopForExit(reason="user-stop",token) {
+  if(reason==="user-stop"&&!token?.stopNoted)backupScheduleHost?.noteStop?.();
+  if(token?.cancelled)throw Error("BACKUP_ADMISSION_STOPPED");
   serverStopReason.logOnce();
   stopDeskPresence();stopDeskPresence=()=>{};
   // 1.0.9 Sentinel: flush the desktop producer. Quitting never unregisters Sentinel or stops its scanner.
@@ -5275,6 +5702,9 @@ function cleanupDesktopForExit() {
     browserSurface?.closeAll();
   } catch {}
   desktopCleanup = (async () => {
+    // Reuse the existing owned-process cleanup copy for this helper too.
+    desktopCleanupStage = "owned harness";
+    await Promise.all([...ownedRelaunchHelpers].map(helper => helper.stop()));
     desktopCleanupStage = "native speech and recorder helpers";
     await awaitOwnedWork(nativeHelpersStopped, "Native speech or recorder helpers have not exited");
     // Children are registered before their first await, including failed
@@ -5393,21 +5823,41 @@ function replaceMainWindow(reason) {
     if (!old.isDestroyed()) old.destroy();
   };
   fresh.once("ready-to-show", finish);
-  setTimeout(finish, WINDOW_REVEAL_FALLBACK_MS).unref?.();
   return true;
 }
 
 app.on("before-quit", (e) => {
+  const backupInternalQuit=internalBackupQuit||returnAuthority.internalQuit;
+  if(!backupInternalQuit)backupScheduleHost?.noteStop?.();
+  if (!shutdownCause) {
+    // Backup and the vendored updater mark their native app before calling quit.
+    shutdownCause = app.murageShutdownCause || (backupInternalQuit ? "automatic" : "unclassified");
+    if (shutdownCause === "unclassified") slog("desktop quit unclassified");
+  }
+  noteShutdownCause(shutdownCause);
+  app.murageShutdownCause=shutdownCause;
   quitRequested = true;
   backgroundLifecycle?.beginQuit();
-  if (cuaCleanedUp) return;
+  if (cuaCleanedUp && startupFailureExit) { e.preventDefault(); app.exit(1); return; }
+  if(backupInternalQuit){
+    if(!cuaCleanedUp){
+      e.preventDefault();
+      void cleanupDesktopForExit("internal").then(()=>setImmediate(quitAfterBackup)).catch(cleanupFailed);
+    }
+    return;
+  }
+  if(returnAuthority.nativeQuit){if(!cuaCleanedUp)e.preventDefault();return;}
+  const updateCleanup = startupDecisionPending || updateRecoveryDescriptor || updateRequester || returnAuthority.attempt;
+  revokeReturn(returnAuthority);
+  finishUpdateWait();
   e.preventDefault();
-  const alreadyClosing = Boolean(desktopCleanup);
-  const operation = cleanupDesktopForExit();
-  if (alreadyClosing) return;
-  // Let the prevented native quit unwind before re-entering Electron's quit.
-  void operation.then(() => { setImmediate(() => app.quit()); }).catch((err) => {
-    slog(`desktop cleanup incomplete (${desktopCleanupStage}, ${typeof err?.code === "string" ? err.code : "no code"}); installation ownership retained`);
-    dialog.showErrorBox("Murage is still closing", `Cleanup is waiting on ${desktopCleanupStage}. Installation ownership was kept. Wait, then try Quit again. You can force quit through your operating system, but that is not a verified clean shutdown.`);
-  });
+  // The shared quit attempt joins cleanup and queues reentry after this native invocation unwinds.
+  void joinExplicitQuit({app,authority:returnAuthority,cleanup:()=>cleanupDesktopForExit("user-stop",{stopNoted:true}),takeProgress:takeBackupProgress,
+    onLeaving:()=>{finishUpdateWait();noteShutdownCause(shutdownCause || "unclassified");app.murageShutdownCause=shutdownCause;},
+    onFailure:err=>{
+      slog(`desktop cleanup incomplete (${desktopCleanupStage}, ${typeof err?.code === "string" ? err.code : "no code"}); installation ownership retained`);
+      if (shutdownCause === "unclassified") return;
+      if (updateCleanup) cleanupFailed(err);
+      else dialog.showErrorBox("Murage is still closing", `Cleanup is waiting on ${desktopCleanupStage}. Installation ownership was kept. Wait, then try Quit again. You can force quit through your operating system, but that is not a verified clean shutdown.`);
+    },log:line=>slog(line)}).catch(()=>{});
 });

@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The Undo toast's markup (handoffs/UNDO-HOST-DESIGN.md sections 4 and 8): a
+// The Undo toast's markup (UNDO-HOST-DESIGN.md sections 4 and 8): a
 // polite status region, Undo as a real button with a 44 px target, a labelled
 // Dismiss, the detail line, and the disabled Undoing state.
 import { createElement } from "react";

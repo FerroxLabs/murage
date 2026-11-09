@@ -26,6 +26,7 @@ export function isOpenCardJson(message: { kind?: unknown; card?: { requestId?: u
 
 export { keyedCardsOf, mayBeKeyed, type KeyedFamily } from "./keyed-cards.ts";
 import { keyedCardsOf } from "./keyed-cards.ts";
+import { SWEEP_SLICE_MS, sliceSizer } from "./slice-budget.ts";
 
 /** How many rows one backfill chunk reads. */
 export const BACKFILL_CHUNK_ROWS = 1_000;
@@ -222,17 +223,27 @@ export function attachmentNamesIn(json: string): string[] {
 /** One chunk of the attachment-name index (which rows name which stored attachment file): the next stretch of `rows` storage
  * positions, bounded by the rows it scans. Rows written since the table exists are indexed by their writers. Conversation
  * deletion trusts the index only once this pass is done, and keeps a file it cannot yet vouch for. Returns whether more remain. */
-export function indexAttachmentNamesChunk(db: DatabaseSync, rows = BACKFILL_CHUNK_ROWS): boolean {
+export function indexAttachmentNamesChunk(db: DatabaseSync, rows = BACKFILL_CHUNK_ROWS, deadlineMs = SWEEP_SLICE_MS, now: () => number = () => performance.now()): boolean {
   const state = readIndexState(db, "attachment_name");
   if (state.done) return false;
   const newest = newestRowid(db);
   const upper = Math.min(newest, state.cursor + rows);
-  const batch = db.prepare("SELECT thread_id, id, json FROM messages WHERE rowid > ? AND rowid <= ? ORDER BY rowid").all(state.cursor, upper) as Array<{ thread_id: string; id: string; json: string }>;
+  const batch = db.prepare("SELECT rowid AS mrow, thread_id, id, json FROM messages WHERE rowid > ? AND rowid <= ? ORDER BY rowid").iterate(state.cursor, upper) as Iterable<{ mrow: number; thread_id: string; id: string; json: string }>;
   const add = db.prepare("INSERT OR IGNORE INTO attachment_name(name, thread_id, id) VALUES (?, ?, ?)");
   return inTransaction(db, () => {
-    for (const row of batch) for (const name of attachmentNamesIn(row.json)) add.run(name, row.thread_id, row.id);
-    const done = upper >= newest;
-    writeIndexState(db, "attachment_name", { done: done ? 1 : 0, cursor: Math.max(state.cursor, upper), skipped: state.skipped });
+    // the predicted size is only a guess (a run of small rows says nothing about the large rows after it), so the chunk also keeps a deadline, looked at
+    // after every row like message-walker.ts: it stops at the row it has just finished and the cursor goes there
+    const deadline = now() + deadlineMs;
+    let reached = state.cursor, cut = false;
+    for (const row of batch) {
+      for (const name of attachmentNamesIn(row.json)) add.run(name, row.thread_id, row.id);
+      reached = Number(row.mrow);
+      if (reached < upper && now() >= deadline) { cut = true; break; }
+    }
+    if (!cut) reached = upper; // the range ran out of rows before the deadline: it is covered to its top
+    const cursor = Math.max(state.cursor, reached);
+    const done = cursor >= newest;
+    writeIndexState(db, "attachment_name", { done: done ? 1 : 0, cursor, skipped: state.skipped });
     return !done;
   });
 }
@@ -320,11 +331,19 @@ export interface Step { position: number; json: string; parent: string | null; r
 /** One step up a branch: the row's storage position and parent id. A row saved
  * before branching existed (no parentId key) is chained to the row stored
  * before it, as Store.loadedMessages reads it. */
-export function stepUpRow(db: DatabaseSync, threadId: string, id: string): { position: number; json: string; message: Record<string, unknown>; parent: string | null } | null {
+export function stepUpRow(db: DatabaseSync, threadId: string, id: string): { position: number; json: string; message: Record<string, unknown>; parent: string | null } | { damaged: true } | null {
   walkStats.parentReads++;
   const row = db.prepare("SELECT rowid AS position, seq, json FROM messages WHERE thread_id = ? AND id = ?").get(threadId, id) as { position: number; seq: number | null; json: string } | undefined;
   if (!row) return null;
-  const message = rowToMessage(row) as unknown as Record<string, unknown>;
+  let message: Record<string, unknown>;
+  try { message = rowToMessage(row) as unknown as Record<string, unknown>; }
+  catch (error) { if (error instanceof SyntaxError) return { damaged: true }; throw error; }
+  // A damaged ancestor is an unknown end of this walk, not a writable row, and it is
+  // not a missing one either: { damaged: true } lets a walk that answers membership or
+  // completeness say "unknown" instead of "no" or "complete". Preview maintenance must
+  // not abort a new message because an older raw row is null, a scalar, an array or
+  // malformed JSON.
+  if (!message || typeof message !== "object" || Array.isArray(message)) return { damaged: true };
   if (message.parentId === undefined) {
     walkStats.parentReads++;
     const before = db.prepare("SELECT id FROM messages WHERE thread_id = ? AND rowid < ? ORDER BY rowid DESC LIMIT 1").get(threadId, row.position) as { id: string } | undefined;
@@ -456,6 +475,10 @@ export async function runTranscriptBackfill(db: DatabaseSync, stillOpen: () => b
       while (await serviceFront()) { /* a thread a request is waiting on */ }
     }
   };
+  // the attachment-name index is walked by time like every other sweep (slice-budget.ts), not by BACKFILL_CHUNK_ROWS rows: a row's JSON can be
+  // large (a pasted file, a tool's output), so 1,000 rows were not a bounded amount of work. The first chunk is small (it may be cold), the next
+  // is sized from how long the last took, and BACKFILL_CHUNK_ROWS stays the most one chunk reads.
+  const attachmentSizer = sliceSizer({ start: 64, max: BACKFILL_CHUNK_ROWS });
   while (stillOpen()) {
     try {
       // the attachment-name index first: a chunk at a time, committed with its cursor
@@ -464,7 +487,10 @@ export async function runTranscriptBackfill(db: DatabaseSync, stillOpen: () => b
         await serviceFront();
         await yieldToUpgrade();
         await pause();
-        const more = asBackground(db, () => indexAttachmentNamesChunk(db));
+        const attachmentRows = attachmentSizer.next(), attachmentBegan = performance.now(), attachmentFrom = readIndexState(db, "attachment_name").cursor;
+        const more = asBackground(db, () => indexAttachmentNamesChunk(db, attachmentRows));
+        // the rows the chunk really covered (a chunk cut by its deadline covers fewer than it was sized for), so the next size follows the true cost per row
+        attachmentSizer.took(Math.max(1, Math.min(attachmentRows, readIndexState(db, "attachment_name").cursor - attachmentFrom)), performance.now() - attachmentBegan);
         failures.prepare = 0;
         await yieldLoop();
         if (!more) break;

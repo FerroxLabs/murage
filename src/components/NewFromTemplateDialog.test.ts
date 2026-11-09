@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-
 import { alreadyHave, templateImportUrl, templatesOfKind, templateTopics, type TemplateEntry } from "./NewFromTemplateDialog";
 
 const entry = (over: Partial<TemplateEntry>): TemplateEntry => ({ slug: "x", name: "X", summary: "", category: "Sell", members: 1, skills: [], ...over });
@@ -54,8 +53,8 @@ describe("the phone layout of the New Bot / New Team panel", async () => {
   const { readFileSync } = await import("node:fs");
   const source = readFileSync(new URL("./NewFromTemplateDialog.tsx", import.meta.url), "utf8");
   it("is portalled to the body so the translated phone drawer is not its containing block", () => {
-    expect(source).toMatch(/return createPortal\(\s*<div className="overlay-inset fixed/);
-    expect(source).toMatch(/document\.body,\s*\);\s*\}\s*$/);
+    expect(source).toMatch(/return (?:\()?\s*<LayerSurface handle=\{layer\}><div className="overlay-inset fixed/);
+    expect(source).toContain("</LayerSurface>");
   });
   it("becomes a full-width, full-height sheet below md, inside the safe area and the visual viewport", () => {
     expect(source).toContain("max-md:h-[var(--vvh,100dvh)]");
@@ -68,7 +67,7 @@ describe("the phone layout of the New Bot / New Team panel", async () => {
   });
   it("shares the portal fix with the New Team and New Channel panels opened from the same + menu", () => {
     for (const file of ["./NewTeamDialog.tsx", "./Sidebar.tsx"]) {
-      expect(readFileSync(new URL(file, import.meta.url), "utf8")).toMatch(/return createPortal\(\s*<div\s+className="overlay-inset fixed inset-x-0 top-0 z-40/);
+      expect(readFileSync(new URL(file, import.meta.url), "utf8")).toMatch(/return (?:\()?\s*<LayerSurface handle=\{layer\}><div\s+className="overlay-inset fixed inset-x-0 top-0/);
     }
   });
 });

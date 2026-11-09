@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // Contract tests for the OpenClaw ACP driver. The scripted fake ACP CLI
 // stands in for `openclaw acp`; no real openclaw binary is ever run.
 import { chmodSync, mkdtempSync, readFileSync } from "node:fs";
@@ -125,7 +127,7 @@ describe("OpenclawAgentDriver turns (fake CLI)", () => {
     process.env.FAKE_ACP_DUMP = dump;
     process.env.FAKE_ACP_MODE = "no-auth";
     await create({ agent: "fred" });
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-oc", text: "hi" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oc", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
 
     expect(recorder.events.every((e) => e.turnId === turnId && e.provider === "openclawAgent")).toBe(true);
@@ -139,7 +141,7 @@ describe("OpenclawAgentDriver turns (fake CLI)", () => {
     const argvFor = async (turn: { threadId: string; warmIdentity?: { botId: string; audience: "owner" | "non-owner"; humanPrincipal?: string } }) => {
       const dump = join(scratch, `dump-${turn.threadId}-${turn.warmIdentity?.audience ?? "none"}.json`);
       process.env.FAKE_ACP_DUMP = dump;
-      const { turnId } = await instance.adapter.sendTurn({ ...turn, text: "hi" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), ...turn, text: "hi" });
       await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
       return dumped(dump).argv;
     };
@@ -157,7 +159,7 @@ describe("OpenclawAgentDriver turns (fake CLI)", () => {
     const keyFor = async (threadId: string, extra: { sessionReset?: boolean } = {}) => {
       const dump = join(scratch, `dump-${threadId}-${Math.random().toString(36).slice(2)}.json`);
       process.env.FAKE_ACP_DUMP = dump;
-      const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi", warmIdentity: { botId: "b1", audience: "owner" }, ...extra });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "hi", warmIdentity: { botId: "b1", audience: "owner" }, ...extra });
       await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
       return dumped(dump).argv[2]!;
     };
@@ -175,7 +177,7 @@ describe("OpenclawAgentDriver turns (fake CLI)", () => {
     process.env.FAKE_ACP_DUMP = dump;
     process.env.FAKE_ACP_MODE = "no-auth";
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-oc-default", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oc-default", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
     expect(dumped(dump).argv[2]).toMatch(/^agent:main:murage-(owner|guest)-[0-9a-f]{24}$/);
   });
@@ -185,7 +187,7 @@ describe("OpenclawAgentDriver turns (fake CLI)", () => {
     process.env.FAKE_ACP_DUMP = dump;
     process.env.FAKE_ACP_MODE = "no-auth";
     await create({ agent: "fred" });
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-oc-mounts",
       text: "hi",
       integrations: {
@@ -204,7 +206,7 @@ describe("OpenclawAgentDriver turns (fake CLI)", () => {
     process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
     process.env.FAKE_ACP_MODE = "no-auth";
     await create({ agent: "fred" });
-    await instance.adapter.sendTurn({ threadId: "t-oc-ask", text: "run it", system: "You are Fred." });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oc-ask", text: "run it", system: "You are Fred." });
     await recorder.until((e) => e.type === "turn.completed");
     const blocks = JSON.parse(readFileSync(promptDump, "utf8")) as Array<{ type: string; text?: string }>;
     const text = blocks.map((b) => b.text ?? "").join("");
@@ -221,7 +223,7 @@ describe("OpenclawAgentDriver turns (fake CLI)", () => {
     process.env.FAKE_ACP_DUMP = dump;
     process.env.FAKE_ACP_MODE = "no-auth";
     await create({ agent: "fred" });
-    await instance.adapter.sendTurn({ threadId: "t-oc-env", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oc-env", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const { env } = dumped(dump);
@@ -232,3 +234,6 @@ describe("OpenclawAgentDriver turns (fake CLI)", () => {
     expect(env.HERMES_HOME).toBeUndefined();
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

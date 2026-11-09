@@ -56,6 +56,30 @@ export function createDistReader(distDir) {
   };
 }
 
+/** A Cloud window whose page hasn't loaded this long after it was asked for (or whose load failed) shows the offline
+ * screen instead of a blank window: never an endless wait. Upstream 8c960af7b (OPEN_MS). */
+export const CLOUD_OPEN_MS = 30_000;
+/** While the offline screen shows, the window looks again by itself this often (Try again looks at once). */
+export const CLOUD_RETRY_MS = 30_000;
+const DEFAULT_TIMERS = {
+  set: (work, ms) => { const timer = setTimeout(work, ms); timer.unref?.(); return timer; },
+  clear: (timer) => clearTimeout(timer),
+};
+
+/**
+ * The offline screen: a self-contained page (nothing fetched, no script). Its one link is the Cloud's own entry,
+ * which the window's navigation hook turns into a fresh, watched load. The bridge refuses a data: page, so it
+ * can reach nothing.
+ */
+export function cloudOfflinePage(homeId) {
+  const entry = cloudHomeEntryUrl(homeId).replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
+  return "data:text/html;charset=utf-8," + encodeURIComponent(`<!doctype html><meta charset="utf-8"><meta name="color-scheme" content="dark light"><title>Murage Cloud</title>
+<body style="margin:0;display:grid;place-items:center;height:100vh;background:#070707;color:#f5f5f5;font:14px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">
+<main style="max-width:420px;padding:32px;text-align:center"><h2 style="margin:0 0 10px;font-size:18px">Can't reach your Cloud right now</h2>
+<p style="margin:0 0 20px;color:#a1a1aa;line-height:1.5">Murage keeps trying by itself.</p>
+<a href="${entry}" style="display:inline-block;border-radius:9px;background:#fff;color:#111;padding:9px 14px;text-decoration:none;font-weight:600">Try again</a></main></body>`);
+}
+
 /** Block anything the cloud partition would fetch outside the scheme (devtools/data/blob excepted). */
 export function cloudRequestAllowed(url) {
   try {
@@ -86,7 +110,7 @@ export function cloudRequestAllowed(url) {
  * @param {(homeId: string) => void} [deps.onWindowClosed] a Cloud window closed (main re-applies the unread badge)
  * @param {(m: string) => void} [deps.warn]
  */
-export function installCloudHome({ liveGate = null, packaged = true, protocol, session, BrowserWindow, shell, net, env, userDataDir, distDir, provider = null, createClient = null, cloudPreload, onWindowClosed = () => {}, warn = () => {} }) {
+export function installCloudHome({ liveGate = null, packaged = true, protocol, session, BrowserWindow, shell, net, env, userDataDir, distDir, provider = null, createClient = null, cloudPreload, onWindowClosed = () => {}, onWindowOpened = () => {}, warn = () => {}, timers = DEFAULT_TIMERS }) {
   // MURAGE_DESKTOP_CLOUD=0 is a hard off: nothing registered, null. Otherwise the scheme is ALWAYS registered (it must be
   // before app ready) but inert: active() is false, so every scheme request is refused, open() throws and the IPC stubs refuse,
   // until the developer override (unpackaged builds only) is on or the live gate (verified live:true from the pinned prod origin,
@@ -158,20 +182,54 @@ export function installCloudHome({ liveGate = null, packaged = true, protocol, s
         webPreferences: { partition, contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, ...(cloudPreload ? { preload: cloudPreload, additionalArguments: [`--murage-cloud-home=${homeId}`] } : {}) },
       });
       windows.set(homeId, win);
-      win.on("closed", () => { windows.delete(homeId); try { onWindowClosed(homeId); } catch {} });
+      try { onWindowOpened(homeId); } catch {} // NOTIFY-EVERYWHERE-1019 S4a: a replaced Cloud window kills outstanding attention tokens
+      // F43 load watchdog: a page that fails or hasn't loaded in CLOUD_OPEN_MS is the offline screen, which looks again by
+      // itself every CLOUD_RETRY_MS and on Try again. `generation` makes a superseded load's late answer a no-op.
+      const entry = cloudHomeEntryUrl(homeId);
+      let generation = 0, watchdog = null, retry = null, offline = false, closed = false;
+      const stopTimers = () => { timers.clear(watchdog); timers.clear(retry); watchdog = null; retry = null; };
+      const showOffline = (gen, why) => {
+        if (closed || gen !== generation || offline) return;
+        offline = true; stopTimers();
+        warn(`cloud window didn't load (${why}); showing the offline screen`);
+        try { win.webContents.stop?.(); } catch {}
+        generation += 1; // the stopped load's rejection belongs to the old generation
+        void Promise.resolve(win.loadURL(cloudOfflinePage(homeId))).catch(() => {});
+        retry = timers.set(() => load(), CLOUD_RETRY_MS);
+      };
+      const loaded = (gen) => { if (gen !== generation || closed) return; timers.clear(watchdog); watchdog = null; };
+      function load() {
+        if (closed) return;
+        stopTimers();
+        offline = false;
+        const gen = ++generation;
+        watchdog = timers.set(() => showOffline(gen, `nothing after ${CLOUD_OPEN_MS / 1000} s`), CLOUD_OPEN_MS);
+        let pending;
+        try { pending = Promise.resolve(win.loadURL(entry)); } catch (error) { pending = Promise.reject(error); }
+        // ERR_ABORTED is the page moving on by itself (a newer navigation), not a failure: the watchdog still covers it.
+        pending.then(() => loaded(gen), (error) => { if (error?.code !== "ERR_ABORTED") showOffline(gen, error?.code ?? error?.message ?? String(error)); });
+      }
+      win.on("closed", () => { closed = true; stopTimers(); windows.delete(homeId); try { onWindowClosed(homeId); } catch {} });
+      // A load of our own entry that finished after an ERR_ABORTED hand-over still ends the watchdog.
+      win.webContents.on("did-finish-load", () => { try { if (!offline && String(win.webContents.getURL?.() ?? "").startsWith(entry)) loaded(generation); } catch {} });
       const guard = createMainNavigationGuard({
         origin: () => cloudHomeEntryUrl(homeId),
         action: (url) => cloudHomeNavigationAction(url, { homeId }),
         openExternal: (url) => shell.openExternal(url),
         warn: (m) => warn(`[cloud-navigation] ${m}`),
       });
-      win.webContents.on("will-navigate", guard.willNavigate);
+      win.webContents.on("will-navigate", (event, ...rest) => {
+        // Try again on the offline screen: our own entry only, as a fresh watched load (never the page's own navigation).
+        const url = typeof event?.url === "string" ? event.url : rest[0];
+        if (offline && cloudHomeNavigationAction(url, { homeId }) === "allow") { try { event?.preventDefault?.(); } catch {} load(); return; }
+        guard.willNavigate(event, ...rest);
+      });
       win.webContents.on("will-redirect", guard.willRedirect);
       win.webContents.setWindowOpenHandler(({ url }) => {
         if (cloudHomeNavigationAction(url, { homeId }) === "external") void Promise.resolve(shell.openExternal(url)).catch(() => {});
         return { action: "deny" };
       });
-      void win.loadURL(cloudHomeEntryUrl(homeId)).catch((error) => warn(`cloud window load failed: ${error?.message ?? error}`));
+      load();
       return win;
     },
   };

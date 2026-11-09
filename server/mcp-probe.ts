@@ -1,3 +1,4 @@
+import { probeFolder } from "./probe-folder.ts";
 import { augmentedPath } from "./env-path.ts";
 import {
   deleteEnvNames,
@@ -136,7 +137,7 @@ export function probeMcpServer(
     let child: ReturnType<typeof spawnCli>;
     try {
       child = spawnCli(server.command, server.args, {
-        cwd: process.cwd(),
+        cwd: probeFolder(),
         env: probeEnvironment(server),
         stdio: ["pipe", "pipe", "pipe"],
       });

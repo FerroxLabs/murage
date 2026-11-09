@@ -8,7 +8,7 @@
 //
 // HEADLESS ONLY: a throwaway temp HOME and a probed port, clear of 8799.
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -89,6 +89,18 @@ describe.skipIf(process.platform === "win32")("a backup that stopped is announce
     expect((await request("GET", "/api/inbox?view=decisions")).body.backupFailed.sentence).toBe(tool.body.sentence);
     const closing = await request("POST", "/api/backup-failure-notice", { action: "report", stage: "precondition", code: "BACKUP_WORKSPACE_CLOSING" });
     expect(closing.body.sentence).toMatch(/Quit Murage and open it again, then back up\./);
+    await request("POST", "/api/backup-failure-notice", { action: "clear" });
+  });
+
+  // WIN-BACKUP-RT-1018: Run as administrator is a whole sentence (cause and way out), stored with its code so the
+  // Inbox can say it in the person's language (shared/backup-capture-failure.mjs backupNoticeSentence).
+  it("a backup started as administrator says exactly its own sentence, and the Inbox row carries the code", async () => {
+    const english = (JSON.parse(readFileSync(join(SERVER_DIR, "..", "src", "locales", "en.json"), "utf8")) as Record<string, string>)["backup.stopped.administrator"];
+    const reported = await request("POST", "/api/backup-failure-notice", { action: "report", stage: "precondition", code: "BACKUP_STARTED_AS_ADMINISTRATOR", notify: true, next: "paused" });
+    expect(reported.status).toBe(200);
+    expect(reported.body.sentence, "no stage before it and no Inbox step after it").toBe(english);
+    const row = (await request("GET", "/api/inbox?view=decisions")).body.backupFailed;
+    expect(row).toMatchObject({ sentence: english, code: "BACKUP_STARTED_AS_ADMINISTRATOR" });
     await request("POST", "/api/backup-failure-notice", { action: "clear" });
   });
 

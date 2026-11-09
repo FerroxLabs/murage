@@ -241,8 +241,17 @@ describe("R9-02: a turn's transcript check costs its window, not the history", (
 
   it("the direct turn and the room render both judge their transcript through the window", () => {
     const index = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-    // the direct turn judges only the newest text lines of the branch, read from the line index in a doubling window (turnctx), never the active path
-    expect(index).toMatch(/store\.activeTextLines\(threadId, window\)[^]*?botMessages\(database\(\), botViewer\(bot\.id\), threadId, branchTail\.messages\)/);
+    // the direct turn judges only the newest text lines of the branch, read from the line index in a doubling window (turnctx), never the active path.
+    // The widening loop is turnReplayInputs (memory/turn-replay-inputs.ts, the one call the lineage warmer's confirm makes too); the turn calls it.
+    const inputs = readFileSync(new URL("./memory/turn-replay-inputs.ts", import.meta.url), "utf8");
+    expect(inputs).toMatch(/store\.activeTextLines\(threadId, window - headSlot\)[^]*?botMessages\(database\(\), botViewer\(botId\), threadId, branchTail\.messages\)/);
+    expect(index).toMatch(/turnReplayInputs\(\{ store, threadId, botId: bot\.id,/);
+    // the window bound stays the whole window: the direct turn passes no headSlot (the helper reads it as 0), and the helper defaults it to 0
+    // (Astra and Fable seat 10, 912a1ac78: the moved guard must pin headSlot)
+    expect(inputs).toMatch(/const headSlot = args\.headSlot \?\? 0;/);
+    const turnCall = index.slice(index.indexOf("turnReplayInputs({ store, threadId, botId: bot.id,"), index.indexOf("const { replayMore, branchMessages, activeMessages"));
+    expect(turnCall.length).toBeGreaterThan(0);
+    expect(turnCall).not.toMatch(/headSlot/);
     expect(index).not.toMatch(/partitionTranscript(Messages|Window)\(/);
     const room = index.slice(index.indexOf("function renderRoomContext("), index.indexOf("// comms bus: passed into the visibility helpers"));
     expect(room).toMatch(/botWindow\(database\(\), botViewer\(botId\), threadId, available,/);

@@ -12,8 +12,9 @@ vi.resetModules();
 const { autoVerdict } = await import("./auto-approve.ts");
 
 const NO_LIMITS = { id: "owned", autoApprove: true, fullAccess: true, noLimits: true };
-const OWNER = { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null } as const;
-const verdict = (cmd: string) => autoVerdict(NO_LIMITS, "Bash", cmd, { ...OWNER, commandText: cmd });
+// 1.0.20 (NOLIMITS-MEANS-IT slice 2): today's No limits, the 1.0.20 lane off (its rows: nolimits-means-it-1020.test.ts)
+const OWNER = { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, noPreRunSeamAtNoLimits: true } as const;
+const verdict = (cmd: string, commandCwd?: string) => autoVerdict(NO_LIMITS, "Bash", cmd, { ...OWNER, commandText: cmd, ...(commandCwd ? { commandCwd } : {}) });
 
 const SUB = "$(rm -rf /)";
 
@@ -95,6 +96,13 @@ describe("NOLIMITS-WALK-CRIT: launcher shapes the reader does not follow keep th
 describe("NOLIMITS-WALK-CRIT: the plain -c form reads as before", () => {
   it.each(["bash -c 'ls'", "bash -lc 'ls'", "sh -c 'git status'", "zsh -c 'echo hi'", "bash -c 'echo $0 $1' zero one", ...READ_SHAPES.map((x) => x.replace("P", "ls"))])(
     "%s runs with no card",
+    // MARKS r9 C1: probe `bash -o errexit -c 'ls'` (and the other -o rows) at No limits with cwd /w -> RUN no-limits (as b18); with no cwd -> always-ask unreadable (doubt value-path on the -o word). Known project cwd given; the twin below pins the no-cwd card.
+    (cmd) => expect(verdict(cmd, "/w").approve).not.toBeNull(),
+  );
+  it.each(["bash -o errexit -c 'ls'", "bash -o errexit -o pipefail -c 'ls'", "bash -e -o nounset -xc 'ls'", "zsh -o xtrace -c 'ls'"])(
+    "%s runs with no card (no cwd)",
+    // MARKS r9 C1 twin: probe the same four with no cwd at No limits -> CARD always-ask unreadable (doubt value-path)
+    // MARKS r11: back to b18 (M-R10 monotonic relief): the value-path doubt alone no longer cards on the owner's turn
     (cmd) => expect(verdict(cmd).approve).not.toBeNull(),
   );
   it.each(["bash -c 'P'", "bash -lc 'P'", "sh -c 'echo ok; P'", ...READ_SHAPES])("%s keeps its card for a wipe in the script", (shape) => {

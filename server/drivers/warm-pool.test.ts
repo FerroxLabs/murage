@@ -1,3 +1,4 @@
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Adaptive, activity-scaled warm pool: memory figures and the clock are
 // injected, nothing here depends on real ps, real memory or real time.
 import type { ChildProcess } from "node:child_process";
@@ -286,8 +287,8 @@ describe("activity-scaled warm pool", () => {
   it("the prewarm gate makes a send wait for the warm that is starting, and times out rather than hang", async () => {
     const gate = createPrewarmGate();
     expect(await gate.wait("t")).toBe(true); // nothing starting
-    expect(gate.begin("t")).toBe(true);
-    expect(gate.begin("t")).toBe(false); // one warm per thread at a time
+    expect(gate.begin("t")).toBeTruthy(); // a token object (STOP-FENCE D8, 9a5849d89)
+    expect(gate.begin("t")).toBeNull(); // one warm per thread at a time
     const waited = gate.wait("t", 1_000);
     gate.end("t");
     expect(await waited).toBe(true);
@@ -329,7 +330,7 @@ describe("activity-scaled warm pool", () => {
   it("takeOver ends the process the driver owns NOW through the owned tree lifecycle, never a remembered one", async () => {
     const gate = createPrewarmGate();
     gate.begin("t");
-    const opts = { stdio: "ignore" as const };
+    const opts = { cwd: fixtureBotFolder(), stdio: "ignore" as const };
     // the prewarm's first process was replaced (a refused session load): only the replacement is live
     const retired = spawnCli(process.execPath, ["-e", "setInterval(() => {}, 1000)"], opts);
     const current = spawnCli(process.execPath, ["-e", "setInterval(() => {}, 1000)"], opts);

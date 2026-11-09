@@ -47,6 +47,7 @@ files:
   - shared/update-candidate.mjs
   - shared/backup-capture-failure.mjs
   - shared/backup-progress.mjs
+  - shared/backup-space.mjs
   - shared/backup-budget.mjs
   - shared/backup-max-bytes.mjs
   - shared/setup-backup-record.mjs
@@ -62,6 +63,8 @@ files:
   - shared/guarded-http.mjs
   - shared/flux-desktop-signin-default.mjs
   - shared/windows-sddl.mjs
+  - shared/md-secret-label.mjs
+  - shared/notify-surfaces.mjs
   - installer/lib/systemd.mjs
   - installer/lib/private-files.mjs
   - installer/lib/service-account.mjs
@@ -111,6 +114,8 @@ extraResources:
     to: licenses/instrument-serif
   # xterm.js (MIT, @xterm/xterm, bundled in the renderer): the Cloud-home engine
   # sign-in terminal. Its licence text travels with the distribution.
+  - from: third_party/muse-code-sdk
+    to: licenses/muse-code-sdk
   - from: third_party/xterm
     to: licenses/xterm
   # WhatsApp channel: Baileys (MIT), its libsignal dependency (GPL-3.0, full
@@ -433,6 +438,39 @@ linux:
       Name: Murage
       Comment: Your own team of AI bots, in a chat app
       Keywords: AI;Agents;Chat;Productivity;
+      Actions: new-chief;needs-you;pause;
+    # electron-builder 26: actions are siblings of entry, keyed by action id.
+    actions:
+      new-chief:
+        Name: New task for Chief
+        "Name[de]": "Neue Aufgabe für Chief"
+        "Name[es]": "Nueva tarea para Chief"
+        "Name[fr]": "Nouvelle tâche pour Chief"
+        "Name[hi]": "Chief के लिए नया काम"
+        "Name[ja]": "Chiefに新しいタスクを依頼"
+        "Name[pt_BR]": "Nova tarefa para Chief"
+        "Name[zh]": "给Chief分配新任务"
+        Exec: murage --murage-task=new-chief
+      needs-you:
+        Name: Open Needs you
+        "Name[de]": "Braucht dich öffnen"
+        "Name[es]": "Abrir Te necesita"
+        "Name[fr]": "Ouvrir À toi"
+        "Name[hi]": "आपकी ज़रूरत है खोलें"
+        "Name[ja]": "「対応待ち」を開く"
+        "Name[pt_BR]": "Abrir Precisa de você"
+        "Name[zh]": "打开需要你处理"
+        Exec: murage --murage-task=needs-you
+      pause:
+        Name: Pause automations
+        "Name[de]": "Automatisierungen pausieren"
+        "Name[es]": "Pausar automatizaciones"
+        "Name[fr]": "Mettre les automatisations en pause"
+        "Name[hi]": "ऑटोमेशन रोकें"
+        "Name[ja]": "自動処理を一時停止"
+        "Name[pt_BR]": "Pausar automações"
+        "Name[zh]": "暂停自动化"
+        Exec: murage --murage-task=pause
 
 deb:
   packageCategory: utils

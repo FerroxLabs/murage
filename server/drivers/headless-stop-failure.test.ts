@@ -1,3 +1,4 @@
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -33,7 +34,7 @@ afterEach(() => {
 const records = (): Array<{ pid: number; env: Record<string, string> }> =>
   existsSync(out) ? readFileSync(out, "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((r) => r.argv && r.stdin === undefined) : [];
 const preflight = () => ({ etcRoot: join(base, "etc"), home: join(base, "home"), grokHome: join(base, "home", ".grok"), platform: "linux" as const, mdmDir: null, claudeManagedPath: join(base, "none.json") });
-const input = (over: Partial<TextOnlyTurnInput> = {}): TextOnlyTurnInput => ({
+const input = (over: Partial<TextOnlyTurnInput> = {}): TextOnlyTurnInput => ({ cwd: fixtureBotFolder(),
   system: fixedPrompt("SYS"), text: "USER", model: "m", outputSchema: SCHEMA, signal: new AbortController().signal, maxOutputTokens: 2000, maxOutputBytes: 12 * 1024,
   context: { botId: "b", runId: "run1", family: "lived", attempt: 1 }, ...over,
   transport: { ...over.transport, gate: openLearningGate("continuity") },
