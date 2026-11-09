@@ -114,9 +114,9 @@ describe("auto room: the awaited override", () => {
   });
 });
 
-// Live eval, spends real money: MURAGE_DECIDE_LIVE_EVAL=1 FLUX_API_KEY=sk-flux-... pnpm exec vitest run server/decider/room-routing.integration.test.ts
+// Live eval, spends real money: MURAGE_DECIDE_TEST_LIVE_EVAL=1 FLUX_API_KEY=sk-flux-... pnpm exec vitest run server/decider/room-routing.integration.test.ts
 // Skipped by default, on purpose.
-const LIVE = process.env.MURAGE_DECIDE_LIVE_EVAL === "1";
+const LIVE = process.env.MURAGE_DECIDE_TEST_LIVE_EVAL === "1";
 describe.skipIf(!LIVE)("live eval against Flux /v1/decide", () => {
   it("routes the bench's labelled messages", async () => {
     const fixture = JSON.parse(readFileSync(join(process.env.MURAGE_DECIDE_FIXTURE ?? "/Volumes/Scratch/work/clef-conformance/room-routing.json"), "utf8")) as {

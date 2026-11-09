@@ -131,9 +131,17 @@ describe("T23W the checker can only tighten", () => {
     expect(d.decidedBy).toBe("intent");
     expect(d.line).toContain(en["browserExt.intent.i3" as keyof typeof en] as string);
   });
-  it("Full permissive L3 needs the checker's allow; ask keeps the card", async () => {
-    const d = await decide(input(sendBtn, { mode: "full" }), spies([], async () => verdict("ask", "checker_ask")));
+  // SABLE-LIVE-B moved this rule to Ask each step; under attended Full an unsure check is advice (twin below).
+  it("Ask each step L3 needs the checker's allow; ask keeps the card", async () => {
+    const d = await decide(input(sendBtn, { mode: "step" }), spies([], async () => verdict("ask", "checker_ask")));
     expect(d.outcome).toBe("card");
+  });
+  it("Full twin: attended Full L3 with an unsure check passes, and the check is kept as advice", async () => {
+    const d = await decide(input(sendBtn, { mode: "full" }), spies([], async () => verdict("ask", "checker_ask")));
+    expect(d.outcome).toBe("pass");
+    expect((d.checker as { advisory?: boolean } | undefined)?.advisory).toBe(true);
+    const routine = await decide(input(sendBtn, { mode: "full", routine: true, siteAllowedAlways: true }), spies([], async () => verdict("ask", "checker_ask")));
+    expect(routine.outcome).not.toBe("pass");
   });
   it("property: no stage output ever makes a decision less strict than the all-allow baseline, and the floor and refusals are sticky", async () => {
     const verdicts = [verdict("allow", "checker_ok"), verdict("ask", "checker_ask"), verdict("block", "checker_block"), verdict("block", "checker_unavailable")];
@@ -151,18 +159,39 @@ describe("T23W the checker can only tighten", () => {
   it("a checker that throws, times out or returns junk is a block, never a pass, for L2 and L3", async () => {
     for (const facts of [typing, sendBtn]) {
       for (const bad of [async () => { throw new Error("boom"); }, async () => ({ nonsense: true }) as never, async () => undefined as never]) {
-        const d = await decide(input(facts, { mode: "full", grants: { l1: true, l2: true } }), spies([], bad));
+        const d = await decide(input(facts, { mode: "task", grants: { l1: true, l2: true } }), spies([], bad));
         expect(d.outcome, facts.operation).not.toBe("pass");
         expect(d.checker?.decision).toBe("block");
       }
     }
   });
+  it("Full twin: under attended Full a checker that throws or returns junk is advice, never a card or a pause; a routine still blocks", async () => {
+    for (const facts of [typing, sendBtn]) {
+      for (const bad of [async () => { throw new Error("boom"); }, async () => ({ nonsense: true }) as never, async () => undefined as never]) {
+        const tally = new CheckerTally();
+        const i = input(facts, { mode: "full", grants: { l1: true, l2: true } });
+        const d = await decide({ ...i, checker: { ...i.checker!, tally } }, spies([], bad));
+        expect(d.outcome, facts.operation).toBe("pass");
+        expect(d.checker?.code).toBe("checker_unavailable");
+        expect(tally.needsHuman).toBe(false);
+        const routine = await decide(input(facts, { mode: "full", routine: true, siteAllowedAlways: true, grants: { l1: true, l2: true } }), spies([], bad));
+        expect(routine.outcome, facts.operation).not.toBe("pass");
+      }
+    }
+  });
   it("Flux's plan and key refusals keep their own plain copy and are never silent passes", async () => {
     for (const code of ["checker_model_not_allowed", "checker_model_not_permitted"]) {
-      const d = await decide(input(typing, { mode: "full", grants: { l1: true, l2: true } }), spies([], async () => verdict("block", code, 1)));
+      const d = await decide(input(typing, { mode: "task", grants: { l1: true, l2: true } }), spies([], async () => verdict("block", code, 1)));
       expect(d.outcome).toBe("card");
       expect(d.checker?.code).toBe(code);
       expect(d.line).not.toBe(DECIDE_LINES.blocked);
+    }
+  });
+  it("Full twin: under attended Full Flux's plan and key refusals are advice; the code is kept for the log", async () => {
+    for (const code of ["checker_model_not_allowed", "checker_model_not_permitted"]) {
+      const d = await decide(input(typing, { mode: "full", grants: { l1: true, l2: true } }), spies([], async () => verdict("block", code, 1)));
+      expect(d.outcome).toBe("pass");
+      expect(d.checker?.code).toBe(code);
     }
   });
   it("checker timeout on L2 in step mode: card, nothing dispatched by decide", async () => {
@@ -172,11 +201,18 @@ describe("T23W the checker can only tighten", () => {
   });
   it("no transport: the checker is skipped, the bot is treated as Ask each step, and the plain line is returned", async () => {
     const deps = spies([]);
-    const d = await decide(input(typing, { mode: "full", grants: { l1: true, l2: true }, checker: undefined }), deps);
+    const d = await decide(input(typing, { mode: "task", grants: { l1: true, l2: true }, checker: undefined }), deps);
     expect(deps.checkAction).not.toHaveBeenCalled();
     expect(d.outcome).toBe("card");
     expect(d.checkerMissing).toBe(true);
     expect(d.line).toBe(DECIDE_LINES.askEachStep);
+  });
+  it("Full twin: no transport under attended Full keeps Full: the checker is skipped and the step passes", async () => {
+    const deps = spies([]);
+    const d = await decide(input(typing, { mode: "full", grants: { l1: true, l2: true }, checker: undefined }), deps);
+    expect(deps.checkAction).not.toHaveBeenCalled();
+    expect(d.outcome).toBe("pass");
+    expect(d.checkerMissing).toBeFalsy();
   });
   it("3 blocks in a row pause the task with a human prompt", async () => {
     const tally = new CheckerTally();
@@ -208,5 +244,145 @@ describe("T23W copy matches the locale pack", () => {
     expect(DECIDE_LINES.blocked).toBe(pack["browserExt.checker.blocked"]);
     expect(DECIDE_LINES.unavailable).toBe(pack["browserExt.checker.unavailable"]);
     expect(DECIDE_LINES.askEachStep).toBe(pack["browserExt.checker.askEachStepUntil"]);
+  });
+});
+
+// SABLE-LIVE-B: Sean's Sable (Grok bot, Full access, Action check = the bot's own engine). Ordinary steps raise no card
+// and never pause, whatever the checker says; the never-list keeps its card or hand-over.
+describe("SABLE-LIVE-B Full access on ordinary steps", () => {
+  const flaky = (n: { calls: number }) => async () => { n.calls++; return verdict("block", "checker_unavailable", 1); };
+  const openFacts: LevelFacts = { operation: "open", navigationCarriesNovelData: true } as LevelFacts;
+  const pressFacts: LevelFacts = { operation: "press", key: "Enter", tag: "input", type: "text", role: "combobox", name: "Search" };
+  const sable = (facts: LevelFacts, action: Record<string, unknown>, over: Partial<DecideInput> = {}): DecideInput => {
+    const base = input(facts, { mode: "full", ...over });
+    return { ...base, intent: { ...base.intent, ownerWords: ["search google for murage"], taskSites: new Set(["https://www.google.com"]), visibility: action.hasTarget === false ? undefined : VISIBLE, action: { operation: facts.operation, origin: "https://www.google.com", ...action } as never } };
+  };
+  const OPEN = { operation: "navigate", origin: "null", destination: "https://www.google.com/search?q=murage", hasTarget: false, currentUrl: "about:blank" };
+  const PRESS = { operation: "press", origin: "https://www.google.com", currentUrl: "https://www.google.com/" };
+  const PRESS_SCAN_FAILED = { ...PRESS, recipientScanFailed: true };
+  const I6_LINE = /carries information from your task/;
+
+  it("cut (MurageMain ruling): open google.com/search from a blank tab is a link that carries data and stays a card under Full", async () => {
+    const i = sable(openFacts, OPEN, { checker: undefined, grants: { l1: true, l2: false } });
+    i.intent = { ...i.intent, ownerWords: ["open google.com and search for murage"], taskSites: new Set() };
+    const d = await decide(i);
+    expect(d.outcome).toBe("card");
+    expect(d.line).toMatch(I6_LINE);
+  });
+  it("press Enter in the Google search box, with no checker wired: no card", async () => {
+    const d = await decide(sable(pressFacts, PRESS, { checker: undefined }));
+    expect(d.outcome).toBe("pass");
+    expect(d.checkerMissing).toBeFalsy();
+  });
+  it("cut (MurageMain ruling): press Enter on the Search box with a failed recipient scan stays a card under Full", async () => {
+    const d = await decide(sable(pressFacts, PRESS_SCAN_FAILED, { checker: undefined }));
+    expect(d.outcome).toBe("card");
+  });
+  it("a checker that keeps failing or says ask never cards and never pauses the binding", async () => {
+    const n = { calls: 0 };
+    const tally = new CheckerTally();
+    for (let k = 0; k < 5; k++) {
+      const i = sable(pressFacts, PRESS);
+      const d = await decide({ ...i, checker: { ...i.checker!, tally } }, { classifyLevel, checkIntent, checkAction: k % 2 ? flaky(n) : async () => verdict("ask", "checker_unsure") });
+      expect(d.outcome).toBe("pass");
+    }
+    expect(tally.needsHuman).toBe(false);
+  });
+  it("a judged block under Full refuses the step, never a card", async () => {
+    const d = await decide(sable(pressFacts, PRESS), { classifyLevel, checkIntent, checkAction: async () => verdict("block", "checker_mismatch") });
+    expect(d.outcome).toBe("refuse");
+  });
+  it("the never-list keeps its card or hand-over under Full", async () => {
+    const pw = await decide(sable({ operation: "fill", tag: "input", type: "password", role: "textbox", name: "Password" }, { operation: "fill", origin: "https://www.google.com" }, { checker: undefined }));
+    expect(pw.outcome).toBe("floor");
+    const named = await decide(sable(sendBtn, { operation: "click", origin: "https://www.google.com", sendCapable: true, recipients: ["eve@evil.example"] }, { checker: undefined }));
+    expect(named.outcome).toBe("card");
+    const composer = await decide(sable(pressFacts, { ...PRESS_SCAN_FAILED, recipientComposer: true }, { checker: undefined }));
+    expect(composer.outcome).toBe("card");
+    const injected = await decide(sable(pressFacts, PRESS, { checker: undefined, probeFlagged: true }));
+    expect(injected.outcome).toBe("card");
+  });
+  it("I6 after a page read, to a site outside the task, still cards under Full", async () => {
+    const i = sable(openFacts, { ...OPEN, origin: "https://www.google.com", destination: "https://evil.example/c?d=secret", pageDataRead: true, currentUrl: "https://www.google.com/" }, { checker: undefined });
+    const d = await decide(i);
+    expect(d.outcome).not.toBe("pass");
+  });
+  it("pre-round: an unknown recipient on a button that is not a Search control still cards", async () => {
+    const d = await decide(sable({ operation: "click", tag: "button", role: "button", name: "Submit" }, { operation: "click", origin: "https://www.google.com", recipientScanFailed: true }, { checker: undefined }));
+    expect(d.outcome).toBe("card");
+  });
+  it("pre-round: a URL carrying words the owner never wrote still cards, even before any page read", async () => {
+    const d = await decide(sable(openFacts, { ...OPEN, destination: "https://www.google.com/search?q=hunter2" }, { checker: undefined }));
+    expect(d.outcome).not.toBe("pass");
+  });
+  it("pre-round: a latched loop guard does not pause the next ordinary step under Full", async () => {
+    const tally = new CheckerTally();
+    for (let k = 0; k < 3; k++) tally.record(verdict("block", "checker_mismatch"));
+    expect(tally.needsHuman).toBe(true);
+    const i = sable(pressFacts, PRESS);
+    const d = await decide({ ...i, checker: { ...i.checker!, tally } }, { classifyLevel, checkIntent, checkAction: async () => verdict("allow", "checker_ok") });
+    expect(d.outcome).toBe("pass");
+  });
+  it("formal r2: a latched tally of three blocks never pauses a step the checker was only unsure about or failed on", async () => {
+    for (const answer of [async () => verdict("ask", "checker_unsure"), async () => verdict("block", "checker_unavailable", 1), async () => { throw new Error("engine busy"); }]) {
+      const tally = new CheckerTally();
+      for (let k = 0; k < 3; k++) tally.record(verdict("block", "checker_mismatch"));
+      const i = sable(pressFacts, PRESS);
+      const d = await decide({ ...i, checker: { ...i.checker!, tally } }, { classifyLevel, checkIntent, checkAction: answer });
+      expect(d.outcome).toBe("pass");
+    }
+  });
+  it("cut (MurageMain ruling): every link that carries data cards under Full, owner words or not, exactly as on base", async () => {
+    for (const destination of ["https://www.google.com/search?q=murage", "https://www.google.com/search?q=.-.--", "https://www.google.com:8443/search?q=murage",
+      "https://www.google.com/search#q=hunter2", "https://hunter2.example/index.html", "https://hunter2@www.google.com/search?q=murage",
+      "https://www.google.com/search?q=hu.nt.er.2", "https://evil.example/search?q=age", "https://www.google.com/search?q=age", "https://evil.example/?d=12-34-56",
+      "https://www.google.com/?d=12-34-56", "https://www.google.com/search?q=murage&hunter2=1", "https://www.google.com/hunter2", "https://hunter2.google.com/search?q=murage"]) {
+      const i = sable(openFacts, { ...OPEN, destination }, { checker: undefined });
+      const d = await decide(i);
+      expect(d.outcome, destination).not.toBe("pass");
+      expect(d.line, destination).toMatch(I6_LINE);
+    }
+  });
+  it("formal r1: I6 stays a card under Full once anything was delivered from a page, even with owner words only", async () => {
+    const i = sable(openFacts, OPEN, { checker: undefined });
+    i.intent = { ...i.intent, ownerWords: ["open google.com and search for murage"], taskSites: new Set(), readOrigins: new Map([["https://www.google.com", new Set(["murage"])]]) };
+    const d = await decide(i);
+    expect(d.outcome).not.toBe("pass");
+  });
+  it("formal r1: an unsure check under Full is logged as advice, never as a match", async () => {
+    const d = await decide(sable(pressFacts, PRESS), { classifyLevel, checkIntent, checkAction: async () => verdict("ask", "checker_unsure") });
+    expect(d.outcome).toBe("pass");
+    expect(d.checkerNote).toBeUndefined();
+    expect((d.checker as { original?: string } | undefined)?.original).toBe("ask");
+  });
+  it("a routine under Full is unchanged: no checker means Ask each step", async () => {
+    const d = await decide(sable(pressFacts, PRESS, { checker: undefined, routine: true }));
+    expect(d.outcome).not.toBe("pass");
+  });
+});
+
+// SABLE-B 5.5 R1 (test 36, decide-level half): a checker verdict that lands after the call ended records nothing and pauses nothing.
+describe("SABLE-B test 36 (FAILS, R1): a late checker verdict after the call's scope ended", () => {
+  const streak = (tally: CheckerTally) => (tally as unknown as { streak: number }).streak;
+  it("attended Full: the held block arrives after the scope ended: refused for the binding, the tally unchanged", async () => {
+    const tally = new CheckerTally(); let alive = true;
+    const base = input(typing, { mode: "full" });
+    const d = await decide({ ...base, alive: () => alive, checker: { ...base.checker!, tally } } as DecideInput, spies([], async () => { alive = false; return verdict("block", "checker_block"); }));
+    expect(d.outcome).toBe("refuse"); expect(d.rule).toBe("binding");
+    expect(streak(tally)).toBe(0); expect(tally.needsHuman).toBe(false);
+  });
+  it("Ask for this task: two blocks so far; the third, which would reach needsHuman, lands after the scope ended: no pause, the tally unchanged", async () => {
+    const tally = new CheckerTally(); tally.record(verdict("block", "checker_block")); tally.record(verdict("block", "checker_block"));
+    let alive = true;
+    const base = input(typing, { mode: "task" });
+    const d = await decide({ ...base, alive: () => alive, checker: { ...base.checker!, tally } } as DecideInput, spies([], async () => { alive = false; return verdict("block", "checker_block"); }));
+    expect(d.outcome).not.toBe("pause"); expect(d.outcome).toBe("refuse"); expect(d.rule).toBe("binding");
+    expect(streak(tally)).toBe(2); expect(tally.needsHuman).toBe(false);
+  });
+  it("control: alive true, the same third block pauses (needsHuman), as base", async () => {
+    const tally = new CheckerTally(); tally.record(verdict("block", "checker_block")); tally.record(verdict("block", "checker_block"));
+    const base = input(typing, { mode: "task" });
+    const d = await decide({ ...base, alive: () => true, checker: { ...base.checker!, tally } } as DecideInput, spies([], async () => verdict("block", "checker_block")));
+    expect(d.outcome).toBe("pause");
   });
 });

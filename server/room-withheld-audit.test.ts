@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -418,3 +419,5 @@ it("R6-02: a real forget of a tool source removes its label from a running deleg
   // the gate was asked for every activity row, on both polls
   expect(asked).toEqual(["tool1", "tool2", "tool1", "tool2"]);
 });
+
+useOutsideStoreFixture();

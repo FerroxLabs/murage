@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -219,3 +220,5 @@ it("index.ts renews at each reset decision, right after the reset is noted, and 
   expect(source.split("if (allowance.everHit) guaranteeLineageWarmSlice();").length - 1).toBe(2);
 });
 
+
+useOutsideStoreFixture();

@@ -67,7 +67,7 @@ const failedStep = (m: Message) => m.kind === "activity" && m.tool?.ok === false
  * everything the bot wrote after it, up to the owner's next message, is its
  * outcome.
  */
-export function handDownStatus(handDown: HandDown, path: Message[], busy: boolean, receipt?: HandDownReceipt): HandDownStatus {
+export function handDownStatus(handDown: HandDown, path: Message[], busy: boolean, receipt?: HandDownReceipt, sources?: (value: { answer?: Message; failure?: Message; steps: Message[] }) => void): HandDownStatus {
   if (handDown.state === "refused" || handDown.state === "failed") return { kind: "failed", reason: handDown.reason || "the request was refused" };
   if (handDown.state === "cancelled") return { kind: "cancelled" };
   if (handDown.state === "dropped") return { kind: "dropped" };
@@ -105,6 +105,7 @@ export function handDownStatus(handDown: HandDown, path: Message[], busy: boolea
   const failure = [...after].reverse().find(failedStep);
   const answer = [...after].reverse().find((m) => m.role === "bot" && m.kind === "text" && m.text?.trim());
   const last = after.at(-1);
+  sources?.({ answer, failure, steps: after.filter(m => m.kind === "activity" && m.tool && !failedStep(m)) });
   // still going: the running turn is this one (nothing newer from the owner)
   if (busy && end === path.length) {
     const steps = after

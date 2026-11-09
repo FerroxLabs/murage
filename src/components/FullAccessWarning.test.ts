@@ -44,13 +44,20 @@ describe("FullAccessWarning", () => {
   it("has its own wording for No limits", () => {
     const markup = renderToStaticMarkup(createElement(FullAccessWarning, { open: true, botName: "Vega", level: "unlimited", onThisComputer: false, onCancel: () => {}, onConfirm: () => {} }));
     expect(markup).toContain("Give @Vega no limits?");
-    expect(markup).toContain("In conversations you start at the Murage app or your paired phone, this bot runs commands and uses tools without asking");
-    expect(markup).toContain("That includes reading and sending your keys and passwords");
-    expect(markup).toContain("before text downloaded from an https address goes to an administrator run");
-    expect(markup).toContain("your own Telegram, Slack and Discord messages keep the cards they have now");
+    // NOLIMITS v1 copy W and O-win (designs/NOLIMITS-MEANS-IT.md section 11)
+    expect(markup).toContain("No limits runs what you ask without stopping to ask you, even a command Murage cannot read in full.");
+    expect(markup).toContain("Murage asks before each command that can run code for the rest of that chat.");
+    expect(markup).toContain("Commands that only read and print keep running.");
+    expect(markup).toContain("on Windows, Murage keeps asking before PowerShell and cmd commands as it does today.");
+    expect(markup).not.toContain("This bot runs on OpenClaw");
     expect(markup).toContain("Turn on no limits");
     expect(markup).not.toContain("still asks before deleting anything outside its folder");
     expect(markup).not.toMatch(/\u2014|\bsafe\b/);
+  });
+
+  it("names the OpenClaw exception (copy O) when the bot runs on OpenClaw", () => {
+    const markup = renderToStaticMarkup(createElement(FullAccessWarning, { open: true, botName: "Vega", level: "unlimited", openClaw: true, onThisComputer: false, onCancel: () => {}, onConfirm: () => {} }));
+    expect(markup).toContain("This bot runs on OpenClaw, which runs commands without asking Murage first.");
   });
 
   it("says whether it covers this conversation, the bot or one routine", () => {

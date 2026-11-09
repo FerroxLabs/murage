@@ -8,7 +8,7 @@ import { removeTempDirSync } from "../testing/cleanup.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { KEEPALL_UNWEDGE, keepAllUnwedged, MEMORY_REPAIRS_FILE, runKeepAllUnwedge } from "./keepall-unwedge.ts";
+import { createKeepAllRepairGate, KEEPALL_UNWEDGE, keepAllUnwedged, MEMORY_REPAIRS_FILE, sessionSlot, startKeepAllRepair } from "./keepall-unwedge.ts";
 import { WritetimeFixture } from "./testing/writetime-fixture.ts";
 
 const cleanups: Array<() => void> = [];
@@ -22,7 +22,7 @@ const setup = () => {
 const rows = (fx: WritetimeFixture, thread: string) => (fx.db.prepare("SELECT native_session AS s, revoke_id AS r FROM memory_deny_session WHERE thread_id=? ORDER BY 1,2").all(thread) as Array<{ s: string; r: number }>).map(row => `${row.s}@${row.r}`);
 
 describe("the Keep all repair at start", () => {
-  it("removes audience-only session marks on the owner's direct chats only, clears cursors, sets its flag, and does nothing a second time", () => {
+  it("removes audience-only session marks on the owner's direct chats only, clears cursors, sets its flag, and does nothing a second time", async () => {
     const { fx, dir } = setup();
     // the wedged shape: receipts flipped by a roster change (audience-only revokes 4 and 5) marked the owner's newest sessions; a forget (revoke 9)
     // marked one too; a channel person's thread holds an audience-only mark as well
@@ -34,36 +34,39 @@ describe("the Keep all repair at start", () => {
     fx.db.prepare("INSERT INTO memory_revoke_jobs(revoke_id,kind,root,root_lsn,started_lsn,phase,cursor,state) VALUES(4,'inherit',?,1,2,'mark','','active')").run(JSON.stringify({ kind: "inherit", cause: "inherit" }));
     let drained = 0, cleared = 0;
     const lines: string[] = [];
-    const deps = { ownerDirectThread: (thread: string) => thread === "owner-chat", drain: () => { drained++; }, clearCursors: () => { cleared++; return 1; }, log: (line: string) => lines.push(line) };
+    // the owner's stored owner-audience cursors are s-1 and s-2 (ELD250 B12: only their marks may go); the person's chat is no owner chat
+    const deps = { ownerSessions: () => new Map([["owner-chat", new Set([sessionSlot("fuigo", "s-1"), sessionSlot("fuigo", "s-2")])]]),
+      drain: () => { drained++; return false; }, markerPending: () => false,
+      judgeAndClear: () => { cleared++; return { cleared: 1, botsMoved: 1, skipped: 0, keptChecking: 0, keptLive: 0 }; }, flush: () => {}, log: (line: string) => lines.push(line) };
+    const repair = () => startKeepAllRepair(fx.db, dir, createKeepAllRepairGate(false), deps);
     expect(keepAllUnwedged(fx.db, dir)).toBe(false);
-    const first = runKeepAllUnwedge(fx.db, dir, deps);
-    expect(first).toMatchObject({ skipped: false, denySessions: 2, ownerThreads: 1, openJobs: 1, cursors: 1, done: true });
+    expect(await repair()).toBe("repaired");
     // the owner's chat keeps only the forget's mark; the channel person's thread keeps its audience-only mark (an audience reader honours it)
     expect(rows(fx, "owner-chat")).toEqual(["s-1@9"]);
     expect(rows(fx, "person-chat")).toEqual(["p-1@4"]);
     expect(drained).toBe(1);
     expect(cleared).toBe(1);
-    expect(lines).toEqual(["[memory] keep-all repair: owner-chat session marks removed=2 threads=1 open-jobs=1 cursors-cleared=1"]);
+    expect(lines).toEqual(["[memory] keep-all repair: owner-chat session marks removed=2 threads=1 open-jobs=1 cursors-cleared=1 slices=1 drainLeft=false cursorsKeptChecking=0 cursorsKeptLive=0 cursorsSkippedChanged=0"]);
     // the flag names this memory file
     const installationId = String(fx.db.prepare("SELECT installation_id FROM memory_meta WHERE id=1").get()!.installation_id);
     expect(JSON.parse(readFileSync(join(dir, MEMORY_REPAIRS_FILE), "utf8"))[KEEPALL_UNWEDGE].installationId).toBe(installationId);
     expect(keepAllUnwedged(fx.db, dir)).toBe(true);
     // a second start does nothing, even with a new audience-only mark on the owner's chat (inert there: deny-read.ts sessionLookup)
     fx.denySession("owner-chat", "fuigo", "s-2", 4);
-    const second = runKeepAllUnwedge(fx.db, dir, deps);
-    expect(second.skipped).toBe(true);
+    expect(await repair()).toBe("already");
     expect(rows(fx, "owner-chat")).toEqual(["s-2@4", "s-1@9"].sort());
     expect(cleared).toBe(1);
     expect(lines).toHaveLength(1);
   });
-  it("a replaced memory file (another installation id) is repaired again; a missing flag file is a first run", () => {
+  it("a replaced memory file (another installation id) is repaired again; a missing flag file is a first run", async () => {
     const { fx, dir } = setup();
     expect(existsSync(join(dir, MEMORY_REPAIRS_FILE))).toBe(false);
-    const deps = { ownerDirectThread: () => true, clearCursors: () => 0, log: () => {} };
-    expect(runKeepAllUnwedge(fx.db, dir, deps).skipped).toBe(false);
-    expect(runKeepAllUnwedge(fx.db, dir, deps).skipped).toBe(true);
+    const deps = { ownerSessions: () => new Map(), drain: () => false, markerPending: () => false, judgeAndClear: () => ({ cleared: 0, botsMoved: 0, skipped: 0, keptChecking: 0, keptLive: 0 }), flush: () => {}, log: () => {} };
+    const repair = () => startKeepAllRepair(fx.db, dir, createKeepAllRepairGate(false), deps);
+    expect(await repair()).toBe("repaired");
+    expect(await repair()).toBe("already");
     fx.db.prepare("UPDATE memory_meta SET installation_id=? WHERE id=1").run("00000000-0000-4000-8000-000000000000");
     expect(keepAllUnwedged(fx.db, dir)).toBe(false);
-    expect(runKeepAllUnwedge(fx.db, dir, deps).skipped).toBe(false);
+    expect(await repair()).toBe("repaired");
   });
 });

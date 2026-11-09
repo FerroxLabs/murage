@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Isolation-all round 9: an engine whose version is unknown (the probe is retried ONCE) or older than the first one proven to honour
@@ -118,7 +120,7 @@ describe("Codex: version gate", () => {
       environment: { HOME: home, CODEX_HOME: codex, FAKE_CODEX_VERSION: version, FAKE_CODEX_VERSION_LOG: log }, config: { cli: FAKE_CODEX, fullAuto: false } });
     const recorder = recordEvents(instance.adapter);
     try {
-      await instance.adapter.sendTurn({ threadId: "codex-v-1", text: "go", warmIdentity: { botId: "bot-cv", audience: "owner" } });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "codex-v-1", text: "go", warmIdentity: { botId: "bot-cv", audience: "owner" } });
       const done = await codexTurnDone(instance, recorder, "codex-v-1");
       return { done, events: recorder.events, dump, probes: probes(log), codex };
     } finally { recorder.stop(); await instance.dispose(); }
@@ -155,7 +157,7 @@ describe("Codex: version gate", () => {
       const recorder = recordEvents(instance.adapter);
       try {
         for (const turn of [1, 2]) {
-          await instance.adapter.sendTurn({ threadId: `${id}-${turn}`, text: "go", warmIdentity: { botId: "bot-probe", audience: "owner" } });
+          await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `${id}-${turn}`, text: "go", warmIdentity: { botId: "bot-probe", audience: "owner" } });
           expect(await codexTurnDone(instance, recorder, `${id}-${turn}`)).toMatchObject({ ok: true });
         }
       } finally { recorder.stop(); await instance.dispose(); }
@@ -171,3 +173,6 @@ describe("Codex: version gate", () => {
     expect(childHome.startsWith(scopedCliHomeRoot("codex"))).toBe(true);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

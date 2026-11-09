@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -111,7 +113,7 @@ describe("MinimaxDriver", () => {
     });
     const recorder = recordEvents(instance.adapter);
 
-    await instance.adapter.sendTurn({ threadId: "thread", text: "private prompt" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "thread", text: "private prompt" });
     const completed = await recorder.until((event) => event.type === "turn.completed");
     const body = JSON.parse(String(request?.body));
 
@@ -142,7 +144,7 @@ describe("MinimaxDriver", () => {
     });
     const recorder = recordEvents(instance.adapter);
 
-    await instance.adapter.sendTurn({ threadId: "thread-empty-stream", text: "hello" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "thread-empty-stream", text: "hello" });
     const completed = await recorder.until((event) => event.type === "turn.completed");
 
     expect(completed).toMatchObject({ ok: false, stopReason: "incomplete" });
@@ -167,7 +169,7 @@ describe("MinimaxDriver", () => {
     });
     const recorder = recordEvents(instance.adapter);
 
-    await instance.adapter.sendTurn({ threadId: "thread", text: "hello" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "thread", text: "hello" });
     const error = await recorder.until((event) => event.type === "runtime.error");
     const completed = await recorder.until((event) => event.type === "turn.completed");
 
@@ -178,3 +180,6 @@ describe("MinimaxDriver", () => {
     await instance.dispose();
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

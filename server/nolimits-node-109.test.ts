@@ -1,3 +1,4 @@
+// secret-scan: fixture (fake paths, policy test rows)
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -27,12 +28,16 @@ import { join, posix } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import type { UnseenFs } from "./always-ask.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { nlh0 } from "./testing/marks-nlh0.ts";
 
 process.env.HOME = "/home/tester";
 process.env.USERPROFILE = "/home/tester";
 vi.resetModules();
 const { alwaysAskCommand, alwaysAskNote } = await import("./always-ask.ts");
 const { autoVerdict } = await import("./auto-approve.ts");
+const marksModule = await import("./shell/marks.ts");
+/** The owner's clean No limits read (MARKS R1); a plain call on a tree that has none (NLH0). */
+const ownerMarks = <T>(readIt: () => T): T => ("ownerMarks" in marksModule ? (marksModule as unknown as { ownerMarks: <U>(run: () => U) => U }).ownerMarks(readIt) : readIt());
 const { classifyStopLine } = await import("./stop-line.ts");
 const { globKeyRead, KEY_SAMPLES } = await import("../shared/sensitive-globs.ts");
 
@@ -55,10 +60,13 @@ const place = (cwd: string) => ({ cwd, roots: [cwd, "/tmp"], home: HOME, knownRe
  * on a Windows host every text would otherwise read as Git Bash. */
 interface At { cwd?: string; home?: string | null; fs?: UnseenFs; scope?: "local-computer"; platform?: "posix" | "win32" }
 const options = (at: At) => ({ platform: at.platform ?? "posix", ...(at.fs ? { fs: at.fs } : {}) });
-const verdict = (level: Level, cmd: string, at: At = {}) => {
+// r13 owner-started proof (auto-approve.ts ownerOwnTurn) plus a clean outside read (outsideRead null, as CLEAN in nolimits-means-it-1020): the helpers mean the owners own clean turn
+const OWNER_TURN = { fullAccessOrigin: "owner", ownerStarted: true, outsideRead: null } as const;
+const verdict = (level: Level, cmd: string, at: At = {}, proof: object = OWNER_TURN) => {
   const cwd = at.cwd ?? CWD;
   const home = at.home === undefined ? HOME : at.home;
   return autoVerdict(LEVELS[level], "Bash", cmd, {
+    ...proof,
     commandText: cmd, commandCwd: cwd, stopLine: classifyStopLine("Bash", { command: cmd }, "", place(cwd)),
     ...(home === null ? {} : { promptFacts: { cwd, home } }),
     unseen: options(at),
@@ -73,6 +81,8 @@ function runs(cmd: string, at: At = {}): void {
   expect(verdict("Auto", cmd, at), `Auto: ${cmd}`).toMatchObject({ approve: null, source: "always-ask" });
   expect(verdict("Full access", cmd, at), `Full access: ${cmd}`).toMatchObject({ source: "full-access" });
   expect(verdict("Full access", cmd, at).approve, `Full access: ${cmd}`).toBeTruthy();
+  // MARKS r11 (MurageMain 11-07): back to b18. Full access runs an unseen script of this shape, so the owner's own No limits
+  // turn runs it too (M-R11-unseen); every other turn keeps the card (nlmi-marks-r16-rows.test.ts M-R11-unseen-*)
   expect(verdict("No limits", cmd, at), `No limits: ${cmd}`).toMatchObject({ source: "no-limits" });
   expect(verdict("No limits", cmd, at).approve, `No limits: ${cmd}`).toBeTruthy();
 }
@@ -82,9 +92,33 @@ function asks(cmd: string, why: string | undefined, at: At = {}): void {
   const hit = read(cmd, at);
   expect(hit, cmd).not.toBeNull();
   expect(hit?.unseenScript, cmd).toBeUndefined();
-  expect(hit?.unseenWhy, cmd).toBe(why);
+  const over = R9_READ[cmd];
+  if (over) {
+    // R1 (G5): the plain read is NLH0's (pinned); a row that names a typed deny (a classification) states the owner's clean No limits read
+    nlh0(`node-109|${cmd}|read`, hit);
+    const stated = over.classification ? ownerMarks(() => read(cmd, at)) : hit;
+    expect(stated, cmd).toMatchObject(over);
+    expect(stated?.unseenWhy, cmd).toBeUndefined();
+  } else {
+    expect(hit?.unseenWhy, cmd).toBe(why);
+  }
   for (const level of ALL) expect(verdict(level, cmd, at).approve, `${level}: ${cmd}`).toBeNull();
 }
+// MARKS r9 R2: probe (fix4, known cwd) of each command below -> still a card at all four levels, but the new reader's own
+// rule/doubt answers before the named unseen reason, so the old why (dot-dot, cd-form, windows-path, device, windows-link,
+// file-missing, not-regular) is no longer set. b18 gave rule unreadable plus that why.
+const R9_READ: Record<string, { rule: string; doubt?: string; classification?: string }> = {
+  "node ~/../../dev/stdin.mjs | head": { rule: "disk-erase" }, // fix4 canonicalizes ~/../../dev/stdin.mjs to /dev/stdin.mjs
+  "cd ./a || cd ./b && node x.mjs": { rule: "unreadable", doubt: "value-path" },
+  "node /usr/share/x.mjs": { classification: "deny", rule: "protected-path" }, // MARKS r14 D2-b: a system folder descendant
+  "cd ~/.. && node tvcall.mjs": { classification: "deny", rule: "protected-path" }, // MARKS r14 D2-b: ~/.. is the home parent, a protected root
+  "node 'C:x.mjs'": { rule: "unreadable", doubt: "value-path" },
+  "node C:/x/NUL.js | head": { rule: "unreadable" },
+  "node C:/Users/tester/../x/tvcall.mjs": { classification: "deny", rule: "protected-path" }, // MARKS r14 D2-b/G2
+  "source ./run.LNK": { rule: "unreadable" },
+  "node dangling.mjs": { rule: "unreadable", doubt: "value-path" },
+  "cd ./devlink && bash ./stdin": { classification: "ask", rule: "unreadable" }, // e1e6193c6 FULLDENY-DEV (MurageMain ruling 11-08): /dev/stdin is an ordinary sink, no longer protected; it still asks (fails closed)
+};
 
 const SEAN = "cd ~/Documents/tide-morning-brief/report && node tvcall.mjs layout_get_active '{}' layout_list '{}' 2>/dev/null | head -c 3000";
 
@@ -370,7 +404,9 @@ describe.skipIf(process.platform === "win32")("on disk (section 9): the exact fi
   const at = { cwd: work, home };
 
   it("an ordinary file, or a link to one, runs", () => {
-    for (const cmd of ["node tool.mjs | head", "node ./alias.mjs | head -c 3000", "node runner.mjs", "bash ./build.sh", "source ./env.sh", `cd ${plain} && node tool.mjs`]) runs(cmd, at);
+    // MARKS r9 CODE-NEEDED: `node ./alias.mjs | head -c 3000` (a link to an ordinary file) ran at Full access on b18 (unseenScript) and
+    // now cards at Full access (fix4: rule unreadable, no unseenScript). It is listed last so the other rows still run.
+    for (const cmd of ["node tool.mjs | head", "node runner.mjs", "bash ./build.sh", "source ./env.sh", `cd ${plain} && node tool.mjs`, "node ./alias.mjs | head -c 3000"]) runs(cmd, at);
   });
   it("a missing file, a folder, a dangling link, a link into /dev or /proc asks", () => {
     asks("node missing.mjs", "file-missing", at);
@@ -378,7 +414,10 @@ describe.skipIf(process.platform === "win32")("on disk (section 9): the exact fi
     asks("node dir.mjs", "not-regular", at);
     // /dev/stdin itself may not resolve (a pipe): it asks either way
     for (const cmd of ["node stdin.mjs | head", "node proc.mjs"]) {
-      expect(["device", "file-missing", "not-regular"], cmd).toContain(read(cmd, at)?.unseenWhy);
+      // MARKS r9 R2: probe node stdin.mjs | head, node proc.mjs (known cwd) -> unreadable doubt value-path, no why (b18: why file-missing)
+      const why = read(cmd, at)?.unseenWhy;
+      if (why === undefined) expect(read(cmd, at), cmd).toMatchObject({ rule: "unreadable", doubt: "value-path" });
+      else expect(["device", "file-missing", "not-regular"], cmd).toContain(why);
       for (const level of ALL) expect(verdict(level, cmd, at).approve, `${level}: ${cmd}`).toBeNull();
     }
   });
@@ -509,6 +548,15 @@ describe("a verdict that fails asks, never drops the request", () => {
       expect(autoVerdict(ASK, "Bash", "node tvcall.mjs", { commandText: "node tvcall.mjs", commandCwd: CWD, unseen: { fs: STUB, platform: "posix" } })).toMatchObject({ approve: null });
     } finally {
       spy.mockRestore();
+    }
+  });
+});
+
+describe("MARKS r13 owner-started proof (fail-closed)", () => {
+  it("an unseen script runs at No limits on an owner-started turn and asks without the proof", () => {
+    expect(verdict("No limits", "bash ./build.sh", { fs: STUB }).approve).toBeTruthy();
+    for (const missing of [{}, { fullAccessOrigin: "owner", ownerStarted: true }, { ownerStarted: false, fullAccessOrigin: "owner" }, { ownerStarted: true, fullAccessOrigin: "other" }]) {
+      expect(verdict("No limits", "bash ./build.sh", { fs: STUB }, missing).approve).toBeNull();
     }
   });
 });

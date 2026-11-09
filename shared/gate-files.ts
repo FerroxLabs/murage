@@ -58,6 +58,17 @@ export function gateHit(texts: readonly string[]): string | null {
   return null;
 }
 
+/** FULL-DENY-1018: the rule of a gate row that only the collapsed spelling names (`~/.kube/./config`, `~/.ssh//config`, `x/../`
+ * climbs, empty `""` pieces). A plain spelling is left to the key rules, which know an `echo` or a commit message from a write. */
+export function gateHitSpelled(texts: readonly string[]): string | null {
+  for (const text of texts) {
+    if (rowIn(text)) continue;
+    const row = rowIn(collapsedPaths(text));
+    if (row) return row.re.source;
+  }
+  return null;
+}
+
 const RULE_IDS: ReadonlyMap<string, string> = new Map([
   ...[...SENSITIVE_PATHS, ...SENSITIVE_TEXT].map((row) => [row.re.source, row.id] as const),
   ...GATE_ROWS.map((row) => [row.re.source, row.id] as const),

@@ -85,7 +85,7 @@ describe("share and skill or routine suggestions in the Inbox", () => {
   });
   it("a routine change names the routine and why it waits; Apply names the exact words shown", async () => {
     expect(suggestionSentence(change)).toBe('Improve the routine "Monday report": Verify first.');
-    expect(suggestionNote(change)).toBe("It sends or reaches other people, so it waits for you.");
+    expect(suggestionNote(change)).toBe("It sends something to other people or contacts them, so it waits for you.");
     expect(canEditSuggestion(change)).toBe(false);
     const request = vi.fn(async () => ({}));
     await answerSuggestion(request, change, "apply");

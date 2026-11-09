@@ -108,3 +108,18 @@ describe("call ownership notifies native (M4)", () => {
     await flush();
   });
 });
+
+it("keeps the budget end reason and a later call starts independently", async () => {
+  vi.stubGlobal("window", { muragebox: { speechStop: vi.fn(async () => {}) } });
+  const { callBudgetEnded } = await import("./call");
+  startCall("spent");
+  expect(endCall("spent", "budget")).toBe(true);
+  expect(currentCall()).toBeNull();
+  expect(callBudgetEnded()).toBe("spent");
+  startCall("next");
+  expect(callBudgetEnded()).toBeNull();
+  expect(endCall("spent", "budget")).toBe(false);
+  expect(currentCall()).toBe("next");
+  endCall();
+  vi.unstubAllGlobals();
+});

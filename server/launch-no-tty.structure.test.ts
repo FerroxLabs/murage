@@ -1,3 +1,4 @@
+import { fixtureBotFolder } from "./testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -45,6 +46,7 @@ const ALLOWLIST: Record<string, string> = {
   "drivers/process-identity.ts": "non-engine helper: ps start-time read of a known pid",
   "drivers/warm-pool.ts": "non-engine helper: ps and vm_stat memory reads",
   "drivers/claude.ts": "git rev-parse of the session folder with stdin ignored and no network",
+  "drivers/codex-hook.ts": "HOOK-LIVENESS warm-up: Murage's own hook runtime as node (ELECTRON_RUN_AS_NODE, `-e \"\"`), stdio ignored, minimal env, hidden window, SIGKILL at the cap; not an engine",
   "drivers/acp/opencode-go.ts": "git of OpenCode's own one-shot scratch folder (U12/U13): GIT_* variables, system and global config cut off, 10 s timeout, hidden window; not an engine",
   "drivers/headless-text-only.ts": "macOS `security find-generic-password` attributes-only lookup (no -w, no -g: it prints no secret and opens no prompt, stdout discarded, 2 s timeout), asking whether the owner's default Keychain item exists; not an engine",
   "drivers/pi-mcp-extension.ts": "runs inside the Pi process and inherits its session",
@@ -194,16 +196,16 @@ describe("engine processes have no controlling terminal (Rule 74c launch clause)
     for (const platform of ["linux", "darwin"] as const) {
       it(`${platform}: spawnCli starts a new session with stdin a pipe`, () => {
         onPlatform(platform);
-        spawnCli("engine", ["--x"], { stdio: ["pipe", "pipe", "pipe"], env: {} });
+        spawnCli("engine", ["--x"], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"], env: {} });
         expect(spawnOptions()).toMatchObject({ detached: true, stdio: ["pipe", "pipe", "pipe"] });
       });
       it(`${platform}: spawnCli never hands stdin on, even when asked to inherit or ignore it`, () => {
         onPlatform(platform);
-        spawnCli("engine", [], { stdio: ["inherit", "inherit", "ignore"], env: {} });
+        spawnCli("engine", [], { cwd: fixtureBotFolder(), stdio: ["inherit", "inherit", "ignore"], env: {} });
         expect(spawnOptions()).toMatchObject({ detached: true, stdio: ["pipe", "pipe", "ignore"] });
-        spawnCli("engine", [], { stdio: "inherit", env: {} });
+        spawnCli("engine", [], { cwd: fixtureBotFolder(), stdio: "inherit", env: {} });
         expect(spawnOptions()).toMatchObject({ detached: true, stdio: ["pipe", "pipe", "pipe"] });
-        spawnCli("engine", [], { env: {} });
+        spawnCli("engine", [], { cwd: fixtureBotFolder(), env: {} });
         expect(spawnOptions()).toMatchObject({ detached: true, stdio: ["pipe", "pipe", "pipe"] });
       });
       it(`${platform}: execCli starts a new session with all stdio piped`, () => {
@@ -215,10 +217,10 @@ describe("engine processes have no controlling terminal (Rule 74c launch clause)
 
     it("win32: spawnCli hides its console, all stdio piped, never detached", () => {
       onPlatform("win32");
-      spawnCli("engine", ["--x"], { stdio: ["pipe", "pipe", "pipe"], env: {}, detached: true });
+      spawnCli("engine", ["--x"], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"], env: {}, detached: true });
       expect(spawnOptions()).toMatchObject({ windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
       expect(spawnOptions().detached).toBeUndefined();
-      spawnCli("engine", [], { stdio: ["inherit", "inherit", "inherit"], env: {} });
+      spawnCli("engine", [], { cwd: fixtureBotFolder(), stdio: ["inherit", "inherit", "inherit"], env: {} });
       expect(spawnOptions()).toMatchObject({ windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
       expect(spawnOptions().detached).toBeUndefined();
     });
