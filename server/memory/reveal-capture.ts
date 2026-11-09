@@ -6,6 +6,7 @@ import { assertHumanPrincipal, isWorkspaceOwner, threadHumanPrincipal } from "..
 import { redactSecretsInText } from "../redact.ts";
 import { botIdentityRecordId } from "./identity.ts";
 import { groundMemoryClaim, type TextOnlyExtractor } from "./extract.ts";
+import { withBotLearningFolder } from "./learning-folder.ts";
 import { learningGate, recordDigest, sampleLearningFence, sourceDigest } from "./learning-send.ts";
 import { writetimeSourceState } from "./consolidate.ts";
 import { LineageAllowance, sourceIsWithheldMessage } from "./replay-lineage.ts";
@@ -14,6 +15,7 @@ import type { MemoryRoster } from "./policy.ts";
 import { revokeRecordDisclosures } from "./revocation.ts";
 import { inheritEdge } from "./revoke-commit.ts";
 import { insertMemoryRecord } from "./record-write.ts";
+import { rowToMessage } from "../transcript-seq.ts";
 
 type Receipt={cursor:string;status:"pending"|"complete";retryAt:number;reason?:string;attempts?:number};
 /** A minute, doubling while the SAME reason keeps coming back, up to an hour.
@@ -247,7 +249,7 @@ function sourceFor(jobId:string,roster:MemoryRoster){
   if(sourceIsWithheldMessage(LineageAllowance.tool(),source)||writetimeSourceState(source)!=="shown")return null;
   const raw=db.prepare("SELECT json FROM messages WHERE thread_id=? AND id=?").get(source.thread_id,source.message_id);
   if(!raw)return null;
-  const message=JSON.parse(String(raw.json)),payload=JSON.parse(String(source.payload));
+  const message=rowToMessage({json:String(raw.json)}),payload=JSON.parse(String(source.payload));
   if(message.kind!=="text"||message.role!=="bot"||message.turnTerminal!==true||typeof message.text!=="string"||redactSecretsInText(wholeTurnText(db,String(source.thread_id),message))!==payload.text)return null;
   const threadId=String(source.thread_id);
   if(roster.groups.some(g=>g.threadId===threadId||g.tasks?.some(t=>t.threadId===threadId)))return null;
@@ -298,7 +300,7 @@ export async function captureBotReveals(jobId:string,roster:()=>MemoryRoster,ext
   if(!canon){persist(db,jobId,String(initial.source.scope_id),{...saved,status:"complete",retryAt:0});return {status:"complete" as const};}
   if(!initial.text.trim()||Buffer.byteLength(initial.text)>65536)return defer("reveal-source-budget");
   const exact=initial.text===canon.text;
-  const support=exact?{supported:true,reason:"exact-terminal-canon"}:await groundMemoryClaim({purpose:"reveal",text:String(canon.text),quote:initial.text,claimType:"reveal-state",speaker:initial.botId,outcome:"visible-terminal-message"},extractor,signal,undefined,learningGate("grounding",fenceAt,{sources:[{id:String(initial.source.id),revision:Number(initial.source.revision),digest:sourceDigest(db,String(initial.source.id),Number(initial.source.revision))}],records:[{id:String(canon.id),version:Number(canon.version),digest:recordDigest(db,String(canon.id),Number(canon.version))}]}));
+  const support=exact?{supported:true,reason:"exact-terminal-canon"}:await withBotLearningFolder(initial.botId,()=>groundMemoryClaim({purpose:"reveal",text:String(canon.text),quote:initial.text,claimType:"reveal-state",speaker:initial.botId,outcome:"visible-terminal-message"},extractor,signal,undefined,learningGate("grounding",fenceAt,{sources:[{id:String(initial.source.id),revision:Number(initial.source.revision),digest:sourceDigest(db,String(initial.source.id),Number(initial.source.revision))}],records:[{id:String(canon.id),version:Number(canon.version),digest:recordDigest(db,String(canon.id),Number(canon.version))}]})));
   if(!support.supported&&support.reason!=="unsupported-claim")return defer(support.reason);
   return transaction(()=>{
     const current=sourceFor(jobId,roster()),now=Date.now();

@@ -1,3 +1,4 @@
+import { probeFolder } from "./probe-folder.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -13,6 +14,7 @@
 // inherits Murage's own environment by omission.
 
 import { createHash, randomBytes } from "node:crypto";
+import { noteEngineEnv } from "./outside-scan.ts";
 import { existsSync, realpathSync } from "node:fs";
 import { delimiter, win32 } from "node:path";
 import { ABSENT_PINS, ENV_PINS, isPowerShellProgram, resolvePins, valuePins, type PinRun, type SshResolution } from "../shared/arg-vocabulary.ts";
@@ -22,6 +24,7 @@ import type { EnvCapture, ExecEnv } from "../shared/mount-identity.ts";
 import { captureOwnerEnv, environmentProbeProgram, envGeneration, installPathTail, invalidateEnvCapture, onEnvInvalidate, type OwnerEnv } from "./env-path.ts";
 import { ownerTimeZone } from "./owner-time-zone.ts";
 import { execCli } from "./procs.ts";
+import { gitBashPath } from "./tool-discovery.ts";
 import { askTouchesStartup, ownerStartupOf, rememberHand } from "./startup-files.ts";
 
 export interface HandedEnv {
@@ -105,6 +108,12 @@ export function handedPinsOf(execEnv: ExecEnv | undefined, platform: NodeJS.Plat
   return pins;
 }
 
+/** The requesting engine's handed PATH and PATHEXT (WIN-PWSH-1018 H1), any spelling; none from a missing or unchecked record. */
+export function handedShellPathOf(execEnv: ExecEnv | undefined): { path?: string; pathExt?: string; gitBash?: string } | undefined {
+  if (!execEnv || execEnv.unread || execEnv.unchecked) return undefined;
+  return { path: envValueOf(execEnv.env, "PATH", "win32"), pathExt: envValueOf(execEnv.env, "PATHEXT", "win32"), ...(execEnv.gitBash ? { gitBash: execEnv.gitBash } : {}) };
+}
+
 /** The Engines panel's ssh lines from the latest hand (delta 5): an owner setting engines do not use, or no OpenSSH found. */
 export function sshPinNotes(): string[] {
   return [...(lastSsh?.notes ?? [])];
@@ -145,12 +154,15 @@ export async function handEnv(
   const probeEnv: Record<string, string> = { ...env };
   for (const [name, value] of valuePins(platform)) set(probeEnv, name, value);
   for (const name of ABSENT_PINS) drop(probeEnv, name);
-  const { pins, ssh } = await resolvePins(owner.env, platform, { run: options.run ?? execPinRun, cwd: options.cwd ?? owner.env.HOME, env: probeEnv });
+  const { pins, ssh } = await resolvePins(owner.env, platform, { run: options.run ?? execPinRun, cwd: options.cwd ?? probeFolder(), env: probeEnv });
   for (const [name, value] of pins) set(env, name, value);
   for (const name of ABSENT_PINS) drop(env, name);
   const handed: HandedEnv = { env: envAsSpawned(env, platform), absent: [...ABSENT_PINS], capture: owner.capture, ownerStartup, pins, ssh };
   lastSsh = ssh;
   rememberHand(handed);
+  // NOLIMITS 1.0.18 (GrokBuild #16 close): the finished map an engine is handed (the owner's captured toolchain env, not
+  // cloudTurnEnvironment's) is noted too; spawnCli notes it again at the spawn
+  noteEngineEnv(handed.env);
   return handed;
 }
 
@@ -406,10 +418,22 @@ function execEnvOf(handed: HandedEnv, cwd: string, shell: readonly string[], che
 const CHECK_RERUNS = 3;
 const CHANGED_WHILE_CHECKED = "the environment changed while it was being checked";
 
+/** WIN-PWSH-1018 H1 (M1): Windows only, the record gains the Git Bash the Claude driver's discovery finds from the env the record
+ *  carries; a failure leaves it out (the gate holds). "changed" when the generation moved during the discovery. */
+export async function attachGitBash(
+  record: ExecEnv, at: number, platform: NodeJS.Platform = process.platform,
+  discover: (env: Readonly<Record<string, string>>, generation: number) => Promise<string | null> = gitBashPath,
+): Promise<ExecEnv | "changed"> {
+  if (platform !== "win32" || record.unread || record.unchecked) return record;
+  const gitBash = await discover(record.env, at).catch(() => null);
+  if (envGeneration() !== at) return "changed";
+  return gitBash ? { ...record, gitBash } : record;
+}
+
 /** The F12 record a driver reports on a command ask, computed when the card opens (Rule 74d): the check of the current
  *  generation, read again once it answers; a check the generation moved under is never reported, it runs again (at most
  *  three times, then U20 with reason changed-while-checked). */
-export async function execEnvNow(session: string, shell: readonly string[], handed: HandedEnv, cwd: string): Promise<ExecEnv> {
+export async function execEnvNow(session: string, shell: readonly string[], handed: HandedEnv, cwd: string, deps: { platform?: NodeJS.Platform; discover?: Parameters<typeof attachGitBash>[3] } = {}): Promise<ExecEnv> {
   for (let run = 0; run <= CHECK_RERUNS; run++) {
     const at = envGeneration();
     let check: CheckResult;
@@ -419,7 +443,11 @@ export async function execEnvNow(session: string, shell: readonly string[], hand
       check = failedCheck("did-not-finish", "the check did not finish");
       rememberFailure(checkKey(at, session, shell, handed, cwd), session, "did-not-finish");
     }
-    if (envGeneration() === at) return execEnvOf(handed, cwd, shell, check);
+    if (envGeneration() === at) {
+      const done = await attachGitBash(execEnvOf(handed, cwd, shell, check), at, deps.platform, deps.discover);
+      // the generation moved while Git Bash was being found: the record is stale, run again (the bounded retry below)
+      if (done !== "changed") return done;
+    }
   }
   rememberFailure(checkKey(envGeneration(), session, shell, handed, cwd), session, "changed-while-checked");
   return execEnvOf(handed, cwd, shell, failedCheck("changed-while-checked", CHANGED_WHILE_CHECKED));

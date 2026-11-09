@@ -415,6 +415,7 @@ export function ChatHeader({
             them to the far edge of an empty track. */}
         <div data-chat-header-name className="min-w-0">
           <RenameTitle
+            key={bot.id}
             value={bot.name}
             onCommit={(name) => dispatch({ type: "updateBot", botId: bot.id, patch: { name } })}
             // A phone opens the profile from the ... menu, so the name is not a second way in.

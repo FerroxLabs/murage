@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -125,7 +127,7 @@ describe("vendor questions through the ACP driver (fake CLI)", () => {
 
   it("Grok Build's ask opens the question card, never auto-answered, and answers by question text", async () => {
     await start("_x.ai/ask_user_question", GROK_PARAMS);
-    await instance!.adapter.sendTurn({ threadId: "t-grok-q", text: "go" });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-grok-q", text: "go" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({ requestType: "question", tool: "ask_user_question", summary: "Which database?" });
     await expect(instance!.adapter.respondToRequest("t-grok-q", (opened as any).requestId, {
@@ -137,7 +139,7 @@ describe("vendor questions through the ACP driver (fake CLI)", () => {
 
   it("Cursor's ask opens the same card and answers by option id", async () => {
     await start("cursor/ask_question", CURSOR_PARAMS, CursorAgentDriver as typeof GrokAgentDriver);
-    await instance!.adapter.sendTurn({ threadId: "t-cursor-q", text: "go" });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-cursor-q", text: "go" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({ requestType: "question", tool: "ask_user", summary: "Which color?" });
     await instance!.adapter.respondToRequest("t-cursor-q", (opened as any).requestId, { behavior: "answer", message: "Blue", answers: [{ id: "q1", selected: ["Blue"] }] });
@@ -147,7 +149,7 @@ describe("vendor questions through the ACP driver (fake CLI)", () => {
 
   it("the turn ending cancels the ask, and a reply after that is dropped", async () => {
     await start("x.ai/ask_user_question", GROK_PARAMS);
-    await instance!.adapter.sendTurn({ threadId: "t-grok-stop", text: "go" });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-grok-stop", text: "go" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     await instance!.adapter.interruptTurn("t-grok-stop");
     expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "system" });
@@ -164,7 +166,7 @@ describe("vendor questions through the ACP driver (fake CLI)", () => {
       original(callback, delay === QUESTION_TIMEOUT_MS ? 50 : delay, ...args)) as typeof setTimeout);
     try {
       await start("x.ai/ask_user_question", GROK_PARAMS);
-      await instance!.adapter.sendTurn({ threadId: "t-grok-timeout", text: "go", unattendedAskNote: true });
+      await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-grok-timeout", text: "go", unattendedAskNote: true });
       const opened = await recorder.until((e) => e.type === "request.opened");
       expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "timeout" });
       await recorder.until((e) => e.type === "turn.completed");
@@ -177,7 +179,7 @@ describe("vendor questions through the ACP driver (fake CLI)", () => {
 
   it("a Grok ask in a shape Murage cannot read fails closed with one line; the agents ask_user stays mounted", async () => {
     await start("_x.ai/ask_user_question", { sessionId: "s-1", toolCallId: "tc-1", questions: [{ prompt: "Which database?" }] });
-    await instance!.adapter.sendTurn({
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-grok-bad",
       text: "go",
       integrations: { agents: { command: process.execPath, args: ["/fake/agents-proxy.js"], env: { MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_COMMS_TOKEN: "t" } } },
@@ -192,3 +194,6 @@ describe("vendor questions through the ACP driver (fake CLI)", () => {
     expect(seen.mcpServers.map((server: { name: string }) => server.name)).toContain("agents");
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

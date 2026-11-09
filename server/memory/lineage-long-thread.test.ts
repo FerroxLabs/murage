@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // A real long thread has thousands of receipts: a frame and a lookup receipt
 // per turn, over many resumed sessions. Past the receipt limit the check
 // counted the thread's reply-to-receipt pairs up to 20,000 for every check
@@ -142,3 +143,5 @@ it("bulk receipts written after the session's own, in its session: a forgotten r
   const after = rowsFor(messages, access("dax", "dax-direct"));
   expect(after.kept.filter(m => m.role !== "user").map(m => m.id)).toEqual([]);
 }, 240_000);
+
+useOutsideStoreFixture();

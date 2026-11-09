@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { murageToolList } from "../testing/murage-tool-list.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -149,3 +150,6 @@ it.each(cases.slice(0, 3))("$driver.driverKind says thread recall once, only for
 it("the shipped memory proxy lists the four memory tools and the three thread tools", async () => {
   expect([...await murageToolList("memory", "")].sort()).toEqual(["memory_get", "memory_propose_correction", "memory_save", "memory_search", "thread_list", "thread_read", "thread_search"]);
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

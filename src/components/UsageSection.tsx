@@ -8,11 +8,14 @@ import { api, useStore } from "@/state/store";
 import { BotAvatar } from "./Avatar";
 import { ActionButton } from "./ActionButton";
 import { Card } from "./SettingsPrimitives";
+import { PlanUsageCard } from "./PlanUsageCard";
 import { t } from "@/lib/i18n";
 import { useAction } from "@/lib/use-action";
 import { learningConnectionLabel } from "@/lib/memory-learning";
 import { LEARNING_LIMIT_ANCHOR, ceilingPercent, readLine, writtenLine } from "@/lib/learning-limit";
 import { formatTokens, monthCountingStart, monthUsageRows, usageCsv } from "@/lib/usage";
+import { monthRoutineUsage } from "@/lib/usage-routines";
+import { SpendLimitCard } from "./SpendLimitCard";
 
 export { usageCsv };
 import type { LearningCeilingStatus } from "../../shared/memory-learning-contract";
@@ -35,14 +38,34 @@ function LimitBar({ label, used, limit }: { label: string; used: number; limit: 
   );
 }
 
+type MonthTokens = { input: number; output: number; cachedInput?: number };
+
+/** The table shows new tokens once any engine reported a cache split (upstream #1878). */
+export function monthTokensLabelKey(rows: ReadonlyArray<MonthTokens>): "settings.l6.usage.colNewTokens" | "settings.l6.usage.colTokens" {
+  return rows.some((r) => typeof r.cachedInput === "number") ? "settings.l6.usage.colNewTokens" : "settings.l6.usage.colTokens";
+}
+
+/** What the new-token total leaves out, and everything that went through the model. Null with nothing cached. */
+export function monthCacheNote(rows: ReadonlyArray<MonthTokens>): { cached: number; total: number } | null {
+  let cached = 0, total = 0;
+  for (const r of rows) {
+    cached += typeof r.cachedInput === "number" ? Math.min(Math.max(0, r.cachedInput), r.input) : 0;
+    total += r.input + r.output;
+  }
+  return cached > 0 ? { cached, total } : null;
+}
+
 const detail = (input: number, output: number, cached?: number) =>
   `${formatTokens(input)} in${typeof cached === "number" ? ` (${formatTokens(Math.min(cached, input))} cached)` : ""} \u00b7 ${formatTokens(output)} out`;
 
 export function UsageSection() {
   const { state, dispatch } = useStore();
-  const rows = monthUsageRows(state.bots.filter((b) => !b.hidden));
+  const shown = state.bots.filter((b) => !b.hidden);
+  const rows = monthUsageRows(shown);
+  const byRoutine = monthRoutineUsage(shown);
   const total = rows.reduce((sum, r) => ({ replies: sum.replies + r.replies, tokens: sum.tokens + r.tokens }), { replies: 0, tokens: 0 });
   const countingFrom = monthCountingStart(rows);
+  const cacheNote = monthCacheNote(rows);
 
   // The learning ceiling, read once when the page opens. A door without the memory page (a phone or a browser) simply has none.
   const [ceiling, setCeiling] = useState<LearningCeilingStatus | null>(null);
@@ -80,6 +103,8 @@ export function UsageSection() {
 
   return (
     <>
+      <SpendLimitCard />
+      <PlanUsageCard />
       <Card title={t("settings.l6.usage.byBot")} subtitle={t("settings.l6.usage.byBotHint")}>
         {rows.length === 0 ? (
           <div className="text-[13px] text-ink-secondary">{t("settings.l6.usage.empty")}</div>
@@ -91,7 +116,7 @@ export function UsageSection() {
             <div className="grid grid-cols-[1fr_auto_auto] gap-x-5 border-b border-hairline/40 pb-2 text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">
               <span>{t("settings.l6.usage.colBot")}</span>
               <span className="text-right">{t("settings.l6.usage.colReplies")}</span>
-              <span className="text-right">{t("settings.l6.usage.colTokens")}</span>
+              <span className="text-right">{t(monthTokensLabelKey(rows))}</span>
             </div>
             {rows.map(({ bot, replies, tokens, input, output, cachedInput }) => (
               <div key={bot.id} className="grid grid-cols-[1fr_auto_auto] items-center gap-x-5 border-b border-hairline/20 py-2 text-[13px]">
@@ -110,6 +135,11 @@ export function UsageSection() {
               <span className="text-right tabular-nums">{total.replies}</span>
               <span className="text-right tabular-nums">{formatTokens(total.tokens)}</span>
             </div>
+            {cacheNote && (
+              <div className="mt-3 text-[12px] leading-relaxed text-ink-secondary">
+                {t("settings.l6.usage.cachedNote", { cached: formatTokens(cacheNote.cached), total: formatTokens(cacheNote.total) })}
+              </div>
+            )}
             {countingFrom !== null && (
               <div className="mt-3 text-[12px] leading-relaxed text-ink-secondary">
                 {t("settings.l6.usage.sinceNote", { date: new Date(countingFrom).toLocaleDateString(undefined, { month: "long", day: "numeric" }) })}
@@ -118,6 +148,26 @@ export function UsageSection() {
           </div>
         )}
       </Card>
+      {byRoutine && (
+        <Card title={t("settings.l6.usage.byRoutine")}>
+          <div className="flex flex-col" data-usage-by-routine="">
+            <div className="grid grid-cols-[1fr_auto_auto] gap-x-5 border-b border-hairline/40 pb-2 text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">
+              <span>{t("settings.l6.usage.colRoutine")}</span>
+              <span className="text-right">{t("settings.l6.usage.colReplies")}</span>
+              <span className="text-right">{t(monthTokensLabelKey(rows))}</span>
+            </div>
+            {[...byRoutine.rows, { id: "", name: "", replies: byRoutine.rest.replies, tokens: byRoutine.rest.tokens }].map((row) => (
+              <div key={row.id || "rest"} className="grid grid-cols-[1fr_auto_auto] items-center gap-x-5 border-b border-hairline/20 py-2 text-[13px] last:border-b-0">
+                <span className={`truncate ${row.id ? "text-ink" : "text-ink-secondary"}`}>
+                  {row.id ? (row.name ?? t("settings.l6.usage.otherRoutines")) : t("settings.l6.usage.notRoutine")}
+                </span>
+                <span className="text-right tabular-nums text-ink-secondary">{row.replies}</span>
+                <span className="text-right tabular-nums text-ink">{formatTokens(row.tokens)}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
       {ceiling && (
         <div id="usage-learning-heading" tabIndex={-1} className="outline-none">
           <Card title={t("settings.l6.usage.learningTitle")}>

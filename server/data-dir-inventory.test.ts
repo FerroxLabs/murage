@@ -32,6 +32,7 @@ const ROOT = join(import.meta.dirname, "..");
 
 /** A scan hit that is not the Murage data folder: file -> joined name -> why. */
 const NOT_THE_DATA_FOLDER: Record<string, Record<string, string>> = {
+  "server/data-roots.ts": { "<<name>>": "RootName is workspaces or providers, both classified top-level roots" },
   "server/cloud-home/supervisor.ts": { "<<name>>": "Fixed root volume layout under /data (home, home/secrets, server-home, proxy, caddy, browser); the application DATA_DIR is /data/home, not this volume root" },
   "server/setup-backup.ts": { "<<SETUP_BACKUP_FILE_NAME>>": "setup-backup.json (classified), the name shared/setup-backup-record.mjs exports" },
   "server/drivers/claude.ts": { "<<CLAUDE_SIGNIN_ANSWERS_FILE>>": "claude-signin-answers.json (classified): the sign-in card's remembered answers, the name drivers/claude-signin-answers.ts exports" },
@@ -43,7 +44,7 @@ const NOT_THE_DATA_FOLDER: Record<string, Record<string, string>> = {
     "<<name>>": "another engine's history folder",
   },
   "server/memory/settings.ts": { "<<part>>": "path parts inside DATA_DIR/memory-model, checked by memoryModelPath" },
-  "server/procedure-bundles.ts": { "<<part>>": "path parts inside DATA_DIR/skill-state/<bot>" },
+  "server/project-migration.ts": { "<<name>>": "deletes only project-rows-before-prune-*.db.partial and its side files, and side files beside a final copy (all classified), matched by name before removal" },
   "server/installation-app-schema-downgrade.ts": { "<<LEGACY_DELEGATIONS_FILE>>": "delegations.json (classified): the 1.0.1 queue file the downgrade writes back" },
   "server/index.ts": { "<<relative>>": "relative paths inside DATA_DIR/workspaces" },
   "electron/memory-upgrade-status.mjs": { "<<name>>": "deletes only memory-upgrade-status.json and its memory-upgrade-status.json.<pid>.tmp (both classified), matched by name before removal" },
@@ -234,4 +235,9 @@ describe("the Sentinel delivery ledger (1.0.9)", () => {
     expect(DATA_DIR_RESTORABLE).not.toContain("sentinel-delivery.json");
     expect(row?.why).not.toMatch(/—|\b(safe|safely|safety|unsafe)\b/i);
   });
+});
+
+it("D17 includes the root provenance record in restorable inventory", () => {
+  expect(DATA_DIR_ENTRIES[".murage-root.json"]).toMatchObject({ backup: "record" });
+  expect(DATA_DIR_RESTORABLE).toContain(".murage-root.json");
 });

@@ -1,7 +1,8 @@
 import { Loader2, Square, Volume2 } from "lucide-react";
 
 import { speaker } from "@/lib/tts";
-import { useSpeech } from "@/lib/tts/useSpeech";
+import { useReadAloudSpeech, useReplySpeech } from "@/lib/tts/reply-speech";
+import { t } from "@/lib/i18n";
 import { useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { isReading, readAloudLabel, toggleReadAloud } from "@/lib/read-aloud";
@@ -17,30 +18,34 @@ import { isReading, readAloudLabel, toggleReadAloud } from "@/lib/read-aloud";
  * in src/lib/read-aloud.ts. */
 export function SpeakButton({
   text,
+  threadId,
   botId,
   messageId,
   voiceId,
   className,
 }: {
   text: string;
+  threadId: string;
   botId?: string;
   messageId: string;
   voiceId?: string;
   className?: string;
 }) {
   const { state } = useStore();
-  const speech = useSpeech();
+  const speech = useReadAloudSpeech();
+  const reply = useReplySpeech();
   const tts = state.config?.tts;
   const configured = Boolean(tts?.configured);
   if (!configured) return null;
   const ready = Boolean(voiceId || tts?.voice);
-  const mine = isReading(speech, messageId);
+  const mine = isReading(speech, messageId, threadId);
   const preparing = mine && speech.status === "preparing";
 
   const label = readAloudLabel({ playing: mine, ready });
   return (
+    <>
     <button
-      onClick={() => toggleReadAloud(speaker, { text, botId, messageId, voiceId })}
+      onClick={() => toggleReadAloud(speaker, { text, threadId, botId, messageId, voiceId })}
       disabled={!ready && !mine}
       aria-label={label}
       title={label}
@@ -54,5 +59,7 @@ export function SpeakButton({
     >
       {preparing ? <Loader2 size={14} className="animate-spin" /> : mine ? <Square size={14} className="fill-current" /> : <Volume2 size={14} />}
     </button>
+    {reply.notice && reply.noticeThreadId === threadId && reply.noticeMessageId === messageId && <span role="status" className="text-xs text-ink-secondary">{t(`ux.d24.${reply.notice}`)}</span>}
+    </>
   );
 }

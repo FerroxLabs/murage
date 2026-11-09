@@ -22,6 +22,7 @@ import { useDecisionFeedback } from "@/lib/approval-feedback";
 import { ApprovalBusyLabel, approvalButton } from "@/components/ApprovalFeedback";
 import { GrantAddedLine } from "@/components/approval/GrantAddedLine";
 import { useGrantAdded } from "@/lib/grant-added";
+import { localizeOutsideNote } from "@/lib/outside-note";
 
 /** A browser card whose `onAnswer` does not say when it is done is shown as
  * working this long at most, so a lost answer never leaves dead buttons. */
@@ -369,7 +370,7 @@ export function ApprovalCard({
       {/* one reason sentence: the held note only when there is no why-line */}
       {card.held && !settled && !whyLine(card) && (
         <div className="mt-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12.5px] text-warning">
-          <CollapsibleText text={card.held} />
+          <CollapsibleText text={localizeOutsideNote(card.held)} />
         </div>
       )}
 

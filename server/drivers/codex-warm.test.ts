@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // One warm `codex app-server` per chat thread: reused while every spawn input
 // is unchanged, recycled otherwise, with the per-turn capability token read from
 // a per-process 0600 file instead of the long-lived environment.
@@ -95,7 +97,7 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
   const last = (type: string) => [...recorder.events].reverse().find((e) => e.type === type) as any;
   /** One whole turn; returns what the fake saw at the end of it. */
   const run = async (threadId: string, text: string, extra: Partial<SendTurnInput> = {}) => {
-    const sent = await instance.adapter.sendTurn({ threadId, text, ...(sessions.has(threadId) ? { resumeCursor: sessions.get(threadId) } : {}), ...extra });
+    const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text, ...(sessions.has(threadId) ? { resumeCursor: sessions.get(threadId) } : {}), ...extra });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
     const started = [...recorder.events].reverse().find((e) => e.type === "session.started" && e.threadId === threadId) as { sessionId?: string } | undefined;
     if (started?.sessionId) sessions.set(threadId, started.sessionId);
@@ -152,6 +154,10 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     await create();
     const first = await run("t-hot", "one", base);
     const second = await run("t-hot", "two", { ...base, integrations: agents("tok-2") });
+    // before the pid: a second process then fails here, and the line says why it was started
+    expect(dispatches()[0]).toBe("codex dispatch thread=t-hot process=spawned reason=no-process");
+    // a "no-process" respawn says nothing by itself: the close line of the first process names why it was not kept
+    expect(dispatches()[1], `close lines: ${closes().join(" | ") || "none"}`).toBe("codex dispatch thread=t-hot process=reused reason=unchanged");
     expect(second.pid).toBe(first.pid);
     expect(spawns()).toHaveLength(1);
     const methods = (second.seen.calls as Array<{ method: string }>).map((c) => c.method);
@@ -159,8 +165,6 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     expect(methods.filter((m) => m === "thread/start")).toHaveLength(1);
     expect(methods.filter((m) => m === "thread/resume")).toHaveLength(0);
     expect(methods.filter((m) => m === "turn/start")).toHaveLength(2);
-    expect(dispatches()[0]).toBe("codex dispatch thread=t-hot process=spawned reason=no-process");
-    expect(dispatches()[1]).toBe("codex dispatch thread=t-hot process=reused reason=unchanged");
     expect(closes()).toEqual([]);
     expect(recorder.events.filter((e) => e.type === "turn.completed" && (e as any).ok === true)).toHaveLength(2);
   });
@@ -173,7 +177,7 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     await create();
     // cold: sendTurn hands the id back first; the fence runs after the handshake and refuses
     let calls = 0;
-    const refused = await instance.adapter.sendTurn({ threadId: "t-fence", text: "one", ...base, beforeSubmit: () => { calls++; throw new Error("MEMORY_CONTEXT_REVOKED"); } });
+    const refused = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fence", text: "one", ...base, beforeSubmit: () => { calls++; throw new Error("MEMORY_CONTEXT_REVOKED"); } });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === refused.turnId);
     expect(recorder.events.find((e) => e.type === "turn.completed" && e.turnId === refused.turnId)).toMatchObject({ ok: false, stopReason: "submission_refused" });
     expect(recorder.events.some((e) => e.type === "runtime.error" && e.turnId === refused.turnId)).toBe(false);
@@ -185,7 +189,7 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     expect(passes).toBe(1);
     expect(turnStarts()).toBe(1);
     // warm: the reused app-server is not written to either
-    const again = await instance.adapter.sendTurn({ threadId: "t-fence", text: "three", ...base, resumeCursor: sessions.get("t-fence"), beforeSubmit: () => { throw new Error("MEMORY_CONTEXT_REVOKED"); } });
+    const again = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fence", text: "three", ...base, resumeCursor: sessions.get("t-fence"), beforeSubmit: () => { throw new Error("MEMORY_CONTEXT_REVOKED"); } });
     // refused before the id came back, the harness stops it by id; after, it settles itself
     const settled = await Promise.race([recorder.until((e) => e.type === "turn.completed" && e.turnId === again.turnId).then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 300))]);
     if (!settled) await instance.adapter.interruptTurn("t-fence");
@@ -352,7 +356,7 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     await create();
     const one = await run("t-stop", "one", base);
     setMode("approval");
-    const sent = await instance.adapter.sendTurn({ threadId: "t-stop", text: "two", resumeCursor: sessions.get("t-stop"), ...base });
+    const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stop", text: "two", resumeCursor: sessions.get("t-stop"), ...base });
     await recorder.until((e) => e.type === "request.opened" && e.threadId === "t-stop");
     await instance.adapter.interruptTurn("t-stop");
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
@@ -368,7 +372,7 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     await create();
     await run("t-auth", "one", base);
     setMode("unauthorized");
-    const sent = await instance.adapter.sendTurn({ threadId: "t-auth", text: "two", resumeCursor: sessions.get("t-auth"), ...base });
+    const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-auth", text: "two", resumeCursor: sessions.get("t-auth"), ...base });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
     expect((last("turn.completed") as any).ok).toBe(false);
     expect(closes().at(-1)).toBe("codex close thread=t-auth reason=auth required");
@@ -383,7 +387,7 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     await run("t-noretry", "one", base);
     // a transient failure would be relaunched for the turn that launched the process; this turn did not
     setMode("transient-503");
-    const sent = await instance.adapter.sendTurn({ threadId: "t-noretry", text: "two", resumeCursor: sessions.get("t-noretry"), ...base });
+    const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-noretry", text: "two", resumeCursor: sessions.get("t-noretry"), ...base });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
     delete process.env.FAKE_CODEX_RETRY_SCALE;
     expect((last("turn.completed") as any).ok).toBe(false);
@@ -528,8 +532,8 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       };
       await create();
       await run("t-slot", "one", base);
-      const second = await instance.adapter.sendTurn({ threadId: "t-slot", text: "two", resumeCursor: sessions.get("t-slot"), ...base });
-      await expect(instance.adapter.sendTurn({ threadId: "t-slot", text: "three", ...base })).rejects.toThrow(/already running/);
+      const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-slot", text: "two", resumeCursor: sessions.get("t-slot"), ...base });
+      await expect(instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-slot", text: "three", ...base })).rejects.toThrow(/already running/);
       await instance.adapter.interruptTurn("t-slot");
       release();
       await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
@@ -552,7 +556,7 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       };
       await create();
       await run("t-slot-quit", "one", base);
-      const second = await instance.adapter.sendTurn({ threadId: "t-slot-quit", text: "two", resumeCursor: sessions.get("t-slot-quit"), ...base });
+      const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-slot-quit", text: "two", resumeCursor: sessions.get("t-slot-quit"), ...base });
       await instance.adapter.interruptTurn("t-slot-quit");
       const disposing = instance.dispose();
       release();
@@ -614,7 +618,7 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       let probing = false;
       probe.override = async (pid) => { probing = true; await gate; return new Set([pid + 1]); };
       await create();
-      const sent = await instance.adapter.sendTurn({ threadId: "t-base-stop", text: "one", ...base });
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-base-stop", text: "one", ...base });
       await eventually(() => probing);
       hooks.stuck = true;
       await expect(instance.adapter.interruptTurn("t-base-stop")).rejects.toThrow(/still pending/);
@@ -845,7 +849,7 @@ describe("CodexDriver intent prewarm (fake app-server)", () => {
     expect(check()).toBe(true);
   };
   const run = async (threadId: string, text: string, extra: Partial<SendTurnInput> = {}) => {
-    const sent = await instance.adapter.sendTurn({ threadId, text, ...(sessions.has(threadId) ? { resumeCursor: sessions.get(threadId) } : {}), ...extra });
+    const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text, ...(sessions.has(threadId) ? { resumeCursor: sessions.get(threadId) } : {}), ...extra });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
     const started = [...recorder.events].reverse().find((e) => e.type === "session.started" && e.turnId === sent.turnId) as { sessionId?: string } | undefined;
     if (started?.sessionId) sessions.set(threadId, started.sessionId);
@@ -1040,7 +1044,7 @@ describe("CodexDriver intent prewarm (fake app-server)", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const t0 = Date.now();
-      const error = await instance.adapter.sendTurn({ threadId: "t-pw-stuck", text: "two", ...base }).then(() => null, (e: Error) => e);
+      const error = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pw-stuck", text: "two", ...base }).then(() => null, (e: Error) => e);
       expect(error?.message).toMatch(/did not stop in time/);
       expect(error?.message).not.toMatch(/already running/);
       expect(Date.now() - t0).toBeLessThan(3_000);
@@ -1066,7 +1070,7 @@ describe("CodexDriver intent prewarm (fake app-server)", () => {
       expect(exitedPid(held)).toBe(false);
       hooks.failClear = false;
       // nothing new starts beside the process that is still owned
-      await expect(instance.adapter.sendTurn({ threadId: "t-pw-unclosed", text: "two", ...base })).rejects.toThrow(/has not closed yet/);
+      await expect(instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pw-unclosed", text: "two", ...base })).rejects.toThrow(/has not closed yet/);
       expect(spawns()).toHaveLength(2);
       await expect(instance.adapter.interruptTurn("t-pw-unclosed")).rejects.toThrow(/still pending/);
       hooks.stuck = false;
@@ -1089,3 +1093,6 @@ describe("CodexDriver intent prewarm (fake app-server)", () => {
     expect(spawns()).toHaveLength(1);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

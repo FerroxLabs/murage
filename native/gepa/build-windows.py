@@ -58,7 +58,7 @@ identity = {"sourceSha": head, "pythonVersion": platform.python_version(), "arch
 (ROOT / "source-identity.json").write_text(json.dumps(identity, indent=2) + "\n")
 run("venv", [sys.executable, "-I", "-m", "venv", ROOT / "venv"])
 python = ROOT / "venv/Scripts/python.exe"
-run("download", [python, "-I", "-m", "pip", "download", "--index-url", "https://pypi.org/simple",
+run("download", [python, "-I", "-m", "pip", "download", "--index-url", "https://pypi.org/simple", "--retries", "10", "--timeout", "60",
                  "--only-binary=:all:", "--require-hashes", "--dest", ROOT / "wheelhouse",
                  "-r", SOURCE / "native/gepa/requirements-build.txt"])
 run("install", [python, "-I", "-m", "pip", "install", "--no-index", "--find-links", ROOT / "wheelhouse",

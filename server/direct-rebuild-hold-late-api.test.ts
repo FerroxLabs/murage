@@ -141,6 +141,12 @@ describe.skipIf(process.platform === "win32")("DELETION-DRAIN-V2: a routine's re
       const {makeLateTerminalDriver}=await import(${JSON.stringify(pathToFileURL(join(process.cwd(), "server/testing/fake-late-terminal-driver.ts")).href)});
       const runs=await import(${JSON.stringify(pathToFileURL(join(process.cwd(), "server/independent-thread-runs.ts")).href)});
       const dir=process.env.MURAGE_DATA_DIR;
+      // The settle window these tests act in needs the refused turn to WAIT for the revoke walk. Since IO-IDLE-DRAIN r3.5 (a2aa1309e) a turn whose
+      // drain room comes only after the 5 s deadline rebuilds at once, and the stuck jobs below keep the runner spending the minute's budget, so the
+      // room is always that far out. Give both ledgers (the pace and the write budget) room inside the window: the stuck jobs still never finish, so
+      // settleRevokesForTurn spins to its full deadline, the case the fixture builds. No production guard moves; only this server process's limits do.
+      const budget=await import(${JSON.stringify(pathToFileURL(join(process.cwd(), "server/memory/revoke-budget.ts")).href)});
+      budget.REVOKE_PACE.bytesPerMinute=2**50; budget.REVOKE_WRITE_BUDGET.bytesPerMinute=2**50;
       // REFUSE_REBUILD_START: once <dir>/refuse-rebuild-start names a thread, the next admission check of that thread's rebuild
       // (startTurnAdmitting) finds its held run gone, as when a Stop lands in the writer-gate wait before admission (DirectRebuildCancelled)
       const proto=runs.IndependentThreadRuns.prototype, rebuilding=proto.rebuilding;

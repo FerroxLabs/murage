@@ -298,6 +298,16 @@ public class PhoneAskMintTest {
         }
     }
 
+    @Test public void theDialogBuiltAfterATurnedOffAnswerHasExactlyOneButtonOk() {
+        PhoneAskSetup.Buttons after = PhoneAskSetup.buttons(PhoneAskSetup.offersOnlyOk(PhoneJobsMintClient.Failure.TURNED_OFF));
+        assertEquals(1, after.count());
+        assertFalse(after.turnOnShown);
+        assertEquals(R.string.ask_ok, after.dismissLabel);
+        PhoneAskSetup.Buttons first = PhoneAskSetup.buttons(false);
+        assertEquals(2, first.count());
+        assertEquals(R.string.ask_not_now, first.dismissLabel);
+    }
+
     @Test public void afterATurnedOffAnswerTheSetupDialogOffersOnlyOk() {
         // TURN ON would only re-run the mint and show the same refusal, so the dialog keeps just OK (which records "asked" like NOT NOW).
         assertTrue(PhoneAskSetup.offersOnlyOk(PhoneJobsMintClient.Failure.TURNED_OFF));

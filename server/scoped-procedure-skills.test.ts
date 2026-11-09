@@ -12,9 +12,10 @@ import { applyStagedSkillWrite, stageSkillWrite, skillEvolutionDescriptor, publi
 import { createProcedurePin, preparePinnedProcedures, readProcedureBundle } from "./procedure-bundles.ts";
 import { taskWorkspacePath } from "./workspace.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { resetDataRootsForTest } from "./data-roots.ts";
 const botId="scoped-fixture",name="checked-method";
 const md=(body:string)=>`---\nname: ${name}\ndescription: Checked method\n---\n${body}\n`;
-beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});setMemoryMode("capture");});
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});resetDataRootsForTest();setMemoryMode("capture");});
 function ownerEdit(body:string,action:"create"|"update"="create"){
   const stage=stageSkillWrite(botId,{action,targetName:action==="update"?name:undefined,source:"learn:owner-fixture",files:[{path:"SKILL.md",content:md(body)}]});
   if("error" in stage)throw Error(stage.error);

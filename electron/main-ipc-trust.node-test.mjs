@@ -447,6 +447,8 @@ test("every IPC channel main.mjs registers refuses a foreign sender before its l
     "desktop:unread-count": { threw: false, hasReturnValue: false, returnValue: null },
     // call audio for a fed recognizer session (0.1.59): fire-and-forget
     "speech:pcm": { threw: false, hasReturnValue: false, returnValue: null },
+    // the renderer's answer to a readiness probe (WIN-NOROUTE-1019 A14): fire-and-forget
+    "app-readiness:alive": { threw: false, hasReturnValue: false, returnValue: null },
   });
 
   // Every channel the preload can reach is registered by main.mjs through the

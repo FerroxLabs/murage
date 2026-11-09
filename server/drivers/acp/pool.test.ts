@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // The ACP engine process pool (upstream 4b0dabc6, #1575), against the shared
 // fake ACP CLI. One process per thread is kept between turns ONLY when
 // nothing that matters changed, and it is closed on every path that retires
@@ -19,6 +21,8 @@ import type { ProviderInstance, RuntimeEvent, SendTurnInput } from "../../contra
 import { removeTempDir } from "../../testing/cleanup.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
+import { ProviderStopUnconfirmedError } from "../child-teardown.ts";
+import { openCodeDestinationAnswer } from "../../opencode-destination.ts";
 import { warmPool } from "../warm-pool.ts";
 import { cacheEnvFromProcess, markMountIncomplete, markMountReady } from "../../connector-cache.ts";
 import { acpPoolingEnabled, createAcpDriver, resetAcpMcpReadinessForTests, type AcpSupport } from "./core.ts";
@@ -124,10 +128,117 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
     agents: { command: "sleep", args: ["300"], env: { MURAGE_COMMS_TOKEN: `turn-${randomUUID()}` } },
   });
   const turn = async (input: Omit<SendTurnInput, "threadId"> & { threadId?: string }) => {
-    const { turnId } = await instance!.adapter.sendTurn({ threadId: "t-pool", ...input });
+    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pool", ...input });
     const done = await recorder.until((event) => event.type === "turn.completed" && event.turnId === turnId);
     return { turnId, done: done as Extract<RuntimeEvent, { type: "turn.completed" }> };
   };
+
+  it.each(["stopAll", "dispose"] as const)("%s drains other threads before reporting an unconfirmed destination stop", async action => {
+    // Each case uses two threads: a held probe and another with either an
+    // active pooled turn or an idle pooled child. Exercise both ownership states.
+    for (const state of ["active", "idle"] as const) {
+      const gate = join(scratch, `gate-${state}`);
+      process.env.FAKE_ACP_MODE = "echo-gated";
+      process.env.FAKE_ACP_GATE_FILE = gate;
+      appendFileSync(gate, "open");
+      let entered!: () => void;
+      const entry = new Promise<void>(resolve => { entered = resolve; });
+      const failure = new ProviderStopUnconfirmedError("poolTest", { closeConfirmed: false, reason: "timeout" });
+      await create(createAcpDriver({ ...POOL_SUPPORT, effectiveDestination: async ctx => {
+        if (ctx.model === "m-two") {
+          entered();
+          await new Promise<void>((_resolve, reject) => {
+            ctx.signal.addEventListener("abort", () => reject(failure), { once: true });
+          });
+        }
+        return openCodeDestinationAnswer({}, { memoryOff: false });
+      } }));
+      expect((await turn({ threadId: "other", text: "park", model: "m-one" })).done).toMatchObject({ ok: true });
+      const pid = spawns().at(-1)!;
+      expect(alive(pid)).toBe(true);
+      let turnId: string | undefined;
+      if (state === "active") {
+        rmSync(gate);
+        const prompts = calls("session/prompt").length;
+        ({ turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "other", text: "held", model: "m-one", resumeCursor: SESSION }));
+        await until(() => calls("session/prompt").length > prompts, "other thread's active prompt");
+        expect(calls("session/prompt").at(-1)!.pid).toBe(pid);
+      }
+      const send = instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "probe", text: "probe", model: "m-two" });
+      // STOP-FENCE r3.2 line 124: a send stopped by Stop All before its turn started resolves to the stopped receipt; dispose still rejects with the probe failure.
+      const rejected = action === "stopAll" ? expect(send).resolves.toEqual({ turnId: expect.any(String) }) : expect(send).rejects.toBe(failure);
+      await entry;
+      const stop = action === "stopAll" ? instance!.adapter.stopAll!() : instance!.dispose();
+      await expect(stop).rejects.toBe(failure);
+      await rejected;
+      if (action === "stopAll") {
+        const { turnId: stoppedTurn } = await send;
+        expect(recorder.events.filter((event) => event.type === "turn.started" && event.turnId === stoppedTurn)).toHaveLength(1);
+        expect(recorder.events.filter((event) => event.type === "turn.completed" && event.turnId === stoppedTurn)).toEqual([expect.objectContaining({ type: "turn.completed", threadId: "probe", stopReason: "cancelled" })]);
+      }
+      // Check at return: reporting the probe error must wait for child closure.
+      expect(alive(pid)).toBe(false);
+      if (turnId) expect(recorder.events).toEqual(expect.arrayContaining([
+        // Stop All ends the turn as a cancel (ok, cancelled), as grok-setmodel T11 pins;
+        // dispose ends it as the engine closing (not ok), as T12 pins.
+        expect.objectContaining(action === "stopAll" ? { type: "turn.completed", turnId, ok: true, stopReason: "cancelled" } : { type: "turn.completed", turnId, ok: false }),
+      ]));
+      await instance!.dispose();
+      recorder.stop();
+    }
+  });
+
+  // X4 stop path (Astra acct2 BLOCK on 159bca1eb, defect a): interrupt and reset start child cleanup in the same tick and await
+  // the destination probe beside the close waits, so a probe that rejects, times out or never settles cannot skip or delay it.
+  const parkedChildWithHeldProbe = async (probe: "reject" | "slow") => {
+    const gate = join(scratch, `gate-int-${probe}`);
+    process.env.FAKE_ACP_MODE = "echo-gated";
+    process.env.FAKE_ACP_GATE_FILE = gate;
+    appendFileSync(gate, "open");
+    let entered!: () => void;
+    const entry = new Promise<void>(resolve => { entered = resolve; });
+    let release!: () => void;
+    const failure = new ProviderStopUnconfirmedError("poolTest", { closeConfirmed: false, reason: "timeout" });
+    await create(createAcpDriver({ ...POOL_SUPPORT, effectiveDestination: async ctx => {
+      if (ctx.model === "m-two") {
+        entered();
+        if (probe === "reject") await new Promise<never>((_resolve, reject) => { ctx.signal.addEventListener("abort", () => reject(failure), { once: true }); });
+        else await new Promise<void>(resolve => { release = resolve; }); // ignores the abort signal: settles only when released
+      }
+      return openCodeDestinationAnswer({}, { memoryOff: false });
+    } }));
+    expect((await turn({ text: "park", model: "m-one" })).done).toMatchObject({ ok: true });
+    const pid = spawns().at(-1)!;
+    expect(alive(pid)).toBe(true);
+    const send = instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pool", text: "probe", model: "m-two" });
+    await entry;
+    return { pid, send, failure, release: () => release() };
+  };
+  it.each(["interrupt", "reset"] as const)("T-INT-PROBE-REJECT: %s closes the parked child even when the destination probe rejects", async action => {
+    const { pid, send, failure } = await parkedChildWithHeldProbe("reject");
+    // STOP-FENCE r3.2 line 124: interrupt and reset before the turn started end the send as the stopped receipt; the stop call itself still rejects with the probe failure.
+    const sendReceipt = expect(send).resolves.toEqual({ turnId: expect.any(String) });
+    const stop = action === "interrupt" ? instance!.adapter.interruptTurn("t-pool") : instance!.adapter.resetSession!("t-pool");
+    await expect(stop).rejects.toBe(failure);
+    await sendReceipt;
+    const { turnId: stoppedTurn } = await send;
+    expect(recorder.events.filter((event) => event.type === "turn.started" && event.turnId === stoppedTurn)).toHaveLength(1);
+    expect(recorder.events.filter((event) => event.type === "turn.completed" && event.turnId === stoppedTurn)).toEqual([expect.objectContaining({ stopReason: "cancelled" })]);
+    expect(alive(pid)).toBe(false);
+  });
+  it.each(["interrupt", "reset"] as const)("T-INT-PROBE-SLOW: %s closes the parked child while the probe is still unsettled (one budget, not two)", async action => {
+    const { pid, send, release } = await parkedChildWithHeldProbe("slow");
+    // STOP-FENCE r3.2 line 124: interrupt and reset before the turn started end the send as the stopped receipt.
+    const sendReceipt = expect(send).resolves.toEqual({ turnId: expect.any(String) });
+    const stop = (action === "interrupt" ? instance!.adapter.interruptTurn("t-pool") : instance!.adapter.resetSession!("t-pool")).then(() => "ok", () => "err");
+    await until(() => !alive(pid), "the parked child to close while the probe is unsettled");
+    release();
+    await stop;
+    await sendReceipt;
+    const { turnId: stoppedTurn } = await send;
+    expect(recorder.events.filter((event) => event.type === "turn.started" && event.turnId === stoppedTurn)).toHaveLength(1);
+    expect(recorder.events.filter((event) => event.type === "turn.completed" && event.turnId === stoppedTurn)).toEqual([expect.objectContaining({ stopReason: "cancelled" })]);
+  });
 
   beforeEach(() => {
     ensureDirs();
@@ -285,7 +396,7 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
     it("resetSession during a turn keeps that turn from parking its process", async () => {
       process.env.FAKE_ACP_MODE = "permission";
       await create();
-      const { turnId } = await instance!.adapter.sendTurn({ threadId: "t-pool", text: "go" });
+      const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pool", text: "go" });
       const opened = await recorder.until((event) => event.type === "request.opened" && event.turnId === turnId);
       await instance!.adapter.resetSession!("t-pool");
       await instance!.adapter.respondToRequest("t-pool", (opened as { requestId: string }).requestId, { behavior: "allow" });
@@ -351,7 +462,7 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
     await create();
     await turn({ text: "one" });
     const [pid] = spawns();
-    const { turnId } = await instance!.adapter.sendTurn({ threadId: "t-pool", text: "go __fixture_cancel_ack__", resumeCursor: SESSION });
+    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pool", text: "go __fixture_cancel_ack__", resumeCursor: SESSION });
     await recorder.until((event) => event.type === "content.delta" && event.turnId === turnId);
     expect(spawns()).toHaveLength(1);
     await expect(instance!.adapter.interruptTurn("t-pool", turnId)).resolves.toEqual({ closeConfirmed: true });
@@ -411,7 +522,7 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
     await turn({ threadId: "t-a", text: "one" });
     const [a] = spawns();
     rmSync(gate); // B's prompt stays open while A's session speaks late
-    const { turnId } = await instance!.adapter.sendTurn({ threadId: "t-b", text: "two", resumeCursor: SESSION });
+    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-b", text: "two", resumeCursor: SESSION });
     await until(() => calls("session/prompt").length === 2, "B's prompt");
     expect(spawns()).toHaveLength(2);
     expect(calls("session/prompt")[1]!.pid).not.toBe(a);
@@ -705,10 +816,10 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
     const childPidFile = join(scratch, "child.pid");
     process.env.FAKE_ACP_CHILD_PID_FILE = childPidFile;
     await create();
-    const first = await instance!.adapter.sendTurn({ threadId: "t-pool", text: "go __fixture_child_after_turn__" });
+    const first = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pool", text: "go __fixture_child_after_turn__" });
     await recorder.until((event) => event.type === "turn.completed" && event.turnId === first.turnId);
     // sent at once: the settle check of the parked process has not answered yet
-    const second = await instance!.adapter.sendTurn({ threadId: "t-pool", text: "two", resumeCursor: SESSION });
+    const second = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pool", text: "two", resumeCursor: SESSION });
     const done = await recorder.until((event) => event.type === "turn.completed" && event.turnId === second.turnId);
     expect(done).toMatchObject({ ok: true });
     const [pid] = spawns();
@@ -723,9 +834,9 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
 
   it("a clean park check lets an immediate follow-up adopt the process (after the check, with handlers attached only then)", async () => {
     await create();
-    const first = await instance!.adapter.sendTurn({ threadId: "t-pool", text: "one" });
+    const first = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pool", text: "one" });
     await recorder.until((event) => event.type === "turn.completed" && event.turnId === first.turnId);
-    const second = await instance!.adapter.sendTurn({ threadId: "t-pool", text: "two", resumeCursor: SESSION });
+    const second = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pool", text: "two", resumeCursor: SESSION });
     const done = await recorder.until((event) => event.type === "turn.completed" && event.turnId === second.turnId);
     expect(done).toMatchObject({ ok: true });
     expect(spawns()).toHaveLength(1);
@@ -923,7 +1034,7 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
       await create();
       await turn({ threadId: "t-a", text: "one" });
       rmSync(gate);
-      const { turnId } = await instance!.adapter.sendTurn({ threadId: "t-b", text: "two", resumeCursor: "t-b-own-session" });
+      const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-b", text: "two", resumeCursor: "t-b-own-session" });
       await until(() => calls("session/prompt").length === 2, "t-b's prompt on the moved process");
       expect(spawns()).toHaveLength(1);
       await until(() => existsSync(lateLog), "the late request to be answered");
@@ -972,7 +1083,7 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
       await create();
       await turn({ threadId: "t-a", text: "one" });
       rmSync(gate); // t-b's prompt stays open while t-a's session speaks late
-      const { turnId } = await instance!.adapter.sendTurn({ threadId: "t-b", text: "two", resumeCursor: "t-b-own-session" });
+      const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-b", text: "two", resumeCursor: "t-b-own-session" });
       await until(() => calls("session/prompt").length === 2, "t-b's prompt on the moved process");
       expect(spawns()).toHaveLength(1);
       await until(() => existsSync(lateLog), "the earlier session's late request to be answered");
@@ -1034,7 +1145,7 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
       await turn({ text: "one" });
       const [pid] = spawns();
       rmSync(gate); // the next turn holds open
-      const { turnId } = await instance!.adapter.sendTurn({ threadId: "t-pool", text: "two", resumeCursor: SESSION });
+      const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pool", text: "two", resumeCursor: SESSION });
       await until(() => calls("session/prompt").length === 2, "the second prompt to be in flight");
       process.env.MURAGE_WARM_POOL_BUDGET_MB = "1";
       await warmPool.tick();
@@ -1057,3 +1168,6 @@ describe("the opt-in pool on Windows", () => {
     for (const platform of ["win32", "darwin", "linux"] as const) expect(acpPoolingEnabled({}, platform)).toBe(false);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

@@ -1,3 +1,4 @@
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -43,7 +44,7 @@ process.exit(${exitCode});
             ? await ClaudeDriver.create({ ...input, config: { cli, permissionMode: "acceptEdits" } })
             : await AntigravityDriver.create({ ...input, config: { cli, fullAuto: false } });
           expect(instance.generateText).toBeTypeOf("function");
-          const error = await instance.generateText!("fixture prompt").catch((error: Error) => error);
+          const error = await instance.generateText!("fixture prompt", undefined, fixtureBotFolder()).catch((error: Error) => error);
           expect(error).toBeInstanceOf(Error);
           const message = (error as Error).message;
           expect(message).not.toMatch(ERROR_TEXT_LEAK);

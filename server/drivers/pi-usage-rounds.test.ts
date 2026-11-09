@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -31,7 +33,7 @@ const turnUsage = async (mode?: string) => {
   chmodSync(FAKE_CLI, 0o755);
   instance = await PiDriver.create({ instanceId: "pi-usage", displayName: "pi Test", environment: mode ? { FAKE_PI_MODE: mode } : {}, enabled: true, config: { cli: FAKE_CLI, fullAuto: false } });
   recorder = recordEvents(instance.adapter);
-  await instance.adapter.sendTurn({ threadId: `t-usage-${mode ?? "plain"}`, text: "run it" });
+  await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-usage-${mode ?? "plain"}`, text: "run it" });
   const done = await recorder.until((event) => event.type === "turn.completed");
   return { done, usage: (done as { usage?: { input: number; output: number } }).usage };
 };
@@ -67,7 +69,7 @@ const scripted = async (threadId: string, frames: unknown[]) => {
   writeFileSync(script, JSON.stringify(frames));
   instance = await PiDriver.create({ instanceId: "pi-usage", displayName: "pi Test", environment: { FAKE_PI_SCRIPT: script }, enabled: true, config: { cli: FAKE_CLI, fullAuto: false } });
   recorder = recordEvents(instance.adapter);
-  return instance.adapter.sendTurn({ threadId, text: "run it" });
+  return instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "run it" });
 };
 
 it("G6: books pi's priced cost and cached tokens summed over the whole run", async () => {
@@ -96,6 +98,19 @@ it("G6: books a model call's cost when the turn is stopped while its tool runs",
   expect((done as { cost?: number }).cost).toBeCloseTo(0.0021, 10);
 });
 
+it.each(["Stop", "dispose"] as const)("USAGE-1 pi %s on a live turn that already booked usage and cost keeps both on the final turn.completed", async (kind) => {
+  const threadId = `t-usage1-${kind}`;
+  const { turnId } = await scripted(threadId, [...toolRound, { wait: 10_000 }]);
+  await recorder!.until((event) => event.type === "item.started" && event.turnId === turnId);
+  if (kind === "Stop") await instance!.adapter.interruptTurn(threadId, turnId);
+  else await instance!.dispose();
+  const ended = recorder!.events.filter((event) => event.type === "turn.completed" && event.turnId === turnId);
+  expect(ended).toHaveLength(1);
+  if (kind === "Stop") expect(ended[0]).toMatchObject({ ok: true, stopReason: "cancelled", usage: { input: 125, output: 1, cachedInput: 100 } });
+  else expect(ended[0]).toMatchObject({ ok: false, stopReason: "exit_before_result", usage: { input: 125, output: 1, cachedInput: 100 } });
+  expect((ended[0] as { cost?: number }).cost).toBeCloseTo(0.0021, 10);
+});
+
 it("G6: a zero price stays unknown, and a round without cache figures adds no cachedInput", () => {
   const unpriced = addPiRoundUsage(undefined, undefined, { input: 4, output: 1, cost: { total: 0 } });
   expect(unpriced).toEqual({ usage: { input: 4, output: 1 }, cost: undefined });
@@ -103,3 +118,6 @@ it("G6: a zero price stays unknown, and a round without cache figures adds no ca
   expect(next).toEqual({ usage: { input: 9, output: 2, cachedInput: 3 }, cost: 0.5 });
   expect(addPiRoundUsage(undefined, undefined, { input: -1, output: Number.NaN, cacheRead: -5 })).toEqual({ usage: { input: 0, output: 0 }, cost: undefined });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();
