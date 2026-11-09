@@ -455,7 +455,7 @@ app.whenReady()
     process.stdout.write("fixture-ready\n");
     return run();
   })
-  .then(() => app.quit())
+  .then(() => { app.murageShutdownCause = "automatic"; app.quit(); })
   .catch((error) => {
     process.stderr.write(`${error?.stack ?? error}\n`);
     app.exit(1);

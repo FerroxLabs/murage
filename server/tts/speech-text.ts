@@ -285,7 +285,11 @@ export function splitFirstClause(sentence: string): [string, string] | null {
 export const MIN_UTTERANCE_CHARS = 12;
 
 export function toUtterances(input: string, { minChars = MIN_UTTERANCE_CHARS, maxChars = 320 } = {}): string[] {
-  const text = speakable(input);
+  return plainSpeechUtterances(speakable(input), { minChars, maxChars });
+}
+
+/** Split an already protected plain projection without rendering source again. */
+export function plainSpeechUtterances(text: string, { minChars = MIN_UTTERANCE_CHARS, maxChars = 320 } = {}): string[] {
   if (!text) return [];
 
   const { sentences, rest } = splitSentences(`${text} `);

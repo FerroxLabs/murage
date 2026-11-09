@@ -45,6 +45,20 @@ Murage is not affiliated with, authorized, endorsed by, or in any way
 officially connected with WhatsApp or any of its subsidiaries or affiliates.
 
 --------------------------------------------------------------------------
+Muse Code engine
+--------------------------------------------------------------------------
+
+Murage talks to a Muse Code CLI the owner installs from Meta through the
+Muse Session Protocol SDK (https://github.com/meta-models/muse-code-sdk, npm
+package "@muse-code/sdk" 1.4.14), Copyright (c) Meta Platforms, Inc. and
+affiliates, licensed under the MIT License (third_party/muse-code-sdk/
+LICENSE). The Muse Code CLI itself is not part of this distribution: Murage
+never ships, mirrors or installs it. Meta's terms apply to its use.
+
+Murage is not affiliated with, authorized, endorsed by, or in any way
+officially connected with Meta Platforms, Inc.
+
+--------------------------------------------------------------------------
 Upstream adaptations in Murage 0.1.52
 --------------------------------------------------------------------------
 
@@ -120,6 +134,18 @@ Unreleased upstream adaptations in the current development branch
 
 The following changes selectively adapt OpenMausBot work under Apache-2.0.
 They do not imply import of a complete upstream release.
+
+  OpenMausBot Muse Code driver (server/drivers/muse-code.ts and its tests)
+    commit eea36bdb1cd76f5fda659e68f564f106d177cbc1 (driver history head
+    ead27095b)
+    The MSP session, catalog, item, Stop and steer handling were ported;
+    upstream's allowAll and --disable-sandbox at full access, its
+    --trust-workspace, its auto-allowed commands, its session-wide allows and
+    its built-in model list were not taken. Murage runs every level at
+    promptUnmatched with Muse's sandbox on, Ask read-only, and only the live
+    model list without Contributor models.
+    Murage: server/drivers/muse-code.ts, server/drivers/muse-code.test.ts,
+    server/testing/fake-muse-cli.ts
 
   OpenMausBot PR #663 (mascot body catalog, desktop data and picker only)
     merge commit d789f849a1bc42c0e6bba2be9a339eee72ad8f9a; catalog data as of

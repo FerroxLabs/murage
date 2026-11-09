@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
 //
@@ -62,7 +64,7 @@ const turn = async (decide: "deny" | "allow") => {
   });
   const recorder = recordEvents(instance.adapter);
   const threadId = `real-tools-${decide}-${Date.now()}`;
-  const { turnId } = await instance.adapter.sendTurn({
+  const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
     threadId, model: MODEL,
     text: "What is the code word for Alice? Use the real_lookup_code tool to find out, then answer in one short sentence.",
     integrations: { custom: { real: { command: process.execPath, args: [script], env: { FAKE_LOG: log } } } },
@@ -104,3 +106,6 @@ describe.skipIf(!URL_ || !MODEL)("real model, real MCP tool (opt-in)", () => {
     expect(result.reply).toMatch(/PELICAN-42/i);
   }, 300_000);
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

@@ -1,7 +1,7 @@
 # Log sweep 108: source-only checks
 
 Inspected `fix/108-log-noise` at `b4579e28e` (int/108), 2026-10-27.
-Source: `/Volumes/Scratch/work/104-lastresort-evidence/reports-107/sean-log-sweep/FINDINGS.md`.
+Source: the log-sweep FINDINGS.md.
 No builds, tests, network, live-data access, or runtime fixture verification performed.
 These are static findings; the historical ~10 resets/day rate was not remeasured.
 

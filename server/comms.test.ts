@@ -36,7 +36,7 @@ const BASE = `http://127.0.0.1:${PORT}`;
 /** The renderer's proof, pinned for this child. See `api` below. */
 const DESKTOP_SECRET = "c0ffee00c0ffee11".repeat(4);
 /** Set by comms-recall-skip.test.ts: the server skips every overlapped memory recall (testing/recall-skip-preload.mjs). */
-const RECALL_SKIP = process.env.MURAGE_COMMS_RECALL_SKIP === "1";
+const RECALL_SKIP = process.env.MURAGE_TEST_COMMS_RECALL_SKIP === "1";
 
 describe("mentionedBots", () => {
   const peers = [

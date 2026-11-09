@@ -1,3 +1,4 @@
+import { rebaseScheduledAttachmentPaths } from "./scheduled-attachment-paths.ts";
 import { REQUIRED_MCP_SERVERS, startsWithNotDone, toolsUnavailableRunError } from "./drivers/mcp-readiness.ts";
 import { readOwnerTimeZone, nextOwnerDailyOccurrence } from "./cloud-home/timezone.ts";
 import { assertHumanPrincipal, type HumanPrincipal } from "./human-principals.ts";
@@ -22,6 +23,7 @@ import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
 import type { RoutineRequestOperation } from "../shared/routine-request.ts";
 import { channelOriginSchema, routineEventForRun, type ChannelOrigin, type RoutineEvent } from "../shared/routine-event.ts";
 import type { RoutineWatchBinding, RoutineWatchInput, RoutineWatchObservation, RoutineWatchRun, RoutineWatchSource } from "../shared/routine-watch.ts";
+import type { RoutineDetail } from "./routine-detail-line.ts";
 import { completeRoutineWatchCheck, createRoutineWatchState, pauseRoutineWatch, reserveRoutineWatchCheck } from "./routine-watch-state.ts";
 import { readRoutineWatchBinding, routineWatchInputSchema } from "./routine-watch-integration.ts";
 import { turnAskStopped, turnStopped, turnSucceeded } from "./turn-outcome.ts";
@@ -1132,6 +1134,7 @@ export class RoutineManager {
     // A missing file is a fresh start. Any other read, parse or shape failure
     // stops startup (like webhooks.json) instead of loading empty state that
     // the next save would write over the person's routines.
+    rebaseScheduledAttachmentPaths(this.file, ["routines", "runs"]);
     let original = "";
     const parsedDisk = readPersistedJson(this.file, (path) => (original = readFileSync(path, "utf8")));
     try {
@@ -1346,6 +1349,15 @@ export class RoutineManager {
     return this.routines.map((routine) => ({ name: routine.name, botId: routine.botId, enabled: routine.enabled }));
   }
 
+  /** 1.0.18 U6 F38: what each routine of one bot does and when, for the owner's own direct chat (routine-detail-line.ts). No run history is read. */
+  listRoutineDetails(botId: string): RoutineDetail[] {
+    return this.routines.filter((routine) => routine.botId === botId).map((routine) => ({
+      name: routine.name, botId: routine.botId, enabled: routine.enabled, schedule: { ...routine.schedule } as RoutineSchedule,
+      nextRunAt: routine.nextRunAt, prompt: routine.prompt, createdAt: routine.createdAt,
+      ...(typeof routine.watch?.state.definition.expiresAt === "number" ? { expiresAt: routine.watch.state.definition.expiresAt } : {}),
+    }));
+  }
+
   /** A copy with the derived failure streak. Only failed and completed runs
    * are attempts: a cancelled run was stopped on purpose and a missed one
    * never started. */
@@ -1356,6 +1368,11 @@ export class RoutineManager {
     const success = outcomes.findIndex((run) => run.status === "completed");
     const failures = success < 0 ? outcomes.length : success;
     return { ...cloneRoutine(routine), ...(failures ? { failureStreak: failures } : {}) };
+  }
+
+  /** 1.0.18 U6 E32: true once any run of this routine has started. A routine with none reads "First run". */
+  hasStartedRun(routineId: string): boolean {
+    return this.runs.some((run) => run.routineId === routineId && run.startedAt !== undefined);
   }
 
   listRuns(from?: number, to?: number): RoutineRun[] {
@@ -3003,6 +3020,24 @@ export class RoutineManager {
       return true;
     }
     return false;
+  }
+
+  /** The routine a turn's usage belongs to on Settings, Usage. A channel message rides a run record of its own
+   * ("Telegram message") but is ordinary conversation, so it stays under Not from a routine (Astra U28b r1 M3). */
+  static usageRoutine(run: Pick<RoutineRun, "routineId" | "routineName" | "triggerSource"> | null | undefined): { id: string; name: string } | undefined {
+    return run && run.triggerSource !== "channel" ? { id: run.routineId, name: run.routineName } : undefined;
+  }
+
+  /** The live room-goal run on a room thread, for Usage's routine share only: its members' turns are spend, not receipts. */
+  roomGoalRunForThread(threadId: string): RoutineRun | null {
+    return this.runs.find((r) => r.threadId === threadId && r.target === "room-goal" && isLive(r.status)) ?? null;
+  }
+
+  /** RESIDUALS-1018-B row 7 (U28b M2): the live run on a thread as a turn starts, for Usage's routine share only (the
+   *  same run handleRuntimeEvent reads), so a turn the run's cancel then stops still counts under its routine. */
+  usageRunForThread(threadId: string): Pick<RoutineRun, "routineId" | "routineName" | "triggerSource"> | null {
+    const run = this.runs.find((r) => r.threadId === threadId && isLive(r.status));
+    return run ? { routineId: run.routineId, routineName: run.routineName, triggerSource: run.triggerSource } : null;
   }
 
   handleRuntimeEvent(event: RuntimeEvent): RoutineRun | null {

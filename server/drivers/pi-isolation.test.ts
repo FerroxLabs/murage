@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // pi bot turns load Murage's own extensions and none of the owner's personal pi setup
@@ -83,3 +84,6 @@ describe("pi personal setup isolation", () => {
     } finally { recorder.stop(); await instance.dispose(); }
   }, 30000);
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

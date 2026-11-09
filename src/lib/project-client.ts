@@ -24,7 +24,7 @@ export interface ProjectGoal { id: string; title: string; state: GoalState; stat
 export type ProjectGoalAction = "start" | "approve_plan" | "change_plan" | "sign_off" | "send_back" | "pause" | "resume" | "stop";
 export interface ProjectGoalCreate { title: string; description?: string; criteria?: string[]; planFirst?: boolean; review?: boolean; deadlineAt?: number | null }
 export interface ProjectGoalPatch { expectedRevision: number; action?: ProjectGoalAction; note?: string; title?: string; description?: string; criteria?: Array<{ id?: string; text: string }> }
-export interface UsageTotals { interrupted?: boolean; workMs: number; input: number; output: number; tokensReported: boolean; charge: number | null }
+export interface UsageTotals { interrupted?: boolean; workMs: number; input: number; output: number; tokensReported: boolean; charge: number | null; chargeIsLowerBound?: boolean }
 export interface ProjectBudget {
   id: string;
   state: "ok" | "warned" | "paused";

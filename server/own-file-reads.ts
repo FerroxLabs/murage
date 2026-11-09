@@ -45,11 +45,11 @@
 // anything outside the bookkeeping files.
 // False means the approval card is raised exactly as before.
 import { lstatSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 import { inProjectCheck } from "../shared/in-project.ts";
 import { parseReadOnlyCommand } from "../shared/readonly-shell.ts";
-import { managedPathIsLinked, NOT_OWN_READ, ownWorkspaceRoots, within } from "./own-workspace-approval.ts";
+import { managedPathIsLinked, managedRootIsLinked, NOT_OWN_READ, ownWorkspaceRoots, within } from "./own-workspace-approval.ts";
 
 /** Read-only file tools, by the engine's own bare name (Claude's Read and
  * NotebookRead, an ACP engine's read_file and friends). */
@@ -113,9 +113,13 @@ function unplaceable(path: string): boolean {
   return path.startsWith("=") || /^[A-Za-z]:(?![\\/])/.test(path) || path.split(/[\\/]/).some((part) => part === ".." || part === ".");
 }
 
-/** A root, or a folder above it up to the data folder, that is a link would make the real-path comparison cancel out. */
+/** A root, or a folder above it up to the data folder, that is a link would make the real-path comparison cancel out.
+ * C7 (S5-DATADIR-PATHS r4.1): a root under `workspaces` is walked from that root's admitted canonical target (DR3/DR4),
+ * so an admitted linked `workspaces` counts once, while a link anywhere below it still refuses. Other roots as before. */
 function rootLinked(root: string, dataDir: string): boolean {
   const stop = resolve(dataDir);
+  const rel = relative(stop, resolve(root));
+  if (rel === "workspaces" || rel.startsWith(`workspaces${sep}`)) return managedRootIsLinked(dataDir, root);
   let current = resolve(root);
   for (let depth = 0; depth < 8; depth++) {
     try { if (lstatSync(current).isSymbolicLink()) return true; } catch { /* a component that is not there cannot be a link */ }

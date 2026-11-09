@@ -1,3 +1,4 @@
+import { classifyFluxRefusal } from "../../shared/flux-refusal";
 // src/lib/stream-mic.ts
 // The call's microphone on the streaming path (spec C.4). Everything FluxMic
 // does (Silero, the voice gate, onVoice, preroll, the batch upload) is kept.
@@ -264,6 +265,7 @@ export class StreamMic extends FluxMic {
   }
 
   private fromBatchEnd(end: MicEnd) {
+    if (end.reason === "budget") { this.endForBudget(); return; }
     const line = end.code === 0 ? this.batchLine : null;
     this.batchLine = null;
     const slot = this.adopted;
@@ -851,6 +853,7 @@ export class StreamMic extends FluxMic {
 
   // ── stream events ──
   private onStream(m: ServerMessage, from: Uplink) {
+    if (m.type === "error" && classifyFluxRefusal(0, m.error) === "budget") { this.endForBudget(); return; }
     const st = this.states.get(from);
     if (!st) return;
     this.lastStreamEvent = Date.now();
@@ -946,7 +949,14 @@ export class StreamMic extends FluxMic {
   }
 
   // ── faults ──
-  private onClosed(code: number, from: Uplink, error: { retry_after_ms: number | null } | null = null) {
+  private endForBudget() {
+    const listeners = [...this.outEnds];
+    this.close();
+    for (const fn of listeners) fn({ code: 1, reason: "budget" });
+  }
+
+  private onClosed(code: number, from: Uplink, error: { code?: string; retry_after_ms: number | null } | null = null) {
+    if (classifyFluxRefusal(code, error) === "budget") { this.endForBudget(); return; }
     const wasDraining = from === this.draining;
     this.detach(from);
     if (wasDraining) {

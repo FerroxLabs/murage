@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,6 +13,17 @@ afterEach(() => {
 });
 
 describe("readClaudeModelCatalog", () => {
+  it("uses the new default for empty settings without rewriting them", () => {
+    const home = mkdtempSync(join(tmpdir(), "murage-claude-empty-"));
+    scratchDirs.push(home);
+    mkdirSync(join(home, ".claude"));
+    const file = join(home, ".claude/settings.json");
+    const settings = JSON.stringify({ model: "" });
+    writeFileSync(file, settings);
+    expect(readClaudeModelCatalog({ HOME: home }).default).toBe("claude-sonnet-5-5");
+    expect(readFileSync(file, "utf8")).toBe(settings);
+  });
+
   it("returns the official models when settings are missing", () => {
     expect(readClaudeModelCatalog({ HOME: join(tmpdir(), "murage-claude-missing-home") })).toEqual(STATIC_CLAUDE_MODELS);
     expect(STATIC_CLAUDE_MODELS.options.slice(0, 2)).toEqual([
@@ -21,7 +32,7 @@ describe("readClaudeModelCatalog", () => {
     ]);
   });
 
-  it("gives Opus 5.5 its 1M context window and leaves the default alone", () => {
+  it("gives the 5.5 models their 1M context window and defaults to Sonnet 5.5", () => {
     const ids = STATIC_CLAUDE_MODELS.options.map((option) => option.id);
     expect(STATIC_CLAUDE_MODELS.options[ids.indexOf("claude-opus-5-5")]).toEqual({
       id: "claude-opus-5-5",
@@ -29,7 +40,7 @@ describe("readClaudeModelCatalog", () => {
       contextWindow: 1_000_000,
     });
     expect(STATIC_CLAUDE_MODELS.options[ids.indexOf("claude-opus-5")]).toEqual({ id: "claude-opus-5", label: "Claude Opus 5" });
-    // Sonnet 5.5 (upstream #2025): the id the Claude CLI 2.1.287 carries as its
+    // Sonnet 5.5 (upstream #2025): the id the Claude CLI 2.1.292 carries as its
     // first-party id, with the 1M window it reports as native.
     expect(STATIC_CLAUDE_MODELS.options[ids.indexOf("claude-sonnet-5-5")]).toEqual({
       id: "claude-sonnet-5-5",
@@ -44,10 +55,10 @@ describe("readClaudeModelCatalog", () => {
       contextWindow: 1_000_000,
     });
     expect(ids.indexOf("claude-haiku-5-5")).toBe(ids.indexOf("claude-haiku-4-5") - 1);
-    expect(STATIC_CLAUDE_MODELS.default).toBe("claude-sonnet-5");
+    expect(STATIC_CLAUDE_MODELS.default).toBe("claude-sonnet-5-5");
   });
 
-  it("tags extra settings models as custom and leaves official rows untagged", () => {
+  it("preserves the saved official default without rewriting settings and tags only extras as custom", () => {
     const home = mkdtempSync(join(tmpdir(), "murage-claude-catalog-"));
     scratchDirs.push(home);
     const dir = join(home, ".claude");
@@ -61,6 +72,7 @@ describe("readClaudeModelCatalog", () => {
       }),
     );
 
+    const saved = readFileSync(join(dir, "settings.json"), "utf8");
     expect(readClaudeModelCatalog({ HOME: home })).toEqual({
       default: "claude-sonnet-5",
       options: [
@@ -69,6 +81,7 @@ describe("readClaudeModelCatalog", () => {
         { id: "hosted-qwen", label: "hosted-qwen", custom: true },
       ],
     });
+    expect(readFileSync(join(dir, "settings.json"), "utf8")).toBe(saved);
   });
 
   it("lists a newer Anthropic model from extraModels with the official rows, not as custom", () => {
@@ -97,7 +110,9 @@ describe("readClaudeModelCatalog", () => {
       JSON.stringify({ model: "orcarouter/Qwen3.8-27B-Uncensored-GGUF" }),
     );
 
-    expect(readClaudeModelCatalog({ HOME: home })).toEqual(STATIC_CLAUDE_MODELS);
+    expect(readClaudeModelCatalog({ HOME: home })).toEqual({
+      ...STATIC_CLAUDE_MODELS, default: "orcarouter/Qwen3.8-27B-Uncensored-GGUF",
+    });
   });
 });
 
@@ -183,7 +198,7 @@ describe("ClaudeDriver catalog", () => {
         config: ClaudeDriver.defaultConfig(),
       });
       expect(instance.models.options.some((option) => option.id === "leftover-switcher-model")).toBe(false);
-      expect(instance.models).toEqual(STATIC_CLAUDE_MODELS);
+      expect(instance.models).toEqual({ ...STATIC_CLAUDE_MODELS, default: "claude-sonnet-5" });
     } finally {
       if (saved === undefined) delete process.env.ANTHROPIC_MODEL;
       else process.env.ANTHROPIC_MODEL = saved;

@@ -100,6 +100,9 @@ export type FluxKeyCheck = { state: "valid"; info: FluxKeyInfo } | { state: "inv
 
 const keyInfo = new Map<string, { check: FluxKeyCheck; at: number; failures: number; nextAt: number }>();
 let keyInfoInFlight = new Map<string, Promise<FluxKeyCheck>>();
+/** Bumped by requestFluxKeyRecheck: a /key/info request that started before a recheck answers its own caller but never
+ *  refills the cache, so the next check after the press asks Flux fresh (HEALTH-DOCTOR-FLUX-INFLIGHT). */
+let keyInfoGen = 0;
 
 function parseKeyInfo(body: unknown): FluxKeyInfo | null {
   const raw = body && typeof body === "object" ? (body as { info?: unknown }).info : undefined;
@@ -126,12 +129,16 @@ export async function checkFluxKey(key: string, options: { fetchImpl?: typeof fe
   if (held && held.check.state === "unknown" && now < held.nextAt && !options.manual) return held.check;
   const running = keyInfoInFlight.get(id);
   if (running) return running;
+  const gen = keyInfoGen;
+  const keep = (entry: { check: FluxKeyCheck; at: number; failures: number; nextAt: number }): void => {
+    if (gen === keyInfoGen) keyInfo.set(id, entry);
+  };
   const run = (async (): Promise<FluxKeyCheck> => {
     const failures = held?.failures ?? 0;
     const fail = (): FluxKeyCheck => {
       const count = failures + 1;
       const check: FluxKeyCheck = { state: "unknown" };
-      keyInfo.set(id, { check, at: now, failures: count, nextAt: now + fluxRetryDelayMs(count) });
+      keep({ check, at: now, failures: count, nextAt: now + fluxRetryDelayMs(count) });
       return check;
     };
     try {
@@ -143,21 +150,21 @@ export async function checkFluxKey(key: string, options: { fetchImpl?: typeof fe
       if (response.status === 401) {
         void response.body?.cancel().catch(() => {});
         const check: FluxKeyCheck = { state: "invalid" };
-        keyInfo.set(id, { check, at: now, failures: 0, nextAt: Number.POSITIVE_INFINITY });
-        noteFluxKeyRefused(key);
+        keep({ check, at: now, failures: 0, nextAt: Number.POSITIVE_INFINITY });
+        if (gen === keyInfoGen) noteFluxKeyRefused(key);
         return check;
       }
       if (!response.ok) { void response.body?.cancel().catch(() => {}); return fail(); }
       const info = parseKeyInfo(await response.json().catch(() => null));
       if (!info) return fail();
       const check: FluxKeyCheck = { state: "valid", info };
-      keyInfo.set(id, { check, at: now, failures: 0, nextAt: 0 });
-      noteFluxKeyAccepted(key);
+      keep({ check, at: now, failures: 0, nextAt: 0 });
+      if (gen === keyInfoGen) noteFluxKeyAccepted(key);
       return check;
     } catch {
       return fail();
     }
-  })().finally(() => { keyInfoInFlight.delete(id); });
+  })().finally(() => { if (keyInfoInFlight.get(id) === run) keyInfoInFlight.delete(id); });
   keyInfoInFlight.set(id, run);
   return run;
 }
@@ -168,7 +175,10 @@ export async function checkFluxKey(key: string, options: { fetchImpl?: typeof fe
  *  left until Flux answers, so the screen does not flicker. Automatic paths never
  *  call this, so they keep the latch. */
 export function requestFluxKeyRecheck(): void {
+  keyInfoGen += 1;
   keyInfo.clear();
+  // A request already on its way was asked before the press: the next check starts a new one.
+  keyInfoInFlight = new Map();
 }
 
 export function resetFluxKeyHealthForTests(): void {
@@ -176,4 +186,5 @@ export function resetFluxKeyHealthForTests(): void {
   failures.clear();
   keyInfo.clear();
   keyInfoInFlight = new Map();
+  keyInfoGen += 1;
 }

@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SETTINGS-UX-1011 S3: the ranker, against the 40-query table Fable wrote before it was built
-// (handoffs/HANDOFF-1012-UX-L3A.md carries the table's ordering rule and why each row expects what it does).
+// (HANDOFF-1012-UX-L3A.md carries the table's ordering rule and why each row expects what it does).
 import { describe, expect, it } from "vitest";
 
 import { SETTINGS_CARDS, cardNameWords } from "./settings-card-registry";

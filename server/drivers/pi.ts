@@ -1,3 +1,5 @@
+import { probeFolder } from "../probe-folder.ts";
+import { botFolderOrThrow } from "../bot-folder.ts";
 import { cliSig, engineLaunchFile, knownCliVersion, memoDeps, noteVersionProbe, pathExists, rememberCliVersion, versionProbeAllowed } from "./isolation-cache.ts";
 import { engineUpdateRequired } from "./scoped-cli-home.ts";
 import { cloudTurnBot, cloudTurnEnvironment } from "../cloud-home/turn-process.ts";
@@ -33,8 +35,9 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { deleteEnvNames, PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
 import { augmentedPath, envGeneration } from "../env-path.ts";
 import { gitBashPath } from "../tool-discovery.ts";
-import { CLI_TERM_GRACE_MS, cliVersionReader, describeSpawnFailure, engineJob, killCliTree, spawnCli, HOST_POWER_CODE, hostPowerMessage, hostPowerRefused } from "../procs.ts";
-import { ProviderStopUnconfirmedError, ROOT_CLOSE_GRACE_MS, stopBudget, TurnTeardowns, type TeardownWait } from "./child-teardown.ts";
+import { CLI_TERM_GRACE_MS, cliVersionReader, describeSpawnFailure, engineJob, killCliTree, nextTask, spawnCli, HOST_POWER_CODE, hostPowerMessage, hostPowerRefused } from "../procs.ts";
+import { ProviderStopUnconfirmedError, providerCloseDeadlineMs, ROOT_CLOSE_GRACE_MS, stopBudget, TurnTeardowns, type TeardownWait } from "./child-teardown.ts";
+import { createStopGate, type GateEntry } from "./stop-gate.ts";
 import { classifyError } from "./retry.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 
@@ -66,6 +69,7 @@ import { localContextWindow, type LocalHost } from "./local-inject.ts";
 import { isPlainObject, readNativeJsonConfig } from "./native-config-file.ts";
 import { primeLocalContext } from "../local-server-probe.ts";
 import { approvalSummary } from "../../shared/approval-summary.ts";
+import { phoneAskLine } from "./phone-tool-schemas.ts";
 import { boundedToolInput } from "../approval-text.ts";
 import type { McpMountRecord } from "../../shared/mount-identity.ts";
 import { PI_GATE_TITLE_PREFIX } from "./pi-permission-gate.ts";
@@ -463,7 +467,7 @@ export async function fetchPiModels(
   cli: string,
   env: Record<string, string | undefined>,
 ): Promise<ModelCatalog> {
-  const child = spawnCli(cli, PI_ARGS, { stdio: ["pipe", "pipe", "pipe"], env });
+  const child = spawnCli(cli, PI_ARGS, { stdio: ["pipe", "pipe", "pipe"], cwd: probeFolder(), env });
   return new Promise((resolve) => {
     let done = false;
     const fallbackDefault = readPiDefaultModel(env);
@@ -679,7 +683,7 @@ function piGateCall(message: string, mounts: readonly McpMountRecord[]): PiGateA
     const identity = { namespace: "mcp", name: `${mount}__${mcpTool}` };
     if (cut) return { tool: name, summary: `${mcpTool.slice(0, 300)} (the call was cut)${note}`, truncated: true, toolIdentity: identity };
     if (!input) return { tool: name, summary: `${mcpTool.slice(0, 300)} (the call was cut)${note}`, truncated: true, toolInputMissing: "input", toolIdentity: identity };
-    return { tool: name, summary: `${mcpTool.slice(0, 300)}${note}`, ...(boundedToolInput(input) ? { toolInput: boundedToolInput(input) } : {}), toolCall: { name, input }, toolIdentity: identity, gateInput: input };
+    return { tool: name, summary: phoneAskLine(name, input) ?? `${mcpTool.slice(0, 300)}${note}`, ...(boundedToolInput(input) ? { toolInput: boundedToolInput(input) } : {}), toolCall: { name, input }, toolIdentity: identity, gateInput: input };
   }
   const display = tool === "bash" ? "Bash" : tool === "powershell" ? "PowerShell" : tool === "edit" ? "Edit" : tool === "write" ? "Write" : tool || "pi";
   if (cut) return { tool: display, summary: `${shown} (the call was cut)${note}`, truncated: true };
@@ -797,12 +801,9 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       /** Asks opened as host-control permission requests (local-computer scope). */
       scopedRequests: Set<string>;
     }>();
-    // A turn between sendTurn's start and its child's registration has no
-    // entry in `active`, so a Stop then found nothing to stop and the turn went
-    // on to prompt the engine (1.0.3 CI 39418988743: a bot-level Stop right
-    // after a room claimed the bot). Such a Stop is kept and honoured as soon
-    // as the turn has started, before its handshake and prompt.
-    const starting = new Set<string>(), earlyStops = new Set<string>();
+    // STOP-NONACP: a turn between sendTurn's start and its child's registration has no entry in `active`; the stop gate holds it
+    // from its first line. A Stop (interruptTurn, stopAll) or the close (dispose) that lands while it is starting ends it there,
+    // before any models.json write, MCP temp file or pi child (every await of that path is a gate step, the spawn is the launch).
     // Settlement emits the terminal event; Stop lets abort finish before
     // termination. The child remains owned until close is confirmed (A2).
     const teardowns = new TurnTeardowns();
@@ -821,10 +822,17 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       createdAt: new Date().toISOString(),
     });
 
+    const stopGate = createStopGate({ engineName: ENGINE, emit: (event) => emit(event as unknown as RuntimeEvent), base });
+
     const sendTurn = async (turn: SendTurnInput) => {
+      turn = { ...turn, cwd: botFolderOrThrow(turn) };
       const { threadId } = turn;
       if (active.has(threadId)) throw new Error("a turn is already running on this thread");
-      earlyStops.delete(threadId); starting.add(threadId);
+      const entry = stopGate.enter(threadId, { turnId: newId() });
+      return stopGate.run(entry, () => runTurn(turn, entry), () => null);
+    };
+    const runTurn = async (turn: SendTurnInput, e: GateEntry): Promise<{ turnId: string }> => {
+      const { threadId } = turn;
       // Host control always routes through the permission card; full-auto must
       // never get unapproved hands on the user's machine (same guard as the
       // Claude and ACP drivers).
@@ -833,7 +841,11 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       if (controlsHost && skipPermissions) {
         throw new Error("local computer control requires the interactive approval broker");
       }
-      const turnId = newId();
+      const turnId = e.turnId ?? "";
+      /** The MCP temp dir of a turn a Stop or the close ended before its spawn (it holds the credential-bearing mcp.json). */
+      const dropTemp = (dir: string | null) => {
+        if (dir) { try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ } }
+      };
       const pending = new Map<string, PiAskAnswer>();
       const scopedRequests = new Set<string>();
       let settled = false;
@@ -856,14 +868,11 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       const requestedModel = typeof turn.model === "string" && turn.model ? turn.model : null;
       const chosen = requestedModel ? splitPiModel(requestedModel) : null;
       if (requestedModel && !chosen) {
-        emit({ ...base(threadId, turnId), type: "turn.started" });
-        emit({
-          ...base(threadId, turnId),
-          type: "runtime.error",
-          message: `${ENGINE} could not select model "${requestedModel.slice(0, 200)}": it needs a provider/model id. Choose a model from its list.`,
+        e.finish({
+          ok: false,
+          stopReason: "failed",
+          error: `${ENGINE} could not select model "${requestedModel.slice(0, 200)}": it needs a provider/model id. Choose a model from its list.`,
         });
-        emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "failed" });
-        starting.delete(threadId);
         return { turnId };
       }
 
@@ -873,7 +882,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       if (requestedModel) {
         // Read the server's loaded context first, so a new models.json row
         // carries the real window (spec T2) even before any catalog refresh.
-        await primeLocalContext(requestedModel, piEnvironment({ ...process.env, ...input.environment }));
+        await stopGate.step(e, primeLocalContext(requestedModel, piEnvironment({ ...process.env, ...input.environment })));   // a Stop (or the close) that lands here ends the turn: models.json is not written
         ensurePiInjectModel(requestedModel, piEnvironment({ ...process.env, ...input.environment }));
       }
 
@@ -885,15 +894,12 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         const known = knownCliVersion(`pi|${config.cli}`, sig);
         if (known) { piVersion = known; piCliSig = sig; }
       }
-      if (!piVersion && versionProbeAllowed(`pi|${config.cli}`, cliSig(config.cli, piProbeEnv()))) await probePiVersion();
-      if (!piVersion) await probePiVersion();
+      if (!piVersion && versionProbeAllowed(`pi|${config.cli}`, cliSig(config.cli, piProbeEnv()))) await stopGate.step(e, probePiVersion());
+      if (!piVersion) await stopGate.step(e, probePiVersion());   // each step reads the gate before the version verdict below can become an error card
       const belowTurnMin = piBelowTurnMin(piVersion);
       if (belowTurnMin) {
         // No child: nothing would ever end this turn. `setup` puts the update command on the card in place of Retry.
-        emit({ ...base(threadId, turnId), type: "turn.started" });
-        emit({ ...base(threadId, turnId), type: "runtime.error", setup: true, message: `${belowTurnMin} Update it in Settings under Engines, then send your message again.` });
-        emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "failed" });
-        starting.delete(threadId);
+        e.finish({ ok: false, stopReason: "failed", error: { setup: true, message: `${belowTurnMin} Update it in Settings under Engines, then send your message again.` } });
         return { turnId };
       }
       piIsolationArgs(piVersion, undefined, "");
@@ -935,7 +941,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         const known = knownCliVersion(`pi|${config.cli}`, sig);
         if (known) { piVersion = known; piCliSig = sig; }
       }
-      if (!piVersion && versionProbeAllowed(`pi|${config.cli}`, cliSig(config.cli, piProbeEnv()))) await probePiVersion();
+      if (!piVersion && versionProbeAllowed(`pi|${config.cli}`, cliSig(config.cli, piProbeEnv()))) await stopGate.step(e, probePiVersion(), { onStopped: () => dropTemp(mcpTempDir) });
       const childArgs = [
         ...PI_ARGS,
         ...piIsolationArgs(piVersion, turn.cwd, input.environment.HOME || process.env.HOME || input.environment.USERPROFILE || process.env.USERPROFILE || homedir()),
@@ -950,8 +956,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       // checked, never trusted (Rule 74d).
       const instanceEnv: Record<string, string> = {};
       for (const [name, value] of Object.entries(input.environment)) if (typeof value === "string") instanceEnv[name] = value;
-      const handed = await handedEngineEnv({
-        cwd: turn.cwd,
+      const handed = await stopGate.step(e, handedEngineEnv({
+        cwd: botFolderOrThrow(turn),
         strip: (env) => {
           const cleaned = piEnvironment(env);
           const out: Record<string, string> = {};
@@ -968,16 +974,17 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           // pi-mcp-extension.ts names it, is the one tool that runs unasked.
           ...(gateSecret && turn.proposalOnly ? { MURAGE_PI_GATE_ONLY: "agents_project_propose" } : {}),
         },
-      }, process.env.MURAGE_CLOUD_ROLE === "home" ? piEnvironment({ ...process.env, ...input.environment }) : undefined);
+      }, process.env.MURAGE_CLOUD_ROLE === "home" ? piEnvironment({ ...process.env, ...input.environment }) : undefined), { onStopped: () => dropTemp(mcpTempDir) });
       // A turn names its bot (the launcher scopes per-bot state by it); the --version probe does not.
       const turnEnv = handed.env;
       cloudTurnBot(turnEnv, turn.warmIdentity?.botId);
-      const shellForm = await piShellForm(handed.env);
+      const shellForm = await stopGate.step(e, piShellForm(handed.env), { onStopped: () => dropTemp(mcpTempDir) });
 
       // spawnCli can throw synchronously (unresolvable CLI); if it does, the
       // 0600 temp file with the box token / composio key / comms token must
       // not be left on disk — closeTurn never runs because no child existed.
-      const child = (() => {
+      // The launch reads the gate in the same tick as the spawn: a Stop or the close that landed ends the turn here, spawning nothing.
+      const child = stopGate.launch(e, () => {
         try {
           // The pi whose --version gated piIsolationArgs (piProbeEnv: Murage's own PATH), not the handed PATH's first.
           const launchCli = engineLaunchFile(config.cli, piProbeEnv());
@@ -989,9 +996,9 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           }
           return spawnCli(launchCli, childArgs, {
             stdio: ["pipe", "pipe", "pipe"],
-            cwd: turn.cwd,
+            cwd: botFolderOrThrow(turn),
             env: handed.env,
-          }, engineJob());
+          }, engineJob(), undefined, threadId);
         } catch (err) {
           if (mcpTempDir) {
             try {
@@ -1002,7 +1009,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           }
           throw err;
         }
-      })();
+      });
       const teardown = teardowns.track(threadId, turnId, child);
       teardown.onClosed(() => {
         if (mcpTempDir) {
@@ -1041,8 +1048,9 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       const rpcFailure = (err: unknown) => (err instanceof Error ? err.message : String(err)).slice(0, 500);
       child.stdin.on("error", () => rejectWaiters(new Error(`${ENGINE} stopped taking input.`)));
       const send = (obj: Record<string, unknown>) => {
-        appendNative(threadId, { dir: "out", source: "pi.rpc", msg: obj });
-        child.stdin.write(JSON.stringify(obj) + "\n");
+        const line = JSON.stringify(obj);
+        appendNative(threadId, { dir: "out", source: "pi.rpc", msg: obj }, { rawChars: line.length });
+        child.stdin.write(line + "\n");
       };
 
       /** Emit buffered assistant text as its own item, then clear it. */
@@ -1097,14 +1105,12 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           waiter.reject(new Error(`${ENGINE} turn ended.`));
         }
         flushAssistantText();
-        if (end.kind === "failed" && end.message) emit({ ...base(threadId, turnId), type: "runtime.error", message: end.message, ...(end.setup !== undefined ? { setup: end.setup } : {}) });
-        emit({
-          ...base(threadId, turnId),
-          type: "turn.completed",
+        // the gate's finish is the one ending: a Stop that reached the turn reads as the stopped pair, a close as the engine closing
+        e.finish({
           ok: end.kind !== "failed",
           stopReason: end.kind === "done" ? "end_turn" : end.kind === "cancelled" ? "cancelled" : end.stopReason ?? "failed",
-          ...(turnUsage ? { usage: turnUsage } : {}),
-          ...(turnCost !== undefined ? { cost: turnCost } : {}),
+          ...(end.kind === "failed" && end.message ? { error: { message: end.message, ...(end.setup !== undefined ? { setup: end.setup } : {}) } } : {}),
+          extra: { ...(turnUsage ? { usage: turnUsage } : {}), ...(turnCost !== undefined ? { cost: turnCost } : {}) },
         });
         if (!aborting) terminate();
         active.delete(threadId);
@@ -1146,10 +1152,10 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         closeTurn(why === "asked" ? { kind: "cancelled" } : failed(engineClosedLine(ENGINE, null), { stopReason: "exit_before_result" }));
       };
       active.set(threadId, { stop, turnId, pending, child, scopedRequests });
-      starting.delete(threadId);
+      stopGate.bindLive(e, { stop, kept: () => undefined });   // pi keeps no usage getter: stop() closes the turn in the same tick, which already finishes with turnUsage and turnCost (PI-NO-KEPT, ruled);  from here a Stop or the close reaches the live child (the launch above made the entry live in the same tick)
 
-      const onEvent = (evt: PiEvent) => {
-        appendNative(threadId, { dir: "in", source: "pi.rpc", msg: evt });
+      const onEvent = (evt: PiEvent, rawChars: number) => {
+        appendNative(threadId, { dir: "in", source: "pi.rpc", msg: evt }, { rawChars });
         // After the end only what a graceful Stop needs still counts: the abort's response, and a dialog pi would otherwise wait on.
         if (settled && evt.type !== "response") {
           if (aborting && evt.type === "extension_ui_request" && evt.id && PI_DIALOGS.has(String(evt.method))) {
@@ -1394,8 +1400,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               };
               // only the gate's command ask is checked (and so only a command card can carry U20); any other ask reports the
               // map as handed, unchecked
-              if (gate && !questions && (gate.tool === "Bash" || gate.tool === "PowerShell")) void execEnvNow(threadId, piCheckForm(gate.tool, shellForm), handed, turn.cwd ?? process.cwd()).then(open);
-              else open(execEnvHanded(handed, turn.cwd ?? process.cwd(), shellForm));
+              if (gate && !questions && (gate.tool === "Bash" || gate.tool === "PowerShell")) void execEnvNow(threadId, piCheckForm(gate.tool, shellForm), handed, botFolderOrThrow(turn)).then(open);
+              else open(execEnvHanded(handed, botFolderOrThrow(turn), shellForm));
             }
             return;
           }
@@ -1423,7 +1429,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         onLine: (line) => {
           if (!line.trim()) return;
           try {
-            onEvent(JSON.parse(line) as PiEvent);
+            onEvent(JSON.parse(line) as PiEvent, line.length);
           } catch {
             /* skip non-JSON line */
           }
@@ -1487,11 +1493,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         rejectWaiters(new Error(`${ENGINE} stopped before replying.`));
       });
 
-      emit({ ...base(threadId, turnId), type: "turn.started" });
-      if (earlyStops.delete(threadId)) {
-        stop("asked");
-        return { turnId };
-      }
+      e.markStarted();
 
       /** Fail the turn before the prompt is dispatched: surface why, settle
        * ok:false and stop the child (settle kills it). A no-op once the turn
@@ -1518,7 +1520,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "murage", itemId: sessionWaitItem, title: line, spoken: line, toolKind: "notice" });
         }, PI_SESSION_SLOW_MS);
         slow.unref?.();
-        const hs = (await hsPromise.finally(() => clearTimeout(slow))) as { sessionFile?: string; sessionId?: string } | undefined;
+        const hs = (await stopGate.step(e, hsPromise.finally(() => clearTimeout(slow)))) as { sessionFile?: string; sessionId?: string } | undefined;
         closeSessionWait(true);
         // a late answer to a turn that already ended (Stop, pi closing) announces nothing after its turn.completed
         if (settled) return { turnId };
@@ -1548,7 +1550,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         try {
           const modelPromise = awaitResponse("set_model");
           send({ type: "set_model", provider: chosen.provider, modelId: chosen.modelId });
-          await modelPromise;
+          await stopGate.step(e, modelPromise);
         } catch (err) {
           // Never fall back to pi's default model: that can move a local or
           // private pick onto a hosted or paid provider the user did not choose.
@@ -1564,7 +1566,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         try {
           const levelPromise = awaitResponse("set_thinking_level");
           send({ type: "set_thinking_level", level: piThinkingLevel(turn.effort) });
-          await levelPromise;
+          await stopGate.step(e, levelPromise);
         } catch {
           /* keep going on the engine default */
         }
@@ -1578,7 +1580,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       try { turn.beforeSubmit?.(); } catch { return { turnId }; }
       if (settled) return { turnId };
       try {
-        send({ type: "prompt", message });
+        stopGate.launch(e, () => send({ type: "prompt", message }));
       } catch {
         failBeforePrompt(`${ENGINE} stopped before it took this message. Send your message again.`);
       }
@@ -1604,8 +1606,11 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       return "version" in probe ? probe.version : null;
     }
     async function probePi(): Promise<{ version: string } | { reason: string }> {
+      // ALL.eld250 B9: the spawn runs in its own macrotask, not in the task that asked (the start-up snapshot scan reached it before listen)
+      await nextTask();
       const answer = await new Promise<{ err: Error | null; out: string }>((resolve) => {
         const child = spawnCli(config.cli, ["--version"], {
+          cwd: probeFolder(),
           stdio: ["ignore", "pipe", "pipe"],
           env: piProbeEnv(),
         });
@@ -1683,9 +1688,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         // Close-confirmed stop (A2): stop() settles, waits for abort, then
         // requests termination; resolve on confirmed close or reject at the deadline.
         interruptTurn: async (threadId, turnId) => {
-          const entry = active.get(threadId);
-          if (entry) entry.stop("asked");
-          else if (starting.has(threadId)) earlyStops.add(threadId);
+          stopGate.ask(threadId);   // first, before any await: a starting turn ends as the stopped pair, a live one is stopped
           const result = await teardowns.wait(threadId, turnId, piStopBudget());
           if (!result.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, result);
           return result;
@@ -1711,7 +1714,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         },
         hasSession: (threadId) => active.has(threadId),
         stopAll: async () => {
-          for (const { stop } of active.values()) stop("asked");
+          stopGate.ask();   // first, before any await: every starting turn ends as the stopped pair, every live one is stopped
           const result = await teardowns.waitAll(piStopBudget());
           if (!result.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, result);
         },
@@ -1721,7 +1724,11 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         },
       },
       dispose: async () => {
+        stopGate.close();
         for (const { stop } of active.values()) stop("closing");
+        // every turn ends (closing) before the listeners can clear; an entry still open at the 5 s bound is settled closing
+        const open = await stopGate.drain(providerCloseDeadlineMs());
+        stopGate.settleOutstanding(open);
         const result = await teardowns.waitAll(piStopBudget());
         if (!result.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, result);
         listeners.clear();

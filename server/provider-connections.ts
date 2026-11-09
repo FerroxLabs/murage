@@ -56,9 +56,14 @@ function currentCachedModel(model: ProviderModel): ProviderModel {
  return { ...model, ...(repairChat ? { chatEligible: true, outputModalities: ["text"] } : {}),
   capabilities: { ...model.capabilities, ...(repairChat ? { chat: true } : {}), ...(vision === undefined ? {} : { vision }) } };
 }
-class CatalogFailure extends Error { readonly code: ProviderCatalogError; constructor(code: ProviderCatalogError) { super(code); this.code=code; } }
+class CatalogFailure extends Error { readonly code: ProviderCatalogError; readonly httpStatus?: number; constructor(code: ProviderCatalogError, httpStatus?: number) { super(code); this.code=code; if(httpStatus!==undefined)this.httpStatus=httpStatus; } }
+/** A provider's non-2xx answer to the catalog route, by status: 402 is payment, 5xx is the service not answering. */
+export function catalogStatusCode(status: number, signIn: boolean): ProviderCatalogError {
+ return status===401?signIn?"needs-sign-in":"unauthorized":status===402?"payment":status===403?"forbidden":status===429?"rate-limited":"unavailable";
+}
 const messages: Record<ProviderCatalogError, string> = {
  unauthorized: "The provider rejected this key. Update the saved key.", forbidden: "This key cannot access the provider catalog.",
+ payment: "The provider says this account needs payment or credit (HTTP 402). Check billing with the provider, then refresh.",
  "rate-limited": "The provider is limiting catalog requests. Try again later.", offline: "Could not reach the provider. The last saved catalog is retained.",
  "invalid-catalog": "The provider returned an invalid or oversized model catalog.", unavailable: "The provider catalog is unavailable. Try again later.",
  "connection-changed": "The connection changed while its catalog was loading. Refresh it again.",
@@ -207,7 +212,7 @@ export class ProviderConnectionsService {
     else headers=connection.preset==="anthropic"?{"x-api-key":connection.key,"anthropic-version":"2023-06-01"}:{authorization:`Bearer ${connection.key}`};
     if(isFluxHost(url))headers={...headers,...fluxUsageHeaders({feature:"other"})};
     const response=await this.fetcher(url.toString(),{headers,signal:controllerSignal,redirect:"error"});active();
-    if(!response.ok){void response.body?.cancel();throw new CatalogFailure(response.status===401?isSignInPreset(connection.preset)?"needs-sign-in":"unauthorized":response.status===403?"forbidden":response.status===429?"rate-limited":"unavailable");}
+    if(!response.ok){void response.body?.cancel();throw new CatalogFailure(catalogStatusCode(response.status,isSignInPreset(connection.preset)),response.status);}
     if(Number(response.headers.get("content-length")??0)>MAX_BYTES||!response.body){void response.body?.cancel();throw new CatalogFailure("invalid-catalog");}
     const reader=response.body.getReader();let size=0;const chunks:Uint8Array[]=[];try{for(;;){const next=await reader.read();if(next.done)break;size+=next.value.length;if(size>MAX_BYTES){await reader.cancel();throw new CatalogFailure("invalid-catalog");}chunks.push(next.value);}}finally{reader.releaseLock();}
     let data:unknown;try{data=JSON.parse(Buffer.concat(chunks).toString("utf8"));}catch{throw new CatalogFailure("invalid-catalog");}
@@ -220,6 +225,6 @@ export class ProviderConnectionsService {
     if(typeof data.last_id!=="string"||!data.last_id||data.last_id.length>200||data.last_id===cursor)throw new CatalogFailure("invalid-catalog");cursor=data.last_id;
    }
    throw new CatalogFailure("invalid-catalog");
-  }catch(error){const code=error instanceof CatalogFailure?error.code:"offline";if(code==="unauthorized"||code==="forbidden")this.report(connection,"refused",code);const catalog:ProviderCatalog={...previous,stale:Boolean(previous.fetchedAt),error:{code,message:messages[code]},assurance:"catalog-only"};if(this.resolve(id)?.revision===connection.revision)this.cache.set(id,{revision:connection.revision,catalog});return catalog;}
+  }catch(error){const code=error instanceof CatalogFailure?error.code:"offline";if(code==="unauthorized"||code==="forbidden")this.report(connection,"refused",code);const catalog:ProviderCatalog={...previous,stale:Boolean(previous.fetchedAt),error:{code,message:messages[code],...(error instanceof CatalogFailure&&error.httpStatus!==undefined?{httpStatus:error.httpStatus}:{})},assurance:"catalog-only"};if(this.resolve(id)?.revision===connection.revision)this.cache.set(id,{revision:connection.revision,catalog});return catalog;}
  }
 }

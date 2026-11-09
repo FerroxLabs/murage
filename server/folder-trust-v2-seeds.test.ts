@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 // FUIGO-TRUST-V2 R4, R5, S5a: seeds on a home made for one routed turn. The real Fuigo
 // support runs against the fake ACP CLI's 1.0.35 protocol, which reads the seeded
 // store with Fuigo's coverage (F5), so "the engine declined with no request" is the
@@ -686,3 +687,6 @@ posixOnly("a routed turn on the real Fuigo driver", () => {
     });
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

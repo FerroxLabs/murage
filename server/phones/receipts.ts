@@ -1,3 +1,6 @@
+import { DATA_DIR } from "../config.ts";
+import { dataRoots, ownedPath } from "../data-roots.ts";
+import { rebaseAttachmentRecord } from "../attachment-paths.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -62,6 +65,21 @@ export class PhoneReceipts {
     this.db = db;
     this.clock = o.now ?? Date.now;
     initializePhoneReceipts(db);
+    // Site 16: each receipt is rewritten in one atomic SQL statement. Cleanup remains basename-only.
+    if (dataRoots().previousRoots().length) {
+      ownedPath(DATA_DIR, { create: false });
+      let count = 0;
+      const rows = db.prepare("SELECT device_id, kind, id, files FROM phone_receipts WHERE files IS NOT NULL").all();
+      for (const row of rows) {
+        const record = { attachments: json<unknown[]>(row.files) };
+        const next = rebaseAttachmentRecord(record);
+        if (next === record) continue;
+        db.prepare("UPDATE phone_receipts SET files=? WHERE device_id=? AND kind=? AND id=?")
+          .run(JSON.stringify(next.attachments), row.device_id!, row.kind!, row.id!);
+        count++;
+      }
+      if (count) console.warn(`data-dir-rebase kind=attachment count=${count}`);
+    }
     db.prepare("DELETE FROM phone_receipts WHERE at < ?").run(this.clock() - RETAIN_MS);
   }
 

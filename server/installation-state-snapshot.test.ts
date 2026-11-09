@@ -23,7 +23,7 @@ function fixture() {
     instances: { fixture: { driver: "fuigoAgent", enabled: true, environment: { TOKEN: "env-secret-canary" }, config: { cli: "custom", apiKey: "config-secret-canary" } } },
     mcpServers: { secret: { command: "anything", env: { TOKEN: "mcp-secret-canary" } } },
   }));
-  writeFileSync(join(data, "bots.json"), JSON.stringify([{ id: "bot", threadId: "thread", name: "Fixture bot", cwd: join(parent, "external"), resumeCursors: { provider: "native-cursor-canary" }, tasks: [{ threadId: "thread", resumeCursors: { provider: "native-cursor-canary" }, resumeSeals: { provider: { cursor: "native-cursor-canary", generation: 1 } } }] }]));
+  writeFileSync(join(data, "bots.json"), JSON.stringify([{ id: "bot", threadId: "thread", name: "Fixture bot", cwd: join(parent, "external"), resumeCursors: { provider: "native-cursor-canary" }, resumePolicies: { fuigo: { root: "/policy-root-canary", sha256: "x" } }, replayPending: { fuigo: { cursor: "native-cursor-canary" } }, tasks: [{ threadId: "thread", resumeCursors: { provider: "native-cursor-canary" }, resumePolicies: { fuigo: { root: "/policy-root-canary", sha256: "x" } }, replayPending: { fuigo: { cursor: "native-cursor-canary" } }, resumeSeals: { provider: { cursor: "native-cursor-canary", generation: 1 } } }] }]));
   writeFileSync(join(data, "webhooks.json"), JSON.stringify({ version: 1, webhooks: [{ id: "hook", endpointId: "endpoint", name: "Hook", prompt: "Task", botId: "bot", runOn: "ember", createdAt: 1, updatedAt: 1, deliveryCount: 1, secretHash: "a8".repeat(32), enabled: true }], deliveries: [{ key: "endpoint:already-accepted", runId: "finished-run", at: 1 }] }));
   mkdirSync(join(data, "attachments"));
   writeFileSync(join(data, "attachments", "fixture.txt"), "Private attachment content");
@@ -46,6 +46,7 @@ it("stages private app content under one epoch, excluding credential fields and 
   expect(config).not.toMatch(/secret-canary/);
   expect(JSON.parse(config)).toEqual({ profile: { name: "Fixture owner" }, instances: { fixture: { driver: "fuigoAgent", enabled: false } } });
   expect(readFileSync(join(directory, "state", "bots.json"), "utf8")).not.toContain("native-cursor-canary");
+  expect(readFileSync(join(directory, "state", "bots.json"), "utf8")).not.toMatch(/policy-root-canary|replayPending|resumePolicies/);
   const webhooks = JSON.parse(readFileSync(join(directory, "state", "webhooks.json"), "utf8"));
   expect(webhooks.webhooks[0]).toMatchObject({ id: "hook", endpointId: "endpoint", enabled: false });
   expect(webhooks.webhooks[0]).not.toHaveProperty("secretHash");

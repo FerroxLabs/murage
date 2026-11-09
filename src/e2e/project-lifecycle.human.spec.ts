@@ -64,9 +64,10 @@ async function inspect(page:Page,dialog:Locator,name:string){
   await expect(dialog).toBeVisible();
   expect(await dialog.evaluate(node=>node.scrollWidth<=node.clientWidth+1)).toBe(true);
   await page.addScriptTag({content:axeSource});
-  const serious=await page.evaluate(async()=>{
+  // The box is a role=dialog owned by the layer engine (PULLBACK-1018), not always a native dialog[open]: audit the dialog under test itself.
+  const serious=await dialog.evaluate(async(node)=>{
     const axe=(window as unknown as {axe:{run(context:Element,options:unknown):Promise<{violations:Array<{id:string;impact:string}>}>}}).axe;
-    return (await axe.run(document.querySelector('dialog[open]')!,{})).violations.filter(v=>v.impact==='critical'||v.impact==='serious').map(v=>v.id);
+    return (await axe.run(node,{})).violations.filter(v=>v.impact==='critical'||v.impact==='serious').map(v=>v.id);
   });
   expect(serious).toEqual([]);
   await page.screenshot({path:test.info().outputPath(name+'.png'),fullPage:true});
