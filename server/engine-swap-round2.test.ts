@@ -317,10 +317,11 @@ it("N3 driver events carry structured call input and completion results into the
   const base = () => ({}), emit = (event: unknown) => emitted.push(event);
   const first = readFileSync(new URL("./drivers/claude.ts", import.meta.url), "utf8");
   for (const pattern of [/emit\(\{[^\n]+itemId: b.id, title: b.name[^\n]+\);/, /emit\(\{[^\n]+itemId: b.tool_use_id, ok:[^\n]+\);/]) {
-    execute(first.match(pattern)![0], { base, emit, threadId: "thread", currentTurnId: () => "turn", b: { id: "id", tool_use_id: "id", name: "wrapper", input, content: result } });
+    execute(first.match(pattern)![0], { base, emit, threadId: "thread", currentTurnId: () => "turn", callKey: "call-key", startedToolKeys: { late: () => false }, b: { id: "id", tool_use_id: "id", name: "wrapper", input, content: result } });
   }
   const second = readFileSync(new URL("./drivers/codex.ts", import.meta.url), "utf8");
-  execute(second.match(/emit\(\{[^\n]+itemId: item.id, title[^\n]+\);/)![0], { base, emit, threadId: "thread", turnId: "turn", title: "wrapper", item: { id: "id", arguments: input } });
+  // 1.0.19 A4/A6 (b8dc0e76e, merged) made the started emit multi-line and keyed; the compact emit above it is a separate event with no call input.
+  execute(second.match(/if \(title\) emit\(\{\n[^\n]+itemId: item.id, title,[\s\S]*?\n\s*\}\);/)![0], { base, emit, threadId: "thread", turnId: "turn", title: "wrapper", item: { id: "id", arguments: input } });
   const end = second.indexOf('ok: item.status !== "failed"');
   execute(second.slice(second.lastIndexOf("emit({", end), second.indexOf("});", end) + 3), { base, emit, threadId: "thread", turnId: "turn", item: { id: "id", status: "completed", result } });
   const third = readFileSync(new URL("./drivers/acp/core.ts", import.meta.url), "utf8");

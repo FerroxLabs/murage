@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "sean",
+  "date": "2026-11-08",
+  "base": "c5b48487ac3922927fd46be698fd59970eaf573b",
+  "scope": "strings and lint files without a valid review",
+  "strings": {
+    "en:call.budgetStop": {
+      "text": "The call ended because this Flux key has reached its budget. You can start another call when the budget resets or changes.",
+      "en": "The call ended because this Flux key has reached its budget. You can start another call when the budget resets or changes.",
+      "verdict": "pass"
+    },
+    "de:call.budgetStop": {
+      "text": "Der Anruf wurde beendet, weil dieser Flux-Schlüssel sein Budget erreicht hat. Du kannst einen neuen Anruf starten, wenn das Budget zurückgesetzt oder geändert wird.",
+      "en": "The call ended because this Flux key has reached its budget. You can start another call when the budget resets or changes.",
+      "verdict": "pass"
+    },
+    "es:call.budgetStop": {
+      "text": "La llamada terminó porque esta clave de Flux alcanzó su presupuesto. Puedes iniciar otra llamada cuando el presupuesto se restablezca o cambie.",
+      "en": "The call ended because this Flux key has reached its budget. You can start another call when the budget resets or changes.",
+      "verdict": "pass"
+    },
+    "fr:call.budgetStop": {
+      "text": "L’appel s’est terminé car cette clé Flux a atteint son budget. Tu peux relancer l’appel quand le budget est réinitialisé ou modifié.",
+      "en": "The call ended because this Flux key has reached its budget. You can start another call when the budget resets or changes.",
+      "verdict": "pass"
+    },
+    "hi:call.budgetStop": {
+      "text": "कॉल समाप्त हो गई क्योंकि इस Flux कुंजी का बजट पूरा हो गया है। बजट रीसेट होने या बदलने पर आप नई कॉल शुरू कर सकते हैं।",
+      "en": "The call ended because this Flux key has reached its budget. You can start another call when the budget resets or changes.",
+      "verdict": "pass"
+    },
+    "ja:call.budgetStop": {
+      "text": "このFluxキーの予算上限に達したため、通話が終了しました。予算がリセットまたは変更されると、再び通話を開始できます。",
+      "en": "The call ended because this Flux key has reached its budget. You can start another call when the budget resets or changes.",
+      "verdict": "pass"
+    },
+    "pt-br:call.budgetStop": {
+      "text": "A chamada terminou porque esta chave do Flux atingiu seu orçamento. Você pode iniciar outra chamada quando o orçamento for redefinido ou alterado.",
+      "en": "The call ended because this Flux key has reached its budget. You can start another call when the budget resets or changes.",
+      "verdict": "pass"
+    },
+    "zh:call.budgetStop": {
+      "text": "此 Flux 密钥已达到预算上限，因此通话已结束。预算重置或更改后，可以再次开始通话。",
+      "en": "The call ended because this Flux key has reached its budget. You can start another call when the budget resets or changes.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

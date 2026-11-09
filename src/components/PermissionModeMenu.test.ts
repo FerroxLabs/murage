@@ -34,7 +34,7 @@ describe("composer approval-level menu", () => {
   });
 
   it("offers No limits with its plain description, on the desktop only", () => {
-    expect(item(render(true), "No limits")).toContain("In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read and before a command it cannot read in full. A script file can still run unread.");
+    expect(item(render(true), "No limits")).toContain("In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before it changes files Murage protects, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread.");
     // 3.4: greyed on the phone, with where it is set
     const remote = item(render(false), "No limits");
     expect(remote).toContain(' aria-disabled="true"');

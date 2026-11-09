@@ -848,3 +848,48 @@ describe("a desktop with no internet keeps its own live stream", () => {
     }
   });
 });
+
+it.each(["focus", "visibilitychange", "resume"])("T-H2-wake: %s always closes and invalidates before checking offline, even just after hello", signal => {
+  const fixture = harness(); let resume!: () => void; const order: string[] = [];
+  const stop = openLiveEvents({ onFrame: vi.fn(), onSnapshotRequired: async () => true, onError: () => order.push("hide"), onHello: (resumed, gen) => { expect(resumed).toBe(true); expect(gen).toEqual({ epoch: "A", rev: 0 }); } }, {
+    ...fixture.platform, isOnline: () => { order.push("online"); return fixture.platform.isOnline(); }, resumeSignal: listener => { resume = listener; return () => {}; },
+  });
+  fixture.sources[0].message({ kind: "hello", resumed: true, chatsGen: { epoch: "A", rev: 0 } });
+  fixture.setOnline(false); order.length = 0;
+  if (signal === "resume") resume(); else if (signal === "focus") fixture.windowTarget.emit(signal); else fixture.documentTarget.emit(signal);
+  expect(order[0]).toBe("hide"); expect(fixture.sources[0].close).toHaveBeenCalledOnce(); expect(fixture.sources).toHaveLength(1);
+  vi.advanceTimersByTime(100_000); expect(fixture.sources).toHaveLength(1);
+  fixture.setOnline(true); fixture.windowTarget.emit("online"); expect(fixture.sources).toHaveLength(2); stop();
+});
+
+it("does not reopen a hidden stream when an earlier wake's secret refresh resolves",async()=>{
+  const fixture=harness();let resolve!: (value:Response)=>void;
+  setDesktopSurfaceSecretForTest("a".repeat(64));
+  vi.stubGlobal("fetch",vi.fn(()=>new Promise<Response>(done=>{resolve=done;})));
+  const stop=openLiveEvents({onFrame:vi.fn(),onSnapshotRequired:async()=>true},fixture.platform);
+  try {
+    expect(fixture.sources).toHaveLength(1);
+    fixture.windowTarget.emit("focus");
+    fixture.setVisible(false);fixture.windowTarget.emit("focus");
+    resolve({ok:true,json:async()=>({secret:"b".repeat(64)})} as Response);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fixture.sources).toHaveLength(1);
+    expect(fixture.sources[0].close).toHaveBeenCalledOnce();
+  } finally {stop();setDesktopSurfaceSecretForTest("");vi.unstubAllGlobals();}
+});
+
+it("D24 starts listening only after both hydration and the bound catch-up marker, never on a replay frame", async () => {
+  const f = harness(), connected = vi.fn(), caughtUp = vi.fn(), onFrame = vi.fn(); let hydrate!: (value: boolean) => void;
+  const stop = openLiveEvents({ onFrame, onConnection: connected, onCaughtUp: caughtUp, onSnapshotRequired: () => new Promise<boolean>(resolve => { hydrate = resolve; }) }, f.platform);
+  const stream = f.sources[0]; stream.message({ kind: "hello", connectionId: "connection", bootId: "boot", cursor: "run:10", resumed: false });
+  expect(connected).toHaveBeenCalledWith({ connectionId: "connection", bootId: "boot" });
+  stream.message({ kind: "caught-up", connectionId: "other" }); expect(caughtUp).not.toHaveBeenCalled();
+  stream.message({ kind: "caught-up", connectionId: "connection" }); expect(caughtUp).not.toHaveBeenCalled(); hydrate(true); await Promise.resolve(); await Promise.resolve(); expect(caughtUp).toHaveBeenCalledOnce();
+  expect(onFrame).not.toHaveBeenCalled(); stop();
+});
+it("D24 a resumed stream with filtered final replay rows still has an explicit catch-up boundary", () => {
+  const f = harness(), caughtUp = vi.fn(), onFrame = vi.fn(); const stop = openLiveEvents({ onFrame, onCaughtUp: caughtUp, onSnapshotRequired: async () => true }, f.platform);
+  const stream = f.sources[0]; stream.message({ kind: "hello", connectionId: "connection", bootId: "boot", cursor: "run:10", resumed: true });
+  stream.message({ kind: "speech.ready", messageId: "old" }, "run:8"); expect(onFrame).toHaveBeenLastCalledWith(expect.objectContaining({ messageId: "old" }), { replayed: true }); expect(caughtUp).not.toHaveBeenCalled();
+  stream.message({ kind: "caught-up", connectionId: "connection" }); expect(caughtUp).toHaveBeenCalledOnce(); stop();
+});

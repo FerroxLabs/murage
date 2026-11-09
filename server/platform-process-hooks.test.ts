@@ -1,3 +1,4 @@
+import { fixtureBotFolder } from "./testing/bot-folder-fixture.ts";
 // Platform process hooks (Murage Cloud): each hook overrides or vetoes exactly
 // as specified, a throw counts as unconfirmed/unknown, and with no hooks set
 // every caller behaves as it did before.
@@ -19,7 +20,7 @@ const posix = process.platform !== "win32";
 
 afterEach(() => setPlatformProcessHooks({}));
 
-const sleeper = (env: NodeJS.ProcessEnv = process.env) => spawnCli("sleep", ["30"], { stdio: ["pipe", "pipe", "pipe"], env });
+const sleeper = (env: NodeJS.ProcessEnv = process.env) => spawnCli("sleep", ["30"], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"], env });
 
 describe("platform process hooks", () => {
   it("with no hooks set, nothing changes: stop is confirmed by Murage alone and the process table is walked", async () => {

@@ -11,6 +11,28 @@ import { redactCauseText } from "../shared/backup-capture-failure.mjs";
 import { safeBackupProgress } from "../shared/backup-progress.mjs";
 import { MAX_BACKUP_DURATION_MS } from "../shared/backup-budget.mjs";
 import { isNoSpaceError } from "./disk-space.ts";
+import { readWindowsTokenElevation } from "./windows-token-elevation.ts";
+/** Test-only seam (WIN-BACKUP-RT-1018): a vitest on a Windows runner has no signed
+ * installed app, so it may point the resolver at a fixture resources folder and
+ * replace ONLY the signature check (the overrides are fixed here, never caller supplied). Honoured only when VITEST=true and NODE_ENV=test; null by default,
+ * so production behaviour is unchanged. */
+let windowsRuntimeTestSeam: { host: { resourcesPath: string; currentExecutable: string } } | null = null;
+const underVitest = () => process.env.VITEST === "true" && process.env.NODE_ENV === "test";
+export function setWindowsBackupRuntimeTestSeam(seam: typeof windowsRuntimeTestSeam) {
+  if (!underVitest()) throw new Error("the Windows backup test seam is for vitest only");
+  windowsRuntimeTestSeam = seam;
+}
+/** Test-only elevation answer, under the same VITEST=true and NODE_ENV=test gate. Outside vitest the real check
+ * always runs. Inside vitest the real check runs when the round-trip seam above is set (a real helper on a real
+ * token); other suites that pretend to be Windows get "unknown" unless they inject an answer here. */
+let windowsElevationTestAnswer: (() => boolean | null) | null = null;
+export function setWindowsElevationTestAnswer(answer: typeof windowsElevationTestAnswer) {
+  if (!underVitest()) throw new Error("the Windows elevation test answer is for vitest only");
+  windowsElevationTestAnswer = answer;
+}
+const windowsTokenElevated = () => !underVitest() ? readWindowsTokenElevation()
+  : windowsElevationTestAnswer ? windowsElevationTestAnswer()
+  : windowsRuntimeTestSeam ? readWindowsTokenElevation() : null;
 function fail(code: string): never { throw new InstallationSnapshotError(code); }
 export function assertBackupAgeTool(executable: string, operation: "encrypt"|"decrypt" = "encrypt") {
   if (!backupAgePinForTarget(process.platform, process.arch)) fail("AGE_TOOL_PLATFORM_UNQUALIFIED");
@@ -24,7 +46,14 @@ export function assertBackupAgeTool(executable: string, operation: "encrypt"|"de
  * a renderer resource root, trust flag, or injected verification callback. */
 export async function resolveWindowsBackupRuntime(requestedAge: string) {
   if (process.platform !== "win32" || process.arch !== "x64") fail("AGE_TOOL_PLATFORM_UNQUALIFIED");
-  const verifyHelper = createWindowsBackupResourceResolver({ resourcesPath: win32.join(win32.dirname(process.execPath), "resources"), currentExecutable: process.execPath });
+  // Before anything spawns the helper: it refuses an elevated token with the same exit as every other refusal, so
+  // a person who started Murage with Run as administrator would otherwise be told their backup folder was at fault.
+  // An answer that can't be read goes on to the helper, whose own refusal is the gate.
+  if (windowsTokenElevated() === true) fail("BACKUP_STARTED_AS_ADMINISTRATOR");
+  const seam = underVitest() ? windowsRuntimeTestSeam : null;
+  const verifyHelper = seam
+    ? createWindowsBackupResourceResolver(seam.host, { verifySignatures: async () => {}, nativeAuthenticode: () => null })
+    : createWindowsBackupResourceResolver({ resourcesPath: win32.join(win32.dirname(process.execPath), "resources"), currentExecutable: process.execPath });
   const { executable } = await verifyHelper();
   const ageExecutable = win32.join(win32.dirname(executable), "age.exe");
   if (typeof requestedAge !== "string" || requestedAge.toLowerCase() !== ageExecutable.toLowerCase()) fail("AGE_TOOL_UNVERIFIED");

@@ -5,6 +5,8 @@ import { ClaudeDriver } from "./claude.ts";
 import { claudeTextOnlyTurn } from "./headless-text-only.ts";
 import { createResolveRoute } from "../memory/pip-reflect-host.ts";
 import * as transport from "../memory/pip-transport.ts";
+// the CLI version probe (claude-guards, 6e766d759 keeps ENOENT for a missing binary) is not what this test is about: "fixture-cli" is not a real file
+vi.mock("./claude-guards.ts", async original => ({ ...await original<typeof import("./claude-guards.ts")>(), requireClaudeCliVersion: async () => {} }));
 vi.mock("./headless-text-only.ts", () => ({ claudeTextOnlyTurn: vi.fn(async () => ({ text: "{}" })) }));
 vi.mock("./local-inject.ts", async original => ({
   ...await original<typeof import("./local-inject.ts")>(),

@@ -1,0 +1,1656 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "NLINT",
+  "date": "2026-11-08",
+  "base": "07fbda0ca",
+  "scope": "NLINT final copy: No limits strings, available-disk-space wording",
+  "strings": {
+    "en:ux.l1.why.outsideContent": {
+      "text": "This chat read outside content, so Murage asks before running this.",
+      "en": "This chat read outside content, so Murage asks before running this.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:ux.l1.level.unlimitedDetail": {
+      "text": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread.",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "en:ux.l1.confirm.unlimitedBody": {
+      "text": "In conversations you start, {level} lets {bot} run commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. Routines and channel messages keep their own rules.",
+      "en": "In conversations you start, {level} lets {bot} run commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. Routines and channel messages keep their own rules.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "en:ux.lcopyb.level.unlimitedHere": {
+      "text": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. That includes this computer. Publishing, browser payments and new email recipients keep their own approvals. Everyone else's messages, other bots, trigger links from other apps and your channel messages keep the cards they have now. A routine runs at this level or its own, whichever is lower, and keeps its cards.",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. That includes this computer. Publishing, browser payments and new email recipients keep their own approvals. Everyone else's messages, other bots, trigger links from other apps and your channel messages keep the cards they have now. A routine runs at this level or its own, whichever is lower, and keeps its cards.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "en:ux.lcopyb.level.unlimited": {
+      "text": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. Publishing, browser payments and new email recipients keep their own approvals. Everyone else's messages, other bots, trigger links from other apps and your channel messages keep the cards they have now. A routine runs at this level or its own, whichever is lower, and keeps its cards.",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. Publishing, browser payments and new email recipients keep their own approvals. Everyone else's messages, other bots, trigger links from other apps and your channel messages keep the cards they have now. A routine runs at this level or its own, whichever is lower, and keeps its cards.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "en:noLimits.v1.warning": {
+      "text": "No limits runs what you ask without stopping to ask you, even a command Murage cannot read in full. It still asks before a wipe it can see in plain words and before anything your own deny rules name. Once a chat reads something from outside, such as a web page, a search, an email, a download, a cloned project, an unpacked archive, a package install, another person's words or another bot's reply, Murage asks before each command that can run code for the rest of that chat. Commands that only read and print keep running.",
+      "en": "No limits runs what you ask without stopping to ask you, even a command Murage cannot read in full. It still asks before a wipe it can see in plain words and before anything your own deny rules name. Once a chat reads something from outside, such as a web page, a search, an email, a download, a cloned project, an unpacked archive, a package install, another person's words or another bot's reply, Murage asks before each command that can run code for the rest of that chat. Commands that only read and print keep running.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.outsideNote": {
+      "text": "This chat read outside content ({source}), so Murage asks before running this. Allow to run it.",
+      "en": "This chat read outside content ({source}), so Murage asks before running this. Allow to run it.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.callOutside": {
+      "text": "Earlier, this chat read outside content ({source}).",
+      "en": "Earlier, this chat read outside content ({source}).",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.callOutsideUnnamed": {
+      "text": "Earlier, this chat read outside content.",
+      "en": "Earlier, this chat read outside content.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.openclaw": {
+      "text": "This bot runs on OpenClaw, which runs commands without asking Murage first. At No limits that stays as it is, even after the chat reads outside content.",
+      "en": "This bot runs on OpenClaw, which runs commands without asking Murage first. At No limits that stays as it is, even after the chat reads outside content.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.windows": {
+      "text": "Running commands Murage cannot read in full without asking applies to bash and zsh shells; on Windows, Murage keeps asking before PowerShell and cmd commands as it does today.",
+      "en": "Running commands Murage cannot read in full without asking applies to bash and zsh shells; on Windows, Murage keeps asking before PowerShell and cmd commands as it does today.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.source.webPage": {
+      "text": "web page",
+      "en": "web page",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.source.webSearch": {
+      "text": "web search",
+      "en": "web search",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.source.email": {
+      "text": "email",
+      "en": "email",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.source.anotherPerson": {
+      "text": "another person",
+      "en": "another person",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.source.anotherBot": {
+      "text": "another bot",
+      "en": "another bot",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.source.browserPage": {
+      "text": "browser page",
+      "en": "browser page",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.source.outsideTool": {
+      "text": "outside tool",
+      "en": "outside tool",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.source.downloadedFile": {
+      "text": "downloaded file",
+      "en": "downloaded file",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.source.networkCommand": {
+      "text": "network command",
+      "en": "network command",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.source.packageInstall": {
+      "text": "package install",
+      "en": "package install",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.source.git": {
+      "text": "git",
+      "en": "git",
+      "verdict": "pass",
+      "note": "Source label. git is the tool name and stays as is; archive is the same word in French; both are pinned in same-as-english.json."
+    },
+    "en:noLimits.v1.source.archive": {
+      "text": "archive",
+      "en": "archive",
+      "verdict": "pass",
+      "note": "Source label. git is the tool name and stays as is; archive is the same word in French; both are pinned in same-as-english.json."
+    },
+    "en:noLimits.v1.source.interpreter": {
+      "text": "interpreter",
+      "en": "interpreter",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.source.helper": {
+      "text": "helper",
+      "en": "helper",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.source.earlierTurn": {
+      "text": "earlier turn",
+      "en": "earlier turn",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.source.earlierSession": {
+      "text": "earlier session",
+      "en": "earlier session",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.source.memory": {
+      "text": "memory",
+      "en": "memory",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.source.clonedFolder": {
+      "text": "cloned folder",
+      "en": "cloned folder",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.source.notChecked": {
+      "text": "not checked",
+      "en": "not checked",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.engineAsks": {
+      "text": "{engine} doesn't show Murage which tools it uses, so No limits still asks here. Fuigo, Claude, Codex, Gemini and Grok don't.",
+      "en": "{engine} doesn't show Murage which tools it uses, so No limits still asks here. Fuigo, Claude, Codex, Gemini and Grok don't.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:noLimits.v1.switchToFuigo": {
+      "text": "Switch to Fuigo",
+      "en": "Switch to Fuigo",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "en:runtimeError.engineKind.session_storage": {
+      "text": "The engine could not read or write its own session files. Check available disk space and the engine's folder permissions, then retry.",
+      "en": "The engine could not read or write its own session files. Check available disk space and the engine's folder permissions, then retry.",
+      "verdict": "pass",
+      "note": "Wording is available disk space, in plain words, no banned words."
+    },
+    "en:whatsapp.status.ingress": {
+      "text": "A WhatsApp message could not be kept. Check available disk space.",
+      "en": "A WhatsApp message could not be kept. Check available disk space.",
+      "verdict": "pass",
+      "note": "Wording is available disk space, in plain words, no banned words."
+    },
+    "de:noLimits.v1.warning": {
+      "text": "Keine Grenzen führt aus, worum du bittest, ohne nachzufragen, auch einen Befehl, den Murage nicht ganz lesen kann. Es fragt weiter vor einer Komplettlöschung, die es im Klartext sieht, und vor allem, was deine eigenen Sperrregeln nennen. Sobald ein Chat etwas von außen liest, etwa eine Webseite, eine Suche, eine E-Mail, einen Download, ein geklontes Projekt, ein entpacktes Archiv, eine Paketinstallation, die Worte einer anderen Person oder die Antwort eines anderen Bots, fragt Murage für den Rest dieses Chats vor jedem Befehl, der Code ausführen kann. Befehle, die nur lesen und ausgeben, laufen weiter.",
+      "en": "No limits runs what you ask without stopping to ask you, even a command Murage cannot read in full. It still asks before a wipe it can see in plain words and before anything your own deny rules name. Once a chat reads something from outside, such as a web page, a search, an email, a download, a cloned project, an unpacked archive, a package install, another person's words or another bot's reply, Murage asks before each command that can run code for the rest of that chat. Commands that only read and print keep running.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.outsideNote": {
+      "text": "Dieser Chat hat Inhalte von außen gelesen ({source}), daher fragt Murage, bevor dies ausgeführt wird. Erlaube es, um es auszuführen.",
+      "en": "This chat read outside content ({source}), so Murage asks before running this. Allow to run it.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.callOutside": {
+      "text": "Dieser Chat hat zuvor Inhalte von außen gelesen ({source}).",
+      "en": "Earlier, this chat read outside content ({source}).",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.callOutsideUnnamed": {
+      "text": "Dieser Chat hat zuvor Inhalte von außen gelesen.",
+      "en": "Earlier, this chat read outside content.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.openclaw": {
+      "text": "Dieser Bot läuft auf OpenClaw, das Befehle ausführt, ohne Murage vorher zu fragen. Auf der Stufe Keine Grenzen bleibt das so, auch nachdem der Chat Inhalte von außen gelesen hat.",
+      "en": "This bot runs on OpenClaw, which runs commands without asking Murage first. At No limits that stays as it is, even after the chat reads outside content.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.windows": {
+      "text": "Befehle, die Murage nicht ganz lesen kann, ohne Nachfrage auszuführen, gilt für bash- und zsh-Shells; unter Windows fragt Murage vor PowerShell- und cmd-Befehlen weiter wie heute.",
+      "en": "Running commands Murage cannot read in full without asking applies to bash and zsh shells; on Windows, Murage keeps asking before PowerShell and cmd commands as it does today.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.source.webPage": {
+      "text": "Webseite",
+      "en": "web page",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.source.webSearch": {
+      "text": "Websuche",
+      "en": "web search",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.source.email": {
+      "text": "E-Mail",
+      "en": "email",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.source.anotherPerson": {
+      "text": "eine andere Person",
+      "en": "another person",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.source.anotherBot": {
+      "text": "ein anderer Bot",
+      "en": "another bot",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.source.browserPage": {
+      "text": "Browserseite",
+      "en": "browser page",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.source.outsideTool": {
+      "text": "externes Tool",
+      "en": "outside tool",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.source.downloadedFile": {
+      "text": "heruntergeladene Datei",
+      "en": "downloaded file",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.source.networkCommand": {
+      "text": "Netzwerkbefehl",
+      "en": "network command",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.source.packageInstall": {
+      "text": "Paketinstallation",
+      "en": "package install",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.source.git": {
+      "text": "git",
+      "en": "git",
+      "verdict": "pass",
+      "note": "Source label. git is the tool name and stays as is; archive is the same word in French; both are pinned in same-as-english.json."
+    },
+    "de:noLimits.v1.source.archive": {
+      "text": "Archiv",
+      "en": "archive",
+      "verdict": "pass",
+      "note": "Source label. git is the tool name and stays as is; archive is the same word in French; both are pinned in same-as-english.json."
+    },
+    "de:noLimits.v1.source.interpreter": {
+      "text": "Interpreter",
+      "en": "interpreter",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.source.helper": {
+      "text": "Hilfsprozess",
+      "en": "helper",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.source.earlierTurn": {
+      "text": "frühere Runde",
+      "en": "earlier turn",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.source.earlierSession": {
+      "text": "frühere Sitzung",
+      "en": "earlier session",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.source.memory": {
+      "text": "Erinnerung",
+      "en": "memory",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.source.clonedFolder": {
+      "text": "geklonter Ordner",
+      "en": "cloned folder",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.source.notChecked": {
+      "text": "nicht geprüft",
+      "en": "not checked",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.engineAsks": {
+      "text": "{engine} zeigt Murage nicht, welche Werkzeuge es nutzt, deshalb fragt Keine Grenzen hier weiter nach. Fuigo, Claude, Codex, Gemini und Grok zeigen es.",
+      "en": "{engine} doesn't show Murage which tools it uses, so No limits still asks here. Fuigo, Claude, Codex, Gemini and Grok don't.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:noLimits.v1.switchToFuigo": {
+      "text": "Zu Fuigo wechseln",
+      "en": "Switch to Fuigo",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:runtimeError.engineKind.session_storage": {
+      "text": "Die Engine konnte ihre eigenen Sitzungsdateien nicht lesen oder schreiben. Prüfe den verfügbaren Speicherplatz und die Ordnerberechtigungen der Engine und versuche es erneut.",
+      "en": "The engine could not read or write its own session files. Check available disk space and the engine's folder permissions, then retry.",
+      "verdict": "pass",
+      "note": "Wording is available disk space, in plain words, no banned words."
+    },
+    "de:whatsapp.status.ingress": {
+      "text": "Eine WhatsApp-Nachricht konnte nicht gespeichert werden. Prüfe den verfügbaren Speicherplatz.",
+      "en": "A WhatsApp message could not be kept. Check available disk space.",
+      "verdict": "pass",
+      "note": "Wording is available disk space, in plain words, no banned words."
+    },
+    "de:ux.l1.why.outsideContent": {
+      "text": "Dieser Chat hat Inhalte von außen gelesen, deshalb fragt Murage nach, bevor das läuft.",
+      "en": "This chat read outside content, so Murage asks before running this.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "de:ux.l1.level.unlimitedDetail": {
+      "text": "In Unterhaltungen, die du startest, führt es Befehle und Tools ohne Nachfrage aus, auch das Lesen und Senden deiner Schlüssel. Es fragt weiterhin vor einer Komplettlöschung, die es lesen kann, vor allem, was deine eigenen Sperrregeln nennen, und wenn ein Befehl abgeschnitten ist oder fehlt. Nachdem ein Chat Inhalte von außen gelesen hat, fragt es außerdem vor Befehlen, die Code ausführen können. Eine Skriptdatei kann trotzdem ungelesen laufen.",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "de:ux.l1.confirm.unlimitedBody": {
+      "text": "In Unterhaltungen, die du startest, lässt {level} {bot} Befehle und Tools ohne Nachfrage ausführen, auch das Lesen und Senden deiner Schlüssel. Es fragt weiterhin vor einer Komplettlöschung, die es lesen kann, vor allem, was deine eigenen Sperrregeln nennen, und wenn ein Befehl abgeschnitten ist oder fehlt. Nachdem ein Chat Inhalte von außen gelesen hat, fragt es außerdem vor Befehlen, die Code ausführen können. Eine Skriptdatei kann trotzdem ungelesen laufen. Routinen und Kanalnachrichten behalten ihre eigenen Regeln.",
+      "en": "In conversations you start, {level} lets {bot} run commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. Routines and channel messages keep their own rules.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "de:ux.lcopyb.level.unlimitedHere": {
+      "text": "In Unterhaltungen, die du startest, führt es Befehle und Tools ohne Nachfrage aus, auch das Lesen und Senden deiner Schlüssel. Es fragt weiterhin vor einer Komplettlöschung, die es lesen kann, vor allem, was deine eigenen Sperrregeln nennen, und wenn ein Befehl abgeschnitten ist oder fehlt. Nachdem ein Chat Inhalte von außen gelesen hat, fragt es außerdem vor Befehlen, die Code ausführen können. Eine Skriptdatei kann trotzdem ungelesen laufen. Das gilt auch für diesen Computer. Veröffentlichen, Zahlungen im Browser und neue E-Mail-Empfänger behalten ihre eigenen Freigaben. Nachrichten von allen anderen, andere Bots, Trigger-Links aus anderen Apps und deine Kanalnachrichten behalten die Karten, die sie jetzt haben. Eine Routine läuft mit diesem Level oder ihrem eigenen, je nachdem, welches niedriger ist, und behält ihre Karten.",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. That includes this computer. Publishing, browser payments and new email recipients keep their own approvals. Everyone else's messages, other bots, trigger links from other apps and your channel messages keep the cards they have now. A routine runs at this level or its own, whichever is lower, and keeps its cards.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "de:ux.lcopyb.level.unlimited": {
+      "text": "In Unterhaltungen, die du startest, führt es Befehle und Tools ohne Nachfrage aus, auch das Lesen und Senden deiner Schlüssel. Es fragt weiterhin vor einer Komplettlöschung, die es lesen kann, vor allem, was deine eigenen Sperrregeln nennen, und wenn ein Befehl abgeschnitten ist oder fehlt. Nachdem ein Chat Inhalte von außen gelesen hat, fragt es außerdem vor Befehlen, die Code ausführen können. Eine Skriptdatei kann trotzdem ungelesen laufen. Veröffentlichen, Zahlungen im Browser und neue E-Mail-Empfänger behalten ihre eigenen Freigaben. Nachrichten von allen anderen, andere Bots, Trigger-Links aus anderen Apps und deine Kanalnachrichten behalten die Karten, die sie jetzt haben. Eine Routine läuft mit diesem Level oder ihrem eigenen, je nachdem, welches niedriger ist, und behält ihre Karten.",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. Publishing, browser payments and new email recipients keep their own approvals. Everyone else's messages, other bots, trigger links from other apps and your channel messages keep the cards they have now. A routine runs at this level or its own, whichever is lower, and keeps its cards.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "es:noLimits.v1.warning": {
+      "text": "Sin límites ejecuta lo que pides sin detenerse a preguntarte, incluso un comando que Murage no puede leer completo. Sigue preguntando antes de un borrado total que pueda ver en texto claro y antes de todo lo que nombren tus propias reglas de bloqueo. Cuando un chat lee algo de fuera, como una página web, una búsqueda, un correo, una descarga, un proyecto clonado, un archivo descomprimido, una instalación de paquetes, las palabras de otra persona o la respuesta de otro bot, Murage pregunta antes de cada comando que pueda ejecutar código durante el resto de ese chat. Los comandos que solo leen e imprimen siguen ejecutándose.",
+      "en": "No limits runs what you ask without stopping to ask you, even a command Murage cannot read in full. It still asks before a wipe it can see in plain words and before anything your own deny rules name. Once a chat reads something from outside, such as a web page, a search, an email, a download, a cloned project, an unpacked archive, a package install, another person's words or another bot's reply, Murage asks before each command that can run code for the rest of that chat. Commands that only read and print keep running.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.outsideNote": {
+      "text": "Este chat leyó contenido de fuera ({source}), así que Murage pregunta antes de ejecutar esto. Permítelo para ejecutarlo.",
+      "en": "This chat read outside content ({source}), so Murage asks before running this. Allow to run it.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.callOutside": {
+      "text": "Este chat ya leyó contenido de fuera ({source}).",
+      "en": "Earlier, this chat read outside content ({source}).",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.callOutsideUnnamed": {
+      "text": "Este chat ya leyó contenido de fuera.",
+      "en": "Earlier, this chat read outside content.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.openclaw": {
+      "text": "Este bot funciona con OpenClaw, que ejecuta comandos sin preguntar antes a Murage. En Sin límites sigue así, incluso después de que el chat lea contenido de fuera.",
+      "en": "This bot runs on OpenClaw, which runs commands without asking Murage first. At No limits that stays as it is, even after the chat reads outside content.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.windows": {
+      "text": "Ejecutar sin preguntar los comandos que Murage no puede leer completos se aplica a las shells bash y zsh; en Windows, Murage sigue preguntando antes de los comandos de PowerShell y cmd, como hoy.",
+      "en": "Running commands Murage cannot read in full without asking applies to bash and zsh shells; on Windows, Murage keeps asking before PowerShell and cmd commands as it does today.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.source.webPage": {
+      "text": "página web",
+      "en": "web page",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.source.webSearch": {
+      "text": "búsqueda web",
+      "en": "web search",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.source.email": {
+      "text": "correo",
+      "en": "email",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.source.anotherPerson": {
+      "text": "otra persona",
+      "en": "another person",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.source.anotherBot": {
+      "text": "otro bot",
+      "en": "another bot",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.source.browserPage": {
+      "text": "página del navegador",
+      "en": "browser page",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.source.outsideTool": {
+      "text": "herramienta externa",
+      "en": "outside tool",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.source.downloadedFile": {
+      "text": "archivo descargado",
+      "en": "downloaded file",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.source.networkCommand": {
+      "text": "comando de red",
+      "en": "network command",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.source.packageInstall": {
+      "text": "instalación de paquetes",
+      "en": "package install",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.source.git": {
+      "text": "git",
+      "en": "git",
+      "verdict": "pass",
+      "note": "Source label. git is the tool name and stays as is; archive is the same word in French; both are pinned in same-as-english.json."
+    },
+    "es:noLimits.v1.source.archive": {
+      "text": "archivo comprimido",
+      "en": "archive",
+      "verdict": "pass",
+      "note": "Source label. git is the tool name and stays as is; archive is the same word in French; both are pinned in same-as-english.json."
+    },
+    "es:noLimits.v1.source.interpreter": {
+      "text": "intérprete",
+      "en": "interpreter",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.source.helper": {
+      "text": "ayudante",
+      "en": "helper",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.source.earlierTurn": {
+      "text": "turno anterior",
+      "en": "earlier turn",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.source.earlierSession": {
+      "text": "sesión anterior",
+      "en": "earlier session",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.source.memory": {
+      "text": "memoria",
+      "en": "memory",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.source.clonedFolder": {
+      "text": "carpeta clonada",
+      "en": "cloned folder",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.source.notChecked": {
+      "text": "sin comprobar",
+      "en": "not checked",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.engineAsks": {
+      "text": "{engine} no le muestra a Murage qué herramientas usa, así que Sin límites sigue preguntando aquí. Fuigo, Claude, Codex, Gemini y Grok sí lo muestran.",
+      "en": "{engine} doesn't show Murage which tools it uses, so No limits still asks here. Fuigo, Claude, Codex, Gemini and Grok don't.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:noLimits.v1.switchToFuigo": {
+      "text": "Cambiar a Fuigo",
+      "en": "Switch to Fuigo",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:runtimeError.engineKind.session_storage": {
+      "text": "El motor no ha podido leer ni escribir sus propios archivos de sesión. Comprueba el espacio disponible en disco y los permisos de su carpeta, y vuelve a intentarlo.",
+      "en": "The engine could not read or write its own session files. Check available disk space and the engine's folder permissions, then retry.",
+      "verdict": "pass",
+      "note": "Wording is available disk space, in plain words, no banned words."
+    },
+    "es:whatsapp.status.ingress": {
+      "text": "No se pudo guardar un mensaje de WhatsApp. Comprueba el espacio disponible en disco.",
+      "en": "A WhatsApp message could not be kept. Check available disk space.",
+      "verdict": "pass",
+      "note": "Wording is available disk space, in plain words, no banned words."
+    },
+    "es:ux.l1.why.outsideContent": {
+      "text": "Este chat leyó contenido externo, así que Murage pregunta antes de ejecutar esto.",
+      "en": "This chat read outside content, so Murage asks before running this.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "es:ux.l1.level.unlimitedDetail": {
+      "text": "En las conversaciones que inicias, ejecuta comandos y herramientas sin preguntar, incluso leer y enviar tus claves. Sigue preguntando antes de un borrado total que pueda leer, antes de todo lo que nombren tus propias reglas de bloqueo y cuando un comando llega cortado o falta. Después de que un chat lea contenido de fuera, también pregunta antes de los comandos que pueden ejecutar código. Un archivo de script aún puede ejecutarse sin leer.",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "es:ux.l1.confirm.unlimitedBody": {
+      "text": "En las conversaciones que inicias, {level} deja que {bot} ejecute comandos y herramientas sin preguntar, incluso leer y enviar tus claves. Sigue preguntando antes de un borrado total que pueda leer, antes de todo lo que nombren tus propias reglas de bloqueo y cuando un comando llega cortado o falta. Después de que un chat lea contenido de fuera, también pregunta antes de los comandos que pueden ejecutar código. Un archivo de script aún puede ejecutarse sin leer. Las rutinas y los mensajes de canal conservan sus propias reglas.",
+      "en": "In conversations you start, {level} lets {bot} run commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. Routines and channel messages keep their own rules.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "es:ux.lcopyb.level.unlimitedHere": {
+      "text": "En las conversaciones que inicias, ejecuta comandos y herramientas sin preguntar, incluso leer y enviar tus claves. Sigue preguntando antes de un borrado total que pueda leer, antes de todo lo que nombren tus propias reglas de bloqueo y cuando un comando llega cortado o falta. Después de que un chat lea contenido de fuera, también pregunta antes de los comandos que pueden ejecutar código. Un archivo de script aún puede ejecutarse sin leer. Eso incluye este ordenador. Publicar, los pagos en el navegador y los destinatarios de correo nuevos conservan sus propias aprobaciones. Los mensajes de cualquier otra persona, otros bots, los enlaces de activación de otras apps y tus mensajes de canal conservan las tarjetas que tienen ahora. Una rutina se ejecuta en este nivel o en el suyo, el que sea más bajo, y conserva sus tarjetas.",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. That includes this computer. Publishing, browser payments and new email recipients keep their own approvals. Everyone else's messages, other bots, trigger links from other apps and your channel messages keep the cards they have now. A routine runs at this level or its own, whichever is lower, and keeps its cards.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "es:ux.lcopyb.level.unlimited": {
+      "text": "En las conversaciones que inicias, ejecuta comandos y herramientas sin preguntar, incluso leer y enviar tus claves. Sigue preguntando antes de un borrado total que pueda leer, antes de todo lo que nombren tus propias reglas de bloqueo y cuando un comando llega cortado o falta. Después de que un chat lea contenido de fuera, también pregunta antes de los comandos que pueden ejecutar código. Un archivo de script aún puede ejecutarse sin leer. Publicar, los pagos en el navegador y los destinatarios de correo nuevos conservan sus propias aprobaciones. Los mensajes de cualquier otra persona, otros bots, los enlaces de activación de otras apps y tus mensajes de canal conservan las tarjetas que tienen ahora. Una rutina se ejecuta en este nivel o en el suyo, el que sea más bajo, y conserva sus tarjetas.",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. Publishing, browser payments and new email recipients keep their own approvals. Everyone else's messages, other bots, trigger links from other apps and your channel messages keep the cards they have now. A routine runs at this level or its own, whichever is lower, and keeps its cards.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "fr:noLimits.v1.warning": {
+      "text": "Sans limites exécute ce que tu demandes sans s'arrêter pour te demander, même une commande que Murage ne peut pas lire en entier. Il demande toujours avant un effacement qu'il voit en clair et avant tout ce que tes propres règles de refus nomment. Dès qu'un chat lit quelque chose venant de l'extérieur, comme une page web, une recherche, un e-mail, un téléchargement, un projet cloné, une archive décompressée, une installation de paquets, les mots d'une autre personne ou la réponse d'un autre bot, Murage demande avant chaque commande qui peut exécuter du code pendant le reste de ce chat. Les commandes qui ne font que lire et afficher continuent de s'exécuter.",
+      "en": "No limits runs what you ask without stopping to ask you, even a command Murage cannot read in full. It still asks before a wipe it can see in plain words and before anything your own deny rules name. Once a chat reads something from outside, such as a web page, a search, an email, a download, a cloned project, an unpacked archive, a package install, another person's words or another bot's reply, Murage asks before each command that can run code for the rest of that chat. Commands that only read and print keep running.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.outsideNote": {
+      "text": "Ce chat a lu du contenu venant de l'extérieur ({source}), donc Murage demande avant d'exécuter ceci. Autorise pour l'exécuter.",
+      "en": "This chat read outside content ({source}), so Murage asks before running this. Allow to run it.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.callOutside": {
+      "text": "Plus tôt, ce chat a lu du contenu venant de l'extérieur ({source}).",
+      "en": "Earlier, this chat read outside content ({source}).",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.callOutsideUnnamed": {
+      "text": "Plus tôt, ce chat a lu du contenu venant de l'extérieur.",
+      "en": "Earlier, this chat read outside content.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.openclaw": {
+      "text": "Ce bot fonctionne avec OpenClaw, qui exécute les commandes sans demander d'abord à Murage. En Sans limites, cela reste ainsi, même après que le chat a lu du contenu venant de l'extérieur.",
+      "en": "This bot runs on OpenClaw, which runs commands without asking Murage first. At No limits that stays as it is, even after the chat reads outside content.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.windows": {
+      "text": "L'exécution sans demander des commandes que Murage ne peut pas lire en entier concerne les shells bash et zsh ; sous Windows, Murage continue de demander avant les commandes PowerShell et cmd, comme aujourd'hui.",
+      "en": "Running commands Murage cannot read in full without asking applies to bash and zsh shells; on Windows, Murage keeps asking before PowerShell and cmd commands as it does today.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.source.webPage": {
+      "text": "page web",
+      "en": "web page",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.source.webSearch": {
+      "text": "recherche web",
+      "en": "web search",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.source.email": {
+      "text": "e-mail",
+      "en": "email",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.source.anotherPerson": {
+      "text": "une autre personne",
+      "en": "another person",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.source.anotherBot": {
+      "text": "un autre bot",
+      "en": "another bot",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.source.browserPage": {
+      "text": "page du navigateur",
+      "en": "browser page",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.source.outsideTool": {
+      "text": "outil externe",
+      "en": "outside tool",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.source.downloadedFile": {
+      "text": "fichier téléchargé",
+      "en": "downloaded file",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.source.networkCommand": {
+      "text": "commande réseau",
+      "en": "network command",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.source.packageInstall": {
+      "text": "installation de paquets",
+      "en": "package install",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.source.git": {
+      "text": "git",
+      "en": "git",
+      "verdict": "pass",
+      "note": "Source label. git is the tool name and stays as is; archive is the same word in French; both are pinned in same-as-english.json."
+    },
+    "fr:noLimits.v1.source.archive": {
+      "text": "archive",
+      "en": "archive",
+      "verdict": "pass",
+      "note": "Source label. git is the tool name and stays as is; archive is the same word in French; both are pinned in same-as-english.json."
+    },
+    "fr:noLimits.v1.source.interpreter": {
+      "text": "interpréteur",
+      "en": "interpreter",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.source.helper": {
+      "text": "assistant",
+      "en": "helper",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.source.earlierTurn": {
+      "text": "tour précédent",
+      "en": "earlier turn",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.source.earlierSession": {
+      "text": "session précédente",
+      "en": "earlier session",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.source.memory": {
+      "text": "mémoire",
+      "en": "memory",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.source.clonedFolder": {
+      "text": "dossier cloné",
+      "en": "cloned folder",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.source.notChecked": {
+      "text": "non vérifié",
+      "en": "not checked",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.engineAsks": {
+      "text": "{engine} ne montre pas à Murage quels outils il utilise, donc Sans limites demande toujours ici. Fuigo, Claude, Codex, Gemini et Grok les montrent.",
+      "en": "{engine} doesn't show Murage which tools it uses, so No limits still asks here. Fuigo, Claude, Codex, Gemini and Grok don't.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:noLimits.v1.switchToFuigo": {
+      "text": "Passer à Fuigo",
+      "en": "Switch to Fuigo",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:runtimeError.engineKind.session_storage": {
+      "text": "Le moteur n’a pas pu lire ni écrire ses propres fichiers de session. Vérifie l’espace disque disponible et les autorisations de son dossier, puis réessaie.",
+      "en": "The engine could not read or write its own session files. Check available disk space and the engine's folder permissions, then retry.",
+      "verdict": "pass",
+      "note": "Wording is available disk space, in plain words, no banned words."
+    },
+    "fr:whatsapp.status.ingress": {
+      "text": "Un message WhatsApp n’a pas pu être conservé. Vérifie l’espace disque disponible.",
+      "en": "A WhatsApp message could not be kept. Check available disk space.",
+      "verdict": "pass",
+      "note": "Wording is available disk space, in plain words, no banned words."
+    },
+    "fr:ux.l1.why.outsideContent": {
+      "text": "Cette discussion a lu du contenu extérieur, donc Murage demande avant de lancer ceci.",
+      "en": "This chat read outside content, so Murage asks before running this.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "fr:ux.l1.level.unlimitedDetail": {
+      "text": "Dans les conversations que tu lances, exécute commandes et outils sans demander, y compris lire et envoyer tes clés. Il demande encore avant un effacement qu'il peut lire, avant tout ce que tes propres règles de refus nomment, et quand une commande est coupée ou manquante. Après qu'un chat a lu du contenu venant de l'extérieur, il demande aussi avant les commandes qui peuvent exécuter du code. Un fichier script peut encore s'exécuter sans être lu.",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "fr:ux.l1.confirm.unlimitedBody": {
+      "text": "Dans les conversations que tu lances, {level} permet à {bot} d'exécuter commandes et outils sans demander, y compris lire et envoyer tes clés. Il demande encore avant un effacement qu'il peut lire, avant tout ce que tes propres règles de refus nomment, et quand une commande est coupée ou manquante. Après qu'un chat a lu du contenu venant de l'extérieur, il demande aussi avant les commandes qui peuvent exécuter du code. Un fichier script peut encore s'exécuter sans être lu. Les routines et les messages de canal gardent leurs propres règles.",
+      "en": "In conversations you start, {level} lets {bot} run commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. Routines and channel messages keep their own rules.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "fr:ux.lcopyb.level.unlimitedHere": {
+      "text": "Dans les conversations que tu lances, exécute commandes et outils sans demander, y compris lire et envoyer tes clés. Il demande encore avant un effacement qu'il peut lire, avant tout ce que tes propres règles de refus nomment, et quand une commande est coupée ou manquante. Après qu'un chat a lu du contenu venant de l'extérieur, il demande aussi avant les commandes qui peuvent exécuter du code. Un fichier script peut encore s'exécuter sans être lu. Ça inclut cet ordinateur. La publication, les paiements dans le navigateur et les nouveaux destinataires d'e-mail gardent leurs propres approbations. Les messages des autres, les autres bots, les liens déclencheurs d'autres apps et tes messages de canal gardent les cartes qu'ils ont aujourd'hui. Une routine s'exécute à ce niveau ou au sien, le plus bas des deux, et garde ses cartes.",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. That includes this computer. Publishing, browser payments and new email recipients keep their own approvals. Everyone else's messages, other bots, trigger links from other apps and your channel messages keep the cards they have now. A routine runs at this level or its own, whichever is lower, and keeps its cards.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "fr:ux.lcopyb.level.unlimited": {
+      "text": "Dans les conversations que tu lances, exécute commandes et outils sans demander, y compris lire et envoyer tes clés. Il demande encore avant un effacement qu'il peut lire, avant tout ce que tes propres règles de refus nomment, et quand une commande est coupée ou manquante. Après qu'un chat a lu du contenu venant de l'extérieur, il demande aussi avant les commandes qui peuvent exécuter du code. Un fichier script peut encore s'exécuter sans être lu. La publication, les paiements dans le navigateur et les nouveaux destinataires d'e-mail gardent leurs propres approbations. Les messages des autres, les autres bots, les liens déclencheurs d'autres apps et tes messages de canal gardent les cartes qu'ils ont aujourd'hui. Une routine s'exécute à ce niveau ou au sien, le plus bas des deux, et garde ses cartes.",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. Publishing, browser payments and new email recipients keep their own approvals. Everyone else's messages, other bots, trigger links from other apps and your channel messages keep the cards they have now. A routine runs at this level or its own, whichever is lower, and keeps its cards.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "hi:noLimits.v1.warning": {
+      "text": "कोई सीमा नहीं स्तर आपके कहे काम बिना रुके पूछे चलाता है, वह कमांड भी जिसे Murage पूरा नहीं पढ़ सकता। यह फिर भी पूछता है जब कोई मिटाने वाली कमांड सादे शब्दों में दिखे, और जब आपके अपने रोक नियम किसी चीज़ का नाम लें। जैसे ही कोई चैट बाहर से कुछ पढ़ती है, जैसे वेब पेज, खोज, ईमेल, डाउनलोड, क्लोन किया प्रोजेक्ट, खोला गया आर्काइव, पैकेज इंस्टॉल, किसी दूसरे व्यक्ति के शब्द या किसी दूसरे बॉट का जवाब, Murage उस चैट के बाकी हिस्से में कोड चला सकने वाली हर कमांड से पहले पूछता है। जो कमांड सिर्फ़ पढ़ती और दिखाती हैं, वे चलती रहती हैं।",
+      "en": "No limits runs what you ask without stopping to ask you, even a command Murage cannot read in full. It still asks before a wipe it can see in plain words and before anything your own deny rules name. Once a chat reads something from outside, such as a web page, a search, an email, a download, a cloned project, an unpacked archive, a package install, another person's words or another bot's reply, Murage asks before each command that can run code for the rest of that chat. Commands that only read and print keep running.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.outsideNote": {
+      "text": "इस चैट ने बाहर की सामग्री पढ़ी ({source}), इसलिए Murage इसे चलाने से पहले पूछता है। चलाने के लिए अनुमति दें।",
+      "en": "This chat read outside content ({source}), so Murage asks before running this. Allow to run it.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.callOutside": {
+      "text": "इस चैट ने पहले बाहर की सामग्री पढ़ी ({source})।",
+      "en": "Earlier, this chat read outside content ({source}).",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.callOutsideUnnamed": {
+      "text": "इस चैट ने पहले बाहर की सामग्री पढ़ी।",
+      "en": "Earlier, this chat read outside content.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.openclaw": {
+      "text": "यह बॉट OpenClaw पर चलता है, जो Murage से पहले पूछे बिना कमांड चलाता है। कोई सीमा नहीं स्तर पर यह वैसा ही रहता है, तब भी जब चैट बाहर की सामग्री पढ़ ले।",
+      "en": "This bot runs on OpenClaw, which runs commands without asking Murage first. At No limits that stays as it is, even after the chat reads outside content.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.windows": {
+      "text": "जिन कमांड को Murage पूरा नहीं पढ़ सकता, उन्हें बिना पूछे चलाना bash और zsh शेल पर लागू होता है; Windows पर PowerShell और cmd कमांड से पहले Murage आज की तरह पूछता रहता है।",
+      "en": "Running commands Murage cannot read in full without asking applies to bash and zsh shells; on Windows, Murage keeps asking before PowerShell and cmd commands as it does today.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.source.webPage": {
+      "text": "वेब पेज",
+      "en": "web page",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.source.webSearch": {
+      "text": "वेब खोज",
+      "en": "web search",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.source.email": {
+      "text": "ईमेल",
+      "en": "email",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.source.anotherPerson": {
+      "text": "कोई दूसरा व्यक्ति",
+      "en": "another person",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.source.anotherBot": {
+      "text": "कोई दूसरा बॉट",
+      "en": "another bot",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.source.browserPage": {
+      "text": "ब्राउज़र पेज",
+      "en": "browser page",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.source.outsideTool": {
+      "text": "बाहरी टूल",
+      "en": "outside tool",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.source.downloadedFile": {
+      "text": "डाउनलोड की गई फ़ाइल",
+      "en": "downloaded file",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.source.networkCommand": {
+      "text": "नेटवर्क कमांड",
+      "en": "network command",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.source.packageInstall": {
+      "text": "पैकेज इंस्टॉल",
+      "en": "package install",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.source.git": {
+      "text": "git",
+      "en": "git",
+      "verdict": "pass",
+      "note": "Source label. git is the tool name and stays as is; archive is the same word in French; both are pinned in same-as-english.json."
+    },
+    "hi:noLimits.v1.source.archive": {
+      "text": "आर्काइव",
+      "en": "archive",
+      "verdict": "pass",
+      "note": "Source label. git is the tool name and stays as is; archive is the same word in French; both are pinned in same-as-english.json."
+    },
+    "hi:noLimits.v1.source.interpreter": {
+      "text": "इंटरप्रेटर",
+      "en": "interpreter",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.source.helper": {
+      "text": "हेल्पर",
+      "en": "helper",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.source.earlierTurn": {
+      "text": "पिछला टर्न",
+      "en": "earlier turn",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.source.earlierSession": {
+      "text": "पिछला सत्र",
+      "en": "earlier session",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.source.memory": {
+      "text": "मेमोरी",
+      "en": "memory",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.source.clonedFolder": {
+      "text": "क्लोन किया फ़ोल्डर",
+      "en": "cloned folder",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.source.notChecked": {
+      "text": "जाँचा नहीं गया",
+      "en": "not checked",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.engineAsks": {
+      "text": "{engine} Murage को नहीं दिखाता कि वह कौन से टूल इस्तेमाल करता है, इसलिए कोई सीमा नहीं स्तर यहाँ अब भी पूछता है। Fuigo, Claude, Codex, Gemini और Grok दिखाते हैं।",
+      "en": "{engine} doesn't show Murage which tools it uses, so No limits still asks here. Fuigo, Claude, Codex, Gemini and Grok don't.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:noLimits.v1.switchToFuigo": {
+      "text": "Fuigo पर जाएँ",
+      "en": "Switch to Fuigo",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:runtimeError.engineKind.session_storage": {
+      "text": "इंजन अपनी ही सत्र फ़ाइलें पढ़ या लिख नहीं सका। डिस्क की उपलब्ध जगह और उसके फ़ोल्डर की अनुमतियाँ जाँचें, फिर दोबारा कोशिश करें।",
+      "en": "The engine could not read or write its own session files. Check available disk space and the engine's folder permissions, then retry.",
+      "verdict": "pass",
+      "note": "Wording is available disk space, in plain words, no banned words."
+    },
+    "hi:whatsapp.status.ingress": {
+      "text": "एक WhatsApp संदेश सहेजा नहीं जा सका। डिस्क में उपलब्ध जगह जाँचें।",
+      "en": "A WhatsApp message could not be kept. Check available disk space.",
+      "verdict": "pass",
+      "note": "Wording is available disk space, in plain words, no banned words."
+    },
+    "hi:ux.l1.why.outsideContent": {
+      "text": "इस चैट ने बाहरी सामग्री पढ़ी है, इसलिए इसे चलाने से पहले Murage पूछता है।",
+      "en": "This chat read outside content, so Murage asks before running this.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "hi:ux.l1.level.unlimitedDetail": {
+      "text": "आपकी शुरू की बातचीतों में कमांड और टूल बिना पूछे चलाता है, इसमें आपकी कुंजियाँ पढ़ना और भेजना भी शामिल है। मिटाने वाली ऐसी कमांड से पहले जिसे वह पढ़ सकता है, आपके अपने रोक नियम जिसका नाम लें उससे पहले, और जब कमांड कटी हुई हो या गायब हो, वह अब भी पूछता है। चैट के बाहर की सामग्री पढ़ लेने के बाद वह कोड चला सकने वाली कमांड से पहले भी पूछता है। स्क्रिप्ट फ़ाइल बिना पढ़े भी चल सकती है।",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "hi:ux.l1.confirm.unlimitedBody": {
+      "text": "आपकी शुरू की बातचीतों में {level} पर {bot} कमांड और टूल बिना पूछे चलाता है, इसमें आपकी कुंजियाँ पढ़ना और भेजना भी शामिल है। मिटाने वाली ऐसी कमांड से पहले जिसे वह पढ़ सकता है, आपके अपने रोक नियम जिसका नाम लें उससे पहले, और जब कमांड कटी हुई हो या गायब हो, वह अब भी पूछता है। चैट के बाहर की सामग्री पढ़ लेने के बाद वह कोड चला सकने वाली कमांड से पहले भी पूछता है। स्क्रिप्ट फ़ाइल बिना पढ़े भी चल सकती है। रूटीन और चैनल संदेश अपने नियम रखते हैं।",
+      "en": "In conversations you start, {level} lets {bot} run commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. Routines and channel messages keep their own rules.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "hi:ux.lcopyb.level.unlimitedHere": {
+      "text": "आपकी शुरू की बातचीतों में कमांड और टूल बिना पूछे चलाता है, इसमें आपकी कुंजियाँ पढ़ना और भेजना भी शामिल है। मिटाने वाली ऐसी कमांड से पहले जिसे वह पढ़ सकता है, आपके अपने रोक नियम जिसका नाम लें उससे पहले, और जब कमांड कटी हुई हो या गायब हो, वह अब भी पूछता है। चैट के बाहर की सामग्री पढ़ लेने के बाद वह कोड चला सकने वाली कमांड से पहले भी पूछता है। स्क्रिप्ट फ़ाइल बिना पढ़े भी चल सकती है। इसमें यह कंप्यूटर भी शामिल है। प्रकाशित करने, ब्राउज़र में भुगतान करने और नए प्राप्तकर्ताओं को ईमेल भेजने के लिए अलग मंज़ूरी अब भी ज़रूरी है। बाकी सबके संदेश, दूसरे बॉट, दूसरे ऐप के ट्रिगर लिंक और आपके चैनल संदेश अपने मौजूदा कार्ड रखते हैं। रूटीन इस स्तर या अपने स्तर में से जो कम हो उस पर चलता है, और अपने कार्ड रखता है।",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. That includes this computer. Publishing, browser payments and new email recipients keep their own approvals. Everyone else's messages, other bots, trigger links from other apps and your channel messages keep the cards they have now. A routine runs at this level or its own, whichever is lower, and keeps its cards.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "hi:ux.lcopyb.level.unlimited": {
+      "text": "आपकी शुरू की बातचीतों में कमांड और टूल बिना पूछे चलाता है, इसमें आपकी कुंजियाँ पढ़ना और भेजना भी शामिल है। मिटाने वाली ऐसी कमांड से पहले जिसे वह पढ़ सकता है, आपके अपने रोक नियम जिसका नाम लें उससे पहले, और जब कमांड कटी हुई हो या गायब हो, वह अब भी पूछता है। चैट के बाहर की सामग्री पढ़ लेने के बाद वह कोड चला सकने वाली कमांड से पहले भी पूछता है। स्क्रिप्ट फ़ाइल बिना पढ़े भी चल सकती है। प्रकाशित करने, ब्राउज़र में भुगतान करने और नए प्राप्तकर्ताओं को ईमेल भेजने के लिए अलग मंज़ूरी अब भी ज़रूरी है। बाकी सबके संदेश, दूसरे बॉट, दूसरे ऐप के ट्रिगर लिंक और आपके चैनल संदेश अपने मौजूदा कार्ड रखते हैं। रूटीन इस स्तर या अपने स्तर में से जो कम हो उस पर चलता है, और अपने कार्ड रखता है।",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. Publishing, browser payments and new email recipients keep their own approvals. Everyone else's messages, other bots, trigger links from other apps and your channel messages keep the cards they have now. A routine runs at this level or its own, whichever is lower, and keeps its cards.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "ja:noLimits.v1.warning": {
+      "text": "制限なしは、Murage が全体を読めないコマンドも含め、頼まれたことを確認せずに実行します。ただし、そのまま読める形の消去と、あなた自身の拒否ルールが指定するものの前では確認します。チャットが外部のもの (ウェブページ、検索、メール、ダウンロード、クローンしたプロジェクト、展開したアーカイブ、パッケージのインストール、他の人の言葉、他のボットの返信など) を読むと、そのチャットの残りでは、コードを実行できるコマンドごとに Murage が確認します。読んで表示するだけのコマンドはそのまま実行されます。",
+      "en": "No limits runs what you ask without stopping to ask you, even a command Murage cannot read in full. It still asks before a wipe it can see in plain words and before anything your own deny rules name. Once a chat reads something from outside, such as a web page, a search, an email, a download, a cloned project, an unpacked archive, a package install, another person's words or another bot's reply, Murage asks before each command that can run code for the rest of that chat. Commands that only read and print keep running.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.outsideNote": {
+      "text": "このチャットは外部の内容 ({source}) を読んだため、実行する前に Murage が確認します。実行するには許可してください。",
+      "en": "This chat read outside content ({source}), so Murage asks before running this. Allow to run it.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.callOutside": {
+      "text": "このチャットでは、すでに外部の内容 ({source}) を読みました。",
+      "en": "Earlier, this chat read outside content ({source}).",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.callOutsideUnnamed": {
+      "text": "このチャットでは、すでに外部の内容を読みました。",
+      "en": "Earlier, this chat read outside content.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.openclaw": {
+      "text": "このボットは OpenClaw で動いており、OpenClaw は Murage に確認せずにコマンドを実行します。制限なしでは、チャットが外部の内容を読んだ後もそのままです。",
+      "en": "This bot runs on OpenClaw, which runs commands without asking Murage first. At No limits that stays as it is, even after the chat reads outside content.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.windows": {
+      "text": "Murage が全体を読めないコマンドを確認せずに実行するのは bash と zsh のシェルだけで、Windows の PowerShell と cmd のコマンドでは今と同じように Murage が確認します。",
+      "en": "Running commands Murage cannot read in full without asking applies to bash and zsh shells; on Windows, Murage keeps asking before PowerShell and cmd commands as it does today.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.source.webPage": {
+      "text": "ウェブページ",
+      "en": "web page",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.source.webSearch": {
+      "text": "ウェブ検索",
+      "en": "web search",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.source.email": {
+      "text": "メール",
+      "en": "email",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.source.anotherPerson": {
+      "text": "他の人",
+      "en": "another person",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.source.anotherBot": {
+      "text": "他のボット",
+      "en": "another bot",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.source.browserPage": {
+      "text": "ブラウザのページ",
+      "en": "browser page",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.source.outsideTool": {
+      "text": "外部ツール",
+      "en": "outside tool",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.source.downloadedFile": {
+      "text": "ダウンロードしたファイル",
+      "en": "downloaded file",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.source.networkCommand": {
+      "text": "ネットワークコマンド",
+      "en": "network command",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.source.packageInstall": {
+      "text": "パッケージのインストール",
+      "en": "package install",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.source.git": {
+      "text": "git",
+      "en": "git",
+      "verdict": "pass",
+      "note": "Source label. git is the tool name and stays as is; archive is the same word in French; both are pinned in same-as-english.json."
+    },
+    "ja:noLimits.v1.source.archive": {
+      "text": "アーカイブ",
+      "en": "archive",
+      "verdict": "pass",
+      "note": "Source label. git is the tool name and stays as is; archive is the same word in French; both are pinned in same-as-english.json."
+    },
+    "ja:noLimits.v1.source.interpreter": {
+      "text": "インタープリター",
+      "en": "interpreter",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.source.helper": {
+      "text": "ヘルパー",
+      "en": "helper",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.source.earlierTurn": {
+      "text": "以前のターン",
+      "en": "earlier turn",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.source.earlierSession": {
+      "text": "以前のセッション",
+      "en": "earlier session",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.source.memory": {
+      "text": "メモリー",
+      "en": "memory",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.source.clonedFolder": {
+      "text": "クローンしたフォルダー",
+      "en": "cloned folder",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.source.notChecked": {
+      "text": "未確認",
+      "en": "not checked",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.engineAsks": {
+      "text": "{engine} はどのツールを使うかを Murage に見せないため、制限なしでもここでは確認します。Fuigo、Claude、Codex、Gemini、Grok は見せます。",
+      "en": "{engine} doesn't show Murage which tools it uses, so No limits still asks here. Fuigo, Claude, Codex, Gemini and Grok don't.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:noLimits.v1.switchToFuigo": {
+      "text": "Fuigo に切り替える",
+      "en": "Switch to Fuigo",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:runtimeError.engineKind.session_storage": {
+      "text": "エンジンが自身のセッションファイルを読み書きできませんでした。ディスクの空き容量とフォルダの権限を確認してから再試行してください。",
+      "en": "The engine could not read or write its own session files. Check available disk space and the engine's folder permissions, then retry.",
+      "verdict": "pass",
+      "note": "Wording is available disk space, in plain words, no banned words."
+    },
+    "ja:whatsapp.status.ingress": {
+      "text": "WhatsApp のメッセージを保存できませんでした。ディスクの空き容量を確認してください。",
+      "en": "A WhatsApp message could not be kept. Check available disk space.",
+      "verdict": "pass",
+      "note": "Wording is available disk space, in plain words, no banned words."
+    },
+    "ja:ux.l1.why.outsideContent": {
+      "text": "このチャットは外部のコンテンツを読み込んだため、Murageは実行前に確認します。",
+      "en": "This chat read outside content, so Murage asks before running this.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "ja:ux.l1.level.unlimitedDetail": {
+      "text": "あなたが始めた会話では、コマンドやツールを確認なしで実行します。キーの読み取りと送信も含みます。読み取れる消去操作の前、あなた自身の拒否ルールが指定するものの前、コマンドが途中で切れている場合や欠けている場合には、引き続き確認します。チャットが外部のコンテンツを読んだ後は、コードを実行できるコマンドの前にも確認します。スクリプトファイルは、読み取らずに実行されることがあります。",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "ja:ux.l1.confirm.unlimitedBody": {
+      "text": "あなたが始めた会話では、{level}にすると、{bot}はコマンドやツールを確認なしで実行します。キーの読み取りと送信も含みます。読み取れる消去操作の前、あなた自身の拒否ルールが指定するものの前、コマンドが途中で切れている場合や欠けている場合には、引き続き確認します。チャットが外部のコンテンツを読んだ後は、コードを実行できるコマンドの前にも確認します。スクリプトファイルは、読み取らずに実行されることがあります。ルーティンとチャンネルのメッセージは、それぞれのルールのままです。",
+      "en": "In conversations you start, {level} lets {bot} run commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. Routines and channel messages keep their own rules.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "ja:ux.lcopyb.level.unlimitedHere": {
+      "text": "あなたが始めた会話では、コマンドやツールを確認なしで実行します。キーの読み取りと送信も含みます。読み取れる消去操作の前、あなた自身の拒否ルールが指定するものの前、コマンドが途中で切れている場合や欠けている場合には、引き続き確認します。チャットが外部のコンテンツを読んだ後は、コードを実行できるコマンドの前にも確認します。スクリプトファイルは、読み取らずに実行されることがあります。このコンピューターも対象です。公開、ブラウザでの支払い、初めての宛先へのメールは、それぞれの承認が残ります。ほかの人のメッセージ、他のボット、他のアプリからのトリガーリンク、チャンネルからのあなたのメッセージには、今のカードがそのまま表示されます。ルーティンは、このレベルとルーティン自身のレベルの低いほうで実行され、カードも残ります。",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. That includes this computer. Publishing, browser payments and new email recipients keep their own approvals. Everyone else's messages, other bots, trigger links from other apps and your channel messages keep the cards they have now. A routine runs at this level or its own, whichever is lower, and keeps its cards.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "ja:ux.lcopyb.level.unlimited": {
+      "text": "あなたが始めた会話では、コマンドやツールを確認なしで実行します。キーの読み取りと送信も含みます。読み取れる消去操作の前、あなた自身の拒否ルールが指定するものの前、コマンドが途中で切れている場合や欠けている場合には、引き続き確認します。チャットが外部のコンテンツを読んだ後は、コードを実行できるコマンドの前にも確認します。スクリプトファイルは、読み取らずに実行されることがあります。公開、ブラウザでの支払い、初めての宛先へのメールは、それぞれの承認が残ります。ほかの人のメッセージ、他のボット、他のアプリからのトリガーリンク、チャンネルからのあなたのメッセージには、今のカードがそのまま表示されます。ルーティンは、このレベルとルーティン自身のレベルの低いほうで実行され、カードも残ります。",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. Publishing, browser payments and new email recipients keep their own approvals. Everyone else's messages, other bots, trigger links from other apps and your channel messages keep the cards they have now. A routine runs at this level or its own, whichever is lower, and keeps its cards.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "pt-br:noLimits.v1.warning": {
+      "text": "Sem limites executa o que você pede sem parar para perguntar, até um comando que o Murage não consegue ler por inteiro. Ele ainda pergunta antes de um apagamento que consiga ver em texto claro e antes de tudo o que suas próprias regras de bloqueio nomeiam. Quando um chat lê algo de fora, como uma página da web, uma busca, um e-mail, um download, um projeto clonado, um arquivo compactado aberto, uma instalação de pacote, as palavras de outra pessoa ou a resposta de outro bot, o Murage pergunta antes de cada comando que possa executar código pelo resto desse chat. Comandos que só leem e mostram continuam rodando.",
+      "en": "No limits runs what you ask without stopping to ask you, even a command Murage cannot read in full. It still asks before a wipe it can see in plain words and before anything your own deny rules name. Once a chat reads something from outside, such as a web page, a search, an email, a download, a cloned project, an unpacked archive, a package install, another person's words or another bot's reply, Murage asks before each command that can run code for the rest of that chat. Commands that only read and print keep running.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.outsideNote": {
+      "text": "Este chat leu conteúdo de fora ({source}), então o Murage pergunta antes de executar isto. Permita para executar.",
+      "en": "This chat read outside content ({source}), so Murage asks before running this. Allow to run it.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.callOutside": {
+      "text": "Este chat já leu conteúdo de fora ({source}).",
+      "en": "Earlier, this chat read outside content ({source}).",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.callOutsideUnnamed": {
+      "text": "Este chat já leu conteúdo de fora.",
+      "en": "Earlier, this chat read outside content.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.openclaw": {
+      "text": "Este bot roda no OpenClaw, que executa comandos sem perguntar antes ao Murage. Em Sem limites isso continua assim, mesmo depois que o chat lê conteúdo de fora.",
+      "en": "This bot runs on OpenClaw, which runs commands without asking Murage first. At No limits that stays as it is, even after the chat reads outside content.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.windows": {
+      "text": "Executar sem perguntar os comandos que o Murage não consegue ler por inteiro vale para shells bash e zsh; no Windows, o Murage continua perguntando antes de comandos do PowerShell e do cmd, como hoje.",
+      "en": "Running commands Murage cannot read in full without asking applies to bash and zsh shells; on Windows, Murage keeps asking before PowerShell and cmd commands as it does today.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.source.webPage": {
+      "text": "página da web",
+      "en": "web page",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.source.webSearch": {
+      "text": "busca na web",
+      "en": "web search",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.source.email": {
+      "text": "e-mail",
+      "en": "email",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.source.anotherPerson": {
+      "text": "outra pessoa",
+      "en": "another person",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.source.anotherBot": {
+      "text": "outro bot",
+      "en": "another bot",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.source.browserPage": {
+      "text": "página do navegador",
+      "en": "browser page",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.source.outsideTool": {
+      "text": "ferramenta externa",
+      "en": "outside tool",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.source.downloadedFile": {
+      "text": "arquivo baixado",
+      "en": "downloaded file",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.source.networkCommand": {
+      "text": "comando de rede",
+      "en": "network command",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.source.packageInstall": {
+      "text": "instalação de pacote",
+      "en": "package install",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.source.git": {
+      "text": "git",
+      "en": "git",
+      "verdict": "pass",
+      "note": "Source label. git is the tool name and stays as is; archive is the same word in French; both are pinned in same-as-english.json."
+    },
+    "pt-br:noLimits.v1.source.archive": {
+      "text": "arquivo compactado",
+      "en": "archive",
+      "verdict": "pass",
+      "note": "Source label. git is the tool name and stays as is; archive is the same word in French; both are pinned in same-as-english.json."
+    },
+    "pt-br:noLimits.v1.source.interpreter": {
+      "text": "interpretador",
+      "en": "interpreter",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.source.helper": {
+      "text": "auxiliar",
+      "en": "helper",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.source.earlierTurn": {
+      "text": "turno anterior",
+      "en": "earlier turn",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.source.earlierSession": {
+      "text": "sessão anterior",
+      "en": "earlier session",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.source.memory": {
+      "text": "memória",
+      "en": "memory",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.source.clonedFolder": {
+      "text": "pasta clonada",
+      "en": "cloned folder",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.source.notChecked": {
+      "text": "não verificado",
+      "en": "not checked",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.engineAsks": {
+      "text": "{engine} não mostra ao Murage quais ferramentas usa, então Sem limites ainda pergunta aqui. Fuigo, Claude, Codex, Gemini e Grok mostram.",
+      "en": "{engine} doesn't show Murage which tools it uses, so No limits still asks here. Fuigo, Claude, Codex, Gemini and Grok don't.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:noLimits.v1.switchToFuigo": {
+      "text": "Mudar para o Fuigo",
+      "en": "Switch to Fuigo",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:runtimeError.engineKind.session_storage": {
+      "text": "O mecanismo não conseguiu ler nem gravar os próprios arquivos de sessão. Verifique o espaço disponível em disco e as permissões da pasta dele e tente novamente.",
+      "en": "The engine could not read or write its own session files. Check available disk space and the engine's folder permissions, then retry.",
+      "verdict": "pass",
+      "note": "Wording is available disk space, in plain words, no banned words."
+    },
+    "pt-br:whatsapp.status.ingress": {
+      "text": "Uma mensagem do WhatsApp não pôde ser salva. Confira o espaço disponível em disco.",
+      "en": "A WhatsApp message could not be kept. Check available disk space.",
+      "verdict": "pass",
+      "note": "Wording is available disk space, in plain words, no banned words."
+    },
+    "pt-br:ux.l1.why.outsideContent": {
+      "text": "Este chat leu conteúdo externo, então o Murage pergunta antes de executar isto.",
+      "en": "This chat read outside content, so Murage asks before running this.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "pt-br:ux.l1.level.unlimitedDetail": {
+      "text": "Nas conversas que você inicia, executa comandos e ferramentas sem perguntar, inclusive ler e enviar suas chaves. Ainda pergunta antes de um apagamento que consegue ler, antes de tudo o que suas próprias regras de bloqueio nomeiam e quando um comando chega cortado ou ausente. Depois que um chat lê conteúdo de fora, também pergunta antes de comandos que podem executar código. Um arquivo de script ainda pode rodar sem ser lido.",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "pt-br:ux.l1.confirm.unlimitedBody": {
+      "text": "Nas conversas que você inicia, {level} deixa {bot} executar comandos e ferramentas sem perguntar, inclusive ler e enviar suas chaves. Ainda pergunta antes de um apagamento que consegue ler, antes de tudo o que suas próprias regras de bloqueio nomeiam e quando um comando chega cortado ou ausente. Depois que um chat lê conteúdo de fora, também pergunta antes de comandos que podem executar código. Um arquivo de script ainda pode rodar sem ser lido. Rotinas e mensagens de canal mantêm as próprias regras.",
+      "en": "In conversations you start, {level} lets {bot} run commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. Routines and channel messages keep their own rules.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "pt-br:ux.lcopyb.level.unlimitedHere": {
+      "text": "Nas conversas que você inicia, executa comandos e ferramentas sem perguntar, inclusive ler e enviar suas chaves. Ainda pergunta antes de um apagamento que consegue ler, antes de tudo o que suas próprias regras de bloqueio nomeiam e quando um comando chega cortado ou ausente. Depois que um chat lê conteúdo de fora, também pergunta antes de comandos que podem executar código. Um arquivo de script ainda pode rodar sem ser lido. Isso inclui este computador. Publicação, pagamentos no navegador e novos destinatários de e-mail mantêm as próprias aprovações. As mensagens de outras pessoas, outros bots, links de gatilho de outros apps e suas mensagens de canal mantêm os cartões que têm hoje. Uma rotina roda neste nível ou no dela, o que for menor, e mantém os cartões.",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. That includes this computer. Publishing, browser payments and new email recipients keep their own approvals. Everyone else's messages, other bots, trigger links from other apps and your channel messages keep the cards they have now. A routine runs at this level or its own, whichever is lower, and keeps its cards.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "pt-br:ux.lcopyb.level.unlimited": {
+      "text": "Nas conversas que você inicia, executa comandos e ferramentas sem perguntar, inclusive ler e enviar suas chaves. Ainda pergunta antes de um apagamento que consegue ler, antes de tudo o que suas próprias regras de bloqueio nomeiam e quando um comando chega cortado ou ausente. Depois que um chat lê conteúdo de fora, também pergunta antes de comandos que podem executar código. Um arquivo de script ainda pode rodar sem ser lido. Publicação, pagamentos no navegador e novos destinatários de e-mail mantêm as próprias aprovações. As mensagens de outras pessoas, outros bots, links de gatilho de outros apps e suas mensagens de canal mantêm os cartões que têm hoje. Uma rotina roda neste nível ou no dela, o que for menor, e mantém os cartões.",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. Publishing, browser payments and new email recipients keep their own approvals. Everyone else's messages, other bots, trigger links from other apps and your channel messages keep the cards they have now. A routine runs at this level or its own, whichever is lower, and keeps its cards.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "zh:noLimits.v1.warning": {
+      "text": "无限制会直接执行你要求的内容，不停下来询问，即使是 Murage 无法完整读懂的命令。它仍会在看到明文写出的清空操作之前，以及在你自己的拒绝规则列出的内容之前询问。一旦某个聊天读取了外部内容，例如网页、搜索、电子邮件、下载、克隆的项目、解压的压缩包、软件包安装、其他人的话或其他机器人的回复，在该聊天剩余的时间里，Murage 会在每条可以运行代码的命令之前询问。只读取和显示内容的命令会继续运行。",
+      "en": "No limits runs what you ask without stopping to ask you, even a command Murage cannot read in full. It still asks before a wipe it can see in plain words and before anything your own deny rules name. Once a chat reads something from outside, such as a web page, a search, an email, a download, a cloned project, an unpacked archive, a package install, another person's words or another bot's reply, Murage asks before each command that can run code for the rest of that chat. Commands that only read and print keep running.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.outsideNote": {
+      "text": "此聊天读取了外部内容（{source}），所以 Murage 在运行之前会询问。允许即可运行。",
+      "en": "This chat read outside content ({source}), so Murage asks before running this. Allow to run it.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.callOutside": {
+      "text": "此聊天此前读取了外部内容（{source}）。",
+      "en": "Earlier, this chat read outside content ({source}).",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.callOutsideUnnamed": {
+      "text": "此聊天此前读取了外部内容。",
+      "en": "Earlier, this chat read outside content.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.openclaw": {
+      "text": "此机器人运行在 OpenClaw 上，OpenClaw 执行命令前不会先询问 Murage。在无限制下保持不变，即使聊天读取了外部内容之后也是如此。",
+      "en": "This bot runs on OpenClaw, which runs commands without asking Murage first. At No limits that stays as it is, even after the chat reads outside content.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.windows": {
+      "text": "不经询问就运行 Murage 无法完整读懂的命令，仅适用于 bash 和 zsh shell；在 Windows 上，Murage 仍会像现在一样在 PowerShell 和 cmd 命令之前询问。",
+      "en": "Running commands Murage cannot read in full without asking applies to bash and zsh shells; on Windows, Murage keeps asking before PowerShell and cmd commands as it does today.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.source.webPage": {
+      "text": "网页",
+      "en": "web page",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.source.webSearch": {
+      "text": "网络搜索",
+      "en": "web search",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.source.email": {
+      "text": "电子邮件",
+      "en": "email",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.source.anotherPerson": {
+      "text": "其他人",
+      "en": "another person",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.source.anotherBot": {
+      "text": "其他机器人",
+      "en": "another bot",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.source.browserPage": {
+      "text": "浏览器页面",
+      "en": "browser page",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.source.outsideTool": {
+      "text": "外部工具",
+      "en": "outside tool",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.source.downloadedFile": {
+      "text": "下载的文件",
+      "en": "downloaded file",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.source.networkCommand": {
+      "text": "网络命令",
+      "en": "network command",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.source.packageInstall": {
+      "text": "软件包安装",
+      "en": "package install",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.source.git": {
+      "text": "git",
+      "en": "git",
+      "verdict": "pass",
+      "note": "Source label. git is the tool name and stays as is; archive is the same word in French; both are pinned in same-as-english.json."
+    },
+    "zh:noLimits.v1.source.archive": {
+      "text": "压缩包",
+      "en": "archive",
+      "verdict": "pass",
+      "note": "Source label. git is the tool name and stays as is; archive is the same word in French; both are pinned in same-as-english.json."
+    },
+    "zh:noLimits.v1.source.interpreter": {
+      "text": "解释器",
+      "en": "interpreter",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.source.helper": {
+      "text": "辅助程序",
+      "en": "helper",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.source.earlierTurn": {
+      "text": "之前的回合",
+      "en": "earlier turn",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.source.earlierSession": {
+      "text": "之前的会话",
+      "en": "earlier session",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.source.memory": {
+      "text": "记忆",
+      "en": "memory",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.source.clonedFolder": {
+      "text": "克隆的文件夹",
+      "en": "cloned folder",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.source.notChecked": {
+      "text": "未检查",
+      "en": "not checked",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.engineAsks": {
+      "text": "{engine} 不会向 Murage 显示它使用了哪些工具，所以无限制在这里仍会询问。Fuigo、Claude、Codex、Gemini 和 Grok 会显示。",
+      "en": "{engine} doesn't show Murage which tools it uses, so No limits still asks here. Fuigo, Claude, Codex, Gemini and Grok don't.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:noLimits.v1.switchToFuigo": {
+      "text": "切换到 Fuigo",
+      "en": "Switch to Fuigo",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:runtimeError.engineKind.session_storage": {
+      "text": "引擎无法读写自己的会话文件。请检查磁盘可用空间和它的文件夹权限，然后重试。",
+      "en": "The engine could not read or write its own session files. Check available disk space and the engine's folder permissions, then retry.",
+      "verdict": "pass",
+      "note": "Wording is available disk space, in plain words, no banned words."
+    },
+    "zh:whatsapp.status.ingress": {
+      "text": "无法保存一条 WhatsApp 消息。请检查磁盘可用空间。",
+      "en": "A WhatsApp message could not be kept. Check available disk space.",
+      "verdict": "pass",
+      "note": "Wording is available disk space, in plain words, no banned words."
+    },
+    "zh:ux.l1.why.outsideContent": {
+      "text": "此聊天读取了外部内容，所以 Murage 会在运行前先问你。",
+      "en": "This chat read outside content, so Murage asks before running this.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour and the call site (outside-note.ts, OutsideEngineNote.tsx, FullAccessWarning.tsx): plain words, no em dash, no banned words, meaning matches."
+    },
+    "zh:ux.l1.level.unlimitedDetail": {
+      "text": "在你发起的对话中，运行命令和工具时不会询问，包括读取和发送你的密钥。在执行它能读懂的清空操作之前、在你自己的拒绝规则列出的内容之前，以及命令被截断或缺失时，仍会询问。聊天读取外部内容之后，在可以运行代码的命令之前也会询问。脚本文件仍可能在未读的情况下运行。",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "zh:ux.l1.confirm.unlimitedBody": {
+      "text": "在你发起的对话中，{level}会让{bot}运行命令和工具时不再询问，包括读取和发送你的密钥。在执行它能读懂的清空操作之前、在你自己的拒绝规则列出的内容之前，以及命令被截断或缺失时，仍会询问。聊天读取外部内容之后，在可以运行代码的命令之前也会询问。脚本文件仍可能在未读的情况下运行。例行任务和频道消息保持各自的规则。",
+      "en": "In conversations you start, {level} lets {bot} run commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. Routines and channel messages keep their own rules.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "zh:ux.lcopyb.level.unlimitedHere": {
+      "text": "在你发起的对话中，运行命令和工具时不再询问，包括读取和发送你的密钥。在执行它能读懂的清空操作之前、在你自己的拒绝规则列出的内容之前，以及命令被截断或缺失时，仍会询问。聊天读取外部内容之后，在可以运行代码的命令之前也会询问。脚本文件仍可能在未读的情况下运行。这也包括这台电脑。发布、浏览器支付和新的邮件收件人仍保留各自的审批。其他人的消息、其他机器人、其他应用的触发链接，以及你的频道消息，仍显示现有的卡片。例行任务按此级别和它自己的级别中较低的一个运行，并保留它的卡片。",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. That includes this computer. Publishing, browser payments and new email recipients keep their own approvals. Everyone else's messages, other bots, trigger links from other apps and your channel messages keep the cards they have now. A routine runs at this level or its own, whichever is lower, and keeps its cards.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    },
+    "zh:ux.lcopyb.level.unlimited": {
+      "text": "在你发起的对话中，运行命令和工具时不再询问，包括读取和发送你的密钥。在执行它能读懂的清空操作之前、在你自己的拒绝规则列出的内容之前，以及命令被截断或缺失时，仍会询问。聊天读取外部内容之后，在可以运行代码的命令之前也会询问。脚本文件仍可能在未读的情况下运行。发布、浏览器支付和新的邮件收件人仍保留各自的审批。其他人的消息、其他机器人、其他应用的触发链接，以及你的频道消息，仍显示现有的卡片。例行任务按此级别和它自己的级别中较低的一个运行，并保留它的卡片。",
+      "en": "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before anything your own deny rules name, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. Publishing, browser payments and new email recipients keep their own approvals. Everyone else's messages, other bots, trigger links from other apps and your channel messages keep the cards they have now. A routine runs at this level or its own, whichever is lower, and keeps its cards.",
+      "verdict": "pass",
+      "note": "Checked against the final No limits behaviour: it now names the wipe guard, the owner deny rules, a cut or missing command and the outside-content rule, and no longer says a command it cannot read in full always asks."
+    }
+  },
+  "files": {
+    "same-as-english.json": {
+      "text": "{\n  \"de:browserUnavailable.details\": \"45989de49fb7f66dfe17a8fc26f3a02c7abcd74f7e8e6cf9f39fa0e3775780df\",\n  \"de:chatHeader.findShortcut\": \"12aaa51aad3d0b795c86d67d0f5be15e691030ba3bb2e0a4b739dd9c921f4c16\",\n  \"de:chatLinks.github.commit\": \"82a9c46ffa4789945d9f2359d75891558ef6faa8dee09e4b25e4e0597704f5bd\",\n  \"de:chatLinks.github.issue\": \"48dc76dfa23ae03fea1372c5ed6c0e1bd62eaeca7bba6d804eb0afa87972f031\",\n  \"de:engines.cloud\": \"b977b950c1ae31e5aeb9ef778cc20a66fc034eb81e738e0206104b677962c465\",\n  \"de:err.plain.details\": \"45989de49fb7f66dfe17a8fc26f3a02c7abcd74f7e8e6cf9f39fa0e3775780df\",\n  \"de:filesWorkspace.filter.bot\": \"9e3fb291086b39e660660f2bf2810760ee764bd1ea596c4277494665c2eeca67\",\n  \"de:highlevel.title\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"de:imageLibrary.block.text\": \"71988c4d8e0803ba4519f0b2864c1331c14a1890bf8694e251379177bfedb5c3\",\n  \"de:imageLibrary.scope.workspace\": \"87bb59ba2f92f2a5a9f13e021fd58dd14ae5c065b1046146875e6e68d5ebc8b7\",\n  \"de:importGuard.whereNoLine\": \"63560a435427a4e5437381a252cff54d618f1da58dc57e1fd5362909da672ed6\",\n  \"de:learningScreen.recent.procedure.routine\": \"90c5c0b92def5bb0c771ee0423909bd06548627abf97716f6b501dad752ec36f\",\n  \"de:mcp.add.name\": \"dcd1d5223f73b3a965c07e3ff5dbee3eedcfedb806686a05b9b3868a2c3d6d50\",\n  \"de:mcp.row.details\": \"45989de49fb7f66dfe17a8fc26f3a02c7abcd74f7e8e6cf9f39fa0e3775780df\",\n  \"de:mcp.row.sourceLink\": \"90d326db726070816add45bb709d2a75db4731a4e9038b7014366f8603356247\",\n  \"de:memoryNeeds.filter\": \"638e249f4a15ebb84957da130701d138a6e06d88dceeaa2e6dcd91db70cc1381\",\n  \"de:memoryPeople.kindTeam\": \"5985039f106df054b43c3529139613bf7c2372937539f344c7c5ee47d00a0d63\",\n  \"de:nav.apps\": \"89dd748442c194857825848e1500abbbc5f52fb067ad27fb05dc9fb23eebba3b\",\n  \"de:notificationSettings.timeZonePlaceholder\": \"e8def32656206d2574e163cff4330221cbca79a584c6debd922546da0bb0ff74\",\n  \"de:procedureAdmissions.kindRoutine\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"de:project.team.label\": \"5985039f106df054b43c3529139613bf7c2372937539f344c7c5ee47d00a0d63\",\n  \"de:projects.board.aria\": \"4816cbfd74aa8297b9c9cdaae89e2f0d2ced6041e952dfcd114e01b4c82e9c6d\",\n  \"de:projects.board.bot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"de:projects.boardCard.details\": \"45989de49fb7f66dfe17a8fc26f3a02c7abcd74f7e8e6cf9f39fa0e3775780df\",\n  \"de:projects.common.tokens\": \"a039dfb9628b53ddaebcfe8ef0793e3fdf19867601295f00d192acef59050869\",\n  \"de:projects.new.budgetLegend\": \"8687555f210f4891dd76a3071530ccafc415e179b2866a9ab50ad620714673d7\",\n  \"de:projects.request.routine\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"de:projects.request.wake\": \"adc719587244723baf63cc93777b53f02f6cf19dd16ed3323daa34c80e9e126c\",\n  \"de:projects.tabs.board\": \"4816cbfd74aa8297b9c9cdaae89e2f0d2ced6041e952dfcd114e01b4c82e9c6d\",\n  \"de:projects.tabs.chat\": \"460b3a7da007b7af9d35bca54181dc91382263b2bf133ca214871ca1fed1fc1c\",\n  \"de:providerError.said.team\": \"f89a7d144a9ba182897efbbad0a6fc5e2d14d49419430e62dfbaf2f28951b081\",\n  \"de:settings.bot.browser.title\": \"d31de1a5c5c8ba2a210a167cf0d0dc2425c57ea7525f4b73a4b7ab934af79dfc\",\n  \"de:settings.bot.computer.cloud\": \"b977b950c1ae31e5aeb9ef778cc20a66fc034eb81e738e0206104b677962c465\",\n  \"de:settings.bot.computer.title\": \"76ed42d22129dc354362704eb4b54208041b68736f976932aada43bc0035f7c0\",\n  \"de:settings.bot.identity.name\": \"dcd1d5223f73b3a965c07e3ff5dbee3eedcfedb806686a05b9b3868a2c3d6d50\",\n  \"de:settings.group.app\": \"0d04bfeb7d64b71c74fc925cca93d683154e8cc7e6e5838faced498e34c9984d\",\n  \"de:settings.group.bots\": \"f17c0acbd8e50c780760bb7c6493264736305603acae6f076b1eecb0e26f5118\",\n  \"de:settings.l1.card.connections.highlevel\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"de:settings.l1.card.models.engines\": \"b9bf0c84842bfa7937024fad674df9af19acc232461e6f089fc21f1a96e916d7\",\n  \"de:settings.l4.engines.title\": \"b9bf0c84842bfa7937024fad674df9af19acc232461e6f089fc21f1a96e916d7\",\n  \"de:settings.l6.usage.colBot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"de:settings.l6.usage.colRoutine\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"de:settings.page.backups\": \"3334fee2c77fef827371cc6c0e618fad0717a345db95b74f74a0facf51eaa647\",\n  \"de:settings.page.botDefaults\": \"f17c0acbd8e50c780760bb7c6493264736305603acae6f076b1eecb0e26f5118\",\n  \"de:settings.page.webSearch\": \"ea93d6a262ecb87a9fa4d09edbd7654c046597936a8e235fc3949eb01775ff99\",\n  \"de:settings.section.backups\": \"3334fee2c77fef827371cc6c0e618fad0717a345db95b74f74a0facf51eaa647\",\n  \"de:settings.section.engines\": \"b9bf0c84842bfa7937024fad674df9af19acc232461e6f089fc21f1a96e916d7\",\n  \"de:settings.sidebar.standard\": \"ef6691545d2c5523efed00424407cb261aeb0037d165ca5792f7f8bac3381362\",\n  \"de:slik.scheduleLimitEngine\": \"8e75ebbdb21505d2f18439f43fe046abc67fc567515bb1d53b855a020a179092\",\n  \"de:task.link\": \"a6a32dbc5618ea39f6df5b0f9808e3588b19e00d5f6f96c69492e40386e5aeab\",\n  \"de:updates.title\": \"22e2bada8f1c65cd83f4ba976f0027c5dd7cb81d5d2199cd1b0130792841eef4\",\n  \"de:ux.l1.card.details\": \"45989de49fb7f66dfe17a8fc26f3a02c7abcd74f7e8e6cf9f39fa0e3775780df\",\n  \"de:ux.l1.settings.inFolder\": \"cdf2dc13bb0320de35bf4fcde5fb6611b998f979a01849abf7b855a9a5d0dda5\",\n  \"de:ux.l2a.door.chats\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"de:ux.l2a.health.area.backups\": \"3334fee2c77fef827371cc6c0e618fad0717a345db95b74f74a0facf51eaa647\",\n  \"de:ux.l2a.health.engines\": \"b9bf0c84842bfa7937024fad674df9af19acc232461e6f089fc21f1a96e916d7\",\n  \"de:ux.l4a.control.engines\": \"b9bf0c84842bfa7937024fad674df9af19acc232461e6f089fc21f1a96e916d7\",\n  \"de:ux.l4a.control.level\": \"1709305c9fa966d14f56f0da3c3614bbc10adcf53d72f90341bb96d24afcfca3\",\n  \"de:ux.l4a.feedback.chatWord\": \"460b3a7da007b7af9d35bca54181dc91382263b2bf133ca214871ca1fed1fc1c\",\n  \"de:ux.l4a.mod.mac\": \"1695b48bccfe51266dd35bb43ee32680b77986c98a3f69a9db1f0dbf0e158557\",\n  \"de:ux.l4a.screen.bot.skills.title\": \"4697d1e6b8706dfda010bb1c06a0e0fb6c3c03d0c7e301fce33af996313cc5af\",\n  \"de:ux.l4a.screen.bot.teams.title\": \"8a3397e9f55688ec83c46bf6e2ab69dbe747ffdc7f3d5c818e72b46fb921c882\",\n  \"de:ux.l4a.screen.chats.title\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"de:ux.l4a.screen.cloud.title\": \"b7ffc38fc386ea046ae7fdc44e115c5db2f26dfe767d3864877d635c74a68fa7\",\n  \"de:ux.l4a.screen.computer.title\": \"76ed42d22129dc354362704eb4b54208041b68736f976932aada43bc0035f7c0\",\n  \"de:ux.l4a.screen.routine.title\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"de:ux.l5b.level.label\": \"1709305c9fa966d14f56f0da3c3614bbc10adcf53d72f90341bb96d24afcfca3\",\n  \"de:ux.l6a.hire.nameLabel\": \"dcd1d5223f73b3a965c07e3ff5dbee3eedcfedb806686a05b9b3868a2c3d6d50\",\n  \"de:widget.details\": \"45989de49fb7f66dfe17a8fc26f3a02c7abcd74f7e8e6cf9f39fa0e3775780df\",\n  \"es:chatHeader.findShortcut\": \"12aaa51aad3d0b795c86d67d0f5be15e691030ba3bb2e0a4b739dd9c921f4c16\",\n  \"es:chatHeader.inspector\": \"da188e3b1cefc8a70813b78ef4ef13461693a08eb69b0327fbc897cf8981702f\",\n  \"es:chatLinks.github.commit\": \"82a9c46ffa4789945d9f2359d75891558ef6faa8dee09e4b25e4e0597704f5bd\",\n  \"es:chatLinks.github.issue\": \"48dc76dfa23ae03fea1372c5ed6c0e1bd62eaeca7bba6d804eb0afa87972f031\",\n  \"es:chatLinks.github.pull\": \"f3dba6629c69d91bd65527f178591b6ab2ac3843cfbf76943801e8dd45bcb7d6\",\n  \"es:engines.local\": \"8c31e6e7223097e2e4847773c47a4efab6aaf79deeecc92a7759891c74976dde\",\n  \"es:filesWorkspace.filter.bot\": \"9e3fb291086b39e660660f2bf2810760ee764bd1ea596c4277494665c2eeca67\",\n  \"es:highlevel.title\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"es:learningScreen.no\": \"1ea442a134b2a184bd5d40104401f2a37fbc09ccf3f4bc9da161c6099be3691d\",\n  \"es:memoryNotebook.general\": \"c910d474dcd724bff83ddedeb06bf1eceaf9fb3af7c76bb282be057f36e6dffa\",\n  \"es:memorySettings.general\": \"c910d474dcd724bff83ddedeb06bf1eceaf9fb3af7c76bb282be057f36e6dffa\",\n  \"es:notificationSettings.timeZonePlaceholder\": \"e8def32656206d2574e163cff4330221cbca79a584c6debd922546da0bb0ff74\",\n  \"es:projects.board.bot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"es:projects.budget.tokens\": \"b92bd9c11e8f4e9d1a9fa2e7acf5d789f427eea1d3d09f6f4de37fca77efa9a3\",\n  \"es:projects.common.tokens\": \"a039dfb9628b53ddaebcfe8ef0793e3fdf19867601295f00d192acef59050869\",\n  \"es:projects.face.tokens\": \"bc17ff48c05229eb1e7470573c5c85a0334cb3ea42c1672c50064261e387ead2\",\n  \"es:projects.sheet.no\": \"1ea442a134b2a184bd5d40104401f2a37fbc09ccf3f4bc9da161c6099be3691d\",\n  \"es:projects.tabs.chat\": \"460b3a7da007b7af9d35bca54181dc91382263b2bf133ca214871ca1fed1fc1c\",\n  \"es:projects.time.days\": \"3f2e9c59984c0b941ec09da664cdc7ce175b29200487805f6c9dd7f03f9097dd\",\n  \"es:projects.time.hours\": \"068deca46a360c34fb4de3abc11555221ddb4440f5f2a1f1dfaa602d9a56ebce\",\n  \"es:projects.time.hoursMin\": \"99422830232cdc3aeea013ffed15fc46da14d5271535388eac5b9ce40c1bdc63\",\n  \"es:projects.time.min\": \"913185ba21fbe409494debb11eaeaad2fea9ccc97bc227f813f3884faf0d317d\",\n  \"es:projects.work.budgetLine\": \"af16f559cd6fdedab2e760526b75427cc3a618363f58a2e11251d73257239bf1\",\n  \"es:projects.work.budgetLineTokens\": \"af041f18902a49a7cd34a41cc7fd52c386d64056422e68ecdd5880ff8778ac5b\",\n  \"es:settings.botsToggle\": \"fc1da572d3f0b2c7e2cdfa7f85a2c1f6b2aceb1969b9cac6ec4391422887a64b\",\n  \"es:settings.group.bots\": \"f17c0acbd8e50c780760bb7c6493264736305603acae6f076b1eecb0e26f5118\",\n  \"es:settings.l1.card.connections.highlevel\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"es:settings.l6.usage.colBot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"es:settings.l6.usage.plan.dh\": \"64a6ac2a25ab8f5577894d09a2f06d15e887cde3ccb65415a86a03258fe4b3a0\",\n  \"es:settings.l6.usage.plan.hm\": \"cf8484035b7fa8c13811a16b0f926ad7f56b4161501e105431231873eae43156\",\n  \"es:settings.l6.usage.plan.m\": \"e1bded87ee24b702d6c1baf5edf99fccfc0d2e1d5bca603aef4937fb6c282fe2\",\n  \"es:settings.page.botDefaults\": \"f17c0acbd8e50c780760bb7c6493264736305603acae6f076b1eecb0e26f5118\",\n  \"es:settings.page.general\": \"c910d474dcd724bff83ddedeb06bf1eceaf9fb3af7c76bb282be057f36e6dffa\",\n  \"es:settings.section.general\": \"c910d474dcd724bff83ddedeb06bf1eceaf9fb3af7c76bb282be057f36e6dffa\",\n  \"es:ux.l2a.door.chats\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"es:ux.l2a.health.botsMany\": \"38ccee81b2654ed9ecad68227e6229e27a486f59e5c6c717d0c66569fff9411f\",\n  \"es:ux.l2a.health.botsOne\": \"ba521a424af39db3760405fe7d15f30a2639067b0d8b8049be65cddbeba65140\",\n  \"es:ux.l4a.feedback.chatWord\": \"460b3a7da007b7af9d35bca54181dc91382263b2bf133ca214871ca1fed1fc1c\",\n  \"es:ux.l4a.mod.mac\": \"1695b48bccfe51266dd35bb43ee32680b77986c98a3f69a9db1f0dbf0e158557\",\n  \"es:ux.l4a.mod.other\": \"e2ee2909fe279f5cbcfc09de8e6daf6c238a3af213840182b679ac4997c50eab\",\n  \"es:ux.l4a.screen.chats.title\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"es:ux.l4a.screen.cloud.title\": \"b7ffc38fc386ea046ae7fdc44e115c5db2f26dfe767d3864877d635c74a68fa7\",\n  \"es:ux.l4a.screen.inspector.title\": \"da188e3b1cefc8a70813b78ef4ef13461693a08eb69b0327fbc897cf8981702f\",\n  \"es:ux.l5b.limit.minutes\": \"1829c58ba472520fd39e61f9e337a1b7da27e86299332dde5bfdea355c3895a8\",\n  \"fr:botImages.title\": \"be7e2f20129365c2899b2c11bfc465541e61b1858f45bf0248cf99b9271bc707\",\n  \"fr:chatHeader.findShortcut\": \"12aaa51aad3d0b795c86d67d0f5be15e691030ba3bb2e0a4b739dd9c921f4c16\",\n  \"fr:chatLinks.github.commit\": \"82a9c46ffa4789945d9f2359d75891558ef6faa8dee09e4b25e4e0597704f5bd\",\n  \"fr:chatLinks.github.pull\": \"f3dba6629c69d91bd65527f178591b6ab2ac3843cfbf76943801e8dd45bcb7d6\",\n  \"fr:engines.cloud\": \"b977b950c1ae31e5aeb9ef778cc20a66fc034eb81e738e0206104b677962c465\",\n  \"fr:engines.local\": \"8c31e6e7223097e2e4847773c47a4efab6aaf79deeecc92a7759891c74976dde\",\n  \"fr:filesWorkspace.filter.bot\": \"9e3fb291086b39e660660f2bf2810760ee764bd1ea596c4277494665c2eeca67\",\n  \"fr:filesWorkspace.filter.type\": \"cb489c29cf31825141051ec622c8d00b9088b98c7afd3af00d04110c3d938a56\",\n  \"fr:filesWorkspace.kind.image\": \"be7e2f20129365c2899b2c11bfc465541e61b1858f45bf0248cf99b9271bc707\",\n  \"fr:highlevel.title\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"fr:imageLibrary.pack.line\": \"504a046f7c812e7fa74353fb8d89bd2c605637de3e5c6cf1c77626ab1f0bedfc\",\n  \"fr:imageLibrary.pack.lineOne\": \"28665c32766cd030526b64d2d207b1e1b25b313e1c234a5eab9d59428a613577\",\n  \"fr:learningScreen.suggestions.heading\": \"2e4da343a56a177f43633f9437deb198ded9f9503085dcc5142f49f606200de7\",\n  \"fr:media.image.untitled\": \"1aa4cb0bcca76e92e30677e809bb3d4b5c066715ef4d558184e319496bcc5125\",\n  \"fr:memoryPeople.kindAudience\": \"545c02357695a6ffed97b01a94a46b9aeb4686f4480173da6d0faeae8eb85053\",\n  \"fr:memoryReview.sources\": \"caf85b0888d78f1f83771a07b25c3d30fa1210242f2fae6e5ae5d9a686602800\",\n  \"fr:memorySettings.audience.label\": \"545c02357695a6ffed97b01a94a46b9aeb4686f4480173da6d0faeae8eb85053\",\n  \"fr:memorySettings.page\": \"a456627ace382cd7eac7c2e266b2ae8b326f7f1bc8579b15af3c009ce2ba0923\",\n  \"fr:nav.routines\": \"61b7bb44e2b47b7c0ccaccff4872fdcf3e298345d0f003ea4bf54e8c84e2a889\",\n  \"fr:notificationSettings.timeZonePlaceholder\": \"e8def32656206d2574e163cff4330221cbca79a584c6debd922546da0bb0ff74\",\n  \"fr:notificationSettings.title\": \"788011833a5a0f22db90c91e8eb7bd8e9f5cd423354ff5ef8c338e7895f44ba9\",\n  \"fr:procedureAdmissions.audience\": \"545c02357695a6ffed97b01a94a46b9aeb4686f4480173da6d0faeae8eb85053\",\n  \"fr:procedureAdmissions.kindRoutine\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"fr:procedureAdmissions.testSetValue\": \"a290a24bc3c2d9e1e76977f15759e8aff8cc2d9bf23f49f26f8ffd8967ff0600\",\n  \"fr:projects.board.bot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"fr:projects.common.description\": \"526e0087cc3f254d9f86f6c7d8e23d954c4dfda2b312efc29194ae8a860106ba\",\n  \"fr:projects.goalView.brief\": \"ac40ae1e8d41291c59c7f09640725d31f88930b2074aad8adb17959d97bc1497\",\n  \"fr:projects.goalView.note\": \"d8da2c49df39d91df7ecd199b92da7bf264f026242ccc69b08daeadfe587c45b\",\n  \"fr:projects.kb.position\": \"75e8fcf0797349f5124b611bb8da0853bf3e0ce98464a073974afe3b762fae11\",\n  \"fr:projects.kb.positionLane\": \"986a5d4ee3ecb1ad69ae41aeb4be9fd35c332a3b6519ebf5c51853f3a84e057f\",\n  \"fr:projects.request.message\": \"2f77668a9dfbf8d5848b9eeb4a7145ca94c6ed9236e4a773f6dcafa5132b2f91\",\n  \"fr:projects.request.routine\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"fr:projects.since.messageOne\": \"011052fed01983b3279365be61a90ca8a0426b55b35c4095dae842101ffc9c4c\",\n  \"fr:projects.since.messageOther\": \"d7b79bfdb6b9e53598a786daa82879bc1a8c82494bcbc04cbab5083d35a0ca9d\",\n  \"fr:projects.time.hours\": \"068deca46a360c34fb4de3abc11555221ddb4440f5f2a1f1dfaa602d9a56ebce\",\n  \"fr:projects.time.hoursMin\": \"99422830232cdc3aeea013ffed15fc46da14d5271535388eac5b9ce40c1bdc63\",\n  \"fr:projects.time.min\": \"913185ba21fbe409494debb11eaeaad2fea9ccc97bc227f813f3884faf0d317d\",\n  \"fr:routines.editor.descriptionLabel\": \"526e0087cc3f254d9f86f6c7d8e23d954c4dfda2b312efc29194ae8a860106ba\",\n  \"fr:routines.editor.instructionsLabel\": \"934652dce41d62d3c9ff34b2c5e44e3addaedc67d6137328a9fe75a63c51dbac\",\n  \"fr:settings.bot.computer.cloud\": \"b977b950c1ae31e5aeb9ef778cc20a66fc034eb81e738e0206104b677962c465\",\n  \"fr:settings.bot.effort.title\": \"4387e5d3966fc436532792769763cd1ab7cccd6464d4c01c2b91261894e96b77\",\n  \"fr:settings.bot.identity.instructions\": \"934652dce41d62d3c9ff34b2c5e44e3addaedc67d6137328a9fe75a63c51dbac\",\n  \"fr:settings.bot.notifications.title\": \"788011833a5a0f22db90c91e8eb7bd8e9f5cd423354ff5ef8c338e7895f44ba9\",\n  \"fr:settings.botsToggle\": \"fc1da572d3f0b2c7e2cdfa7f85a2c1f6b2aceb1969b9cac6ec4391422887a64b\",\n  \"fr:settings.group.bots\": \"f17c0acbd8e50c780760bb7c6493264736305603acae6f076b1eecb0e26f5118\",\n  \"fr:settings.l1.card.connections.highlevel\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"fr:settings.l6.usage.colBot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"fr:settings.l6.usage.colRoutine\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"fr:settings.l6.usage.plan.hm\": \"cf8484035b7fa8c13811a16b0f926ad7f56b4161501e105431231873eae43156\",\n  \"fr:settings.l6.usage.plan.m\": \"e1bded87ee24b702d6c1baf5edf99fccfc0d2e1d5bca603aef4937fb6c282fe2\",\n  \"fr:settings.page.botDefaults\": \"f17c0acbd8e50c780760bb7c6493264736305603acae6f076b1eecb0e26f5118\",\n  \"fr:settings.section.images\": \"be7e2f20129365c2899b2c11bfc465541e61b1858f45bf0248cf99b9271bc707\",\n  \"fr:settings.sidebar.standard\": \"ef6691545d2c5523efed00424407cb261aeb0037d165ca5792f7f8bac3381362\",\n  \"fr:settings.voice.title\": \"30bf7b9b9540d4e11819ffbadf3ae6fe4c7ca94c8b433391e50e47e14a9d6cbf\",\n  \"fr:ux.l2a.door.chats\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"fr:ux.l2a.door.routines\": \"61b7bb44e2b47b7c0ccaccff4872fdcf3e298345d0f003ea4bf54e8c84e2a889\",\n  \"fr:ux.l2a.health.botsMany\": \"38ccee81b2654ed9ecad68227e6229e27a486f59e5c6c717d0c66569fff9411f\",\n  \"fr:ux.l2a.health.botsOne\": \"ba521a424af39db3760405fe7d15f30a2639067b0d8b8049be65cddbeba65140\",\n  \"fr:ux.l4a.mod.mac\": \"1695b48bccfe51266dd35bb43ee32680b77986c98a3f69a9db1f0dbf0e158557\",\n  \"fr:ux.l4a.mod.other\": \"e2ee2909fe279f5cbcfc09de8e6daf6c238a3af213840182b679ac4997c50eab\",\n  \"fr:ux.l4a.screen.bot.routines.title\": \"026bff195769a19c1d5bf32c0f46139e3bc20eb0d92030e66750b3ea1e704eb5\",\n  \"fr:ux.l4a.screen.bot.skills.title\": \"4697d1e6b8706dfda010bb1c06a0e0fb6c3c03d0c7e301fce33af996313cc5af\",\n  \"fr:ux.l4a.screen.chats.title\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"fr:ux.l4a.screen.clients-card.title\": \"65a7256542c30138e6f979959b13707ef238bbf5aaf8472dde584c05b0c07529\",\n  \"fr:ux.l4a.screen.cloud.title\": \"b7ffc38fc386ea046ae7fdc44e115c5db2f26dfe767d3864877d635c74a68fa7\",\n  \"fr:ux.l4a.screen.routine.title\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"fr:ux.l4a.screen.routines.title\": \"61b7bb44e2b47b7c0ccaccff4872fdcf3e298345d0f003ea4bf54e8c84e2a889\",\n  \"fr:ux.l5b.instructions.label\": \"934652dce41d62d3c9ff34b2c5e44e3addaedc67d6137328a9fe75a63c51dbac\",\n  \"fr:ux.l5b.limit.minutes\": \"1829c58ba472520fd39e61f9e337a1b7da27e86299332dde5bfdea355c3895a8\",\n  \"fr:ux.l5b.list.count\": \"55cf322eaf09a705044f499aad0ad813749259bac78845d049e6804340e288f1\",\n  \"fr:whatsapp.groups.mention\": \"d820d8de70e4347c8c8e6927b4fd17a22678ab8f51c5a8ba10d51b608d3af5ef\",\n  \"fr:widget.image\": \"1aa4cb0bcca76e92e30677e809bb3d4b5c066715ef4d558184e319496bcc5125\",\n  \"fr:workspacePane.imageLabel\": \"6feae89a36296ee3e2f5248fe468ab9213b81f47dbd054e945f622b24299d603\",\n  \"fr:workspacePane.source\": \"0e570ca6fabe24f94e52c1833f3ffd25567022beb826fa16891f3322051bc221\",\n  \"hi:chatHeader.findShortcut\": \"12aaa51aad3d0b795c86d67d0f5be15e691030ba3bb2e0a4b739dd9c921f4c16\",\n  \"hi:highlevel.title\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"hi:notificationSettings.timeZonePlaceholder\": \"e8def32656206d2574e163cff4330221cbca79a584c6debd922546da0bb0ff74\",\n  \"hi:publish.sites.add.placeholder\": \"1b05d2efefda710401553058eee0ef78f8faeb699fa06e8234944b24a62903c6\",\n  \"hi:settings.l1.card.connections.highlevel\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"hi:ux.l4a.mod.mac\": \"1695b48bccfe51266dd35bb43ee32680b77986c98a3f69a9db1f0dbf0e158557\",\n  \"hi:ux.l4a.mod.other\": \"e2ee2909fe279f5cbcfc09de8e6daf6c238a3af213840182b679ac4997c50eab\",\n  \"hi:ux.l4a.screen.cloud.title\": \"b7ffc38fc386ea046ae7fdc44e115c5db2f26dfe767d3864877d635c74a68fa7\",\n  \"ja:chatHeader.findShortcut\": \"12aaa51aad3d0b795c86d67d0f5be15e691030ba3bb2e0a4b739dd9c921f4c16\",\n  \"ja:chatLinks.github.issue\": \"48dc76dfa23ae03fea1372c5ed6c0e1bd62eaeca7bba6d804eb0afa87972f031\",\n  \"ja:highlevel.title\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"ja:notificationSettings.timeZonePlaceholder\": \"e8def32656206d2574e163cff4330221cbca79a584c6debd922546da0bb0ff74\",\n  \"ja:publish.sites.add.placeholder\": \"1b05d2efefda710401553058eee0ef78f8faeb699fa06e8234944b24a62903c6\",\n  \"ja:settings.l1.card.connections.highlevel\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"ja:ux.l4a.mod.other\": \"e2ee2909fe279f5cbcfc09de8e6daf6c238a3af213840182b679ac4997c50eab\",\n  \"ja:ux.l4a.screen.cloud.title\": \"b7ffc38fc386ea046ae7fdc44e115c5db2f26dfe767d3864877d635c74a68fa7\",\n  \"pt-br:chatHeader.findShortcut\": \"12aaa51aad3d0b795c86d67d0f5be15e691030ba3bb2e0a4b739dd9c921f4c16\",\n  \"pt-br:chatLinks.github.commit\": \"82a9c46ffa4789945d9f2359d75891558ef6faa8dee09e4b25e4e0597704f5bd\",\n  \"pt-br:chatLinks.github.issue\": \"48dc76dfa23ae03fea1372c5ed6c0e1bd62eaeca7bba6d804eb0afa87972f031\",\n  \"pt-br:chatLinks.github.pull\": \"f3dba6629c69d91bd65527f178591b6ab2ac3843cfbf76943801e8dd45bcb7d6\",\n  \"pt-br:engines.local\": \"8c31e6e7223097e2e4847773c47a4efab6aaf79deeecc92a7759891c74976dde\",\n  \"pt-br:filesWorkspace.filter.bot\": \"9e3fb291086b39e660660f2bf2810760ee764bd1ea596c4277494665c2eeca67\",\n  \"pt-br:highlevel.title\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"pt-br:mcp.row.sourceLink\": \"90d326db726070816add45bb709d2a75db4731a4e9038b7014366f8603356247\",\n  \"pt-br:nav.apps\": \"89dd748442c194857825848e1500abbbc5f52fb067ad27fb05dc9fb23eebba3b\",\n  \"pt-br:notificationSettings.timeZonePlaceholder\": \"e8def32656206d2574e163cff4330221cbca79a584c6debd922546da0bb0ff74\",\n  \"pt-br:projects.board.bot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"pt-br:projects.budget.tokens\": \"b92bd9c11e8f4e9d1a9fa2e7acf5d789f427eea1d3d09f6f4de37fca77efa9a3\",\n  \"pt-br:projects.common.tokens\": \"a039dfb9628b53ddaebcfe8ef0793e3fdf19867601295f00d192acef59050869\",\n  \"pt-br:projects.face.tokens\": \"bc17ff48c05229eb1e7470573c5c85a0334cb3ea42c1672c50064261e387ead2\",\n  \"pt-br:projects.request.wake\": \"adc719587244723baf63cc93777b53f02f6cf19dd16ed3323daa34c80e9e126c\",\n  \"pt-br:projects.tabs.chat\": \"460b3a7da007b7af9d35bca54181dc91382263b2bf133ca214871ca1fed1fc1c\",\n  \"pt-br:projects.time.days\": \"3f2e9c59984c0b941ec09da664cdc7ce175b29200487805f6c9dd7f03f9097dd\",\n  \"pt-br:projects.time.hours\": \"068deca46a360c34fb4de3abc11555221ddb4440f5f2a1f1dfaa602d9a56ebce\",\n  \"pt-br:projects.time.hoursMin\": \"99422830232cdc3aeea013ffed15fc46da14d5271535388eac5b9ce40c1bdc63\",\n  \"pt-br:projects.time.min\": \"913185ba21fbe409494debb11eaeaad2fea9ccc97bc227f813f3884faf0d317d\",\n  \"pt-br:projects.work.budgetLine\": \"af16f559cd6fdedab2e760526b75427cc3a618363f58a2e11251d73257239bf1\",\n  \"pt-br:projects.work.budgetLineTokens\": \"af041f18902a49a7cd34a41cc7fd52c386d64056422e68ecdd5880ff8778ac5b\",\n  \"pt-br:settings.bot.computer.cloud\": \"b977b950c1ae31e5aeb9ef778cc20a66fc034eb81e738e0206104b677962c465\",\n  \"pt-br:settings.botsToggle\": \"fc1da572d3f0b2c7e2cdfa7f85a2c1f6b2aceb1969b9cac6ec4391422887a64b\",\n  \"pt-br:settings.group.bots\": \"f17c0acbd8e50c780760bb7c6493264736305603acae6f076b1eecb0e26f5118\",\n  \"pt-br:settings.l1.card.connections.highlevel\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"pt-br:settings.l6.usage.colBot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"pt-br:settings.l6.usage.plan.dh\": \"64a6ac2a25ab8f5577894d09a2f06d15e887cde3ccb65415a86a03258fe4b3a0\",\n  \"pt-br:settings.l6.usage.plan.hm\": \"cf8484035b7fa8c13811a16b0f926ad7f56b4161501e105431231873eae43156\",\n  \"pt-br:settings.l6.usage.plan.m\": \"e1bded87ee24b702d6c1baf5edf99fccfc0d2e1d5bca603aef4937fb6c282fe2\",\n  \"pt-br:settings.page.backups\": \"3334fee2c77fef827371cc6c0e618fad0717a345db95b74f74a0facf51eaa647\",\n  \"pt-br:settings.page.botDefaults\": \"f17c0acbd8e50c780760bb7c6493264736305603acae6f076b1eecb0e26f5118\",\n  \"pt-br:settings.section.backups\": \"3334fee2c77fef827371cc6c0e618fad0717a345db95b74f74a0facf51eaa647\",\n  \"pt-br:task.link\": \"a6a32dbc5618ea39f6df5b0f9808e3588b19e00d5f6f96c69492e40386e5aeab\",\n  \"pt-br:ux.l2a.door.chats\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"pt-br:ux.l2a.health.area.backups\": \"3334fee2c77fef827371cc6c0e618fad0717a345db95b74f74a0facf51eaa647\",\n  \"pt-br:ux.l2a.health.botsMany\": \"38ccee81b2654ed9ecad68227e6229e27a486f59e5c6c717d0c66569fff9411f\",\n  \"pt-br:ux.l2a.health.botsOne\": \"ba521a424af39db3760405fe7d15f30a2639067b0d8b8049be65cddbeba65140\",\n  \"pt-br:ux.l4a.feedback.chatWord\": \"460b3a7da007b7af9d35bca54181dc91382263b2bf133ca214871ca1fed1fc1c\",\n  \"pt-br:ux.l4a.mod.mac\": \"1695b48bccfe51266dd35bb43ee32680b77986c98a3f69a9db1f0dbf0e158557\",\n  \"pt-br:ux.l4a.mod.other\": \"e2ee2909fe279f5cbcfc09de8e6daf6c238a3af213840182b679ac4997c50eab\",\n  \"pt-br:ux.l4a.screen.bot.skills.title\": \"4697d1e6b8706dfda010bb1c06a0e0fb6c3c03d0c7e301fce33af996313cc5af\",\n  \"pt-br:ux.l4a.screen.chats.title\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"pt-br:ux.l4a.screen.cloud.title\": \"b7ffc38fc386ea046ae7fdc44e115c5db2f26dfe767d3864877d635c74a68fa7\",\n  \"pt-br:ux.l5b.limit.minutes\": \"1829c58ba472520fd39e61f9e337a1b7da27e86299332dde5bfdea355c3895a8\",\n  \"zh:chatHeader.findShortcut\": \"12aaa51aad3d0b795c86d67d0f5be15e691030ba3bb2e0a4b739dd9c921f4c16\",\n  \"zh:highlevel.title\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"zh:notificationSettings.timeZonePlaceholder\": \"e8def32656206d2574e163cff4330221cbca79a584c6debd922546da0bb0ff74\",\n  \"zh:publish.sites.add.placeholder\": \"1b05d2efefda710401553058eee0ef78f8faeb699fa06e8234944b24a62903c6\",\n  \"zh:settings.l1.card.connections.highlevel\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"zh:ux.l4a.mod.other\": \"e2ee2909fe279f5cbcfc09de8e6daf6c238a3af213840182b679ac4997c50eab\",\n  \"zh:ux.l4a.screen.cloud.title\": \"b7ffc38fc386ea046ae7fdc44e115c5db2f26dfe767d3864877d635c74a68fa7\",\n  \"stepup/de:line.bot\": \"294e91606a271fbbd426f1b4d71ba091072a00b9059de14028fdccfc1da81d5b\",\n  \"stepup/de:line.name\": \"8b9507f57685b27800e1967ad3e8255b09369a6994186f70f4aac4210cda672e\",\n  \"stepup/es:line.bot\": \"294e91606a271fbbd426f1b4d71ba091072a00b9059de14028fdccfc1da81d5b\",\n  \"stepup/pt-br:line.bot\": \"294e91606a271fbbd426f1b4d71ba091072a00b9059de14028fdccfc1da81d5b\",\n  \"de:noLimits.v1.source.git\": \"9a881b9b9f23849475296a8cd768ea1965bc3152df7118e60c145975af6aa58a\",\n  \"es:noLimits.v1.source.git\": \"9a881b9b9f23849475296a8cd768ea1965bc3152df7118e60c145975af6aa58a\",\n  \"fr:noLimits.v1.source.git\": \"9a881b9b9f23849475296a8cd768ea1965bc3152df7118e60c145975af6aa58a\",\n  \"hi:noLimits.v1.source.git\": \"9a881b9b9f23849475296a8cd768ea1965bc3152df7118e60c145975af6aa58a\",\n  \"ja:noLimits.v1.source.git\": \"9a881b9b9f23849475296a8cd768ea1965bc3152df7118e60c145975af6aa58a\",\n  \"pt-br:noLimits.v1.source.git\": \"9a881b9b9f23849475296a8cd768ea1965bc3152df7118e60c145975af6aa58a\",\n  \"zh:noLimits.v1.source.git\": \"9a881b9b9f23849475296a8cd768ea1965bc3152df7118e60c145975af6aa58a\",\n  \"fr:noLimits.v1.source.archive\": \"0eb3e36bfb24dcd9bb1d1bece1531216b59539a8fde17ee80224af0653c92aa3\"\n}\n",
+      "verdict": "pass"
+    },
+    "pending-review.json": {
+      "text": "{\n  \"version\": 1,\n  \"note\": \"Strings waiting for a review record. Must be empty at the release cut (scripts/copy-pending-check.mjs).\",\n  \"strings\": {}\n}\n",
+      "verdict": "pass"
+    }
+  }
+}

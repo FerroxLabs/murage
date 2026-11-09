@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Owner approval of an agent-proposed memory correction (audit C1, decision
 // U-16). Before approval the proposal changes nothing about the target. On
 // approval the exact recorded target version is validated, only that target
@@ -382,3 +383,5 @@ describe("Round 12 unavailable correction originals",()=>{
   expect(db.prepare("SELECT count(*) AS n FROM memory_records WHERE state='active'").get()?.n).toBe(1);
  });
 });
+
+useOutsideStoreFixture();

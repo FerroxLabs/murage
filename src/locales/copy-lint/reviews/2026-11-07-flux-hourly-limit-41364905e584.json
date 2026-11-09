@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "7g-r14-flux-burn",
+  "date": "2026-11-07",
+  "base": "4ebac50f1",
+  "scope": "FLUX-BURN-COPY-1018 Flux hourly limit card",
+  "strings": {
+    "en:gatewayBusy.hourly.title": {
+      "text": "You've reached your Flux hourly limit. Your message is kept.",
+      "en": "You've reached your Flux hourly limit. Your message is kept.",
+      "verdict": "pass",
+      "note": "Clear and consistent with the sibling cards."
+    },
+    "en:gatewayBusy.hourly.until": {
+      "text": "You've reached your Flux hourly limit. It resets at about {time}. Your message is kept.",
+      "en": "You've reached your Flux hourly limit. It resets at about {time}. Your message is kept.",
+      "verdict": "pass",
+      "note": "Natural time wording and the exact message retention sentence."
+    },
+    "de:gatewayBusy.hourly.title": {
+      "text": "Du hast dein stündliches Flux-Limit erreicht. Deine Nachricht bleibt erhalten.",
+      "en": "You've reached your Flux hourly limit. Your message is kept.",
+      "verdict": "pass",
+      "note": "Natural German with matching informal address and retention wording."
+    },
+    "de:gatewayBusy.hourly.until": {
+      "text": "Du hast dein stündliches Flux-Limit erreicht. Es wird gegen {time} zurückgesetzt. Deine Nachricht bleibt erhalten.",
+      "en": "You've reached your Flux hourly limit. It resets at about {time}. Your message is kept.",
+      "verdict": "pass",
+      "note": "Preserves the meaning and places {time} naturally."
+    },
+    "es:gatewayBusy.hourly.title": {
+      "text": "Alcanzaste tu límite por hora de Flux. Tu mensaje se conserva.",
+      "en": "You've reached your Flux hourly limit. Your message is kept.",
+      "verdict": "pass",
+      "note": "Matches the siblings' informal voice and retention sentence."
+    },
+    "es:gatewayBusy.hourly.until": {
+      "text": "Alcanzaste tu límite por hora de Flux. Se restablece hacia las {time}. Tu mensaje se conserva.",
+      "en": "You've reached your Flux hourly limit. It resets at about {time}. Your message is kept.",
+      "verdict": "pass",
+      "note": "Natural Spanish with the intended approximate reset time."
+    },
+    "fr:gatewayBusy.hourly.title": {
+      "text": "Tu as atteint ta limite horaire Flux. Ton message est conservé.",
+      "en": "You've reached your Flux hourly limit. Your message is kept.",
+      "verdict": "pass",
+      "note": "Matches the siblings' familiar address and retention sentence."
+    },
+    "fr:gatewayBusy.hourly.until": {
+      "text": "Tu as atteint ta limite horaire Flux. Elle se réinitialise vers {time}. Ton message est conservé.",
+      "en": "You've reached your Flux hourly limit. It resets at about {time}. Your message is kept.",
+      "verdict": "pass",
+      "note": "Natural French with clear approximate reset timing."
+    },
+    "hi:gatewayBusy.hourly.title": {
+      "text": "आपने Flux की प्रति घंटे की सीमा पूरी कर ली है। आपका संदेश रखा गया है।",
+      "en": "You've reached your Flux hourly limit. Your message is kept.",
+      "verdict": "pass",
+      "note": "Matches the siblings' address and exact retention sentence."
+    },
+    "hi:gatewayBusy.hourly.until": {
+      "text": "आपने Flux की प्रति घंटे की सीमा पूरी कर ली है। यह लगभग {time} बजे रीसेट होगी। आपका संदेश रखा गया है।",
+      "en": "You've reached your Flux hourly limit. It resets at about {time}. Your message is kept.",
+      "verdict": "pass",
+      "note": "Conveys the approximate reset time with consistent address and retention wording."
+    },
+    "ja:gatewayBusy.hourly.title": {
+      "text": "Flux の1時間あたりの上限に達しました。メッセージは保存されています。",
+      "en": "You've reached your Flux hourly limit. Your message is kept.",
+      "verdict": "pass",
+      "note": "Natural Japanese with the exact retention sentence."
+    },
+    "ja:gatewayBusy.hourly.until": {
+      "text": "Flux の1時間あたりの上限に達しました。{time} ごろにリセットされます。メッセージは保存されています。",
+      "en": "You've reached your Flux hourly limit. It resets at about {time}. Your message is kept.",
+      "verdict": "pass",
+      "note": "Places {time} naturally and preserves the intended meaning."
+    },
+    "pt-br:gatewayBusy.hourly.title": {
+      "text": "Você atingiu seu limite por hora do Flux. Sua mensagem foi mantida.",
+      "en": "You've reached your Flux hourly limit. Your message is kept.",
+      "verdict": "pass",
+      "note": "Matches the siblings' você address and retention wording."
+    },
+    "pt-br:gatewayBusy.hourly.until": {
+      "text": "Você atingiu seu limite por hora do Flux. Ele é redefinido por volta das {time}. Sua mensagem foi mantida.",
+      "en": "You've reached your Flux hourly limit. It resets at about {time}. Your message is kept.",
+      "verdict": "pass",
+      "note": "Clear reset timing with consistent voice and retention wording."
+    },
+    "zh:gatewayBusy.hourly.title": {
+      "text": "你已达到 Flux 每小时上限。你的消息已保留。",
+      "en": "You've reached your Flux hourly limit. Your message is kept.",
+      "verdict": "pass",
+      "note": "Concise Chinese with matching address and retention wording."
+    },
+    "zh:gatewayBusy.hourly.until": {
+      "text": "你已达到 Flux 每小时上限。大约 {time} 重置。你的消息已保留。",
+      "en": "You've reached your Flux hourly limit. It resets at about {time}. Your message is kept.",
+      "verdict": "pass",
+      "note": "Natural time placement with the exact retention sentence."
+    }
+  },
+  "files": {}
+}

@@ -220,6 +220,8 @@ it("no connection of the server process runs TRUNCATE or RESTART on messages.db 
     "memory/schema.ts",                 // migration, before listen
     "memory/index.ts",                  // the memory child process's own file
     "memory/root-set-reclaim.ts",       // 1.0.2: idle-gated (10 min), sliced batches in a worker on its own connection; the one VACUUM holds owner writes asynchronously
+    "message-search-index.ts",         // 1.0.18 option A (451cce9e5): settleInheritedSearchMerge, called only from database() (database.ts:350), runs on every open; only its optimize and TRUNCATE wait on a pre-release search_merge marker and on the first open (before listen). A reopen after listen (a restore or data-dir switch) restores the merge config only and keeps the marker for the next start. busy_timeout=0 bounds only the lock wait (the checkpoint I/O itself is synchronous, as database.ts:211-213 notes for the open path)
+    "memory/revoke-budget.ts",         // 1.0.18 IO-IDLE-DRAIN r3.6c (MurageMain ruling 1, named in wal-maintenance.ts): the revoke drain's own reset, resetCopiedLog, the one server-thread TRUNCATE. It runs only on a log it has re-read as completely copied (nBackfill >= mxFrame, same salt, same mxFrame), outside a transaction, under busy_timeout=0 restored in a finally, so there is nothing to copy and it never waits on a reader or a writer; the writer lock is held only for the reset. The two expects below pin that shape
   ]);
   const root = fileURLToPath(new URL(".", import.meta.url));
   const found: string[] = [];
@@ -236,6 +238,10 @@ it("no connection of the server process runs TRUNCATE or RESTART on messages.db 
   expect(found.filter(file => !allowed.has(file))).toEqual([]);
   expect(found.some(file => file === "memory/root-set-compaction.ts")).toBe(true);
   expect(readFileSync(join(root, "memory/root-set-compaction.ts"), "utf8")).not.toMatch(/truncateWal/);
+  // The revoke drain's reset is the only TRUNCATE in that file, runs only after the log was proven copied, and waits on nothing.
+  const revoke = readFileSync(join(root, "memory/revoke-budget.ts"), "utf8");
+  expect(revoke.match(/wal_checkpoint\(\s*(TRUNCATE|RESTART)/g)).toHaveLength(1);
+  expect(revoke).toMatch(/PRAGMA busy_timeout=0[\s\S]*nBackfill < again\.mxFrame[\s\S]*wal_checkpoint\(TRUNCATE\)/);
   for (const file of ["wal-maintenance.ts", "engine-history-offthread.ts", "engine-history-worker.ts"]) expect(readFileSync(join(root, file), "utf8"), file).not.toMatch(/Atomics\.wait|execSync|spawnSync/);
 });
 

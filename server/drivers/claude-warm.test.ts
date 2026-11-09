@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Hot engine instance, step 1: one warm `claude` process per conversation
 // thread, reused while every spawn input is unchanged, recycled otherwise, with
 // the per-turn capability token delivered through a per-process 0600 file that
@@ -125,7 +127,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
   const identity = (botId = "b1", audience: "owner" | "non-owner" = "owner") => ({ botId, audience });
   /** One whole turn; returns what the fake CLI saw at the start of it. */
   const run = async (threadId: string, text: string, extra: Partial<SendTurnInput> = {}) => {
-    const sent = await instance.adapter.sendTurn({ threadId, text, ...(sessions.has(threadId) ? { resumeCursor: sessions.get(threadId) } : {}), ...extra });
+    const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text, ...(sessions.has(threadId) ? { resumeCursor: sessions.get(threadId) } : {}), ...extra });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
     const started = [...recorder.events].reverse().find((e) => e.type === "session.started" && e.threadId === threadId) as { sessionId?: string } | undefined;
     if (started?.sessionId) sessions.set(threadId, started.sessionId);
@@ -322,7 +324,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
   it("recycles the process after a Stop", async () => {
     await create();
     const one = await run("t-stop", "one", base);
-    const held = await instance.adapter.sendTurn({ threadId: "t-stop", text: "__fixture_hold_authority__ two", resumeCursor: sessions.get("t-stop"), ...base });
+    const held = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stop", text: "__fixture_hold_authority__ two", resumeCursor: sessions.get("t-stop"), ...base });
     await recorder.until((e) => e.type === "session.started" && e.turnId === held.turnId);
     await instance.adapter.interruptTurn("t-stop", held.turnId);
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === held.turnId);
@@ -408,7 +410,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
       await instance.adapter.resetSession!("t-blocked");
       // never beside a live old tree: the old process is still there
       expect(() => process.kill(one.pid, 0)).not.toThrow();
-      const blocked = await instance.adapter.sendTurn({ threadId: "t-blocked", text: "two", ...base, sessionReset: true }).then(() => "sent", (error: unknown) => String(error));
+      const blocked = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-blocked", text: "two", ...base, sessionReset: true }).then(() => "sent", (error: unknown) => String(error));
       expect(blocked).toMatch(/CLAUDE_SESSION_NOT_STOPPED/);
       expect(() => process.kill(one.pid, 0)).not.toThrow();
       probe.forceFails = false;
@@ -454,7 +456,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
       const reset = instance.adapter.resetSession!("t-barrier");
       // both arrive inside the reset's wait for the wedged old tree
       const warmed = instance.adapter.prewarm!("t-barrier");
-      const sent = await instance.adapter.sendTurn({ threadId: "t-barrier", text: "two", ...base, sessionReset: true });
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-barrier", text: "two", ...base, sessionReset: true });
       await reset;
       expect(await warmed).toBe(false);
       await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
@@ -474,7 +476,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     process.env.FAKE_CLAUDE_MODE = "hang";
     try {
       await create();
-      const sent = await instance.adapter.sendTurn({ threadId: "t-late-active", text: "go", ...base });
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-late-active", text: "go", ...base });
       await recorder.until((e) => e.type === "session.started" && e.threadId === "t-late-active");
       const before = recorder.events.filter((e) => e.type === "session.started" && e.threadId === "t-late-active").length;
       await instance.adapter.resetSession!("t-late-active");
@@ -492,7 +494,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
   it("a tree that cannot be confirmed stopped still settles the turn; the thread then refuses a launch retryably until a confirmation succeeds", async () => {
     process.env.FAKE_CLAUDE_MODE = "hang";
     await create();
-    const sent = await instance.adapter.sendTurn({ threadId: "t-quarantine", text: "go", ...base });
+    const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-quarantine", text: "go", ...base });
     await recorder.until((e) => e.type === "session.started" && e.threadId === "t-quarantine");
     probe.stopFails = true;
     probe.forceFails = true;
@@ -502,7 +504,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     expect(recorder.events.some((e) => e.type === "runtime.error" && String((e as { message?: string }).message).startsWith("CLAUDE_SESSION_NOT_STOPPED"))).toBe(true);
     // settled, but quarantined: the retry is refused, retryably, and nothing is launched
     process.env.FAKE_CLAUDE_MODE = "happy";
-    const refused = await instance.adapter.sendTurn({ threadId: "t-quarantine", text: "again", ...base }).then(() => "sent", (error: unknown) => String(error));
+    const refused = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-quarantine", text: "again", ...base }).then(() => "sent", (error: unknown) => String(error));
     expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED/);
     // a later confirmation succeeds: the thread is free
     probe.stopFails = false;
@@ -516,14 +518,14 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     await create();
     let confirmLate: (value: true) => void = () => {};
     probe.lateSignal = new Promise<true>((resolve) => { confirmLate = resolve; });
-    const sent = await instance.adapter.sendTurn({ threadId: "t-late-release", text: "go", ...base });
+    const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-late-release", text: "go", ...base });
     await recorder.until((e) => e.type === "session.started" && e.threadId === "t-late-release");
     probe.stopFails = true;
     probe.forceFails = true; // every caller-facing confirmation keeps reading "not stopped"
     await instance.adapter.interruptTurn("t-late-release").catch(() => undefined);
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
     process.env.FAKE_CLAUDE_MODE = "happy";
-    const refused = await instance.adapter.sendTurn({ threadId: "t-late-release", text: "again", ...base }).then(() => "sent", (error: unknown) => String(error));
+    const refused = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-late-release", text: "again", ...base }).then(() => "sent", (error: unknown) => String(error));
     expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED/);
     // the shared confirmation finally succeeds, long after the attempt expired
     confirmLate(true);
@@ -538,7 +540,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     await create();
     let confirmLate: (value: true) => void = () => {};
     probe.lateSignal = new Promise<true>((resolve) => { confirmLate = resolve; });
-    const sent = await instance.adapter.sendTurn({ threadId: "t-subs", text: "go", ...base });
+    const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-subs", text: "go", ...base });
     await recorder.until((e) => e.type === "session.started" && e.threadId === "t-subs");
     probe.stopFails = true;
     probe.forceFails = true;
@@ -548,7 +550,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     probe.calls = { await: 0, force: 0, outcome: 0 };
     probe.signalPids = [];
     for (let i = 0; i < 5; i++) {
-      const refused = await instance.adapter.sendTurn({ threadId: "t-subs", text: "again", ...base }).then(() => "sent", (error: unknown) => String(error));
+      const refused = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-subs", text: "again", ...base }).then(() => "sent", (error: unknown) => String(error));
       expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED/);
     }
     // one subscription per session, however many attempts failed
@@ -565,7 +567,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     process.env.FAKE_CLAUDE_MODE = "hang";
     try {
       await create();
-      const sent = await instance.adapter.sendTurn({ threadId: "t-noclose", text: "go", ...base });
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-noclose", text: "go", ...base });
       await recorder.until((e) => e.type === "session.started" && e.threadId === "t-noclose");
       probe.stopFails = true;
       probe.forceFails = true;
@@ -578,7 +580,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
       expect(recorder.events.some((e) => e.type === "runtime.error" && String((e as { message?: string }).message).startsWith("CLAUDE_SESSION_NOT_STOPPED"))).toBe(true);
       process.env.FAKE_CLAUDE_MODE = "happy";
       delete process.env.FAKE_CLAUDE_IGNORE_TERM;
-      const refused = await instance.adapter.sendTurn({ threadId: "t-noclose", text: "again", ...base }).then(() => "sent", (error: unknown) => String(error));
+      const refused = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-noclose", text: "again", ...base }).then(() => "sent", (error: unknown) => String(error));
       expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED/);
       probe.stopFails = false;
       probe.forceFails = false;
@@ -593,7 +595,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     process.env.FAKE_CLAUDE_MODE = "hang";
     try {
       await create();
-      const sent = await instance.adapter.sendTurn({ threadId: "t-disagree", text: "go", ...base });
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-disagree", text: "go", ...base });
       await recorder.until((e) => e.type === "session.started" && e.threadId === "t-disagree");
       probe.disagree = true;
       probe.calls = { await: 0, force: 0, outcome: 0 };
@@ -622,13 +624,13 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     probe.treeGate = new Promise<void>((resolve) => { release = resolve; });
     try {
       await create();
-      const sent = await instance.adapter.sendTurn({ threadId: "t-deadline", text: "go", ...base });
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-deadline", text: "go", ...base });
       await recorder.until((e) => e.type === "session.started" && e.threadId === "t-deadline");
       // the stop is requested but its confirmation hangs: no close, no quarantine yet
       await instance.adapter.interruptTurn("t-deadline").catch(() => undefined);
       probe.forceFails = true;
       process.env.FAKE_CLAUDE_MODE = "happy";
-      const refused = await instance.adapter.sendTurn({ threadId: "t-deadline", text: "again", ...base }).then(() => "sent", (error: unknown) => String(error));
+      const refused = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-deadline", text: "again", ...base }).then(() => "sent", (error: unknown) => String(error));
       // the old turn was settled by the quarantine, and the refusal is the retryable one
       expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED/);
       await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
@@ -756,7 +758,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS = "1";
     process.env.FAKE_CLAUDE_STATE = join(scratch, "state");
     await create();
-    const sending = instance.adapter.sendTurn({ threadId: "t-steer-retry", text: "x".repeat(4 * 1024 * 1024), ...base });
+    const sending = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-steer-retry", text: "x".repeat(4 * 1024 * 1024), ...base });
     // queue the steer while the launch is pre-init (a settled-false answer means it was not queued yet)
     const pending = Symbol("pending");
     let steered: Promise<boolean | SteerDelivery> | null = null;
@@ -785,7 +787,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     let followUp: Promise<unknown> | null = null;
     const unsubscribe = instance.adapter.onEvent((event) => {
       if (event.type === "turn.completed" && event.threadId === "t-order" && !followUp) {
-        followUp = instance.adapter.sendTurn({ threadId: "t-order", text: "three", resumeCursor: sessions.get("t-order"), ...routed });
+        followUp = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-order", text: "three", resumeCursor: sessions.get("t-order"), ...routed });
       }
     });
     const two = await run("t-order", "two", routed);
@@ -804,8 +806,8 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     probe.override = async () => { await gate; return new Set<number>(); };
     await run("t-race", "two", base);
     probe.override = async () => { await gate; return new Set<number>(); };
-    const first = instance.adapter.sendTurn({ threadId: "t-race", text: "three", resumeCursor: sessions.get("t-race"), ...base });
-    const second = instance.adapter.sendTurn({ threadId: "t-race", text: "four", resumeCursor: sessions.get("t-race"), ...base });
+    const first = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-race", text: "three", resumeCursor: sessions.get("t-race"), ...base });
+    const second = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-race", text: "four", resumeCursor: sessions.get("t-race"), ...base });
     release();
     const [a, b] = await Promise.allSettled([first, second]);
     expect(a.status).toBe("fulfilled");
@@ -817,8 +819,8 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
 
   it("two overlapping first dispatches on one thread start one process, and the loser is refused", async () => {
     await create();
-    const first = instance.adapter.sendTurn({ threadId: "t-overlap", text: "one", ...base });
-    const second = instance.adapter.sendTurn({ threadId: "t-overlap", text: "two", ...base });
+    const first = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-overlap", text: "one", ...base });
+    const second = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-overlap", text: "two", ...base });
     const settled = await Promise.allSettled([first, second]);
     expect(settled.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     const lost = settled.find((r) => r.status === "rejected") as PromiseRejectedResult;
@@ -841,7 +843,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     process.env.FAKE_CLAUDE_HOLD_SEEN = join(scratch, "hold.seen");
     await create();
     const one = await run("t-clear", "one", base);
-    const held = await instance.adapter.sendTurn({ threadId: "t-clear", text: "__hold_here__ two", resumeCursor: sessions.get("t-clear"), ...base });
+    const held = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-clear", text: "__hold_here__ two", resumeCursor: sessions.get("t-clear"), ...base });
     for (let i = 0; i < 100 && !existsSync(process.env.FAKE_CLAUDE_HOLD_SEEN!); i++) await new Promise((resolve) => setTimeout(resolve, 20));
     rmSync(one.cred.path, { force: true });
     mkdirSync(one.cred.path); // the emptying rename now fails
@@ -944,7 +946,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     const unsubscribe = instance.adapter.onEvent((event) => {
       if (event.type === "turn.retrying") leftAtRetry = readdirSync(scratch).filter((name) => name.startsWith("murage-cred-"));
     });
-    const sent = await instance.adapter.sendTurn({ threadId: "t-retry", text: "x".repeat(4 * 1024 * 1024), ...base });
+    const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-retry", text: "x".repeat(4 * 1024 * 1024), ...base });
     await recorder.until((e) => e.type === "turn.retrying" && e.turnId === sent.turnId);
     unsubscribe();
     // the dead launch's file is gone while the retry waits out its backoff
@@ -978,7 +980,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
       expect(await hit(first.token)).toBe(200); // still the live generation until the harness settles it
       registry.revokeGeneration("t-e2e", "g1"); // harness: turn N settled
       const second = turnWith("g2");
-      const held = await instance.adapter.sendTurn({ threadId: "t-e2e", text: "__hold_here__ two", resumeCursor: sessions.get("t-e2e"), ...second.input });
+      const held = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-e2e", text: "__hold_here__ two", resumeCursor: sessions.get("t-e2e"), ...second.input });
       for (let i = 0; i < 100 && !existsSync(process.env.FAKE_CLAUDE_HOLD_SEEN!); i++) await new Promise((resolve) => setTimeout(resolve, 20));
       const inFile = JSON.parse(readFileSync(one.cred.path, "utf8")) as Record<string, Record<string, string>>;
       expect(JSON.stringify(inFile)).toContain(second.token);
@@ -1010,7 +1012,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     probe.override = async () => { await gate; return new Set<number>(); };
     const two = await run("t-stopwait", "two", base);
     const dispatched = traces.length;
-    const third = instance.adapter.sendTurn({ threadId: "t-stopwait", text: "three", resumeCursor: sessions.get("t-stopwait"), ...base });
+    const third = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stopwait", text: "three", resumeCursor: sessions.get("t-stopwait"), ...base });
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(instance.adapter.hasSession("t-stopwait")).toBe(true);
     await instance.adapter.interruptTurn("t-stopwait");
@@ -1022,7 +1024,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     expect((done as { stopReason?: string }).stopReason).toBe("cancelled");
     expect(traces).toHaveLength(dispatched);
     // a message sent right after the Stop waits for the stopped dispatch's close, then runs on the same warm process
-    const fourth = instance.adapter.sendTurn({ threadId: "t-stopwait", text: "four", resumeCursor: sessions.get("t-stopwait"), ...base });
+    const fourth = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stopwait", text: "four", resumeCursor: sessions.get("t-stopwait"), ...base });
     release();
     const sent = await fourth;
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
@@ -1080,7 +1082,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     });
     // cold: no process exists yet
     let off = stopOnStart("t-r3-cold");
-    const cold = await instance.adapter.sendTurn({ threadId: "t-r3-cold", text: "never written", ...base });
+    const cold = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-r3-cold", text: "never written", ...base });
     const coldDone = await recorder.until((e) => e.type === "turn.completed" && e.turnId === cold.turnId);
     off();
     expect((coldDone as { stopReason?: string }).stopReason).toBe("cancelled");
@@ -1089,7 +1091,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
     await run("t-r3-warm", "one", base);
     rmSync(dump, { force: true });
     off = stopOnStart("t-r3-warm");
-    const warm = await instance.adapter.sendTurn({ threadId: "t-r3-warm", text: "never written either", resumeCursor: sessions.get("t-r3-warm"), ...base });
+    const warm = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-r3-warm", text: "never written either", resumeCursor: sessions.get("t-r3-warm"), ...base });
     const warmDone = await recorder.until((e) => e.type === "turn.completed" && e.turnId === warm.turnId);
     off();
     expect((warmDone as { stopReason?: string }).stopReason).toBe("cancelled");
@@ -1232,7 +1234,7 @@ describe("ClaudeDriver warm process (stale frames and shutdown)", () => {
     recorder = recordEvents(instance.adapter);
   };
   const turn = async (threadId: string, text: string, extra: Partial<SendTurnInput> = {}) => {
-    const sent = await instance.adapter.sendTurn({ threadId, text, warmIdentity: identity, ...(cursors.has(threadId) ? { resumeCursor: cursors.get(threadId) } : {}), ...extra });
+    const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text, warmIdentity: identity, ...(cursors.has(threadId) ? { resumeCursor: cursors.get(threadId) } : {}), ...extra });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
     cursors.set(threadId, "mini-session");
     return sent.turnId;
@@ -1296,7 +1298,7 @@ describe("ClaudeDriver warm process (stale frames and shutdown)", () => {
 
   it("R4: a steer sent right after a cold dispatch is written only after init has been handled", async () => {
     await create();
-    const sent = await instance.adapter.sendTurn({ threadId: "t-steer-cold", text: "one SLOW_INIT", warmIdentity: identity });
+    const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-steer-cold", text: "one SLOW_INIT", warmIdentity: identity });
     const steered = instance.adapter.steer!("t-steer-cold", "STEER-ME");
     // the CLI has the first prompt; its init is 300 ms away, so the steer has not been written
     for (let i = 0; i < 100 && miniLog().length < 1; i++) await new Promise((resolve) => setTimeout(resolve, 20));
@@ -1309,7 +1311,7 @@ describe("ClaudeDriver warm process (stale frames and shutdown)", () => {
 
   it("R4: a steer queued before init is dropped, not written, when the turn is stopped first", async () => {
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-steer-stop", text: "one SLOW_INIT", warmIdentity: identity });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-steer-stop", text: "one SLOW_INIT", warmIdentity: identity });
     const steered = instance.adapter.steer!("t-steer-stop", "STEER-LATE");
     await instance.adapter.interruptTurn("t-steer-stop");
     await expect(steered).resolves.toBe(false);
@@ -1321,13 +1323,13 @@ describe("ClaudeDriver warm process (stale frames and shutdown)", () => {
     await create();
     const revoked = () => { throw new Error("MEMORY_CONTEXT_REVOKED"); };
     // cold: the fence runs after setup, right before the spawn and first write
-    await expect(instance.adapter.sendTurn({ threadId: "t-fence", text: "COLD-REFUSED", warmIdentity: identity, beforeSubmit: revoked })).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
+    await expect(instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fence", text: "COLD-REFUSED", warmIdentity: identity, beforeSubmit: revoked })).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
     expect(mine()).toHaveLength(0);
     expect(instance.adapter.hasSession("t-fence")).toBe(false);
     // warm: a live idle process is not written to either
     await turn("t-fence", "one");
     let calls = 0;
-    await expect(instance.adapter.sendTurn({ threadId: "t-fence", text: "WARM-REFUSED", warmIdentity: identity, resumeCursor: "mini-session", beforeSubmit: () => { calls++; revoked(); } })).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
+    await expect(instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fence", text: "WARM-REFUSED", warmIdentity: identity, resumeCursor: "mini-session", beforeSubmit: () => { calls++; revoked(); } })).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
     expect(calls).toBe(1);
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(miniLog().some((line) => line.includes("REFUSED"))).toBe(false);
@@ -1343,7 +1345,7 @@ describe("ClaudeDriver warm process (stale frames and shutdown)", () => {
 
   it("memory r3: a steer queued before init is not written when its session went invalid while it waited", async () => {
     await create();
-    const sent = await instance.adapter.sendTurn({ threadId: "t-steer-invalid", text: "one SLOW_INIT", warmIdentity: identity });
+    const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-steer-invalid", text: "one SLOW_INIT", warmIdentity: identity });
     let valid = true;
     const steered = instance.adapter.steer!("t-steer-invalid", "STEER-STALE", () => { if (!valid) throw new Error("MEMORY_CONTEXT_REVOKED"); });
     // the revoke lands while the steer waits for init
@@ -1405,7 +1407,7 @@ describe("ClaudeDriver warm process (stale frames and shutdown)", () => {
     probe.forceFailPid = old!;
     await instance.adapter.resetSession!("t-older");
     expect(alive(old!)).toBe(true);
-    const refused = await instance.adapter.sendTurn({ threadId: "t-older", text: "three", warmIdentity: identity, resumeCursor: "mini-session" }).then(() => "sent", (error: unknown) => String(error));
+    const refused = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-older", text: "three", warmIdentity: identity, resumeCursor: "mini-session" }).then(() => "sent", (error: unknown) => String(error));
     expect(refused).toMatch(/CLAUDE_SESSION_NOT_STOPPED/);
     expect(mine()).toHaveLength(2); // C never launched
     // A is confirmed on a later attempt: the thread is free and A is really gone
@@ -1450,7 +1452,7 @@ describe("ClaudeDriver warm process (stale frames and shutdown)", () => {
     await reset;
     probe.signalByPid.clear();
     // A was released: the thread must not be quarantined on it again
-    const sent = await instance.adapter.sendTurn({ threadId: "t-interleave", text: "three", warmIdentity: identity, resumeCursor: "mini-session" }).then(() => "sent", (error: unknown) => String(error));
+    const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-interleave", text: "three", warmIdentity: identity, resumeCursor: "mini-session" }).then(() => "sent", (error: unknown) => String(error));
     expect(sent).toBe("sent");
     // the fixture's own stubborn process (on Windows the reset's stop already ended it)
     try { process.kill(old!, "SIGKILL"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
@@ -1476,7 +1478,7 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
     recorder = recordEvents(instance.adapter);
   };
   const run = async (threadId: string, text: string, extra: Partial<SendTurnInput> = {}) => {
-    const sent = await instance.adapter.sendTurn({ threadId, text, ...(sessions.has(threadId) ? { resumeCursor: sessions.get(threadId) } : {}), ...extra });
+    const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text, ...(sessions.has(threadId) ? { resumeCursor: sessions.get(threadId) } : {}), ...extra });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
     const started = [...recorder.events].reverse().find((e) => e.type === "session.started" && e.threadId === threadId) as { sessionId?: string } | undefined;
     if (started?.sessionId) sessions.set(threadId, started.sessionId);
@@ -1542,7 +1544,7 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
     process.env.FAKE_CLAUDE_PERM_TOOL = "Bash";
     process.env.FAKE_CLAUDE_PERM_INPUT = JSON.stringify({ command: "rm -rf ~/Documents" });
     try {
-      const sent = await instance.adapter.sendTurn({ threadId: "t-brokerrsp-respawn", text: "__fixture_permission_tool__", ...base, resumeCursor: sessions.get("t-brokerrsp-respawn") });
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-brokerrsp-respawn", text: "__fixture_permission_tool__", ...base, resumeCursor: sessions.get("t-brokerrsp-respawn") });
       expect(dispatches().at(-1)).toMatch(/process=spawned reason=(no-process|process-exited)/);
       const opened = await recorder.until((e) => e.type === "request.opened" && e.threadId === "t-brokerrsp-respawn");
       await instance.adapter.respondToRequest(opened.threadId, opened.requestId!, { behavior: "deny" });
@@ -1562,7 +1564,7 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
     process.env.FAKE_CLAUDE_PERM_INPUT = JSON.stringify({ command: "rm -rf ~/Documents" });
     process.env.FAKE_CLAUDE_PERM_SOCKET = join(scratch, "brokerrsp-nothing-listens.sock");
     try {
-      const sent = await instance.adapter.sendTurn({ threadId: "t-brokerrsp-down", text: "__fixture_permission_tool__", ...base });
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-brokerrsp-down", text: "__fixture_permission_tool__", ...base });
       const denied = await recorder.until((e) => e.type === "item.completed" && e.threadId === "t-brokerrsp-down" && e.itemType === "tool");
       expect((denied as { ok?: boolean }).ok).toBe(false);
       // U22: the proxy would deny every later ask the same way; the turn ends here instead of running on with denials
@@ -1879,3 +1881,6 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
     expect(dispatches()).toHaveLength(1);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

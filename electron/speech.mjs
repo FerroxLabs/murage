@@ -55,9 +55,20 @@ export function restates(kept, text) {
 }
 
 export function speechActive() { return child !== null; }
-// Bumped by every Start and every explicit Stop, so a Start that had to wait
+// Bumped by every Start and every cancelling Stop, so a Start that had to wait
 // for an earlier helper cannot launch after a newer Start or Stop.
 let startGeneration = 0;
+// The one Start still waiting to launch: `{ generation, token, win }`. A Stop
+// cancels it only when the tokens match (both undefined counts as a match), so
+// a composer Stop never cancels a call's Start and a call Stop still does.
+let pendingStart = null;
+
+/** Composer dictation names its session with a renderer-made token (a string
+ *  of at most 64 characters). Calls and push-to-talk send none. */
+export function speechToken(value) {
+  return typeof value === "string" && value.length > 0 && value.length <= 64 ? value : undefined;
+}
+const tagged = (token, info) => (token === undefined ? info : { ...info, session: token });
 
 function ensureBuilt() {
   if (app.isPackaged) return;
@@ -92,21 +103,43 @@ export function speechArgs(options) {
  * dictation deliberately keeps listening until its mic button is pressed.
  */
 export async function startSpeech(win, options = {}) {
+  const token = speechToken(options?.session);
+  // A composer start never disturbs a call: while a tokenless helper is owned
+  // and not stopping, or a tokenless start is pending, refuse BEFORE touching
+  // the pending start or the generation. Nothing is stopped or cancelled.
+  if (token !== undefined) {
+    const callOwned = child && child.token === undefined && !child.stopRequested;
+    if (callOwned || (pendingStart && pendingStart.token === undefined)) {
+      sendEnd(win, { code: 1, reason: "speech-busy", session: token });
+      return;
+    }
+  }
+  // A newer start by another caller silently ends an older composer start that
+  // was still waiting; its owner is told.
+  if (pendingStart && pendingStart.token !== undefined && pendingStart.token !== token) {
+    sendEnd(pendingStart.win, { code: 0, reason: "superseded", session: pendingStart.token });
+  }
   const generation = ++startGeneration;
-  const previous = stopOwnedSpeech();
+  pendingStart = { generation, token, win };
+  const done = () => {
+    if (pendingStart?.generation === generation) pendingStart = null;
+  };
+  const previous = stopOwnedSpeech(token);
   if (previous) {
     try {
       await previous;
     } catch {
       // The previous helper is still owned (its stop marker failed or it has
       // not exited). Never start a second recognizer beside it.
-      if (generation === startGeneration) sendEnd(win, { code: 1, reason: "helper-stop-pending" });
+      if (generation === startGeneration) sendEnd(win, tagged(token, { code: 1, reason: "helper-stop-pending" }));
+      done();
       return;
     }
     if (generation !== startGeneration) return;
   }
   if (process.platform !== "darwin") {
-    sendEnd(win, { code: 2, reason: "unsupported-platform" });
+    done();
+    sendEnd(win, tagged(token, { code: 2, reason: "unsupported-platform" }));
     return;
   }
   const args = speechArgs(options);
@@ -121,10 +154,12 @@ export async function startSpeech(win, options = {}) {
   try {
     ensureBuilt();
   } catch {
-    sendEnd(win, { code: 1, reason: "helper-build-failed" });
+    done();
+    sendEnd(win, tagged(token, { code: 1, reason: "helper-build-failed" }));
     return;
   }
-  launchSpeechSession(win, args, { fed });
+  done();
+  launchSpeechSession(win, args, { fed, token });
 }
 
 /** Append renderer audio (16 kHz mono s16le) to the fed session, if any.
@@ -145,7 +180,9 @@ export function feedSpeech(bytes) {
  * build gates first; this is exported so the lifecycle tests can drive it
  * with a fake `open` waiter on every CI platform.
  */
-export function launchSpeechSession(win, args = [], { fed = false } = {}) {
+export function launchSpeechSession(win, args = [], { fed = false, token } = {}) {
+  const sendTagged = (channel, payload) => win.webContents.send(channel, tagged(token, payload));
+  const endTagged = (info) => sendEnd(win, tagged(token, info));
   // A direct spawn of Contents/MacOS/speech-helper loses the app-bundle
   // identity and TCC kills it for lacking a usage description. LaunchServices
   // preserves that identity. `open` redirects its stdout/stderr to files,
@@ -185,7 +222,7 @@ export function launchSpeechSession(win, args = [], { fed = false } = {}) {
     );
   } catch {
     rmSync(sessionDir, { recursive: true, force: true });
-    sendEnd(win, { code: 1, reason: "helper-start-failed" });
+    endTagged({ code: 1, reason: "helper-start-failed" });
     return;
   }
 
@@ -197,6 +234,8 @@ export function launchSpeechSession(win, args = [], { fed = false } = {}) {
     finishPath,
     pcmPath,
     sessionDir,
+    token,
+    win,
     stopRequested: false,
     exit: createHelperExit(),
   };
@@ -267,7 +306,7 @@ export function launchSpeechSession(win, args = [], { fed = false } = {}) {
         // A stopping or replaced helper can flush one last chunk. Never leak
         // it into the renderer or the session that replaced it.
         if (child === speechSession && !speechSession.stopRequested && !win.isDestroyed()) {
-          win.webContents.send("speech:transcript", parsed);
+          sendTagged("speech:transcript", parsed);
         }
       } catch {
         /* non-JSON noise on stdout — ignore */
@@ -302,7 +341,7 @@ export function launchSpeechSession(win, args = [], { fed = false } = {}) {
     // The session ended (error, crash) with words shown and no final:
     // deliver them as the final rather than losing the turn.
     if (!completed && lastText && !win.isDestroyed()) {
-      win.webContents.send("speech:transcript", {
+      sendTagged("speech:transcript", {
         partial: false,
         text: lastText,
         recovered: true,
@@ -317,11 +356,11 @@ export function launchSpeechSession(win, args = [], { fed = false } = {}) {
     const traceReason = reportedError ?? (completed && code === 0 ? "completed" : "helper-exited");
     writeCallTrace(sessionTraceLine({ ...stats, recovered: recoveredFinal, code, reason: traceReason }));
     if (reportedError) {
-      sendEnd(win, { code: 1, reason: reportedError });
+      endTagged({ code: 1, reason: reportedError });
     } else if (completed && code === 0) {
-      sendEnd(win, { code: 0, reason: "completed" });
+      endTagged({ code: 0, reason: "completed" });
     } else {
-      sendEnd(win, { code: 1, reason: "helper-exited" });
+      endTagged({ code: 1, reason: "helper-exited" });
     }
   });
   proc.on("error", () => {
@@ -330,17 +369,27 @@ export function launchSpeechSession(win, args = [], { fed = false } = {}) {
     if (child !== speechSession) return;
     child = null;
     if (speechSession.stopRequested) return;
-    sendEnd(win, { code: 1, reason: "helper-start-failed" });
+    endTagged({ code: 1, reason: "helper-start-failed" });
   });
 }
 
-function stopOwnedSpeech() {
+function stopOwnedSpeech(requester) {
   const session = child;
   if (!session) return null;
-  return stopOwnedHelper(session, {
+  const stopping = stopOwnedHelper(session, {
     name: "Dictation",
     writeMarker: () => writeFileSync(session.stopPath, "stop"),
   });
+  // A composer session stopped by a request that does not carry its token (a
+  // call start, push-to-talk, another window, a tokenless stop) gets told
+  // once the stop settles, because its own events are suppressed.
+  if (session.token !== undefined && requester !== session.token) {
+    stopping.then(
+      () => sendEnd(session.win, { code: 0, reason: "superseded", session: session.token }),
+      () => sendEnd(session.win, { code: 1, reason: "stop-failed", session: session.token }),
+    );
+  }
+  return stopping;
 }
 
 /**
@@ -349,15 +398,25 @@ function stopOwnedSpeech() {
  * stop marker cannot be written or the helper has not exited within the
  * owned-work deadline.
  */
-export async function stopSpeech() {
-  startGeneration += 1;
-  await stopOwnedSpeech();
+export async function stopSpeech(rawToken) {
+  const token = speechToken(rawToken);
+  // Cancel a pending start only when the tokens match.
+  if (!pendingStart || pendingStart.token === token) {
+    startGeneration += 1;
+    pendingStart = null;
+  }
+  // A tokened stop never touches a tokenless (call) helper; with nothing
+  // composer-owned it resolves at once. A tokenless stop behaves as before.
+  if (token !== undefined && (!child || child.token === undefined)) return;
+  await stopOwnedSpeech(token);
 }
 
 /** Finalize the active request and keep it owned until the recognizer emits
- * its final transcript. Used by push-to-talk key release. */
-export function finishSpeech() {
+ * its final transcript. Used by push-to-talk key release (no token) and by
+ * composer dictation (its own token only). */
+export function finishSpeech(rawToken) {
   if (!child || child.stopRequested) return;
+  if (child.token !== speechToken(rawToken)) return;
   try {
     writeFileSync(child.finishPath, "finish");
   } catch {}

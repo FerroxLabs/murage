@@ -229,6 +229,22 @@ final class PhoneAskMintTests: XCTestCase {
         }
         XCTAssertEqual(PhoneJobStrings.text("ask_ok"), "OK")
     }
+
+    @MainActor
+    func testTheDialogBuiltAfterATurnedOffAnswerHasExactlyOneButtonOkThatWritesLikeNotNow() throws {
+        var writes = 0, turnOns = 0
+        let alert = PhoneAskSetup.makeAlert(problem: "x", onlyOk: PhoneAskSetup.offersOnlyOk(PhoneJobsMintError.turnedOff),
+                                            notNow: { writes += 1 }, turnOn: { _ in turnOns += 1 })
+        XCTAssertEqual(alert.actions.count, 1)
+        let ok = try XCTUnwrap(alert.actions.first)
+        XCTAssertEqual(ok.title, "OK")
+        XCTAssertEqual(ok.style, .cancel)
+        let handler = try XCTUnwrap(ok.value(forKey: "handler"))
+        unsafeBitCast(handler as AnyObject, to: (@convention(block) (UIAlertAction) -> Void).self)(ok)
+        XCTAssertEqual(writes, 1); XCTAssertEqual(turnOns, 0)
+        let first = PhoneAskSetup.makeAlert(problem: nil, onlyOk: false, notNow: { writes += 1 }, turnOn: { _ in })
+        XCTAssertEqual(first.actions.map(\.title), ["NOT NOW", "TURN ON"].map { PhoneJobStrings.text($0 == "NOT NOW" ? "ask_not_now" : "ask_turn_on") })
+    }
     #endif
 
     func testPhoneFlagsWithoutFeatureShowsTurnedOffBeforeChallenge() async throws {

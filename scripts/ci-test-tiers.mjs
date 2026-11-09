@@ -54,6 +54,12 @@ export function vitestFiles(root = ROOT) {
   return [...files].sort();
 }
 
+/** Node gates run in the existing blocking test:electron job, not in Vitest shards. */
+export function nodeGateFiles(root = ROOT) {
+  let command;try { command = JSON.parse(readFileSync(join(root,"package.json"),"utf8")).scripts?.["test:electron"] ?? ""; } catch { return []; }
+  return [...command.matchAll(/"([^"]+\.node-test\.mjs)"/g)].flatMap(match => [...globSync(match[1],{cwd:root})].map(file=>file.split("\\").join("/")));
+}
+
 function parseOses(value, where) {
   if (value === "all") return [...OSES];
   const list = value.split("+");
@@ -86,12 +92,12 @@ export function readLists(root = ROOT) {
 export function check(root = ROOT) {
   const { gate, extended } = readLists(root);
   const files = vitestFiles(root);
-  const known = new Set(files);
+  const known = new Set([...files,...nodeGateFiles(root)]);
   const unlisted = files.filter(file => !gate.has(file) && !extended.has(file));
   const stale = [...gate.keys(), ...extended.keys()].filter(file => !known.has(file));
   const problems = [
     ...unlisted.map(file => `unclassified test file: ${file} (add it to ${GATE} or ${EXTENDED}; see docs/testing.md)`),
-    ...stale.map(file => `listed but not a Vitest file: ${file}`),
+    ...stale.map(file => `listed but not a configured test file: ${file}`),
   ];
   return { problems, gate: gate.size, extended: extended.size, files: files.length };
 }
@@ -108,7 +114,8 @@ export function select({ tier, os, shard, skip = [] }, root = ROOT) {
   let files = tier === "gate"
     ? [...gate].filter(([, entry]) => !os || entry.oses.includes(os)).map(([file]) => file)
     : [...extended].filter(([, note]) => nightly(note) === (tier === "nightly")).map(([file]) => file);
-  files = files.filter(file => !skip.includes(file)).sort();
+  const nodeGates = new Set(nodeGateFiles(root));
+  files = files.filter(file => !skip.includes(file) && !nodeGates.has(file)).sort();
   if (shard) {
     const [index, count] = shard.split("/").map(Number);
     if (!(count >= 1 && index >= 1 && index <= count)) fail(`bad --shard ${shard}`);

@@ -9,7 +9,7 @@ import { Link2, Link2Off, Pin } from "lucide-react";
 import { copyOrReport } from "@/lib/copy-text";
 import { t } from "@/lib/i18n";
 import { raiseTransientError } from "@/state/chat-error";
-import { useStore, useStoreIfAny } from "@/state/store";
+import { useStoreActions, useStoreActionsIfAny } from "@/state/store";
 import { threadLinkUrl } from "../../shared/thread-link";
 
 type ThreadLinkValue = { link?: string; assign: (link: string | null) => void };
@@ -19,7 +19,7 @@ const ITEM_CLASS = "flex w-full items-center gap-2 rounded px-2.5 py-2 text-left
 
 /** Makes the open conversation's link assignable from every link beneath it. */
 export function ThreadLinkProvider({ botId, threadId, link, children }: { botId: string; threadId: string; link?: string; children: ReactNode }) {
-  const { dispatch } = useStore();
+  const { dispatch } = useStoreActions();
   const value = useMemo<ThreadLinkValue>(
     () => ({ link, assign: (next) => dispatch({ type: "updateTask", botId, threadId, patch: { link: next } }) }),
     [link, botId, threadId, dispatch],
@@ -29,7 +29,7 @@ export function ThreadLinkProvider({ botId, threadId, link, children }: { botId:
 
 export function useThreadLinkMenu(href: string | undefined) {
   // A message can render with no store above it (an exported or static render); the menu needs one only when it reports a failed copy.
-  const dispatch = useStoreIfAny()?.dispatch;
+  const dispatch = useStoreActionsIfAny()?.dispatch;
   const thread = useContext(ThreadLinkContext);
   const [at, setAt] = useState<{ left: number; top: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);

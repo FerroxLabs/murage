@@ -5,10 +5,19 @@
 // result to the dispatch step. A failure is held until `take()` (so it
 // surfaces where the sequential build would have), and `cancel()` aborts the
 // build and silences its rejection when the turn ends before it is used.
+const BUNDLE_FAILURES = new Set(["MEMORY_UNAUTHORIZED", "MEMORY_EVIDENCE_UNAVAILABLE", "MEMORY_CONTEXT_REVOKED", "MEMORY_PIN_UNAVAILABLE", "MEMORY_PIN_BUDGET", "MEMORY_SCOPE_DENIED", "MEMORY_RECORD_CHANGED", "MEMORY_QUERY_DEADLINE", "MEMORY_POLICY_PENDING", "MEMORY_BUNDLE_UNTRUSTED", "MEMORY_BUNDLE_BUDGET_MISMATCH", "INVALID_MEMORY_QUERY", "INVALID_MEMORY_CONTEXT_BUDGET"]);
+
+/** What a failed build's trace line may say: one of the bundle's own fixed codes, never text from the error (turn-trace.ts). */
+export function bundleFailureCause(error: unknown): string {
+  const first = /^[A-Z_]+/.exec(error instanceof Error ? error.message : "")?.[0];
+  return first !== undefined && BUNDLE_FAILURES.has(first) ? first : "other";
+}
+
 export class EarlyBundle<T, A = unknown> {
   private readonly controller = new AbortController();
   private promise: Promise<T> | undefined;
   private spent = false;
+  private firstCancel: string | undefined;
   readonly access: A;
   constructor(access: A) { this.access = access; }
 
@@ -27,8 +36,12 @@ export class EarlyBundle<T, A = unknown> {
     return this.promise;
   }
 
-  cancel(): void {
+  /** Which step cancelled first, for the trace line: a fixed word from the caller, never text from a value. */
+  get cancelledBy(): string | undefined { return this.firstCancel; }
+
+  cancel(by: string): void {
     this.spent = true;
+    this.firstCancel ??= by;
     this.controller.abort();
   }
 }
@@ -51,7 +64,7 @@ export function dispatchAccess<T, A>(
       hooks.assertCurrent(early.access);
       const now = hooks.stamp();
       return { access: early.access, earlyVerdictHolds: checkedAt !== undefined && now === checkedAt };
-    } catch { early.cancel(); }
+    } catch { early.cancel("access-revoked"); }
   }
   return { access: hooks.mint(), earlyVerdictHolds: false };
 }

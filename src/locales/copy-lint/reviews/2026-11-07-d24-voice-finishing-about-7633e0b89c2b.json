@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "d24-speech-snap",
+  "date": "2026-11-07",
+  "base": "576cea4c5",
+  "scope": "D24 voice-finishing detail: about N min (Astra r5 Low)",
+  "strings": {
+    "stepup/en:prepare.voiceFinishingDetail": {
+      "text": "Try again in about {minutes} min. Your chats and memories are as they were.",
+      "en": "Try again in about {minutes} min. Your chats and memories are as they were.",
+      "verdict": "pass",
+      "note": "Plain, calm wording clearly marks the wait as an estimate."
+    },
+    "stepup/de:prepare.voiceFinishingDetail": {
+      "text": "Versuch es in etwa {minutes} Min. noch einmal. Deine Chats und Erinnerungen sind unverändert.",
+      "en": "Try again in about {minutes} min. Your chats and memories are as they were.",
+      "verdict": "pass",
+      "note": "Natural wording preserves the estimate and matches the informal address."
+    },
+    "stepup/es:prepare.voiceFinishingDetail": {
+      "text": "Vuelve a intentarlo en aproximadamente {minutes} min. Tus chats y recuerdos siguen como estaban.",
+      "en": "Try again in about {minutes} min. Your chats and memories are as they were.",
+      "verdict": "pass",
+      "note": "Sol replacement text for the es 1-minute case, applied exactly."
+    },
+    "stepup/fr:prepare.voiceFinishingDetail": {
+      "text": "Réessaie dans environ {minutes} min. Tes discussions et tes souvenirs n'ont pas changé.",
+      "en": "Try again in about {minutes} min. Your chats and memories are as they were.",
+      "verdict": "pass",
+      "note": "Natural wording preserves the estimate, familiar address and app terminology."
+    },
+    "stepup/hi:prepare.voiceFinishingDetail": {
+      "text": "लगभग {minutes} मिनट बाद फिर से कोशिश करें। आपकी चैट और यादें पहले जैसी हैं।",
+      "en": "Try again in about {minutes} min. Your chats and memories are as they were.",
+      "verdict": "pass",
+      "note": "Natural, polite wording conveys the estimate and preserves the reassurance."
+    },
+    "stepup/ja:prepare.voiceFinishingDetail": {
+      "text": "約 {minutes} 分後にもう一度お試しください。チャットとメモリはそのままです。",
+      "en": "Try again in about {minutes} min. Your chats and memories are as they were.",
+      "verdict": "pass",
+      "note": "Polite, natural wording conveys the estimate using the app’s terminology."
+    },
+    "stepup/pt-br:prepare.voiceFinishingDetail": {
+      "text": "Tente de novo em cerca de {minutes} min. Suas conversas e memórias continuam como estavam.",
+      "en": "Try again in about {minutes} min. Your chats and memories are as they were.",
+      "verdict": "pass",
+      "note": "Natural wording conveys the estimate and matches the pack’s address and terminology."
+    },
+    "stepup/zh:prepare.voiceFinishingDetail": {
+      "text": "请在约 {minutes} 分钟后再试。你的聊天和记忆都保持原样。",
+      "en": "Try again in about {minutes} min. Your chats and memories are as they were.",
+      "verdict": "pass",
+      "note": "Clear, calm wording preserves the estimate and matches the app’s address and terminology."
+    }
+  },
+  "files": {}
+}

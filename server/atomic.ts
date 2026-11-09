@@ -75,26 +75,41 @@ export function syncParentDirectory(path: string, platform: NodeJS.Platform = pr
   finally { closeSync(fd); }
 }
 
+
+/** Like `syncParentDirectory`, but says what happened: "synced" when the directory really was fsynced, "unsupported" on Windows or a
+ * filesystem that refuses a directory sync (nothing was made durable). An I/O error is thrown. The OUTSIDE-COMPACT barrier needs the
+ * difference: a rename is only published on a "synced" directory. `syncParentDirectory` and its callers are unchanged. */
+export function syncParentDirectoryStatus(path: string, platform: NodeJS.Platform = process.platform): "synced" | "unsupported" {
+  if (platform === "win32") return "unsupported";
+  let fd: number;
+  try { fd = openSync(dirname(path), "r"); }
+  catch (error) { if (DIRECTORY_SYNC_UNSUPPORTED.has(String((error as { code?: unknown } | null)?.code))) return "unsupported"; throw error; }
+  try { fsyncSync(fd); return "synced"; }
+  catch (error) { if (!DIRECTORY_SYNC_UNSUPPORTED.has(String((error as { code?: unknown } | null)?.code))) throw error; return "unsupported"; }
+  finally { closeSync(fd); }
+}
+
 /** `syncDir` (opt-in): also fsync the parent directory after the rename, for stores whose loss across a power
  * cut matters (the browser restore store). Off by default: every other caller keeps the file-only fsync. */
-export function writeFileAtomic(path: string, data: string | Uint8Array, options: { mode?: number; syncDir?: boolean } = {}): void {
+export type WriteFileAtomicOptions = { mode?: number; syncDir?: boolean; rename?: (from: string, to: string) => void; platform?: NodeJS.Platform; /** test-only fault and order seams for the tmp file: open, write, fsync */ ops?: { open?: typeof openSync; write?: typeof writeFileSync; fsync?: typeof fsyncSync } };
+export function writeFileAtomic(path: string, data: string | Uint8Array, options: WriteFileAtomicOptions = {}): void {
   writeFileAtomicInner(path, data, options);
   atomicWriteCounts.set(path, (atomicWriteCounts.get(path) ?? 0) + 1);
 }
 
-function writeFileAtomicInner(path: string, data: string | Uint8Array, options: { mode?: number; syncDir?: boolean } = {}): void {
+function writeFileAtomicInner(path: string, data: string | Uint8Array, options: WriteFileAtomicOptions = {}): void {
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   let fd: number | null = null;
   try {
     // Apply sensitive-file permissions to the temporary inode itself. The
     // final rename preserves them and never leaves a broader-permission
     // config file visible between the write and a later chmod.
-    fd = openSync(tmp, "w", options.mode);
-    writeFileSync(fd, data);
-    fsyncSync(fd);
+    fd = (options.ops?.open ?? openSync)(tmp, "w", options.mode);
+    (options.ops?.write ?? writeFileSync)(fd, data);
+    (options.ops?.fsync ?? fsyncSync)(fd);
     closeSync(fd);
     fd = null;
-    renameWithRetry(tmp, path);
+    renameWithRetry(tmp, path, options.rename, options.platform);
   } catch (e) {
     if (fd !== null) {
       try {

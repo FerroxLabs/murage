@@ -14,6 +14,64 @@ import time
 import urllib.request
 import zipfile
 
+# --- Download resilience (kept in sync with scripts/download-retry.mjs) -------
+# Retries transport trouble only (network errors, timeouts, truncated bodies,
+# HTTP 408/425/429/5xx) with capped exponential backoff, then optionally tries
+# a Ferrox-controlled copy of the same pinned file. Callers still verify the
+# pinned sha256 on the finished file, so a bad mirror fails closed.
+_MIRROR_DEFAULT = "https://github.com/FerroxLabs/murage/releases/download/build-mirror-1/"
+def _mirror_url(url):
+    import urllib.parse
+    configured = os.environ.get("MURAGE_PACKAGE_MIRROR_BASE")
+    if configured in ("off", ""):
+        return None
+    base = urllib.parse.urlsplit(configured or _MIRROR_DEFAULT)
+    if base.scheme != "https" or not base.netloc or "@" in base.netloc or base.query or base.fragment or not base.path.endswith("/"):
+        return None
+    name = urllib.parse.urlsplit(url).path.rsplit("/", 1)[-1]
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", name):
+        return None
+    return urllib.parse.urlunsplit(base._replace(path=base.path + name))
+def _download_once_retrying(url, dest, timeout, attempts, sleep):
+    import http.client, urllib.error
+    last = None
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as src, open(dest, "wb") as out:
+                shutil.copyfileobj(src, out)
+                headers = getattr(src, "headers", None)
+                expected = headers.get("Content-Length") if headers is not None else None
+                if expected is not None and expected.isdigit() and out.tell() != int(expected):
+                    raise OSError("truncated download: got %d of %s bytes" % (out.tell(), expected))
+            return
+        except urllib.error.HTTPError as error:
+            if not (error.code in (408, 425, 429) or 500 <= error.code <= 599):
+                raise
+            last = error
+        except (urllib.error.URLError, http.client.HTTPException, OSError) as error:
+            last = error
+        if attempt < attempts:
+            delay = min(60, 5 * 2 ** (attempt - 1))
+            print("download attempt %d/%d failed (%s); retrying in %ds" % (attempt, attempts, last, delay), file=sys.stderr, flush=True)
+            sleep(delay)
+    raise last
+def download_pinned(url, dest, timeout=60, attempts=5, mirror=True, sleep=None):
+    sleep = sleep or time.sleep
+    try:
+        _download_once_retrying(url, dest, timeout, attempts, sleep)
+        return url
+    except Exception as primary:
+        fallback = _mirror_url(url) if mirror else None
+        if not fallback:
+            raise
+        print("upstream download failed (%s); trying the Ferrox mirror %s" % (primary, fallback), file=sys.stderr, flush=True)
+        try:
+            _download_once_retrying(fallback, dest, timeout, attempts, sleep)
+            return fallback
+        except Exception:
+            raise primary
+# ------------------------------------------------------------------------------
+
 # Kept in sync with scripts/linux-floor.mjs; checked by scripts/linux-floor.test.mjs.
 LINUX_FLOOR_IMAGE = "docker.io/library/almalinux:8@sha256:8b469a3a78515e8a18ea8fc727e6a3679e1d0c5ba6f58d5b30be3d0d9b86cffe"
 OPENSSL_URL = "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz"
@@ -129,8 +187,7 @@ try:
         shutil.copyfile(original, ROOT / "inputs" / name)
     receipt(inputs=hashes, glibc=platform.libc_ver())
     archive = ROOT / "inputs/Python-3.13.15.tar.xz"
-    with urllib.request.urlopen("https://www.python.org/ftp/python/3.13.15/Python-3.13.15.tar.xz", timeout=60) as src, archive.open("wb") as out:
-        shutil.copyfileobj(src, out)
+    download_pinned("https://www.python.org/ftp/python/3.13.15/Python-3.13.15.tar.xz", archive)
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     if digest != "1e66a7945a48390ee4c2a4268a0e4185884059a13c4aab6d148aa208deea4a76":
         raise RuntimeError("CPython source hash mismatch")
@@ -139,8 +196,7 @@ try:
         tar.extractall(ROOT / "source", filter="data")
     src = ROOT / "source/Python-3.13.15"
     openssl_archive = ROOT / "inputs/openssl-3.5.9.tar.gz"
-    with urllib.request.urlopen(OPENSSL_URL, timeout=60) as src_stream, openssl_archive.open("wb") as out:
-        shutil.copyfileobj(src_stream, out)
+    download_pinned(OPENSSL_URL, openssl_archive)
     openssl_digest = hashlib.sha256(openssl_archive.read_bytes()).hexdigest()
     if openssl_digest != OPENSSL_SHA256:
         raise RuntimeError("OpenSSL source hash mismatch")
@@ -153,7 +209,7 @@ try:
     platforms += ["manylinux2014_x86_64", "manylinux2010_x86_64", "manylinux1_x86_64"]
     platform_args = [arg for tag in platforms for arg in ("--platform", tag)]
     try:
-        run("download-wheels", ["/usr/bin/python3", "-I", "-m", "pip", "download", "--index-url", "https://pypi.org/simple",
+        run("download-wheels", ["/usr/bin/python3", "-I", "-m", "pip", "download", "--index-url", "https://pypi.org/simple", "--retries", "10", "--timeout", "60",
                                "--python-version", "3.13", "--implementation", "cp", "--abi", "cp313", *platform_args,
                                "--only-binary=:all:", "--require-hashes", "-r", ROOT / "inputs/requirements-build.txt",
                                "--dest", ROOT / "wheelhouse"])

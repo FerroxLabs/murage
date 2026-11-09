@@ -25,4 +25,25 @@ entries:
       - file:src/locales/en.json#projects.work.budgetHint
     verified: 1.0.10
     internal: KB limits-41. No per-bot spend cap in server, shared or src/lib (searched 1.0.10).
+  - id: limits.plan-usage
+    name: View plan usage
+    status: partial
+    questions:
+      - How much of my plan have I used?
+      - When does my plan limit reset?
+      - Where can I check plan usage?
+    answer: >
+      Settings, Usage shows the plan use last reported by an engine, when it was checked,
+      and the reported reset time. Use Refresh to check again.
+    limits: >
+      Readings are available when Codex reports them. Other engines and Murage Cloud may
+      show no reading. A reset time does not confirm that more use is available.
+    ask_your_bot: Ask your bot to remind you to check your engine account when no reading is available.
+    settings_path: Settings → Usage
+    platforms: [all]
+    engines: [codex]
+    anchors:
+      - route:/api/plan-usage
+      - file:src/components/PlanUsageCard.tsx#PlanUsageCard
+    verified: 1.0.17
 retired: []

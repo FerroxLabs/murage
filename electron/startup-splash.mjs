@@ -286,6 +286,7 @@ export function createStartupSplash({ BrowserWindow, dark = false, icon, note = 
       closing = true;
       try { if (w && !w.isDestroyed()) w.destroy(); } catch { /* already gone */ }
     },
+    get win() { return win; },
     get open() { return Boolean(win); },
     get upgrading() { return upgrading; },
   };

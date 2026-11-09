@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -97,7 +99,7 @@ describe("a draft-only turn on Claude", () => {
     const dump = join(scratch, "dump-empty.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
     await create();
-    await instance!.adapter.sendTurn({ threadId: "t-draft-empty", text: "draft", routeAsks: true, askLevel: true, draftOnly: true });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-draft-empty", text: "draft", routeAsks: true, askLevel: true, draftOnly: true });
     await recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-draft-empty");
     const seen = dumpOf(dump);
     expect(seen.argv[seen.argv.indexOf("--tools") + 1]).toBe("");
@@ -111,7 +113,7 @@ describe("a draft-only turn on Claude", () => {
     process.env.FAKE_CLAUDE_DUMP = dump;
     writeFileSync(join(config, "cowork_settings.json"), JSON.stringify({ apiKeyHelper: "/usr/local/bin/print-key" }));
     await create({ CLAUDE_CODE_USE_COWORK_PLUGINS: "1" });
-    await instance!.adapter.sendTurn({ threadId: "t-cowork", text: "draft", routeAsks: true, askLevel: true, draftOnly: true });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-cowork", text: "draft", routeAsks: true, askLevel: true, draftOnly: true });
     await refusedWithLine("t-cowork");
     expect(existsSync(dump)).toBe(false);
   }, 30_000);
@@ -125,7 +127,7 @@ describe("a draft-only turn on Claude", () => {
     process.env.FAKE_CLAUDE_DUMP = dump;
     writeFileSync(join(config, file), text);
     await create();
-    await instance!.adapter.sendTurn({ threadId: "t-helper", text: "draft", routeAsks: true, askLevel: true, draftOnly: true });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-helper", text: "draft", routeAsks: true, askLevel: true, draftOnly: true });
     await refusedWithLine("t-helper");
     expect(existsSync(dump)).toBe(false);
   }, 30_000);
@@ -139,7 +141,7 @@ describe("a draft-only turn on Claude", () => {
     process.env.FAKE_CLAUDE_LAUNCH_WRITE_TEXT = JSON.stringify({ apiKeyHelper: "/usr/local/bin/print-key" });
     await create();
     // larger than any pipe buffer, so the pre-accept launch's write is refused and the driver relaunches (claude.test.ts U-17)
-    await instance!.adapter.sendTurn({ threadId: "t-relaunch", text: "x".repeat(4 * 1024 * 1024), routeAsks: true, askLevel: true, draftOnly: true });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-relaunch", text: "x".repeat(4 * 1024 * 1024), routeAsks: true, askLevel: true, draftOnly: true });
     await refusedWithLine("t-relaunch");
     expect(readFileSync(join(scratch, "launches"), "utf8")).toBe("1");
   }, 30_000);
@@ -148,11 +150,11 @@ describe("a draft-only turn on Claude", () => {
     const dump = join(scratch, "dump-later.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
     await create();
-    await instance!.adapter.sendTurn({ threadId: "t-later", text: "draft one", routeAsks: true, askLevel: true, draftOnly: true });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-later", text: "draft one", routeAsks: true, askLevel: true, draftOnly: true });
     expect(await recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-later")).toMatchObject({ ok: true });
     writeFileSync(join(config, "settings.json"), JSON.stringify({ gcpAuthRefresh: "gcloud auth login" }));
     recorder.events.length = 0;
-    await instance!.adapter.sendTurn({ threadId: "t-later", text: "draft two", routeAsks: true, askLevel: true, draftOnly: true });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-later", text: "draft two", routeAsks: true, askLevel: true, draftOnly: true });
     await refusedWithLine("t-later");
   }, 30_000);
 });
@@ -194,3 +196,6 @@ describe("claudeDraftOnlyFacts (R1, R6)", () => {
     expect(claudeDraftOnlyFacts([{ CLAUDE_CONFIG_DIR: config }], scratch, [managedIn(join(scratch, "none"))]).claudeHelpers).toBe(false);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();
