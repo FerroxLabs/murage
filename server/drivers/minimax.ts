@@ -121,7 +121,7 @@ export const MinimaxDriver: ProviderDriver<MinimaxConfig> = {
       noBodyError: "MiniMax returned no response body",
       nativeLog: {
         source: "minimax.chat.completions",
-        outgoing: (_turn, messages, model) => ({ model, messageCount: messages.length }),
+        outgoingCount: (_turn, messageCount, model) => ({ model, messageCount }),
         incoming: ({ text, usage }) => ({ textLength: text.length, usage }),
       },
     });

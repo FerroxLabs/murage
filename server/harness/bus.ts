@@ -10,8 +10,9 @@ import { join } from "node:path";
 
 import { EVENTS_DIR } from "../config.ts";
 import { redactSecrets } from "../redact.ts";
-import { loggedRuntimeEvent } from "../runtime-event-out.ts";
+import { LOGGED_TOOL_KINDS, loggedRuntimeEvent } from "../runtime-event-out.ts";
 import { isPhoneRequest } from "../phones/withhold.ts";
+import { PHONE_TOOL_NAMES } from "../../shared/phone-jobs-contract.ts";
 import { createHash } from "node:crypto";
 import { IntakeValve } from "./intake.ts";
 import { observeTurnEvent } from "../health/turn-observer.ts";
@@ -84,24 +85,47 @@ function withheldQuestions(e: Record<string, unknown>): RuntimeEvent {
   return { ...rest, questions } as unknown as RuntimeEvent;
 }
 
-function withheldByType(policy: PhoneWithholdPolicy, event: RuntimeEvent): RuntimeEvent {
+/** NOLIMITS 1.0.18 (design NOLIMITS-S1S2-H6-ALLOWLIST.md L5): the envelope a withheld tool row keeps. */
+const WITHHELD_TOOL_ENVELOPE = ["type", "itemType", "origin", "eventId", "provider", "providerInstanceId", "threadId", "turnId", "createdAt", "itemId"] as const;
+const PHONE_SUMMARIES: ReadonlySet<string> = new Set([...PHONE_TOOL_NAMES, "phone tool"]);
+
+/** L5: the ONE builder of every withheld tool row (phone tool on any thread, any tool row on a marked thread; start and
+ * completion; normal and catch path). Rebuilt from the envelope, never spread: no toolIdentity, title, detail, raw or any
+ * other key. `summary` is a canonical phone tool name, "phone tool", or the withheld marker. */
+function withheldToolRow(e: Record<string, unknown>, summary: string): RuntimeEvent {
+  const row: Record<string, unknown> = {};
+  for (const key of WITHHELD_TOOL_ENVELOPE) if (typeof e[key] === "string") row[key] = e[key];
+  if (typeof e.toolKind === "string" && LOGGED_TOOL_KINDS.has(e.toolKind)) row.toolKind = e.toolKind;
+  const canonical = summary === PHONE_RESULT_WITHHELD || PHONE_SUMMARIES.has(summary) ? summary : "phone tool";
+  if (e.type === "item.completed") {
+    if (typeof e.ok === "boolean") row.ok = e.ok;
+    row.summary = canonical;
+    row.result = PHONE_RESULT_WITHHELD;
+  } else {
+    row.summary = canonical;
+    row.input = PHONE_RESULT_WITHHELD;
+  }
+  return row as unknown as RuntimeEvent;
+}
+
+const isToolRow = (e: Record<string, unknown>) => (e.type === "item.started" || e.type === "item.completed") && e.itemType === "tool";
+
+/** `loggable` is what the log may keep (already projected); `original` is the live event, which the policy reads: the
+ * logged projection drops `summary` and may replace `title`, so recognition never runs on it (L5). */
+function withheldByType(policy: PhoneWithholdPolicy, loggable: RuntimeEvent, original: RuntimeEvent): RuntimeEvent {
+  const event = loggable;
   try {
     const e = event as unknown as Record<string, unknown>;
-    const marked = policy.thread(event.threadId);
+    const marked = policy.thread(original.threadId);
     if (e.type === "request.opened") {
-      if (marked || isPhoneRequest(e)) return withheldRequest(e);
+      if (marked || isPhoneRequest(original as unknown as Record<string, unknown>)) return withheldRequest(e);
       return event;
     }
     if (e.type === "item.completed" || e.type === "item.started") {
       if (e.itemType === "tool") {
-        const phone = policy.phoneTool(event);
+        const phone = policy.phoneTool(original);
         if (!phone && !marked) return event;
-        // the raw engine frame can carry the same arguments and result
-        const { raw: _raw, detail: _detail, title: _title, ...rest } = e;
-        const summary = phone ? phone.summary : PHONE_RESULT_WITHHELD;
-        return (e.type === "item.completed"
-          ? { ...rest, result: PHONE_RESULT_WITHHELD, summary }
-          : { ...rest, input: PHONE_RESULT_WITHHELD, summary }) as unknown as RuntimeEvent;
+        return withheldToolRow(e, phone ? phone.summary : PHONE_RESULT_WITHHELD);
       }
       if (e.type === "item.started" && e.itemType === "reasoning" && marked) {
         const { raw: _raw, ...rest } = e;
@@ -121,7 +145,7 @@ function withheldByType(policy: PhoneWithholdPolicy, event: RuntimeEvent): Runti
     if (e.type === "question.async") return withheldQuestions(e);
     if (e.type === "item.started" && e.itemType === "reasoning") return { ...e, raw: undefined, title: PHONE_RESULT_WITHHELD, summary: PHONE_RESULT_WITHHELD, input: PHONE_RESULT_WITHHELD } as unknown as RuntimeEvent;
     if (e.type === "item.completed" && e.itemType === "assistant_text") return { ...e, raw: undefined, text: PHONE_TEXT_WITHHELD } as unknown as RuntimeEvent;
-    if ((e.type === "item.completed" || e.type === "item.started") && e.itemType === "tool") return { ...e, raw: undefined, detail: undefined, title: undefined, summary: PHONE_RESULT_WITHHELD, result: e.type === "item.completed" ? PHONE_RESULT_WITHHELD : undefined, input: e.type === "item.started" ? PHONE_RESULT_WITHHELD : undefined } as unknown as RuntimeEvent;
+    if (isToolRow(e)) return withheldToolRow(e, PHONE_RESULT_WITHHELD);
     return event;
   }
 }
@@ -165,13 +189,14 @@ function withoutRaw(event: RuntimeEvent): RuntimeEvent {
 const NO_KEYS: ReadonlySet<string> = new Set();
 const PHONE_ROW_KEYS: ReadonlySet<string> = new Set(["summary"]);
 
-function withheldForLog(policy: PhoneWithholdPolicy | null, event: RuntimeEvent): RuntimeEvent {
-  if (!policy) return event;
-  const typed = withheldByType(policy, event);
+function withheldForLog(policy: PhoneWithholdPolicy | null, loggable: RuntimeEvent, original: RuntimeEvent): RuntimeEvent {
+  if (!policy) return loggable;
+  const typed = withheldByType(policy, loggable, original);
   try {
-    if (!policy.thread(event.threadId)) return typed;
-    // a phone tool row's summary is Murage's own line, not model text
-    const keep = policy.phoneTool(event) ? PHONE_ROW_KEYS : NO_KEYS;
+    if (!policy.thread(original.threadId)) return typed;
+    // a withheld tool row's summary is Murage's own canonical line (withheldToolRow), never model text. Read from the row
+    // itself, not a second policy.phoneTool call: the matcher hands a completion's remembered start out once.
+    const keep = isToolRow(typed as unknown as Record<string, unknown>) ? PHONE_ROW_KEYS : NO_KEYS;
     return withholdAllStrings(withoutRaw(typed), "", "", keep, 0) as RuntimeEvent;
   } catch {
     return withholdAllStrings(withoutRaw(typed), "", "", NO_KEYS, 0) as RuntimeEvent;
@@ -249,7 +274,8 @@ export class EventBus {
     if (!persistsEvent(event) || threadLogClosed(event.threadId)) return this.deliver(event);
     const pendingWarning = this.pendingLogWarnings.get(event.threadId);
     // the F12 record (the map handed to the engine process) is never written (runtime-event-out.ts)
-    const loggable = withheldForLog(this.withhold, redactSecrets(withoutImageBytes(loggedRuntimeEvent(event))) as RuntimeEvent);
+    // the phone policy recognises on the ORIGINAL event; the withheld row is built from the logged projection (L5)
+    const loggable = withheldForLog(this.withhold, redactSecrets(withoutImageBytes(loggedRuntimeEvent(event))) as RuntimeEvent, event);
     const persistedEvents = pendingWarning ? [pendingWarning, loggable] : [loggable];
     try {
       // the canonical log is a file people paste into bug reports; scrub

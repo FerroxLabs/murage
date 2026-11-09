@@ -70,7 +70,8 @@ describe("Settings in a Cloud window", () => {
     for (const entry of SECTION_PAGES) expect(source, entry.id).toContain(`section === "${entry.id}"`);
     expect(source).not.toMatch(/\bsection === id\b/);
     expect(source).toContain("const navPage = resolveSettingsSection(requested).section;");
-    expect(source).toContain('aria-current={navPage === id ? "page" : undefined}');
+    // UX-L3B S7: one Settings window; a bot's row takes the page mark while its settings are open
+    expect(source).toContain('aria-current={!bot && navPage === id ? "page" : undefined}');
     expect(ON_YOUR_COMPUTER_ONLY).toBe("On your computer only");
   });
 
@@ -89,7 +90,8 @@ describe("Settings in a Cloud window", () => {
         expect(alias).toBe("images");
         expect(modal).toContain("<ToolsSettings advanced={advancedFor(\"webSearch\")} cloudImagesOnly={pageComputerOnly} />");
         expect(tools).toContain("{!cloudImagesOnly && <Anchor id=\"search-settings-heading\"><SearchSettings /></Anchor>}");
-        expect(tools).toMatch(/\{!cloudImagesOnly && \(\s*<Anchor id="voice-settings-heading">/);
+        // UX-L3A-2 (393c00dbf): the voice card's Anchor also marks its control (settingControl); the Cloud guard around it is unchanged
+        expect(tools).toMatch(/\{!cloudImagesOnly && \(\s*<Anchor id="voice-settings-heading"[^>]*>/);
       }
     }
   });

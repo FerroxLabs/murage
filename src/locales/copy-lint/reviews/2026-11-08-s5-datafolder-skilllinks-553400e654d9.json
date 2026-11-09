@@ -1,0 +1,1106 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "S5",
+  "date": "2026-11-08",
+  "base": "d3fbc47b3",
+  "scope": "S5 data-folder and skill-link copy, runtimeError.local.* and settings.dataFolder.*",
+  "strings": {
+    "en:runtimeError.local.data-dir-moved.title": {
+      "text": "This conversation's folder is from an earlier location",
+      "en": "This conversation's folder is from an earlier location",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:runtimeError.local.data-dir-moved.message": {
+      "text": "Murage keeps your conversation tied to its original folder. After the data folder moved, this conversation's folder could not be matched to the new location, so the turn did not start.",
+      "en": "Murage keeps your conversation tied to its original folder. After the data folder moved, this conversation's folder could not be matched to the new location, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:runtimeError.local.data-dir-moved.resolution": {
+      "text": "Start a new conversation with this bot, or move the data folder back, then retry.",
+      "en": "Start a new conversation with this bot, or move the data folder back, then retry.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:runtimeError.local.data-root-changed.title": {
+      "text": "Murage's workspaces folder now points somewhere else",
+      "en": "Murage's workspaces folder now points somewhere else",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:runtimeError.local.data-root-changed.message": {
+      "text": "Murage keeps your turn in the intended location. A linked folder in Murage's data folder now points somewhere else, so the turn did not start.",
+      "en": "Murage keeps your turn in the intended location. A linked folder in Murage's data folder now points somewhere else, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:runtimeError.local.data-root-changed.resolution": {
+      "text": "If you moved it on purpose, open Settings > Data folder and choose Use this folder. Otherwise put it back as it was; the next turn picks it up. If neither works, restart Murage.",
+      "en": "If you moved it on purpose, open Settings > Data folder and choose Use this folder. Otherwise put it back as it was; the next turn picks it up. If neither works, restart Murage.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:runtimeError.local.data-root-changed-providers.title": {
+      "text": "Murage's Claude accounts folder now points somewhere else",
+      "en": "Murage's Claude accounts folder now points somewhere else",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:runtimeError.local.data-root-changed-providers.message": {
+      "text": "Murage keeps your turn in the intended location. A linked folder in Murage's data folder now points somewhere else, so the turn did not start.",
+      "en": "Murage keeps your turn in the intended location. A linked folder in Murage's data folder now points somewhere else, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:runtimeError.local.data-root-changed-providers.resolution": {
+      "text": "If you moved it on purpose, open Settings > Data folder and choose Use this folder. Otherwise put it back as it was; the next turn picks it up. If neither works, restart Murage.",
+      "en": "If you moved it on purpose, open Settings > Data folder and choose Use this folder. Otherwise put it back as it was; the next turn picks it up. If neither works, restart Murage.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:runtimeError.local.skill-link-foreign.title": {
+      "text": "Your skill links stay unchanged",
+      "en": "Your skill links stay unchanged",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:runtimeError.local.skill-link-foreign.message": {
+      "text": "Murage keeps your skill links unchanged when it cannot check or replace a link in this bot's working folder. Your turn did not start.",
+      "en": "Murage keeps your skill links unchanged when it cannot check or replace a link in this bot's working folder. Your turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:runtimeError.local.skill-link-foreign.resolution": {
+      "text": "Start a new conversation with this bot to keep going. If you made that link, remove it from the bot's .claude, .agents or .grok skills folder, then retry.",
+      "en": "Start a new conversation with this bot to keep going. If you made that link, remove it from the bot's .claude, .agents or .grok skills folder, then retry.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:runtimeError.local.skill-link-staging.title": {
+      "text": "Your skill links stay unchanged",
+      "en": "Your skill links stay unchanged",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:runtimeError.local.skill-link-staging.message": {
+      "text": "Murage keeps your skill links unchanged when its staging folder in this bot's working folder is missing, on another drive or changed, or when this computer cannot move links while preserving them. Your turn did not start.",
+      "en": "Murage keeps your skill links unchanged when its staging folder in this bot's working folder is missing, on another drive or changed, or when this computer cannot move links while preserving them. Your turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:runtimeError.local.skill-link-staging.resolution": {
+      "text": "Start a new conversation with this bot to keep going. Murage may have kept a link in the bot's .murage-procedures/.relink folder; if you placed something there, remove it, then retry.",
+      "en": "Start a new conversation with this bot to keep going. Murage may have kept a link in the bot's .murage-procedures/.relink folder; if you placed something there, remove it, then retry.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:runtimeError.local.pinned-procedures.title": {
+      "text": "Your conversation keeps its original skills",
+      "en": "Your conversation keeps its original skills",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:runtimeError.local.pinned-procedures.message": {
+      "text": "Murage keeps your conversation on its original instructions. The skills it started with are missing or changed on disk, so your turn did not start.",
+      "en": "Murage keeps your conversation on its original instructions. The skills it started with are missing or changed on disk, so your turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:runtimeError.local.pinned-procedures.resolution": {
+      "text": "Start a new conversation with this bot to use its current skills.",
+      "en": "Start a new conversation with this bot to use its current skills.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:settings.dataFolder.title": {
+      "text": "Data folder",
+      "en": "Data folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:settings.dataFolder.subtitle": {
+      "text": "A linked folder in Murage's data folder now points somewhere else. If you moved it on purpose, use it here.",
+      "en": "A linked folder in Murage's data folder now points somewhere else. If you moved it on purpose, use it here.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:settings.dataFolder.row.workspaces": {
+      "text": "Workspaces folder",
+      "en": "Workspaces folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:settings.dataFolder.row.providers": {
+      "text": "Claude accounts folder",
+      "en": "Claude accounts folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:settings.dataFolder.location": {
+      "text": "New location",
+      "en": "New location",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:settings.dataFolder.use": {
+      "text": "Use this folder",
+      "en": "Use this folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:settings.dataFolder.restart": {
+      "text": "Restart Murage so you can use this folder.",
+      "en": "Restart Murage so you can use this folder.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "en:settings.dataFolder.error": {
+      "text": "Check that the folder is still in place, then try again to confirm it.",
+      "en": "Check that the folder is still in place, then try again to confirm it.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:runtimeError.local.data-dir-moved.title": {
+      "text": "Der Ordner dieser Unterhaltung gehört zum früheren Speicherort",
+      "en": "This conversation's folder is from an earlier location",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:runtimeError.local.data-dir-moved.message": {
+      "text": "Murage behält für deine Unterhaltung den ursprünglichen Ordner bei. Nach dem Verschieben des Datenordners ließ sich der Ordner dieser Unterhaltung dem neuen Speicherort nicht zuordnen. Deshalb wurde die Runde nicht gestartet.",
+      "en": "Murage keeps your conversation tied to its original folder. After the data folder moved, this conversation's folder could not be matched to the new location, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:runtimeError.local.data-dir-moved.resolution": {
+      "text": "Beginne eine neue Unterhaltung mit diesem Bot oder verschiebe den Datenordner zurück und versuche es dann erneut.",
+      "en": "Start a new conversation with this bot, or move the data folder back, then retry.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:runtimeError.local.data-root-changed.title": {
+      "text": "Murages Ordner für Arbeitsbereiche verweist jetzt auf einen anderen Speicherort",
+      "en": "Murage's workspaces folder now points somewhere else",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:runtimeError.local.data-root-changed.message": {
+      "text": "Murage behält für deine Runde den vorgesehenen Speicherort bei. Ein verknüpfter Ordner in Murages Datenordner verweist jetzt auf einen anderen Speicherort. Deshalb wurde die Runde nicht gestartet.",
+      "en": "Murage keeps your turn in the intended location. A linked folder in Murage's data folder now points somewhere else, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:runtimeError.local.data-root-changed.resolution": {
+      "text": "Wenn du ihn absichtlich verschoben hast, öffne Einstellungen > Datenordner und wähle „Diesen Ordner verwenden“. Andernfalls stelle ihn wieder her wie zuvor; die nächste Runde übernimmt das. Wenn beides nicht hilft, starte Murage neu.",
+      "en": "If you moved it on purpose, open Settings > Data folder and choose Use this folder. Otherwise put it back as it was; the next turn picks it up. If neither works, restart Murage.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:runtimeError.local.data-root-changed-providers.title": {
+      "text": "Murages Ordner für Claude-Konten verweist jetzt auf einen anderen Speicherort",
+      "en": "Murage's Claude accounts folder now points somewhere else",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:runtimeError.local.data-root-changed-providers.message": {
+      "text": "Murage behält für deine Runde den vorgesehenen Speicherort bei. Ein verknüpfter Ordner in Murages Datenordner verweist jetzt auf einen anderen Speicherort. Deshalb wurde die Runde nicht gestartet.",
+      "en": "Murage keeps your turn in the intended location. A linked folder in Murage's data folder now points somewhere else, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:runtimeError.local.data-root-changed-providers.resolution": {
+      "text": "Wenn du ihn absichtlich verschoben hast, öffne Einstellungen > Datenordner und wähle „Diesen Ordner verwenden“. Andernfalls stelle ihn wieder her wie zuvor; die nächste Runde übernimmt das. Wenn beides nicht hilft, starte Murage neu.",
+      "en": "If you moved it on purpose, open Settings > Data folder and choose Use this folder. Otherwise put it back as it was; the next turn picks it up. If neither works, restart Murage.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:runtimeError.local.skill-link-foreign.title": {
+      "text": "Deine Skill-Verknüpfungen bleiben unverändert",
+      "en": "Your skill links stay unchanged",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:runtimeError.local.skill-link-foreign.message": {
+      "text": "Murage lässt deine Skill-Verknüpfungen unverändert, wenn es eine Verknüpfung im Arbeitsordner dieses Bots nicht prüfen oder ersetzen kann. Deine Runde wurde nicht gestartet.",
+      "en": "Murage keeps your skill links unchanged when it cannot check or replace a link in this bot's working folder. Your turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:runtimeError.local.skill-link-foreign.resolution": {
+      "text": "Beginne eine neue Unterhaltung mit diesem Bot, um fortzufahren. Falls du die Verknüpfung erstellt hast, entferne sie aus dem Skills-Ordner unter .claude, .agents oder .grok des Bots und versuche es erneut.",
+      "en": "Start a new conversation with this bot to keep going. If you made that link, remove it from the bot's .claude, .agents or .grok skills folder, then retry.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:runtimeError.local.skill-link-staging.title": {
+      "text": "Deine Skill-Verknüpfungen bleiben unverändert",
+      "en": "Your skill links stay unchanged",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:runtimeError.local.skill-link-staging.message": {
+      "text": "Murage lässt deine Skill-Verknüpfungen unverändert, wenn sein temporärer Ordner im Arbeitsordner dieses Bots fehlt, auf einem anderen Laufwerk liegt oder verändert wurde oder dieser Computer Verknüpfungen beim Verschieben nicht erhalten kann. Deine Runde wurde nicht gestartet.",
+      "en": "Murage keeps your skill links unchanged when its staging folder in this bot's working folder is missing, on another drive or changed, or when this computer cannot move links while preserving them. Your turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:runtimeError.local.skill-link-staging.resolution": {
+      "text": "Beginne eine neue Unterhaltung mit diesem Bot, um fortzufahren. Murage hat möglicherweise eine Verknüpfung im Ordner .murage-procedures/.relink des Bots aufbewahrt. Falls du dort etwas abgelegt hast, entferne es und versuche es erneut.",
+      "en": "Start a new conversation with this bot to keep going. Murage may have kept a link in the bot's .murage-procedures/.relink folder; if you placed something there, remove it, then retry.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:runtimeError.local.pinned-procedures.title": {
+      "text": "Deine Unterhaltung behält ihre ursprünglichen Skills",
+      "en": "Your conversation keeps its original skills",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:runtimeError.local.pinned-procedures.message": {
+      "text": "Murage behält für deine Unterhaltung die ursprünglichen Anweisungen bei. Die Skills, mit denen sie begonnen wurde, fehlen auf dem Datenträger oder wurden verändert. Deshalb wurde deine Runde nicht gestartet.",
+      "en": "Murage keeps your conversation on its original instructions. The skills it started with are missing or changed on disk, so your turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:runtimeError.local.pinned-procedures.resolution": {
+      "text": "Beginne eine neue Unterhaltung mit diesem Bot, um seine aktuellen Skills zu verwenden.",
+      "en": "Start a new conversation with this bot to use its current skills.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:settings.dataFolder.title": {
+      "text": "Datenordner",
+      "en": "Data folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:settings.dataFolder.subtitle": {
+      "text": "Ein verknüpfter Ordner in Murages Datenordner verweist jetzt auf einen anderen Speicherort. Wenn du ihn absichtlich verschoben hast, verwende ihn hier.",
+      "en": "A linked folder in Murage's data folder now points somewhere else. If you moved it on purpose, use it here.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:settings.dataFolder.row.workspaces": {
+      "text": "Ordner für Arbeitsbereiche",
+      "en": "Workspaces folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:settings.dataFolder.row.providers": {
+      "text": "Ordner für Claude-Konten",
+      "en": "Claude accounts folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:settings.dataFolder.location": {
+      "text": "Neuer Ort",
+      "en": "New location",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:settings.dataFolder.use": {
+      "text": "Diesen Ordner verwenden",
+      "en": "Use this folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:settings.dataFolder.restart": {
+      "text": "Starte Murage neu, damit du diesen Ordner verwenden kannst.",
+      "en": "Restart Murage so you can use this folder.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "de:settings.dataFolder.error": {
+      "text": "Prüfe, ob der Ordner noch da ist, und versuche es dann erneut, um ihn zu bestätigen.",
+      "en": "Check that the folder is still in place, then try again to confirm it.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:runtimeError.local.data-dir-moved.title": {
+      "text": "La carpeta de esta conversación es de una ubicación anterior",
+      "en": "This conversation's folder is from an earlier location",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:runtimeError.local.data-dir-moved.message": {
+      "text": "Murage mantiene tu conversación vinculada a su carpeta original. Tras mover la carpeta de datos, no se pudo asociar la carpeta de esta conversación a la nueva ubicación, así que el turno no empezó.",
+      "en": "Murage keeps your conversation tied to its original folder. After the data folder moved, this conversation's folder could not be matched to the new location, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:runtimeError.local.data-dir-moved.resolution": {
+      "text": "Empieza una conversación nueva con este bot, o vuelve a poner la carpeta de datos donde estaba y reinténtalo.",
+      "en": "Start a new conversation with this bot, or move the data folder back, then retry.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:runtimeError.local.data-root-changed.title": {
+      "text": "La carpeta de espacios de trabajo de Murage ahora apunta a otro lugar",
+      "en": "Murage's workspaces folder now points somewhere else",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:runtimeError.local.data-root-changed.message": {
+      "text": "Murage mantiene tu turno en la ubicación prevista. Una carpeta enlazada dentro de la carpeta de datos de Murage ahora apunta a otro lugar, así que el turno no empezó.",
+      "en": "Murage keeps your turn in the intended location. A linked folder in Murage's data folder now points somewhere else, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:runtimeError.local.data-root-changed.resolution": {
+      "text": "Si la moviste a propósito, abre Ajustes > Carpeta de datos y elige Usar esta carpeta. Si no, vuelve a ponerla como estaba; el siguiente turno lo detectará. Si ninguna de las dos opciones funciona, reinicia Murage.",
+      "en": "If you moved it on purpose, open Settings > Data folder and choose Use this folder. Otherwise put it back as it was; the next turn picks it up. If neither works, restart Murage.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:runtimeError.local.data-root-changed-providers.title": {
+      "text": "La carpeta de cuentas de Claude de Murage ahora apunta a otro lugar",
+      "en": "Murage's Claude accounts folder now points somewhere else",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:runtimeError.local.data-root-changed-providers.message": {
+      "text": "Murage mantiene tu turno en la ubicación prevista. Una carpeta enlazada dentro de la carpeta de datos de Murage ahora apunta a otro lugar, así que el turno no empezó.",
+      "en": "Murage keeps your turn in the intended location. A linked folder in Murage's data folder now points somewhere else, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:runtimeError.local.data-root-changed-providers.resolution": {
+      "text": "Si la moviste a propósito, abre Ajustes > Carpeta de datos y elige Usar esta carpeta. Si no, vuelve a ponerla como estaba; el siguiente turno lo detectará. Si ninguna de las dos opciones funciona, reinicia Murage.",
+      "en": "If you moved it on purpose, open Settings > Data folder and choose Use this folder. Otherwise put it back as it was; the next turn picks it up. If neither works, restart Murage.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:runtimeError.local.skill-link-foreign.title": {
+      "text": "Tus enlaces de habilidades se mantienen sin cambios",
+      "en": "Your skill links stay unchanged",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:runtimeError.local.skill-link-foreign.message": {
+      "text": "Murage mantiene tus enlaces de habilidades sin cambios cuando no puede comprobar o reemplazar un enlace en la carpeta de trabajo de este bot. Tu turno no empezó.",
+      "en": "Murage keeps your skill links unchanged when it cannot check or replace a link in this bot's working folder. Your turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:runtimeError.local.skill-link-foreign.resolution": {
+      "text": "Inicia una nueva conversación con este bot para continuar. Si creaste ese enlace, elimínalo de la carpeta de habilidades de .claude, .agents o .grok del bot y vuelve a intentarlo.",
+      "en": "Start a new conversation with this bot to keep going. If you made that link, remove it from the bot's .claude, .agents or .grok skills folder, then retry.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:runtimeError.local.skill-link-staging.title": {
+      "text": "Tus enlaces de habilidades se mantienen sin cambios",
+      "en": "Your skill links stay unchanged",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:runtimeError.local.skill-link-staging.message": {
+      "text": "Murage mantiene tus enlaces de habilidades sin cambios cuando su carpeta temporal en la carpeta de trabajo de este bot no está, está en otra unidad o ha cambiado, o cuando este equipo no puede mover los enlaces conservándolos intactos. Tu turno no empezó.",
+      "en": "Murage keeps your skill links unchanged when its staging folder in this bot's working folder is missing, on another drive or changed, or when this computer cannot move links while preserving them. Your turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:runtimeError.local.skill-link-staging.resolution": {
+      "text": "Inicia una nueva conversación con este bot para continuar. Es posible que Murage haya conservado un enlace en la carpeta .murage-procedures/.relink del bot; si colocaste algo allí, elimínalo y vuelve a intentarlo.",
+      "en": "Start a new conversation with this bot to keep going. Murage may have kept a link in the bot's .murage-procedures/.relink folder; if you placed something there, remove it, then retry.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:runtimeError.local.pinned-procedures.title": {
+      "text": "Tu conversación conserva sus habilidades originales",
+      "en": "Your conversation keeps its original skills",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:runtimeError.local.pinned-procedures.message": {
+      "text": "Murage mantiene las instrucciones originales de tu conversación. Las habilidades con las que se inició no se encuentran en el disco o han cambiado, así que tu turno no empezó.",
+      "en": "Murage keeps your conversation on its original instructions. The skills it started with are missing or changed on disk, so your turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:runtimeError.local.pinned-procedures.resolution": {
+      "text": "Inicia una nueva conversación con este bot para usar sus habilidades actuales.",
+      "en": "Start a new conversation with this bot to use its current skills.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:settings.dataFolder.title": {
+      "text": "Carpeta de datos",
+      "en": "Data folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:settings.dataFolder.subtitle": {
+      "text": "Una carpeta enlazada dentro de la carpeta de datos de Murage ahora apunta a otro lugar. Si la moviste a propósito, úsala aquí.",
+      "en": "A linked folder in Murage's data folder now points somewhere else. If you moved it on purpose, use it here.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:settings.dataFolder.row.workspaces": {
+      "text": "Carpeta de espacios de trabajo",
+      "en": "Workspaces folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:settings.dataFolder.row.providers": {
+      "text": "Carpeta de cuentas de Claude",
+      "en": "Claude accounts folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:settings.dataFolder.location": {
+      "text": "Nueva ubicación",
+      "en": "New location",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:settings.dataFolder.use": {
+      "text": "Usar esta carpeta",
+      "en": "Use this folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:settings.dataFolder.restart": {
+      "text": "Reinicia Murage para poder usar esta carpeta.",
+      "en": "Restart Murage so you can use this folder.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "es:settings.dataFolder.error": {
+      "text": "Comprueba que la carpeta sigue en su sitio y vuelve a intentarlo para confirmarla.",
+      "en": "Check that the folder is still in place, then try again to confirm it.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:runtimeError.local.data-dir-moved.title": {
+      "text": "Le dossier de cette conversation vient d'un emplacement précédent",
+      "en": "This conversation's folder is from an earlier location",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:runtimeError.local.data-dir-moved.message": {
+      "text": "Murage garde ta conversation liée à son dossier d’origine. Après le déplacement du dossier de données, le dossier de cette conversation n’a pas pu être associé au nouvel emplacement. Le tour n’a donc pas démarré.",
+      "en": "Murage keeps your conversation tied to its original folder. After the data folder moved, this conversation's folder could not be matched to the new location, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:runtimeError.local.data-dir-moved.resolution": {
+      "text": "Commence une nouvelle conversation avec ce bot, ou remets le dossier de données à sa place, puis réessaie.",
+      "en": "Start a new conversation with this bot, or move the data folder back, then retry.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:runtimeError.local.data-root-changed.title": {
+      "text": "Le dossier des espaces de travail de Murage pointe maintenant ailleurs",
+      "en": "Murage's workspaces folder now points somewhere else",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:runtimeError.local.data-root-changed.message": {
+      "text": "Murage garde ton tour à l’emplacement prévu. Un dossier lié dans le dossier de données de Murage pointe maintenant ailleurs. Le tour n’a donc pas démarré.",
+      "en": "Murage keeps your turn in the intended location. A linked folder in Murage's data folder now points somewhere else, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:runtimeError.local.data-root-changed.resolution": {
+      "text": "Si tu l’as déplacé volontairement, ouvre Réglages > Dossier de données et choisis Utiliser ce dossier. Sinon, remets-le comme avant ; le prochain tour en tiendra compte. Si aucune des deux options ne fonctionne, redémarre Murage.",
+      "en": "If you moved it on purpose, open Settings > Data folder and choose Use this folder. Otherwise put it back as it was; the next turn picks it up. If neither works, restart Murage.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:runtimeError.local.data-root-changed-providers.title": {
+      "text": "Le dossier des comptes Claude de Murage pointe maintenant ailleurs",
+      "en": "Murage's Claude accounts folder now points somewhere else",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:runtimeError.local.data-root-changed-providers.message": {
+      "text": "Murage garde ton tour à l’emplacement prévu. Un dossier lié dans le dossier de données de Murage pointe maintenant ailleurs. Le tour n’a donc pas démarré.",
+      "en": "Murage keeps your turn in the intended location. A linked folder in Murage's data folder now points somewhere else, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:runtimeError.local.data-root-changed-providers.resolution": {
+      "text": "Si tu l’as déplacé volontairement, ouvre Réglages > Dossier de données et choisis Utiliser ce dossier. Sinon, remets-le comme avant ; le prochain tour en tiendra compte. Si aucune des deux options ne fonctionne, redémarre Murage.",
+      "en": "If you moved it on purpose, open Settings > Data folder and choose Use this folder. Otherwise put it back as it was; the next turn picks it up. If neither works, restart Murage.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:runtimeError.local.skill-link-foreign.title": {
+      "text": "Tes liens de compétences restent inchangés",
+      "en": "Your skill links stay unchanged",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:runtimeError.local.skill-link-foreign.message": {
+      "text": "Murage garde tes liens de compétences inchangés lorsqu’il ne peut pas vérifier ou remplacer un lien dans le dossier de travail de ce bot. Ton tour n’a pas démarré.",
+      "en": "Murage keeps your skill links unchanged when it cannot check or replace a link in this bot's working folder. Your turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:runtimeError.local.skill-link-foreign.resolution": {
+      "text": "Commence une nouvelle conversation avec ce bot pour continuer. Si tu as créé ce lien, supprime-le du dossier de compétences .claude, .agents ou .grok du bot, puis réessaie.",
+      "en": "Start a new conversation with this bot to keep going. If you made that link, remove it from the bot's .claude, .agents or .grok skills folder, then retry.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:runtimeError.local.skill-link-staging.title": {
+      "text": "Tes liens de compétences restent inchangés",
+      "en": "Your skill links stay unchanged",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:runtimeError.local.skill-link-staging.message": {
+      "text": "Murage garde tes liens de compétences inchangés lorsque son dossier temporaire dans le dossier de travail de ce bot est absent, se trouve sur un autre disque ou a changé, ou lorsque cet ordinateur ne peut pas déplacer les liens en les conservant intacts. Ton tour n’a pas démarré.",
+      "en": "Murage keeps your skill links unchanged when its staging folder in this bot's working folder is missing, on another drive or changed, or when this computer cannot move links while preserving them. Your turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:runtimeError.local.skill-link-staging.resolution": {
+      "text": "Commence une nouvelle conversation avec ce bot pour continuer. Murage a peut-être conservé un lien dans le dossier .murage-procedures/.relink du bot ; si tu y as placé quelque chose, supprime-le, puis réessaie.",
+      "en": "Start a new conversation with this bot to keep going. Murage may have kept a link in the bot's .murage-procedures/.relink folder; if you placed something there, remove it, then retry.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:runtimeError.local.pinned-procedures.title": {
+      "text": "Ta conversation conserve ses compétences d’origine",
+      "en": "Your conversation keeps its original skills",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:runtimeError.local.pinned-procedures.message": {
+      "text": "Murage conserve les instructions d’origine de ta conversation. Les compétences avec lesquelles elle a commencé sont absentes du disque ou ont été modifiées. Ton tour n’a donc pas démarré.",
+      "en": "Murage keeps your conversation on its original instructions. The skills it started with are missing or changed on disk, so your turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:runtimeError.local.pinned-procedures.resolution": {
+      "text": "Commence une nouvelle conversation avec ce bot pour utiliser ses compétences actuelles.",
+      "en": "Start a new conversation with this bot to use its current skills.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:settings.dataFolder.title": {
+      "text": "Dossier de données",
+      "en": "Data folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:settings.dataFolder.subtitle": {
+      "text": "Un dossier lié dans le dossier de données de Murage pointe maintenant ailleurs. Si tu l’as déplacé volontairement, utilise-le ici.",
+      "en": "A linked folder in Murage's data folder now points somewhere else. If you moved it on purpose, use it here.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:settings.dataFolder.row.workspaces": {
+      "text": "Dossier des espaces de travail",
+      "en": "Workspaces folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:settings.dataFolder.row.providers": {
+      "text": "Dossier des comptes Claude",
+      "en": "Claude accounts folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:settings.dataFolder.location": {
+      "text": "Nouvel emplacement",
+      "en": "New location",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:settings.dataFolder.use": {
+      "text": "Utiliser ce dossier",
+      "en": "Use this folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:settings.dataFolder.restart": {
+      "text": "Redémarre Murage pour pouvoir utiliser ce dossier.",
+      "en": "Restart Murage so you can use this folder.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "fr:settings.dataFolder.error": {
+      "text": "Vérifie que le dossier est toujours là, puis réessaie pour le confirmer.",
+      "en": "Check that the folder is still in place, then try again to confirm it.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "hi:runtimeError.local.data-dir-moved.title": {
+      "text": "इस बातचीत का फ़ोल्डर पिछली जगह का है",
+      "en": "This conversation's folder is from an earlier location",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "hi:runtimeError.local.data-dir-moved.message": {
+      "text": "Murage आपकी बातचीत को उसके मूल फ़ोल्डर से जोड़े रखता है। डेटा फ़ोल्डर को दूसरी जगह ले जाने के बाद इस बातचीत के फ़ोल्डर को नई जगह से मिलाया नहीं जा सका, इसलिए टर्न शुरू नहीं हुआ।",
+      "en": "Murage keeps your conversation tied to its original folder. After the data folder moved, this conversation's folder could not be matched to the new location, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "hi:runtimeError.local.data-dir-moved.resolution": {
+      "text": "इस बॉट के साथ नई बातचीत शुरू करें, या डेटा फ़ोल्डर को वापस पुरानी जगह रखें, फिर दोबारा कोशिश करें।",
+      "en": "Start a new conversation with this bot, or move the data folder back, then retry.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "hi:runtimeError.local.data-root-changed.title": {
+      "text": "Murage का वर्कस्पेस फ़ोल्डर अब किसी और जगह की ओर है",
+      "en": "Murage's workspaces folder now points somewhere else",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "hi:runtimeError.local.data-root-changed.message": {
+      "text": "Murage आपके टर्न के लिए तय की गई जगह बनाए रखता है। Murage के डेटा फ़ोल्डर में लिंक किया गया एक फ़ोल्डर अब दूसरी जगह की ओर इशारा करता है, इसलिए टर्न शुरू नहीं हुआ।",
+      "en": "Murage keeps your turn in the intended location. A linked folder in Murage's data folder now points somewhere else, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "hi:runtimeError.local.data-root-changed.resolution": {
+      "text": "अगर आप इसे जानबूझकर दूसरी जगह ले गए हैं, तो सेटिंग > डेटा फ़ोल्डर खोलें और यह फ़ोल्डर इस्तेमाल करें चुनें। नहीं तो इसे पहले जैसा कर दें; अगला टर्न इसे पहचान लेगा। अगर दोनों से काम न बने, तो Murage को रीस्टार्ट करें।",
+      "en": "If you moved it on purpose, open Settings > Data folder and choose Use this folder. Otherwise put it back as it was; the next turn picks it up. If neither works, restart Murage.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "hi:runtimeError.local.data-root-changed-providers.title": {
+      "text": "Murage का Claude खातों का फ़ोल्डर अब किसी और जगह की ओर है",
+      "en": "Murage's Claude accounts folder now points somewhere else",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "hi:runtimeError.local.data-root-changed-providers.message": {
+      "text": "Murage आपके टर्न के लिए तय की गई जगह बनाए रखता है। Murage के डेटा फ़ोल्डर में लिंक किया गया एक फ़ोल्डर अब दूसरी जगह की ओर इशारा करता है, इसलिए टर्न शुरू नहीं हुआ।",
+      "en": "Murage keeps your turn in the intended location. A linked folder in Murage's data folder now points somewhere else, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "hi:runtimeError.local.data-root-changed-providers.resolution": {
+      "text": "अगर आप इसे जानबूझकर दूसरी जगह ले गए हैं, तो सेटिंग > डेटा फ़ोल्डर खोलें और यह फ़ोल्डर इस्तेमाल करें चुनें। नहीं तो इसे पहले जैसा कर दें; अगला टर्न इसे पहचान लेगा। अगर दोनों से काम न बने, तो Murage को रीस्टार्ट करें।",
+      "en": "If you moved it on purpose, open Settings > Data folder and choose Use this folder. Otherwise put it back as it was; the next turn picks it up. If neither works, restart Murage.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "hi:settings.dataFolder.title": {
+      "text": "डेटा फ़ोल्डर",
+      "en": "Data folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "hi:settings.dataFolder.subtitle": {
+      "text": "Murage के डेटा फ़ोल्डर में लिंक किया गया एक फ़ोल्डर अब किसी और जगह की ओर है। अगर आप इसे जानबूझकर दूसरी जगह ले गए हैं, तो इसे यहाँ इस्तेमाल करें।",
+      "en": "A linked folder in Murage's data folder now points somewhere else. If you moved it on purpose, use it here.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "hi:settings.dataFolder.row.workspaces": {
+      "text": "वर्कस्पेस फ़ोल्डर",
+      "en": "Workspaces folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "hi:settings.dataFolder.row.providers": {
+      "text": "Claude खातों का फ़ोल्डर",
+      "en": "Claude accounts folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "hi:settings.dataFolder.location": {
+      "text": "नई जगह",
+      "en": "New location",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "hi:settings.dataFolder.use": {
+      "text": "यह फ़ोल्डर इस्तेमाल करें",
+      "en": "Use this folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "hi:settings.dataFolder.restart": {
+      "text": "इस फ़ोल्डर का इस्तेमाल करने के लिए Murage को रीस्टार्ट करें।",
+      "en": "Restart Murage so you can use this folder.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "hi:settings.dataFolder.error": {
+      "text": "जाँच लें कि फ़ोल्डर अपनी जगह पर है, फिर पुष्टि करने के लिए दोबारा कोशिश करें।",
+      "en": "Check that the folder is still in place, then try again to confirm it.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:runtimeError.local.data-dir-moved.title": {
+      "text": "この会話のフォルダーは以前の場所のものです",
+      "en": "This conversation's folder is from an earlier location",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:runtimeError.local.data-dir-moved.message": {
+      "text": "Murage は会話と元のフォルダーの対応を保ちます。データフォルダーの移動後、この会話のフォルダーを新しい場所に対応付けられなかったため、ターンを開始しませんでした。",
+      "en": "Murage keeps your conversation tied to its original folder. After the data folder moved, this conversation's folder could not be matched to the new location, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:runtimeError.local.data-dir-moved.resolution": {
+      "text": "このボットと新しい会話を始めるか、データフォルダーを元の場所に戻してから、もう一度お試しください。",
+      "en": "Start a new conversation with this bot, or move the data folder back, then retry.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:runtimeError.local.data-root-changed.title": {
+      "text": "Murage のワークスペースフォルダーの参照先が変わりました",
+      "en": "Murage's workspaces folder now points somewhere else",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:runtimeError.local.data-root-changed.message": {
+      "text": "Murage はターンを本来の場所で実行するようにしています。Murage のデータフォルダー内のリンクされたフォルダーが以前とは別の場所を指しているため、ターンを開始しませんでした。",
+      "en": "Murage keeps your turn in the intended location. A linked folder in Murage's data folder now points somewhere else, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:runtimeError.local.data-root-changed.resolution": {
+      "text": "意図して移動した場合は、設定 > データフォルダーを開き、「このフォルダーを使う」を選んでください。そうでない場合は元に戻してください。次のターンで反映されます。どちらもうまくいかない場合は、Murage を再起動してください。",
+      "en": "If you moved it on purpose, open Settings > Data folder and choose Use this folder. Otherwise put it back as it was; the next turn picks it up. If neither works, restart Murage.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:runtimeError.local.data-root-changed-providers.title": {
+      "text": "Murage の Claude アカウントフォルダーの参照先が変わりました",
+      "en": "Murage's Claude accounts folder now points somewhere else",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:runtimeError.local.data-root-changed-providers.message": {
+      "text": "Murage はターンを本来の場所で実行するようにしています。Murage のデータフォルダー内のリンクされたフォルダーが以前とは別の場所を指しているため、ターンを開始しませんでした。",
+      "en": "Murage keeps your turn in the intended location. A linked folder in Murage's data folder now points somewhere else, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:runtimeError.local.data-root-changed-providers.resolution": {
+      "text": "意図して移動した場合は、設定 > データフォルダーを開き、「このフォルダーを使う」を選んでください。そうでない場合は元に戻してください。次のターンで反映されます。どちらもうまくいかない場合は、Murage を再起動してください。",
+      "en": "If you moved it on purpose, open Settings > Data folder and choose Use this folder. Otherwise put it back as it was; the next turn picks it up. If neither works, restart Murage.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:runtimeError.local.skill-link-foreign.title": {
+      "text": "スキルのリンクをそのまま保ちます",
+      "en": "Your skill links stay unchanged",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:runtimeError.local.skill-link-foreign.message": {
+      "text": "Murage はスキルのリンクをそのまま保ちます。このボットの作業フォルダー内のリンクを確認または置き換えられないため、ターンを開始しませんでした。",
+      "en": "Murage keeps your skill links unchanged when it cannot check or replace a link in this bot's working folder. Your turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:runtimeError.local.skill-link-foreign.resolution": {
+      "text": "続けるには、このボットとの新しい会話を開始してください。そのリンクを作成した場合は、ボットの .claude、.agents、または .grok のスキルフォルダーから削除して、もう一度お試しください。",
+      "en": "Start a new conversation with this bot to keep going. If you made that link, remove it from the bot's .claude, .agents or .grok skills folder, then retry.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:runtimeError.local.skill-link-staging.title": {
+      "text": "スキルのリンクをそのまま保ちます",
+      "en": "Your skill links stay unchanged",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:runtimeError.local.skill-link-staging.message": {
+      "text": "Murage はスキルのリンクをそのまま保ちます。このボットの作業フォルダー内にある一時保管フォルダーが存在しない、別のドライブにある、変更されている、またはこのコンピューターではリンクを維持したまま移動できないため、ターンを開始しませんでした。",
+      "en": "Murage keeps your skill links unchanged when its staging folder in this bot's working folder is missing, on another drive or changed, or when this computer cannot move links while preserving them. Your turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:runtimeError.local.skill-link-staging.resolution": {
+      "text": "続けるには、このボットとの新しい会話を開始してください。Murage がボットの .murage-procedures/.relink フォルダーにリンクを残している場合があります。そこに何かを置いた場合は、それを削除して、もう一度お試しください。",
+      "en": "Start a new conversation with this bot to keep going. Murage may have kept a link in the bot's .murage-procedures/.relink folder; if you placed something there, remove it, then retry.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:runtimeError.local.pinned-procedures.title": {
+      "text": "この会話では元のスキルを維持します",
+      "en": "Your conversation keeps its original skills",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:runtimeError.local.pinned-procedures.message": {
+      "text": "Murage はこの会話の元の指示を維持します。会話の開始時に使われたスキルがディスク上に存在しないか、変更されているため、ターンを開始しませんでした。",
+      "en": "Murage keeps your conversation on its original instructions. The skills it started with are missing or changed on disk, so your turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:runtimeError.local.pinned-procedures.resolution": {
+      "text": "このボットの現在のスキルを使うには、新しい会話を開始してください。",
+      "en": "Start a new conversation with this bot to use its current skills.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:settings.dataFolder.title": {
+      "text": "データフォルダー",
+      "en": "Data folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:settings.dataFolder.subtitle": {
+      "text": "Murage のデータフォルダー内のリンクされたフォルダーが別の場所を指しています。意図して移動した場合は、ここで使用してください。",
+      "en": "A linked folder in Murage's data folder now points somewhere else. If you moved it on purpose, use it here.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:settings.dataFolder.row.workspaces": {
+      "text": "ワークスペースフォルダー",
+      "en": "Workspaces folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:settings.dataFolder.row.providers": {
+      "text": "Claude アカウントフォルダー",
+      "en": "Claude accounts folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:settings.dataFolder.location": {
+      "text": "新しい場所",
+      "en": "New location",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:settings.dataFolder.use": {
+      "text": "このフォルダーを使う",
+      "en": "Use this folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:settings.dataFolder.restart": {
+      "text": "このフォルダーを使うには、Murage を再起動してください。",
+      "en": "Restart Murage so you can use this folder.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "ja:settings.dataFolder.error": {
+      "text": "フォルダーが元の場所にあることを確かめてから、もう一度フォルダーの確定をお試しください。",
+      "en": "Check that the folder is still in place, then try again to confirm it.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "pt-br:runtimeError.local.data-dir-moved.title": {
+      "text": "A pasta desta conversa é de um local anterior",
+      "en": "This conversation's folder is from an earlier location",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "pt-br:runtimeError.local.data-root-changed.title": {
+      "text": "A pasta de espaços de trabalho do Murage agora aponta para outro lugar",
+      "en": "Murage's workspaces folder now points somewhere else",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "pt-br:runtimeError.local.data-root-changed-providers.title": {
+      "text": "A pasta de contas do Claude do Murage agora aponta para outro lugar",
+      "en": "Murage's Claude accounts folder now points somewhere else",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "pt-br:settings.dataFolder.title": {
+      "text": "Pasta de dados",
+      "en": "Data folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "pt-br:settings.dataFolder.row.workspaces": {
+      "text": "Pasta de espaços de trabalho",
+      "en": "Workspaces folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "pt-br:settings.dataFolder.row.providers": {
+      "text": "Pasta de contas do Claude",
+      "en": "Claude accounts folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "pt-br:settings.dataFolder.location": {
+      "text": "Novo local",
+      "en": "New location",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "pt-br:settings.dataFolder.use": {
+      "text": "Usar esta pasta",
+      "en": "Use this folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:runtimeError.local.data-dir-moved.title": {
+      "text": "此对话的文件夹来自之前的位置",
+      "en": "This conversation's folder is from an earlier location",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:runtimeError.local.data-dir-moved.message": {
+      "text": "Murage 会保持你的对话与原文件夹的关联。数据文件夹移动后，无法将此对话的文件夹对应到新位置，因此本轮没有开始。",
+      "en": "Murage keeps your conversation tied to its original folder. After the data folder moved, this conversation's folder could not be matched to the new location, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:runtimeError.local.data-dir-moved.resolution": {
+      "text": "请与此机器人开始新的对话，或将数据文件夹移回原处，然后重试。",
+      "en": "Start a new conversation with this bot, or move the data folder back, then retry.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:runtimeError.local.data-root-changed.title": {
+      "text": "Murage 的工作区文件夹现在指向了别处",
+      "en": "Murage's workspaces folder now points somewhere else",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:runtimeError.local.data-root-changed.message": {
+      "text": "Murage 会让你的本轮操作在预定位置进行。Murage 数据文件夹中的一个链接文件夹现在指向了别处，因此本轮没有开始。",
+      "en": "Murage keeps your turn in the intended location. A linked folder in Murage's data folder now points somewhere else, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:runtimeError.local.data-root-changed.resolution": {
+      "text": "如果是你有意移动的，请打开“设置 > 数据文件夹”，选择“使用此文件夹”。否则请将其恢复原状，下一轮会自动识别。如果都不行，请重启 Murage。",
+      "en": "If you moved it on purpose, open Settings > Data folder and choose Use this folder. Otherwise put it back as it was; the next turn picks it up. If neither works, restart Murage.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:runtimeError.local.data-root-changed-providers.title": {
+      "text": "Murage 的 Claude 账户文件夹现在指向了别处",
+      "en": "Murage's Claude accounts folder now points somewhere else",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:runtimeError.local.data-root-changed-providers.message": {
+      "text": "Murage 会让你的本轮操作在预定位置进行。Murage 数据文件夹中的一个链接文件夹现在指向了别处，因此本轮没有开始。",
+      "en": "Murage keeps your turn in the intended location. A linked folder in Murage's data folder now points somewhere else, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:runtimeError.local.data-root-changed-providers.resolution": {
+      "text": "如果是你有意移动的，请打开“设置 > 数据文件夹”，选择“使用此文件夹”。否则请将其恢复原状，下一轮会自动识别。如果都不行，请重启 Murage。",
+      "en": "If you moved it on purpose, open Settings > Data folder and choose Use this folder. Otherwise put it back as it was; the next turn picks it up. If neither works, restart Murage.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:runtimeError.local.skill-link-foreign.title": {
+      "text": "你的技能链接保持不变",
+      "en": "Your skill links stay unchanged",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:runtimeError.local.skill-link-foreign.message": {
+      "text": "Murage 会保持你的技能链接不变。当 Murage 无法检查或替换此机器人工作文件夹中的链接时，就会保留原样。本轮没有开始。",
+      "en": "Murage keeps your skill links unchanged when it cannot check or replace a link in this bot's working folder. Your turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:runtimeError.local.skill-link-foreign.resolution": {
+      "text": "请与此机器人开始新对话以继续。如果该链接是你创建的，请将其从机器人的 .claude、.agents 或 .grok 技能文件夹中移除，然后重试。",
+      "en": "Start a new conversation with this bot to keep going. If you made that link, remove it from the bot's .claude, .agents or .grok skills folder, then retry.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:runtimeError.local.skill-link-staging.title": {
+      "text": "你的技能链接保持不变",
+      "en": "Your skill links stay unchanged",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:runtimeError.local.skill-link-staging.message": {
+      "text": "Murage 会保持你的技能链接不变。当此机器人工作文件夹中 Murage 的暂存文件夹不存在、位于其他驱动器或已更改，或者此计算机无法在保持链接完整的情况下移动链接时，就会保留原样。本轮没有开始。",
+      "en": "Murage keeps your skill links unchanged when its staging folder in this bot's working folder is missing, on another drive or changed, or when this computer cannot move links while preserving them. Your turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:runtimeError.local.skill-link-staging.resolution": {
+      "text": "请与此机器人开始新对话以继续。Murage 可能在机器人的 .murage-procedures/.relink 文件夹中保留了一个链接；如果你曾在其中放入内容，请将其移除，然后重试。",
+      "en": "Start a new conversation with this bot to keep going. Murage may have kept a link in the bot's .murage-procedures/.relink folder; if you placed something there, remove it, then retry.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:runtimeError.local.pinned-procedures.title": {
+      "text": "你的对话会保留原有技能",
+      "en": "Your conversation keeps its original skills",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:runtimeError.local.pinned-procedures.message": {
+      "text": "Murage 会保留你的对话原有的指令。此对话开始时使用的技能在磁盘上已缺失或发生更改，因此本轮没有开始。",
+      "en": "Murage keeps your conversation on its original instructions. The skills it started with are missing or changed on disk, so your turn did not start.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:runtimeError.local.pinned-procedures.resolution": {
+      "text": "请与此机器人开始新对话，以使用其当前技能。",
+      "en": "Start a new conversation with this bot to use its current skills.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:settings.dataFolder.title": {
+      "text": "数据文件夹",
+      "en": "Data folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:settings.dataFolder.subtitle": {
+      "text": "Murage 数据文件夹中的一个链接文件夹现在指向了别处。如果是你有意移动的，请在这里使用它。",
+      "en": "A linked folder in Murage's data folder now points somewhere else. If you moved it on purpose, use it here.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:settings.dataFolder.row.workspaces": {
+      "text": "工作区文件夹",
+      "en": "Workspaces folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:settings.dataFolder.row.providers": {
+      "text": "Claude 账户文件夹",
+      "en": "Claude accounts folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:settings.dataFolder.location": {
+      "text": "新位置",
+      "en": "New location",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:settings.dataFolder.use": {
+      "text": "使用此文件夹",
+      "en": "Use this folder",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:settings.dataFolder.restart": {
+      "text": "请重启 Murage，以便使用此文件夹。",
+      "en": "Restart Murage so you can use this folder.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    },
+    "zh:settings.dataFolder.error": {
+      "text": "请确认文件夹仍在原位，然后重试以确认它。",
+      "en": "Check that the folder is still in place, then try again to confirm it.",
+      "verdict": "pass",
+      "note": "Checked against rules and call site: plain words, no em dash, none of the banned words, framed as Murage keeping things as they are, matches the code and the UI labels."
+    }
+  },
+  "files": {
+    "reviewers.json": {
+      "text": "{\n  \"version\": 1,\n  \"reviewers\": [\n    {\n      \"kind\": \"agent\",\n      \"name\": \"sol\",\n      \"account\": \"gpt-6.1-sol read-only, codex acct2 and acct6\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"claude-copyrev\",\n      \"account\": \"claude sonnet 5.5, copy-review seat for MurageMain\"\n    }\n  ]\n}\n",
+      "verdict": "pass"
+    }
+  }
+}

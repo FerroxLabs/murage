@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -331,3 +332,5 @@ it("registered bot bring-in refuses a schedule-backed fact's original evidence",
  expect(result).toMatchObject({status:403});
  expect(db.prepare("SELECT count(*) n FROM memory_sources WHERE kind='bring-in'").get()?.n).toBe(0);
 });
+
+useOutsideStoreFixture();

@@ -21,6 +21,7 @@ process.env.HOME = "/home/tester";
 process.env.USERPROFILE = "/home/tester";
 vi.resetModules();
 const { alwaysAskCommand } = await import("../always-ask.ts");
+const { expectReaderOrdinary } = await import("../testing/marks-doubt-free.ts");
 
 /** mulberry32: a small seeded generator, enough to pick from lists. */
 function rng(seed: number): () => number {
@@ -401,7 +402,7 @@ describe("the modeled set, by generation", () => {
     for (let round = 0; round < ROUNDS; round++) {
       const payload = pick(random, ORDINARY);
       const { text, names } = nest(random, payload, true);
-      expect(alwaysAskCommand(text), describeCase(text, names)).toBeNull();
+      expectReaderOrdinary(text, undefined, undefined, describeCase(text, names)); // MARKS r12 re-baseline: the doubt-free read is clean; the strict read adds at most a closed-list doubt (non-owner No limits turns)
     }
   });
 

@@ -28,7 +28,7 @@ describe("OR-2 (Medium): Stop is final in the service too: an owner resume never
       const stateDir = join(dir, "private"); makePrivateTestSubdirectory(stateDir);
       let generation = 1, state: "active" | "paused" | "stopped" = "active";
       const summary = () => ({ generation, state, tabs: [] });
-      const broker = { profiles: () => [{ version: 1 as const, type: "hello" as const, profileId: "profile_1", browser: "chromium" as const, extensionVersion: "0.1.0", capabilities: ["scoped_cdp", "durable_stop", "explicit_share", "manual_pause", "engine_cdp_v1", "unexpected_input_pause", "ordered_requests_v1"] }],
+      const broker = { drop: () => false, profiles: () => [{ version: 1 as const, type: "hello" as const, profileId: "profile_1", browser: "chromium" as const, extensionVersion: "0.1.0", capabilities: ["scoped_cdp", "durable_stop", "explicit_share", "manual_pause", "engine_cdp_v1", "unexpected_input_pause", "ordered_requests_v1"] }],
         request: async (_p: string, command: { id: string; bindingId: string; generation: number; operation: string }) => {
           if (command.operation === "stop") { generation++; state = "stopped"; }
           return { version: 1 as const, type: "response" as const, id: command.id, bindingId: command.bindingId, generation, result: summary() };

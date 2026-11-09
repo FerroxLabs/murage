@@ -80,6 +80,6 @@ export function goalBudgetLines(budget: ProjectBudget | undefined, usage: UsageR
   if (budget?.state === "ok") lines.push(t("projects.budget.within"));
   if (budget?.state === "warned") lines.push(t("projects.budget.warned"));
   if (budget?.state === "paused") lines.push(t("projects.budget.paused"));
-  if (usage.totals.charge !== null) lines.push(t("projects.budget.charge", { amount: usage.totals.charge.toFixed(4) }));
+  if (usage.totals.charge !== null) lines.push(t(usage.totals.chargeIsLowerBound ? "projects.budget.chargeAtLeast" : "projects.budget.charge", { amount: usage.totals.charge.toFixed(4) }));
   return lines;
 }

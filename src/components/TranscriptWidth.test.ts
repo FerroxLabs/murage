@@ -33,8 +33,10 @@ describe("the message column is not capped at ~75% of a phone", () => {
     // is the 74.4% that was measured on screen.
     expect(source).not.toContain("max-md:max-w-[92%]");
     expect(source).toContain("max-md:max-w-full");
-    // The desktop width comes from the shared tokens in styles.css, not a literal.
-    expect(source).toContain("max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))]");
+    // The desktop width comes from the shared tokens in styles.css, not a
+    // literal: written in the view, or taken from lib/reply-width.ts (E35).
+    const token = "max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))]";
+    expect(source.includes(token) || (source.includes("bubbleWidth(") && read("../lib/reply-width.ts").includes(token))).toBe(true);
     expect(source).not.toContain("min(42rem");
   });
 

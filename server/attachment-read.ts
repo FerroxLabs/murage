@@ -16,7 +16,7 @@
 import { constants, statSync } from "node:fs";
 import type { BigIntStats } from "node:fs";
 import * as fsp from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, join, posix, resolve, win32 } from "node:path";
 
 /** No attachment read is larger than this; no 1.0.x writer stores more. */
 export const ATTACHMENT_READ_CEILING = 25 * 1024 * 1024;
@@ -52,6 +52,15 @@ function folderOf(home: AttachmentsHome): string {
  * outside server/attachments.ts. */
 export function attachmentsFolderForWriter(home: AttachmentsHome): string {
   return folderOf(home);
+}
+
+/** S5 site 14 (P8): the stored path a leaf takes in the attachments folder of one recorded data root, or null.
+ * The leaf is one segment under both Windows and POSIX rules, whatever the host OS: no / or \, no NUL, not "."
+ * or "..", not absolute, no drive letter (C:, C:x) and no \\?\ prefix. The folder string stays inside this module. */
+export function rebasedAttachmentPath(root: string, name: string): string | null {
+  if (!name || name === "." || name === ".." || /[\\/\0]/.test(name) || /^[A-Za-z]:/.test(name)) return null;
+  if (posix.isAbsolute(name) || win32.isAbsolute(name)) return null;
+  return join(folderOf(attachmentsHomeOf(root)), name);
 }
 
 export type FileIdentity = { dev: bigint; ino: bigint; nlink: bigint; size: bigint; mtimeNs: bigint; ctimeNs: bigint };
@@ -103,6 +112,14 @@ export function attachmentRemoved(home: AttachmentsHome, name: string): boolean 
     const code = errno(error);
     return !(code === "ENOENT" || code === "ENOTDIR");
   }
+}
+
+/** Avatar observation distinguishes absence from I/O failure; serving remains fail closed. */
+export async function attachmentRemovalState(home: AttachmentsHome, name: string,
+  stat: (path: string) => Promise<unknown> = fsp.stat): Promise<"removed" | "present" | "error"> {
+  if (!isAttachmentName(name)) return "present";
+  try { await stat(join(folderOf(home), REMOVED_FOLDER, name)); return "removed"; }
+  catch (error) { const code = errno(error); return code === "ENOENT" || code === "ENOTDIR" ? "present" : "error"; }
 }
 
 // ---------------------------------------------------------------------------

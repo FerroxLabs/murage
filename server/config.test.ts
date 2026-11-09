@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fluxMemorySettings, setFluxMemoryConfig } from "./flux-memory-headers.ts";
 
-import { customMcpServers, customMcpServerDescriptors,
+import { APP_CONFIG_KEYS, customMcpServers, customMcpServerDescriptors,
   DATA_DIR,
   instanceConfigs,
   isValidSshAlias,
@@ -121,6 +121,129 @@ describe("explicit web search configuration", () => {
     const inherited = { TAVILY_API_KEY: process.env.TAVILY_API_KEY, EXA_API_KEY: process.env.EXA_API_KEY };
     stripWorkspaceCredentialEnv(inherited);
     expect(inherited).toEqual({ TAVILY_API_KEY: "ambient-engine-tavily-key", EXA_API_KEY: "ambient-engine-exa-key" });
+  });
+});
+
+describe("HighLevel private token is stored with the config", () => {
+  const file = join(DATA_DIR, "config.json");
+  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); vi.stubEnv("MURAGE_HIGHLEVEL_PRIVATE_TOKEN", undefined); });
+  afterEach(() => { rmSync(file, { force: true }); vi.unstubAllEnvs(); });
+  const diskToken = () => (JSON.parse(readFileSync(file, "utf8")) as { highlevel?: { privateToken?: string } }).highlevel?.privateToken;
+
+  it("a cleared token stays gone from memory and from config.json, before and after a restart", () => {
+    // config.json still holds an older plaintext token (written by hand, or a file from before the desktop shell kept it)
+    writeFileSync(file, JSON.stringify({ language: "en", highlevel: { privateToken: "old-plaintext-hl-token" } }));
+    vi.stubEnv("MURAGE_HIGHLEVEL_PRIVATE_TOKEN", "live-hl-token");
+    expect(loadConfig().highlevel?.privateToken).toBe("live-hl-token");
+    // the owner clears the credential: the same write and env sync PUT /api/config runs
+    const clear = parseConfigPatch({ highlevel: { privateToken: "" } });
+    saveConfig(clear);
+    syncCredentialEnv(clear);
+    expect(process.env.MURAGE_HIGHLEVEL_PRIVATE_TOKEN).toBeUndefined();
+    // the reload commitEngineChange does right after the save
+    expect(loadConfig().highlevel?.privateToken).toBe("");
+    expect(diskToken()).toBe("");
+    expect(readFileSync(file, "utf8")).not.toContain("old-plaintext-hl-token");
+    // a restart: nothing in env, only the file
+    vi.unstubAllEnvs();
+    vi.stubEnv("MURAGE_HIGHLEVEL_PRIVATE_TOKEN", undefined);
+    expect(loadConfig().highlevel?.privateToken).toBe("");
+    expect(loadConfig().language).toBe("en");
+  });
+
+  it("the external-storage tombstone also clears an old plaintext token on disk", () => {
+    writeFileSync(file, JSON.stringify({ highlevel: { privateToken: "old-plaintext-hl-token" } }));
+    // ?secretStorage=external: the shell keeps the real value; the server writes the empty tombstone
+    saveConfig({ highlevel: { privateToken: "" } });
+    expect(diskToken()).toBe("");
+    expect(loadConfig().highlevel?.privateToken).toBe("");
+  });
+
+  it("a token saved with no desktop shell survives a restart, and a later save of another section keeps it", () => {
+    saveConfig(parseConfigPatch({ highlevel: { privateToken: "file-hl-token" } }));
+    expect(diskToken()).toBe("file-hl-token");
+    saveConfig({ language: "fr" });
+    expect(loadConfig().highlevel?.privateToken).toBe("file-hl-token");
+  });
+  it("an upgrade from a 1.0.17-shaped config.json (no highlevel section) saves, clears and restarts with no token anywhere", () => {
+    // 1.0.17 shipped no HighLevel credential: its config.json has no highlevel key at all
+    writeFileSync(file, JSON.stringify({ language: "en", webSearch: { provider: "auto" }, instances: { fuigo: { driver: "fuigoAgent", enabled: true } } }));
+    expect(loadConfig().highlevel).toBeUndefined();
+    const save = parseConfigPatch({ highlevel: { privateToken: "upgrade-hl-token" } });
+    saveConfig(save);
+    syncCredentialEnv(save);
+    expect(loadConfig().highlevel?.privateToken).toBe("upgrade-hl-token");
+    const clear = parseConfigPatch({ highlevel: { privateToken: "" } });
+    saveConfig(clear);
+    syncCredentialEnv(clear);
+    expect(loadConfig().highlevel?.privateToken).toBe("");
+    expect(readFileSync(file, "utf8")).not.toContain("upgrade-hl-token");
+    vi.unstubAllEnvs();
+    vi.stubEnv("MURAGE_HIGHLEVEL_PRIVATE_TOKEN", undefined);
+    expect(loadConfig().highlevel?.privateToken).toBe("");
+    expect(loadConfig().webSearch).toEqual({ provider: "auto" });
+  });
+});
+
+describe("every config key saveConfig accepts reaches config.json", () => {
+  const file = join(DATA_DIR, "config.json");
+  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); });
+  afterEach(() => { rmSync(file, { force: true }); });
+  const onDisk = () => JSON.parse(readFileSync(file, "utf8")) as JsonObject;
+
+  // One row per AppConfig key: a new interface key fails tsc here, and a new schema key fails the parity test below,
+  // until it has a row; then the round-trip tests fail until saveConfig writes it, and `second` checks a later save replaces it.
+  type Patch = Parameters<typeof saveConfig>[0];
+  // Values are typed as the patch saveConfig takes; `afterSecond` is what config.json holds after `second` when it differs.
+  type Rows = { [K in keyof Required<AppConfig>]: { first: NonNullable<Patch[K]>; second: NonNullable<Patch[K]>; afterSecond?: unknown } };
+  const rows: Rows = {
+    automationsPaused: { first: true, second: false }, noLimitsTermsVersion: { first: 1, second: 2 },
+    telegram: { first: { targetBotId: "bot-a" }, second: { targetBotId: "bot-b" } }, slack: { first: { targetBotId: "bot-a" }, second: { targetBotId: "bot-b" } },
+    discord: { first: { targetBotId: "bot-a" }, second: { targetBotId: "bot-b" } }, whatsapp: { first: { readReceipts: true }, second: { readReceipts: false } },
+    notifications: { first: { previewContent: false }, second: { previewContent: true } }, spend: { first: { monthlyLimitUsd: 25 }, second: { monthlyLimitUsd: 50 } },
+    engineDiscovery: { first: "explicit", second: "automatic" }, hermesProfilesPinned: { first: true, second: false },
+    newBots: { first: { effort: "high" }, second: { effort: null }, afterSecond: {} },
+    mcpServers: { first: { "guard-a": { command: "guard-a" } }, second: { "guard-b": { command: "guard-b" } }, afterSecond: { "guard-b": { command: "guard-b" } } },
+    language: { first: "fr", second: "de" }, xai: { first: { url: "https://a.example.invalid" }, second: { url: "https://b.example.invalid" } },
+    modelProviders: { first: { bank: "bank-a" }, second: { bank: "bank-b" } },
+    openaiCompat: { first: { model: "m-a" }, second: { model: "m-b" } }, composio: { first: { userId: "u-a" }, second: { userId: "u-b" } },
+    box: { first: { token: "box-a" }, second: { token: "" } }, vps: { first: { sshAlias: "build-box" }, second: { sshAlias: "other-box" } },
+    opencodeGo: { first: { apiKey: "go-a" }, second: { apiKey: "" } },
+    tts: { first: { voice: "v-a" }, second: { voice: "v-b" } }, imageGen: { first: { enabled: true }, second: { enabled: false } },
+    webSearch: { first: { provider: "exa" }, second: { provider: "off" } },
+    highlevel: { first: { privateToken: "guard-hl-a" }, second: { privateToken: "" } },
+    flux: { first: { memory: { enabled: false } }, second: { memory: { enabled: true } } }, decider: { first: { enabled: true }, second: { enabled: false } },
+    profile: { first: { name: "Guard" }, second: { name: "Guard Two" } }, rooms: { first: { turnTimeoutMinutes: 30 }, second: { turnTimeoutMinutes: 45 } },
+    localVm: { first: { mode: "per-bot" }, second: { mode: "shared" } }, features: { first: { showToolCalls: true }, second: { showToolCalls: false } },
+    browserProfiles: { first: [{ id: "guard-a", name: "Guard A" }], second: [] },
+    instances: { first: { guardA: { driver: "fuigoAgent", enabled: true } }, second: { guardA: { driver: "fuigoAgent", enabled: false } } },
+  };
+  const entries = Object.entries(rows) as Array<[string, Rows[keyof Rows]]>;
+  const patch = (key: string, value: unknown) => ({ [key]: value }) as Patch;
+
+  it("has a row for exactly the keys appConfigSchema accepts", () => {
+    expect(Object.keys(rows).sort()).toEqual([...APP_CONFIG_KEYS].sort());
+  });
+  for (const [key, row] of entries) {
+    it(`writes ${key} and a later save replaces it`, () => {
+      saveConfig(patch(key, row.first));
+      if (typeof row.first === "object") expect(onDisk()[key]).toMatchObject(row.first as object);
+      else expect(onDisk()[key]).toBe(row.first);
+      saveConfig(patch(key, row.second));
+      if (row.afterSecond !== undefined) expect(onDisk()[key]).toEqual(row.afterSecond);
+      else if (typeof row.second === "object") expect(onDisk()[key]).toMatchObject(row.second as object);
+      else expect(onDisk()[key]).toBe(row.second);
+    });
+  }
+  it("saving one key leaves every other key exactly as it was", () => {
+    for (const [key, row] of entries) saveConfig(patch(key, row.first));
+    for (const [key, row] of entries) {
+      const before = onDisk();
+      saveConfig(patch(key, row.second));
+      const after = onDisk();
+      for (const other of Object.keys(before)) if (other !== key) expect(after[other], `${other} changed when ${key} was saved`).toEqual(before[other]);
+      saveConfig(patch(key, row.first));
+    }
   });
 });
 
@@ -1605,5 +1728,35 @@ describe("Flux Memory switches in config", () => {
     vi.stubEnv("MURAGE_FLUX_MEMORY", "off");
     expect(fluxMemorySettings()).toMatchObject({ killSwitch: true, spaces: false, inject: "off" });
     expect(() => saveConfig({ flux: { memory: { bogus: true } } } as never)).toThrow();
+  });
+});
+
+describe("automations pause is stored with the config", () => {
+  const file = join(DATA_DIR, "config.json");
+  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); });
+  afterEach(() => { rmSync(file, { force: true }); });
+
+  it("writes automationsPaused to config.json so a reload keeps it (a reload otherwise resumes automations)", () => {
+    saveConfig({ automationsPaused: true });
+    expect(JSON.parse(readFileSync(file, "utf8")).automationsPaused).toBe(true);
+    expect(loadConfig().automationsPaused).toBe(true);
+    saveConfig({ automationsPaused: false });
+    expect(loadConfig().automationsPaused).toBe(false);
+  });
+});
+
+describe("engineDiscovery is stored with the config", () => {
+  const file = join(DATA_DIR, "config.json");
+  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); });
+  afterEach(() => { rmSync(file, { force: true }); });
+
+  it("writes engineDiscovery to config.json so a reload keeps it, and an unset patch preserves it", () => {
+    saveConfig({ engineDiscovery: "explicit" });
+    expect(JSON.parse(readFileSync(file, "utf8")).engineDiscovery).toBe("explicit");
+    expect(loadConfig().engineDiscovery).toBe("explicit");
+    saveConfig({ automationsPaused: true });
+    expect(loadConfig().engineDiscovery).toBe("explicit");
+    saveConfig({ engineDiscovery: "automatic" });
+    expect(loadConfig().engineDiscovery).toBe("automatic");
   });
 });

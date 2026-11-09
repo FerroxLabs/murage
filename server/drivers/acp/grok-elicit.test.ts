@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -51,7 +53,7 @@ describe("Grok Build's MCP elicitation reaches the owner (GROK-ELICIT-CARD)", ()
   for (const method of ["_x.ai/mcp/elicit", "x.ai/mcp/elicit"]) {
     it(`${method}: opens the question card, never auto-answered, and Yes replies {outcome: accept, content}`, async () => {
       await start({ FAKE_ACP_MODE: "grok-elicit", FAKE_ACP_ELICIT_METHOD: method });
-      await instance!.adapter.sendTurn({ threadId: "t-grok-elicit", text: "make the video" });
+      await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-grok-elicit", text: "make the video" });
       const opened = await recorder.until((e) => e.type === "request.opened");
       expect(opened).toMatchObject({
         requestType: "question",
@@ -71,7 +73,7 @@ describe("Grok Build's MCP elicitation reaches the owner (GROK-ELICIT-CARD)", ()
 
   it("a skipped card replies {outcome: decline}", async () => {
     await start({ FAKE_ACP_MODE: "grok-elicit" });
-    await instance!.adapter.sendTurn({ threadId: "t-grok-elicit-skip", text: "make the video" });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-grok-elicit-skip", text: "make the video" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     await expect(instance!.adapter.respondToRequest("t-grok-elicit-skip", (opened as any).requestId, { behavior: "deny" })).resolves.toBe("rejected");
     expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "user" });
@@ -86,7 +88,7 @@ describe("Grok Build's MCP elicitation reaches the owner (GROK-ELICIT-CARD)", ()
       FAKE_ACP_ASK_METHOD: "_x.ai/mcp/brand_new\nforged=1",
       FAKE_ACP_ASK_PARAMS: JSON.stringify({ sessionId: "s-1", message: "PARAMS-MUST-NOT-BE-LOGGED" }),
     });
-    await instance!.adapter.sendTurn({ threadId: "t-grok-unknown", text: "go" });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-grok-unknown", text: "go" });
     await recorder.until((e) => e.type === "turn.completed");
     expect(recorder.events.some((e) => e.type === "request.opened")).toBe(false);
     expect(decision()).toEqual({ error: { code: -32601, message: "method not found" } });
@@ -98,3 +100,6 @@ describe("Grok Build's MCP elicitation reaches the owner (GROK-ELICIT-CARD)", ()
     expect(lines.join("\n")).not.toContain("PARAMS-MUST-NOT-BE-LOGGED");
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

@@ -8,6 +8,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import ts from "typescript";
+import { voiceFinishingDialog } from "./prepare-voice-finishing.mjs";
 
 function handler(state) {
   const source = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
@@ -59,7 +60,83 @@ test("accepts no arguments", () => {
   assert.equal(state.calls, 0);
 });
 
+// 1.0.18: the REAL prepareForPreviousVersion lifted out of main.mjs. A held bot Post refuses the step back with
+// DOWNGRADE_WORK_PENDING (the downgrade's own refusal, server/downgrade-102-schema.test.ts), and the dialog detail names
+// bot posts and how to clear them.
+async function prepareDialogs(refusal) {
+  const source = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
+  const tree = ts.createSourceFile("main.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const node = tree.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === "prepareForPreviousVersion");
+  assert.ok(node, "prepareForPreviousVersion present");
+  // STARTUP-SILENT: the step back names its quit "automatic" before app.quit(), with the REAL noteShutdownCause lifted beside it.
+  const noteCause = tree.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === "noteShutdownCause");
+  assert.ok(noteCause, "noteShutdownCause present");
+  const shown = []; let quit = 0; let causeAtQuit;
+  let sandbox;
+  sandbox = vm.createContext({
+    app: { isPackaged: true, quit: () => { quit += 1; causeAtQuit = sandbox.shutdownCause; } },
+    mainWindow: undefined,
+    dialog: { showMessageBox: async (...args) => { const box = args.at(-1); shown.push(box); return { response: 0 }; } },
+    runDesktopRecovery: async () => { throw refusal; },
+    voiceFinishingDialog,
+  });
+  vm.runInContext("var desktopRecoveryMode=false; var desktopShutdownStarted=false; var desktopDataOwner=true; var desktopDataDir='/data'; var shutdownCause=null;", sandbox);
+  vm.runInContext(noteCause.getText(tree), sandbox);
+  vm.runInContext(node.getText(tree), sandbox);
+  await vm.runInContext("prepareForPreviousVersion()", sandbox);
+  return { shown, quit, causeAtQuit };
+}
+
+test("a held bot Post refusing the step back names bot posts in the dialog", async () => {
+  const held = Object.assign(new Error("You have 1 post from a bot still waiting for your answer. Post or decline it, then try again."), { code: "DOWNGRADE_WORK_PENDING" });
+  const { shown, quit, causeAtQuit } = await prepareDialogs(held);
+  assert.equal(shown.length, 2);
+  assert.equal(shown[1].message, "Murage will be ready for 1.0.2 once this is done.");
+  assert.equal(shown[1].detail, "Your chats and memories are as they were. Some messages, bot posts or other work are still waiting. Open Murage, send, post or decline what is waiting, let the rest finish, then try again.");
+  assert.doesNotMatch(shown[1].detail, /send or cancel|Code:/);
+  assert.equal(quit, 1);
+  assert.equal(causeAtQuit, "automatic");
+});
+
+test("a voice reply still finishing refuses the step back with the minutes left, as finishing up, not an error", async () => {
+  const finishing = Object.assign(new Error("Murage is finishing a voice reply. Try again in about 4 min."), { code: "DOWNGRADE_VOICE_FINISHING_4" });
+  const { shown, quit, causeAtQuit } = await prepareDialogs(finishing);
+  assert.equal(shown.length, 2);
+  assert.equal(shown[1].type, "info");
+  assert.equal(shown[1].message, "Murage is finishing a voice reply.");
+  assert.equal(shown[1].detail, "Try again in about 4 min. Your chats and memories are as they were.");
+  assert.deepEqual(shown[1].buttons, ["Quit"]);
+  assert.doesNotMatch(shown[1].detail, /Code:|error/i);
+  assert.equal(quit, 1);
+  assert.equal(causeAtQuit, "automatic");
+});
+
 test("the preload exposes it as a call with no arguments", () => {
   const preload = readFileSync(new URL("./preload.cjs", import.meta.url), "utf8");
   assert.match(preload, /preparePreviousVersion: \(\) => ipcRenderer\.invoke\("update:prepare-previous-version"\)/);
+});
+
+test("the downgrade dialog names unfinished calls and the preserved phone history folder", async () => {
+  const source = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
+  const tree = ts.createSourceFile("main.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const node = tree.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === "prepareForPreviousVersion");
+  for (const failure of [undefined, "PHONE_CALLS_PENDING", "PHONE_CALLS_UNREADABLE"]) {
+    const dialogs = [];
+    const sandbox = vm.createContext({
+      app: { isPackaged: true, quit() {} }, mainWindow: undefined,
+      noteShutdownCause: () => {}, // b9 STARTUP-SILENT names the step-back quit; test 7 checks the real function
+      desktopRecoveryMode: false, desktopShutdownStarted: false, desktopDataOwner: {}, desktopDataDir: "/fixture",
+      dialog: { showMessageBox: async options => { dialogs.push(options); return { response: 0 }; } },
+      voiceFinishingDialog,
+      runDesktopRecovery: async () => { if (failure) throw Object.assign(new Error(failure), { code: failure }); return { phoneCallsPreservedAt: "/fixture-preserved" }; },
+    });
+    vm.runInContext(node.getText(tree), sandbox);
+    await vm.runInContext("prepareForPreviousVersion()", sandbox);
+    const last = dialogs.at(-1);
+    if (failure) {
+      assert.equal(last.type, "warning");
+      assert.match(last.detail, /phone call/i);
+      assert.doesNotMatch(last.message, /^Ready/);
+    } else assert.match(last.detail, /\/fixture-preserved.*restore/);
+  }
 });

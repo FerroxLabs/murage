@@ -80,7 +80,7 @@ describe("turn-refusal structure", () => {
     expect(body.match(/clearTimeout\(/g)).toHaveLength(1);
     // the bound starts before the turn/start request is written, with nothing awaited between them
     const started = code.indexOf('if (hookGate && !refusal.hookLive && (method === "turn/start" || method === "review/start")) void proveLiveness();');
-    const sent = code.indexOf("await request(method, commandParams", started);
+    const sent = code.indexOf("await gate.step(entry, gate.launch(entry, () => request(method, commandParams", started);
     expect(started).toBeGreaterThan(0);
     expect(sent).toBeGreaterThan(started);
     expect(code.slice(started, sent).split("\n").slice(1).join("\n")).not.toMatch(/\bawait\b/);
@@ -92,6 +92,6 @@ describe("turn-refusal structure", () => {
     expect(code).toMatch(/if \(hookGate && !refusal\.hookLive\) void proveLiveness\(\)\.then\(\(\) => \{ if \(!abandoned\) handleServerRequest\(msg\); \}\);\s*else handleServerRequest\(msg\);/);
     // every clean end waits for the proof; only the user's Stop (the process is killed: not a clean end of engine work) does not (F4 design 2a).
     // A Stop that comes in while the clean end waits wins (STOP1); otherwise an unproven hook ends it as the refusal, never clean.
-    expect(code).toMatch(/if \(ok && hookGate && !refusal\.hookLive && !\(stopRequested && stopReason === "cancelled"\)\) \{\s*const live = await proveLiveness\(\);\s*if \(state\.settled\) return;\s*if \(stopWins\(stopReason\)\) \{ \[ok, stopReason\] = stopEnd\(\); closeCut = !ok; \}\s*else if \(!live\) return;\s*\}/);
+    expect(code).toMatch(/if \(ok && hookGate && !refusal\.hookLive && !\(stopRequested && stopReason === "cancelled"\)\) \{\s*const live = await gate\.cleanupStep\(entry, proveLiveness\(\)\);\s*if \(state\.settled\) return;\s*if \(stopWins\(stopReason\)\) \[ok, stopReason\] = stopEnd\(\);\s*else if \(!live\) return;\s*\}/);
   });
 });

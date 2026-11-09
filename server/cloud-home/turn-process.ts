@@ -1,6 +1,7 @@
 import { cloudHomeCopy } from "./copy.ts";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
+import { noteEngineEnv } from "../outside-scan.ts";
 
 export const CLOUD_ENGINES = ["claudeAgent", "codex", "pi", "antigravity", "grokAgent", "geminiAgent", "kimiAgent", "droidAgent", "cursorAgent", "customAcp", "fuigoAgent", "hermesAgent", "opencodeGo", "qwenAgent"] as const;
 export const TURN_LAUNCHER = "/usr/local/libexec/murage-turn-launch";
@@ -41,6 +42,12 @@ export function cloudEngineHome(engine: string): string {
 /** Start with public runtime settings and this driver's explicit credential grant.
  * Routing code can then inject the selected provider's credential for this turn. */
 export function cloudTurnEnvironment(engine: string, source: NodeJS.ProcessEnv, credentials: readonly string[] = []): NodeJS.ProcessEnv {
+  const env = cloudTurnEnvironmentOf(engine, source, credentials);
+  // NOLIMITS 1.0.18 (GrokBuild #16): an engine started with a code-loading variable turns the No limits relief off
+  noteEngineEnv(env);
+  return env;
+}
+function cloudTurnEnvironmentOf(engine: string, source: NodeJS.ProcessEnv, credentials: readonly string[]): NodeJS.ProcessEnv {
   if (process.env.MURAGE_CLOUD_ROLE !== "home") return source;
   const home = cloudEngineHome(engine);
   const env: NodeJS.ProcessEnv = {};

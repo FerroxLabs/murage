@@ -31,8 +31,9 @@ import { ownerMemoryTicket } from "./authority.ts";
 import { commitMemoryImport, previewMemoryImport } from "./import.ts";
 import { ensureWorkspace } from "../workspace.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { resetDataRootsForTest } from "../data-roots.ts";
 
-beforeEach(async () => { closeDatabase(); await stopWalMaintenance(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); thawRootSetWritesForTest(true); resetSessionHolds(); });
+beforeEach(async () => { closeDatabase(); await stopWalMaintenance(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); resetDataRootsForTest(); thawRootSetWritesForTest(true); resetSessionHolds(); });
 afterEach(() => { thawRootSetWritesForTest(false); vi.restoreAllMocks(); });
 
 /** Every "memory receipts revoked" line the code under test logs. */
@@ -180,7 +181,7 @@ it("removing a task ends its receipts only; the bot's other thread keeps its rec
   const next = structuredClone(f.roster); next.bots[0].tasks = [{ threadId: "private-a" }];
   f.save(next);
   expect(policyRevision()).toBe(before);
-  expect(hard()).not.toBe(stamp);
+  expect(hard()).toBe(stamp);
   expect(receiptState(onX.bundle.bundleId)).toBe("revoked");
   expect(receiptState(onA.bundle.bundleId)).toBe("delivered");
   expect(lines.filter(line => line.includes("scope=global"))).toEqual([]);
@@ -190,26 +191,43 @@ it("removing a task ends its receipts only; the bot's other thread keeps its rec
   expect(database().prepare("SELECT state FROM memory_scope_bindings WHERE id='memory-roster-policy'").get()?.state).toBe("granted");
 });
 
-it("a receipt on another thread that cited the removed task's scope is judged live: hydrate denies, the hold is gone, the session resets", async () => {
+it.each([false, true])("a receipt citing a removed task is judged live (derived=%s)", async (derived) => {
   const f = fixture(["private-a", "task-x"]);
   const scope = ensureScope("conversation", "task-x"), db = database();
   db.prepare("INSERT INTO memory_records VALUES('fact-x',1,?,'fact','task-x knows the launch date','owner-statement','active',0,?,NULL,NULL,?)").run(scope, 1, 1);
-  const citing = { search: async () => ({ hits: [{ id: "fact-x", version: 1, score: 1, lexical: true }], vectorRows: 1, coverageComplete: true }) };
+  if (derived) {
+    db.prepare("INSERT INTO memory_records VALUES('fact-y',1,?,'fact','derived launch date','owner-statement','active',0,1,NULL,NULL,1)").run(ensureScope("conversation", "private-a"));
+    db.prepare("INSERT INTO memory_derivations VALUES('fact-x',1,'fact-y',1)").run();
+  }
+  const citedId = derived ? "fact-y" : "fact-x";
+  const citing = { search: async () => ({ hits: [{ id: citedId, version: 1, score: 1, lexical: true }], vectorRows: 1, coverageComplete: true }) };
   const onA = await f.receipt("private-a", citing as never, "a", "launch date");
-  expect(JSON.parse(String(db.prepare("SELECT record_versions FROM memory_disclosures WHERE bundle_id=?").get(onA.bundle.bundleId)!.record_versions)).map((r: { id: string }) => r.id)).toContain("fact-x");
+  if (derived) db.prepare("UPDATE memory_disclosures SET record_versions=?,source_versions='[]' WHERE bundle_id=?").run(JSON.stringify([{ id: citedId, version: 1 }]), onA.bundle.bundleId);
+  expect(JSON.parse(String(db.prepare("SELECT record_versions FROM memory_disclosures WHERE bundle_id=?").get(onA.bundle.bundleId)!.record_versions)).map((r: { id: string }) => r.id)).toContain(citedId);
   markSessionKnown("private-a", "fixture", "session-private-a", "a");
   const allowance = LineageAllowance.turn();
   expect(continuationMemoryRevoked(allowance, "private-a", "fixture", "session-private-a", f.access("private-a"), {})).toBe(false);
   const stamp = hard();
   const next = structuredClone(f.roster); next.bots[0].tasks = [{ threadId: "private-a" }];
   f.save(next);
-  expect(hard()).not.toBe(stamp);
+  expect(hard()).toBe(stamp); // the removed thread is in the soft dependency log
   const fresh = f.access("private-a");
   expect(() => hydrateDisclosedMemoryRecord("fact-x", 1, fresh, { allowance: LineageAllowance.tool() })).toThrow("MEMORY_SCOPE_DENIED");
   const why: { reason?: string } = {};
-  expect(continuationMemoryRevoked(LineageAllowance.turn(), "private-a", "fixture", "session-private-a", fresh, why)).toBe(true);
-  expect(why.reason).toContain("fact-x");
-  expect(receiptState(onA.bundle.bundleId)).toBe("revoked");
+  const reads = vi.spyOn(db, "prepare");
+  const answer = continuationMemoryRevoked(LineageAllowance.turn(), "private-a", "fixture", "session-private-a", fresh, why);
+  expect(reads.mock.calls.some(([sql]) => sql.startsWith("SELECT * FROM memory_records WHERE id=? AND version=?"))).toBe(true);
+  reads.mockRestore();
+  if (derived) {
+    // Roster removal alone does not forget an independently scoped derived record.
+    // The soft path must rejudge it and agree with a cold check, not reuse its old proof.
+    resetSessionHolds();
+    expect(answer).toBe(continuationMemoryRevoked(LineageAllowance.turn(), "private-a", "fixture", "session-private-a", fresh));
+  } else {
+    expect(answer).toBe(true);
+    expect(why.reason).toContain(citedId);
+    expect(receiptState(onA.bundle.bundleId)).toBe("revoked");
+  }
 });
 
 it("removing a room ends the room threads' receipts; a member's direct access loses the room scope and keeps its own", async () => {

@@ -12,8 +12,9 @@ import { describe, expect, it, vi } from "vitest";
 import { NeedsRow } from "./NeedsRow";
 import { offerSnoozeUndo } from "./snooze-undo";
 import { createUndoHost } from "@/lib/undo";
-import { needsTopRows } from "./NeedsYouPage";
-import type { InboxItem } from "../../../shared/inbox";
+import { composeTop, needsPageSummary, needsTopRows } from "./NeedsYouPage";
+import { needsLines, type NeedsLinesInput } from "@/lib/today-needs";
+import type { InboxItem, InboxPage } from "../../../shared/inbox";
 
 const verbs = createElement("div", null, createElement("button", null, "Allow once"), createElement("button", null, "Deny"));
 const row = (open: boolean) => renderToStaticMarkup(createElement(NeedsRow, { id: "r1", line: "Send the Dana email?", meta: "Max · waiting since 07:12", open, onToggle: () => undefined }, verbs));
@@ -111,5 +112,45 @@ describe("Today's rows", () => {
     const rows = needsTopRows([item("d", now - 1), item("a", now - 4), item("x", now - 9, false), item("b", now - 3), item("c", now - 2)], now, () => undefined);
     expect(rows.map(row => row.id)).toEqual(["a", "b", "c"]);
     expect(rows[0]!.meta).toMatch(/^Max · waiting since \d\d:\d\d$/);
+  });
+
+  it("give Today every owed row with its segment, the split and the restore rows from the same read, and leave top as it was (1.0.18)", () => {
+    const now = new Date(2026, 10, 3, 12).getTime();
+    const owed = (id: string, at: number, segment: string) => ({ ...item(id, at), segment }) as unknown as InboxItem;
+    const restore = { id: "connection:restore", routines: ["Morning brief"], routineKeys: ["routine:r1"], bots: ["Max"], since: now - 9, detail: "A connection Morning brief depends on is no longer authorized." };
+    const page = {
+      items: [owed("q1", now - 1, "question"), owed("a1", now - 5, "approval"), owed("c1", now - 3, "connection"), item("news", now - 8, false), owed("a2", now - 4, "approval"), owed("q2", now - 2, "question")],
+      approvals: 2, questions: 2, connections: 2, decisions: 6, total: 6, page: 1, pageSize: 25, unread: 0, toRead: 0,
+      restore: [restore],
+    } as unknown as InboxPage;
+    const summary = needsPageSummary(page, now, () => undefined);
+    expect(summary.rows.map((row) => [row.id, row.segment])).toEqual([["a1", "approval"], ["a2", "approval"], ["c1", "connection"], ["q2", "question"], ["q1", "question"]]);
+    // Filtering by segment comes BEFORE any cut: the questions are there even though they are not among the three oldest.
+    expect(summary.rows.filter((row) => row.segment === "question").map((row) => row.id)).toEqual(["q2", "q1"]);
+    expect(summary.top.map((row) => row.id)).toEqual(["a1", "a2", "c1"]);
+    expect(summary.top.every((row) => !("segment" in row))).toBe(true);
+    expect(summary.split).toEqual({ approvals: 2, questions: 2, connections: 2 });
+    expect(summary.restore).toEqual([restore]);
+    const bare = needsPageSummary({ items: [], total: 0, page: 1, pageSize: 25, unread: 0, decisions: 0, toRead: 0, approvals: Number.NaN, questions: -1, connections: 0 } as unknown as InboxPage, now, () => undefined);
+    expect(bare).toEqual({ top: [], rows: [], rowsCount: 0, split: { approvals: 0, questions: 0, connections: 0 }, restore: [] });
+    // APPROVALS-SIMPLE-1018: the rows' own count is the badge's formula on the same read
+    expect(summary.rowsCount).toBe(6);
+  });
+});
+
+// UX-L2C: the spend heads-up is a Needs you top row only. Today's count must equal the rows it lists.
+describe("the spend row stays out of Today's count", () => {
+  it("is first in the top rows, and leaves rows and the count alone", () => {
+    const owed = [1, 2].map((n) => ({ id: `d${n}`, at: n, decision: true, title: `T ${n}`, sourceLabel: "Max · Weekly", botId: "max" }) as unknown as InboxItem);
+    const read = needsPageSummary({ items: owed, total: 2, page: 1, pageSize: 25, unread: 0, decisions: 2, toRead: 0, approvals: 2, questions: 0, connections: 0 } as unknown as InboxPage, Date.now(), () => undefined);
+    const spend = { id: "spend:2026-11", line: "80% of your month", meta: "Flux", open: () => undefined };
+    const merged = composeTop(read, spend);
+    expect(merged.top?.[0]?.id).toBe("spend:2026-11");
+    expect(merged.top).toHaveLength(3);
+    expect(merged.rows).toEqual(read.rows);
+    const lines = needsLines({ now: Date.now(), count: merged.rows?.length ?? 0, rows: merged.rows ?? [], restore: [], reconnectApps: [], handoffs: [], routines: [], runs: [], bots: [], botNames: {} } as NeedsLinesInput);
+    expect(lines.all).toHaveLength(2);
+    expect(lines.unnamed).toBe(0);
+    expect(lines.all.length + lines.unnamed).toBe(merged.rows?.length);
   });
 });

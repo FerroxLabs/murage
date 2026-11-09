@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -114,7 +116,7 @@ describe("Ask hard stop: Cursor (ACP, read-only session mode)", () => {
     recorder = recordEvents(instance.adapter);
   };
   const run = async (turn: SendTurnInput) => {
-    await instance!.adapter.sendTurn(turn);
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), ...turn });
     return recorder!.until((e) => e.type === "turn.completed" && e.threadId === turn.threadId);
   };
   const ASK = { routeAsks: true as const, askLevel: true as const };
@@ -184,7 +186,7 @@ describe("Ask hard stop: Cursor (ACP, read-only session mode)", () => {
     process.env.FAKE_ACP_MODE = "permission";
     process.env.FAKE_ACP_PERMISSION_COMMAND = "echo PROBE > ran.txt";
     await create();
-    await instance!.adapter.sendTurn({ threadId: "t-auto-shell", text: "run it", routeAsks: true });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-auto-shell", text: "run it", routeAsks: true });
     const opened = await recorder!.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({ requestType: "permission", tool: "shell" });
     await instance!.adapter.interruptTurn("t-auto-shell");
@@ -213,7 +215,7 @@ describe("Ask hard stop: Cursor (ACP, read-only session mode)", () => {
     await create();
     const first = await run({ threadId: "t-back", text: "look", ...ASK });
     const started = recorder!.events.find((e) => e.type === "session.started" && e.threadId === "t-back") as { sessionId: string };
-    await instance!.adapter.sendTurn({ threadId: "t-back", text: "now change it", routeAsks: true, resumeCursor: started.sessionId });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-back", text: "now change it", routeAsks: true, resumeCursor: started.sessionId });
     const second = await recorder!.until((e) => e.type === "turn.completed" && e.threadId === "t-back" && e !== first);
     expect(second).toMatchObject({ ok: true });
     const applied = JSON.parse(readFileSync(`${dump}.config.json`, "utf8")) as Array<{ method: string; params: { modeId?: string } }>;
@@ -404,7 +406,7 @@ describe("Ask hard stop: OpenClaw (Gateway session read-only mode)", () => {
       process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
       const seen: boolean[] = [];
       await create(async ({ askLevel }) => { seen.push(askLevel); expect(existsSync(promptDump)).toBe(false); });
-      await instance!.adapter.sendTurn({ threadId: "t-oc-ask", text: "edit notes", routeAsks: true, askLevel: true });
+      await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oc-ask", text: "edit notes", routeAsks: true, askLevel: true });
       const done = await recorder!.until((e) => e.type === "turn.completed");
       expect(done).toMatchObject({ ok: true });
       expect(seen).toEqual([true]);
@@ -415,7 +417,7 @@ describe("Ask hard stop: OpenClaw (Gateway session read-only mode)", () => {
 
     it("fails closed: an Ask turn whose read-only switch throws is not prompted", async () => {
       await create(async ({ askLevel }) => { if (askLevel) throw new Error("gateway closed"); });
-      await instance!.adapter.sendTurn({ threadId: "t-oc-fail", text: "edit notes", routeAsks: true, askLevel: true });
+      await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oc-fail", text: "edit notes", routeAsks: true, askLevel: true });
       const done = await recorder!.until((e) => e.type === "turn.completed");
       expect(done).toMatchObject({ ok: false });
       const err = recorder!.events.find((e) => e.type === "runtime.error") as { message: string } | undefined;
@@ -425,7 +427,7 @@ describe("Ask hard stop: OpenClaw (Gateway session read-only mode)", () => {
 
     it("an OpenClaw too old for permissionMode refuses the turn with its own plain note, not the generic line", async () => {
       await create(async () => { throw new AskStopRefusal(ASK_STOP_OPENCLAW_OLD_NOTE); });
-      await instance!.adapter.sendTurn({ threadId: "t-oc-old", text: "edit notes", routeAsks: true, askLevel: true });
+      await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oc-old", text: "edit notes", routeAsks: true, askLevel: true });
       const done = await recorder!.until((e) => e.type === "turn.completed");
       expect(done).toMatchObject({ ok: false });
       const err = recorder!.events.find((e) => e.type === "runtime.error") as { message: string } | undefined;
@@ -436,7 +438,7 @@ describe("Ask hard stop: OpenClaw (Gateway session read-only mode)", () => {
     it("an edit OpenClaw's read-only mode refused shows the note once", async () => {
       process.env.FAKE_ACP_MODE = "refused-edit";
       await create(async () => {});
-      await instance!.adapter.sendTurn({ threadId: "t-oc-refused", text: "edit notes", routeAsks: true, askLevel: true });
+      await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oc-refused", text: "edit notes", routeAsks: true, askLevel: true });
       await recorder!.until((e) => e.type === "turn.completed");
       expect(notes(recorder!.events)).toHaveLength(1);
     });
@@ -446,7 +448,7 @@ describe("Ask hard stop: OpenClaw (Gateway session read-only mode)", () => {
       process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
       const seen: boolean[] = [];
       await create(async ({ askLevel }) => { seen.push(askLevel); });
-      await instance!.adapter.sendTurn({ threadId: "t-oc-auto", text: "edit notes", routeAsks: true });
+      await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oc-auto", text: "edit notes", routeAsks: true });
       await recorder!.until((e) => e.type === "turn.completed");
       expect(seen).toEqual([false]);
       const text = (JSON.parse(readFileSync(promptDump, "utf8")) as Array<{ text?: string }>).map((b) => b.text ?? "").join("");
@@ -460,7 +462,7 @@ describe("Ask hard stop: OpenClaw (Gateway session read-only mode)", () => {
         process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
         const seen: boolean[] = [];
         await create(async ({ askLevel }) => { seen.push(askLevel); });
-        await instance!.adapter.sendTurn({ threadId: `t-oc-redirect-${flags.routeAsks ? "auto" : "full"}`, text: "run: echo hi > out.txt && cat out.txt", ...flags });
+        await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-oc-redirect-${flags.routeAsks ? "auto" : "full"}`, text: "run: echo hi > out.txt && cat out.txt", ...flags });
         const done = await recorder!.until((e) => e.type === "turn.completed");
         expect(done).toMatchObject({ ok: true });
         expect(seen).toEqual([false]);
@@ -475,7 +477,7 @@ describe("Ask hard stop: OpenClaw (Gateway session read-only mode)", () => {
       const promptDump = join(scratch, "prompt.json");
       process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
       await create(async () => {});
-      await instance!.adapter.sendTurn({ threadId: "t-oc-redirect-ask", text: "run: echo hi > out.txt", routeAsks: true, askLevel: true });
+      await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oc-redirect-ask", text: "run: echo hi > out.txt", routeAsks: true, askLevel: true });
       await recorder!.until((e) => e.type === "turn.completed");
       const text = (JSON.parse(readFileSync(promptDump, "utf8")) as Array<{ text?: string }>).map((b) => b.text ?? "").join("");
       expect(text.split("\n")[0]).toBe("/exec security=deny");
@@ -550,7 +552,7 @@ describe("Ask hard stop: Antigravity (PreToolUse hook)", () => {
     process.env.FAKE_AGY_TOOL = "write_file";
     process.env.FAKE_AGY_RUN_HOOKS = "1";
     await create();
-    await instance!.adapter.sendTurn({ threadId: "t-agy-ask", text: "write notes", routeAsks: true, askLevel: true });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-agy-ask", text: "write notes", routeAsks: true, askLevel: true });
     const done = await recorder!.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true });
     expect(JSON.parse(readFileSync(`${dump}.hook.json`, "utf8"))).toEqual({ tool: "write_file", denial: ASK_STOP_NOTE });
@@ -567,7 +569,7 @@ describe("Ask hard stop: Antigravity (PreToolUse hook)", () => {
     process.env.FAKE_AGY_TOOL = "run_command";
     process.env.FAKE_AGY_RUN_HOOKS = "1";
     await create();
-    await instance!.adapter.sendTurn({ threadId: "t-agy-shell", text: "run it", routeAsks: true, askLevel: true });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-agy-shell", text: "run it", routeAsks: true, askLevel: true });
     await recorder!.until((e) => e.type === "turn.completed");
     expect(JSON.parse(readFileSync(`${dump}.hook.json`, "utf8"))).toEqual({ tool: "run_command", denial: ASK_STOP_NOTE });
     expect(notes(recorder!.events)).toHaveLength(1);
@@ -579,7 +581,7 @@ describe("Ask hard stop: Antigravity (PreToolUse hook)", () => {
     process.env.FAKE_AGY_TOOL = "read_file";
     process.env.FAKE_AGY_RUN_HOOKS = "1";
     await create();
-    await instance!.adapter.sendTurn({ threadId: "t-agy-read", text: "read notes", routeAsks: true, askLevel: true });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-agy-read", text: "read notes", routeAsks: true, askLevel: true });
     const done = await recorder!.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true });
     expect(JSON.parse(readFileSync(`${dump}.hook.json`, "utf8"))).toEqual({ tool: "read_file", denial: null });
@@ -589,7 +591,7 @@ describe("Ask hard stop: Antigravity (PreToolUse hook)", () => {
   it("at Ask, a change agy reports as done (the hook did not hold) stops the turn, with the note", async () => {
     process.env.FAKE_AGY_TOOL = "write_file";
     await create();
-    await instance!.adapter.sendTurn({ threadId: "t-agy-ran", text: "write notes", routeAsks: true, askLevel: true });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-agy-ran", text: "write notes", routeAsks: true, askLevel: true });
     await recorder!.until((e) => e.type === "turn.completed");
     expect(notes(recorder!.events)).toHaveLength(1);
   });
@@ -599,7 +601,7 @@ describe("Ask hard stop: Antigravity (PreToolUse hook)", () => {
     // reply was dropped, so the chat never got its closing reply.
     process.env.FAKE_AGY_TOOL = "write_file";
     await create();
-    await instance!.adapter.sendTurn({ threadId: "t-agy-halt", text: "write notes", routeAsks: true, askLevel: true });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-agy-halt", text: "write notes", routeAsks: true, askLevel: true });
     const done = await recorder!.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true, stopReason: "ask_stop" });
     expect(notes(recorder!.events)).toHaveLength(1);
@@ -609,7 +611,7 @@ describe("Ask hard stop: Antigravity (PreToolUse hook)", () => {
   it("at Ask, the halted turn still shows agy's reply: content.delta and assistant_text come before the settle", async () => {
     process.env.FAKE_AGY_TOOL = "write_file";
     await create();
-    await instance!.adapter.sendTurn({ threadId: "t-agy-halt-reply", text: "write notes", routeAsks: true, askLevel: true });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-agy-halt-reply", text: "write notes", routeAsks: true, askLevel: true });
     await recorder!.until((e) => e.type === "turn.completed");
     const events = recorder!.events;
     const settled = events.findIndex((e) => e.type === "turn.completed");
@@ -634,7 +636,7 @@ describe("Ask hard stop: Antigravity (PreToolUse hook)", () => {
     const off = instance!.adapter.onEvent((e) => {
       if (e.type === "request.opened") void instance!.adapter.respondToRequest(e.threadId, (e as { requestId: string }).requestId, { behavior: "allow" });
     });
-    await instance!.adapter.sendTurn({ threadId: "t-agy-auto", text: "write notes", routeAsks: true });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-agy-auto", text: "write notes", routeAsks: true });
     const done = await recorder!.until((e) => e.type === "turn.completed");
     off();
     expect(done).toMatchObject({ ok: true });
@@ -648,3 +650,6 @@ describe("Ask hard stop: Antigravity (PreToolUse hook)", () => {
     expect(notes(recorder!.events)).toEqual([]);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

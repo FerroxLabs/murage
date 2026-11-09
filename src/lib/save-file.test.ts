@@ -211,3 +211,8 @@ describe("a save that fails", () => {
     expect(saveFailureMessage("boom")).toBe("Couldn't save that file. Try again.");
   });
 });
+
+it("reports a local image busy action without changing ordinary save errors", () => {
+  expect(saveFailureMessage(Object.assign(new Error("Localized busy copy"), { code: "local-image-busy" }))).toBe("Localized busy copy");
+  expect(saveFailureMessage(new Error("Untrusted failure"))).toBe("Couldn't save that file. Try again.");
+});

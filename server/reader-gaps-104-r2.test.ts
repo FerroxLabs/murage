@@ -32,6 +32,7 @@ const posixRule = (cmd: string) => alwaysAskCommand(cmd, CWD)?.rule ?? null;
 const AUTO = { autoApprove: true };
 const FULL = { autoApprove: true, fullAccess: true };
 const NO_LIMITS = { autoApprove: true, fullAccess: true, noLimits: true };
+const OWNER_TURN = { ownerStarted: true, fullAccessOrigin: "owner" } as const;
 
 const WIN_CWD = "C:\\Users\\owner\\Projects\\site";
 const win = (): StopLinePlace => ({
@@ -57,7 +58,11 @@ const asksBelowFull = (cmd: string) => {
   expect(alwaysAskCommand(cmd, CWD, "command", undefined, undefined, undefined, { fs: STUB, platform: "posix" }), cmd).toMatchObject({ rule: "unreadable", unseenScript: true });
   expect(autoVerdict(AUTO, "Bash", cmd), cmd).toMatchObject({ approve: null, source: "always-ask" });
   // 1.0.5 r6: placed from the command's folder (every local turn has one)
-  for (const bot of [FULL, NO_LIMITS]) expect(autoVerdict(bot, "Bash", cmd, { commandText: cmd, commandCwd: CWD, unseen: { fs: STUB, platform: "posix" } }).approve, cmd).toBeTruthy();
+  // NOLIMITS-MEANS-IT: No limits runs the unseen script only on the owner turn real turns carry (server/index.ts, ownerStarted + origin owner)
+  const placed = { commandText: cmd, commandCwd: CWD, unseen: { fs: STUB, platform: "posix" as const } };
+  for (const bot of [FULL, NO_LIMITS]) expect(autoVerdict(bot, "Bash", cmd, { ...placed, ...OWNER_TURN }).approve, cmd).toBeTruthy();
+  // a turn that is not the owner's own still asks at No limits
+  expect(autoVerdict(NO_LIMITS, "Bash", cmd, placed).approve, cmd).toBeNull();
 };
 
 describe("deno run and bun run read the script after their options", () => {

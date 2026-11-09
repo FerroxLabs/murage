@@ -5,7 +5,7 @@ import { isOwnerOrigin, type Store, type BotRecord } from "./store.ts";
 import { murageLine } from "./murage-line.ts";
 import { DRAFT_ONLY_BROWSER_REFUSAL } from "./draft-only.ts";
 type SetupStore = Pick<Store,"keyedCards"|"keyedCardsEverywhere"|"messageById"|"newestMatching"|"appendMessage"|"patchMessage"|"bots"|"groups">;
-export type BrowserSetupStatus = { profiles: {profileId:string;browser:string}[]; bindings: {bindingId?:string;botId:string;threadId:string;profileId:string;state:string}[] };
+export type BrowserSetupStatus = { profiles: {profileId:string;browser:string}[]; bindings: {bindingId?:string;botId:string;threadId:string;profileId:string;state:string;pausedReason?:string}[] };
 type Options = {
   store: SetupStore;
   owner: (botId:string,threadId:string)=>BotRecord | null;
@@ -76,6 +76,8 @@ export class BrowserExtensionSetup {
           if(!newest.bindingId||!this.options.startNewTask)refusal("Start a new browser task in Murage for Chrome, then choose Continue again.");
           try{await this.options.startNewTask!(newest.bindingId!);}catch{refusal("Start a new browser task in Murage for Chrome, then choose Continue again.");}
         }
+        // EXT-RESTART 3.7: a task paused because Chrome or Murage closed says so.
+        else if(newest&&newest.state==='paused'&&newest.pausedReason==='connection_lost')refusal("Chrome or Murage closed, so this task is paused. Press Resume in the Murage side panel, then choose Continue again.");
         else if(newest&&newest.state!=='active')refusal("Resume the browser task in the extension before continuing here.");
         // Continue confirms the profile only. A browser toggle the owner switched
         // off stays off until the owner turns it back on.
