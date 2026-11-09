@@ -8,10 +8,11 @@ import { managedOutputWorkspace } from "../execution-audience.ts";
 // generated-audio/<thread>, then saved to Files as a managed output, so the
 // chat's existing audio player plays it and Files keeps it. The speaking is
 // the same `speak()` a call uses, with the bot's own voice service and voice.
-import { lstatSync, mkdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { lstatSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { rootsFor, WorkspaceTreeError } from "../data-roots.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { join } from "node:path";
 
 import type { AppConfig } from "../config.ts";
 import { registerArtifact } from "../artifacts.ts";
@@ -27,10 +28,6 @@ export const VOICE_NOTE_MAX_CHARS = 1_500;
 const PIECE_CHARS = 450;
 
 const identity = /^[\w-]{1,160}$/;
-const inside = (root: string, path: string) => {
-  const tail = relative(root, path);
-  return tail !== ".." && !tail.startsWith(`..${sep}`) && !isAbsolute(tail);
-};
 
 /** <partitionRoot>/generated-audio/<thread>, without touching disk:
  *  Files authorizes a conversation's saved voice notes by it. */
@@ -42,22 +39,13 @@ export function managedAudioOutputPath(dataDir: string, botId: string, threadId:
  *  real directory inside DATA_DIR, never a link (as for generated images). */
 export function managedAudioRoot(dataDir: string, botId: string, threadId: string, create: boolean): string {
   if (!identity.test(botId) || !identity.test(threadId)) throw Object.assign(new Error("Invalid voice note workspace."), { status: 403 });
-  const root = realpathSync.native(dataDir);
-  let directory = root;
-  for (const part of relative(dataDir, managedAudioOutputPath(dataDir, botId, threadId)).split(sep)) {
-    directory = join(directory, part);
-    if (create) {
-      try {
-        mkdirSync(directory, { mode: 0o700 });
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      }
-    }
-    const stat = lstatSync(directory);
-    if (!stat.isDirectory() || stat.isSymbolicLink() || !inside(root, realpathSync.native(directory))) {
-      throw Object.assign(new Error("Voice note workspace is not a private directory."), { status: 403 });
-    }
-  }
+  // C5 (S5-DATADIR-PATHS r4.1 DR4): the one walker, from the workspaces root's canonical target (a linked root keeps voice notes
+  // working); a link below the root is refused and nothing is created through one.
+  let directory: string;
+  try { directory = rootsFor(dataDir).ownedPath(managedAudioOutputPath(dataDir, botId, threadId), { create }).canonical; }
+  catch (error) { if (error instanceof WorkspaceTreeError) throw Object.assign(new Error("Voice note workspace is not a private directory."), { status: 403 }); throw error; }
+  const stat = lstatSync(directory);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw Object.assign(new Error("Voice note workspace is not a private directory."), { status: 403 });
   return directory;
 }
 

@@ -46,9 +46,13 @@ describe("U19 reaches the card (Rule 68f case 1, Astra r6 item 1)", () => {
         "GIT_ASKPASS=/tmp/askpass env git fetch", "GIT_ASKPASS=/x nice git fetch", "env -u GIT_ASKPASS git fetch", "env -i git fetch",
         "export GIT_ASKPASS=/x; git fetch", "GIT_ASKPASS=/x bash -c 'git fetch'", "sudo -n git fetch"]) {
         const verdict = autoVerdict(bot, "Bash", command, { exactCommand: { command, cwd: "/tmp/p" } as never, handedPins: pins });
-        expect(verdict, `${JSON.stringify(bot)} ${command}`).toMatchObject({ approve: null, source: "unread-call" });
+        // 875166e91 (NOLIMITS 1.0.18 allow-list core, merged in 710480d3d): at owner No limits the always-ask reader now holds some of these
+        // as unreadable (measured: approve null, source always-ask, rule unreadable) before the unread-call hold is reached. Every one still asks.
+        const verdictSource = (bot as { noLimits?: boolean }).noLimits === true ? ["unread-call", "always-ask"] : ["unread-call"];
+        expect(verdict.approve, `${JSON.stringify(bot)} ${command}`).toBeNull();
+        expect(verdictSource, `${JSON.stringify(bot)} ${command}`).toContain(verdict.source);
         // the note names the pinned name, the option, or (Astra r8: any env clearing holds) the env form
-        expect(approvalHoldNote(verdict)).toMatch(/GIT_ASKPASS|core\.sshCommand|PAGER|env -i /);
+        if (verdict.source === "unread-call") expect(approvalHoldNote(verdict)).toMatch(/GIT_ASKPASS|core\.sshCommand|PAGER|env -i /);
       }
     }
     for (const command of ["git log", "GIT_ASKPASS= git log", "PAGER=cat git log"]) {

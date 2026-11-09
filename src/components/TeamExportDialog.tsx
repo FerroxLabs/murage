@@ -1,3 +1,5 @@
+import { useNativeDialogLayer } from "@/lib/native-dialog-layer";
+import type { LoadedLayerProps } from "@/components/LazyOverlay";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
 import { BOX_DIALOG, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
@@ -11,8 +13,10 @@ interface Options {
   skills?: { id: string; botId: string; name: string; license?: string; dependencies: null }[];
 }
 interface Preview { name: string; members: number; previewHash: string; markdown?: string; files?: { path: string; bytes: number; sha256: string; content?: string }[]; reviewWarnings?: string[]; scan: { blocked: boolean; reviewRequired: boolean; findings: { path: string; rule: string; line?: number }[] } }
-export function TeamExportDialog({ onClose, onExported, initialBotIds = [] }: { onClose: () => void; onExported: (result: { name: string; members: number }) => void; initialBotIds?: string[] }) {
+export function TeamExportDialog({ layerLifecycle, onClose: requestedClose, onExported, initialBotIds = [] }: { onClose: () => void; onExported: (result: { name: string; members: number }) => void; initialBotIds?: string[] } & { layerLifecycle?: LoadedLayerProps }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const native = useNativeDialogLayer(dialog, { name: "team-export-native", returnFocusTo: layerLifecycle?.opener, lease: layerLifecycle?.lease });
+  const onClose = () => native.dismiss(requestedClose);
   const [options, setOptions] = useState<Options | null>(null);
   const [format, setFormat] = useState<"markdown" | "zip">("zip");
   const [selection, setSelection] = useState<ZipExportSelection>({ botIds: [...initialBotIds], playbookKeys: [], routineIds: [], skillIds: [] });
@@ -32,7 +36,7 @@ export function TeamExportDialog({ onClose, onExported, initialBotIds = [] }: { 
     catch (error) { setError(error instanceof Error ? error.message : "Could not load export options."); }
     finally { setBusy(null); }
   };
-  useEffect(() => { dialog.current?.showModal(); void load(); }, []);
+  useEffect(() => { native.show(); void load(); }, []);
   const changeFormat = (nextFormat: "markdown" | "zip") => {
     if (busy || nextFormat === format) return;
     setFormat(nextFormat); setOptions(null); setSelection(current => ({ ...current, skillIds: [] }));

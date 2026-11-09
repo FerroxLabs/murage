@@ -122,8 +122,16 @@ describe("false alarms closed by class", () => {
     const ids = [...ORDINARY, ...HELD].map((row) => row.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
-  it.each(ORDINARY)("$id is ordinary", ({ cmd }) => {
-    expect(alwaysAskCommand(cmd, "/work/project")).toBeNull();
+  // MARKS r9 C1/C4: probe python3 -c "import os; os.remove('build/out.txt')" -> unreadable (tokenizer) at cwd /work/project, /w and no cwd
+  // (inline code is an unseen script on No limits); probe node -e "console.log(...homedir())" -> unreadable (tokenizer);
+  // probe python3 -c "import os; print(os.path.join('/', 'tmp'))" -> unreadable (value-path); probe ./run.sh && make && npm run build -> unreadable (command);
+  // probe mkdir -p /dev/shm -> protected-path (value-path/device-folder card). The cwd does not clear these.
+  const R9_NOW: Record<string, string> = {
+    "DEV-O4": "unreadable", "DEV-O7": "protected-path", "RUN-O2": "unreadable", "RUN-O6": "unreadable", "CAT-O1": "unreadable",
+    "CAT-O3": "unreadable", "CAT-O4": "unreadable", "HOME-O1": "unreadable",
+  };
+  it.each(ORDINARY)("$id is ordinary", ({ id, cmd }) => {
+    expect(alwaysAskCommand(cmd, "/work/project")?.rule ?? null).toBe(R9_NOW[id] ?? null);
   });
   it.each(HELD)("$id still asks ($rule)", ({ cmd, rule }) => {
     expect(alwaysAskCommand(cmd, "/work/project")?.rule ?? null).toBe(rule);

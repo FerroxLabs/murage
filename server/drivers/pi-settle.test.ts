@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -51,7 +53,7 @@ const playTurn = async (frames: Frame[], environment: Record<string, string> = {
   const dir = tempDir(), script = join(dir, "script.json");
   writeFileSync(script, JSON.stringify(frames));
   await create({ FAKE_PI_SCRIPT: script, ...environment });
-  const { turnId } = await instance!.adapter.sendTurn({ threadId: `t-${Math.random().toString(36).slice(2)}`, text: "go" });
+  const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-${Math.random().toString(36).slice(2)}`, text: "go" });
   const completed = await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId) as Extract<RuntimeEvent, { type: "turn.completed" }>;
   return { turnId, completed };
 };
@@ -226,7 +228,7 @@ describe("Stop", () => {
   it("answers an open gate card so the abort finishes inside its grace, and no tool runs", async () => {
     const dir = tempDir(), dump = join(dir, "dump.jsonl");
     await create({ FAKE_PI_MODE: "gate", FAKE_PI_DUMP: dump, FAKE_PI_ABORT_MS: "50" });
-    const { turnId } = await instance!.adapter.sendTurn({ threadId: "t-stop-card", text: "go" });
+    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stop-card", text: "go" });
     await recorder!.until((e) => e.type === "request.opened");
     await instance!.adapter.interruptTurn("t-stop-card", turnId);
     expect(dumpRows(dump).filter((row) => row.uiResponse?.id === "ask-host")).toMatchObject([{ uiResponse: { cancelled: true } }]);
@@ -238,7 +240,7 @@ describe("Stop", () => {
   it("a dialog in the abort grace is cancelled and opens no card", async () => {
     const dir = tempDir(), dump = join(dir, "dump.jsonl");
     await create({ FAKE_PI_MODE: "gate", FAKE_PI_DUMP: dump, FAKE_PI_ABORT_MS: "150", FAKE_PI_ABORT_DIALOG: "1" });
-    const { turnId } = await instance!.adapter.sendTurn({ threadId: "t-stop-late", text: "go" });
+    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stop-late", text: "go" });
     await recorder!.until((e) => e.type === "request.opened");
     await instance!.adapter.interruptTurn("t-stop-late", turnId);
     expect(dumpRows(dump).filter((row) => row.uiResponse?.id === "ask-late")).toMatchObject([{ uiResponse: { cancelled: true } }]);
@@ -249,7 +251,7 @@ describe("Stop", () => {
     const dir = tempDir(), script = join(dir, "s.json");
     writeFileSync(script, JSON.stringify([...start, text("reply"), ended("stop", { usage: usage(4, 1) }), turnEnd("stop", { usage: usage(4, 1) }), agentEnd(), { type: "compaction_start", reason: "threshold" }]));
     await create({ FAKE_PI_SCRIPT: script });
-    const { turnId } = await instance!.adapter.sendTurn({ threadId: "t-stop-compact", text: "go" });
+    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stop-compact", text: "go" });
     await recorder!.until((e) => e.type === "item.started");
     await instance!.adapter.interruptTurn("t-stop-compact", turnId);
     expect(ofType("turn.completed")).toMatchObject([{ ok: true, stopReason: "cancelled", usage: { input: 4, output: 1 } }]);
@@ -260,7 +262,7 @@ describe("Stop", () => {
     const dir = tempDir(), script = join(dir, "s.json");
     writeFileSync(script, JSON.stringify([...start, text("reply"), ...done("x").slice(2), text("late"), { type: "tool_execution_start", toolCallId: "c9", toolName: "read", args: {} }]));
     await create({ FAKE_PI_SCRIPT: script });
-    const { turnId } = await instance!.adapter.sendTurn({ threadId: "t-late", text: "go" });
+    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-late", text: "go" });
     await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId);
     await settle();
     const at = recorder!.events.findIndex((e) => e.type === "turn.completed");
@@ -289,18 +291,18 @@ describe("the Pi floor", () => {
   it("below the floor a turn fails at once with the setup card and spawns nothing", async () => {
     const dir = tempDir(), dump = join(dir, "dump.jsonl");
     await piAt("0.75.4", { FAKE_PI_DUMP: dump });
-    const { turnId } = await instance!.adapter.sendTurn({ threadId: "t-old", text: "go" });
+    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-old", text: "go" });
     const completed = await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId);
     expect(completed).toMatchObject({ ok: false, stopReason: "failed" });
     expect(ofType("runtime.error")).toMatchObject([{ setup: true, message: "Your Pi engine is version 0.75.4, and Murage needs 0.80.5 or newer. Update it in Settings under Engines, then send your message again." }]);
     expect(instance!.adapter.hasSession("t-old")).toBe(false);
-    await expect(instance!.adapter.sendTurn({ threadId: "t-old", text: "again" })).resolves.toBeTruthy();
+    await expect(instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-old", text: "again" })).resolves.toBeTruthy();
   });
 
   it("at the floor a turn runs", async () => {
     await piAt("0.80.5");
     expect((await instance!.snapshot()).state).toBe("available");
-    const { turnId } = await instance!.adapter.sendTurn({ threadId: "t-floor", text: "go" });
+    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-floor", text: "go" });
     expect(await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: true });
   });
 });
@@ -330,7 +332,7 @@ describe("nothing can run after agent_settled (design section 3)", () => {
   it("a turn loads no extension but Murage's own", async () => {
     const dump = join(tempDir(), "dump.jsonl");
     await create({ FAKE_PI_DUMP: dump });
-    const { turnId } = await instance!.adapter.sendTurn({ threadId: "t-args", text: "go" });
+    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-args", text: "go" });
     await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId);
     const argv = (readFileSync(dump, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as { argv?: string[] }).findLast((row) => row.argv?.includes("--mode"))?.argv) ?? [];
     expect(argv).toContain("--no-extensions");
@@ -338,3 +340,6 @@ describe("nothing can run after agent_settled (design section 3)", () => {
     for (const file of loadedFiles) expect(file).toMatch(/pi-(mcp-extension|permission-gate)|pinned-bash/);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

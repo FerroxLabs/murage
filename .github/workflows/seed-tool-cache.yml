@@ -1,0 +1,68 @@
+# Seeds the pinned-tool download cache (age, restic, cloudflared, bubblewrap source) on every
+# runner OS/arch that packages Murage, so package jobs read them from the Actions cache and do not
+# depend on github.com release hosting being up. Key = runner OS + arch + hash of the pin files, the
+# same key the package jobs use, so a pin bump needs a fresh seed. Every file is sha256-verified.
+# Dispatch (once per pin change, before cutting an RC):  gh workflow run seed-tool-cache.yml
+# NOTE: a cache saved on a feature branch is readable only from that branch and its PRs/children;
+# run this on the default branch (or the RC branch) so the RC run can see it. A package job that
+# finds no cache also seeds it itself when it succeeds at downloading.
+name: Seed tool cache
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Ref whose pin files define the cache key; default is this run ref"
+        required: false
+        default: ''
+
+jobs:
+  seed:
+    name: Seed (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, macos-15-intel, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Restore the pinned tool download cache
+        id: tools-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/package-tool-cache
+          key: package-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/prepare-cloudflared.mjs', 'shared/backup-age-pins.mjs', 'shared/backup-restic-pin.mjs', 'shared/windows-backup-tools.mjs', 'scripts/prepare-cua.mjs', 'scripts/build-murage-cage.mjs') }}-restore
+          restore-keys: |
+            package-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/prepare-cloudflared.mjs', 'shared/backup-age-pins.mjs', 'shared/backup-restic-pin.mjs', 'shared/windows-backup-tools.mjs', 'scripts/prepare-cua.mjs', 'scripts/build-murage-cage.mjs') }}-
+            package-tools-${{ runner.os }}-${{ runner.arch }}-
+      - name: Download and verify every pinned tool archive
+        shell: bash
+        env:
+          MURAGE_PACKAGE_DOWNLOAD_CACHE: ${{ runner.temp }}/package-tool-cache
+          MURAGE_PACKAGE_GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/seed-tool-cache.mjs
+      - name: Fingerprint the tool download cache
+        id: tool-sig
+        if: always()
+        shell: bash
+        run: |
+          dir="${{ runner.temp }}/package-tool-cache"
+          sig=""
+          if [ -d "$dir" ] && [ -n "$(ls -A "$dir")" ]; then sig="$(ls "$dir" | sort | sha256sum | cut -c1-16)"; fi
+          echo "sig=$sig" >> "$GITHUB_OUTPUT"
+      - name: Save the pinned tool download cache
+        if: always() && steps.tool-sig.outputs.sig != ''
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/package-tool-cache
+          key: package-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/prepare-cloudflared.mjs', 'shared/backup-age-pins.mjs', 'shared/backup-restic-pin.mjs', 'shared/windows-backup-tools.mjs', 'scripts/prepare-cua.mjs', 'scripts/build-murage-cage.mjs') }}-${{ steps.tool-sig.outputs.sig }}

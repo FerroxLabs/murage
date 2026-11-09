@@ -22,6 +22,7 @@ import { ArrowUpRight, ShieldAlert, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 import { useStore } from "@/state/store";
+import { useNativeDialogLayer } from "@/lib/native-dialog-layer";
 import {
   ANNOUNCEMENT_ACTION_SECTIONS,
   announcementSurface,
@@ -198,16 +199,13 @@ const FOCUSABLE = 'button:not([disabled]), a[href], [tabindex]:not([tabindex="-1
 export function AnnouncementDialog({ item, imageUrl, onAct, onDismiss }: Omit<AnnouncementCardProps, "headingRef">) {
   const dialog = useRef<HTMLDialogElement>(null);
   const heading = useRef<HTMLHeadingElement | null>(null);
+  // The layer engine records the show order and returns focus to the opener when the card goes (PULLBACK-1018 Low b).
+  const native = useNativeDialogLayer(dialog, { name: "announcement-native" });
   useLayoutEffect(() => {
     const element = dialog.current;
     if (!element) return;
-    const previous = document.activeElement;
-    if (!element.open) element.showModal();
+    if (!element.open) native.show();
     heading.current?.focus();
-    return () => {
-      element.close();
-      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
-    };
   }, [item.id]);
   const trap = (event: KeyboardEvent<HTMLDialogElement>) => {
     event.stopPropagation();
@@ -227,7 +225,7 @@ export function AnnouncementDialog({ item, imageUrl, onAct, onDismiss }: Omit<An
       data-announcement
       data-accent={item.accent}
       className="announce m-auto max-h-none max-w-none overflow-visible border-0 bg-transparent p-0 font-sans backdrop:bg-black/[0.66]"
-      onCancel={(event) => { event.preventDefault(); onDismiss(); }}
+      onCancel={(event) => { event.preventDefault(); native.dismiss(onDismiss); }}
       onKeyDown={trap}
     >
       <AnnouncementCard item={item} imageUrl={imageUrl} onAct={onAct} onDismiss={onDismiss} headingRef={(node) => { heading.current = node; }} />

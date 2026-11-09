@@ -128,7 +128,7 @@ describe("web search through Flux Router (/v1/search, 2026-09-23 contract)", () 
   it("keeps Flux's error codes: a plan without search is not an empty balance", async () => {
     const refuse = (status: number, code = "") => vi.fn<typeof fetch>().mockResolvedValue(Response.json({ error: { code, message: "no" } }, { status }));
     await expect(searchFlux(flux, { fetch: refuse(402, "premium_locked") })).rejects.toMatchObject({ code: "plan", providerCode: "premium_locked" });
-    await expect(searchFlux(flux, { fetch: refuse(402, "insufficient_balance") })).rejects.toMatchObject({ code: "quota", providerCode: "insufficient_balance" });
+    await expect(searchFlux(flux, { fetch: refuse(402, "insufficient_balance") })).rejects.toMatchObject({ providerError: { fluxBudget: true, provider: "flux-router" } });
     await expect(searchFlux(flux, { fetch: refuse(401) })).rejects.toMatchObject({ code: "auth" });
     resetFluxKeyHealthForTests(); // the 401 above latched this key; the cases below are about other statuses
     await expect(searchFlux(flux, { fetch: refuse(429) })).rejects.toMatchObject({ code: "rate-limit" });
@@ -140,4 +140,13 @@ describe("web search through Flux Router (/v1/search, 2026-09-23 contract)", () 
     await expect(searchFlux({ ...flux, query: "q".repeat(2001) }, { fetch: fetcher })).rejects.toMatchObject({ code: "invalid-request" });
     expect(fetcher).not.toHaveBeenCalled();
   });
+});
+
+it.each([{ error: { code: "key_budget_reached" } }, { error: "key_budget_reached" }])("Flux search marks the memo and preserves a typed budget: %j", async body => {
+  const { isBudgetReached, resetUnavailable } = await import("./voice/voice-routes.ts");
+  resetUnavailable();
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json(body, { status: 402 }));
+  await expect(searchFlux({ baseUrl: "http://fixture.invalid/v1", apiKey: "fixture", query: "weather" }, { fetch: fetcher })).rejects.toMatchObject({ providerError: { fluxBudget: true } });
+  expect(isBudgetReached({ via: "flux", label: "Flux", baseUrl: "http://fixture.invalid/v1", key: "fixture", model: "host" })).toBe(true);
+  expect(fetcher).toHaveBeenCalledOnce();
 });

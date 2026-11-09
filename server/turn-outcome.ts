@@ -27,6 +27,13 @@ export function turnSucceeded(event: TerminalTurn): boolean {
   return event.ok && !turnStopped(event);
 }
 
+/** A turn the CLOSING server ended: STOP-NONACP makes a dispose end every live turn with the engine-closed line (ok:false). Nobody stopped it, so what it
+ * queued is kept for the next start's boot drain. A Stop is ok:true "cancelled" (turnStopped) and is never a close, even when its completion lands after the
+ * close began: an asked Stop still discards the queue. `closing` is the server's dispatch gate (turnDispatchClosed). */
+export function turnEndedByClose(event: TerminalTurn, closing: boolean): boolean {
+  return closing && !event.ok && !turnStopped(event);
+}
+
 /** The memory settlement label for a terminal turn. */
 export function turnOutcome(event: TerminalTurn): "completed" | "cancelled" | "failed" {
   return turnStopped(event) ? "cancelled" : event.ok ? "completed" : "failed";

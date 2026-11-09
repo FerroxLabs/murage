@@ -33,7 +33,7 @@ describe("Needs you, desktop", () => {
   it("leads with the count, the everyday line and Keep all, then three answerable rows", () => {
     const out = html();
     expect(out).toContain("11 waiting for you");
-    expect(out).toContain("8 everyday things can be kept together. 3 need you one by one.");
+    expect(out).toContain("8 everyday things can be kept together. 3 items need individual review.");
     expect(out).toContain("Keep all 8");
     expect(out).toContain("Review all 11");
     expect((out.match(/data-memory-item=/g) ?? []).length).toBe(3);
@@ -57,7 +57,7 @@ describe("Needs you, desktop", () => {
   it("offers Keep all only when something is everyday, and says so when nothing is", () => {
     const none = html({ counts: { waiting: 3, later: 0, everyday: 0 }, items: asks });
     expect(none).not.toContain("Keep all");
-    expect(none).toContain("Each of these needs you one by one.");
+    expect(none).toContain("Review each of these individually.");
     expect(html({ counts: { waiting: 0, later: 0, everyday: 0 }, items: [] })).toContain("Nothing waiting for you.");
   });
 
@@ -147,7 +147,7 @@ describe("the Inbox card (0.4)", () => {
     expect(out).toContain("Sable would like to remember 11 things");
     expect(out).toContain("Ember would like to remember 1 thing");
     expect(out).toContain("Keep all 8");
-    expect(out).toContain("8 everyday things can be kept together. 3 need you one by one.");
+    expect(out).toContain("8 everyday things can be kept together. 3 items need individual review.");
     expect(out.match(/Keep all/g)).toHaveLength(1);
     expect((out.match(/>Review</g) ?? [])).toHaveLength(2);
     expect(out).not.toMatch(/MEMORY_|candidate|Reports go out/);

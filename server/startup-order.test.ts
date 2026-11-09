@@ -54,9 +54,11 @@ describe("cold start ordering in server/index.ts", () => {
     // The remembered file is read only when bots exist (default-engine.ts bootEngineChoice), and then no new bot is a first bot: birth
     // copies the Chief and never reads bootSelection. The desktop first-bot fallback (r3) gets the WHOLE Fuigo list, so birth refuses a
     // reading that names a Fuigo which cannot answer (Store row: birth-selection.test.ts "a probe reading that names a Fuigo ...").
+    // ENGINE-DEFAULT-1018 (handoffs/designs/ENGINE-DEFAULT-1018.md:57-62): the Store also takes `eligible` (live catalogue check) and `signedIn`, the desktop
+    // birth candidate from the account-mapped scan, which returns the FINAL validated selection or null; the Chief copy and the Fuigo refusal stay as pinned below.
     const engine = readFileSync(new URL("./default-engine.ts", import.meta.url), "utf8");
     expect(engine).toContain("const saved = opts.hasBots ? readRememberedEngine(opts.file) : null;");
-    expect(index).toContain('new Store({ fuigo: () => registry.instances().filter(instance => instance.driverKind === "fuigoAgent"), copyChief: birthOnDesktop, ...(birthOnDesktop ? { firstBot: () => bootSelection } : {}) }');
+    expect(index).toContain('new Store({ fuigo: () => registry.instances().filter(instance => instance.driverKind === "fuigoAgent"), copyChief: birthOnDesktop, eligible: id => liveForBirth(id) !== null, ...(birthOnDesktop ? { firstBot: () => bootSelection, signedIn: source => birthCandidate({ reading: registry.scanReading(), paidOnly: ENGINE_DEFAULT_PAID_ONLY, live: liveForBirth, source }) } : {}) }');
     const store = readFileSync(new URL("./store.ts", import.meta.url), "utf8");
     const birth = store.slice(store.indexOf("  birthSelection(): ModelSelection {"), store.indexOf("  workspaceChief(): BotRecord | null {"));
     expect(birth).toMatch(/if \(!source && this\.birth\.copyChief && this\.birth\.firstBot\)/);

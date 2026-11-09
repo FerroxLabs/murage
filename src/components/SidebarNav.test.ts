@@ -79,7 +79,7 @@ describe("reaching Settings and the dialogs Settings opens", () => {
 
   it("portals What's new and the shortcuts, so a shut phone drawer (inert) cannot swallow them", () => {
     expect(sidebar).toContain("{whatsNew.open && createPortal(<WhatsNewHost");
-    expect(sidebar).toContain("{shortcutsOpen && createPortal(<LazyBoundary onRetry={ShortcutsDialog.retry}");
+    expect(sidebar).toContain("{shortcutsOpen && createPortal(<LazyOverlay");
     // and the list itself is not in the first paint
     expect(sidebar).not.toMatch(/import \{ KeyboardShortcutsDialog \}/);
   });
@@ -90,7 +90,7 @@ describe("the sidebar search hands a word to the palette", () => {
     expect(sidebar).toContain('openCommandPalette(query.trim());');
     expect(sidebar).toContain('t("nav.searchSettings", { query: query.trim() })');
     const palette = readFileSync(fileURLToPath(new URL("./CommandPalette.tsx", import.meta.url)), "utf8");
-    expect(palette).toContain("setQuery(handedQuery.current);");
+    expect(palette).toContain("useState(request.query)");
   });
 });
 

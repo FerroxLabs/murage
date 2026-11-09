@@ -1,3 +1,4 @@
+import { fixtureBotFolder } from "./testing/bot-folder-fixture.ts";
 import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
 import { mkdtempSync } from "node:fs";
@@ -76,7 +77,7 @@ afterEach(() => {
 
 describe("owned Windows close confirmation (simulated)", () => {
   it.each(["exitCode", "signalCode"] as const)("waits for close after %s is recorded", async (field) => {
-    const owned = spawnCli("fixture.exe", [], { stdio: ["pipe", "pipe", "pipe"] });
+    const owned = spawnCli("fixture.exe", [], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] });
     Object.defineProperty(child, field, { value: field === "exitCode" ? 0 : "SIGTERM" });
     const stopped = awaitCliTreeStopped(owned);
     let resolved = false;
@@ -89,7 +90,7 @@ describe("owned Windows close confirmation (simulated)", () => {
   });
 
   it("times out without close even after root exit, then confirms a late close", async () => {
-    const owned = spawnCli("fixture.exe", [], { stdio: ["pipe", "pipe", "pipe"] });
+    const owned = spawnCli("fixture.exe", [], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] });
     Object.defineProperty(child, "exitCode", { value: 0 });
     const stopped = awaitCliTreeStopped(owned);
     let resolved = false;
@@ -108,7 +109,7 @@ describe("owned Windows close confirmation (simulated)", () => {
 describe("Windows tree stop without a job keeps the 1.0.1 semantics (simulated)", () => {
   it("one taskkill /T /F while the root is alive; the root's close confirms the stop", async () => {
     native.execFile.mockImplementation((_command, _args, _options, callback) => { queueMicrotask(() => child.emit("close", 1, null)); callback(null); });
-    const owned = spawnCli("fixture.exe", [], { stdio: ["pipe", "pipe", "pipe"] });
+    const owned = spawnCli("fixture.exe", [], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] });
     await expect(awaitCliTreeStopped(owned)).resolves.toBe(true);
     expect(native.execFile).toHaveBeenCalledTimes(1);
     expect(native.execFile).toHaveBeenCalledWith("taskkill", expect.arrayContaining(["/T", "/F"]), expect.any(Object), expect.any(Function));
@@ -117,7 +118,7 @@ describe("Windows tree stop without a job keeps the 1.0.1 semantics (simulated)"
   it("a failed taskkill falls back to killing the root; its close is what 1.0.1 treated as stopped", async () => {
     native.execFile.mockImplementation((_command, _args, _options, callback) => callback(new Error("access denied")));
     child.kill = vi.fn(() => { queueMicrotask(() => child.emit("close", 1, null)); return true; });
-    const owned = spawnCli("fixture.exe", [], { stdio: ["pipe", "pipe", "pipe"] });
+    const owned = spawnCli("fixture.exe", [], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] });
     await expect(awaitCliTreeStopped(owned)).resolves.toBe(true);
     expect(child.kill).toHaveBeenCalled();
   });
@@ -125,7 +126,7 @@ describe("Windows tree stop without a job keeps the 1.0.1 semantics (simulated)"
   it("never re-issues taskkill against a retained pid after the root has closed", async () => {
     native.execFile.mockImplementation((_command, _args, _options, callback) => callback(new Error("access denied")));
     child.kill = vi.fn(() => { queueMicrotask(() => child.emit("close", 1, null)); return true; });
-    const owned = spawnCli("fixture.exe", [], { stdio: ["pipe", "pipe", "pipe"] });
+    const owned = spawnCli("fixture.exe", [], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] });
     await awaitCliTreeStopped(owned);
     const calls = native.execFile.mock.calls.length;
     await expect(awaitCliTreeStopped(owned)).resolves.toBe(true);
@@ -136,7 +137,7 @@ describe("Windows tree stop without a job keeps the 1.0.1 semantics (simulated)"
   it("an exit-128 taskkill gets no success shortcut: only the root's close confirms", async () => {
     native.execFile.mockImplementation((_command, _args, _options, callback) => callback(Object.assign(new Error("not found"), { code: 128 })));
     child.kill = vi.fn(() => false);
-    const owned = spawnCli("fixture.exe", [], { stdio: ["pipe", "pipe", "pipe"] });
+    const owned = spawnCli("fixture.exe", [], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] });
     const stopped = awaitCliTreeStopped(owned);
     await vi.advanceTimersByTimeAsync(6_000);
     await expect(stopped).resolves.toBe(false);
@@ -147,7 +148,7 @@ describe("one shared in-flight confirmation (simulated)", () => {
   it("concurrent callers share ONE taskkill, and a slow success reaches every caller and later ones", async () => {
     let answer: ((err: Error | null) => void) | undefined;
     native.execFile.mockImplementation((_command, _args, _options, callback) => { answer = callback; });
-    const owned = spawnCli("fixture.exe", [], { stdio: ["pipe", "pipe", "pipe"] });
+    const owned = spawnCli("fixture.exe", [], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] });
     const a = awaitCliTreeStopped(owned);
     const b = awaitCliTreeStopped(owned);
     const c = forceCliTreeStopped(owned);

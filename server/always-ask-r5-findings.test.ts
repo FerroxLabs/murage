@@ -77,10 +77,32 @@ const ROWS: Row[] = [
   { cmd: "blkid --unknown /dev/sda", rule: "disk-erase", why: "6 an unknown option still asks" },
 ];
 
+// MARKS r9 C1: no known cwd cards a path in write or exec position (value-path). probe echo 'echo hi' > a.sh; ln a.sh b.sh; sh b.sh -> null
+// with cwd /w; unreadable (value-path) with no cwd. The row runs at cwd /w; the (no cwd) twin asserts the card.
+const R9_NOCWD: Record<string, string> = {
+  "2 a standard module constant is no value": "unreadable",
+  "1 alias of benign text stays ordinary": "unreadable",
+  "1 a copy is a snapshot, not a link": "unreadable",
+  "6 partx show with columns": "unreadable",
+};
+// MARKS r9 C1/C4: the cwd does not clear these. probe python3 -c "import shutil; shutil.rmtree('dist')" -> unreadable (tokenizer) at cwd /w and no cwd;
+// probe python3 -c "d = {}; d.clear(); print('/')" -> unreadable (value-path); same for the string-format and platform rows.
+const R9_NOW: Record<string, string> = {
+  "4 a collection clear beside a root string": "unreadable",
+  "4 string format beside a home string": "unreadable",
+  "4 platform beside a root string": "unreadable",
+};
+
 describe("always-ask round 5 findings", () => {
   for (const row of ROWS) {
     it(`${row.why}`, () => {
-      expect(alwaysAskCommand(row.cmd)?.rule ?? null).toBe(row.rule);
+      const cwd = row.why in R9_NOCWD || row.why in R9_NOW ? "/w" : undefined;
+      expect(alwaysAskCommand(row.cmd, cwd)?.rule ?? null).toBe(R9_NOW[row.why] ?? row.rule);
+    });
+  }
+  for (const row of ROWS.filter((r) => r.why in R9_NOCWD)) {
+    it(`${row.why} (no cwd)`, () => {
+      expect(alwaysAskCommand(row.cmd)?.rule ?? null).toBe(R9_NOCWD[row.why]);
     });
   }
 });

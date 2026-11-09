@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -263,3 +264,6 @@ it("recalls a relevant room reply beside the room checkpoint for a room member",
   expect(bundle.checkpoint.map(r=>r.id)).toEqual([checkpoint]);
   expect(bundle.evidence.map(r=>r.id)).toEqual(["reply"]);
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

@@ -182,7 +182,7 @@ export function SlackSettings() {
     {(status?.pending ?? 0) > 0 && <p role="status" className="mt-3 text-[12px] text-ink-secondary">Slack work is pending. Review the task in Murage.</p>}
     {(status?.uncertain ?? 0) > 0 && <p role="alert" className="mt-2 text-[12px] text-warning">A reply delivery is uncertain. Check Slack before sending the message again.</p>}
     {(status?.rejected ?? 0) > 0 && <p role="alert" className="mt-2 text-[12px] text-warning">A reply was rejected. Review app access and the task in Murage.</p>}
-    {(status?.needsReview ?? 0) > 0 && <p role="alert" className="mt-2 text-[12px] text-warning">A saved task receipt needs review in Murage. It will not be rerun automatically.</p>}
+    {(status?.needsReview ?? 0) > 0 && <p role="alert" className="mt-2 text-[12px] text-warning">A saved task record needs review in Murage. The task will not be run again automatically.</p>}
     {status?.error && <p role="alert" className="mt-3 text-[12px] text-warning">{slackHelp(status.error)}</p>}
     {refreshError && <p role="alert" className="mt-2 text-[12px] text-warning">Status refresh failed. The last confirmed state is still shown. Check the connection, then use Refresh status.</p>}
     {error && <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p>}

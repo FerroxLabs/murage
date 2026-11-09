@@ -12,7 +12,7 @@ test("backup folder permissions and invalid key locations have plain actionable 
     assert.equal(sentence("BACKUP_FOLDER_NOT_WRITABLE", { action }), "Murage can't write a file the backup needs. Choose a backup folder you can write to, or fix the permissions on that folder and on the folder that holds Murage's data.");
     assert.equal(sentence("BACKUP_RECOVERY_KEY_LOCATION_INVALID", { action }), "That location can't be used. Choose another folder; nothing was saved.");
   }
-  assert.equal(sentence("BACKUP_STATE_SAVE_FAILED"), "Murage could not save its backup state. Check free disk space and folder permissions, then choose Return to workspace again.");
+  assert.equal(sentence("BACKUP_STATE_SAVE_FAILED"), "Murage could not save its backup state. Check available disk space and folder permissions, then choose Return to workspace again.");
 });
 
 // Every refusal code the recovery path can raise, read from the code that
@@ -107,9 +107,22 @@ test("skipped items read the same on the Backup mode page and the Backups page",
   for (const line of samples.flatMap(sample => backupSkippedLines(sample))) assert.doesNotMatch(line, /—|[A-Z]{2,}_[A-Z_]+/);
 });
 
+// 1.0.18: DOWNGRADE_WORK_PENDING also refuses for a held or posting bot Post (296e04a04), so the sentence names messages and
+// bot posts and every way out (send, post or decline), never "send or cancel" alone.
+test("1.0.18: work still waiting before a step back names messages and bot posts", () => {
+  assert.equal(sentence("DOWNGRADE_WORK_PENDING"), "Some messages, bot posts or other work are still waiting. Open Murage, send, post or decline what is waiting, let the rest finish, then try again.");
+  assert.doesNotMatch(sentence("DOWNGRADE_WORK_PENDING"), /send or cancel/i);
+});
+
 test("1.0.12: a full disk names both drives, in a backup and in a restore, and never the recovery key", () => {
   for (const action of ["backup-encrypted", "restore-encrypted-new", "inspect-encrypted"]) {
     const text = sentence("BACKUP_DISK_FULL", { action });
     assert.equal(text, "There isn't enough free space to finish. Free up space on this computer's drive and on the drive that holds your backup folder, then try again.");
   }
+});
+
+test("T20 update gate codes use the exact recovery sentences",async()=>{
+ const {updateRecoveryCopy}=await import("./update-recovery-copy.mjs");
+ const context={};vm.runInNewContext(readFileSync(new URL("./recovery/messages.js",import.meta.url),"utf8"),context);
+ for(const code of ["BACKUP_UPGRADE_STAGED","BACKUP_UPGRADE_REVIEW_REQUIRED","BACKUP_UPGRADE_CLEANUP_FAILED","BACKUP_UPGRADE_ACTION_UNAVAILABLE"])assert.equal(context.murageRecoveryMessages.sentence(code),updateRecoveryCopy[code]);
 });

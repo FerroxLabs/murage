@@ -1,10 +1,10 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// 1.0.15 BIRTH-FUIGO-1014 (r2): the engine a bot is born on when no owner pick is given. Sean 11-02: "First engine is always
-// Fuigo." Owner picks always win. One synchronous Store.birthSelection, read inside createBot (and once per package import, in its
-// commit), from the live registry: a usable Fuigo (its catalogue after the Flux filter has a model), else on desktop a value copy of
-// the Chief, else the empty seed. Every born bot carries the mark (one write, in the saved record). Real Store, temp DATA_DIR.
+// Sean's ruling, 2026-11-06, ENGINE-DEFAULT Option A: verified paid Claude or Codex leads desktop births.
+// Usable eligible Fuigo, the eligible Chief and the eligible first-bot probe remain fallbacks. Owner picks win.
+// Every automatic birth keeps its mark, in memory and on disk. Earlier BIRTH-FUIGO preservation rows remain below.
+// Real Store, isolated DATA_DIR, injected dependencies.
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,7 +17,7 @@ import { closeDatabase, database } from "./database.ts";
 import { fuigoBirthModel } from "./default-engine.ts";
 import { STATIC_FUIGO_MODELS } from "./drivers/acp/fuigo.ts";
 import { starterProfileContents } from "./starter-profiles.ts";
-import { Store, type BotRecord } from "./store.ts";
+import { Store, type BotRecord, type BirthDeps } from "./store.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 type Instance = { instanceId: string; driverKind?: string; enabled?: boolean; models: ModelCatalog };
@@ -40,9 +40,9 @@ afterEach(() => {
 });
 
 /** A Store wired the way index.ts wires it: live Fuigo instances and the desktop/Cloud copy switch. */
-function world(opts: { fuigo?: Instance[]; copyChief?: boolean; firstBot?: { instanceId: string; model: string } } = {}) {
+function world(opts: { fuigo?: Instance[]; copyChief?: boolean; firstBot?: { instanceId: string; model: string }; signedIn?: BirthDeps["signedIn"]; eligible?: BirthDeps["eligible"] } = {}) {
   const state = { fuigo: opts.fuigo ?? [] };
-  const store = new Store({ fuigo: () => state.fuigo, copyChief: opts.copyChief ?? true, ...(opts.firstBot ? { firstBot: () => opts.firstBot! } : {}) });
+  const store = new Store({ signedIn: opts.signedIn, eligible: opts.eligible, fuigo: () => state.fuigo, copyChief: opts.copyChief ?? true, ...(opts.firstBot ? { firstBot: () => opts.firstBot! } : {}) });
   return { store, state };
 }
 const onDisk = (id: string) => (JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8")) as BotRecord[]).find(bot => bot.id === id)!;
@@ -52,6 +52,18 @@ const chiefOn = (store: Store, selection: { instanceId: string; model: string })
   store.setChiefOfStaff(chief.id, undefined, "workspace");
   return store.bot(chief.id)!;
 };
+
+it("a Store without birth dependencies preserves explicit selections and leaves automatic births empty", () => {
+  const store = new Store();
+  const chief = chiefOn(store, CLAUDE);
+  expect(chief.modelSelection).toEqual(CLAUDE);
+  expect(onDisk(chief.id).modelSelection).toEqual(CLAUDE);
+  const automatic = store.createBot({ name: "No engine dependencies" }, { seedMessages: false });
+  expect(automatic.modelSelection).toEqual(EMPTY);
+  expect(automatic.engineAutoPicked).toBe(true);
+  expect(onDisk(automatic.id).modelSelection).toEqual(EMPTY);
+  expect(new Store().bot(chief.id)!.modelSelection).toEqual(CLAUDE);
+});
 
 describe("rule step 1: a usable Fuigo", () => {
   it("the first bot is born on Fuigo and marked when Fuigo has a model", () => {
@@ -217,7 +229,12 @@ describe("no startup cache, no sign-in", () => {
     const index = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
     expect(index).not.toMatch(/new Store\(\(\) => bootSelection/);
     // r3: bootSelection reaches birth only as the desktop first-bot fallback, and the whole Fuigo list goes in (birth filters it).
-    expect(index).toMatch(/const birthOnDesktop = process\.env\.MURAGE_CLOUD_ROLE !== "home";\nconst store = new Store\(\{ fuigo: \(\) => registry\.instances\(\)\.filter\(instance => instance\.driverKind === "fuigoAgent"\), copyChief: birthOnDesktop, \.\.\.\(birthOnDesktop \? \{ firstBot: \(\) => bootSelection \} : \{\}\) \}/);
+    expect(index).toContain('copyChief: birthOnDesktop, eligible: id => liveForBirth(id) !== null');
+    expect(index).toContain('firstBot: () => bootSelection, signedIn: source => birthCandidate(');
+    expect(index).toContain('reading: registry.scanReading()');
+    expect(index).toContain('fuigo: () => registry.instances().filter(instance => instance.driverKind === "fuigoAgent")');
+    // Pin the complete boundary: eligibility is shared, paid and remembered choices are desktop-only.
+    expect(index.replace(/\s+/g, " ")).toContain('const birthOnDesktop = process.env.MURAGE_CLOUD_ROLE !== "home"; const store = new Store({ fuigo: () => registry.instances().filter(instance => instance.driverKind === "fuigoAgent"), copyChief: birthOnDesktop, eligible: id => liveForBirth(id) !== null, ...(birthOnDesktop ? { firstBot: () => bootSelection, signedIn: source => birthCandidate({ reading: registry.scanReading(), paidOnly: ENGINE_DEFAULT_PAID_ONLY, live: liveForBirth, source }) } : {}) },');
     expect(index.match(/\bbootSelection\b/g)?.length, "bootSelection: declaration, adopt, the r3 firstBot wiring, engine health and comments only").toBeLessThanOrEqual(8);
     // no birth caller of the sign-in-ranked pick is left; it survives only as engine health's display probe (BN1)
     expect(index).not.toMatch(/\bdefaultSelection\(/);
@@ -363,7 +380,6 @@ describe("route wiring: every birth read happens after the route's last wait", (
   });
 });
 
-describe("P5 package import on a real Store", () => {
   async function importStarter(store: Store, modelSelection: { instanceId: string; model: string } | "birth", between?: () => void) {
     const root = mkdtempSync(join(tmpdir(), "murage-birth-import-"));
     try {
@@ -384,6 +400,7 @@ describe("P5 package import on a real Store", () => {
     } finally { removeTempDirSync(root); }
   }
 
+describe("P5 package import on a real Store", () => {
   it("a package with no selection: every bot born on Fuigo and marked, in the returned, live, persisted and reloaded records", async () => {
     const { store } = world({ fuigo: [fuigo()] });
     const birth = vi.spyOn(store, "birthSelection");
@@ -426,4 +443,195 @@ describe("P5 package import on a real Store", () => {
     const result = await importStarter(store, "birth");
     expect(result.leadBotIds).toHaveLength(1);
   });
+});
+
+describe("1.0.18 ENGINE-DEFAULT", () => {
+  it("B1/B6: paid engine wins over Fuigo without changing the Chief", () => {
+    const signedIn = vi.fn(() => ({ ...CLAUDE }));
+    const { store } = world({ fuigo: [fuigo()], signedIn });
+    const chief = chiefOn(store, { instanceId: "fuigo", model: "grok-code" });
+    const before = onDisk(chief.id);
+    const born = store.createBot({}, { seedMessages: false });
+    expect(born.modelSelection).toEqual(CLAUDE);
+    expect(born.engineAutoPicked).toBe(true);
+    expect(onDisk(chief.id)).toEqual(before);
+  });
+  it("B4: both dependency boundaries pass values", () => {
+    const result = { ...CLAUDE };
+    const signedIn = vi.fn(() => result);
+    const { store } = world({ fuigo: [fuigo()], signedIn });
+    const chief = chiefOn(store, { instanceId: "claude", model: "opus" });
+    const born = store.createBot({}, { seedMessages: false });
+    expect(signedIn).toHaveBeenCalledExactlyOnceWith({ instanceId: "claude", model: "opus" });
+    expect(born.modelSelection).toEqual(CLAUDE);
+    chief.modelSelection.model = "changed";
+    result.model = "changed";
+    expect(signedIn.mock.calls[0]).toEqual([{ instanceId: "claude", model: "opus" }]);
+    expect(born.modelSelection).toEqual(CLAUDE);
+  });
+  it("B5: signed-in selection drops connection and effort without Fuigo", () => {
+    const { store } = world({ signedIn: () => ({ ...CLAUDE }) });
+    chiefOn(store, { ...CLAUDE, connectionId: "other", effort: "high" } as typeof CLAUDE);
+    expect(store.createBot({}, { seedMessages: false }).modelSelection).toEqual(CLAUDE);
+  });
+  it("B2/B3: a null signed-in reading preserves Fuigo, Chief and first-bot fallbacks", () => {
+    const { store, state } = world({ fuigo: [fuigo()], signedIn: () => null, firstBot: CODEX });
+    const chief = chiefOn(store, CLAUDE);
+    expect(store.birthSelection()).toEqual({ instanceId: "fuigo", model: "grok-code" });
+    state.fuigo = [];
+    expect(store.birthSelection()).toEqual(chief.modelSelection);
+    store.bots = [];
+    expect(store.birthSelection()).toEqual(CODEX);
+  });
+  it("B9: an owner pick bypasses the dependency", () => {
+    const signedIn = vi.fn(() => ({ ...CLAUDE }));
+    const eligible = vi.fn(() => true);
+    const { store } = world({ signedIn, eligible });
+    expect(store.createBot({ modelSelection: CODEX }, { seedMessages: false }).modelSelection).toEqual(CODEX);
+    expect(signedIn).not.toHaveBeenCalled();
+    expect(eligible).not.toHaveBeenCalled();
+  });
+});
+
+describe("1.0.18 ENGINE-DEFAULT eligibility", () => {
+  const born = (store: Store, expected: typeof CLAUDE) => {
+    const bot = store.createBot({}, { seedMessages: false });
+    expect(bot.modelSelection).toEqual(expected);
+    expect(bot.engineAutoPicked).toBe(true);
+    expect(onDisk(bot.id)).toMatchObject({ modelSelection: expected, engineAutoPicked: true });
+    return bot;
+  };
+  it("B7: omitted birth dependencies preserve existing selection", () => {
+    born(world({ fuigo: [fuigo()] }).store, { instanceId: "fuigo", model: "grok-code" });
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); database();
+    const copy = world().store;
+    const chief = chiefOn(copy, CLAUDE);
+    expect(born(copy, CLAUDE).modelSelection).not.toBe(chief.modelSelection);
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); database();
+    born(world({ firstBot: CODEX }).store, CODEX);
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); database();
+    born(world().store, EMPTY);
+  });
+  it.each([CLAUDE, { instanceId: "fuigo", model: "grok-code" }])("B7b/B11: rejected Fuigo never wins with Chief %s", selection => {
+    const store = world({ fuigo: [fuigo()], eligible: id => id === "claude" }).store;
+    chiefOn(store, selection);
+    born(store, selection.instanceId === "claude" ? CLAUDE : EMPTY);
+  });
+  it("B11(c/d/g): settled shadows are refused by Chief and stale probe paths", () => {
+    const registry = { get: (_id: string) => null, isRetired: (_id: string) => false };
+    const liveForBirth = (id: string) => { const inst = registry.get(id); return inst && !registry.isRetired(id) ? inst : null; };
+    const store = world({ eligible: id => liveForBirth(id) !== null, firstBot: CLAUDE }).store;
+    born(store, EMPTY);
+    chiefOn(store, CLAUDE);
+    born(store, EMPTY);
+  });
+  it("B11(e/f): the signed-in dependency owns eligibility and later Fuigo can win", () => {
+    born(world({ signedIn: () => CLAUDE, eligible: () => false }).store, CLAUDE);
+    born(world({ fuigo: [fuigo("one"), fuigo("two")], eligible: id => id === "two" }).store, { instanceId: "two", model: "grok-code" });
+  });
+  it("B8: pairing and package births use the signed-in dependency", async () => {
+    const signedIn = vi.fn(() => CLAUDE);
+    const store = world({ fuigo: [fuigo()], signedIn }).store;
+    const paired = store.createBot({ name: "Paired", title: "Helper" }, { seedMessages: false });
+    expect(paired.modelSelection).toEqual(CLAUDE);
+    expect(signedIn).toHaveBeenCalled();
+    signedIn.mockClear();
+    const result = await importStarter(store, "birth");
+    expect(signedIn).toHaveBeenCalled();
+    for (const bot of result.bots) {
+      expect(bot.modelSelection).toEqual(CLAUDE);
+      expect(onDisk(bot.id)).toMatchObject({ modelSelection: CLAUDE, engineAutoPicked: true });
+    }
+  });
+  it("B10/G1: birth wiring and shutdown use the r6.2 rules", () => {
+    const index = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+    expect(index.startsWith('import "./memory/pre-listen-enable.ts";')).toBe(true);
+    expect(index.match(/commitEngineChange\(/g)).toHaveLength(6);
+    expect(index.match(/reloadWithRollback\(/g)).toHaveLength(6);
+    expect(index).not.toContain("await reloadProviders(");
+    expect(index).toContain("unsafe: scopedReloadUnsafe");
+    expect(index).toContain("retireFleet();\n  providerFleetReady = false;");
+    expect(index.match(/registry.beginShutdown\(\)/g)).toHaveLength(1);
+    // 2e749c0d5 (NLINT-FIX4 B3) put the outside-store flush seal first in this job, and 39096ec82 (ELD250 B6) added the onStart repair latch ahead of cleanup; the birth rule is unchanged: beginShutdown still precedes the stream close.
+    expect(index).toContain("async () => { beginOutsideShutdown(); registry.beginShutdown(); streamsStopping = true; await closeAllStreams(); }");
+    const uncommented = index.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
+    expect(uncommented).toMatch(/const gracefulShutdown = createGracefulShutdown\(\{\s*onStart: \(\) => keepAllRepair\.stop\(\),\s*cleanup: \[\s*async \(\) => \{ beginOutsideShutdown\(\); registry\.beginShutdown\(\); streamsStopping = true; await closeAllStreams\(\); \}/);
+    // These five routes must enter reload in the same synchronous interval as their commit.
+    // Names, modes and saves are pinned per caller, not just counted across the file.
+    const immediateRoutes = [
+      ['[id], "fleet", () => saveConfig({ instances: candidate.config.instances })', "result"],
+      ['[target], "fleet", () => { receipt = replaceClaudeAccountInstances(next); }', "result"],
+      ['newInstances.map(item => item.instanceId), "scoped", () => saveConfig({ instances: next.instances })', "result"],
+      ['sameCli, "scoped", () => {}', "outcome"],
+      ['[instancePatch[1]], "scoped", () => saveConfig({ instances: result.config.instances })', "outcome"],
+    ];
+    const compact = index.replace(/\s+/g, " ");
+    for (const [args, result] of immediateRoutes) {
+      expect(compact, args).toContain(`const change = commitEngineChange(engineChangeHost, ${args}); const ${result} = await reloadWithRollback(engineChangeHost, change, scope => reloadProviders(scope)`);
+    }
+    // Settings intentionally has browser cleanup between commit and reload. Its fleet mark
+    // must precede the first cleanup await; all three saves stay in the synchronous closure.
+    expect(index).toContain('const mode = reloadKeys.length ? "fleet" : "none";');
+    const settingsStart = index.indexOf('change = commitEngineChange(engineChangeHost, [], mode');
+    expect(settingsStart).toBeGreaterThan(-1);
+    const settingsReload = index.indexOf('await reloadWithRollback(', settingsStart);
+    expect(settingsReload).toBeGreaterThan(settingsStart);
+    const settingsInterval = uncommented.slice(uncommented.indexOf('change = commitEngineChange(engineChangeHost, [], mode'));
+    expect(settingsInterval.slice(0, settingsInterval.indexOf('await '))).toContain('if (!reloadKeys.length) settleEngineChange(engineChangeHost);');
+    expect(settingsInterval.slice(settingsInterval.indexOf('await '))).toMatch(/^await finalizeBrowserCleanupMutation\(\{/);
+    expect(compact).toContain('change = commitEngineChange(engineChangeHost, [], mode, () => { if (cloudHome) saveConfig(withoutCloudCredentials(patch)); else if (externalSecretStorage) saveConfig(persisted); else saveConfig(patch); configWriteCommitted = true; syncCredentialEnv(patch); });');
+    const beforeSettingsReload = settingsInterval.slice(0, settingsInterval.indexOf("await reloadWithRollback("));
+    expect(beforeSettingsReload.match(/\bawait\s+\w+/g)).toEqual(["await finalizeBrowserCleanupMutation", "await releaseAllBrowserCapabilities"]);
+    expect(index.slice(settingsReload)).toMatch(/^await reloadWithRollback\(engineChangeHost, change, scope => reloadProviders\(scope\)\);/);
+    expect(index.slice(settingsStart, settingsReload)).toMatch(/mandatory: async \(\) => \{[\s\S]*if \(reloadKeys\.length > 0\) \{\s*try \{\s*const result = $/);
+    expect(index).toContain('() => describedInstances({ catalogs: "due" })');
+    expect(index).toContain('describe: options => describedInstances(options)');
+    expect(index).toContain('return pickDefaultEngine(await describedInstances({ catalogs: "due" }))');
+    expect(index).toContain('instances: () => describedInstances({ catalogs: "due" })');
+    expect(index).toContain('ownerEnvAfterDiscovery(fresh, () => describedInstances(');
+    expect(index).not.toMatch(/registry\.(describe|publishScan)\s*\(/);
+
+    const live = index.slice(index.indexOf("const liveForBirth"), index.indexOf("const birthOnDesktop"));
+    for (const text of ["registry.get(", "enabled !== false", "registry.isRetired("]) expect(live).toContain(text);
+    expect(live).not.toMatch(/\bcfg\b|instanceConfigs/);
+    const registry = readFileSync(new URL("./harness/registry.ts", import.meta.url), "utf8");
+    for (const [start, end] of [["  async load(", "  /** Rebuild"], ["  async reload(", "  private async resolveEntry"], ["  async disposeAll(", "\n}\n"]]) {
+      const offset = registry.indexOf(start);
+      expect(registry.slice(offset, registry.indexOf(end, offset))).not.toMatch(/this\.(retired|terminal)|beginShutdown/);
+    }
+    expect(registry.match(/this\.terminal = true/g)).toHaveLength(1);
+    expect(registry).toContain("settle(saved: InstanceConfigMap): void {\n    if (this.terminal) return;");
+    const resolve = registry.slice(registry.indexOf("  private async resolveEntry"), registry.indexOf("  /** Holds these"));
+    expect(resolve.match(/structuredClone\(entry\)/g)).toHaveLength(1);
+    expect(resolve.indexOf("structuredClone(entry)")).toBeLessThan(resolve.indexOf("if ("));
+    expect(resolve.match(/instanceId, builtFrom/g)).toHaveLength(4);
+    const helper = readFileSync(new URL("./engine-change.ts", import.meta.url), "utf8");
+    expect(helper).not.toContain("structuredClone(");
+    expect(helper.match(/Object.assign\(host.cfg/g)).toHaveLength(1);
+    const recovery = helper.slice(helper.indexOf("host.registry.retire(change.marked)"));
+    expect(recovery.indexOf("host.registry.retire(change.marked)")).toBeLessThan(recovery.indexOf("restore()"));
+    expect(recovery.slice(0, recovery.indexOf("await reload(scopeArg)"))).not.toContain("settleEngineChange(");
+    const save = index.slice(index.indexOf("change = commitEngineChange(engineChangeHost, [], mode"), index.indexOf("if (!reloadKeys.length) settleEngineChange"));
+    expect(save.match(/saveConfig\(/g)).toHaveLength(3);
+    expect(save).not.toContain("Object.assign(cfg");
+    expect(readFileSync(new URL("./birth-reading.ts", import.meta.url), "utf8")).not.toContain('from "./config.ts"');
+
+  });
+});
+
+it.each(["fresh", "due"] as const)("BF-12: mapped unavailable account births on Fuigo on %s", async catalogs => {
+  const { ProviderRegistry } = await import("./harness/registry.ts");
+  const { makeFakeDriver } = await import("./testing/fake-driver.ts");
+  const { mappedInstanceScan, mapClaudeAccountInstances } = await import("./mapped-instance-scan.ts");
+  const { birthCandidate } = await import("./birth-reading.ts");
+  const fake = makeFakeDriver({ kind: "claudeAgent" }); Object.assign(fake.driver, { install: {} });
+  const registry = new ProviderRegistry([fake.driver]);
+  await registry.load({ named: { driver: "claudeAgent" } });
+  registry.get("named")!.snapshot = async () => ({ state: "available", authenticated: true, billing: "subscription" });
+  const describe = mappedInstanceScan(registry, rows => mapClaudeAccountInstances(rows, { named: { driver: "claudeAgent", config: { configDir: "relative" } } }));
+  await describe({ catalogs });
+  const store = world({ fuigo: [fuigo()], signedIn: source => birthCandidate({ reading: registry.scanReading(), live: id => registry.get(id), source, paidOnly: true }) }).store;
+  const bot = store.createBot({}, { seedMessages: false });
+  expect(bot.modelSelection.instanceId).toBe("fuigo");
+  expect(onDisk(bot.id)).toMatchObject({ modelSelection: { instanceId: "fuigo" }, engineAutoPicked: true });
 });

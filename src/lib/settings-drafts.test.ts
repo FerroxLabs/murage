@@ -39,7 +39,9 @@ describe("the settings window", () => {
     const modal = read("../components/SettingsModal.tsx");
     expect(modal).toContain("DISCARD_SETTINGS_CHANGES");
     // Escape, the backdrop, the search box's Escape and the close button all go through the question
-    expect(modal.match(/closeSettings\(\)/g)?.length).toBeGreaterThanOrEqual(3);
+    // Registry Escape, search Escape, backdrop and button all use the same dirty-close path.
+    expect(modal).toContain('useLayerContainer(dialogRef, { onEscape: closeSettings, initialFocus: null, holdFocus: false })');
+    expect(modal).toMatch(/if \(query\) setQuery\(""\);\s*else closeSettings\(\);/);
     expect(modal).toContain("onClick={closeSettings}");
     expect(modal).toContain("e.target === e.currentTarget && closeSettings()");
     expect(DISCARD_SETTINGS_CHANGES).not.toMatch(/[–—]/);

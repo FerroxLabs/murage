@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { chmodSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
@@ -48,3 +49,6 @@ describe("108 isolated fake driver asks", () => {
     } finally { events.stop(); }
   }, 60_000);
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

@@ -10,7 +10,7 @@
  * number of messages, and what goes on the wire is one page (50 by default,
  * 200 at most). The page is picked in one pass that keeps only the best
  * `limit + 1` rows after the cursor, so no list of every chat is sorted or
- * copied. No schema, no background job. */
+ * copied. Owner routes add summary text only after selecting the page. */
 
 export const CHAT_PAGE_DEFAULT = 50;
 export const CHAT_PAGE_MAX = 200;
@@ -54,6 +54,9 @@ export interface ChatRow {
   createdAt: number;
   /** newest message time; absent when the chat has no messages yet */
   lastActivityAt?: number;
+  snippet?: string;
+  lastRole?: string | null;
+  lastFrom?: string | null;
   botId?: string;
   groupId?: string;
   /** the channel this chat belongs to (a channel task, or a bot's desk in a project) */
@@ -67,6 +70,9 @@ export interface ChatRow {
 }
 
 export interface ChatFilters {
+  dateFrom?: number;
+  dateTo?: number;
+  threadIds?: readonly string[];
   botId?: string;
   /** a channel or project id, or "direct" for chats that sit in no channel */
   groupId?: string;
@@ -98,6 +104,7 @@ export interface ChatPage {
   next: string | null;
   /** how many chats match the filters (pinned included) */
   total: number;
+  partial?: boolean;
 }
 
 /** Request work in task records. Tests separately measure bounded renderer work. No transcript is visited. */
@@ -106,7 +113,7 @@ export const chatListWork = { requests: 0, rowsVisited: 0 };
 const sortTime = (row: Pick<ChatRow, "lastActivityAt" | "createdAt">) => row.lastActivityAt ?? row.createdAt;
 
 /** Newest first; the thread id breaks a tie so a page boundary is stable. */
-function newerFirst(a: ChatRow, b: ChatRow): number {
+export function newerFirst(a: ChatRow, b: ChatRow): number {
   return Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || sortTime(b) - sortTime(a) || (a.threadId < b.threadId ? -1 : a.threadId > b.threadId ? 1 : 0);
 }
 
@@ -126,6 +133,9 @@ export function chatFiltersFromQuery(params: URLSearchParams): ChatFilters {
   const flag = (name: string) => params.get(name) === "1";
   const text = (name: string) => params.get(name)?.trim() || undefined;
   return {
+    dateFrom: finiteTime(params.get("date_from")),
+    dateTo: finiteTime(params.get("date_to")),
+    threadIds: params.has("threads") ? (params.get("threads") ?? "").split(",").slice(0, 200) : undefined,
     botId: text("bot"),
     groupId: text("group"),
     pinned: flag("pinned"),
@@ -134,6 +144,10 @@ export function chatFiltersFromQuery(params: URLSearchParams): ChatFilters {
     routines: flag("routines"),
     q: text("q")?.toLowerCase(),
   };
+}
+
+function finiteTime(value: string | null): number | undefined {
+  return value !== null && value !== "" && Number.isFinite(Number(value)) ? Number(value) : undefined;
 }
 
 /** Insert into a small newest-first array, keeping at most `cap` rows. */
@@ -163,12 +177,14 @@ export function pageChats(source: ChatSource, filters: ChatFilters, before: stri
     const at = source.lastActivityAt(row.threadId);
     return at === undefined ? row : { ...row, lastActivityAt: at };
   };
+  const recordFilters = { ...filters, dateFrom: undefined, dateTo: undefined };
   const consider = (row: ChatRow) => {
     chatListWork.rowsVisited++;
-    if (!chatMatches(row, filters)) return;
-    total++;
-    // the time is looked up only for a chat that passed every filter
+    if (!chatMatches(row, recordFilters)) return;
     const timed = withActivity(row);
+    if (!chatMatches(timed, filters)) return;
+    total++;
+
     if (after && newerFirst(timed, after) <= 0) return;
     keepBest(best, timed, size + 1);
   };
@@ -188,11 +204,27 @@ export function pageChats(source: ChatSource, filters: ChatFilters, before: stri
 export function chatSearchThreads(source: ChatSource, filters: ChatFilters): string[] {
   const ids: string[] = [];
   const recordFilters = { ...filters, q: undefined };
-  visitChats(source, row => { if (chatMatches(row, recordFilters)) ids.push(row.threadId); });
+  const untimed = { ...recordFilters, dateFrom: undefined, dateTo: undefined };
+  // the activity time is looked up only when a Date filter needs it
+  const dated = filters.dateFrom !== undefined || filters.dateTo !== undefined;
+  visitChats(source, row => {
+    if (!chatMatches(row, untimed)) return;
+    if (!dated || chatMatches({ ...row, lastActivityAt: source.lastActivityAt(row.threadId) }, recordFilters)) ids.push(row.threadId);
+  });
   return ids;
 }
 
+/** Grouped search consumes chats in the same order as the list. */
+export function chatSearchRows(source: ChatSource, filters: ChatFilters): ChatRow[] {
+  const allowed = new Set(chatSearchThreads(source, filters)), rows: ChatRow[] = [];
+  visitChats(source, row => { if (allowed.has(row.threadId)) rows.push({ ...row, lastActivityAt: source.lastActivityAt(row.threadId) }); });
+  return rows.sort(newerFirst);
+}
+
 function chatMatches(row: ChatRow, filters: ChatFilters): boolean {
+  if (filters.threadIds && !filters.threadIds.includes(row.threadId)) return false;
+  if (filters.dateFrom !== undefined && sortTime(row) < filters.dateFrom) return false;
+  if (filters.dateTo !== undefined && sortTime(row) >= filters.dateTo) return false;
   if (Boolean(row.archived) !== Boolean(filters.archived)) return false;
   if (row.routine && !filters.routines) return false;
   if (filters.pinned && !row.pinned || filters.unread && !row.unread) return false;

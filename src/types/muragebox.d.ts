@@ -126,6 +126,8 @@ type SkillRecordingPayload = {
 
   interface BackupScheduleStatus {
     supported:boolean; pending:boolean; enabled:boolean; revision:number; phase:string;
+    /** 1.0.18: a backup waiting for space, its drive, or a busy file; it starts by itself. */
+    waiting?:{drive:"backup"|"data"|null;volumes:{kind:"backup"|"data"|"shared";requiredBytes:number;freeBytes?:number;neededBytes?:number}[];cause:"space"|"drive"|"busy"|"interrupted";code:string;requiredBytes?:number;neededBytes?:number;since:number;nextAt:number;attempts:number};
     /** Unsupported only for now: the backup tool is still being checked. */
     checking?:boolean;
     /** Unsupported, and why, when it is not just the check: the backup tool
@@ -173,6 +175,8 @@ type SkillRecordingPayload = {
       homeId: string;
       platform: NodeJS.Platform;
       setUnreadCount(count: number): void;
+      /** S3R session, offers, display hand-off and payload acknowledgements over cloud-attention:*; main derives the home. */
+      attention?: import("@/lib/attention-offer").AttentionBridge;
       approvalNotifications: {
         show(payload: { botId: string; threadId: string; requestId: string; messageId: string; requestTurnId?: string; title: string; body: string; silent?: boolean }): Promise<{ accepted: boolean }>;
         onOpen(callback: (target: { botId: string; threadId: string; messageId?: string }) => void): () => void;
@@ -272,10 +276,14 @@ type SkillRecordingPayload = {
         show(payload: { botId: string; threadId: string; requestId: string; messageId: string; requestTurnId?: string; title: string; body: string; silent?: boolean }): Promise<{ accepted: boolean }>;
         onOpen(callback: (target: { botId: string; threadId: string; messageId?: string }) => void): () => void;
       };
+      /** S3R desktop session, offers, display hand-off and payload acknowledgements. */
+      attention?: import("@/lib/attention-offer").AttentionBridge;
       /** Menu bar / system tray menu intents (electron/background-lifecycle.mjs). */
       tray?: {
         onOpen(callback: (target: TrayOpenTarget) => void): () => void;
       };
+      /** Device notification surfaces (electron/notify-surfaces.mjs). Main window only. */
+      notifySurfaces?: import("@/lib/notify-surfaces").NotifySurfacesBridge;
       startup?: {
         status(): Promise<StartupBackgroundState>;
         update(patch:{keepRunning?:boolean;startAtLogin?:boolean}):Promise<StartupBackgroundState>;
@@ -323,16 +331,21 @@ type SkillRecordingPayload = {
       /** Start native dictation. Call mode supplies endpointMs so silence
        * finalizes a turn (endpointLongMs applies when the last word sounds
        * unfinished); composer dictation omits it and remains manual. */
-      speechStart(options?: { endpointMs?: number; endpointLongMs?: number; fed?: boolean; hints?: string[] }): Promise<void>;
+      speechStart(options?: { endpointMs?: number; endpointLongMs?: number; fed?: boolean; hints?: string[]; session?: string }): Promise<void>;
       /** Call mode: echo-cancelled microphone audio (16 kHz mono s16le) for a fed session. */
       speechFeed?(bytes: Uint8Array): void;
-      speechStop(): Promise<void>;
+      speechStop(session?: string): Promise<void>;
       /** Finish capture and emit the recognizer's final transcript. */
-      speechFinish?(): Promise<void>;
+      speechFinish?(session?: string): Promise<void>;
       onSpeechTranscript(
         cb: (line: { partial?: boolean; text?: string; error?: string; longEndpoint?: boolean }) => void,
       ): () => void;
       onSpeechEnd(cb: (info: { code: number | null; reason?: string }) => void): () => void;
+      /** Composer dictation events only: those that carry the session token. */
+      onDictationTranscript(
+        cb: (line: { partial?: boolean; text?: string; error?: string; session: string }) => void,
+      ): () => void;
+      onDictationEnd(cb: (info: { code: number | null; reason?: string; session: string }) => void): () => void;
       skillRecorder?: {
         permissions(): Promise<{ supported: boolean; reason?: string }>;
         start(): Promise<{ recording: boolean }>;
@@ -460,6 +473,11 @@ type SkillRecordingPayload = {
         start(): Promise<{ ok: true } | { ok: false; code: string; message: string }>;
         cancel(): Promise<void>;
       };
+      /** Phone calls: the Settings key box. Save hands the Vapi key to main once; nothing ever reads it back. */
+      phoneKey?: {
+        save(key: string): Promise<{ ok: true } | { ok: false; code?: string; message?: string }>;
+        remove(): Promise<{ ok: true } | { ok: false; code?: string; message?: string }>;
+      };
       /** Plan sign-in (ChatGPT, Grok). Never returns a token. */
       modelSignIn?: {
         status(): Promise<{ providers: import("../../shared/model-signin").SignInProviderStatus[]; ready: boolean }>;
@@ -488,7 +506,7 @@ type SkillRecordingPayload = {
       /** Reconnect connected apps here after another computer took over. */
       reconnectConnectedApps?(): Promise<{ reconnected: boolean }>;
       setCredential?(
-        name: "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "openaiImageApiKey" | "tavilySearchApiKey" | "exaSearchApiKey" | "firecrawlSearchApiKey" | "telegramBotToken" | "slackAppToken" | "slackBotToken" | "discordBotToken",
+        name: "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "openaiImageApiKey" | "tavilySearchApiKey" | "exaSearchApiKey" | "firecrawlSearchApiKey" | "highlevelPrivateToken" | "telegramBotToken" | "slackAppToken" | "slackBotToken" | "discordBotToken",
         value: string,
       ): Promise<ConfigStatus>;
       /** In-app auto-update (packaged app only; dormant in dev). onState
@@ -562,7 +580,8 @@ export interface UpdaterState {
   currentVersion?: string;
   percent?: number;
   message?: string;
-  action?: "download-from-murage";
+  action?: "download-from-murage" | "download-installer";
+  downloadUrl?: string;
   /** ISO time of the first failed update check in a streak that has lasted a day or more; absent once a check works. */
   staleCheckSince?: string;
   /**

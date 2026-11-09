@@ -26,7 +26,8 @@ import { FLUX_MODELS, FLUX_OPENAI_BASE } from "./flux-routing.ts";
 import { fluxConfigured } from "./flux-config.ts";
 
 /** The `provider.<id>` key this app owns inside opencode.json. */
-export const OPENCODE_FLUX_PROVIDER = "flux";
+import { OPENCODE_FLUX_PROVIDER } from "../shared/opencode-model-id.ts";
+export { OPENCODE_FLUX_PROVIDER };
 
 /** The tool name the receipt is filed under. */
 export const OPENCODE_CONNECTOR_TOOL = "opencode";

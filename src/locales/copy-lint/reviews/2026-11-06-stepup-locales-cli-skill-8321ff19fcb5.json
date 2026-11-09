@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "claude-opus-stepup-locales",
+  "date": "2026-11-06",
+  "base": "fda559f05f5603b1e77007880a00c171ecde3a14",
+  "scope": "cliTest and botSkill labels",
+  "strings": {
+    "stepup/en:label.botSkill": {
+      "text": "See, switch on or off, or remove a bot's skill, or restore an earlier version",
+      "en": "See, switch on or off, or remove a bot's skill, or restore an earlier version",
+      "verdict": "pass",
+      "note": "Read in round 5."
+    },
+    "stepup/en:label.cliTest": {
+      "text": "Run a program from a location sent with this request, to see if it starts",
+      "en": "Run a program from a location sent with this request, to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 5."
+    },
+    "stepup/de:label.botSkill": {
+      "text": "Einen Skill eines Bots ansehen, ein- oder ausschalten, entfernen oder eine frühere Version wiederherstellen",
+      "en": "See, switch on or off, or remove a bot's skill, or restore an earlier version",
+      "verdict": "pass",
+      "note": "Read in round 5."
+    },
+    "stepup/de:label.cliTest": {
+      "text": "Ein Programm von einem mit dieser Anfrage gesendeten Speicherort ausführen, um zu sehen, ob es startet",
+      "en": "Run a program from a location sent with this request, to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 5."
+    },
+    "stepup/es:label.botSkill": {
+      "text": "Ver, activar o desactivar o eliminar una habilidad de un bot, o restaurar una versión anterior",
+      "en": "See, switch on or off, or remove a bot's skill, or restore an earlier version",
+      "verdict": "pass",
+      "note": "Read in round 5."
+    },
+    "stepup/es:label.cliTest": {
+      "text": "Ejecutar un programa desde una ubicación enviada con esta solicitud para ver si arranca",
+      "en": "Run a program from a location sent with this request, to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 5."
+    },
+    "stepup/fr:label.botSkill": {
+      "text": "Voir, activer, désactiver ou supprimer une compétence d'un bot, ou restaurer une version antérieure",
+      "en": "See, switch on or off, or remove a bot's skill, or restore an earlier version",
+      "verdict": "pass",
+      "note": "Read in round 5."
+    },
+    "stepup/fr:label.cliTest": {
+      "text": "Lancer un programme depuis un emplacement envoyé avec cette demande pour voir s'il démarre",
+      "en": "Run a program from a location sent with this request, to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 5."
+    },
+    "stepup/hi:label.botSkill": {
+      "text": "बॉट की स्किल देखना, चालू या बंद करना, हटाना या पिछला संस्करण वापस लाना",
+      "en": "See, switch on or off, or remove a bot's skill, or restore an earlier version",
+      "verdict": "pass",
+      "note": "Read in round 5."
+    },
+    "stepup/hi:label.cliTest": {
+      "text": "इस अनुरोध के साथ भेजी गई लोकेशन से प्रोग्राम चलाना, यह देखने के लिए कि वह शुरू होता है या नहीं",
+      "en": "Run a program from a location sent with this request, to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 5."
+    },
+    "stepup/ja:label.botSkill": {
+      "text": "ボットのスキルを表示、オン・オフ、削除する、または以前のバージョンに戻す",
+      "en": "See, switch on or off, or remove a bot's skill, or restore an earlier version",
+      "verdict": "pass",
+      "note": "Read in round 5."
+    },
+    "stepup/ja:label.cliTest": {
+      "text": "このリクエストで送られた場所にあるプログラムを実行して、起動するか確認する",
+      "en": "Run a program from a location sent with this request, to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 5."
+    },
+    "stepup/pt-br:label.botSkill": {
+      "text": "Ver, ligar ou desligar ou remover uma habilidade de um bot, ou restaurar uma versão anterior",
+      "en": "See, switch on or off, or remove a bot's skill, or restore an earlier version",
+      "verdict": "pass",
+      "note": "Read in round 5."
+    },
+    "stepup/pt-br:label.cliTest": {
+      "text": "Executar um programa de um local enviado com este pedido para ver se ele inicia",
+      "en": "Run a program from a location sent with this request, to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 5."
+    },
+    "stepup/zh:label.botSkill": {
+      "text": "查看、开启或关闭、移除机器人的技能，或恢复到以前的版本",
+      "en": "See, switch on or off, or remove a bot's skill, or restore an earlier version",
+      "verdict": "pass",
+      "note": "Read in round 5."
+    },
+    "stepup/zh:label.cliTest": {
+      "text": "运行此请求发送的位置中的程序，看它能否启动",
+      "en": "Run a program from a location sent with this request, to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 5."
+    }
+  },
+  "files": {}
+}

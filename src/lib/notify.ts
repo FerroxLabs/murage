@@ -3,6 +3,7 @@
 // the per-bot toggle); this only decides how to show it here.
 import type { Notification } from "../../server/notify.ts";
 import { notificationBridge } from "./cloud-workspace";
+import { collectingAttentionDisplay, type AttentionDisplay } from "./attention-offer";
 import { notificationSoundsEnabled } from "./notification-sounds";
 import { HEALTH_PAGE_BODY, HEALTH_PAGE_TITLE, type HealthPageNotification } from "../../shared/notification-preferences";
 
@@ -46,7 +47,7 @@ export function buildNotificationOptions(bot: NotificationBotIdentity): Notifica
   return { tag: `murage:${bot.id}`, icon: bot.avatarUrl ?? undefined };
 }
 
-/** Show one unless the exact destination conversation is already visible.
+/** Return display fields on the router path. Otherwise show one unless its conversation is visible.
  * A focused app may still be showing another task (routine runs are detached),
  * so window focus alone is not proof that the actionable card can be seen. */
 export function showNotification(
@@ -54,7 +55,16 @@ export function showNotification(
   onOpen: (target: NotificationTarget) => void,
   avatarUrl?: string | null,
   visibleThreadId?: string | null,
-) {
+): AttentionDisplay | (() => void) | void {
+  if (collectingAttentionDisplay() || notificationBridge()?.attention) {
+    const fields: AttentionDisplay = {
+      title: frame.title.slice(0, 256), body: frame.body.slice(0, 1024),
+      botId: frame.botId, threadId: frame.threadId,
+      privatePreview: frame.privatePreview === true, silent: !notificationSoundsEnabled(),
+    };
+    if (!fields.privatePreview && typeof avatarUrl === "string" && avatarUrl.length <= 65536 && /^data:image\/png;base64,[a-z0-9+/]*={0,2}$/i.test(avatarUrl)) fields.icon = avatarUrl;
+    return fields;
+  }
   if (typeof Notification === "undefined") return;
   if (frame.kind !== "approval" && document.hasFocus() && visibleThreadId === frame.threadId) return;
   if (Notification.permission !== "granted") return;
@@ -88,7 +98,10 @@ export function showNotification(
       // that muted notification sounds.
       ...(notificationSoundsEnabled() ? {} : { silent: true }),
     };
-    new Notification(frame.title, options).onclick = open;
+    const notification = new Notification(frame.title, options);
+    notification.onclick = open;
+    // This closer belongs only to the no-router display path.
+    return () => { try { notification.close(); } catch { /* already closed by the OS */ } };
   }
 }
 
