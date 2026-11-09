@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Engine sign-in on the desktop (handoffs/designs/ENGINE-SIGNIN-SIMPLE-1014.md). This is the renderer's side of
+// Engine sign-in on the desktop (design ENGINE-SIGNIN-SIMPLE-1014.md). This is the renderer's side of
 // window.muragebox.localEngineLogin. Main starts the engine's own login with no output reaching Murage; the engine opens
 // the browser. The window sends only an instance id and a session id, and hears only progress and the final word.
 // electron/engine-login-local.d.mts carries the same shape; a test pins the channel list.

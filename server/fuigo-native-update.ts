@@ -1,5 +1,10 @@
+import { DATA_DIR } from "./config.ts";
+import { comparable, dataRoots, ownedPath } from "./data-roots.ts";
+import { managedCliConstructors } from "./config-paths.ts";
+import { rebaseStoredPath } from "./stored-paths.ts";
+import { writeFileAtomic } from "./atomic.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { createFuigoIsolation, type FuigoIsolation } from "./fuigo-probe-isolation.ts";
@@ -40,7 +45,7 @@ export function supportedFuigoVersion(version: string): boolean {
  * can change the ACP contract Murage speaks (Fuigo 1.0.35 asks for every command
  * in a folder trusted under folderTrust v1). An owner already on a newer
  * release is left on it: receipts, rollback and status still accept it. */
-export const QUALIFIED_FUIGO_VERSION = "1.0.39";
+export const QUALIFIED_FUIGO_VERSION = "1.0.40";
 function parts(version: string): number[] { return version.split(".").map(Number); }
 /** True when `a` is a later release than `b` (both x.y.z). */
 export function fuigoVersionNewer(a: string, b: string): boolean {
@@ -135,6 +140,8 @@ function probeEnvironment(home: string): NodeJS.ProcessEnv {
 export const probeNativeFuigo: FuigoProbe = async (cli, expectedVersion, scratch) => {
   if (!(FUIGO_TARGETS as readonly string[]).includes(`${process.platform}-${process.arch}`)) throw Object.assign(new Error("Native Fuigo update isolation is not qualified on this platform. Keep the selected engine."), { code: "FUIGO_PROBE_UNQUALIFIED" });
   const home = await mkdtemp(join(scratch, "probe-"));
+  const cwd = join(home, "work");
+  await mkdir(cwd, { mode: 0o700 });
   let cleanupSafe = true, isolation: FuigoIsolation | undefined;
   let proof: FuigoProof | undefined;
   try {
@@ -150,14 +157,14 @@ export const probeNativeFuigo: FuigoProbe = async (cli, expectedVersion, scratch
     const { command, prefix } = isolation;
     let result;
     // Through the shared launcher (Rule 74c): the candidate engine runs with no controlling terminal.
-    try { result = await execCliAsync(command, [...prefix, "--version"], { cwd: home, env, timeout: 15000, windowsHide: true, maxBuffer: 65536 }); }
+    try { result = await execCliAsync(command, [...prefix, "--version"], { cwd, env, timeout: 15000, windowsHide: true, maxBuffer: 65536 }); }
     catch (error) {
       if ((error as { code?: unknown }).code === 72) throw Object.assign(new Error("Private Fuigo update isolation is unavailable. Keep the selected engine."), { code: "FUIGO_PROBE_UNQUALIFIED" });
       throw error;
     }
     const version = nativeFuigoVersion(result.stdout);
     if (!version || expectedVersion && version !== expectedVersion) throw new Error("Fuigo executable version did not match the verified release.");
-    const child = spawnCli(command, [...prefix, "--permission-mode", "default", "--no-memory", "agent", "--no-leader", "-m", "murage_native_probe", "stdio"], { cwd: home, env, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawnCli(command, [...prefix, "--permission-mode", "default", "--no-memory", "agent", "--no-leader", "-m", "murage_native_probe", "stdio"], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
     // Only the isolated synthetic probe can populate these bounded diagnostics.
     const diagnostic = { cause: "unknown", exitCode: null as number | null, signal: null as string | null, stderr: "", stdoutBytes: 0, stderrBytes: 0 };
     let stderrSample = "";
@@ -204,7 +211,7 @@ export const probeNativeFuigo: FuigoProbe = async (cli, expectedVersion, scratch
               if (message.result.protocolVersion !== 1 || message.result.agentCapabilities?.loadSession !== true || !Array.isArray(message.result.authMethods) || !message.result.authMethods.some((method: { id?: string }) => method?.id === "fuigo.api_key")) { fail("Fuigo does not advertise the required ACP 1 session-loading and isolated authentication capability. The release was not activated."); return; }
               send("authenticate", { methodId: "fuigo.api_key" });
             } else if (phase === "authenticate") {
-              send("session/new", { cwd: home, mcpServers: [] });
+              send("session/new", { cwd, mcpServers: [] });
             } else {
               if (typeof message.result.sessionId !== "string" || !message.result.sessionId) { fail(); return; }
               finished = true; resolveProof(); return;
@@ -238,6 +245,21 @@ export const probeNativeFuigo: FuigoProbe = async (cli, expectedVersion, scratch
   if (!proof) throw Object.assign(new Error("Fuigo compatibility could not be verified."), { code: "FUIGO_INCOMPATIBLE" });
   return proof;
 };
+/** The folder is its own realpath. Spelling may differ only by what comparable() folds (the win32 case, darwin NFC), and then every
+ * component must also be the same object as its real folder: not a link or junction, and the same dev/ino (a link 1.0.9-abc ->
+ * sibling 1.0.9-ABC on a case-sensitive Windows directory case-folds equal but is another folder). */
+async function sameFolder(folder: string): Promise<boolean> {
+  const real = await realpath(folder);
+  if (real === folder) return true;
+  if (comparable(real) !== comparable(folder)) return false;
+  for (let current = folder; ; current = dirname(current)) {
+    const own = await lstat(current, { bigint: true });
+    if (own.isSymbolicLink()) return false;
+    if (dirname(current) === current) return true;
+    const target = await stat(current === folder ? real : await realpath(current), { bigint: true });
+    if (own.dev !== target.dev || own.ino !== target.ino) return false;
+  }
+}
 export async function managedFuigoReceipt(root: string, id: string, cli?: string): Promise<FuigoReceipt | null> {
   if (!cli || !/^[A-Za-z0-9][\w.-]{0,79}$/.test(id)) return null;
   try {
@@ -245,11 +267,26 @@ export async function managedFuigoReceipt(root: string, id: string, cli?: string
     const parts = relative(parent, path).split(sep);
     if (parts.length !== 2 || !/^\d+\.\d+\.\d+-[0-9a-f-]+$/.test(parts[0]!) || !/^fuigo(?:\.exe)?$/.test(parts[1]!)) return null;
     const stat = await lstat(path);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_BINARY || await realpath(dirname(path)) !== dirname(path)) return null;
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_BINARY || !(await sameFolder(dirname(path)))) return null;
     const manifestPath = join(dirname(path), "manifest.json"), manifestStat = await lstat(manifestPath);
     if (!manifestStat.isFile() || manifestStat.isSymbolicLink() || manifestStat.size > 65536) return null;
     const value = JSON.parse(await readFile(manifestPath, "utf8")) as FuigoReceipt;
     if (value.schema !== 1 || value.instanceId !== id || !supportedFuigoVersion(value.version) || !/^[a-f0-9]{64}$/.test(value.binarySha256) || value.proof?.version !== value.version || value.proof.protocolVersion !== 1 || !value.proof.loadSession || !value.proof.sessionCreated) return null;
+    if (typeof value.previousManagedCli === "string") {
+      const previous = dataRoots().previousRoots();
+      const result = rebaseStoredPath(value.previousManagedCli, managedCliConstructors(value.previousManagedCli, id, previous), { previous });
+      // A refused rollback target is unavailable in memory; the receipt stays byte-identical.
+      if ("refused" in result) { const { previousManagedCli: _previous, ...rest } = value; return rest; }
+      if ("path" in result) {
+        // Only the application's managed store may be migrated, through DR4 and an atomic replacement.
+        if (resolve(root) !== join(DATA_DIR, "managed-engines")) return null;
+        const checked = ownedPath(dirname(manifestPath), { create: false });
+        const next = { ...value, previousManagedCli: result.path };
+        writeFileAtomic(join(checked.canonical, "manifest.json"), JSON.stringify(next, null, 2), { mode: 0o600 });
+        console.warn("data-dir-rebase kind=cli count=1");
+        return next;
+      }
+    }
     return value;
   } catch { return null; }
 }

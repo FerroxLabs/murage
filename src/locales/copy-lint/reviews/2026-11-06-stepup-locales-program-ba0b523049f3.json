@@ -1,0 +1,207 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "claude-opus-stepup-locales",
+  "date": "2026-11-06",
+  "base": "32aab4e1e6d0f2319e944146031c5a5f830944da",
+  "scope": "Engine check names the program",
+  "strings": {
+    "stepup/en:label.cliTest": {
+      "text": "Run this program to see if it starts",
+      "en": "Run this program to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/en:line.program": {
+      "text": "Program: {path}",
+      "en": "Program: {path}",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/en:line.programRefused": {
+      "text": "This can't be confirmed, so nothing was run. The program's location is missing, too long or has characters that can't be shown exactly.",
+      "en": "This can't be confirmed, so nothing was run. The program's location is missing, too long or has characters that can't be shown exactly.",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/en:dialog.close": {
+      "text": "Close",
+      "en": "Close",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/de:label.cliTest": {
+      "text": "Dieses Programm ausführen, um zu sehen, ob es startet",
+      "en": "Run this program to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/de:line.program": {
+      "text": "Programm: {path}",
+      "en": "Program: {path}",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/de:line.programRefused": {
+      "text": "Das lässt sich nicht bestätigen, deshalb wurde nichts ausgeführt. Der Speicherort des Programms fehlt, ist zu lang oder enthält Zeichen, die sich nicht genau anzeigen lassen.",
+      "en": "This can't be confirmed, so nothing was run. The program's location is missing, too long or has characters that can't be shown exactly.",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/de:dialog.close": {
+      "text": "Schließen",
+      "en": "Close",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/es:label.cliTest": {
+      "text": "Ejecutar este programa para ver si arranca",
+      "en": "Run this program to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/es:line.program": {
+      "text": "Programa: {path}",
+      "en": "Program: {path}",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/es:line.programRefused": {
+      "text": "No se puede confirmar, así que no se ejecutó nada. La ubicación del programa falta, es demasiado larga o tiene caracteres que no se pueden mostrar con exactitud.",
+      "en": "This can't be confirmed, so nothing was run. The program's location is missing, too long or has characters that can't be shown exactly.",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/es:dialog.close": {
+      "text": "Cerrar",
+      "en": "Close",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/fr:label.cliTest": {
+      "text": "Lancer ce programme pour voir s'il démarre",
+      "en": "Run this program to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/fr:line.program": {
+      "text": "Programme : {path}",
+      "en": "Program: {path}",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/fr:line.programRefused": {
+      "text": "Impossible de confirmer, donc rien n'a été lancé. L'emplacement du programme manque, est trop long ou contient des caractères impossibles à afficher exactement.",
+      "en": "This can't be confirmed, so nothing was run. The program's location is missing, too long or has characters that can't be shown exactly.",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/fr:dialog.close": {
+      "text": "Fermer",
+      "en": "Close",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/hi:label.cliTest": {
+      "text": "यह देखने के लिए यह प्रोग्राम चलाना कि वह शुरू होता है या नहीं",
+      "en": "Run this program to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/hi:line.program": {
+      "text": "प्रोग्राम: {path}",
+      "en": "Program: {path}",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/hi:line.programRefused": {
+      "text": "इसकी पुष्टि नहीं हो सकती, इसलिए कुछ नहीं चला। प्रोग्राम की लोकेशन नहीं है, बहुत लंबी है या उसमें ऐसे अक्षर हैं जो ठीक-ठीक नहीं दिख सकते।",
+      "en": "This can't be confirmed, so nothing was run. The program's location is missing, too long or has characters that can't be shown exactly.",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/hi:dialog.close": {
+      "text": "बंद करें",
+      "en": "Close",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/ja:label.cliTest": {
+      "text": "このプログラムを実行して、起動するか確認する",
+      "en": "Run this program to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/ja:line.program": {
+      "text": "プログラム: {path}",
+      "en": "Program: {path}",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/ja:line.programRefused": {
+      "text": "確認できないため、何も実行されませんでした。プログラムの場所がないか、長すぎるか、正確に表示できない文字が含まれています。",
+      "en": "This can't be confirmed, so nothing was run. The program's location is missing, too long or has characters that can't be shown exactly.",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/ja:dialog.close": {
+      "text": "閉じる",
+      "en": "Close",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/pt-br:label.cliTest": {
+      "text": "Executar este programa para ver se ele inicia",
+      "en": "Run this program to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/pt-br:line.program": {
+      "text": "Programa: {path}",
+      "en": "Program: {path}",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/pt-br:line.programRefused": {
+      "text": "Não dá para confirmar, então nada foi executado. O local do programa está faltando, é longo demais ou tem caracteres que não podem ser mostrados com exatidão.",
+      "en": "This can't be confirmed, so nothing was run. The program's location is missing, too long or has characters that can't be shown exactly.",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/pt-br:dialog.close": {
+      "text": "Fechar",
+      "en": "Close",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/zh:label.cliTest": {
+      "text": "运行此程序，看它能否启动",
+      "en": "Run this program to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/zh:line.program": {
+      "text": "程序：{path}",
+      "en": "Program: {path}",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/zh:line.programRefused": {
+      "text": "无法确认，因此没有运行任何内容。程序位置缺失、太长或包含无法准确显示的字符。",
+      "en": "This can't be confirmed, so nothing was run. The program's location is missing, too long or has characters that can't be shown exactly.",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    },
+    "stepup/zh:dialog.close": {
+      "text": "关闭",
+      "en": "Close",
+      "verdict": "pass",
+      "note": "Read in round 6."
+    }
+  },
+  "files": {}
+}

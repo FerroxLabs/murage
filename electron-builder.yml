@@ -47,6 +47,7 @@ files:
   - shared/update-candidate.mjs
   - shared/backup-capture-failure.mjs
   - shared/backup-progress.mjs
+  - shared/backup-space.mjs
   - shared/backup-budget.mjs
   - shared/backup-max-bytes.mjs
   - shared/setup-backup-record.mjs
@@ -62,6 +63,7 @@ files:
   - shared/guarded-http.mjs
   - shared/flux-desktop-signin-default.mjs
   - shared/windows-sddl.mjs
+  - shared/md-secret-label.mjs
   - installer/lib/systemd.mjs
   - installer/lib/private-files.mjs
   - installer/lib/service-account.mjs
@@ -111,6 +113,8 @@ extraResources:
     to: licenses/instrument-serif
   # xterm.js (MIT, @xterm/xterm, bundled in the renderer): the Cloud-home engine
   # sign-in terminal. Its licence text travels with the distribution.
+  - from: third_party/muse-code-sdk
+    to: licenses/muse-code-sdk
   - from: third_party/xterm
     to: licenses/xterm
   # WhatsApp channel: Baileys (MIT), its libsignal dependency (GPL-3.0, full
@@ -315,7 +319,7 @@ win:
       to: fuigo-probe/launcher.exe
     - from: dist-native/fuigo-probe/win32-x64/manifest.json
       to: fuigo-probe/manifest.json
-    - from: dist-native/engine-exclusion/win32-x64/engine-exclusion.node
+    - from: dist-native/engine-exclusion/win32-${arch}/engine-exclusion.node
       to: engine-exclusion.node
     - from: dist-native/cloudflared/win32-x64/cloudflared.exe
       to: cloudflared/cloudflared.exe

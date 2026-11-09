@@ -31,9 +31,12 @@ describe("Backups settings section", () => {
 
   it("General no longer renders backups, and the Backups pane is surface-gated", () => {
     expect(generalPane(modal)).not.toContain("BackupSettings");
-    // 1.0.3 attachment-cap: the Backups page also carries the Storage card; both sit behind the same desktop gate
-    expect(modal).toMatch(/desktop === true && section === "backups" && <div className="space-y-4"><BackupSettings \/><div id="storage-heading"><StorageSettings \/><\/div><\/div>/);
-    expect(modal.match(/<BackupSettings \/>/g)).toHaveLength(1);
+    // 1.0.3 attachment-cap: the Backups page also carries the Storage card; S5 DR7 puts the Data folder card first; all sit behind the same desktop gate
+    // 1.0.19: the Backups page lives in settings/pages/BackupsPage.tsx; the shell hides the page from a phone (desktopOnly).
+    const page = readFileSync(fileURLToPath(new URL("./settings/pages/BackupsPage.tsx", import.meta.url)), "utf8");
+    expect(page).toContain("<DataFolderSettings /><BackupSettings mode={mode} />");
+    expect(page).toContain("<StorageSettings />");
+    expect(modal).not.toContain("<BackupSettings");
   });
 
   it("deep link: opening settings on Backups selects the Backups pane", () => {

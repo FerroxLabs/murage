@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -104,3 +105,5 @@ describe("memory records resting on a marked row", () => {
     expect(fenceEmailDerivedRecords(d, out, "th2")[0]!.text).toBe(out[0]!.text);
   });
 });
+
+useOutsideStoreFixture();

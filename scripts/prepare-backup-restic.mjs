@@ -4,6 +4,7 @@ import {constants,chmodSync,copyFileSync,existsSync,lstatSync,mkdirSync,readFile
 import {join,resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import yauzl from "yauzl";
+import { fetchPinned } from "./download-retry.mjs";
 import {RESTIC_LICENSE_SHA256,RESTIC_PINS} from "../shared/backup-restic-pin.mjs";
 const repository=fileURLToPath(new URL("../",import.meta.url));
 const digest=bytes=>createHash("sha256").update(bytes).digest("hex");
@@ -29,7 +30,7 @@ function unzipMember(bytes,member){
 }
 export function resticStagedPath(root,pin){return pin.platform==="win32"?join(root,"dist-native",pin.stagingDirectory,pin.executable):join(root,"dist-native",pin.stagingDirectory,pin.arch,pin.executable);}
 /** Build-only download and decompression; never invokes restic or connects a repo. */
-export async function stageBackupRestic({root=repository,target,archive,fetchArchive=url=>fetch(url,{signal:AbortSignal.timeout(60000)})}={}){
+export async function stageBackupRestic({root=repository,target,archive,fetchArchive}={}){
  if(target!==undefined&&!Object.hasOwn(RESTIC_PINS,target))throw Error("RESTIC_STAGE_UNSUPPORTED_TARGET");
  const license=join(root,"third_party","restic","LICENSE");if(digest(read(license))!==RESTIC_LICENSE_SHA256)throw Error("RESTIC_STAGE_LICENSE_MISMATCH");
  // Every staging root exists, with its license, so each platform's package
@@ -45,7 +46,7 @@ export async function stageBackupRestic({root=repository,target,archive,fetchArc
  let compressed;
  if(archive)compressed=read(archive);
  else{
-  const response=await fetchArchive(pin.url);if(!response.ok||!response.body)throw Error("RESTIC_STAGE_DOWNLOAD_FAILED");
+  const response=await (fetchArchive??(url=>fetchPinned(url,{},{sha256:pin.archiveSha256})))(pin.url);if(!response.ok||!response.body)throw Error("RESTIC_STAGE_DOWNLOAD_FAILED");
   const chunks=[];let size=0;for await(const part of response.body){size+=part.length;if(size>32*1024**2)throw Error("RESTIC_STAGE_DOWNLOAD_LIMIT");chunks.push(Buffer.from(part));}compressed=Buffer.concat(chunks);
  }
  if(digest(compressed)!==pin.archiveSha256)throw Error("RESTIC_STAGE_ARCHIVE_MISMATCH");

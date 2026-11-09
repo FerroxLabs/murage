@@ -47,7 +47,8 @@ const judge = (bot: AutoApprover, call: Call, turn: AutoContext): LevelCell => {
   const stopLine = classifyStopLine(call.tool, call.input, call.summary, place);
   return autoVerdict(bot, call.tool, call.summary, { ...call.context, ...turn, stopLine }).approve ? "goes-ahead" : "asks";
 };
-const OWNER_TURN: AutoContext = { fullAccessOrigin: "owner", ownerStarted: true };
+// 1.0.20 (NOLIMITS-MEANS-IT slice 2): today's No limits, the 1.0.20 lane off (its rows: nolimits-means-it-1020.test.ts)
+const OWNER_TURN: AutoContext = { fullAccessOrigin: "owner", ownerStarted: true, noPreRunSeamAtNoLimits: true };
 const WEBHOOK_TURN: AutoContext = { fullAccessOrigin: "other", unattended: true, automated: true };
 const CHANNEL_TURN: AutoContext = { unattended: true, automated: true, channelOwner: true };
 const ROUTINE_TURN: AutoContext = { routineLevel: true, automated: true };

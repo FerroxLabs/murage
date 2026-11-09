@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 import { createServer } from "node:http";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
@@ -17,7 +19,7 @@ const threadPath = (threadId: string) => join(DATA_DIR, "native/grok-provider-co
 async function turn(instance: ProviderInstance, input: SendTurnInput) {
   const events = recordEvents(instance.adapter);
   try {
-    const sent = await instance.adapter.sendTurn(input);
+    const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), ...input });
     const completed = await events.until(e => e.type === "turn.completed" && e.turnId === sent.turnId);
     expect(await instance.adapter.awaitTurnTeardown?.(input.threadId, sent.turnId)).toMatchObject({ closeConfirmed: true });
     const started = events.events.find(e => e.type === "session.started");
@@ -120,8 +122,8 @@ it("rejects model pin failure and changed submission authority before any provid
     await f.dispose(); instance = await f.create();
     const fenced = await turn(instance, { threadId: f.threadId, text: "must not submit", model: f.route.model, providerRoute: f.route, beforeSubmit: () => { throw new Error("Selected connection revision changed"); } });
     expect(fenced.completed).toMatchObject({ ok: false }); expect(f.dump().calls.some((c: any) => c.method === "session/prompt")).toBe(false); expect(f.received).toHaveLength(0);
-    await expect(instance.adapter.sendTurn({ threadId: f.threadId, text: "invalid protocol", providerRoute: { ...f.route, protocol: "responses" } })).rejects.toThrow();
-    await expect(instance.adapter.sendTurn({ threadId: f.threadId, text: "missing replay", providerRoute: { ...f.route, revision: "changed" }, resumeCursor: "foreign-native-id" })).rejects.toThrow("Reload the conversation");
+    await expect(instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: f.threadId, text: "invalid protocol", providerRoute: { ...f.route, protocol: "responses" } })).rejects.toThrow();
+    await expect(instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: f.threadId, text: "missing replay", providerRoute: { ...f.route, revision: "changed" }, resumeCursor: "foreign-native-id" })).rejects.toThrow("Reload the conversation");
   } finally { await f.cleanup(); }
 });
 it("preserves permission denial and cancellation on routed Grok ACP turns", async () => {
@@ -131,7 +133,7 @@ it("preserves permission denial and cancellation on routed Grok ACP turns", asyn
       const instance = await f.create({ FAKE_ACP_MODE: mode }, join(import.meta.dirname, "../../testing/fake-acp-cli.ts"));
       const events = recordEvents(instance.adapter);
       try {
-        const sent = await instance.adapter.sendTurn({ threadId: f.threadId, text: "fixture only", model: f.route.model, providerRoute: f.route });
+        const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: f.threadId, text: "fixture only", model: f.route.model, providerRoute: f.route });
         if (mode === "permission") {
           const request = await events.until(e => e.type === "request.opened");
           if (request.type !== "request.opened" || !request.requestId) throw new Error("Missing permission identity");
@@ -142,3 +144,6 @@ it("preserves permission denial and cancellation on routed Grok ACP turns", asyn
     }
   } finally { await f.cleanup(); }
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

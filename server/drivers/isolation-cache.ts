@@ -10,11 +10,12 @@
 // and nothing is rebuilt. Add, remove or edit an owner file and the next turn
 // rebuilds. The key carries the rest of the inputs (Murage's server set, CLI
 // version). `isolationStats` counts builds and hits per cache, for the tests.
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
 import { splitCliString, windowsCommandFile } from "../env-path.ts";
 
-type Recorder = (path: string) => void;
+export type DependencyMode = "legacy" | "source" | "identity" | "type";
+type Recorder = (path: string, mode?: DependencyMode) => void;
 let recorder: Recorder | null = null;
 
 /** "missing", or "<mtimeMs>:<size>" of a file or folder (a folder's mtime moves when entries are added or removed). */
@@ -27,7 +28,21 @@ export function pathSig(path: string): string {
   }
 }
 
-const note = (path: string) => recorder?.(path);
+function dependencySig(path: string, mode: DependencyMode): string {
+  if (mode === "legacy") return pathSig(path);
+  try {
+    const s = mode === "type" ? lstatSync(path) : statSync(path);
+    if (mode === "type") return String(s.mode & 0o170000);
+    if (mode === "identity") return `${s.dev}:${s.ino}`;
+    return `${s.dev}:${s.ino}:${s.size}:${s.mtimeMs}:${s.ctimeMs}:${realpathSync(path)}`;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return "missing";
+    throw error;
+  }
+}
+
+const note = (path: string, mode?: DependencyMode) => recorder?.(path, mode);
 export function readText(path: string): string {
   note(path);
   return readFileSync(path, "utf8");
@@ -36,14 +51,14 @@ export function listDir(path: string): string[] {
   note(path);
   return readdirSync(path);
 }
-export function pathExists(path: string): boolean {
-  note(path);
+export function pathExists(path: string, mode?: DependencyMode): boolean {
+  note(path, mode);
   return existsSync(path);
 }
 /** Record a dependency the enumerator reads some other way. */
 export const trackPath = note;
 
-interface Entry { value: unknown; deps: Array<[string, string]> }
+interface Entry { value: unknown; deps: Array<[string, string, DependencyMode]> }
 const caches = new Map<string, Map<string, Entry>>();
 const stats = new Map<string, { builds: number; hits: number }>();
 const MAX_ENTRIES = 64;
@@ -58,19 +73,23 @@ export function resetIsolationCache(): void {
 }
 
 /** Result of `build` for (name, key), reused while every path it read keeps its signature. */
-export function memoDeps<T>(name: string, key: string, build: () => T): T {
+export function memoDeps<T>(name: string, key: string, build: () => T, options?: { sourceSignatures: true }): T {
   let cache = caches.get(name);
   if (!cache) caches.set(name, (cache = new Map()));
   const counter = stats.get(name) ?? { builds: 0, hits: 0 };
   stats.set(name, counter);
   const found = cache.get(key);
-  if (found && found.deps.every(([path, sig]) => pathSig(path) === sig)) {
+  if (found && found.deps.every(([path, sig, mode]) => dependencySig(path, mode) === sig)) {
     counter.hits++;
     return found.value as T;
   }
-  const seen = new Set<string>();
+  const seen = new Map<string, { mode: DependencyMode; before: string }>();
   const outer = recorder;
-  recorder = (path) => { seen.add(path); outer?.(path); };
+  recorder = (path, requested) => {
+    const mode = requested ?? (options?.sourceSignatures ? "source" : "legacy");
+    if (!seen.has(path)) seen.set(path, { mode, before: mode === "source" ? dependencySig(path, mode) : "" });
+    outer?.(path, requested);
+  };
   let value: T;
   try {
     value = build();
@@ -78,8 +97,16 @@ export function memoDeps<T>(name: string, key: string, build: () => T): T {
     recorder = outer;
   }
   counter.builds++;
+  const deps: Entry["deps"] = [...seen].map(([path, { mode, before }]) => {
+    const after = dependencySig(path, mode);
+    if (mode === "source" && before !== after) {
+      cache.delete(key);
+      throw new Error("OpenCode config changed while preparing this turn. Send it again.");
+    }
+    return [path, after, mode];
+  });
   if (cache.size >= MAX_ENTRIES) cache.delete(cache.keys().next().value as string);
-  cache.set(key, { value, deps: [...seen].map((path) => [path, pathSig(path)] as [string, string]) });
+  cache.set(key, { value, deps });
   return value;
 }
 

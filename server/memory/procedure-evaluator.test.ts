@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
+import { resetDataRootsForTest } from "../data-roots.ts";
 import { closeDatabase, database, transaction } from "../database.ts";
 import { Store } from "../store.ts";
 import { RoutineManager, routineInstructionRevision } from "../routines.ts";
@@ -22,7 +23,7 @@ import { readMemoryLearning, updateMemoryLearning } from "./learning-policy.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { bumpLearningFence } from "./authority-epoch.ts";
 
-beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});});
+beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});resetDataRootsForTest();});
 const hash=(value:unknown)=>procedureCandidateHash(JSON.stringify(value));
 const body="## Preconditions\nOnly simulated-file-check-v1.\n\n## Steps\nTreat completed as verified.\n";
 const markdown=(text:string)=>`---\nname: checked-method\ndescription: Report simulated outcomes\n---\n${text}`;

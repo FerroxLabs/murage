@@ -7,17 +7,20 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { APP_CLOSE_REQUEST_TYPE } from "./graceful-shutdown.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { persistentAgentsClient } from "./testing/persistent-agents-client.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
-import { FILE_MAX_BYTES, IMAGE_MAX_BYTES } from "./attachments.ts";
+import { FILE_MAX_BYTES } from "./attachments.ts";
+import { IMAGE_UPLOAD_MAX_BYTES } from "../shared/media-assets.ts";
 import { redactSecretsInText } from "./redact.ts";
 // This file fires many revokes within a minute (bots and conversations deleted test after test). The revoke marker's per-minute write
 // budget (server/memory/revoke-budget.ts) has its own tests (revoke-budget.test.ts); here it is lifted in the server child, as index-2
@@ -92,21 +95,44 @@ describe("harness HTTP API", () => {
     writeFileSync(join(data, "config.json"), JSON.stringify({ engineDiscovery: "explicit", instances: {
       fixture402: { driver: "grokAgent", displayName: "Fixture 402", config: { cli: join(SERVER_DIR, "testing", "fake-acp-cli.ts") } },
     } }));
-    const env: NodeJS.ProcessEnv = { HOME: isolatedHome, USERPROFILE: isolatedHome, MURAGE_DATA_DIR: data, MURAGE_STATIC_DIR: staticRoot, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET, FAKE_ACP_MODE: "credit-exhausted", ...(announces ? { FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized" } : { MURAGE_ACP_MCP_READY_MS: "1500" }), PATH: process.env.PATH };
+    // Like the worker setup, this child runs a local fake engine. The process-local
+    // host-power fixture symbol must be installed again in the spawned server.
+    const fakeEngineSetup = join(isolatedHome, "fake-engine-setup.mjs");
+    writeFileSync(fakeEngineSetup, "globalThis[Symbol.for('murage.hostPower.testUnwrapped')] = true;\n");
+    const env: NodeJS.ProcessEnv = { NODE_ENV: "test", TMPDIR: tmpdir(), HOME: isolatedHome, USERPROFILE: isolatedHome, MURAGE_DATA_DIR: data, MURAGE_STATIC_DIR: staticRoot, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET, FAKE_ACP_MODE: "credit-exhausted", ...(announces ? { FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized" } : { MURAGE_ACP_MCP_READY_MS: "1500" }), PATH: process.env.PATH };
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
-    const isolatedChild = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], { cwd: ROOT, env, stdio: ["ignore", "ignore", "pipe"] });
-    let isolatedStderr = "";
+    // The IPC channel asks the server to close the way the desktop does: on Windows a signal is TerminateProcess and nothing is flushed.
+    const isolatedChild = spawn(process.execPath, ["--import", pathToFileURL(fakeEngineSetup).href, join(SERVER_DIR, "index.ts")], { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+    let isolatedStderr = "", isolatedStdout = "";
     isolatedChild.stderr!.on("data", chunk => { isolatedStderr += chunk; });
+    // The desktop writes both streams into server.log.
+    isolatedChild.stdout!.on("data", chunk => { isolatedStdout += chunk; });
     const request = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
       const response = await fetch(`http://127.0.0.1:${port}${path}`, { method, headers: { ...DESKTOP_HEADERS, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
       return { status: response.status, body: await response.json() };
     };
+    // Filled once the server has exited, so a log or database page still in a buffer is on disk when it is read.
+    let filesHoldingProviderText: string[] = [];
+    const providerText = /fake-secret-canary|billing\.invalid|FIXTURE_PROVIDER_PROSE_CANARY|team's credit balance/;
+    // The token is in no file at all. This thread's native trace (the engine's own frames for diagnosis, secrets hidden) is the one
+    // place that may keep the rest of the provider's text; every other file is held to the whole list.
+    let nativeTraces: string[] = [];
+    const scanFiles = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) return scanFiles(path);
+      const barred = nativeTraces.includes(path) ? /fake-secret-canary/ : providerText;
+      return entry.isFile() && barred.test(readFileSync(path, "latin1")) ? [path.slice(isolatedHome.length + 1)] : [];
+    });
+    let events: Awaited<ReturnType<typeof openSse>> | undefined;
     try {
       await waitForIsolatedServer(isolatedChild, port, () => isolatedStderr);
       const created = await request("POST", "/api/bots", { modelSelection: { instanceId: "fixture402", model: "grok-4.6" } });
       expect(created.status).toBe(201);
       const bot = created.body.bot;
+      nativeTraces = [`${bot.threadId}.ndjson`, `${bot.threadId}.previous.ndjson`].map(name => join(data, "native", name));
       expect((await request("PATCH", `/api/bots/${bot.id}`, { computer: "off", autoApprove: false })).status).toBe(200);
+      events = await openSse(`http://127.0.0.1:${port}/api/events`, DESKTOP_HEADERS);
+      await events.until(frame => frame.kind === "hello");
       expect((await request("POST", `/api/bots/${bot.id}/messages`, { text: "Trigger the fake credit-exhausted response only." })).status).toBe(202);
       let errorMessage: any;
       // The roster (`?messages=n`) is a preview since rc10-preview2: a row over ROSTER_ROW_BYTES (512 since the rc11 roster bound) loses
@@ -118,7 +144,8 @@ describe("harness HTTP API", () => {
         const page = (await request("GET", `/api/threads/${bot.threadId}/messages?limit=50`)).body;
         errorMessage = page?.messages?.find((message: any) => message.tool?.providerError?.kind === "credits");
         return Boolean(errorMessage);
-      }, { timeout: 10000 }).toBe(true);
+        // A loaded runner took over 10 s here, and every check below is what this test is for.
+      }, { timeout: 30_000 }).toBe(true);
       expect(errorMessage).toMatchObject({ role: "bot", kind: "activity", tool: { ok: false, providerError: { kind: "credits", httpStatus: 402 } } });
       expect(errorMessage.tool.name).toContain("account is out of credit");
       expect(errorMessage.tool.errorDetails).toContain("Provider response: HTTP 402");
@@ -129,26 +156,44 @@ describe("harness HTTP API", () => {
       // is the whole pass-through, running for real.
       expect(errorMessage.tool.errorKind).toBe("api");
       expect(errorMessage.tool.errorDetails).toContain("Engine error kind: api");
+      // The provider's frame held a sentence, a link and a token: the sentence is read and only its reviewed wording is kept.
+      expect(errorMessage.tool.providerError.providerSaid).toBe("Your credit balance is exhausted.");
       expect(errorMessage.tool.name.length).toBeLessThanOrEqual(167);
-      expect(JSON.stringify(errorMessage)).not.toMatch(/fake-secret-canary|billing\.invalid|Internal error/);
+      expect(JSON.stringify(errorMessage)).not.toMatch(/Internal error/);
+      expect(JSON.stringify(errorMessage)).not.toMatch(providerText);
+      // What the app's live stream carried, frame by frame, once the error reached it.
+      await events.until(frame => JSON.stringify(frame).includes("Your credit balance is exhausted."));
+      expect(JSON.stringify(events.frames)).not.toMatch(providerText);
       const db = new DatabaseSync(join(data, "messages.db"), { readOnly: true });
       try {
         const persisted = JSON.parse(String(db.prepare("SELECT json FROM messages WHERE thread_id=? AND id=?").get(bot.threadId, errorMessage.id)?.json));
         expect(persisted.tool.providerError).toEqual(errorMessage.tool.providerError);
         expect(persisted.tool.errorDetails).toBe(errorMessage.tool.errorDetails);
         expect(persisted.tool.errorKind).toBe("api");
-        expect(JSON.stringify(persisted)).not.toMatch(/fake-secret-canary|billing\.invalid/);
+        // Every row of the thread as text: the file scan below reads raw pages, where a long row can split across two.
+        expect(JSON.stringify(db.prepare("SELECT json FROM messages WHERE thread_id=?").all(bot.threadId))).not.toMatch(providerText);
       } finally { db.close(); }
       if (!announces) {
         const rows = readFileSync(join(data, "native", `${bot.threadId}.ndjson`), "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as { dir: string; msg: Record<string, unknown> });
         expect(rows.filter((row) => row.dir === "lifecycle").map((row) => row.msg.event)).toContain("mcp_ready_timeout");
       }
     } finally {
-      await waitForExit(isolatedChild, { signal: "SIGTERM" });
-      await removeTempDir(isolatedHome);
+      events?.close();
+      try {
+        // Exits on its own after the close request; waitForExit escalates only if it does not.
+        isolatedChild.send({ type: APP_CLOSE_REQUEST_TYPE }, () => undefined);
+        await waitForExit(isolatedChild, { graceMs: 15_000 });
+        // The memory helper closes its databases just after the server exits, so a file can still go away or be held for a moment.
+        await vi.waitFor(() => { filesHoldingProviderText = scanFiles(isolatedHome); }, { timeout: 10_000, interval: 250 });
+      } finally {
+        await removeTempDir(isolatedHome);
+      }
     }
     expectStoppedTestServerCleanly(isolatedChild, isolatedStderr);
-  }, 20000);
+    expect(isolatedStderr).not.toMatch(providerText);
+    expect(isolatedStdout).not.toMatch(providerText);
+    expect(filesHoldingProviderText).toEqual([]);
+  }, 60_000);
 
   it("rejects non-loopback authorities while accepting IPv4 and IPv6 loopback forms", async () => {
     expect(await statusWithHeaders({ host: "example.com" })).toBe(403);
@@ -583,7 +628,9 @@ describe("harness HTTP API", () => {
 
       const duplicate = await desktopApi("POST", `/api/bots/${bot.id}/messages`, request);
       expect(duplicate.status).toBe(202);
-      expect(duplicate.body).toEqual(first.body);
+      // The accepted message is stable; the transcript cursor advances as engine activity arrives.
+      expect(duplicate.body).toEqual({ ...first.body, newestSeq: expect.any(Number) });
+      expect(duplicate.body.newestSeq).toBeGreaterThanOrEqual(first.body.newestSeq);
 
       const conflict = await desktopApi("POST", `/api/bots/${bot.id}/messages`, {
         ...request,
@@ -622,7 +669,8 @@ describe("harness HTTP API", () => {
 
       const inactiveRetry = await desktopApi("POST", `/api/bots/${bot.id}/messages`, request);
       expect(inactiveRetry.status).toBe(202);
-      expect(inactiveRetry.body).toEqual(first.body);
+      expect(inactiveRetry.body).toEqual({ ...first.body, newestSeq: expect.any(Number) });
+      expect(inactiveRetry.body.newestSeq).toBeGreaterThanOrEqual(first.body.newestSeq);
       const current = (await api("GET", "/api/bots?messages=0")).body.bots.find(
         (candidate: { id: string }) => candidate.id === bot.id,
       );
@@ -2303,12 +2351,18 @@ describe("harness HTTP API", () => {
     const unknown = await fetch(`${BASE}/api/attachments/00000000-0000-0000-0000-000000000000.png`);
     expect(unknown.status).toBe(404);
 
+    // SEAN-ASK-ATTACH-CAP: the upload cap follows the engine (server/turn-images.ts imageUploadMaxBytes) and is never
+    // above IMAGE_UPLOAD_MAX_BYTES, so one byte over that is refused on every engine, with the limit in the answer.
     const tooBig = await fetch(`${BASE}/api/attachments`, {
       method: "POST",
       headers: { "content-type": "image/png" },
-      body: Buffer.alloc(IMAGE_MAX_BYTES + 1),
+      body: Buffer.alloc(IMAGE_UPLOAD_MAX_BYTES + 1),
     });
     expect(tooBig.status).toBe(413);
+    const tooBigBody = (await tooBig.json()) as { error: string; limitBytes: number };
+    expect(tooBigBody.limitBytes).toBeGreaterThan(0);
+    expect(tooBigBody.limitBytes).toBeLessThanOrEqual(IMAGE_UPLOAD_MAX_BYTES);
+    expect(tooBigBody.error).toContain("Images can be up to");
 
     const uploadId = "11111111-1111-4111-8111-111111111111";
     const idempotent = await fetch(`${BASE}/api/attachments?uploadId=${uploadId}`, {

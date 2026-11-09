@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "./testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -71,7 +73,7 @@ const driver = async () => {
   instance = await BoxAgentDriver.create({ instanceId: "box-r2", displayName: "Box", environment: { BOX_TOKEN: TOKEN }, enabled: true, config: { pollMs: 0 } });
   recorder = recordEvents(instance.adapter);
 };
-const send = (threadId: string) => instance!.adapter.sendTurn({ threadId, text: "go", integrations: { computer: { boxId: BOX } } } as never);
+const send = (threadId: string) => instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go", integrations: { computer: { boxId: BOX } } } as never);
 
 beforeEach(() => {
   ensureDirs();
@@ -290,3 +292,6 @@ describe("7.4 Astra round 1", () => {
     expect(cloudComputerUnknown()).toBeDefined();
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

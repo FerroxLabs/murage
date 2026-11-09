@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // MEMJSON1: engines receive remembered words as background, never Murage's
 // machine-readable provenance. Smoke round 1 saw a Flux Auto turn reply with
 // only {"sourceId":…,"startByte":…,"endByte":…} copied from the old JSON
@@ -292,3 +293,5 @@ it("keeps every message the room context already carries out of a member's recal
   expect(whole.degradedReason).toBeUndefined();
   expect(() => assertMemoryBundle(whole,access)).not.toThrow();
 });
+
+useOutsideStoreFixture();

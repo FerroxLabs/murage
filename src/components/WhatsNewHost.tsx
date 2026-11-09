@@ -1,17 +1,17 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { LazyOverlay } from "@/components/LazyOverlay";
 //
 // Where each What's new shortcut goes. Mounted by Sidebar.tsx, which owns the
 // You menu entry that reopens the page (Settings > About & updates asks it to,
 // through lib/app-events.ts). The dialog itself, art included,
 // loads the first time the page opens, so it stays out of the first paint.
-import { Suspense } from "react";
 import { useStore, type Action } from "@/state/store";
 import { whatsNewTarget } from "@/lib/whats-new";
 import { MURAGE_FOR_CHROME_STORE_URL } from "@/lib/chrome-web-store";
 import { openExternalPage } from "@/lib/open-external";
 import { raiseTransientError } from "@/state/chat-error";
-import { LazyBoundary, retryableLazy } from "./LazyBoundary";
+import { retryableLazy } from "./LazyBoundary";
 import type { WhatsNewAction } from "./WhatsNewDialog";
 
 const Dialog = retryableLazy(() => import("./WhatsNewDialog").then((module) => ({ default: module.WhatsNewDialog })));
@@ -148,19 +148,17 @@ export function WhatsNewHost({
   const target = whatsNewTarget();
   if (target.kind !== "page" || !whatsNew.open) return null;
   return (
-    <LazyBoundary onRetry={Dialog.retry} onDismiss={whatsNew.close}>
-      <Suspense fallback={null}>
-        <Dialog.Component
+    <LazyOverlay name="whats-new" kind="dialog" covers="while-loading" onRetry={Dialog.retry} onDismiss={whatsNew.close}>
+        {loadedLayer => (<Dialog.Component layerLifecycle={loadedLayer}
           open
           version={target.version}
           releaseNotesUrl={target.releaseNotesUrl}
-          onClose={whatsNew.close}
+          onClose={loadedLayer.dismiss}
           onAction={(action) => {
             whatsNew.close();
             if (runWhatsNewAction(action, dispatch)) onNavigate();
           }}
-        />
-      </Suspense>
-    </LazyBoundary>
+        />)}
+    </LazyOverlay>
   );
 }

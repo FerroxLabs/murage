@@ -11,7 +11,9 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { DATA_DIR } from "../../config.ts";
 import { closeDatabase, database } from "../../database.ts";
+import { wireOutsideStore } from "../../email/external-marks.ts";
 import { InternalCapabilities } from "../../internal-capabilities.ts";
+import { fileOutsideStore } from "../../outside-store.ts";
 import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "../policy.ts";
 import { captureSource } from "../capture.ts";
 import { saveMemoryCandidate } from "../authority.ts";
@@ -30,8 +32,11 @@ export function fixtureRoster(threads: number): MemoryRoster {
 const empty = { async search() { return { hits: [], vectorRows: 0, coverageComplete: false }; } };
 
 /** Builds the fixture in DATA_DIR, closes it, and copies it to `target`. */
-export async function longThreadsV5(target: string, threads: number, replies: number): Promise<string> {
+export async function longThreadsV5(target: string, threads: number, replies: number, options: { outsideStore?: boolean } = {}): Promise<string> {
   const roster = fixtureRoster(threads);
+  // the app wires its outside store at boot, before any save can run (index.ts); a memory save on an install whose store is not
+  // open is refused by design (fail closed), so the fixture opens it the same way. outsideStore: false is the negative case.
+  if (options.outsideStore !== false) wireOutsideStore(fileOutsideStore(join(DATA_DIR, "outside-state.jsonl")));
   // an install made before 1.0.2 (no incremental vacuum): the file exists before the first open
   closeSync(openSync(join(DATA_DIR, "messages.db"), "a", 0o600));
   setMemoryMode("active"); reconcileMemoryRoster(roster);

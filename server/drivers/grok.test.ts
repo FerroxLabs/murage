@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Grok driver contract tests — the API-backed driver rides fetch, so the
 // fake is a stubbed globalThis.fetch that scripts HTTP failures and SSE
 // bodies. Covers the auto-retry policy: transient (429/5xx) retried with
@@ -71,7 +73,7 @@ describe("GrokDriver turns (fake fetch)", () => {
       return new Response(null, { status: 307, headers: { location: "https://api.fluxrouter.ai/v1/chat/completions" } });
     }) as typeof fetch;
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-redirect", text: "a private sentence" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-redirect", text: "a private sentence" });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ type: "turn.completed" });
     expect(JSON.stringify(recorder.events)).toMatch(/different address/);
@@ -82,7 +84,7 @@ describe("GrokDriver turns (fake fetch)", () => {
   it("normalizes a full turn into the canonical event sequence", async () => {
     script = [];
     await create();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-happy", text: "hi" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-happy", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
 
     expect(recorder.events.map((e) => e.type)).toEqual([
@@ -103,7 +105,7 @@ describe("GrokDriver turns (fake fetch)", () => {
     script = [];
     await create();
     const threadId = "t-default-model-log";
-    await instance.adapter.sendTurn({ threadId, text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "hi" });
     await recorder.until((event) => event.type === "turn.completed");
 
     const entries = readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8")
@@ -123,7 +125,7 @@ describe("GrokDriver turns (fake fetch)", () => {
   it("auto-retries transient 429/5xx responses, then completes once", async () => {
     script = [{ status: 429 }, { status: 503 }];
     await create();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-retry", text: "go" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-retry", text: "go" });
     await recorder.until((e) => e.type === "turn.completed" && e.ok === true);
 
     const retries = recorder.events.filter((e) => e.type === "turn.retrying");
@@ -139,7 +141,7 @@ describe("GrokDriver turns (fake fetch)", () => {
   it("stops at the attempt cap and settles as failed", async () => {
     script = [{ status: 500 }, { status: 500 }, { status: 500 }];
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-cap", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-cap", text: "go" });
     await recorder.until((e) => e.type === "turn.completed" && e.ok === false);
 
     const retries = recorder.events.filter((e) => e.type === "turn.retrying");
@@ -152,14 +154,14 @@ describe("GrokDriver turns (fake fetch)", () => {
   it("never retries a terminal auth or invalid-request failure", async () => {
     script = [{ status: 401 }];
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-auth", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-auth", text: "go" });
     await recorder.until((e) => e.threadId === "t-auth" && e.type === "turn.completed" && e.ok === false);
 
     expect(recorder.events.filter((e) => e.threadId === "t-auth" && e.type === "turn.retrying")).toHaveLength(0);
     expect(calls).toBe(1);
 
     script = [{ status: 400 }];
-    await instance.adapter.sendTurn({ threadId: "t-badreq", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-badreq", text: "go" });
     await recorder.until((e) => e.threadId === "t-badreq" && e.type === "turn.completed" && e.ok === false);
     expect(recorder.events.filter((e) => e.type === "turn.retrying" && e.threadId === "t-badreq")).toHaveLength(0);
   }, 20_000);
@@ -179,7 +181,7 @@ describe("GrokDriver turns (fake fetch)", () => {
       return new Response(failingStream, { status: 200, headers: { "content-type": "text/event-stream" } });
     }) as typeof fetch;
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-partial", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-partial", text: "go" });
     await recorder.until((e) => e.threadId === "t-partial" && e.type === "turn.completed" && e.ok === false);
 
     expect(recorder.events.some((e) => e.type === "content.delta" && e.streamKind === "assistant_text")).toBe(true);
@@ -191,7 +193,7 @@ describe("GrokDriver turns (fake fetch)", () => {
     // HTTP 200, one content frame, then clean EOF: no finish_reason, no [DONE]
     script = [{ sse: `data: ${JSON.stringify({ choices: [{ delta: { content: "cut off mid" } }] })}\n` }];
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-truncated", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-truncated", text: "go" });
     const done = await recorder.until((e) => e.threadId === "t-truncated" && e.type === "turn.completed");
 
     expect(done).toMatchObject({ ok: false, stopReason: "incomplete" });
@@ -210,7 +212,7 @@ describe("GrokDriver turns (fake fetch)", () => {
     script = [{ status: 503 }];
     process.env.FAKE_GROK_RETRY_SCALE = "60"; // long backoff — we cancel inside it
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-cancel-backoff", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-cancel-backoff", text: "go" });
     await recorder.until((e) => e.type === "turn.retrying");
 
     await instance.adapter.interruptTurn("t-cancel-backoff");
@@ -274,7 +276,7 @@ describe("GrokDriver address guard", () => {
       config: { url, apiKeyEnv: "XAI_API_KEY" },
     });
     recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: "t-guard", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-guard", text: "hi" });
     return recorder.until((e) => e.type === "turn.completed");
   };
 
@@ -335,7 +337,7 @@ describe("GrokDriver usage request", () => {
     });
     const recorder = recordEvents(instance.adapter);
     try {
-      for(let n=0;n<2;n++){const sent=await instance.adapter.sendTurn({ threadId: "t-usage", text: "hi" });
+      for(let n=0;n<2;n++){const sent=await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-usage", text: "hi" });
         await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);}
       expect(recorder.events.filter(e=>e.type==="turn.completed")).toMatchObject([{usage:{input:10,output:5}},{usage:{input:10,output:5}}]);
       await expect(instance.generateText?.("name this")).resolves.toBe("a title");
@@ -372,7 +374,7 @@ describe("GrokDriver key issuer guard", () => {
     const instance = await GrokDriver.create({ instanceId: "grok-issuer", displayName: "Grok", environment: { XAI_API_KEY: key }, enabled: true, config: { url: "https://api.x.ai/v1", apiKeyEnv: "XAI_API_KEY" } });
     expect(await instance.snapshot()).toMatchObject({ state: "unavailable", reason: expect.stringContaining("does not match xAI") });
     const recorder = recordEvents(instance.adapter);
-    const turn = instance.adapter.sendTurn({ threadId: "t-issuer", text: "hi" }).then(() => recorder.until((e) => e.type === "turn.completed"), (error: unknown) => error);
+    const turn = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-issuer", text: "hi" }).then(() => recorder.until((e) => e.type === "turn.completed"), (error: unknown) => error);
     expect(String(await turn)).toContain("does not match xAI");
     expect(auths).toEqual([]);
     recorder.stop();
@@ -403,3 +405,6 @@ describe("GrokDriver key issuer guard follows the configured endpoint", () => {
     await instance.dispose();
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

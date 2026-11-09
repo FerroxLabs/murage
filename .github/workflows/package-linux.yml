@@ -37,6 +37,38 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.ref }}
           persist-credentials: false
+      - name: Restore the pinned tool download cache
+        # Primary source for age, restic, cloudflared and the other pinned helpers: served by the
+        # Actions cache, not github.com release hosting. Files are named by their pinned sha256 and
+        # re-verified on every use (scripts/download-retry.mjs), so a stale or bad entry is discarded.
+        id: tools-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/package-tool-cache
+          key: package-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/prepare-cloudflared.mjs', 'shared/backup-age-pins.mjs', 'shared/backup-restic-pin.mjs', 'shared/windows-backup-tools.mjs', 'scripts/prepare-cua.mjs', 'scripts/build-murage-cage.mjs') }}-restore
+          restore-keys: |
+            package-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/prepare-cloudflared.mjs', 'shared/backup-age-pins.mjs', 'shared/backup-restic-pin.mjs', 'shared/windows-backup-tools.mjs', 'scripts/prepare-cua.mjs', 'scripts/build-murage-cage.mjs') }}-
+            package-tools-${{ runner.os }}-${{ runner.arch }}-
+      - name: Point the packagers at the tool download cache
+        shell: bash
+        run: |
+          echo "MURAGE_PACKAGE_DOWNLOAD_CACHE=${{ runner.temp }}/package-tool-cache" >> "$GITHUB_ENV"
+          # Authenticated github.com downloads are not in the anonymous (throttled/timing-out) pool.
+          echo "MURAGE_PACKAGE_GITHUB_TOKEN=${{ github.token }}" >> "$GITHUB_ENV"
+      - name: Restore the Electron and electron-builder toolchain cache
+        # electron zips, NSIS and winCodeSign come from github.com; serve them from the Actions cache.
+        id: electron-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: electron-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: electron-toolchain-${{ runner.os }}-${{ runner.arch }}-
       - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -185,6 +217,37 @@ jobs:
             release/SHA256SUMS-ubuntu-x64.txt
           if-no-files-found: error
           retention-days: 14
+      - name: Save the Electron and electron-builder toolchain cache
+        if: success() && steps.electron-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: electron-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - name: Fingerprint the tool download cache
+        id: tool-sig
+        if: always()
+        shell: bash
+        run: |
+          dir="${{ runner.temp }}/package-tool-cache"
+          sig=""
+          if [ -d "$dir" ] && [ -n "$(ls -A "$dir")" ]; then sig="$(ls "$dir" | sort | sha256sum | cut -c1-16)"; fi
+          echo "sig=$sig" >> "$GITHUB_OUTPUT"
+      - name: Save the pinned tool download cache
+        # Saves a new generation whenever the set of verified files changed (even if a later step failed), so a
+        # partial cache is topped up instead of being frozen under one key.
+        if: always() && steps.tool-sig.outputs.sig != ''
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/package-tool-cache
+          key: package-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/prepare-cloudflared.mjs', 'shared/backup-age-pins.mjs', 'shared/backup-restic-pin.mjs', 'shared/windows-backup-tools.mjs', 'scripts/prepare-cua.mjs', 'scripts/build-murage-cage.mjs') }}-${{ steps.tool-sig.outputs.sig }}
 
   verify-published:
     name: Verify published Linux update from accepted artifact

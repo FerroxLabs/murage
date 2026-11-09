@@ -130,11 +130,11 @@ export function DiscordSettings() {
     await api("/api/config", { method: "PATCH", body: JSON.stringify({ discord: identity }) }); dirty.current = false;
     await refresh(expected); if (mounted.current) setNotice("Application details saved. Pairing has not started.");
   });
-  return <section aria-labelledby="discord-settings-title" className="min-w-0 rounded-xl border border-hairline/40 bg-card p-4">
-    <h3 id="discord-settings-title" className="text-[15px] font-semibold text-ink">Discord</h3>
+  return <section aria-labelledby="discord-settings-name" className="min-w-0 rounded-xl border border-hairline/40 bg-card p-4">
+    <h3 id="discord-settings-name"className="text-[15px] font-semibold text-ink">Discord</h3>
     <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">Message your Chief from one approved Discord direct message. Keep Murage running to receive messages; messages missed while it is stopped may not be recovered. Long replies are previews with the full result in Murage. Approvals stay in Murage.</p>
     <p role="status" className="mt-3 text-[12px] font-medium text-ink">{discordHealth(status, expired)}</p>
-    <InAdvanced><div id="discord-app-setup-heading" className="rounded-xl bg-card p-4 text-[12px] text-ink-secondary">
+    <InAdvanced slot="discord-setup"><div className="rounded-xl bg-card p-4 text-[12px] text-ink-secondary">
       <h4 className="text-[13px] font-medium text-ink">Private Discord app setup</h4>
       <p>Use your own Discord application bot. Choose an installation you control and open a direct message with the bot. Murage reads only direct messages from the owner below; guild messages and Discord approval buttons are not supported.</p>
       <a data-setting-control="discord-app-setup-heading" className="mt-2 inline-flex min-h-11 items-center text-accent-text underline hover:text-ink" href="https://discord.com/developers/applications" target="_blank" rel="noreferrer">Open Discord app settings</a>
@@ -179,7 +179,7 @@ export function DiscordSettings() {
     {(status?.pending ?? 0) > 0 && <p role="status" className="mt-3 text-[12px] text-ink-secondary">Discord work is pending. Review the task in Murage.</p>}
     {(status?.uncertain ?? 0) > 0 && <p role="alert" className="mt-2 text-[12px] text-warning">A reply delivery is uncertain. Check Discord before sending the message again.</p>}
     {(status?.rejected ?? 0) > 0 && <p role="alert" className="mt-2 text-[12px] text-warning">A reply was rejected. Review app access and the task in Murage.</p>}
-    {(status?.needsReview ?? 0) > 0 && <p role="alert" className="mt-2 text-[12px] text-warning">A saved task receipt needs review in Murage. It will not be rerun automatically.</p>}
+    {(status?.needsReview ?? 0) > 0 && <p role="alert" className="mt-2 text-[12px] text-warning">A saved task record needs review in Murage. The task will not be run again automatically.</p>}
     {status?.error && <p role="alert" className="mt-3 text-[12px] text-warning">{discordHelp(status.error)}</p>}
     {refreshError && <p role="alert" className="mt-2 text-[12px] text-warning">Status refresh failed. The last confirmed state is still shown. Check the connection, then use Refresh status.</p>}
     {error && <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p>}

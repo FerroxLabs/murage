@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "sonnet-b5",
+  "date": "2026-11-09",
+  "base": "070edae98",
+  "scope": "setpages-b5-de-fix",
+  "strings": {
+    "de:settings.usage.learningStale": {
+      "text": "Zuletzt bekannte Werte von {time}. Möglicherweise sind sie nicht mehr aktuell.",
+      "en": "Showing last-known values from {time}. They may be out of date.",
+      "verdict": "pass",
+      "note": "Accurate, natural German that preserves the timestamp and staleness warning; appropriate for an informal du-style UI."
+    }
+  },
+  "files": {}
+}

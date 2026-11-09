@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import { MODAL_ON_TOP, OPEN_ON_TOP, drawerTakesEscape, escapeIsFree, takeDrawerEscape, takeFreeEscape } from "./escape-layer";
+import { MODAL_ON_TOP, OPEN_ON_TOP, drawerTakesEscape, escapeIsFree, overlayTakesEscape, takeDrawerEscape, takeFreeEscape } from "./escape-layer";
 import { trapFocus, type TrapContainer, type TrapDocument, type TrapKeyEvent } from "./focus-trap";
 import { healthEscapeListener } from "@/components/health/HealthExit";
 
@@ -19,9 +19,12 @@ function press(onTop: Layer, drawerOpen: boolean) {
   const capture: ((event: TrapKeyEvent) => void)[] = [];
   const doc: TrapDocument = {
     activeElement: null,
+    body: null,
+    documentElement: null,
     addEventListener: ((type: string, listener: (event: TrapKeyEvent) => void) => { if (type === "keydown") capture.push(listener); }) as unknown as TrapDocument["addEventListener"],
     removeEventListener: ((type: string, listener: (event: TrapKeyEvent) => void) => { if (type === "keydown") capture.splice(capture.indexOf(listener), 1); }) as unknown as TrapDocument["removeEventListener"],
     querySelector: (selector: string) => {
+      if (selector === 'dialog[open]' || selector === 'main' || selector === '#root') return null;
       const modal = onTop === "dialog" || onTop === "snooze";
       if (selector === MODAL_ON_TOP) return modal ? {} : null;
       if (selector === OPEN_ON_TOP) return modal || onTop === "menu" ? {} : null;
@@ -96,7 +99,7 @@ describe("escapeIsFree", () => {
   });
 
   it("holds the drawer back only for modal layers, never for a menu", () => {
-    for (const part of ["dialog[open]", '[role="dialog"][aria-modal="true"]', "[data-snooze-popover]"]) expect(MODAL_ON_TOP).toContain(part);
+    for (const part of ["dialog[open]", '[role="dialog"][aria-modal="true"]', "[data-snooze-popover]", "[data-lazy-overlay]"]) expect(MODAL_ON_TOP).toContain(part);
     for (const part of ['[role="menu"]', "[data-bot-menu]", "[data-room-menu]", "[data-section-picker]", "[data-create-menu]"]) expect(MODAL_ON_TOP).not.toContain(part);
   });
 });
@@ -125,6 +128,59 @@ describe("drawerTakesEscape", () => {
   });
 });
 
+describe("a real keydown dispatched through the listeners (HEALTH-EXIT-FOLLOWUPS)", () => {
+  /** A real Event on a real EventTarget, so preventDefault and defaultPrevented are the platform's, not a stub's. */
+  const keydown = (key: string, isComposing = false) => Object.assign(new Event("keydown", { cancelable: true }), { key, isComposing });
+  const nothingOnTop = { querySelector: (() => null) as Document["querySelector"] };
+
+  it("a layer that takes the key uses it up, and the page listener after it leaves it alone", () => {
+    const target = new EventTarget(), drawer = vi.fn(), page = vi.fn();
+    target.addEventListener("keydown", (event) => { takeDrawerEscape(event as ReturnType<typeof keydown>, nothingOnTop, drawer); });
+    target.addEventListener("keydown", (event) => { takeFreeEscape(event as ReturnType<typeof keydown>, nothingOnTop, page); });
+    const event = keydown("Escape");
+    expect(target.dispatchEvent(event)).toBe(false);
+    expect(event.defaultPrevented).toBe(true);
+    expect(drawer).toHaveBeenCalledOnce();
+    expect(page).not.toHaveBeenCalled();
+  });
+
+  it("a page alone takes a free Esc, and none takes the Esc that ends a composition or another key", () => {
+    const target = new EventTarget(), page = vi.fn();
+    const onKey = (event: Event) => { takeFreeEscape(event as ReturnType<typeof keydown>, nothingOnTop, page); };
+    target.addEventListener("keydown", onKey);
+    expect(target.dispatchEvent(keydown("Escape", true))).toBe(true);
+    expect(target.dispatchEvent(keydown("Enter"))).toBe(true);
+    expect(page).not.toHaveBeenCalled();
+    expect(target.dispatchEvent(keydown("Escape"))).toBe(false);
+    expect(page).toHaveBeenCalledOnce();
+    // once unbound, as Health does on unmount, a later Esc reaches it no more
+    target.removeEventListener("keydown", onKey);
+    target.dispatchEvent(keydown("Escape"));
+    expect(page).toHaveBeenCalledOnce();
+  });
+
+  it("Health's own listener, bound and unbound like useHealthEscape, leaves once and then never again", () => {
+    const target = new EventTarget(), leave = vi.fn();
+    const onKey = healthEscapeListener(leave, () => nothingOnTop) as unknown as EventListener;
+    target.addEventListener("keydown", onKey);
+    target.dispatchEvent(keydown("Escape"));
+    target.removeEventListener("keydown", onKey);
+    target.dispatchEvent(keydown("Escape"));
+    expect(leave).toHaveBeenCalledOnce();
+  });
+
+  it("a loading or failed panel overlay takes the Esc before the page under it", () => {
+    expect(overlayTakesEscape({ key: "Escape", defaultPrevented: false })).toBe(true);
+    expect(overlayTakesEscape({ key: "Escape", defaultPrevented: false, isComposing: true })).toBe(false);
+    expect(overlayTakesEscape({ key: "Escape", defaultPrevented: true })).toBe(false);
+    expect(overlayTakesEscape({ key: "Enter", defaultPrevented: false })).toBe(false);
+    // the overlay is in MODAL_ON_TOP, so a page and the drawer both wait for it
+    const overlayOnTop = { querySelector: ((selector: string) => (selector.includes("[data-lazy-overlay]") ? ({} as Element) : null)) as Document["querySelector"] };
+    expect(escapeIsFree({ key: "Escape", defaultPrevented: false }, overlayOnTop)).toBe(false);
+    expect(drawerTakesEscape({ key: "Escape", defaultPrevented: false }, overlayOnTop)).toBe(false);
+  });
+});
+
 describe("the layers that sit under others use the one rule", () => {
   const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
   it("binds the drawer, Health and All chats through escape-layer", () => {
@@ -143,13 +199,21 @@ describe("the layers that sit under others use the one rule", () => {
     // An Esc inside the menu closes it alone and the drawer stays (intake.human.spec.ts:55).
     const menu = sidebar.slice(sidebar.indexOf('<div id="sidebar-create-options"'), sidebar.indexOf("<SidebarNewChatPanel"));
     expect(menu).toContain("event.stopPropagation();");
-    expect(read("../components/SidebarNewChatPanel.tsx")).toContain('else if (event.key === "Escape") { event.stopPropagation(); onClose(); }');
+    // Neither the + menu's own Esc nor the New chat filter's acts on the Esc that ends an IME composition, and
+    // both ask the layer registry first (Astra r3 High 2): canHandleLayerEscape refuses a composing Esc.
+    expect(menu).toContain('if (event.key === "Escape" && canHandleLayerEscape(null, event.nativeEvent)) {');
+    expect(read("../components/SidebarNewChatPanel.tsx")).toContain('else if (event.key === "Escape" && canHandleLayerEscape(null, event.nativeEvent)) { event.stopPropagation(); onClose(); }');
+    expect(read("./focus-trap.ts")).toContain("if (event.key !== 'Escape' || event.defaultPrevented || imeComposing(event)) return false;");
   });
 
   it("closes New Channel and New Project from any control in the panel, and uses the key up", () => {
     const sidebar = read("../components/Sidebar.tsx");
     const panel = sidebar.slice(sidebar.indexOf("function NewRoomPanel("), sidebar.indexOf("/** Move-to-section popover"));
-    const root = panel.slice(panel.indexOf('<div role="dialog" aria-modal="true" aria-labelledby="new-channel-title"'));
-    expect(root.slice(0, root.indexOf("\n"))).toContain('onKeyDown={(e) => { if (e.key === "Escape" && !e.nativeEvent.isComposing) { e.preventDefault(); e.stopPropagation(); onClose(); } }}');
+    expect(panel).toContain('useFocusTrap(dialogRef, true, { name: project ? "new-project-form" : "new-channel-form"');
+    expect(panel).toContain('onEscape: onClose');
+    expect(panel).toContain('ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true"');
+    expect(panel).toContain('<LayerSurface handle={layer}>');
+    // Real control bubbling and higher-owner suppression are mounted in additional-modal-layers.dom.test.ts.
+
   });
 });

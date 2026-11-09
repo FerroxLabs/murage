@@ -7,12 +7,13 @@ import { describe, expect, it } from "vitest";
 
 import { BOT_SETTINGS_SECTIONS } from "@/components/bot-settings-sections";
 import { SETTINGS_CARDS } from "./settings-card-registry";
-import { APP_SETTINGS_ENTRIES, BOT_SETTINGS_CARDS, SETTINGS_INDEX, settingsIndexProblems } from "./settings-index";
+import { APP_SETTINGS_ENTRIES, BOT_SETTINGS_CARDS, MERGED_SETTINGS_ROWS, SETTINGS_INDEX, settingsIndexProblems } from "./settings-index";
 import { searchSettingsIndex, type SettingsFindContext } from "./settings-search";
 
 const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
 const PANEL = read("../components/SettingsPanel.tsx");
 const MODAL = read("../components/SettingsModal.tsx");
+const CALLS = read("../components/BotCallsSettings.tsx");
 const BOTS = [{ id: "b-nova", name: "Nova" }, { id: "b-rex", name: "Rex" }, { id: "b-ivy", name: "Ivy" }];
 const APP: SettingsFindContext = { desktop: true, cloud: false, bots: BOTS };
 const firstId = (query: string, context: SettingsFindContext = APP) => {
@@ -23,8 +24,8 @@ const firstId = (query: string, context: SettingsFindContext = APP) => {
 describe("the settings index", () => {
   it("passes its invariants", () => {
     expect(settingsIndexProblems()).toEqual([]);
-    expect(SETTINGS_INDEX.length).toBe(SETTINGS_CARDS.length + BOT_SETTINGS_CARDS.length);
-    expect(APP_SETTINGS_ENTRIES.map((entry) => entry.id)).toEqual(SETTINGS_CARDS.map((card) => card.id));
+    expect(SETTINGS_INDEX.length).toBe(SETTINGS_CARDS.length + MERGED_SETTINGS_ROWS.length + BOT_SETTINGS_CARDS.length);
+    expect(APP_SETTINGS_ENTRIES.map((entry) => entry.id)).toEqual([...SETTINGS_CARDS, ...MERGED_SETTINGS_ROWS].map((card) => card.id));
   });
 
   it("holds roughly 35 bot entries and at least one for every bot section", () => {
@@ -34,13 +35,14 @@ describe("the settings index", () => {
 
   it("renders every bot entry on its own row in the bot window", () => {
     for (const entry of BOT_SETTINGS_CARDS) {
-      expect(PANEL, entry.id).toContain(`id="${entry.anchor}" data-setting="${entry.id}"`);
+      const row = `id="${entry.anchor}" data-setting="${entry.id}"`;
+      expect(PANEL.includes(row) || CALLS.includes(row), entry.id).toBe(true);
     }
   });
 
   it("registers every data-setting row and every Settings anchor", () => {
     const ids = new Set(SETTINGS_INDEX.map((entry) => entry.id));
-    for (const source of [PANEL, MODAL]) {
+    for (const source of [PANEL, MODAL, CALLS]) {
       for (const [, id] of source.matchAll(/data-setting="([^"]+)"/g)) expect(ids.has(id), `${id} is rendered but not in the index`).toBe(true);
     }
     const anchors = new Set(SETTINGS_CARDS.map((card) => card.anchor));

@@ -34,6 +34,7 @@ import { ReleasedText, type EgressOrigin } from "./released-text.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { coordinationTraceSchema, MAX_HANDOFFS_PER_TURN, type CoordinationTrace } from "./coordination-budget.ts";
 import { messagedRow, type CommsBus } from "./comms-visibility.ts";
+import { readDoneWhen } from "./done-when.ts";
 import { DATA_DIR } from "./config.ts";
 import { newId } from "./contracts.ts";
 import type { ApprovalBus } from "./peer-approval.ts";
@@ -66,6 +67,9 @@ export interface DelegationItem {
   toBotId: string;
   message: string;
   reason?: string;
+  /** U4 S3: what "finished" means for this hand-off, one bounded line the asking bot wrote (server/done-when.ts). Shown under the
+   * hand-off row and carried in the teammate's brief. */
+  doneWhen?: string;
   /** The user already approved this exact peer message while it was still
    * an ask_bot request. If that peer became busy before dispatch, the
    * fallback handoff must not ask them to approve the same action twice. */
@@ -1016,6 +1020,8 @@ export function parsePendingItem(value: unknown): PendingDelegationItem | null {
     toBotId: item.toBotId,
     message: item.message,
     ...(typeof item.reason === "string" ? { reason: item.reason } : {}),
+    // U4 S3: a stored value is read through the same check as a new one (a restored, re-queued or hand-edited row included)
+    ...((): { doneWhen?: string } => { const read = readDoneWhen(item.doneWhen); return read.ok && read.value ? { doneWhen: read.value } : {}; })(),
     depth: Math.max(0, Math.trunc(item.depth!)),
     attempts: Number.isFinite(item.attempts) ? Math.max(0, Math.trunc(item.attempts!)) : 0,
     ...(typeof item.fromBotId === "string" && item.fromBotId ? { fromBotId: item.fromBotId } : {}),
@@ -1123,16 +1129,21 @@ export function pendingThreads(after = "", limit = DRAIN_PAGE): string[] {
 
 /** Read-only metadata for the local Team Map. Task prompts stay private;
  * the UI only needs to know who handed work to whom and the optional label.
- * Bounded: the first SNAPSHOT_LIMIT handoffs in queue order. */
+ * Bounded: the first SNAPSHOT_LIMIT handoffs in queue order.
+ * `phase: "busy"` keeps only handoffs whose teammate stayed busy through a retry (Today's "waiting hand-off" row). The
+ * filter is in the SQL, before the LIMIT, so busy rows behind SNAPSHOT_LIMIT fresh ones are still found. */
 export const SNAPSHOT_LIMIT = 500;
-export function pendingDelegationSnapshot(options: { activeOnly?: boolean } = {}): Array<{
+export function pendingDelegationSnapshot(options: { activeOnly?: boolean; phase?: "busy" } = {}): Array<{
   sourceThreadId: string;
   toBotId: string;
   reason?: string;
 }> {
   const db = database();
   const draining = [...drainingThreads];
-  const where = options.activeOnly ? `WHERE phase='fresh'${draining.length ? ` OR source_thread_id IN (${draining.map(() => "?").join(",")})` : ""}` : "";
+  const clauses: string[] = [];
+  if (options.activeOnly) clauses.push(`(phase='fresh'${draining.length ? ` OR source_thread_id IN (${draining.map(() => "?").join(",")})` : ""})`);
+  if (options.phase === "busy") clauses.push("phase='busy'");
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   const rows = db.prepare(`SELECT source_thread_id, to_bot_id, json_extract(item,'$.reason') AS reason FROM pending_delegations ${where} ORDER BY rowid LIMIT ${SNAPSHOT_LIMIT}`)
     .all(...(options.activeOnly ? draining : [])) as Array<{ source_thread_id: string; to_bot_id: string; reason: unknown }>;
   return rows.map((row) => ({
@@ -1170,7 +1181,10 @@ export function queueDelegation(
   const executionAudience = issueWorkAudience(from.id, item.toBotId, sourceThreadId, item.executionAudience ?? issueExecutionAudience(from.id, sourceThreadId, id), id, item.notOwnerAudience !== true);
   if (executionAudience && !validExecutionAudience(executionAudience)) throw new Error("Invalid execution audience");
   const senderTurnId = bus.turnOf?.(sourceThreadId) ?? null;
-  const queued: PendingDelegationItem = { ...item, ...(executionAudience ? { executionAudience } : {}), id, attempts: 0, fromBotId: from.id };
+  // U4 S3: checked again before the row is written, whoever called: only a value that passes is ever stored, shown or briefed
+  const doneWhen = (() => { const read = readDoneWhen(item.doneWhen); return read.ok ? read.value : undefined; })();
+  const { doneWhen: _unchecked, ...rest } = item;
+  const queued: PendingDelegationItem = { ...rest, ...(doneWhen ? { doneWhen } : {}), ...(executionAudience ? { executionAudience } : {}), id, attempts: 0, fromBotId: from.id };
   queued.senderTurnId = senderTurnId;
   // The room request that tracks this handoff and the queue row are accepted together or not at all.
   let inserting = false;
@@ -1194,7 +1208,7 @@ export function queueDelegation(
   appendDelegationRow(bus, sourceThreadId, from.id, {
     role: "bot",
     kind: "activity",
-    tool: { name: label },
+    tool: { name: label, ...(doneWhen ? { doneWhen } : {}) },
     // A room is several bots in one thread: name who delegated.
     ...(bus.store.groupByThread(sourceThreadId) ? { from: { botId: from.id, name: from.name, color: from.color } } : {}),
   });

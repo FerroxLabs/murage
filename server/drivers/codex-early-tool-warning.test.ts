@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -31,7 +33,7 @@ describe("Codex turn-start failure after early updates", () => {
     process.env.FAKE_CODEX_MODE = mode;
     instance = await CodexDriver.create({ instanceId: "codex-early", displayName: "Codex Test", environment: {}, enabled: true, config: { cli: FAKE_CLI, fullAuto: false } });
     recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: `t-${mode}`, text: "record one action" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-${mode}`, text: "record one action" });
     const done = await recorder.until((event) => event.type === "turn.completed");
     return { done, events: recorder.events };
   };
@@ -55,3 +57,6 @@ describe("Codex turn-start failure after early updates", () => {
     expect(events.some((event) => event.type === "turn.retrying")).toBe(false);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

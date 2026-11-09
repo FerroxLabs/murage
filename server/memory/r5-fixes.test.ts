@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -192,3 +193,5 @@ it("P2 capture: a turn longer than the walk cap falls back to the whole branch a
   expect(text.split("\n\n")).toHaveLength(length);
   expect(text.startsWith("piece0\n\npiece1")).toBe(true);
 });
+
+useOutsideStoreFixture();

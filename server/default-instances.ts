@@ -16,5 +16,8 @@ export const DEFAULT_INSTANCES: InstanceConfigMap = {
   qwen: { driver: "qwenAgent" },
   hermes: { driver: "hermesAgent" },
   cline: { driver: "clineAgent" },
+  muse: { driver: "museCode" },
   pi: { driver: "piAgent" },
+  // Last on purpose: the person's own Copilot CLI is offered after every other engine, never as a default.
+  githubCopilot: { driver: "copilotAgent" },
 };

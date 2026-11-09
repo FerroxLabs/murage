@@ -1,4 +1,7 @@
-import { useEffect, useState } from "react";
+import { useLayerOwner } from "./LayerSlot";
+import { canHandleLayerEscape, useFocusTrap } from "@/lib/focus-trap";
+import { LayerSurface } from "@/components/LayerSurface";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -249,7 +252,7 @@ function CopyButton({ value, label }: { value: string; label: string }) {
  * The primary button repeats the action rather than saying OK: a dialog whose
  * confirm button is "OK" makes the reader reconstruct what they are agreeing
  * to from the title they have already scrolled past. */
-function ConfirmRemoteAccess({
+export function ConfirmRemoteAccess({
   onCancel,
   onConfirm,
   busy,
@@ -258,9 +261,10 @@ function ConfirmRemoteAccess({
   onConfirm: () => void;
   busy: boolean;
 }) {
-  return (
-    <div className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div role="dialog" aria-modal="true" aria-label="Serve Murage on your tailnet" className={`${BOX_FRAME} max-h-[calc(var(--vvh,100dvh)-2rem)] w-full max-w-[440px] rounded-2xl bg-card shadow-xl`}>
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const layer = useFocusTrap(dialogRef, true, { name: "confirm-remote-access", kind: "dialog", onEscape: () => { if (!busy) onCancel(); } });
+  return <LayerSurface handle={layer}><div className="overlay-inset fixed inset-0 flex items-center justify-center bg-black/40 p-4">
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Serve Murage on your tailnet" className={`${BOX_FRAME} max-h-[calc(var(--vvh,100dvh)-2rem)] w-full max-w-[440px] rounded-2xl bg-card shadow-xl`}>
         <BoxHead className="px-5 pt-5"><h3 className="text-[16px] font-semibold text-ink">Serve Murage on your tailnet?</h3></BoxHead>
         <BoxBody className="px-5">
         <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">
@@ -296,8 +300,7 @@ function ConfirmRemoteAccess({
           </button>
         </BoxFoot>
       </div>
-    </div>
-  );
+    </div></LayerSurface>;
 }
 
 /** Asked inline under the device's row, before a revoke. Same shape as the
@@ -315,13 +318,17 @@ export function RevokeDeviceConfirm({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const layerOwner = useLayerOwner();
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (layerOwner?.handle?.active) cancelRef.current?.focus(); }, [layerOwner]);
   return (
     <div
       role="alertdialog"
       data-box-exempt="inline confirm under a device row"
       aria-label={t("phone.revoke.title", { name })}
       onKeyDown={(event) => {
-        if (event.key !== "Escape") return;
+        if (!canHandleLayerEscape(layerOwner?.handle, event.nativeEvent)) return;
+        event.preventDefault();
         event.stopPropagation();
         onCancel();
       }}
@@ -332,7 +339,7 @@ export function RevokeDeviceConfirm({
       <div className="mt-3 flex flex-wrap gap-2">
         <button
           type="button"
-          autoFocus
+          ref={cancelRef}
           disabled={busy}
           onClick={onCancel}
           className="rounded-lg border border-hairline/50 px-3 py-1.5 text-[12.5px] text-ink hover:bg-control disabled:opacity-40"

@@ -25,6 +25,12 @@ export function defaultModel(instance: Pick<EngineReading, "models">): string {
   return instance.models.default || instance.models.options?.[0]?.id || "";
 }
 
+/** Empty native selections use the current catalog at dispatch; saved choices are never rewritten. */
+export function nativeTurnModel(instance: Pick<EngineReading, "driverKind" | "models">, saved: string | null | undefined): string {
+  if (!saved && (instance.driverKind === "claudeAgent" || instance.driverKind === "codex")) return defaultModel(instance);
+  return saved ?? "";
+}
+
 /** 1.0.14 FIRST-ENGINE-REPICK (BR2): the usable Fuigo instances in a scan, and the usable others. Usable means available with a model to
  * give (defaultModel: the named default, else the first listed). Reads no sign-in field. Birth (BIRTH-FUIGO-1014) and the engine pass
  * share this one split. */
