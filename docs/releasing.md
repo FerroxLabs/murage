@@ -260,3 +260,15 @@ notarize with the local keychain profile (`xcrun notarytool submit …
 --keychain-profile AC_PASSWORD`), staple, re-zip, regenerate blockmaps and
 `node scripts/regenerate-mac-feed.mjs`, upload, publish, and always verify
 the published bytes against the published feed by downloading them back.
+
+## Check engine versions every publish
+
+Before each publish, check the shipped engine pins and the separately installed
+engine versions used to qualify model defaults. Desktop bundles Fuigo and installs
+Codex and Claude Code separately. Cloud home pins all three in
+`deploy/cloud-home/build-image.sh`; check its hashes, `LICENSES.md`, qualification
+script pins and `server/cloud-home/engine-cli-pins.test.ts` together. Do not infer a
+bundled Codex version from a catalog comment. Record CLI model-support evidence before advancing an offline
+default, preserve saved choices, and keep a live catalog authoritative. The
+[1.0.18 model-default qualification](verification/model-defaults.md) records the
+public-package evidence and verification limits for this change.

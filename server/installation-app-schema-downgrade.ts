@@ -1,3 +1,4 @@
+import { CHATS_PREVIEW_TABLES, CHATS_PREVIEW_INDEXES } from "./thread-summary.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
@@ -9,6 +10,10 @@ import { LEGACY_DELEGATIONS_FILE, syncDirectory } from "./pending-delegations-sc
 import { runBranchChangeSlice } from "./memory/branch-change.ts";
 import { SCHEMA_1_0_1, type Schema101Object } from "./schema-1.0.1.ts";
 
+/** The spoken-reply objects 1.0.18 makes at every open (database.ts initializeReplySchema). No earlier build knows them, and every earlier
+ *  build's database check refuses an object it does not know. Declared before APP_SCHEMA_102_ADDITIONS, which lists them too. */
+export const SPEECH_INDEXES_AFTER_117: readonly string[] = Object.freeze(["speech_generation_provider", "speech_session_connection", "speech_automatic_claim", "speech_attempt_rate", "speech_message_rate", "speech_thread_active", "speech_commands_pending"]);
+export const SPEECH_TABLES_AFTER_117: readonly string[] = Object.freeze(["speech_clock", "speech_threads", "speech_prompts", "speech_generations", "speech_settlements", "speech_sessions", "speech_accounts", "speech_plans", "speech_attempts", "speech_commands"]);
 /** Every non-memory object Murage 1.0.2 adds to messages.db beyond what 1.0.1 reads. Frozen by name: a retry after a crash must drop exactly the
  * same set, and a 1.0.2 object that is not listed here fails server/pm-sends-102-r22.test.ts (the check against the real 1.0.1 inspector). Memory objects
  * (`memory_*`) are not here: the memory downgrade (server/memory/schema.ts) owns them. Dropped in this order: triggers, indexes, tables. */
@@ -40,6 +45,7 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     "turn_source_hold_u",
   ],
   indexes: [
+    ...CHATS_PREVIEW_INDEXES,
     // turnctx: indexed reads of the working context on tables 1.0.1 already has
     "artifacts_bot_date",
     "image_operations_awaiting",
@@ -97,8 +103,15 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     "email_sends_inbox",
     "email_sends_replaces",
     "email_sends_settled",
+    // venue posts (server/venue-post-held.ts), 1.0.18
+    "venue_posts_open",
+    // cross-chat share cards (server/room-shares-schema.ts), 1.0.18
+    "room_shares_status",
+    // spoken replies (server/tts/reply-schema.ts), 1.0.18
+    ...SPEECH_INDEXES_AFTER_117,
   ],
   tables: [
+    ...CHATS_PREVIEW_TABLES,
     "app_write_revision",
     "attachment_name",
     "branch_change",
@@ -147,6 +160,12 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     "email_tombstones",
     "email_trust",
     "email_trusted",
+    // venue posts (server/venue-post-held.ts), 1.0.18
+    "venue_posts",
+    // cross-chat share cards (server/room-shares-schema.ts), 1.0.18
+    "room_shares",
+    // spoken replies (server/tts/reply-schema.ts), 1.0.18
+    ...SPEECH_TABLES_AFTER_117,
   ],
 });
 
@@ -157,6 +176,9 @@ export const DOWNGRADE_CARD_DELIVERY_OWED = "DOWNGRADE_CARD_DELIVERY_OWED";
 export const CARD_DELIVERY_OWED_LINE = "Some card results have not reached their room yet. Reopen this version of Murage to retry delivery, then try again.";
 /** Thrown (as the `code`) when hand-offs are held for the owner: going back would drop work the owner has not decided. */
 export const DOWNGRADE_HANDOFFS_HELD = "DOWNGRADE_HANDOFFS_HELD";
+/** Thrown (as the `code`, "DOWNGRADE_VOICE_FINISHING_<minutes left, 1 to 99>") while a spoken reply is still held or inside its rate window
+ *  (speechCooldownUntil). The recovery worker carries only a code, so the minutes ride in it (electron/prepare-voice-finishing.mjs reads them). */
+export const DOWNGRADE_VOICE_FINISHING = "DOWNGRADE_VOICE_FINISHING";
 export const INTERRUPTED_BY_REINSTALL = "interrupted by the reinstall";
 
 export interface AppSchemaDowngrade {
@@ -172,6 +194,110 @@ export interface AppSchemaDowngrade {
 const has = (db: DatabaseSync, type: string, name: string): boolean => Boolean(db.prepare("SELECT 1 AS x FROM sqlite_schema WHERE type=? AND name=?").get(type, name));
 const quoted = (name: string): string => `"${name.replace(/"/g, '""')}"`;
 const BUSY_FALLBACK_MS = 5 * 60_000;
+
+/** The card tables 1.0.18 makes at every open (database.ts): the held Post in… posts (venue-post-held.ts) and the cross-chat share
+ *  cards (room-shares-schema.ts). No earlier build knows them, and 1.0.2's database check refuses an object it does not know, so they
+ *  leave whatever the target, indexes first, in one transaction (a savepoint inside the caller's). Each row is a view of a card in a
+ *  transcript; the card message itself stays, and a later 1.0.18 start makes the empty tables again. Idempotent. */
+export const CARD_TABLES_AFTER_117 = Object.freeze({ indexes: ["venue_posts_open", "room_shares_status"], tables: ["venue_posts", "room_shares"] });
+/** A held Post in… post (state held, or posting: a boot moves a cut-short post back to held, venue-post-held.ts recoverVenuePosts) is the only
+ *  copy of the bot's full post while the owner has not answered it (the card in the transcript keeps a preview), so the downgrade refuses
+ *  while one is open, before any change (installation-memory-downgrade.ts runs this on its read-only probe first). A room share needs no
+ *  such check: every start of 1.0.18 discards the live drafts and settles an interrupted Share (room-shares.ts recoverRoomShares).
+ *  Every row goes, 'shared' ones too, and only metadata goes with it (query, nonce, stable_id, status; a shared row's excerpts are
+ *  already '[]'). The shared line is a message and stays, and its "Shared from…" label reads message.sharedFrom, not the row. The ask card
+ *  stays too; its state line (Shared, Declined, Closed) comes from the row, so a card with no row falls back to the "closed" line
+ *  (RoomShareCard.tsx, on a 404 only). */
+export function assertNoHeldVenuePosts(db: DatabaseSync): void {
+  if (!has(db, "table", "venue_posts")) return;
+  const open = Number((db.prepare("SELECT COUNT(*) AS n FROM venue_posts WHERE state IN ('held','posting')").get() as { n: number }).n);
+  if (open > 0) throw Object.assign(new Error(`You have ${open} post${open === 1 ? "" : "s"} from a bot still waiting for your answer. Post or decline ${open === 1 ? "it" : "them"}, then try again.`), { code: DOWNGRADE_WORK_PENDING });
+}
+export function downgradeCardTablesTo117(db: DatabaseSync): { dropped: number } {
+  let dropped = 0;
+  const outer = db.isTransaction;
+  db.exec(outer ? "SAVEPOINT card_tables_downgrade" : "BEGIN IMMEDIATE");
+  try {
+    assertNoHeldVenuePosts(db);
+    const indexes = CARD_TABLES_AFTER_117.indexes.filter(name => has(db, "index", name));
+    const tables = CARD_TABLES_AFTER_117.tables.filter(name => has(db, "table", name));
+    dropped = indexes.length + tables.length;
+    for (const name of indexes) db.exec(`DROP INDEX ${quoted(name)}`);
+    for (const name of tables) db.exec(`DROP TABLE ${quoted(name)}`);
+    db.exec(outer ? "RELEASE card_tables_downgrade" : "COMMIT");
+  } catch (error) {
+    try { if (outer) { db.exec("ROLLBACK TO card_tables_downgrade"); db.exec("RELEASE card_tables_downgrade"); } else db.exec("ROLLBACK"); } catch { /* already rolled back */ }
+    throw error;
+  }
+  return { dropped };
+}
+/** The moment before which a 1.0.18 start would not admit new speech: the latest account hold, the end of the rate window of the newest
+ *  attempt (reserved_at + 10 minutes covers both the per-minute and the per-message caps, reply-state.ts reserve), and, for an attempt
+ *  still reserved or streaming, ten minutes from now (the hold every start gives it, reply-state.ts boot). 0 when nothing holds.
+ *  `now` never runs behind the speech clock. */
+export function speechCooldownUntil(db: DatabaseSync, now: number): number {
+  let until = 0;
+  if (has(db, "table", "speech_clock")) now = Math.max(now, Number((db.prepare("SELECT value FROM speech_clock WHERE id=1").get() as { value?: number } | undefined)?.value ?? 0));
+  if (has(db, "table", "speech_accounts")) until = Math.max(until, Number((db.prepare("SELECT coalesce(max(hold_until),0) AS v FROM speech_accounts").get() as { v: number }).v));
+  if (has(db, "table", "speech_attempts")) {
+    until = Math.max(until, Number((db.prepare("SELECT coalesce(max(reserved_at),0) AS v FROM speech_attempts").get() as { v: number }).v) + 600_000);
+    if (db.prepare("SELECT 1 AS x FROM speech_attempts WHERE state IN ('reserved','streaming') LIMIT 1").get()) until = Math.max(until, now + 600_000);
+  }
+  return until > now ? until : 0;
+}
+/** Astra r5 / MurageMain ruling: an attempt left reserved or streaming by a crash would make speechCooldownUntil answer now + 10 minutes on
+ *  EVERY call, so a build that cannot start (the reason to downgrade) would be refused forever. Before the refusal, the downgrade therefore
+ *  durably does what a start does (reply-state.ts boot): the attempt becomes interrupted and its account holds ten minutes from now, in one
+ *  transaction of its own. The refusal then ends ten minutes later, and a second downgrade inside those ten minutes finds no attempt in
+ *  flight, changes nothing and does not move the hold. The `now` term in speechCooldownUntil stays, so a live reply is still never
+ *  dropped. Returns how many attempts it marked (0 when none, or when the speech tables are absent). */
+export function markInFlightSpeechInterrupted(db: DatabaseSync, now = Date.now()): number {
+  if (!has(db, "table", "speech_attempts") || !has(db, "table", "speech_accounts")) return 0;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const open = Number((db.prepare("SELECT COUNT(*) AS n FROM speech_attempts WHERE state IN ('reserved','streaming')").get() as { n: number }).n);
+    if (open === 0) { db.exec("COMMIT"); return 0; }
+    const clock = has(db, "table", "speech_clock") ? Number((db.prepare("SELECT value FROM speech_clock WHERE id=1").get() as { value?: number } | undefined)?.value ?? 0) : 0;
+    db.prepare("UPDATE speech_accounts SET hold_until=max(hold_until,?) WHERE account_scope_id IN (SELECT account_scope_id FROM speech_attempts WHERE state IN ('reserved','streaming'))").run(Math.max(now, clock) + 600_000);
+    db.exec("UPDATE speech_attempts SET state='interrupted',outcome='boot' WHERE state IN ('reserved','streaming')");
+    db.exec("COMMIT");
+    return open;
+  } catch (error) {
+    try { db.exec("ROLLBACK"); } catch { /* already rolled back */ }
+    throw error;
+  }
+}
+/** Refuses (DOWNGRADE_VOICE_FINISHING_<minutes>) while speechCooldownUntil is ahead: the speech tables are the only record of those holds
+ *  and rate windows, so the downgrade waits for them to pass rather than drop them. After that a downgrade and return loses nothing an
+ *  ordinary restart keeps. Reads only. The memory downgrade runs it on its read-only probe before any change, and the speech step again. */
+export function assertNoSpeechHeld(db: DatabaseSync, now = Date.now()): void {
+  const until = speechCooldownUntil(db, now);
+  if (until <= 0) return;
+  const minutes = Math.min(99, Math.max(1, Math.ceil((until - now) / 60_000)));
+  throw Object.assign(new Error(`Murage is finishing a voice reply. Try again in about ${minutes} min.`), { code: `${DOWNGRADE_VOICE_FINISHING}_${minutes}` });
+}
+/** The spoken-reply tables leave whatever the target, indexes first, in one transaction (a savepoint inside the caller's). They hold
+ *  metadata only, never source text, audio or a credential (reply-schema.ts), and no work: every 1.0.18 start interrupts any attempt and
+ *  closes any session (reply-state.ts boot), so nothing is owed. A later 1.0.18 start makes them again, empty. Idempotent. Refuses first while a hold or rate window is ahead
+ *  (assertNoSpeechHeld). */
+export function downgradeSpeechTablesTo117(db: DatabaseSync, now = Date.now()): { dropped: number } {
+  let dropped = 0;
+  const outer = db.isTransaction;
+  db.exec(outer ? "SAVEPOINT speech_tables_downgrade" : "BEGIN IMMEDIATE");
+  try {
+    assertNoSpeechHeld(db, now);
+    const indexes = SPEECH_INDEXES_AFTER_117.filter(name => has(db, "index", name));
+    const tables = SPEECH_TABLES_AFTER_117.filter(name => has(db, "table", name));
+    dropped = indexes.length + tables.length;
+    for (const name of indexes) db.exec(`DROP INDEX ${quoted(name)}`);
+    for (const name of tables) db.exec(`DROP TABLE ${quoted(name)}`);
+    db.exec(outer ? "RELEASE speech_tables_downgrade" : "COMMIT");
+  } catch (error) {
+    try { if (outer) { db.exec("ROLLBACK TO speech_tables_downgrade"); db.exec("RELEASE speech_tables_downgrade"); } else db.exec("ROLLBACK"); } catch { /* already rolled back */ }
+    throw error;
+  }
+  return { dropped };
+}
 const RECEIPTS_FILE = "delegation-receipts.json";
 const MAX_RECEIPTS = 100;
 
@@ -324,6 +450,37 @@ function heldHandoffs(db: DatabaseSync): number {
   return Number((db.prepare("SELECT COUNT(*) AS n FROM pending_delegations WHERE phase='started' AND started_at IS NULL").get() as { n: number }).n);
 }
 
+/** The owner-state refusals of 1.0.1's step, run read-only by the memory downgrade's PREFLIGHT on EVERY target before anything is written
+ * (design PIPPERF-DOWNGRADE13-rule.md): a send or restore hold still keeping the owner's words or a delivery, a finished card's result
+ * still owed to its project room, a hand-off held for the owner, a finished hand-off whose reply is not yet in its conversation. Reads only. */
+export function assertNoOwedWorkForDowngrade(db: DatabaseSync, dataDir: string): void {
+  const pending = pendingOwnerWork(db);
+  if (pending > 0) {
+    throw Object.assign(new Error(`You have ${pending} message${pending === 1 ? "" : "s"} still waiting to send or restore. Send or cancel ${pending === 1 ? "it" : "them"}, then try again.`), { code: DOWNGRADE_WORK_PENDING });
+  }
+  // a finished card's result still on its way to the project room: dropping the table would lose the delivery 1.0.1 has no way to resume
+  if (has(db, "table", "project_card_delivery_owed") && Number((db.prepare("SELECT COUNT(*) AS n FROM project_card_delivery_owed").get() as { n: number }).n) > 0) {
+    throw Object.assign(new Error(CARD_DELIVERY_OWED_LINE), { code: DOWNGRADE_CARD_DELIVERY_OWED });
+  }
+  // a hand-off held for the owner (Send again or Dismiss) has no form 1.0.1 can keep: it is never dropped, the owner decides it first
+  if (heldHandoffs(db) > 0) throw Object.assign(new Error(HELD_HANDOFFS_LINE), { code: DOWNGRADE_HANDOFFS_HELD });
+  // a finished hand-off whose reply is not yet in its conversation: 1.0.1 cannot deliver it, and its receipt is never replaced or cut while it owes the line
+  if (owedHandoffReplies(dataDir) > 0) throw Object.assign(new Error(OWED_REPLIES_LINE), { code: DOWNGRADE_WORK_PENDING });
+}
+
+/** A long branch switch cut short (a crash) leaves memory sources half moved between the two branches, and dropping its queue would lose the place that
+ * finishes it. Finish it first, a slice at a time (each slice its own short transaction); if a slice cannot run, nothing has been removed and the owner is
+ * told. The memory downgrade runs it before its first removal on the way to 1.0.1 (the only step that drops the queue). */
+export function finishBranchChangeForDowngrade(db: DatabaseSync, progress?: (slices: number) => void): void {
+  if (!has(db, "table", "branch_change")) return;
+  let slices = 0;
+  try {
+    while (runBranchChangeSlice(db)) progress?.(++slices);
+  } catch {
+    throw Object.assign(new Error(BRANCH_CHANGE_LINE), { code: DOWNGRADE_WORK_PENDING });
+  }
+}
+
 /** Brings the application tables of messages.db back to what Murage 1.0.1 accepts, for "Prepare to reinstall Murage 1.0.1" (before the memory step,
  * server/installation-memory-downgrade.ts). The database is the truth until the final commit:
  *  1. it refuses (DOWNGRADE_WORK_PENDING) while a send or a restore hold still keeps the owner's words or a delivery, or while a hand-off is held for the
@@ -337,28 +494,10 @@ function heldHandoffs(db: DatabaseSync): number {
  *     columns differ rebuilt from its executable original definition (schema-1.0.1.ts `ddl`); COMMIT.
  * A crash anywhere leaves the rows (or the finished result): a retry recomputes the same files and the same drops. */
 export function downgradeApplicationSchemaTo101(db: DatabaseSync, dataDir: string, hooks: { beforeCommit?: () => void; branchChangeProgress?: (slices: number) => void } = {}): AppSchemaDowngrade {
-  const pending = pendingOwnerWork(db);
-  if (pending > 0) {
-    throw Object.assign(new Error(`You have ${pending} message${pending === 1 ? "" : "s"} still waiting to send or restore. Send or cancel ${pending === 1 ? "it" : "them"}, then try again.`), { code: DOWNGRADE_WORK_PENDING });
-  }
-  // a finished card's result still on its way to the project room: dropping the table would lose the delivery 1.0.1 has no way to resume
-  if (has(db, "table", "project_card_delivery_owed") && Number((db.prepare("SELECT COUNT(*) AS n FROM project_card_delivery_owed").get() as { n: number }).n) > 0) {
-    throw Object.assign(new Error(CARD_DELIVERY_OWED_LINE), { code: DOWNGRADE_CARD_DELIVERY_OWED });
-  }
-  // a hand-off held for the owner (Send again or Dismiss) has no form 1.0.1 can keep: it is never dropped, the owner decides it first
-  if (heldHandoffs(db) > 0) throw Object.assign(new Error(HELD_HANDOFFS_LINE), { code: DOWNGRADE_HANDOFFS_HELD });
-  // a finished hand-off whose reply is not yet in its conversation: 1.0.1 cannot deliver it, and its receipt is never replaced or cut while it owes the line
-  if (owedHandoffReplies(dataDir) > 0) throw Object.assign(new Error(OWED_REPLIES_LINE), { code: DOWNGRADE_WORK_PENDING });
-  // A long branch switch cut short (a crash) leaves memory sources half moved between the two branches, and dropping its queue would lose the place that
-  // finishes it. Finish it first, a slice at a time (each slice its own short transaction); if a slice cannot run, nothing has been touched and the owner is told.
-  if (has(db, "table", "branch_change")) {
-    let slices = 0;
-    try {
-      while (runBranchChangeSlice(db)) hooks.branchChangeProgress?.(++slices);
-    } catch {
-      throw Object.assign(new Error(BRANCH_CHANGE_LINE), { code: DOWNGRADE_WORK_PENDING });
-    }
-  }
+  // (the memory downgrade already ran these in its preflight and its finish step; a direct caller gets them here, and the repeat is a no-op)
+  assertNoHeldVenuePosts(db);
+  assertNoOwedWorkForDowngrade(db, dataDir);
+  finishBranchChangeForDowngrade(db, hooks.branchChangeProgress);
   let exported = 0, interrupted = 0;
   const exportedIds: string[] = [];
   if (has(db, "table", "pending_delegations")) {

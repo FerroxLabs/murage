@@ -452,7 +452,7 @@ export function fluxHeaderRefusal(engine: DriverKind, decision: FluxMemoryDecisi
 export function isFluxUrl(url: string | URL | undefined | null): boolean {
   if (!url) return false;
   try {
-    const host = new URL(String(url)).hostname.toLowerCase();
+    const host = new URL(String(url)).hostname.toLowerCase().replace(/\.$/, "");
     return host === "api.fluxrouter.ai" || host.endsWith(".fluxrouter.ai");
   } catch { return false; }
 }

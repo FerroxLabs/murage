@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // L2A STAND-INS for the cards other lanes render into Today and the shell
-// (handoffs/HANDOFF-1013-UX-L2A.md, shell contract section 3). Each keeps the
+// (HANDOFF-1013-UX-L2A.md, shell contract section 3). Each keeps the
 // contract's name and props. The first-run card says what FIRSTRUN 1.2 says,
 // so Today is right during setup before L6A merges; the rest render nothing
 // until their lane lands (L2C This month, L6C agency, L7 phone tabs), which is
 // what those cards do anyway when they have nothing to show.
 import { t } from "@/lib/i18n";
-import type { ClientsCardProps, FirstRunTodayCardProps, MonthCardProps, OtherWorkspacesStripProps, PhoneTabsProps, TodayTag } from "../shell-contract";
+import type { FirstRunTodayCardProps, MonthCardProps, OtherWorkspacesStripProps, PhoneTabsProps, TodayTag } from "../shell-contract";
 
 export function FirstRunTodayCard({ remote, onContinueSetup }: FirstRunTodayCardProps) {
   return (
@@ -29,7 +29,5 @@ export function FirstRunTodayCard({ remote, onContinueSetup }: FirstRunTodayCard
 
 export function MonthCard(_props: MonthCardProps) { return null; }
 export function useMonthTag(): TodayTag | null { return null; }
-export function ClientsCard(_props: ClientsCardProps) { return null; }
-export function useClientsTag(): TodayTag | null { return null; }
 export function OtherWorkspacesStrip(_props: OtherWorkspacesStripProps) { return null; }
 export function PhoneTabs(_props: PhoneTabsProps) { return null; }

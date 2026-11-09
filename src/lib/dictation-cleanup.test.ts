@@ -115,8 +115,10 @@ describe("the composer", () => {
   const composer = read("../components/Composer.tsx");
 
   it("cleans up native dictation when it stops, and offers one-step undo", () => {
-    expect(composer).toContain("requestCleanup");
-    expect(composer).toContain("cleanupEnabled()");
+    // the session store runs the tidy-up (ComposerDictation.dom.test.ts drives it); the Composer offers the undo
+    const session = read("./dictation-session.ts");
+    expect(session).toContain("requestCleanup");
+    expect(session).toContain("cleanupEnabled()");
     expect(composer).toContain("Undo clean-up");
     expect(composer).toContain("undoCleanup(");
     expect(composer).toContain("undoOffered(");
@@ -199,9 +201,9 @@ describe("stopping dictation", () => {
     expect(h.done).toHaveBeenCalledTimes(1);
   });
 
-  it("is what the composer's stop and Escape use", () => {
-    const composer = read("../components/Composer.tsx");
-    expect(composer).toContain("finishThenStop(");
-    expect(composer).toContain("speechFinish");
+  // The composer's stop and Escape now go through the dictation session store (finish, then stop, with the same
+  // deadline); that is proven by running the real Composer in ComposerDictation.dom.test.ts.
+  it("shares its deadline with the dictation session store", () => {
+    expect(read("./dictation-session.ts")).toContain("FINISH_DEADLINE_MS");
   });
 });

@@ -74,7 +74,7 @@ Preserve a verified backup before migration or recovery. Do not open a migrated 
 
 The first start of 0.1.54 or later upgrades the memory tables inside `messages.db` (schema v1 to v2). Before it does, it writes a consistent copy of the untouched v1 file to `messages.pre-memory-v2.db` next to `messages.db` (mode 0600). If that copy cannot be written, the upgrade does not run and startup stops with `MEMORY_SCHEMA_SNAPSHOT_FAILED: <reason>`; free the space or fix the permission and start again. The copy is left out of installation backups and is never deleted automatically; remove it yourself once you are sure you will not go back.
 
-A 0.1.53 build refuses to start on an upgraded `messages.db`. To reinstall 0.1.53 and keep everything you did since the upgrade, run the downgrade step with Murage fully quit (it takes the same exclusive lease as the app and refuses while Murage is open):
+A 0.1.53 build refuses to start on an upgraded `messages.db`. To reinstall 0.1.53 and keep everything you did since the upgrade, first go through Murage 1.0.2 (see [Going back to 1.0.1 or older from a later version](#going-back-to-101-or-older-from-a-later-version)), then run the downgrade step from 1.0.2's install with Murage fully quit (it takes the same exclusive lease as the app and refuses while Murage is open):
 
 ```sh
 # macOS
@@ -84,7 +84,7 @@ ELECTRON_RUN_AS_NODE=1 /Applications/Murage.app/Contents/MacOS/Murage \
 # any platform with Node 22+: node <Resources>/server/installation-recovery.js memory-downgrade --data-dir <data dir>
 ```
 
-It prints `{"ok":true,"operation":"memory-downgrade","status":"downgraded","from":2,"to":1}` (or `"already-v1"`). Chats and memory rows stay; only the v2 learning details and the learning policy settings are dropped, and the next 0.1.54 start upgrades again. Restoring `messages.pre-memory-v2.db` over `messages.db` by hand is the alternative, but it loses everything after the upgrade; if you do that, delete `messages.db-wal`, `messages.db-shm` and `memory-index.db` first so nothing stale is replayed (the index is rebuilt).
+It prints `{"ok":true,"operation":"memory-downgrade","status":"downgraded","from":10,"to":1}` (or `"already-v1"`). This step keeps your chats and memory rows. It removes the learning history, the bot-learning rows, the extra details on memory rows and the learning policy settings; a later upgrade does not bring those back, apart from which bots have learning paused and what learning uses, and it works out new details for each memory row from the row's kind and state. A later upgrade rebuilds the indexes and other tables Murage derives from your chats and memory. The step also removes records Murage 1.0.1 does not know: handoffs a bot already passed to its engine are recorded as interrupted, and other waiting handoffs go back to `delegations.json`. Some bots may start a fresh session with their engine. The next 0.1.54 start upgrades the memory tables again. Make a backup before this step if you may want the removed information back. Restoring `messages.pre-memory-v2.db` over `messages.db` by hand is the alternative, but it loses everything after the upgrade; if you do that, delete `messages.db-wal`, `messages.db-shm` and `memory-index.db` first so nothing stale is replayed (the index is rebuilt).
 
 ### Upgrading to 0.1.62 (memory schema v2 to v4)
 
@@ -93,15 +93,15 @@ Going from 0.1.61 to 0.1.62 upgrades the memory tables in `messages.db` straight
 - **Disk space is checked first.** Murage needs the size of the copy plus about 10% (at least 64 MB) of working room. If the disk is short, nothing is written, `messages.db` stays at v2, and a start-up screen says how much to free; free it and open Murage again.
 - **A full disk part way through** removes the partial copy and leaves `messages.db` at v2 (the upgrade is a single transaction). The copy is written as `<name>.partial` and renamed only when whole, so a copy cut short by a quit or crash is never mistaken for a finished one.
 - **It can take a minute on a large history.** While it runs Murage shows "Upgrading your memory" with progress read from the growing copy, and the start-up wait is extended for as long as the upgrade reports it is running (capped at 30 minutes). Closing that screen quits Murage and stops the upgrade; nothing is changed and the next start begins it again. If the 30 minutes run out, Murage stops the upgrade the same way and says it could not finish.
-- **0.1.61 and earlier cannot open a v4 file.** They stop on `MEMORY_SCHEMA_UNSUPPORTED` and show the generic "Murage couldn't finish starting" recovery page. To go back, reinstall 0.1.62 or later, quit Murage, and run `memory-downgrade --data-dir <data dir> --to 2` (the command above), then install 0.1.61. Restoring `messages.pre-memory-v3.db` by hand also works but loses everything since the upgrade. Before you start 0.1.61, move `messages.pre-memory-v3.db` (and any `messages.pre-memory-v3.db.partial`) out of the data folder: 0.1.61 does not know those names, and its backups pause with `BACKUP_UNCLASSIFIED_COMPONENT` until they are gone. The same applies if 0.1.62 could not finish the upgrade and you go back to 0.1.61.
-- **A file from a newer Murage** (a memory format above 4) is refused with `MEMORY_SCHEMA_NEWER`: install the latest version, or run the newer version's `memory-downgrade --to 4` first.
+- **0.1.61 and earlier cannot open a v4 file.** They stop on `MEMORY_SCHEMA_UNSUPPORTED` and show the generic "Murage couldn't finish starting" recovery page. To go back, go through 1.0.2 (see [Going back to 1.0.1 or older from a later version](#going-back-to-101-or-older-from-a-later-version)), quit Murage, and run 1.0.2's `memory-downgrade --data-dir <data dir> --to 2` (the command above), then install 0.1.61. Restoring `messages.pre-memory-v3.db` by hand also works but loses everything since the upgrade. Before you start 0.1.61, move `messages.pre-memory-v3.db` (and any `messages.pre-memory-v3.db.partial`) out of the data folder: 0.1.61 does not know those names, and its backups pause with `BACKUP_UNCLASSIFIED_COMPONENT` until they are gone. The same applies if 0.1.62 could not finish the upgrade and you go back to 0.1.61.
+- **A file from a newer Murage** (a memory format above 4) is refused with `MEMORY_SCHEMA_NEWER`: install the latest version, or step back through 1.0.2 and run its `memory-downgrade --to 4` first.
 - Once you are happy with 0.1.62, you can delete `messages.pre-memory-v3.db` (and `messages.pre-memory-v2.db` / `messages.pre-memory-v4.db` if present) from the data folder. They are never deleted automatically and are left out of backups.
 
 Memory is verified for ordinary interactive use. Sustained high-throughput ingestion and continuous-search saturation tuning remain deferred; it is not a promise of unlimited recall capacity or perfect model answers.
 
-### Going back to 1.0.1 after the memory v8 upgrade
+### Going back to 1.0.1 from 1.0.2
 
-Murage 1.0.2 upgrades memory to schema v8, and Murage 1.0.1 (which reads up to v6) will not open a v7 or v8 `messages.db` (`MEMORY_SCHEMA_NEWER`). To go back, choose **Help > Prepare to reinstall Murage 1.0.1…** in the 1.0.2 app and press **Prepare and quit**. That is the one step: Murage closes, steps the memory database down to v6, and tells you when to install 1.0.1. Chats and memories stay; details only 1.0.2 uses are set aside, and the next start of 1.0.2 brings them up to date again. Handoffs your bots queued for a teammate that have not run yet are written back to `delegations.json`, the file 1.0.1 reads, so 1.0.1 runs them; if you come back to 1.0.2 first, or later, 1.0.2 brings them in once and none runs twice. A handoff that had already started is not handed on, because 1.0.1 could not tell and would start it again.
+Murage 1.0.2 upgrades memory to schema v10, and Murage 1.0.1 (which reads up to v6) will not open a `messages.db` above v6 (`MEMORY_SCHEMA_NEWER`). To go back, choose **Help > Prepare to reinstall Murage 1.0.1…** in the 1.0.2 app and press **Prepare and quit**. That is the one step: Murage closes, steps the memory database down to v6, and tells you when to install 1.0.1. Chats and memories stay; details only 1.0.2 uses are set aside, and the next start of 1.0.2 brings them up to date again. Handoffs your bots queued for a teammate that have not run yet are written back to `delegations.json`, the file 1.0.1 reads, so 1.0.1 runs them; if you come back to 1.0.2 first, or later, 1.0.2 brings them in once and none runs twice. A handoff that had already started is not handed on, because 1.0.1 could not tell and would start it again.
 
 If the menu item is not available, run the same step by hand with Murage fully quit, using the command above with `--to 6`:
 
@@ -110,6 +110,32 @@ ELECTRON_RUN_AS_NODE=1 /Applications/Murage.app/Contents/MacOS/Murage \
   /Applications/Murage.app/Contents/Resources/server/installation-recovery.js \
   memory-downgrade --data-dir ~/.murage --to 6
 ```
+
+### Going back to 1.0.17 from 1.0.18
+
+Murage 1.0.18 keeps memory at schema v13, the same as 1.0.17, and adds a few parts 1.0.17 does not know: an index on the source stamps, the chats preview tables, and the card and spoken-reply tables. 1.0.17 stops on `MEMORY_SCHEMA_UNSUPPORTED` while they are there. To go back, quit Murage fully, run this version's command with `--to 13`, then install 1.0.17:
+
+```sh
+ELECTRON_RUN_AS_NODE=1 /Applications/Murage.app/Contents/MacOS/Murage \
+  /Applications/Murage.app/Contents/Resources/server/installation-recovery.js \
+  memory-downgrade --data-dir ~/.murage --to 13
+```
+
+It prints `{"ok":true,"operation":"memory-downgrade","status":"downgraded","from":13,"to":13,"removed":[...]}` (or `"already-v13"`), where `removed` names each part it took away. It may also print `phoneCallsPreservedAt`, a private copy of your phone call history kept beside the data folder. Only the parts 1.0.18 added leave. Your chats, memories, source stamps, phone history, bot calls and everything else 1.0.17 has stay as they are, and the next start of 1.0.18 builds the removed parts again. If something is still under way, the command says so and removes nothing. Before it checks, it marks a spoken reply that a crash left half sent as interrupted, the one write it makes first. That covers a phone call in progress, a message still waiting to send or restore (from a phone too), a spoken reply or a card post still waiting, a card's result still on its way to its project, a hand-off waiting for you, or a hand-off reply not yet in its conversation. Let it finish, or send, dismiss or cancel it in 1.0.18, then run the command again. Every `--to` target makes these same checks before removing anything. Use `--to 13` for 1.0.17. The lower targets are for going back to 1.0.6 or older, and they also remove parts that 1.0.17 keeps.
+
+If the step stops before it finishes, run the same command again (`memory-downgrade --data-dir <data dir> --to 13`). Until it completes, opening 1.0.17 shows the "Murage couldn't finish starting" page, and the log names `MEMORY_SCHEMA_UNSUPPORTED`. If the stopped run had already made its private copy of your phone call history, that copy stays in its own folder beside the data folder (its name starts with `.murage-phone-calls-preserved-`) and the second run makes another.
+
+### Going back to 1.0.1 or older from a later version
+
+A step to 1.0.1's memory format or older belongs to 1.0.2's own command, so a later version's `memory-downgrade` takes `--to 7` to `--to 13` and always needs a target. Asked for anything older, or for no target, it changes nothing and names the route:
+
+1. **Create a backup in the version you are on, before the first step.** Murage 1.0.1's backup and restore tools can't read your data after these steps. Your backup from this version restores in this version.
+2. Quit Murage and run this version's `memory-downgrade --data-dir <data dir> --to 10`.
+3. Install 1.0.2.
+4. In 1.0.2, decide any hand-off that is waiting for you (Send again or Dismiss), then choose **Help > Prepare to reinstall Murage 1.0.1…**, or run its `memory-downgrade --to 6` with Murage fully quit.
+5. Install 1.0.1.
+
+Chats and memories stay through these steps; details only the later versions use are set aside.
 
 ### Fuigo memory ownership
 

@@ -19,6 +19,9 @@ const posixOnly = describe.skipIf(process.platform === "win32");
 // the suite hands every fixture server this launch secret (testing/setup.ts): it is the door's token and the companion's launch proof here
 const DOOR = "c".repeat(64);
 const DEVICE = "22222222-2222-4222-8222-222222222222";
+import { REPLY_LOGGED_TEXT } from "./runtime-event-out.ts";
+// 9b335afc0 (NOLIMITS 1.0.18 logger, one sink allowlist): an engine reply is logged as REPLY_LOGGED_TEXT and a native-trace text becomes a label, so an unmarked
+// thread shows that label (never the reply), and a marked one still shows the phone withheld text: the two stay distinguishable.
 let fixture: VerificationServer;
 let headers: Record<string, string> = {};
 let dir = "";
@@ -125,7 +128,7 @@ const withheldAfter = async (bot: { id: string; threadId: string }, words: strin
 };
 const shownAfter = async (bot: { id: string; threadId: string }, words: string) => {
   await plainTurn(bot, `ask for ${words}`, words);
-  await expect.poll(() => assistantTexts(bot.threadId).includes(words), { timeout: 30000 }).toBe(true);
+  await expect.poll(() => assistantTexts(bot.threadId).includes(REPLY_LOGGED_TEXT), { timeout: 30000 }).toBe(true);
 };
 const doneRows = (threadId: string) => pushRows(threadId).filter((r) => r.category === "done");
 const genericDone = async (threadId: string, generic: boolean) => {
@@ -235,7 +238,7 @@ PHONE_JOBS_ENGINES.fakeAsk = { mounts: true, where: 'test fixture' };
     await connect();
     await withheldAfter(bot, "ZEBRA-TWO-after-restart");
     await shownAfter(plain, "OTTER-plain-visible");
-    expect(assistantTexts(plain.threadId)).toContain("OTTER-plain-visible");
+    expect(assistantTexts(plain.threadId)).toContain(REPLY_LOGGED_TEXT);
   }, 300000);
 
   it("S18: after a model switch on the marked thread (history replayed as text) the reply text is still withheld", async () => {
@@ -308,7 +311,7 @@ PHONE_JOBS_ENGINES.fakeAsk = { mounts: true, where: 'test fixture' };
     expect(trace).toContain('"dir":"out"');
     for (const phoneText of ["PHONE-REPLY-ALPHA", "question after the switch", "FIRST-CALL-ARGS-CANARY"]) expect(trace, phoneText).not.toContain(phoneText);
     await plainTurn(other, "unmarked question stays visible");
-    expect(nativeTrace(other.threadId)).toContain("unmarked question stays visible");
+    expect(nativeTrace(other.threadId)).toContain('"dir":"out"'); // the unmarked thread keeps its frames (the text itself is a label, 9b335afc0)
     expect((await api("PATCH", "/api/config", { features: { phoneTools: true } })).status).toBe(200);
   }, 300000);
 });

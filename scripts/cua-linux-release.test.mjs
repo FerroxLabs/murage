@@ -240,6 +240,9 @@ describe("Linux CUA release staging", () => {
         arch: "x64",
         fetchImpl,
         downloadTimeoutMs: 10,
+        downloadAttempts: 2,
+        downloadRetryDelayMs: 1,
+        sleep: async () => {},
       }),
     ).rejects.toThrow("download timed out");
   });

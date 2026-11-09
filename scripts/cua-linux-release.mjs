@@ -1,3 +1,4 @@
+import { isRetryableStatus, mirrorUrlFor } from "./download-retry.mjs";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import {
@@ -405,6 +406,9 @@ async function readVerifiedArchive({
   fetchImpl,
   offline,
   downloadTimeoutMs,
+  downloadAttempts = 6,
+  downloadRetryDelayMs = 5_000,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 }) {
   for (const candidate of [archivePath, cachePath].filter(Boolean)) {
     try {
@@ -422,25 +426,43 @@ async function readVerifiedArchive({
   }
   if (offline) throw new Error("offline CUA staging requires an existing verified stage or archive cache");
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), downloadTimeoutMs);
-  timeout.unref?.();
   let bytes;
-  try {
-    const response = await fetchImpl(LINUX_CUA_RELEASE.url, {
-      headers: { "user-agent": "Murage-packager" },
-      signal: controller.signal,
-    });
-    if (!response?.ok) {
-      throw new Error(`CUA Driver download failed: HTTP ${response?.status ?? "unknown"}`);
+  let failure;
+  // Upstream first, then the Ferrox mirror of the same pinned file; size and sha256 are checked below either way.
+  for (const downloadUrl of [LINUX_CUA_RELEASE.url, mirrorUrlFor(LINUX_CUA_RELEASE.url)].filter(Boolean)) {
+  failure = undefined;
+  for (let attempt = 1; ; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), downloadTimeoutMs);
+    timeout.unref?.();
+    let transient;
+    try {
+      const response = await fetchImpl(downloadUrl, {
+        headers: { "user-agent": "Murage-packager" },
+        signal: controller.signal,
+      });
+      if (!response?.ok) {
+        const status = response?.status;
+        const error = new Error(`CUA Driver download failed: HTTP ${status ?? "unknown"}`);
+        try { await response?.body?.cancel?.(); } catch {}
+        if (isRetryableStatus(status)) transient = error;
+        else throw error;
+      } else {
+        bytes = await readBoundedResponseBody(response, LINUX_CUA_RELEASE.maxArchiveBytes);
+      }
+    } catch (error) {
+      if (error?.message?.startsWith("CUA Driver download failed") || error?.message?.includes("exceeds")) { failure = error; break; }
+      transient = controller.signal.aborted ? new Error("CUA Driver download timed out") : error;
+    } finally {
+      clearTimeout(timeout);
     }
-    bytes = await readBoundedResponseBody(response, LINUX_CUA_RELEASE.maxArchiveBytes);
-  } catch (error) {
-    if (controller.signal.aborted) throw new Error("CUA Driver download timed out");
-    throw error;
-  } finally {
-    clearTimeout(timeout);
+    if (!transient) break;
+    if (attempt >= downloadAttempts) { failure = transient; break; }
+    await sleep(Math.min(60_000, downloadRetryDelayMs * 2 ** (attempt - 1)));
   }
+  if (!failure) break;
+  }
+  if (failure) throw failure;
   if (bytes.length !== LINUX_CUA_RELEASE.archiveSize) {
     throw new Error("downloaded CUA archive size does not match the pinned release");
   }
@@ -468,6 +490,9 @@ export async function stageLinuxCua({
   archivePath,
   fetchImpl = globalThis.fetch,
   downloadTimeoutMs = 120_000,
+  downloadAttempts,
+  downloadRetryDelayMs,
+  sleep,
 } = {}) {
   if (platform !== "linux" || arch !== "x64") {
     throw new Error(`bundled CUA staging supports only linux/x64, received ${platform}/${arch}`);
@@ -505,6 +530,9 @@ export async function stageLinuxCua({
     fetchImpl,
     offline,
     downloadTimeoutMs,
+    downloadAttempts,
+    downloadRetryDelayMs,
+    sleep,
   });
   const files = parseLinuxCuaArchive(archive);
 

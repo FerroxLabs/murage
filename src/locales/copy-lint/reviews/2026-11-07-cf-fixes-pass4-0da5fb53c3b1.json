@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "cf-copy-final",
+  "date": "2026-11-07",
+  "base": "HEAD",
+  "scope": "strings and lint files without a valid review",
+  "strings": {
+    "en:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "This check stopped without changing anything, because the update may still be installing. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "en": "This check stopped without changing anything, because the update may still be installing. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "en:updateRecovery.cleanup-stopped": {
+      "text": "Your backup is kept. Murage needs another try to close some background work.",
+      "en": "Your backup is kept. Murage needs another try to close some background work.",
+      "verdict": "pass"
+    },
+    "de:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "Diese Prüfung hat angehalten, ohne etwas zu ändern, weil das Update möglicherweise noch installiert wird. Beende Murage und öffne es erneut. Wenn diese Seite wieder erscheint, öffne den Diagnoseordner und kontaktiere den Support. Dein Backup bleibt erhalten.",
+      "en": "This check stopped without changing anything, because the update may still be installing. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "de:updateRecovery.cleanup-stopped": {
+      "text": "Dein Backup bleibt erhalten. Murage braucht einen weiteren Versuch, um einige Hintergrundaufgaben zu schließen.",
+      "en": "Your backup is kept. Murage needs another try to close some background work.",
+      "verdict": "pass"
+    },
+    "es:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "Esta comprobación se detuvo sin cambiar nada, porque es posible que la actualización aún se esté instalando. Cierra Murage y vuelve a abrirlo. Si esta página vuelve a aparecer, abre la carpeta de diagnósticos y contacta con soporte. Tu copia de seguridad se conserva.",
+      "en": "This check stopped without changing anything, because the update may still be installing. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "es:updateRecovery.cleanup-stopped": {
+      "text": "Tu copia de seguridad se conserva. Murage necesita otro intento para cerrar algunas tareas en segundo plano.",
+      "en": "Your backup is kept. Murage needs another try to close some background work.",
+      "verdict": "pass"
+    },
+    "fr:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "Cette vérification s’est arrêtée sans rien modifier, car la mise à jour est peut-être encore en cours d’installation. Quitte Murage et rouvre-le. Si cette page revient, ouvre le dossier de diagnostics et contacte l’assistance. Ta sauvegarde est conservée.",
+      "en": "This check stopped without changing anything, because the update may still be installing. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "fr:updateRecovery.cleanup-stopped": {
+      "text": "Ta sauvegarde est conservée. Murage a besoin d’un nouvel essai pour fermer certaines tâches en arrière-plan.",
+      "en": "Your backup is kept. Murage needs another try to close some background work.",
+      "verdict": "pass"
+    },
+    "hi:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "यह जाँच बिना कुछ बदले रुक गई, क्योंकि हो सकता है कि अपडेट अभी भी इंस्टॉल हो रहा हो। Murage बंद करके दोबारा खोलें। अगर यह पेज फिर आए, तो डायग्नोस्टिक्स फ़ोल्डर खोलें और सहायता से संपर्क करें। आपका बैकअप रखा गया है।",
+      "en": "This check stopped without changing anything, because the update may still be installing. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "hi:updateRecovery.cleanup-stopped": {
+      "text": "आपका बैकअप रखा गया है। कुछ बैकग्राउंड काम बंद करने के लिए Murage को एक और कोशिश करनी होगी।",
+      "en": "Your backup is kept. Murage needs another try to close some background work.",
+      "verdict": "pass"
+    },
+    "ja:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "アップデートがまだインストール中の可能性があるため、この確認は何も変更せずに停止しました。Murage を終了してもう一度開いてください。このページが再び表示される場合は、診断フォルダを開いてサポートに連絡してください。バックアップは保持されます。",
+      "en": "This check stopped without changing anything, because the update may still be installing. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "ja:updateRecovery.cleanup-stopped": {
+      "text": "バックアップは保持されます。一部のバックグラウンド処理を終了するには、Murage がもう一度試す必要があります。",
+      "en": "Your backup is kept. Murage needs another try to close some background work.",
+      "verdict": "pass"
+    },
+    "pt-br:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "Esta verificação parou sem alterar nada, porque a atualização ainda pode estar sendo instalada. Encerre o Murage e abra novamente. Se esta página voltar, abra a pasta de diagnósticos e entre em contato com o suporte. Seu backup será mantido.",
+      "en": "This check stopped without changing anything, because the update may still be installing. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "pt-br:updateRecovery.cleanup-stopped": {
+      "text": "Seu backup será mantido. O Murage precisa de mais uma tentativa para encerrar algumas tarefas em segundo plano.",
+      "en": "Your backup is kept. Murage needs another try to close some background work.",
+      "verdict": "pass"
+    },
+    "zh:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "更新可能仍在安装，因此本次检查已停止，未做任何更改。请退出 Murage 并重新打开。如果再次出现此页面，请打开诊断文件夹并联系支持。你的备份会保留。",
+      "en": "This check stopped without changing anything, because the update may still be installing. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "zh:updateRecovery.cleanup-stopped": {
+      "text": "你的备份会保留。Murage 需要再试一次，才能关闭部分后台任务。",
+      "en": "Your backup is kept. Murage needs another try to close some background work.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

@@ -9,6 +9,8 @@
 // the level menu.
 import type { CardClass } from "../shared/fold-scopes.ts";
 import type { StopHit } from "./stop-line.ts";
+import { engineSeenInFull } from "./email/external-marks.ts";
+import { localEngineLabel } from "../shared/local-models.ts";
 
 export type CardLevel = "ask" | "auto" | "full" | "unlimited";
 
@@ -32,7 +34,8 @@ export type WhyKey =
   | "ux.l1.why.sensitiveGuard"
   | "ux.l1.why.unreadCall"
   | "ux.l1.why.destructiveGuard"
-  | "ux.l1.why.promptGuard";
+  | "ux.l1.why.promptGuard"
+  | "ux.l1.why.outsideContent";
 
 export interface CardWhy {
   key: WhyKey;
@@ -75,6 +78,7 @@ export function cardWhy(input: WhyInput): CardWhy | undefined {
     case "unread-call": return { key: "ux.l1.why.unreadCall", params: {} };
     case "destructive-guard": return { key: "ux.l1.why.destructiveGuard", params: {} };
     case "prompt-guard": return { key: "ux.l1.why.promptGuard", params: {} };
+    case "outside-turn": return { key: "ux.l1.why.outsideContent", params: {} };
     default: break;
   }
   if (cardClass.unattended || cardClass.reason === "unattended-block") {
@@ -97,4 +101,21 @@ export function cardWhy(input: WhyInput): CardWhy | undefined {
     return cardClass.routine && input.routineName ? { key: "ux.l1.why.askRoutine", params: { bot, routine: input.routineName } } : { key: "ux.l1.why.askOwner", params: { bot } };
   }
   return undefined;
+}
+
+/** The engine a No limits card names: its driver and the name the owner sees for it. */
+export interface OutsideEngine { driver: string; name: string }
+
+/** NOLIMITS v1 (1.0.18, MurageMain ruling): the card No limits raises on a turn whose first mark is the V7 blanket
+ *  `outside tool` of an engine Murage does not see in full carries that engine, so the page says why it still asks and
+ *  offers Switch to Fuigo. Nothing on any other card: another first source, a covered engine's `outside tool` (an
+ *  unseen item, an unknown tool) or another verdict. */
+export function outsideEngineCard(
+  verdictSource: string | undefined,
+  firstMark: string | null,
+  instance: { driverKind: string; displayName?: string | undefined } | null | undefined,
+): { outsideEngine?: OutsideEngine } {
+  if (verdictSource !== "outside-turn" || firstMark !== "outside tool" || !instance || engineSeenInFull(instance.driverKind)) return {};
+  const name = instance.displayName?.trim() || localEngineLabel(instance.driverKind);
+  return { outsideEngine: { driver: instance.driverKind, name } };
 }

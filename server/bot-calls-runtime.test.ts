@@ -10,6 +10,7 @@ import type { AddressInfo, Socket } from "node:net";
 import { WebSocket } from "ws";
 import { attachCloudUpgradeGate } from "./cloud-home/upgrade-gate.ts";
 import { setCloudIdentity, type CloudRequestIdentity } from "./cloud-request-identity.ts";
+import { CallSpeechCoordinator } from "./tts/call-coordinator.ts";
 import { callCaller } from "./bot-calls-caller.ts";
 import { DatabaseSync } from "node:sqlite";
 import { initializeMessageTables } from "./message-tables.ts";
@@ -18,7 +19,7 @@ import { PushOutbox, type OutboxWorld, type SendResult } from "./mobile-push-out
 import { LEGACY_SESSION_PRINCIPAL, migrateSessionPrincipals, botCallsEnabled, callsOffUntil, initializeBotCalls, insertCallRule, setBotCallsEnabled, setCallsOffUntil, type CallRuleInput } from "./bot-calls-schema.ts";
 import { admitIntent, getIntent, type CallIntent } from "./bot-calls-machine.ts";
 import { createBotCallsRuntime, matchTurnOwed } from "./bot-calls-runtime.ts";
-import { createCallChannel, createCallTickets, handleCallsRoute, liveFrame, nextLocalMidnight, type CallsRouteDeps } from "./bot-calls-routes.ts";
+import { createCallChannel, createCallTickets, handleCallsRoute, liveFrame, nextLocalMidnight, type CallsRouteDeps, type CallChannelDeps } from "./bot-calls-routes.ts";
 import { routeAdmits, routeClass, routePolicy } from "./route-policy.ts";
 import { callCardRow, callOpener } from "./bot-calls-card.ts";
 
@@ -174,7 +175,7 @@ describe("call routes", () => {
   function routes(t: ReturnType<typeof setup>, visible = true) {
     const deps: CallsRouteDeps = {
       db: () => t.db, runtime: t.runtime, tickets: createCallTickets(), caller: () => "desktop", visible: () => visible,
-      bot: (id) => id === "scout" ? { id, name: "Scout" } : null, opener: () => "Hi, it's Scout.", quietHours: () => null, voiceReady: () => true,
+      bot: (id) => id === "scout" ? { id, name: "Scout", threadId: "t1" } : null, opener: () => "Hi, it's Scout.", quietHours: () => null, voiceReady: () => true,
       setRingsForCalls: () => true, readBody: async () => ({}), now: () => t.now(),
     };
     const call = (method: string, path: string, body: unknown = {}) => handleCallsRoute(method, path, new URL(`http://x${path}`), { ...deps, readBody: async () => body });
@@ -231,7 +232,7 @@ describe("Calls off for today (calls-109.yaml v2, off-today)", () => {
   function routes(t: ReturnType<typeof setup>) {
     const deps: CallsRouteDeps = {
       db: () => t.db, runtime: t.runtime, tickets: createCallTickets(), caller: () => "desktop", visible: () => true,
-      bot: (id) => id === "scout" ? { id, name: "Scout" } : null, opener: () => "", quietHours: () => null, voiceReady: () => true,
+      bot: (id) => id === "scout" ? { id, name: "Scout", threadId: "t1" } : null, opener: () => "", quietHours: () => null, voiceReady: () => true,
       setRingsForCalls: () => true, readBody: async () => ({}), now: () => t.now(),
     };
     return (method: string, path: string, body: unknown = {}) => handleCallsRoute(method, path, new URL(`http://x${path}`), { ...deps, readBody: async () => body });
@@ -307,7 +308,7 @@ describe("Call me when this finishes (calls-109.yaml, turn-end)", () => {
     let running: { turnId: string; botId: string } | null = { turnId: "turn-9", botId: "scout" };
     const deps: CallsRouteDeps = {
       db: () => t.db, runtime: t.runtime, tickets: createCallTickets(), caller: () => "desktop", visible: (id) => id === "t1",
-      bot: (id) => id === "scout" ? { id, name: "Scout" } : null, opener: () => "", quietHours: () => null, voiceReady: () => true,
+      bot: (id) => id === "scout" ? { id, name: "Scout", threadId: "t1" } : null, opener: () => "", quietHours: () => null, voiceReady: () => true,
       setRingsForCalls: () => true, readBody: async () => ({}), now: () => t.now(), runningTurn: () => running,
     };
     const call = (body: unknown) => handleCallsRoute("POST", "/api/calls/turn-end", new URL("http://x/api/calls/turn-end"), { ...deps, readBody: async () => body });
@@ -331,7 +332,7 @@ describe("Call me when this finishes (calls-109.yaml, turn-end)", () => {
     const t = setup();
     const deps: CallsRouteDeps = {
       db: () => t.db, runtime: t.runtime, tickets: createCallTickets(), caller: () => "desktop", visible: (id) => id === "t1",
-      bot: (id) => id === "scout" ? { id, name: "Scout" } : null, opener: () => "", quietHours: () => null, voiceReady: () => true,
+      bot: (id) => id === "scout" ? { id, name: "Scout", threadId: "t1" } : null, opener: () => "", quietHours: () => null, voiceReady: () => true,
       setRingsForCalls: () => true, readBody: async () => ({}), now: () => t.now(), runningTurn: () => ({ turnId: "turn-7", botId: "scout" }),
     };
     const post = (path: string, body: unknown) => handleCallsRoute("POST", path, new URL(`http://x${path}`), { ...deps, readBody: async () => body });
@@ -371,7 +372,7 @@ describe("the call channel echoes the heartbeat number (R3-H1)", () => {
 describe("bot calls follow-up (Grok union-server M1, M2, L1)", () => {
   const deps = (t: ReturnType<typeof setup>, visible: (threadId: string) => boolean): CallsRouteDeps => ({
     db: () => t.db, runtime: t.runtime, tickets: createCallTickets(), caller: () => "desktop", visible,
-    bot: (id) => id === "scout" ? { id, name: "Scout" } : null, opener: () => "Hi, it's Scout.", quietHours: () => null, voiceReady: () => true,
+    bot: (id) => id === "scout" ? { id, name: "Scout", threadId: "t1" } : null, opener: () => "Hi, it's Scout.", quietHours: () => null, voiceReady: () => true,
     setRingsForCalls: () => true, readBody: async () => ({}), now: () => t.now(),
   });
   it("M1: call.answered and every call.ended hint carry the call's threadId", async () => {
@@ -454,9 +455,9 @@ describe("the call channel on a Cloud home (BOT-CALLS-109 5.7)", () => {
   };
   // Headers, a body field and a query value that claim to be device A; none of them may count.
   const FORGED = { "x-murage-stream-principal": "companion:devA:s1", "x-test-device": "devA", "x-murage-approval-device": "devA", "x-murage-call-principal": "cloud:devA" };
-  async function home(t: ReturnType<typeof setup>) {
+  async function home(t: ReturnType<typeof setup>, callbacks: Pick<CallChannelDeps, "connected" | "disconnected"> = {}) {
     const tickets = createCallTickets();
-    const channel = createCallChannel({ db: () => t.db, runtime: () => t.runtime, tickets, admitUpgrade: () => true,
+    const channel = createCallChannel({ ...callbacks, db: () => t.db, runtime: () => t.runtime, tickets, admitUpgrade: () => true,
       upgradeCaller: (req) => callCaller(req.headers, { cloudHome: true, upgrade: true }) });
     const server = createServer();
     servers.push(server);
@@ -474,7 +475,7 @@ describe("the call channel on a Cloud home (BOT-CALLS-109 5.7)", () => {
     const url = new URL(`http://h${path}?device=cloud:devA&principal=cloud:devA`);
     return handleCallsRoute(method, path, url, {
       db: () => t.db, runtime: t.runtime, tickets, caller: () => callCaller(headers as never, { cloudHome: true, upgrade: false, query: url.searchParams }), visible: () => true,
-      bot: (id) => id === "scout" ? { id, name: "Scout" } : null, opener: () => "Hi, it's Scout.", quietHours: () => null, voiceReady: () => true,
+      bot: (id) => id === "scout" ? { id, name: "Scout", threadId: "t1" } : null, opener: () => "Hi, it's Scout.", quietHours: () => null, voiceReady: () => true,
       setRingsForCalls: () => true, readBody: async () => ({ ...body, principal: "cloud:devA", caller: "cloud:devA" }), now: () => t.now(),
     });
   };
@@ -514,6 +515,76 @@ describe("the call channel on a Cloud home (BOT-CALLS-109 5.7)", () => {
     // single use: the same ticket again is refused, even for A
     expect((await open(port, livePath(callId, second), "token-a")).status).toBe(403);
     live.ws!.close();
+    t.runtime.stop();
+  });
+
+  it.each(["replace", "false", "throw"])("H2 %s retires the real channel while downloaded audio plays", async mode => {
+    const { Speaker } = await import("../src/lib/tts/" + "index.ts");
+    const t = setup(); t.runtime.boot();
+    const speech = new CallSpeechCoordinator(() => true);
+    let fail = false;
+    const { tickets, channel, port } = await home(t, {
+      connected: (session, connection, emit) => speech.attach({ callId: session.callId, principal: session.principal!, threadId: session.threadId!, targetId: session.botId }, connection, event => {
+        if (fail) { if (mode === "throw") throw Error("control failed"); return false; }
+        return emit(event);
+      }),
+      disconnected: (callId, connection) => speech.detach(callId, connection),
+    });
+    const opened = await route(t, tickets, "token-a", "POST", "/api/calls/sessions", { botId: "scout", threadId: "t1", device: "desktop:xyz" });
+    const callId = (opened!.body as { callId: string }).callId;
+    const connect = async () => open(port, livePath(callId, await ticketOf(route(t, tickets, "token-a", "POST", `/api/calls/sessions/${callId}/ticket`, { device: "desktop:xyz" }))), "token-a");
+    const first = (await connect()).ws!;
+    const speaker = new Speaker();
+    let finish!: (outcome: "ended" | "cut") => void;
+    const teardown = vi.fn(() => finish?.("cut"));
+    const play = vi.fn(() => new Promise<"ended" | "cut">(resolve => { finish = resolve; }));
+    speaker.useOutput({ play, teardown, pause() {}, resume() {}, streams: false });
+    first.on("close", () => speaker.stop());
+    first.on("message", data => { if (JSON.parse(String(data)).type === "call.speech.invalidated") speaker.stop(); });
+    const ready = new Promise<any>(resolve => first.once("message", data => resolve(JSON.parse(String(data)))));
+    speech.begin("t1", "scout", "generation"); speech.item("t1", "scout", "generation", "item", "Safe reply.");
+    speech.settle("t1", "scout", "generation", "message", true);
+    const frame = await ready;
+    vi.stubGlobal("fetch", async () => new Response('{"type":"clip","mime":"audio/mpeg","data":"AQID","text":"Booked for eight."}\n{"type":"complete"}\n'));
+    let second: WebSocket | undefined;
+    try {
+      const playback = speaker.playCallReply({ callSessionId: callId, threadId: "t1", replyId: frame.replyId });
+      await vi.waitFor(() => expect(play).toHaveBeenCalledOnce()); teardown.mockClear();
+      if (mode === "replace") second = (await connect()).ws!;
+      else { fail = true; speech.invalidate("t1"); }
+      await vi.waitFor(() => expect(first.readyState).toBe(WebSocket.CLOSED));
+      expect(teardown).toHaveBeenCalled(); await playback;
+      expect(() => speech.claim(callId, "cloud:devA", "t1", frame.replyId)).toThrow();
+      expect(channel.open(callId)).toBe(mode === "replace" ? 1 : 0);
+    } finally { first.terminate(); second?.terminate(); speaker.stop(); vi.unstubAllGlobals(); t.runtime.stop(); }
+  });
+
+  it("D24 channel owns sealed speech and disconnect rejects its source", async () => {
+    const t = setup(); t.runtime.boot();
+    const speech = new CallSpeechCoordinator((session, botId) => session.targetId === botId);
+    let disconnected!: () => void;
+    const lost = new Promise<void>((resolve) => { disconnected = resolve; });
+    const { tickets, port } = await home(t, {
+      connected: (session, connection, emit) => speech.attach({ callId: session.callId, principal: session.principal!, threadId: session.threadId!, targetId: session.botId }, connection, emit),
+      disconnected: (callId, connection) => { speech.detach(callId, connection); disconnected(); },
+    });
+    const opened = await route(t, tickets, "token-a", "POST", "/api/calls/sessions", { botId: "scout", threadId: "t1", device: "desktop:xyz" });
+    const callId = (opened!.body as { callId: string }).callId;
+    const ticket = await ticketOf(route(t, tickets, "token-a", "POST", `/api/calls/sessions/${callId}/ticket`, { device: "desktop:xyz" }));
+    const live = await open(port, livePath(callId, ticket), "token-a");
+    expect(live.status).toBe(101);
+    const ready = new Promise<string>((resolve) => live.ws!.once("message", data => resolve(String(data))));
+    speech.begin("t1", "scout", "generation");
+    speech.item("t1", "scout", "generation", "item", "Safe. password: hunter2");
+    speech.settle("t1", "scout", "generation", "message", true);
+    const frame = JSON.parse(await ready);
+    expect(frame).toMatchObject({ type: "call.speech.ready", callId, threadId: "t1", messageId: "message" });
+    expect(JSON.stringify(frame)).not.toMatch(/password|hunter2/);
+    const job = speech.claim(callId, "cloud:devA", "t1", frame.replyId);
+    live.ws!.close(); await lost;
+    expect(job.signal.aborted).toBe(true);
+    expect(() => job.utterances.next()).toThrow();
+    expect(() => speech.claim(callId, "cloud:devA", "t1", frame.replyId)).toThrow();
     t.runtime.stop();
   });
 
@@ -666,4 +737,16 @@ describe("callCaller off Cloud", () => {
     }
     for (const upgrade of [false, true]) expect(callCaller({}, { cloudHome: false, upgrade })).not.toBe(LEGACY_SESSION_PRINCIPAL);
   });
+});
+
+
+it("D24 paired call principal requires the launch proof on HTTP and the live channel", async () => {
+  const { createCompanionAuthority } = await import("./companion-authority.ts");
+  const proof = "a".repeat(64), authorized = createCompanionAuthority(proof);
+  for (const upgrade of [false, true]) for (const principal of ["companion:device:bearer", "companion:device:session"]) {
+    const headers = { "x-murage-companion": "1", "x-murage-companion-token": proof, "x-murage-stream-principal": principal };
+    expect(callCaller(headers, { cloudHome: false, upgrade }, authorized)).toBe(principal);
+    expect(callCaller({ ...headers, "x-murage-companion-token": "b".repeat(64) }, { cloudHome: false, upgrade }, authorized)).toBeNull();
+    expect(callCaller({ ...headers, "x-murage-stream-principal": "desktop" }, { cloudHome: false, upgrade }, authorized)).toBeNull();
+  }
 });

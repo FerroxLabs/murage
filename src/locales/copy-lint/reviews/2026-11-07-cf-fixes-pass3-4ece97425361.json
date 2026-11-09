@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "cf-copy-final",
+  "date": "2026-11-07",
+  "base": "f7ad36a24",
+  "scope": "strings and lint files without a valid review",
+  "strings": {
+    "pt-br:engines.hideHint": {
+      "text": "Tire este serviço de IA de todas as listas de modelos. O app e o login dele continuam como estão, e você pode mostrá-lo de novo abaixo.",
+      "en": "Leave this engine out of every model list. Its app and sign-in stay as they are, and you can unhide it below.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

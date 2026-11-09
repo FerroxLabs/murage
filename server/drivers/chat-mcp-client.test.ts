@@ -1,3 +1,4 @@
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
 //
@@ -99,7 +100,7 @@ const entry = (mode = "normal", log?: string): Record<string, unknown> => ({
   env: { FAKE_MODE: mode, ENTRY_TOKEN, ...(log ? { FAKE_LOG: log } : {}) },
 });
 const open = async (servers: Record<string, unknown>, options: Parameters<typeof openChatMcpServers>[1] = {}) => {
-  const result = await openChatMcpServers(servers, {
+  const result = await openChatMcpServers(servers, { cwd: fixtureBotFolder(),
     ...options,
     onSpawn: (server, teardown) => { spawned.push(teardown); options.onSpawn?.(server, teardown); },
   });
@@ -200,7 +201,7 @@ describe("openChatMcpServers", () => {
     const reported: string[] = [];
     const { sessions, failed } = await openChatMcpServers(
       { a: { args: [] }, b: { command: 7 }, c: null },
-      { spawn: (command) => { spawnCalls.push(command); throw new Error("must not spawn"); }, onSpawn: (server) => reported.push(server) },
+      { cwd: fixtureBotFolder(), spawn: (command) => { spawnCalls.push(command); throw new Error("must not spawn"); }, onSpawn: (server) => reported.push(server) },
     );
     expect(sessions).toEqual([]);
     expect(failed).toEqual(["a", "b", "c"]);

@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -281,3 +282,6 @@ describe("the compaction pin (test 29)", () => {
     expect(spawned.env.FUIGO_COMPACTION_WALL_CLOCK_SECS).toBe("300");
   }, 30_000);
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

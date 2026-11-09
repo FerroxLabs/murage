@@ -1,3 +1,4 @@
+import { classifyFluxRefusal } from "../../shared/flux-refusal.ts";
 // The voice host: the fast half of a call.
 //
 // A call used to wait for the bot's engine (Claude Code, Codex, Fuigo) to
@@ -27,9 +28,12 @@
 // used here speaks OpenAI-shaped streaming chat with tools, Anthropic through
 // its OpenAI-compatible endpoint. Runs on the HARNESS, never the renderer:
 // keys must not leave the server.
+import { readCallPresentation, type ProtectedPresentation, type PresentationFields } from "../tts/call-presentation.ts";
 import { fluxCallHeadersVia } from "../flux-memory-headers.ts";
-import { isUnavailable, markUnavailable, notPermitted, VoiceUnavailable, type VoiceEndpoint } from "./voice-routes.ts";
+import { isBudgetReached, markBudgetReached, isVoiceBudgetFrame, isUnavailable, markUnavailable, notPermitted, VoiceUnavailable, type VoiceEndpoint } from "./voice-routes.ts";
 import { firstClauseBreak, firstClauseEnd, splitFirstClause, splitLong, splitSentences } from "../tts/speech-text.ts";
+import { compileSpeechSource, MAX_SOURCE_BYTES, REST_ON_SCREEN } from "../tts/speech-source.ts";
+import { optionBCut } from "../tts/speech-source-option-b.ts";
 import { sameRequest } from "./hand-downs.ts";
 
 /** Beyond this the host has stalled, and is asked once more; a second stall
@@ -140,7 +144,7 @@ export type VoiceHostEvent =
   | { type: "done" }
   | { type: "error"; reason: VoiceHostFailure; message: string };
 
-export type VoiceHostFailure = "key" | "auth" | "premium" | "unavailable" | "rate_limit" | "timeout" | "upstream";
+export type VoiceHostFailure = "budget" | "key" | "auth" | "premium" | "unavailable" | "rate_limit" | "timeout" | "upstream";
 
 /** Each thread message in the host's snapshot (voice-host-route.ts keeps
  *  the newest RECENT_MESSAGES of them). */
@@ -298,6 +302,8 @@ export class SentenceSplitter {
   clausePiece: string | null = null;
   /** The plain text of a voiced clause whose sentence is not complete yet. */
   clauseHead: string | null = null;
+  /** The clause as said, when that differs from how it was heard (its opening filler dropped). */
+  clauseHeadSaid: string | null = null;
   /** The clause was filtered, so the rest of its sentence is dropped too. */
   dropRest = false;
   /** Set by sentencesFrom just before it yields: that piece was a clause. */
@@ -366,6 +372,17 @@ function splitFirstClauseStrict(sentence: string): [string, string] | null {
 }
 
 /** Markdown is for eyes: a voice would read the asterisks. */
+// The sole sentence-event constructor. Inspect the EXACT released text after
+// all formatting and splitting; do not recompile or transform it after this gate.
+function releaseSentence(text: string, clause = false): Extract<VoiceHostEvent, { type: "sentence" }> {
+  try {
+    if (optionBCut(text)) text = REST_ON_SCREEN;
+  } catch {
+    text = REST_ON_SCREEN;
+  }
+  return clause ? { type: "sentence", text, clause: true } : { type: "sentence", text };
+}
+
 export function spokenText(sentence: string): string {
   return sentence
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
@@ -384,8 +401,8 @@ const FILLER_OPENER = /^\s*(?:(?:h+m{2,}|m{2,})(?:[.,!?:;…–—-]+\s*|\s+|$)|
  *  filler sound at the very start of a reply; the words after it are kept. */
 export function dropLeadingFiller(sentence: string): string {
   const rest = sentence.replace(FILLER_OPENER, "").trim();
-  // "Hmm, iOS does" keeps iOS: only a plain lower-case word is capitalised
-  return rest === sentence.trim() || !/^[a-z](?![A-Z])/.test(rest) ? rest : rest.charAt(0).toUpperCase() + rest.slice(1);
+  // "Hmm, iOS does" keeps iOS and "Hmm, macOS does" keeps macOS: only a first word written all in lower case is capitalised
+  return rest === sentence.trim() || !/^[a-z]+(?![\p{L}\p{N}])/u.test(rest) ? rest : rest.charAt(0).toUpperCase() + rest.slice(1);
 }
 
 type StreamPart =
@@ -398,54 +415,110 @@ type StreamPart =
  *  and what Flux actually charged. */
 interface LookupOutcome { done: boolean; citations?: string[]; searches?: number; costUsd?: string }
 
+const isBudgetReachedNow = (endpoint: VoiceEndpoint) => isBudgetReached(endpoint);
+const BUDGET_EVENT = { type: "error", reason: "budget", message: "This key has reached its budget." } as const;
+class VoiceBudgetReached extends Error {}
+function rememberBudget(endpoint: VoiceEndpoint): never {
+  markBudgetReached(endpoint);
+  throw new VoiceBudgetReached();
+}
+
 /** Read an OpenAI-shaped streaming completion into text and tool pieces.
  *  `lookup` collects a Flux lookup's completion frame. */
-async function* readCompletion(body: ReadableStream<Uint8Array>, lookup?: LookupOutcome): AsyncGenerator<StreamPart> {
+async function* readCompletion(body: ReadableStream<Uint8Array>, lookup?: LookupOutcome, completion?: { sealed: boolean; capped: boolean }, endpoint?: VoiceEndpoint): AsyncGenerator<StreamPart> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) return;
-    buffer += decoder.decode(value, { stream: true });
-    let newline: number;
-    while ((newline = buffer.indexOf("\n")) >= 0) {
-      const line = buffer.slice(0, newline).trim();
-      buffer = buffer.slice(newline + 1);
-      if (!line.startsWith("data:")) continue;
-      const data = line.slice(5).trim();
-      if (!data || data === "[DONE]") continue;
-      let frame: any;
-      try {
-        frame = JSON.parse(data);
-      } catch {
-        continue;
-      }
-      if (frame?.object === "flux.voice.lookup.error") throw new Error(`lookup failed: ${frame?.error?.code ?? "unknown"}`);
-      if (frame?.object === "flux.voice.lookup.done") {
-        if (lookup) {
-          lookup.done = true;
-          if (Array.isArray(frame.citations)) lookup.citations = frame.citations.filter((c: unknown): c is string => typeof c === "string");
-          if (Number.isInteger(frame.searches)) lookup.searches = frame.searches;
-          if (typeof frame.cost_usd === "string") lookup.costUsd = frame.cost_usd;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      buffer += decoder.decode(value, { stream: true });
+      if (buffer.length > MAX_SOURCE_BYTES * 2) throw new Error("voice output limit");
+      let newline: number;
+      while ((newline = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim();
+        if (!data) continue;
+        if (data === "[DONE]") { if (completion) completion.sealed = true; continue; }
+        let frame: any;
+        try {
+          frame = JSON.parse(data);
+        } catch {
+          continue;
         }
-        continue;
-      }
-      const delta = frame?.choices?.[0]?.delta;
-      if (typeof delta?.content === "string" && delta.content) yield { kind: "text", text: delta.content };
-      const finish = frame?.choices?.[0]?.finish_reason;
-      if (typeof finish === "string" && finish) yield { kind: "finish", reason: finish };
-      for (const part of Array.isArray(delta?.tool_calls) ? delta.tool_calls : []) {
-        yield {
-          kind: "tool",
-          index: typeof part?.index === "number" ? part.index : 0,
-          name: typeof part?.function?.name === "string" ? part.function.name : undefined,
-          args: typeof part?.function?.arguments === "string" ? part.function.arguments : undefined,
-        };
+        if (endpoint?.via === "flux" && isVoiceBudgetFrame(frame)) rememberBudget(endpoint);
+        if (frame?.object === "flux.voice.lookup.error") throw new Error(`lookup failed: ${frame?.error?.code ?? "unknown"}`);
+        if (frame?.object === "flux.voice.lookup.done") {
+          if (lookup) {
+            lookup.done = true;
+            if (Array.isArray(frame.citations)) lookup.citations = frame.citations.filter((c: unknown): c is string => typeof c === "string");
+            if (Number.isInteger(frame.searches)) lookup.searches = frame.searches;
+            if (typeof frame.cost_usd === "string" && /^\d{1,12}(?:\.\d{1,12})?$/.test(frame.cost_usd)) lookup.costUsd = frame.cost_usd;
+          }
+          continue;
+        }
+        const delta = frame?.choices?.[0]?.delta;
+        if (typeof delta?.content === "string" && delta.content) yield { kind: "text", text: delta.content };
+        const finish = frame?.choices?.[0]?.finish_reason;
+        if (typeof finish === "string" && finish) {
+          if (completion) { completion.sealed = true; completion.capped ||= finish === "length"; }
+          yield { kind: "finish", reason: finish };
+        }
+        for (const part of Array.isArray(delta?.tool_calls) ? delta.tool_calls : []) {
+          yield {
+            kind: "tool",
+            index: typeof part?.index === "number" ? part.index : 0,
+            name: typeof part?.function?.name === "string" ? part.function.name : undefined,
+            args: typeof part?.function?.arguments === "string" ? part.function.arguments : undefined,
+          };
+        }
       }
     }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
 }
+
+/** Complete original model output is protected before any sentence or prosody operation. */
+async function* protectedCompletion(body: ReadableStream<Uint8Array>, signal: AbortSignal, received: (part: StreamPart) => void, source?: (raw: string) => void, endpoint?: VoiceEndpoint): AsyncGenerator<StreamPart> {
+  let raw = "";
+  let bytes = 0;
+  let controlBytes = 0;
+  const parts: StreamPart[] = [];
+  const completion = { sealed: false, capped: false };
+  for await (const part of readCompletion(body, undefined, completion, endpoint)) {
+    if (signal.aborted) throw new Error("voice output cancelled");
+    received(part);
+    if (part.kind === "text") {
+      const joinedPair = /[\uD800-\uDBFF]$/.test(raw) && /^[\uDC00-\uDFFF]/.test(part.text);
+      bytes += Buffer.byteLength(part.text) - (joinedPair ? 2 : 0);
+      if (bytes > MAX_SOURCE_BYTES) throw new Error("voice output limit");
+      raw += part.text;
+    } else {
+      controlBytes += Buffer.byteLength(JSON.stringify(part));
+      if (controlBytes > MAX_SOURCE_BYTES) throw new Error("voice output limit");
+      if (part.kind === "tool") yield part;
+      else parts.push(part);
+    }
+  }
+  if (signal.aborted || !completion.sealed || completion.capped) throw new Error("voice output incomplete");
+  source?.(raw);
+  const text = compileSpeechSource(raw, { maxUnits: MAX_SOURCE_BYTES * 2, pronounce: false });
+  // D24 B.2 RULE: iteration only splits the checked text; no characters change.
+  for (const character of text) {
+    if (signal.aborted) return;
+    yield { kind: "text", text: character };
+  }
+  for (const part of parts) {
+    if (signal.aborted) return;
+    yield part;
+  }
+}
+
 
 /** A finished sentence, as opposed to the tail of one the model never
  *  finished (a lookup that failed, a reply that hit the output cap). */
@@ -501,10 +574,13 @@ function* sentencesFrom(splitter: SentenceSplitter, text: string | null, wholeOn
     splitter.said.add(plain);
     splitter.said.add(plainHeard);
     splitter.openerChecked = true;
-    if (clause) splitter.clauseHead = plainHeard;
+    if (clause) { splitter.clauseHead = plainHeard; splitter.clauseHeadSaid = plain; }
     else if (splitter.clauseHead) {
+      // both forms of the whole sentence: a doubled reply without the filler is the said form, and is still said once
       splitter.said.add(`${splitter.clauseHead} ${plain}`);
+      if (splitter.clauseHeadSaid) splitter.said.add(`${splitter.clauseHeadSaid} ${plain}`);
       splitter.clauseHead = null;
+      splitter.clauseHeadSaid = null;
     }
     splitter.lastWasClause = clause;
     if (sentence.length <= SPOKEN_MAX_CHARS) yield sentence;
@@ -512,6 +588,19 @@ function* sentencesFrom(splitter: SentenceSplitter, text: string | null, wholeOn
     splitter.lastWasClause = false;
   }
 }
+
+/** Trusted post-protection projection, used only after the whole call source is sealed. */
+export function protectedHostUtterances(projection: string): string[] {
+  const splitter = new SentenceSplitter();
+  const clips: string[] = [];
+  for (const sentence of [...sentencesFrom(splitter, projection), ...sentencesFrom(splitter, null)]) {
+    const last = clips.at(-1);
+    if (last && last.length + 1 + sentence.length <= SPOKEN_MAX_CHARS) clips[clips.length - 1] = last + " " + sentence;
+    else clips.push(sentence);
+  }
+  return clips;
+}
+
 
 const TOOLS = [
   {
@@ -560,6 +649,7 @@ function failure(status: number, provider = "Flux", said = ""): { reason: VoiceH
   // the key is fine; this feature is not switched on for it
   if (status === 403 && notPermitted(said)) return { reason: "unavailable", message: `Fast replies on calls are not switched on for this ${provider} key yet.` };
   if (status === 401 || status === 403) return { reason: "auth", message: `${provider} rejected the saved key.` };
+  if (provider === "Flux" && status === 402 && classifyFluxRefusal(status, said) === "budget") return BUDGET_EVENT;
   if (status === 402) return { reason: "premium", message: `Fast replies on calls need ${plan}.` };
   if (status === 404) return { reason: "unavailable", message: `Fast replies on calls are not available for this ${provider} account.` };
   if (status === 429) return { reason: "rate_limit", message: `${provider} is rate-limiting this account.` };
@@ -568,7 +658,7 @@ function failure(status: number, provider = "Flux", said = ""): { reason: VoiceH
 
 /** The display name of the provider behind an endpoint, for messages. */
 function providerName(endpoint: VoiceEndpoint): string {
-  return { flux: "Flux", xai: "xAI", openai: "OpenAI", anthropic: "Anthropic", groq: "Groq", openrouter: "OpenRouter" }[endpoint.via as string] ?? endpoint.label;
+  return { flux: "Flux", xai: "xAI", openai: "OpenAI", anthropic: "Anthropic", groq: "Groq", openrouter: "OpenRouter" }[endpoint.via as string] ?? "Voice provider";
 }
 
 /**
@@ -577,21 +667,32 @@ function providerName(endpoint: VoiceEndpoint): string {
  * max_completion_tokens) and any temperature but the default; every other
  * provider here takes the classic pair.
  */
-/** What the provider said when it refused. A 400 is our request's fault and
- *  the provider says which part: logged for whoever reads the server log,
- *  never spoken. */
+/** Refusal diagnostics contain only provider and status. Body classification stays in memory. */
 async function logRefusal(res: Response, provider: string): Promise<string> {
-  const said = await res.text().catch(() => "");
-  let message = said;
+  const providers: Record<string, string> = { Flux: "flux", xAI: "xai", OpenAI: "openai", Anthropic: "anthropic", Groq: "groq", OpenRouter: "openrouter" };
+  console.warn(`[voice-host] refusal provider=${providers[provider] ?? "unknown"} status=${res.status}`);
+  // Only a fixed classification leaves this volatile bounded reader. No body or exception is logged.
+  const reader = res.body?.getReader();
+  if (!reader) return "";
+  let text = "";
+  let bytes = 0;
+  const decoder = new TextDecoder();
   try {
-    const body = JSON.parse(said);
-    message = body?.error?.message ?? body?.message ?? body?.detail ?? said;
-  } catch {
-    // not JSON: the text as sent
-  }
-  message = String(message).replace(/\s+/g, " ").slice(0, 300);
-  if (res.status === 400) console.warn(`[voice-host] ${provider} refused the request: ${message}`);
-  return message;
+    for (;;) {
+      const part = await reader.read();
+      if (part.done) break;
+      bytes += part.value.byteLength;
+      if (bytes > 16_384) break;
+      text += decoder.decode(part.value, { stream: true });
+    }
+    if (provider === "Flux") {
+      const classification = classifyFluxRefusal(res.status, text);
+      if (classification === "premium") return "premium_locked";
+      if (classification === "budget") return "key_budget_reached";
+    }
+    return notPermitted(text) ? "not permitted to use" : "";
+  } catch { return ""; }
+  finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
 }
 
 function sampling(endpoint: VoiceEndpoint, maxTokens: number): Record<string, number | string> {
@@ -604,11 +705,11 @@ function sampling(endpoint: VoiceEndpoint, maxTokens: number): Record<string, nu
 /**
  * Open the connection and wake the model when a call starts, so the owner's
  * first question does not pay the cold start (measured 2.3-5 s cold against
- * about 1.3 s warm). One token, fire and forget; a failure here only means
- * the first reply is slower.
+ * about 1.3 s warm). One token, fire and forget. Budget refusals are
+ * remembered so the first real turn does not ask the same exhausted key.
  */
 export async function warmVoiceHost(host: VoiceEndpoint | null, fetchImpl: typeof fetch = fetch): Promise<void> {
-  if (!host) return;
+  if (!host || isBudgetReached(host)) return;
   await fetchImpl(`${host.baseUrl}/chat/completions`, {
     method: "POST",
     headers: { authorization: `Bearer ${host.key}`, "content-type": "application/json", ...fluxCallHeadersVia("voice-host", host.via) },
@@ -619,7 +720,11 @@ export async function warmVoiceHost(host: VoiceEndpoint | null, fetchImpl: typeo
     }),
     signal: AbortSignal.timeout(FIRST_TOKEN_TIMEOUT_MS),
   })
-    .then((res) => res.body?.cancel())
+    .then(async (res) => {
+      if (host.via === "flux" && res.status === 402) {
+        if (classifyFluxRefusal(res.status, await res.text()) === "budget") markBudgetReached(host);
+      } else await res.body?.cancel();
+    })
     .catch(() => undefined);
 }
 
@@ -676,20 +781,38 @@ export class CitationFilter {
 const LOOKUP_INSTRUCTIONS =
   "You are answering aloud on a phone call. Answer in two or three short spoken sentences with the key facts and where they come from. No markdown, no URLs, no lists.";
 
+/** An owner-key lookup source (xAI, OpenAI, Anthropic) said mid-stream that its key is out of credit. It is the same refusal
+ *  as that source's HTTP 402: never kept as a partial answer, never a Flux budget (the key is the owner's), and the engine
+ *  takes the question. */
+class LookupRefused extends Error {}
+const OWNER_BUDGET_CODES = new Set(["insufficient_quota", "billing_hard_limit_reached", "billing_error", "credit_balance_too_low", "budget_exceeded", "key_budget_reached", "payment_required"]);
+function isOwnerBudgetEvent(event: any): boolean {
+  const error = event?.error ?? event?.response?.error;
+  const codes = [error?.code, error?.type, event?.code];
+  if (codes.some(code => typeof code === "string" && OWNER_BUDGET_CODES.has(code.toLowerCase()))) return true;
+  return [error?.status, error?.status_code, event?.status, event?.status_code].includes(402);
+}
+
 /** Text pieces from a Responses-API stream (xAI and OpenAI share the shape). */
 async function* responsesText(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+  let completed = false;
   for await (const event of sseEvents(body)) {
+    if (event?.type === "response.completed") completed = true;
     if (event?.type === "response.output_text.delta" && typeof event.delta === "string") yield event.delta;
-    if (event?.type === "error" || event?.type === "response.failed") throw new Error("lookup failed");
+    if (event?.type === "error" || event?.type === "response.failed") throw isOwnerBudgetEvent(event) ? new LookupRefused("lookup refused: budget") : new Error("lookup failed");
   }
+  if (!completed) throw new Error("lookup incomplete");
 }
 
 /** Text pieces from an Anthropic Messages stream. */
 async function* anthropicText(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+  let completed = false;
   for await (const event of sseEvents(body)) {
+    if (event?.type === "message_stop") completed = true;
     if (event?.type === "content_block_delta" && event.delta?.type === "text_delta" && typeof event.delta.text === "string") yield event.delta.text;
-    if (event?.type === "error") throw new Error("lookup failed");
+    if (event?.type === "error") throw isOwnerBudgetEvent(event) ? new LookupRefused("lookup refused: budget") : new Error("lookup failed");
   }
+  if (!completed) throw new Error("lookup incomplete");
 }
 
 /** Parsed `data:` events of an SSE body. */
@@ -723,7 +846,34 @@ async function* sseEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<any>
  * never went live), or the owner's own xAI, OpenAI or Anthropic key with that
  * provider's own web search tool.
  */
-async function* lookupText(query: string, endpoint: VoiceEndpoint, call: typeof fetch, signal: AbortSignal): AsyncGenerator<string> {
+class IncompleteLookup extends Error {}
+
+async function* lookupText(query: string, endpoint: VoiceEndpoint, call: typeof fetch, signal: AbortSignal, capture?: (raw: string) => void): AsyncGenerator<string> {
+  let source = "";
+  let bytes = 0;
+  const protectedQuery = compileSpeechSource(query, { presentation: true, maxUnits: MAX_SOURCE_BYTES * 2, pronounce: false });
+  try {
+    for await (const delta of rawLookupText(protectedQuery, endpoint, call, signal)) {
+      if (signal.aborted) throw new Error("lookup cancelled");
+      const joinedPair = /[\uD800-\uDBFF]$/.test(source) && /^[\uDC00-\uDFFF]/.test(delta);
+      bytes += Buffer.byteLength(delta) - (joinedPair ? 2 : 0);
+      if (bytes > MAX_SOURCE_BYTES) throw new Error("lookup output limit");
+      source += delta;
+    }
+  } catch (error) {
+    // A budget refusal ends the turn whatever arrived before it: it is never an incomplete answer to be kept.
+    if (error instanceof VoiceBudgetReached || error instanceof LookupRefused) throw error;
+    if (bytes) throw new IncompleteLookup("lookup output discarded");
+    throw error;
+  }
+  if (signal.aborted) throw new Error("lookup cancelled");
+  capture?.(source);
+  // D24 B.2 RULE: per-character yield only splits the exact checked text.
+  for (const character of compileSpeechSource(source, { maxUnits: MAX_SOURCE_BYTES * 2, pronounce: false })) yield character;
+}
+
+async function* rawLookupText(query: string, endpoint: VoiceEndpoint, call: typeof fetch, signal: AbortSignal): AsyncGenerator<string> {
+  if (isBudgetReached(endpoint)) throw new VoiceBudgetReached();
   const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
     call(`${endpoint.baseUrl}${path}`, {
       method: "POST",
@@ -740,14 +890,13 @@ async function* lookupText(query: string, endpoint: VoiceEndpoint, call: typeof 
       const said = await logRefusal(res, providerName(endpoint));
       // a valid key this account may not use lookups with: the next source
       if (res.status === 403 && notPermitted(said)) throw new VoiceUnavailable("Flux lookups aren't switched on for this key yet.");
+      if (endpoint.via === "flux" && res.status === 402 && classifyFluxRefusal(res.status, said) === "budget") rememberBudget(endpoint);
       throw new Error(`lookup ${res.status}`);
     }
-    // Flux's contract (2026-09-23): HTTP 200 and [DONE] alone are not
-    // success. Only a flux.voice.lookup.done frame is; an error frame can
-    // come before or after text, and a stream that just ends is a dropped
-    // connection. What was said before either is kept by the caller.
+    // HTTP 200 and [DONE] alone are not success. Only the lookup completion
+    // frame seals its source; an error or dropped connection discards it.
     const outcome: LookupOutcome = { done: false };
-    for await (const part of readCompletion(res.body, outcome)) if (part.kind === "text") yield part.text;
+    for await (const part of readCompletion(res.body, outcome, undefined, endpoint)) if (part.kind === "text") yield part.text;
     if (!outcome.done) throw new Error("lookup ended without finishing");
     if (outcome.costUsd) console.log(`[voice] lookup via Flux: ${outcome.searches ?? "?"} searches, $${outcome.costUsd}, ${outcome.citations?.length ?? 0} sources`);
     return;
@@ -772,6 +921,7 @@ async function* lookupText(query: string, endpoint: VoiceEndpoint, call: typeof 
     );
     if (!res.ok || !res.body) {
       await logRefusal(res, providerName(endpoint));
+
       throw new Error(`lookup ${res.status}`);
     }
     yield* responsesText(res.body);
@@ -792,6 +942,7 @@ async function* lookupText(query: string, endpoint: VoiceEndpoint, call: typeof 
     );
     if (!res.ok || !res.body) {
       await logRefusal(res, providerName(endpoint));
+
       throw new Error(`lookup ${res.status}`);
     }
     yield* anthropicText(res.body);
@@ -801,21 +952,10 @@ async function* lookupText(query: string, endpoint: VoiceEndpoint, call: typeof 
 }
 
 export interface VoiceHostOptions {
-  state: VoiceHostState;
-  /** Earlier exchanges on this call, oldest first. */
-  history: VoiceHostTurn[];
-  /** What the owner just said. */
-  said: string;
-  /** Where the host runs; null when no source can serve it. */
+  snapshot: ProtectedPresentation;
   host: VoiceEndpoint | null;
-  /** Where lookups run, in the order to try them; none offers no lookup
-   *  tool (the host hands down). */
   lookup?: VoiceEndpoint | VoiceEndpoint[] | null;
-  /** The live status of each hand-down in `history`, by id. */
-  results?: Record<string, string>;
-  /** Requests handed down on this call that are still running. A new
-   *  hand-down of the same work is refused in code, not left to the prompt. */
-  running?: string[];
+  onSource?: (raw: string) => void;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
   /** Called once when the turn ends, with where its time went. Numbers and
@@ -841,7 +981,10 @@ export interface HostTiming {
 /**
  * One host turn, as a stream of events. `onTiming` hears how it went, once.
  */
-export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerator<VoiceHostEvent> {
+export async function* runVoiceHostTurn(input: VoiceHostOptions): AsyncGenerator<VoiceHostEvent> {
+  if (input.signal?.aborted) return;
+  const fields = readCallPresentation(input.snapshot);
+  const options = { ...input, ...fields, signal: AbortSignal.any([input.snapshot.signal, ...(input.signal ? [input.signal] : [])]) };
   const timing: HostTiming = { headersMs: null, firstTokenMs: null, firstPieceMs: null, attempts: 0, firstPiece: null, firstPieceChars: 0 };
   const clock = { start: 0 };
   try {
@@ -864,12 +1007,14 @@ export async function* runVoiceHostTurn(options: VoiceHostOptions): AsyncGenerat
  * (fall back to handing the words to the engine) and a throw would be one
  * more path to forget.
  */
-async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: { start: number }): AsyncGenerator<VoiceHostEvent> {
+async function* hostTurn(options: VoiceHostOptions & PresentationFields, timing: HostTiming, clock: { start: number }): AsyncGenerator<VoiceHostEvent> {
   const host = options.host;
+  if (options.signal?.aborted) return;
   if (!host) {
     yield { type: "error", reason: "key", message: "Fast replies on calls need a Flux key or a model connection." };
     return;
   }
+  if (isBudgetReached(host)) { yield BUDGET_EVENT; return; }
   // a source that said lookups are not switched on is skipped for a while
   const lookupSources = [options.lookup ?? []].flat().filter((source) => !isUnavailable(source));
   const lookupSource = lookupSources.length > 0;
@@ -880,7 +1025,8 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
     { role: "user", content: options.said },
   ];
 
-  const call = options.fetchImpl ?? fetch;
+  const transport = options.fetchImpl ?? fetch;
+  const call: typeof fetch = (url, init) => { readCallPresentation(options.snapshot); return transport(url, init); };
   const body = JSON.stringify({
     model: host.model,
     messages,
@@ -896,6 +1042,8 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
   const wholeTurn = setTimeout(abort, TURN_TIMEOUT_MS);
   let firstToken: ReturnType<typeof setTimeout> | undefined;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let idled = false;
+  let observed = "";
   const timeout = { type: "error", reason: "timeout", message: "The fast reply took too long." } as const;
 
   try {
@@ -906,6 +1054,7 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
     let parts: AsyncGenerator<StreamPart> | null = null;
     let first: IteratorResult<StreamPart> | null = null;
     for (let attempt = 1; ; attempt += 1) {
+      if (isBudgetReached(host)) { yield BUDGET_EVENT; return; }
       timing.attempts = attempt;
       if (attempt === 1) clock.start = Date.now();
       controller = new AbortController();
@@ -936,13 +1085,22 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
       if (!res.ok || !res.body) {
         clearTimeout(firstToken);
         const said = await logRefusal(res, providerName(host));
-        yield { type: "error", ...failure(res.status, providerName(host), said) };
+        const refused = failure(res.status, providerName(host), said);
+        if (refused.reason === "budget") markBudgetReached(host);
+        yield { type: "error", ...refused };
         return;
       }
-      parts = readCompletion(res.body);
+      parts = protectedCompletion(res.body, mine.signal, (part) => {
+        if (part.kind === "text") observed += part.text;
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => { idled = true; mine.abort(); }, STREAM_IDLE_MS);
+        clearTimeout(firstToken);
+        if (timing.firstTokenMs === null) timing.firstTokenMs = Date.now() - clock.start;
+      }, options.onSource, host);
       try {
         first = await parts.next();
-      } catch {
+      } catch (error) {
+        if (error instanceof VoiceBudgetReached) { yield BUDGET_EVENT; return; }
         clearTimeout(firstToken);
         if (options.signal?.aborted) return;
         if (stalled && attempt === 1) {
@@ -963,7 +1121,6 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
     /** The model hit the output cap: its last sentence is unfinished. */
     let capped = false;
     const stream = parts!;
-    let idled = false;
     const idle = () => {
       clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
@@ -978,7 +1135,7 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
         if (part.kind === "text") {
           for (const sentence of sentencesFrom(splitter, part.text)) {
             streamed += `${sentence} `;
-            yield splitter.lastWasClause ? { type: "sentence", text: sentence, clause: true } : { type: "sentence", text: sentence };
+            yield releaseSentence(sentence, splitter.lastWasClause);
           }
         } else if (part.kind === "finish") {
           capped = part.reason === "length";
@@ -989,7 +1146,8 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
           calls.set(part.index, entry);
         }
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof VoiceBudgetReached) { yield BUDGET_EVENT; return; }
       if (options.signal?.aborted) return;
       if (idled) {
         // hung mid-reply: what was said stands, ended on a whole sentence. A
@@ -1013,17 +1171,13 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
       }
     }
     clearTimeout(idleTimer);
+    if (options.signal?.aborted) return;
     let spoken = "";
     // cut off by the cap: end on the last whole sentence, as a failed lookup
     // does, never on half of one
     for (const sentence of sentencesFrom(splitter, null, capped || idled)) {
       spoken += `${sentence} `;
-      yield { type: "sentence", text: sentence };
-    }
-
-    if (idled && !streamed.trim() && !spoken.trim() && !calls.size && !options.signal?.aborted) {
-      yield timeout;
-      return;
+      yield releaseSentence(sentence);
     }
 
     // The lead-in line without the call (heard live: "Let me check." and
@@ -1032,7 +1186,7 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
     // Not while work is running or an approval is open: there "let me check"
     // is about that work, not a question for the web.
     if (!calls.size && !options.state.task.busy && !(options.running ?? []).length && !options.state.approval) {
-      const said = `${streamed} ${spoken}`;
+      const said = idled ? observed : `${streamed} ${spoken}`;
       if (/\blet me (check|find out|see what)\b|\bchecking (that|now)\b/i.test(said)) {
         calls.set(-1, { name: "quick_lookup", args: JSON.stringify({ query: options.said }) });
       } else if (/\blet me (look into|look at|get on|work on|dig into)\b/i.test(said)) {
@@ -1040,8 +1194,14 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
       }
     }
 
+    if (idled && !streamed.trim() && !spoken.trim() && !/[.!?](?:\s|$)/.test(observed) && !calls.size && !options.signal?.aborted) {
+      yield timeout;
+      return;
+    }
+
     let handed = false;
     for (const { name, args } of calls.values()) {
+      if (name === "quick_lookup" && [options.lookup ?? []].flat().some(isBudgetReachedNow)) { yield BUDGET_EVENT; return; }
       // Something to be done is work, even when doing it starts with a
       // search: grok-4.20 looked up "book me a table" instead of handing it
       // down, whatever the tool text said.
@@ -1061,8 +1221,8 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
         clearTimeout(wholeTurn);
         // a lookup takes seconds: never start one in silence (Pipecat speaks
         // a line the moment a tool call starts; some models skip the line)
-        if (!`${streamed} ${spoken}`.trim()) yield { type: "sentence", text: "Let me check." };
-        yield { type: "lookup", query };
+        if (!`${streamed} ${spoken}`.trim()) yield releaseSentence("Let me check.");
+        yield { type: "lookup", query: compileSpeechSource(query, { presentation: true, maxUnits: MAX_SOURCE_BYTES * 2, pronounce: false }) };
         // The lookup has its own clock. Nothing heard by LOOKUP_TIMEOUT_MS,
         // or any failure before the first sentence: the engine takes it, so
         // the owner still gets an answer, just a slower one.
@@ -1078,11 +1238,11 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
         try {
           for (const source of lookupSources) {
             try {
-              for await (const text of lookupText(query, source, call, lookup.signal)) {
+              for await (const text of lookupText(query, source, call, lookup.signal, options.onSource)) {
                 for (const sentence of sentencesFrom(lookupSplitter, citations.push(text))) {
                   if (!answered) clearTimeout(deadline);
                   answered = true;
-                  yield { type: "sentence", text: sentence };
+                  yield releaseSentence(sentence);
                 }
               }
               break;
@@ -1095,9 +1255,11 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
           const tail = citations.flush();
           for (const sentence of [...(tail ? [...sentencesFrom(lookupSplitter, tail)] : []), ...sentencesFrom(lookupSplitter, null)]) {
             answered = true;
-            yield { type: "sentence", text: sentence };
+            yield releaseSentence(sentence);
           }
-        } catch {
+        } catch (error) {
+          if (error instanceof VoiceBudgetReached) { yield BUDGET_EVENT; return; }
+          if (error instanceof IncompleteLookup) answered = true;
           // judged below: an answer already begun is kept, none is handed down.
           // Whole sentences that arrived before the failure are still said;
           // a half-finished one is not.
@@ -1105,7 +1267,7 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
             const tail = citations.flush();
             for (const sentence of [...(tail ? [...sentencesFrom(lookupSplitter, tail, true)] : []), ...sentencesFrom(lookupSplitter, null, true)]) {
               answered = true;
-              yield { type: "sentence", text: sentence };
+              yield releaseSentence(sentence);
             }
           }
         } finally {
@@ -1141,7 +1303,7 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
         // the same work is already running: say so instead of starting it
         // twice (LiveKit's on_duplicate="reject", done in code)
         if ((options.running ?? []).some((running) => sameRequest(running, work))) {
-          yield { type: "sentence", text: "That's already under way." };
+          yield releaseSentence("That's already under way.");
         } else {
           yield { type: "hand_down", request: work };
         }
@@ -1186,16 +1348,11 @@ const STOP_SAID = /\b(stop(ping|ped)?|cancel(l?ing|l?ed)?|halt(ing|ed)?|dropp(in
 export const BRIEF_MAX_CHARS = 20_000;
 
 export interface VoiceBriefOptions {
-  state: VoiceHostState;
-  /** The working self's finished answer, as it appears in the chat. */
-  answer: string;
+  snapshot: ProtectedPresentation;
   host: VoiceEndpoint | null;
-  /** The call so far, so the answer is told as a reply to what was asked
-   *  and nothing already said is said again. */
-  history?: VoiceHostTurn[];
-  results?: Record<string, string>;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
+  onSource?: (raw: string) => void;
 }
 
 /**
@@ -1208,14 +1365,20 @@ export interface VoiceBriefOptions {
  * BSD-2-Clause). Same event stream as a host turn; any failure is an `error`
  * event and the caller reads the answer out instead.
  */
-export async function* runVoiceBrief(options: VoiceBriefOptions): AsyncGenerator<VoiceHostEvent> {
+export async function* runVoiceBrief(input: VoiceBriefOptions): AsyncGenerator<VoiceHostEvent> {
+  if (input.signal?.aborted) return;
+  const fields = readCallPresentation(input.snapshot);
+  if (fields.answer === undefined) throw new Error("call presentation unavailable");
+  const options = { ...input, ...fields, answer: fields.answer, signal: AbortSignal.any([input.snapshot.signal, ...(input.signal ? [input.signal] : [])]) };
   const host = options.host;
+  if (options.signal?.aborted) return;
   if (!host) {
     yield { type: "error", reason: "key", message: "Fast replies on calls need a Flux key or a model connection." };
     return;
   }
+  if (isBudgetReached(host)) { yield BUDGET_EVENT; return; }
   const answer = clip(options.answer, BRIEF_MAX_CHARS);
-  const alreadyInResults = Object.values(options.results ?? {}).some((result) => result.includes(answer.slice(0, 200)));
+  const alreadyInResults = Boolean(options.answerResultId && historyMessages(options.history, options.results).some(message => message.role === "tool" && message.tool_call_id === options.answerResultId));
   const prompt = [
     voiceHostPrompt(options.state),
     "",
@@ -1229,7 +1392,8 @@ export async function* runVoiceBrief(options: VoiceBriefOptions): AsyncGenerator
   options.signal?.addEventListener("abort", abort, { once: true });
   const firstToken = setTimeout(abort, BRIEF_FIRST_TOKEN_TIMEOUT_MS);
   const wholeTurn = setTimeout(abort, BRIEF_TURN_TIMEOUT_MS);
-  const call = options.fetchImpl ?? fetch;
+  const transport = options.fetchImpl ?? fetch;
+  const call: typeof fetch = (url, init) => { readCallPresentation(options.snapshot); return transport(url, init); };
   try {
     let res: Response;
     try {
@@ -1256,22 +1420,26 @@ export async function* runVoiceBrief(options: VoiceBriefOptions): AsyncGenerator
     }
     if (!res.ok || !res.body) {
       const said = await logRefusal(res, providerName(host));
-      yield { type: "error", ...failure(res.status, providerName(host), said) };
+      const refused = failure(res.status, providerName(host), said);
+      if (refused.reason === "budget") markBudgetReached(host);
+      yield { type: "error", ...refused };
       return;
     }
     const splitter = new SentenceSplitter({ rule: "short" });
     let capped = false;
     try {
-      for await (const part of readCompletion(res.body)) {
+      for await (const part of protectedCompletion(res.body, controller.signal, () => clearTimeout(firstToken), options.onSource, host)) {
         clearTimeout(firstToken);
-        if (part.kind === "text") for (const sentence of sentencesFrom(splitter, part.text)) yield { type: "sentence", text: sentence };
+        if (part.kind === "text") for (const sentence of sentencesFrom(splitter, part.text)) yield releaseSentence(sentence);
         else if (part.kind === "finish") capped = part.reason === "length";
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof VoiceBudgetReached) { yield BUDGET_EVENT; return; }
       if (!options.signal?.aborted) yield { type: "error", reason: "upstream", message: "The brief was cut off." };
       return;
     }
-    for (const sentence of sentencesFrom(splitter, null, capped)) yield { type: "sentence", text: sentence };
+    if (options.signal?.aborted) return;
+    for (const sentence of sentencesFrom(splitter, null, capped)) yield releaseSentence(sentence);
     yield { type: "done" };
   } finally {
     clearTimeout(firstToken);

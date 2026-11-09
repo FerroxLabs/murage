@@ -88,6 +88,16 @@ describe("internal routes, by principal", () => {
     }
   });
 
+  // BOT-CALLS-1020 section 7: the phone tools' internal route is the owner's. A channel person's turn is refused at this gate;
+  // a notOwnerAudience claim is refused inside the route (phone-calls/phone-section7.test.ts).
+  it("lets the owner reach the phone call tools and refuses a channel person", () => {
+    const { owner, channel } = principals();
+    for (const path of ["/api/internal/phone/phone_call_place", "/api/internal/phone/phone_call_result"]) {
+      expect(internalRouteRefusal({ path, kind: "agents", principal: owner })).toBeNull();
+      expect(internalRouteRefusal({ path, kind: "agents", principal: channel })).toBe(CHANNEL_PERSON_INTERNAL_REFUSAL);
+    }
+  });
+
   it("leaves memory to its own authority rather than this gate", () => {
     const { channel } = principals();
     expect(internalRouteRefusal({ path: "/api/internal/memory/recall", kind: "memory", principal: channel })).toBeNull();
