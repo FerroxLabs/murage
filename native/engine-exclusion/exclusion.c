@@ -51,6 +51,9 @@
 //   cwdOf(pid)                     Windows (DELETION-WHILE-OPEN-107): another process's working folder, read from its PEB
 //                                  (ProcessParameters->CurrentDirectory.DosPath); null when it cannot be read. Optional: an older
 //                                  build without it only means the open-home pass does not run there (it fails closed).
+//   anchorBegin / anchorOpen / anchorList / anchorRead / anchorStat / anchorClose / anchorEnd
+//                                  Windows (version 11): the anchored opens the Claude Code copy import reads through, in anchored-win.c (CONTRACTS-B 1.3)
+//                                  every folder and file opened relative to its held parent, on the session own I/O thread, under a deadline.
 //   dropShutdownPrivileges         Windows (version 10): removes both shutdown privileges from this process's primary token and
 //                                  verifies they are absent. Returns { ok: true } or { ok: false, step, error }.
 //   diskWritten()                  macOS (IO-IDLE-DRAIN-1018 r3.6): this process's cumulative bytes written to storage
@@ -92,7 +95,7 @@
 #endif
 #endif
 
-#define ADDON_VERSION 10
+#define ADDON_VERSION 11
 #define LOCK_WAIT_MS 1000
 #define LOCK_STEP_MS 10
 
@@ -1839,6 +1842,7 @@ static napi_value authenticode(napi_env env, napi_callback_info info) {
 #include <sddl.h>
 #include <aclapi.h>
 #include "exclusion-lsa.h"
+#include "anchored-win.h"
 #define COBJMACROS
 #include <sapi.h>
 #pragma comment(lib, "ole32.lib")
@@ -2504,6 +2508,7 @@ NAPI_MODULE_INIT() {
   add(env, exports, "speechVoices", speech_voices);
   add(env, exports, "speechToWave", speech_to_wave);
   add(env, exports, "cwdOf", cwd_of);
+  anchored_win_register(env, exports);
 #endif
   add(env, exports, "bootId", boot_id);
   add(env, exports, "version", version);
