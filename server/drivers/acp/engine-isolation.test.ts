@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // OpenCode and Fuigo bot turns: Murage's own MCP servers present, the owner's personal
@@ -268,3 +269,6 @@ describe("Droid personal setup isolation", () => {
     expect(mounted.some((server) => server.args.includes("fixture-agents"))).toBe(true);
   }, 30000);
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

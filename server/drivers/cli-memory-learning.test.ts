@@ -1,3 +1,5 @@
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
+import { fixtureLearningBot } from "../testing/learning-bot-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -5,7 +7,7 @@
 // openai-compat prompt contracts, the inference purpose route, pacing behind an interactive turn, and the limit pause.
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProviderInstance, RuntimeEvent, SendTurnInput } from "../contracts.ts";
@@ -46,7 +48,7 @@ function fakeEngine(script: Script, id = "codex-fixture", name = "Codex", option
     resetSession: async () => undefined,
   };
   const instance = { instanceId: id, driverKind: "codex", displayName: name, enabled: true, adapter, dispose: async () => undefined } as unknown as ProviderInstance;
-  return { instance: withCliMemoryLearning(instance, options), sent, denied, cwds, emitFor, listeners };
+  return { instance: fixtureLearningBot(withCliMemoryLearning(instance, options)), sent, denied, cwds, emitFor, listeners };
 }
 
 const answer = (text: string): Script => (_prompt, emit) => {
@@ -79,19 +81,19 @@ describe("CLI and ACP learning (H12)", () => {
     expect(typeof resolveMemoryExtractor("codex-fixture", [instance])!.ground).toBe("function");
   });
 
-  it("runs a one-off inside the folder the engine names, wipes it after, and falls back to the temp folder", async () => {
+  it("runs a one-off in the bot folder and retains it when the engine names no folder", async () => {
     const parent = mkdtempSync(join(tmpdir(), "murage-oneshot-parent-"));
     try {
       const named = fakeEngine(answer("OK"), "opencode-fixture", "OpenCode", { oneShotFolder: async () => parent });
       await named.instance.checkReply!(signal());
       const cwd = named.sent[0].cwd!;
-      expect(dirname(cwd)).toBe(parent);
+      expect(cwd).toBe(fixtureBotFolder());
       expect(named.cwds[0]).toEqual([]);
-      await vi.waitFor(() => expect(existsSync(cwd)).toBe(false));
+      await vi.waitFor(() => expect(existsSync(cwd)).toBe(true));
       expect(existsSync(parent)).toBe(true);
       const failing = fakeEngine(answer("OK"), "opencode-fixture", "OpenCode", { oneShotFolder: async () => { throw new Error("no folder"); } });
       await failing.instance.checkReply!(signal());
-      expect(dirname(failing.sent[0].cwd!)).toBe(tmpdir());
+      expect(failing.sent[0].cwd).toBe(fixtureBotFolder());
     } finally {
       removeTempDirSync(parent);
     }
@@ -108,8 +110,8 @@ describe("CLI and ACP learning (H12)", () => {
     expect(engine.sent[0].integrations).toBeUndefined();
     expect(isMemoryLearningThread(engine.sent[0].threadId)).toBe(true);
     expect(engine.cwds[0]).toEqual([]);
-    // the folder goes once the engine's retained session for the thread is retired
-    await vi.waitFor(() => expect(existsSync(engine.sent[0].cwd!)).toBe(false));
+    // Retiring a learning session does not remove the bot folder.
+    await vi.waitFor(() => expect(existsSync(engine.sent[0].cwd!)).toBe(true));
   });
 
   it("a paraphrase activates: the grounding call returns supported through the grounding contract", async () => {
@@ -279,7 +281,7 @@ describe("Claude one-shot learning (fake CLI)", () => {
   afterEach(async () => { for (const instance of made.splice(0)) await instance.dispose().catch(() => undefined); });
   const create = async () => {
     chmodSync(fake, 0o755);
-    const instance = await ClaudeDriver.create({ instanceId: "claude-fixture", displayName: "Claude", environment: {}, enabled: true, config: { cli: fake, permissionMode: "acceptEdits" } });
+    const instance = fixtureLearningBot(await ClaudeDriver.create({ instanceId: "claude-fixture", displayName: "Claude", environment: {}, enabled: true, config: { cli: fake, permissionMode: "acceptEdits" } }));
     made.push(instance);
     return instance;
   };

@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Grok runs `--permission-mode default` at every level, Full access included (FUIGO-SCOPE-1010 R1/R2 Medium):
@@ -65,3 +66,6 @@ describe("Grok Full access: `default` always, one-time allows only", () => {
     expect(decision).toEqual({ outcome: { outcome: "cancelled" } });
   }, 30000);
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

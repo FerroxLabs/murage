@@ -26,7 +26,7 @@ function setup() {
   const snapshot: ProcedureReviewSnapshot = { requestId: "actual-gepa-policy", scopeId, target: { kind: "memory-policy", scopeId, ownerId: "workspace-owner", artifactId: "memory-policy", baseRevision: policy.revision, threadId: "memory-policy", bundleId: hash(policy) }, evidenceDigest: hash([]), evidence: [], policyRevision: state.policyRevision, deletionEpoch: state.deletionEpoch, learningRevision: readMemoryLearning(database()).revision, outcomeBasis: "source-reported" };
   let reflections = 0;
   const options: ProcedureEvaluatorOptions = {
-    command: { executable: process.env.MURAGE_GEPA_PYTHON ?? "/not-admitted/python", args: ["-I", worker], cwd: DATA_DIR, expectedPythonVersion: process.env.MURAGE_GEPA_PYTHON_VERSION ?? "0.0.0" },
+    command: { executable: process.env.MURAGE_GEPA_TEST_PYTHON ?? "/not-admitted/python", args: ["-I", worker], cwd: DATA_DIR, expectedPythonVersion: process.env.MURAGE_GEPA_TEST_PYTHON_VERSION ?? "0.0.0" },
     workerDigest: createHash("sha256").update(readFileSync(worker)).digest("hex"), evaluatorId: "synthetic-recall-groups-v1-scripted-reflection", seedInstruction: JSON.stringify({ extraction: policy.extraction, retrieval: policy.retrieval }), corpus,
     budget: { totalUsd: 0, evaluationPerCaseUsd: 0, reflectionUsd: 0, authorityReference: "isolated-synthetic-no-provider" },
     evaluate: recallPolicyEvaluator({ extraction: policy.extraction, retrieval: policy.retrieval }),
@@ -43,7 +43,7 @@ it("rejects leaked split groups and an unpriced configured dollar ceiling before
   await expect(evaluateProcedureWithGepa(f.snapshot, f.options, new AbortController().signal)).rejects.toThrow("GEPA_COST_AUTHORITY_REQUIRED");
   expect(f.reflections()).toBe(0);
 });
-it.skipIf(!process.env.MURAGE_GEPA_PYTHON || !process.env.MURAGE_GEPA_PYTHON_VERSION).each([true, false])("actual pinned GEPA improves untouched groups and preserves cost-known=%s through publication and rollback", async (costKnown) => {
+it.skipIf(!process.env.MURAGE_GEPA_TEST_PYTHON || !process.env.MURAGE_GEPA_TEST_PYTHON_VERSION).each([true, false])("actual pinned GEPA improves untouched groups and preserves cost-known=%s through publication and rollback", async (costKnown) => {
   const f = setup();
   if (!costKnown) {
     f.options.budget.totalUsd = null;
@@ -62,7 +62,7 @@ it.skipIf(!process.env.MURAGE_GEPA_PYTHON || !process.env.MURAGE_GEPA_PYTHON_VER
   expect(() => publishMemoryEvolutionPolicy(f.snapshot, receipt, f.admission)).toThrow("MEMORY_EVOLUTION_CONFLICT");
 }, 40_000);
 
-it.skipIf(!process.env.MURAGE_GEPA_PYTHON || !process.env.MURAGE_GEPA_PYTHON_VERSION)("actual GEPA evaluates classification guidance through production framing/parser and publishes only the held-out improvement", async () => {
+it.skipIf(!process.env.MURAGE_GEPA_TEST_PYTHON || !process.env.MURAGE_GEPA_TEST_PYTHON_VERSION)("actual GEPA evaluates classification guidance through production framing/parser and publishes only the held-out improvement", async () => {
   const f=setup(),corpus=memoryClassificationCorpus();
   f.options.corpus=corpus;f.options.evaluatorId="synthetic-classification-scripted-model-v1";
   const admission=admitMemoryEvolutionCorpus(f.ticket,{kind:"synthetic",corpusDigest:hash(corpus),holdoutDigest:hash([corpus.id,corpus.version,corpus.groupBy,corpus.holdout])});
@@ -92,7 +92,7 @@ it.skipIf(!process.env.MURAGE_GEPA_PYTHON || !process.env.MURAGE_GEPA_PYTHON_VER
   expect(readMemoryEvolutionPolicy().retrieval).toEqual(f.policy.retrieval);
 },65_000);
 
-it.skipIf(!process.env.MURAGE_GEPA_PYTHON || !process.env.MURAGE_GEPA_PYTHON_VERSION)("actual GEPA improves simulated procedure outcomes while retaining the exact skill identity and preconditions",async()=>{
+it.skipIf(!process.env.MURAGE_GEPA_TEST_PYTHON || !process.env.MURAGE_GEPA_TEST_PYTHON_VERSION)("actual GEPA improves simulated procedure outcomes while retaining the exact skill identity and preconditions",async()=>{
   const f=setup(),header="---\nname: outcome-report\ndescription: Report simulated work outcomes.\n---\n\n## Preconditions\nUse simulated-file-check-v1 observations only. No external actions.\n\n";
   const seed=header+"## Method\nTreat reported completed tasks as verified.\n";
   const good=header+"## Method\nRequire a matching verification receipt before reporting success; otherwise completed claims remain unconfirmed. Preserve failures.\n";

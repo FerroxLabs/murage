@@ -15,6 +15,7 @@ import { walkPwsh } from "./shell/pwsh.ts";
 import { newContext } from "./shell/walk.ts";
 import { classifyAsk, type StopLinePlace } from "./stop-line.ts";
 import type { GrantCall } from "../shared/app-action-grant.ts";
+const { expectProtectedPath } = await import("./testing/marks-doubt-free.ts");
 
 const r = String.raw;
 const CWD = "C:\\Users\\owner\\repo";
@@ -329,8 +330,9 @@ describe("a read never carries a wipe", () => {
   });
 
   it("text that only starts like a cmdlet keeps its card: a POSIX shell would run it", () => {
-    expect(alwaysAskCommand("Get-Item /etc `truncate -s 0 /home/owner/report.txt`", "/home/owner")?.rule).toBe("protected-path");
-    expect(alwaysAskCommand("Get-ChildItem /etc", "/home/owner")?.rule).toBe("protected-path");
+    // MARKS r12 re-baseline (MurageMain 11-07 item 1): the doubt-free read names it; strict read and every level still card
+    expectProtectedPath("Get-Item /etc `truncate -s 0 /home/owner/report.txt`", "/home/owner");
+    expectProtectedPath("Get-ChildItem /etc", "/home/owner");
   });
 
   it("`$null` is a discard only in text PowerShell runs: a POSIX shell can name a file with it", () => {
@@ -341,6 +343,6 @@ describe("a read never carries a wipe", () => {
   it("the wipes keep their own card, not the read's", () => {
     expect(rule(r`Get-ChildItem C:\Windows | Remove-Item -Recurse -Force`)).toBe("delete-system-folder");
     expect(rule(r`Format-Volume -DriveLetter C`)).toBe("disk-erase");
-    expect(rule(r`Get-ChildItem C:\Windows | Clear-Content`)).toBe("protected-path");
+    expectProtectedPath(r`Get-ChildItem C:\Windows | Clear-Content`, CWD, "pwsh"); // MARKS r12 re-baseline
   });
 });

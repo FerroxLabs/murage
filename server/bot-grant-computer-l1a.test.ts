@@ -12,7 +12,7 @@
 // owner-desktop, peer}. B9 (MCP server removal drops that mount's grants) is a
 // subtractive lifecycle exception, pinned below. Section 4: both respond
 // routes check the task row before any branch can answer.
-// The index.ts wiring checks are RED until handoffs/INDEX-PATCH-1013-UX-L1A.diff
+// The index.ts wiring checks are RED until INDEX-PATCH-1013-UX-L1A.diff
 // is applied (the integrator diff), like route-policy-l1a.test.ts.
 import { generateKeyPairSync } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -223,7 +223,10 @@ describe("section 4: both respond routes check the task row before any branch ca
   const answerer = (marker: string): string => {
     const text = route(marker);
     if (!text.includes("respondToCard(")) return text;
-    expect(text.replace(/\s+/g, " ")).toContain("return await respondToCard({ req, url, res }, threadId, await readBody(req));");
+    // BOT-RESPOND-ROUTE-UNIFY: the bot route resolves its bot's own direct thread first, then hands off the same way
+    expect(text.replace(/\s+/g, " ")).toContain(marker.includes("bots")
+      ? "return await respondToCard({ req, url, res }, bot.threadId, body, undefined, { botId: bot.id });"
+      : "return await respondToCard({ req, url, res }, threadId, await readBody(req));");
     // the route itself answers nothing before (or instead of) the hand-off
     for (const branch of [...ANSWERING, "taskGrantRefusal(", "json(res"]) expect(text, branch).not.toContain(branch);
     const at = source.indexOf("\nasync function respondToCard(");

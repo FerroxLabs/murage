@@ -126,6 +126,8 @@ type SkillRecordingPayload = {
 
   interface BackupScheduleStatus {
     supported:boolean; pending:boolean; enabled:boolean; revision:number; phase:string;
+    /** 1.0.18: a backup waiting for space, its drive, or a busy file; it starts by itself. */
+    waiting?:{drive:"backup"|"data"|null;volumes:{kind:"backup"|"data"|"shared";requiredBytes:number;freeBytes?:number;neededBytes?:number}[];cause:"space"|"drive"|"busy"|"interrupted";code:string;requiredBytes?:number;neededBytes?:number;since:number;nextAt:number;attempts:number};
     /** Unsupported only for now: the backup tool is still being checked. */
     checking?:boolean;
     /** Unsupported, and why, when it is not just the check: the backup tool
@@ -460,6 +462,11 @@ type SkillRecordingPayload = {
         start(): Promise<{ ok: true } | { ok: false; code: string; message: string }>;
         cancel(): Promise<void>;
       };
+      /** Phone calls: the Settings key box. Save hands the Vapi key to main once; nothing ever reads it back. */
+      phoneKey?: {
+        save(key: string): Promise<{ ok: true } | { ok: false; code?: string; message?: string }>;
+        remove(): Promise<{ ok: true } | { ok: false; code?: string; message?: string }>;
+      };
       /** Plan sign-in (ChatGPT, Grok). Never returns a token. */
       modelSignIn?: {
         status(): Promise<{ providers: import("../../shared/model-signin").SignInProviderStatus[]; ready: boolean }>;
@@ -488,7 +495,7 @@ type SkillRecordingPayload = {
       /** Reconnect connected apps here after another computer took over. */
       reconnectConnectedApps?(): Promise<{ reconnected: boolean }>;
       setCredential?(
-        name: "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "openaiImageApiKey" | "tavilySearchApiKey" | "exaSearchApiKey" | "firecrawlSearchApiKey" | "telegramBotToken" | "slackAppToken" | "slackBotToken" | "discordBotToken",
+        name: "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "openaiImageApiKey" | "tavilySearchApiKey" | "exaSearchApiKey" | "firecrawlSearchApiKey" | "highlevelPrivateToken" | "telegramBotToken" | "slackAppToken" | "slackBotToken" | "discordBotToken",
         value: string,
       ): Promise<ConfigStatus>;
       /** In-app auto-update (packaged app only; dormant in dev). onState
@@ -562,7 +569,8 @@ export interface UpdaterState {
   currentVersion?: string;
   percent?: number;
   message?: string;
-  action?: "download-from-murage";
+  action?: "download-from-murage" | "download-installer";
+  downloadUrl?: string;
   /** ISO time of the first failed update check in a streak that has lasted a day or more; absent once a check works. */
   staleCheckSince?: string;
   /**

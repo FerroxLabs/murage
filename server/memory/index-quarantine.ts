@@ -5,7 +5,7 @@
 // owner deleted after it was set aside, and nothing scrubs it. So it is removed as soon as the new index is open, and so is any copy an
 // earlier build left. Only the index's own directory is looked at (never recursively), only names `<index file>.corrupt-<digits>` and
 // their `-wal`/`-shm`, only regular files (never a link or a directory). No other quarantine (messages.db's included) is touched.
-import { lstatSync, readdirSync, renameSync, unlinkSync, type Stats } from "node:fs";
+import { closeSync, fsyncSync, lstatSync, openSync, readdirSync, renameSync, unlinkSync, type Stats } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
@@ -29,8 +29,14 @@ export function checkIndex(db: DatabaseSync): void {
   if (answer !== "ok") throw new IndexDamagedError(answer);
 }
 
-/** The index's log files. SQLite opens them by name beside the index file and follows a link. */
-const LOG_SUFFIXES = ["-wal", "-shm"] as const;
+/** The index file set beside the index file (MEMW spec 1.10): SQLite's log files, which it opens by name and follows a link, and the
+ * MEMW sidecars (stop, seal ok, attempt marker). Every member is checked as one set (UNSAFE) and swept as one set. */
+export const LOG_SUFFIXES = ["-wal", "-shm", "-walstop", "-walok", "-walattempt"] as const;
+/** MEMW r3.2.8 point 1: `-walstop` is a presence-only marker. Nothing on the open path moves, unlinks or rewrites it: it stays at its live
+ * name through quarantineIndex and prepareIndexOpen, and only removeStopMarker (the reset's completion) removes it. */
+export const STOP_MARKER_SUFFIX = "-walstop";
+/** The members that quarantineIndex moves and prepareIndexOpen unlinks: LOG_SUFFIXES minus the stop marker. */
+export const MOVED_SUFFIXES: readonly string[] = LOG_SUFFIXES.filter(suffix => suffix !== STOP_MARKER_SUFFIX);
 const UNSAFE = "UNSAFE_MEMORY_INDEX";
 
 /** lstat that answers null for a name that is not there; any other fault is thrown (fail closed). */
@@ -41,7 +47,8 @@ function entry(path: string): Stats | null {
 /** Run before every open of the index. A log file that is a link, a directory or anything but a regular file stops the start
  * (UNSAFE_MEMORY_INDEX): SQLite would read and write through it. With no index file, a log file at the live name belongs to no database
  * (a set-aside that failed half way, a crash): opened beside the new empty file, a WAL would bring the old words back into it. It is
- * removed, and if it cannot be the start fails and is retried, so a fresh index is never opened beside it. */
+ * removed, and if it cannot be the start fails and is retried, so a fresh index is never opened beside it. The stop marker is checked
+ * (UNSAFE) but never removed here, with or without an index file (r3.2.8 point 1). */
 export function prepareIndexOpen(path: string, unlink: (file: string) => void = unlinkSync): void {
   const indexFile = entry(path);
   if (indexFile && (!indexFile.isFile() || indexFile.isSymbolicLink())) throw new Error(UNSAFE);
@@ -49,7 +56,7 @@ export function prepareIndexOpen(path: string, unlink: (file: string) => void = 
     const file = `${path}${suffix}`, stat = entry(file);
     if (!stat) continue;
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(UNSAFE);
-    if (indexFile) continue;
+    if (indexFile || !MOVED_SUFFIXES.includes(suffix)) continue;
     try { unlink(file); } catch (error) { if ((error as { code?: unknown })?.code !== "ENOENT") throw error; }
   }
 }
@@ -68,11 +75,12 @@ export function indexFilesRegular(path: string): boolean {
 
 /** Moves a damaged index and its log files aside under one name, as one set: if any rename fails, the ones already done are moved back
  * and the error is thrown (the start fails and is retried). Left at the live name, a log would be read into the new empty file. A log
- * that is not a regular file is refused (UNSAFE_MEMORY_INDEX). Returns the main file's new name. `rename` is for tests only. */
+ * that is not a regular file is refused (UNSAFE_MEMORY_INDEX). The stop marker is not moved: it stays at its live name, so the set
+ * stays stopped until the reset completes (r3.2.8 point 1). Returns the main file's new name. `rename` is for tests only. */
 export function quarantineIndex(path: string, now = Date.now(), rename: (from: string, to: string) => void = renameSync): string {
   const aside = `${path}.corrupt-${now}`, moved: Array<[from: string, to: string]> = [];
   try {
-    for (const suffix of ["", ...LOG_SUFFIXES]) {
+    for (const suffix of ["", ...MOVED_SUFFIXES]) {
       const from = `${path}${suffix}`, to = `${aside}${suffix}`;
       if (suffix) { const stat = entry(from); if (!stat) continue; if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(UNSAFE); }
       rename(from, to);
@@ -92,9 +100,29 @@ export function quarantineIndex(path: string, now = Date.now(), rename: (from: s
   return aside;
 }
 
+/** Whether `<index>-walstop` is there (any content, any type). An lstat error other than ENOENT counts as present (fail closed). */
+export function stopMarkerPresent(indexPath: string): boolean {
+  try { lstatSync(`${indexPath}${STOP_MARKER_SUFFIX}`); return true; }
+  catch (error) { return (error as { code?: unknown })?.code !== "ENOENT"; }
+}
+
+function syncDirectory(dir: string): void {
+  if (process.platform === "win32") return; // NTFS: a directory cannot be opened for fsync; its metadata is journaled
+  const fd = openSync(dir, "r");
+  try { fsyncSync(fd); } finally { closeSync(fd); }
+}
+
+/** r3.2.8 3.3 step 2, the only removal of the stop marker: unlink `<index>-walstop` (ENOENT counts as done), then fsync the directory.
+ * Throws on any other fault (the caller answers "failed": the marker stays and the reset is retried). `io` is for tests only. */
+export function removeStopMarker(indexPath: string, io: { unlink?: (file: string) => void; fsyncDir?: (dir: string) => void } = {}): void {
+  try { (io.unlink ?? unlinkSync)(`${indexPath}${STOP_MARKER_SUFFIX}`); }
+  catch (error) { if ((error as { code?: unknown })?.code !== "ENOENT") throw error; }
+  (io.fsyncDir ?? syncDirectory)(dirname(indexPath));
+}
+
 function quarantinePattern(indexPath: string): RegExp {
   const name = basename(indexPath).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`^${name}\\.corrupt-\\d+(?:-wal|-shm)?$`);
+  return new RegExp(`^${name}\\.corrupt-\\d+(?:${LOG_SUFFIXES.map(x => x.replace(".", "\\.")).join("|")})?$`);
 }
 
 /** Unlinks every set-aside copy of this index (and its log files) in the index's own directory. A file that cannot be removed now

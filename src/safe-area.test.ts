@@ -92,14 +92,15 @@ describe("the chat column's own controls", () => {
 });
 
 describe("full-screen sheets on a phone", () => {
-  it("starts Bot settings' header below the status bar and ends its footer above the home indicator", () => {
-    const source = read("components/BotSettingsDialog.tsx");
-    const header = elementAt(source, '<BoxHead className=');
-    expect(header).toContain("max-sm:pt-[calc(0.75rem+var(--inset-top))]");
-    // The desktop's centred layout keeps its own padding.
-    expect(header).toContain("py-3");
-    expect(header).toContain("sm:px-5");
-    expect(source.slice(source.indexOf("<BoxFoot"), source.indexOf("<BoxFoot") + 200)).toContain("max-sm:pb-[calc(0.5rem+var(--inset-bottom))]");
+  it("Bot settings is a page of the Settings window, whose sheet keeps clear of the status bar and home indicator", () => {
+    // One Settings window (S7): the bot page has no frame of its own, so it cannot pad the insets twice.
+    const pane = read("components/BotSettingsPane.tsx");
+    expect(pane).not.toContain("<BoxHead");
+    expect(pane).not.toContain("--inset-");
+    // With the visual viewport shrunk (keyboard up) the chips and the standing note give way, so the page keeps room for the profile-setup card.
+    expect(elementAt(pane, "data-bot-header-chips")).toContain("keyboard-open:hidden");
+    expect(pane).toContain("[@media(max-height:640px)]:hidden keyboard-open:hidden");
+    expect(read("components/SettingsModal.tsx")).toContain("max-md:pt-[var(--inset-top)] max-md:pb-[var(--inset-bottom)]");
   });
 
   it("pads Settings' full-bleed sheet by both insets, below md only", () => {
@@ -142,10 +143,12 @@ describe("every modal backdrop", () => {
   // A backdrop that centres (or top-aligns) a dialog: it hosts controls a
   // person has to reach, so it must move inside the safe area. Click-away
   // layers (`fixed inset-0 z-30` with nothing in them) do not.
-  const BACKDROP = /className="([^"]*\bfixed (?:inset-0|inset-x-0 top-0) z-[^"]*\bitems-(?:center|start)\b[^"]*)"/g;
+  // PULLBACK: layers stack through LayerSurface, so a backdrop need not carry a z-* class.
+  const BACKDROP = /className="([^"]*\bfixed (?:inset-0|inset-x-0 top-0)\b[^"]*\bitems-(?:center|start)\b[^"]*)"/g;
   // SettingsModal's backdrop turns into a full-bleed sheet below md, which
   // pads itself (above); SignedOutCard pads its top inline.
-  const OWN_INSETS = new Set(["components/SettingsModal.tsx", "components/SignedOutCard.tsx"]);
+  // ImageMedia's full-screen viewer pads env(safe-area-inset-*) inline.
+  const OWN_INSETS = new Set(["components/SettingsModal.tsx", "components/SignedOutCard.tsx", "components/ImageMedia.tsx"]);
 
   const files: string[] = [];
   const walk = (dir: string) => {

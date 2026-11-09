@@ -28,7 +28,7 @@ import { LineageAllowance } from "./lineage-allowance.ts";
 import { stampFreshSession } from "./testing/writetime-fixture.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { settleTestHandles } from "../test-handle-registry.ts";
-import { REVOKE_WRITE_BUDGET, resetRevokeWriteBudget } from "./revoke-budget.ts";
+import { REVOKE_PACE, REVOKE_PACE_COMMIT, REVOKE_WRITE_BUDGET, resetRevokeWriteBudget } from "./revoke-budget.ts";
 import { storeAnchorMessage } from "./testing/anchor-message.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
@@ -40,8 +40,12 @@ beforeEach(() => resetMemoryRevocationStats());
 // these bound each slice's rows and time; the per-minute write budget (revoke-budget.ts, 1.0.3 revoke storm M3) has its own tests
 // (revoke-budget.test.ts), and 20k receipts inside it take many minutes by design
 const BUDGET = REVOKE_WRITE_BUDGET.bytesPerMinute;
-beforeEach(() => { REVOKE_WRITE_BUDGET.bytesPerMinute = Number.POSITIVE_INFINITY; resetRevokeWriteBudget(); });
-afterEach(() => { REVOKE_WRITE_BUDGET.bytesPerMinute = BUDGET; resetRevokeWriteBudget(); });
+// the drains here are about WHAT a forget ends and how many rows it reads, with the write budget off; the idle pace (IO-IDLE-DRAIN-1018 r3.5/r3.6, 0.8 MB a
+// minute, a capped drain commit) is a second limiter proven in io-budget-revoke-pace.test.ts and io-budget-revoke-bounds.test.ts, so it is off here too
+// (the 20k and 300k receipt cases would otherwise wait out real minutes)
+const PACE0 = REVOKE_PACE.bytesPerMinute, ROWS0 = REVOKE_PACE_COMMIT.rows;
+beforeEach(() => { REVOKE_WRITE_BUDGET.bytesPerMinute = Number.POSITIVE_INFINITY; REVOKE_PACE.bytesPerMinute = Number.POSITIVE_INFINITY; REVOKE_PACE_COMMIT.rows = 1_000_000; resetRevokeWriteBudget(); });
+afterEach(() => { REVOKE_WRITE_BUDGET.bytesPerMinute = BUDGET; REVOKE_PACE.bytesPerMinute = PACE0; REVOKE_PACE_COMMIT.rows = ROWS0; resetRevokeWriteBudget(); });
 afterEach(() => { stopMemoryRevocation(); vi.restoreAllMocks(); for (const db of dbs.splice(0)) db.close(); });
 /** Runs every job row of `db` to completion through the runner. */
 async function drain(db: DatabaseSync | (() => DatabaseSync)) { wakeMemoryRevocation(typeof db === "function" ? db : () => db, { pauseMs: 1 }); await memoryRevocationIdle(); }
