@@ -88,7 +88,17 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: /^\/api\/cloud\/model-signins\/(chatgpt|supergrok)\/(start|sign-out|attempts\/[A-Za-z0-9_-]{1,200}\/cancel)$/, class: "desktop", cloudWrite: "step-up", why: "A paired owner confirms a home model sign-in change." },
   { methods: ["DELETE"], path: /^\/api\/cloud\/model-signins\/(chatgpt|supergrok)$/, class: "desktop", cloudWrite: "step-up", why: "A paired owner confirms removing a home model connection." },
   { methods: "*", path: /^\/api\/cloud\/own-server(?:\/(?:confirm|test))?$/, class: "desktop", cloudWrite: "step-up", why: "A paired owner connects, checks or removes their own server for bots to use as a computer (server/cloud-home/own-server.ts)." },
+  { methods: ["GET"], path: "/api/highlevel", class: "desktop", why: "The owner reads native HighLevel status: whether a token is saved, the confirmed location, pending changes and each bot's access. Never the token (server/highlevel/private-token.ts)." },
+  { methods: ["POST"], path: /^\/api\/highlevel\/token\/(?:check|[0-9a-f-]{36}\/confirm)$/, class: "desktop", cloudWrite: "credential", why: "The owner checks a HighLevel location with the saved token, then confirms that exact check; only then can a bot reach it." },
+  { methods: ["PUT"], path: re(`/api/highlevel/bots/${ID}/access`), class: "desktop", cloudWrite: "credential", why: "The owner sets which HighLevel read tools a bot may use on the confirmed location (read only: no write path exists, server/highlevel/runtime.ts)." },
+  { methods: ["DELETE"], path: /^\/api\/highlevel\/connections\/hl_[A-Za-z0-9]{4,64}$/, class: "desktop", cloudWrite: "credential", why: "The owner disconnects the HighLevel location; nothing more reaches it until they check and confirm again." },
+  { methods: "*", path: /^\/api\/highlevel(?:\/.*)?$/, class: "desktop", cloudWrite: "credential", why: "Every other method or path under the HighLevel owner block answers 404; it stays owner-desktop like the routes above." },
   { methods: ["GET", "PUT"], path: "/api/owner/timezone", class: "desktop", cloudWrite: "ordinary", why: "The owner reads and sets their time zone: the home's on a Cloud home, the desktop profile's on this computer (owner-time-zone.ts)." },
+  { methods: ["GET"], path: "/api/data-dir/roots", class: "desktop", why: "S5 DR7: the data roots' states for Settings > Data folder; the owner's own computer only (isOwnersComputer), anyone else 404 with no body." },
+  { methods: ["POST"], path: "/api/data-dir/confirm-root", class: "desktop", cloudWrite: "step-up", why: "S5 DR7: the owner confirms a linked data root that now points somewhere else; the owner's own computer only, a Cloud home answers 404." },
+  { methods: ["GET"], path: "/api/spend", class: "desktop", why: "UX-L2C: the owner's Flux spend figure for Today, Usage and Needs you; the owner's own computer only, a Cloud home answers 404." },
+  { methods: ["GET"], path: "/api/plan-usage", class: "desktop", why: "The owner reads each engine account's reported plan usage (server/plan-usage-report.ts); no credential or home path is sent." },
+  { methods: ["POST"], path: "/api/plan-usage/refresh", class: "desktop", cloudWrite: "ordinary", why: "The owner asks running engine accounts for a fresh usage report; bounded, never starts an engine or a turn." },
   { methods: ["GET"], path: "/api/projects/new-options", class: "desktop", why: "The owner chooses available project members." },
   { methods: ["POST"], path: "/api/projects/proposal", class: "desktop", cloudWrite: "ordinary", why: "The owner asks the Chief for a project proposal." },
   { methods: ["POST"], path: "/api/projects", class: "desktop", cloudWrite: "ordinary", why: "The owner creates project authority and members." },
@@ -112,6 +122,10 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: "*", path: /^\/api\/media\/bytes(?:\/|$)/, class: "media", cloudWrite: "ordinary", why: "audio and video elements cannot send the desktop header; each byte URL carries its own short-lived capability" },
 
   // ── companion: the desktop, or the phone's forwarded launch proof ─────
+  // CROSS-CHAT-READ-1019: the share card, Share / Don't share and the composer entry; the route itself requires the owner's desktop or companion origin
+  { methods: ["GET"], path: re(`/api/room-shares/${ID}`), class: "companion", why: "the owner reads a bot's share request card (room-shares.ts shareCard), owner origin only" },
+  { methods: ["POST"], path: re(`/api/room-shares/${ID}/(share|decline)`), class: "companion", cloudWrite: "step-up", why: "the owner shares the exact excerpts or keeps them private, with the draft's nonce and digest" },
+  { methods: ["POST"], path: re(`/api/groups/${ID}/room-shares`), class: "companion", cloudWrite: "step-up", why: "the owner's composer entry asks the same picker for a room member" },
   { methods: ["GET"], path: "/api/inbox", class: "companion", why: "the phone's Inbox, scoped to the conversations its sidebar shows (inbox-access.ts)" },
   { methods: ["POST"], path: "/api/inbox/state", class: "companion", cloudWrite: "ordinary", why: "read, snooze and clear marks on items inside that same list" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/voice-host`), class: "companion", cloudWrite: "ordinary", why: "the fast half of a call, for a bot the phone's sidebar shows (call-access.ts)" },
@@ -153,6 +167,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: "/api/phones/minted", class: "companion", cloudWrite: "ordinary", why: "the companion reports a phone job credential it minted, so the harness can match it to a registered device" },
   { methods: ["GET"], path: "/api/phones", class: "desktop", why: "the owner's desktop lists the registered phones and what each can do" },
   { methods: ["GET"], path: "/api/phones/offered", class: "companion", why: "the door asks before it mints a phone-jobs token" },
+  { methods: "*", path: /^\/api\/phone-calls(?:\/|$)/, class: "desktop", cloudWrite: "step-up", why: "bot phone call owner routes (phone-calls/owner-routes.ts): setup, settings, the call list, cancel and share answer the desktop app only, and a bot or engine credential is refused first" },
   { methods: "*", path: /^\/api\/email(?:\/|$)/, class: "companion", cloudWrite: "step-up", why: "bot email owner routes (email/owner-routes.ts): the account switch answers the desktop only, every phone act carries a fresh device proof, and a bot or engine credential is refused first (F18)" },
   { methods: "*", path: /^\/api\/mobile\/push\//, class: "companion", cloudWrite: "ordinary", why: "push enrolment and notification actions, each proved by the companion door (mobile/v1)" },
   { methods: "*", path: re(`/api/threads/${ID}/browser-setup/${ID}`), class: "companion", cloudWrite: "ordinary", why: "answering a bot's browser setup card, like any card: the desktop or the paired phone (mayApprove)" },
@@ -181,6 +196,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: re(`/api/bots/${ID}/typing`), class: "conversation", cloudWrite: "ordinary", why: "the owner is typing: background work holds back a few seconds (owner-first)" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/active-branch`), class: "conversation", cloudWrite: "ordinary", why: "switch between a conversation's branches" },
   { methods: ["GET"], path: re(`/api/bots/${ID}/engine-commands`), class: "conversation", why: "names of the bot's own engine commands for the composer menu" },
+  { methods: ["GET"], path: re(`/api/bots/${ID}/postable-venues`), class: "conversation", why: "the Post in… picker's list of projects and channels the bot may post in (VENUE-POST-1017); the route's own isOwnerOrigin check keeps venue names from door guests, and the send re-checks every pick" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/avatar/generate`), class: "conversation", cloudWrite: "ordinary", why: "draw a new avatar for a bot" },
   { methods: ["GET"], path: re(`/api/bots/${ID}/skills`), class: "conversation", why: "the list of a bot's skills the new-bot intake counts; installing stays on the desktop" },
   { methods: ["GET", "POST"], path: re(`/api/bots/${ID}/tasks`), class: "conversation", cloudWrite: "ordinary", why: "start a separate task conversation, or page back through the older ones the roster window leaves out" },
@@ -227,6 +243,8 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: "/api/inbox/approve-all/preview", class: "conversation", cloudWrite: "ordinary", why: "Approve all: freeze the Approvals list and say which cards it may answer; the desktop app or the paired phone app only (approveAllSurface)" },
   { methods: ["POST"], path: "/api/inbox/approve-all/surface", class: "conversation", cloudWrite: "ordinary", why: "Approve all: whether this surface shows the button, from the one owner-app check (ownerAppSurface); read only" },
   { methods: ["POST"], path: "/api/inbox/approve-all/caution", class: "conversation", cloudWrite: "ordinary", why: "Approve all: the owner's shared choice to hide or show the first-use caution again (owner-prefs.ts); the desktop app or the paired phone app only" },
+  { methods: ["GET"], path: "/api/owner-prefs/today-view", class: "conversation", cloudWrite: "ordinary", why: "Today: the owner's shared Calm | Detailed choice (owner-prefs.ts) and whether this surface may save it (ownerAppSurface); read only" },
+  { methods: ["POST"], path: "/api/owner-prefs/today-view", class: "conversation", cloudWrite: "ordinary", why: "Today: save the Calm | Detailed choice (owner-prefs.ts); the desktop app or the keyed paired phone app only (ownerAppSurface)" },
   { methods: ["POST"], path: "/api/inbox/approve-all/apply", class: "conversation", cloudWrite: "ordinary", why: "Approve all: Allow once on each ticked card through the respond function; the phone signs the ticked set once (fresh-auth gate)" },
   { methods: ["POST"], path: re(`/api/threads/${ID}/respond`), class: "conversation", cloudWrite: "ordinary", why: "answer a card: anyone may decline or skip, only the desktop or the paired phone may allow or answer (mayApprove)" },
   { methods: ["POST"], path: re(`/api/threads/${ID}/widgets/${ID}/respond`), class: "conversation", cloudWrite: "ordinary", why: "press a bot's widget: only the desktop or the paired phone (mayApprove); one owner send per widget" },
@@ -236,6 +254,12 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: "/api/files", class: "conversation", cloudWrite: "ordinary", why: "a share-sheet document, stored under a generated name" },
   { methods: ["GET"], path: "/api/tts/voices", class: "conversation", why: "voice labels; the voice key never leaves" },
   { methods: ["POST"], path: "/api/tts/voices/add", class: "desktop", cloudWrite: "step-up", why: "the owner adds a Voice Library voice to their own ElevenLabs account (a voice slot there); the key never leaves; cloudRouteDecision denies it on every Cloud scope but owner-desktop" },
+  { methods: ["POST"], path: "/api/tts/reply", class: "desktop", cloudWrite: "ordinary", why: "desktop reply speech bound to an authenticated live stream; no posted text" },
+  { methods: ["POST"], path: "/api/tts/reply/session", class: "desktop", cloudWrite: "ordinary", why: "desktop reply speech bound to an authenticated live stream; no posted text" },
+  { methods: ["POST"], path: "/api/tts/reply/cancel", class: "desktop", cloudWrite: "ordinary", why: "desktop reply speech bound to an authenticated live stream; no posted text" },
+  { methods: ["POST"], path: "/api/tts/reply/target", class: "desktop", cloudWrite: "ordinary", why: "desktop reply speech bound to an authenticated live stream; no posted text" },
+  { methods: ["POST"], path: "/api/tts/call/reply", class: "conversation", cloudWrite: "ordinary", why: "protected audio for one sealed reply on an authenticated live call; handler enforces target, principal and room desktop admission" },
+  { methods: ["POST"], path: "/api/tts/call/heard", class: "conversation", cloudWrite: "ordinary", why: "playback counts for one delivered reply on an authenticated live call; handler enforces target, principal and room desktop admission" },
   { methods: ["POST"], path: "/api/tts/speak", class: "conversation", cloudWrite: "ordinary", why: "speak a reply; audio out, no key" },
   { methods: ["POST"], path: "/api/tts/prepare", class: "conversation", cloudWrite: "ordinary", why: "split a reply into utterances and say whether a voice is set up; reads no key, writes nothing" },
   { methods: ["POST"], path: "/api/voice/transcribe", class: "conversation", cloudWrite: "ordinary", why: "voice in: audio in, text out, the Flux key stays here" },
@@ -321,6 +345,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: "/api/engine-signin-recipe", class: "desktop", cloudWrite: "step-up", why: "the fixed sign-in recipe a desktop runs for an engine" },
   { methods: ["POST"], path: "/api/engine-signin-probe", class: "desktop", cloudWrite: "step-up", why: "whether one engine reads signed in, while its sign-in runs" },
   { methods: ["GET", "POST"], path: re(String.raw`/api/engine-management/[\w.-]+`), class: "desktop", cloudWrite: "step-up", why: "inspect and install managed engines" },
+  { methods: ["GET"], path: "/api/instances/hidden", class: "desktop", why: "U22 G20: the engines the owner hid, for the folded Hidden list in Engines settings" },
   { methods: ["PATCH"], path: re(String.raw`/api/instances/[\w.-]+`), class: "desktop", cloudWrite: "step-up", why: "change engine launch configuration" },
   { methods: ["POST"], path: re(String.raw`/api/instances/[\w.-]+/claude-update`), class: "desktop", cloudWrite: "step-up", why: "run Claude Code's own updater for a Claude engine" },
   { methods: ["GET"], path: "/api/hermes/profiles", class: "desktop", why: "the Hermes profiles on this computer, read from its files" },
@@ -394,9 +419,9 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
  * desktop gets the same answer for a hidden bot or a bot-to-bot room as for
  * one that does not exist (visibleToCompanion), whatever the route. */
 export function conversationSubject(target: string): { scope: "bot"; botId: string } | { scope: "group"; groupId: string } | null {
-  const bot = /^\/api\/bots\/([\w-]+)\/(?:messages(?:\/[\w-]+\/edit)?|calls\/rules|interrupt|message-allow|read|warm|typing|active-branch|engine-commands|avatar\/generate|profile|respond|cards\/[\w-]+|skills|browser-extension(?:\/(?:activity|mode|sites))?|work-threads|tasks(?:\/[\w-]+)?|task-allow\/(?:remove|clear))$/.exec(target);
+  const bot = /^\/api\/bots\/([\w-]+)\/(?:messages(?:\/[\w-]+\/edit)?|calls\/rules|interrupt|message-allow|read|warm|typing|active-branch|engine-commands|postable-venues|avatar\/generate|profile|respond|cards\/[\w-]+|skills|browser-extension(?:\/(?:activity|mode|sites))?|work-threads|tasks(?:\/[\w-]+)?|task-allow\/(?:remove|clear))$/.exec(target);
   if (bot) return { scope: "bot", botId: bot[1]! };
-  const group = /^\/api\/groups\/([\w-]+)\/(?:messages|interrupt|read|tasks(?:\/[\w-]+)?|project(?:\/[\w-]+)*|board(?:\/[\w-]+)*|activity|usage|requests(?:\/[\w-]+)*)$/.exec(target);
+  const group = /^\/api\/groups\/([\w-]+)\/(?:messages|interrupt|read|tasks(?:\/[\w-]+)?|project(?:\/[\w-]+)*|board(?:\/[\w-]+)*|activity|usage|room-shares|requests(?:\/[\w-]+)*)$/.exec(target);
   if (group) return { scope: "group", groupId: group[1]! };
   return null;
 }
@@ -481,6 +506,7 @@ export function cloudRouteDecision(method: string, targetRoute: string, scope: i
   if (targetRoute === "/api/storage/attachments/remove") return "deny";
   // A Voice Library add takes a voice slot on the owner's own ElevenLabs account: the paired owner desktop only,
   // never a phone or a browser, stepped up or not (C31, GrokBuild r1)
+  if (["/api/tts/reply", "/api/tts/reply/session", "/api/tts/reply/cancel", "/api/tts/reply/target"].includes(targetRoute) && scope !== "owner-desktop") return "deny";
   if (targetRoute === "/api/tts/voices/add" && scope !== "owner-desktop") return "deny";
   const credential = write && entry?.cloudWrite === "credential";
   const serialized = body !== null && typeof body === "object" ? JSON.stringify(body) : "";

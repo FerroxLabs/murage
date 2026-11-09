@@ -252,6 +252,22 @@ describe("a managed folder that is itself a link", () => {
   });
 });
 
+describe("C7 (S5-DATADIR-PATHS r4.1): a linked workspaces root", () => {
+  it("is the bot's own folder at its admitted target: bookkeeping inside it needs no card", () => {
+    const data = join(fixture, "c7-data"), target = join(fixture, "c7-volume");
+    mkdirSync(join(target, BOT, "threads", THREAD), { recursive: true }); mkdirSync(data, { recursive: true });
+    writeFileSync(join(target, BOT, "threads", THREAD, "notes.md"), "x");
+    symlinkSync(target, join(data, "workspaces"));
+    const path = join(data, "workspaces", BOT, "threads", THREAD, "notes.md");
+    expect(isOwnWorkspaceBookkeeping({ dataDir: data, botId: BOT, threadId: THREAD, tool: "Edit", paths: [path] })).toBe(true);
+  });
+  it("linked to the filesystem root is refused by the DR2 list: never the whole disk", () => {
+    const data = join(fixture, "c7-root-data"); mkdirSync(data, { recursive: true });
+    symlinkSync("/", join(data, "workspaces"));
+    expect(isOwnWorkspaceBookkeeping({ dataDir: data, botId: "tmp", threadId: THREAD, tool: "Edit", paths: [join(data, "workspaces", "tmp", "x.md")] })).toBe(false);
+  });
+});
+
 describe("segments compare exactly, never folded", () => {
   // Nothing under `ghost` exists, so nothing is canonicalized away and this
   // is the segment comparison on its own — the same assertion on a real macOS

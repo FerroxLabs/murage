@@ -1,3 +1,4 @@
+import { THREAD_SUMMARY_SQL, withChatsPreviewTransaction } from "./thread-summary.ts";
 import { dropLegacyUpgradeTables, ensureDirectTurnInflight } from "./memory/upgrade-app-tables.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { beginBackground } from "./db-busy.ts";
@@ -28,6 +29,8 @@ export function initializeMessageTables(db: DatabaseSync, indexHooks: EnsureInde
       CREATE INDEX IF NOT EXISTS messages_thread ON messages(thread_id);
       CREATE INDEX IF NOT EXISTS messages_at ON messages(at DESC);
       CREATE TABLE IF NOT EXISTS thread_state(thread_id TEXT PRIMARY KEY, active_leaf_id TEXT);`);
+  // Serving open creates both preview tables together with the generation.
+  if (!indexHooks.defer) withChatsPreviewTransaction(db, handle => handle.exec(THREAD_SUMMARY_SQL));
   // The per-thread storage sequence (transcript-seq.ts, ROOM-ORDER-DESIGN r7 R1): appended by ALTER TABLE on every file, a fresh one
   // included, so a migrated and a fresh messages table keep one definition text. Metadata only: no row is read or rewritten.
   ensureSeqColumn(db);

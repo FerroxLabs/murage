@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // At Ask, Grok Build sends every shell command, edit and write to Murage before it runs (grok-scope.ts
@@ -118,3 +119,6 @@ describe("grok at Ask asks Murage before every shell command, edit and write", (
     for (const version of ["grok 1.0.61 (x)", undefined]) expect(() => requireGrokAskHold(false, version)).not.toThrow();
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

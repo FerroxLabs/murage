@@ -1,8 +1,11 @@
+// Copyright 2026 Ferrox Labs
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// @vitest-environment jsdom
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { createElement } from "react";
+import { fileURLToPath, URL as NodeURL } from "node:url";
+import { act, createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { CompanionAccountState } from "../types/muragebox";
 import { en } from "@/locales";
@@ -33,6 +36,19 @@ import {
   shareAskRowVisible,
 } from "./CompanionSection";
 
+import { cleanup, installDOMHarness, mount, press } from '../testing/dom-harness';
+import { LayerOwner, LayerSlot } from './LayerSlot';
+import { openLayer } from '../lib/focus-trap';
+import { nextLayerSequence } from '../lib/layers';
+let restore: () => void;
+beforeAll(() => { restore = installDOMHarness(); });
+afterAll(() => restore());
+afterEach(() => { cleanup(); document.body.replaceChildren(); });
+function mountRevoke(p: Parameters<typeof RevokeDeviceConfirm>[0]) {
+  const owner = new LayerOwner({ name: 'settings', kind: 'window', covers: 'always', onDismiss: vi.fn() });
+  mount(createElement(LayerSlot, { owner }, createElement(RevokeDeviceConfirm, p)));
+  return document.querySelector('[role="alertdialog"]')!;
+}
 const account = (status: CompanionAccountState["status"], message?: string): CompanionAccountState => ({
   available: true,
   status,
@@ -165,7 +181,7 @@ describe("companion status refresh", () => {
 describe("the sign-in panel names both ways in", () => {
   const qrLogin = () => {
     const source = readFileSync(
-      fileURLToPath(new URL("./CompanionSection.tsx", import.meta.url)),
+      fileURLToPath(new NodeURL("./CompanionSection.tsx", import.meta.url)),
       "utf8",
     );
     const start = source.indexOf("function QrLogin");
@@ -244,7 +260,7 @@ describe("the three-step strip fits the modal it lives in", () => {
   // invisible to every test that reads behaviour rather than layout.
   it("lets each step shrink below its own text", () => {
     const source = readFileSync(
-      fileURLToPath(new URL("./CompanionSection.tsx", import.meta.url)),
+      fileURLToPath(new NodeURL("./CompanionSection.tsx", import.meta.url)),
       "utf8",
     );
     const strip = source.slice(source.indexOf("function StepStrip"));
@@ -254,7 +270,7 @@ describe("the three-step strip fits the modal it lives in", () => {
 
   it("still truncates the detail rather than wrapping the row taller", () => {
     const source = readFileSync(
-      fileURLToPath(new URL("./CompanionSection.tsx", import.meta.url)),
+      fileURLToPath(new NodeURL("./CompanionSection.tsx", import.meta.url)),
       "utf8",
     );
     const strip = source.slice(source.indexOf("function StepStrip"));
@@ -272,7 +288,7 @@ describe("the remote access line when the tailnet has no certificates", () => {
 
 describe("the Tailscale account the phone needs", () => {
   const qrLogin = () => {
-    const source = readFileSync(fileURLToPath(new URL("./CompanionSection.tsx", import.meta.url)), "utf8");
+    const source = readFileSync(fileURLToPath(new NodeURL("./CompanionSection.tsx", import.meta.url)), "utf8");
     const start = source.indexOf("function QrLogin");
     return source.slice(start, source.indexOf("export function CompanionSection", start));
   };
@@ -412,7 +428,7 @@ describe("one switch turns it on", () => {
   });
 
   it("the switch turns on through turnOnForCode, which can clear the request", () => {
-    const source = readFileSync(fileURLToPath(new URL("./CompanionSection.tsx", import.meta.url)), "utf8");
+    const source = readFileSync(fileURLToPath(new NodeURL("./CompanionSection.tsx", import.meta.url)), "utf8");
     expect(source).toContain("turnOnForCode(companion, () => setCodeWanted(false))");
   });
 
@@ -429,7 +445,7 @@ describe("one switch turns it on", () => {
 });
 
 describe("the page is called Phone and other devices", () => {
-  const source = () => readFileSync(fileURLToPath(new URL("./CompanionSection.tsx", import.meta.url)), "utf8");
+  const source = () => readFileSync(fileURLToPath(new NodeURL("./CompanionSection.tsx", import.meta.url)), "utf8");
   const body = () => {
     const all = source();
     return all.slice(all.indexOf("export function CompanionSection("));
@@ -494,7 +510,7 @@ describe("the page is called Phone and other devices", () => {
 });
 
 describe("removing a paired device asks first", () => {
-  const source = () => readFileSync(fileURLToPath(new URL("./CompanionSection.tsx", import.meta.url)), "utf8");
+  const source = () => readFileSync(fileURLToPath(new NodeURL("./CompanionSection.tsx", import.meta.url)), "utf8");
   const props = () => ({ name: "Sean's iPhone", busy: false, onCancel: vi.fn(), onConfirm: vi.fn() });
 
   it("clicking the row's remove control only asks: it never calls revoke", () => {
@@ -522,35 +538,55 @@ describe("removing a paired device asks first", () => {
 
   it("confirming calls onConfirm once, cancelling calls onCancel and never onConfirm", () => {
     const p = props();
-    const panel = RevokeDeviceConfirm(p) as any;
-    const buttons = panel.props.children[2].props.children;
-    const [cancel, confirm] = buttons;
-    cancel.props.onClick();
+    const panel = mountRevoke(p);
+    const [cancel, confirm] = panel.querySelectorAll("button");
+    act(() => cancel.click());
     expect(p.onCancel).toHaveBeenCalledOnce();
     expect(p.onConfirm).not.toHaveBeenCalled();
-    confirm.props.onClick();
+    act(() => confirm.click());
     expect(p.onConfirm).toHaveBeenCalledOnce();
   });
 
   it("Cancel has the focus, the confirm button is the destructive style, Escape cancels", () => {
     const p = props();
-    const panel = RevokeDeviceConfirm(p) as any;
-    const [cancel, confirm] = panel.props.children[2].props.children;
-    expect(cancel.props.autoFocus).toBe(true);
-    expect(confirm.props.autoFocus).toBeFalsy();
-    expect(confirm.props.className).toContain("bg-danger");
-    const stop = vi.fn();
-    panel.props.onKeyDown({ key: "Escape", stopPropagation: stop });
+    const panel = mountRevoke(p);
+    const [cancel, confirm] = panel.querySelectorAll("button");
+    // Astra r3 Medium 6: the confirm takes Cancel by itself on mount; nothing in the test arranges it.
+    expect(document.activeElement).toBe(cancel);
+    expect(confirm.className).toContain("bg-danger");
+    press("Escape", cancel);
     expect(p.onCancel).toHaveBeenCalledOnce();
-    panel.props.onKeyDown({ key: "Enter", stopPropagation: stop });
+    press("Enter", cancel);
     expect(p.onCancel).toHaveBeenCalledOnce();
     expect(p.onConfirm).not.toHaveBeenCalled();
   });
 
+  it("R5-M6: under a higher owner (the palette) Cancel gets no focus event and Escape stays the palette's", () => {
+    const p = props();
+    const seq = nextLayerSequence();
+    const paletteEscape = vi.fn();
+    const upper = openLayer({ id: `palette-fixture:${seq}`, name: "palette", kind: "palette", openingSequence: seq, returnFocusTo: null, onDismiss: paletteEscape });
+    const focused: EventTarget[] = [];
+    const track = (event: FocusEvent) => { if (event.target) focused.push(event.target); };
+    document.addEventListener("focusin", track, true);
+    try {
+      const panel = mountRevoke(p);
+      const [cancel] = panel.querySelectorAll("button");
+      expect(focused).not.toContain(cancel);
+      expect(document.activeElement).not.toBe(cancel);
+      press("Escape", cancel);
+      expect(p.onCancel).not.toHaveBeenCalled();
+      expect(paletteEscape).toHaveBeenCalledOnce();
+    } finally {
+      document.removeEventListener("focusin", track, true);
+      upper.release();
+    }
+  });
+
   it("has no remove-all control, and the phone's own sign-out and the Replace flow already confirm", () => {
     expect(source()).not.toMatch(/remove all|revoke all|sign out everywhere/i);
-    expect(readFileSync(fileURLToPath(new URL("./RemoteSignOut.tsx", import.meta.url)), "utf8")).toContain("setConfirming(true)");
-    expect(readFileSync(fileURLToPath(new URL("./ReplaceOldDevice.tsx", import.meta.url)), "utf8")).toContain("setConfirming(device.id)");
+    expect(readFileSync(fileURLToPath(new NodeURL("./RemoteSignOut.tsx", import.meta.url)), "utf8")).toContain("setConfirming(true)");
+    expect(readFileSync(fileURLToPath(new NodeURL("./ReplaceOldDevice.tsx", import.meta.url)), "utf8")).toContain("setConfirming(device.id)");
   });
 
   it("keeps the new copy in the catalog, without banned words", () => {
@@ -603,9 +639,9 @@ describe("per-phone share and ask switch", () => {
   });
 
   it("reads the offer from shareAsk alone, independent of phoneTools", () => {
-    const src = readFileSync(fileURLToPath(new URL("./CompanionSection.tsx", import.meta.url)), "utf8");
+    const src = readFileSync(fileURLToPath(new NodeURL("./CompanionSection.tsx", import.meta.url)), "utf8");
     // 1.0.12: the Preview card asks /api/phones/offered and hands each answer to the page
-    expect(readFileSync(fileURLToPath(new URL("./PhonePreviewSwitches.tsx", import.meta.url)), "utf8")).toContain('"/api/phones/offered"');
+    expect(readFileSync(fileURLToPath(new NodeURL("./PhonePreviewSwitches.tsx", import.meta.url)), "utf8")).toContain('"/api/phones/offered"');
     expect(src).toContain("<PhonePreviewSwitches onAnswer={onOfferAnswer} />");
     expect(src).toContain("answer?.shareAsk === true");
     expect(src).not.toContain("answer?.offered");
@@ -632,7 +668,7 @@ describe("a removal that has not finished", () => {
   });
 
   it("the device row shows it from removalPending and Try again runs the same removal", () => {
-    const source = readFileSync(fileURLToPath(new URL("./CompanionSection.tsx", import.meta.url)), "utf8");
+    const source = readFileSync(fileURLToPath(new NodeURL("./CompanionSection.tsx", import.meta.url)), "utf8");
     expect(source).toContain("device.removalPending");
     expect(source).toMatch(/<RemovalPendingNote[\s\S]*?companion\.revoke\(device\.id\)/);
   });

@@ -1,4 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useFocusTrap } from "@/lib/focus-trap";
+import { LayerSurface } from "@/components/LayerSurface";
+import { useRef } from "react";
 import { AlertTriangle } from "lucide-react";
 import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 
@@ -15,7 +17,7 @@ export const LOCAL_COMPUTER_FULL_ACCESS_WARNING =
 export const LOCAL_COMPUTER_NO_LIMITS_WARNING =
   "In conversations you start, No limits will let this bot click, type and run commands on this computer without asking first, including reading and sending your keys. It still asks before a wipe it can read and before a command it cannot read in full, and browser, email and publishing keep their own approvals. A script file can still run unread. Continue only if you are watching.";
 
-export function LocalComputerAutoWarning({
+function LocalComputerAutoWarningOpen({
   open,
   /** which switch the person actually chose; the dialog says so */
   mode = "auto",
@@ -29,27 +31,18 @@ export function LocalComputerAutoWarning({
 }) {
   const confirmRef = useRef<HTMLButtonElement>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    confirmRef.current?.focus();
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onCancel();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onCancel]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const layer = useFocusTrap(dialogRef, open, { name: "local-computer-warning", kind: "dialog", initialFocus: "[data-confirm]", onEscape: onCancel });
 
   if (!open) return null;
 
-  return (
-    <div
-      className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
+  return <LayerSurface handle={layer}><div
+      className="overlay-inset fixed inset-0 flex items-center justify-center bg-black/50 p-6"
       onMouseDown={(event) => event.target === event.currentTarget && onCancel()}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="local-auto-warning-title"
@@ -76,7 +69,7 @@ export function LocalComputerAutoWarning({
             Cancel
           </button>
           <button
-            ref={confirmRef}
+            ref={confirmRef} data-confirm
             type="button"
             onClick={onConfirm}
             className="rounded-xl bg-accent px-4 py-2 text-[13px] font-medium text-white hover:brightness-110"
@@ -85,6 +78,8 @@ export function LocalComputerAutoWarning({
           </button>
         </BoxFoot>
       </div>
-    </div>
-  );
+    </div></LayerSurface>;
+}
+export function LocalComputerAutoWarning(props: Parameters<typeof LocalComputerAutoWarningOpen>[0]) {
+  return props.open ? <LocalComputerAutoWarningOpen {...props} /> : null;
 }

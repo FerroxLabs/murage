@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Antigravity isolation: agy runs in a Murage-owned HOME, so the owner's
 // personal MCP servers, plugins, hooks, skills, workflows and instruction
 // files are absent, Murage's own tools are present, the login still resolves,
@@ -228,7 +230,7 @@ describe("Antigravity driver isolation (fake CLI)", () => {
       const afterStart = JSON.parse(readFileSync(join(home, ".gemini", "config", "mcp_config.json"), "utf8"));
       expect(Object.keys(afterStart.mcpServers).sort()).toEqual(OWNER_KEPT);
       expect(before).toContain("stale-token");
-      await instance.adapter.sendTurn({ threadId: "t-iso", text: "hi", integrations: integrations as never });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-iso", text: "hi", integrations: integrations as never });
       await recorder.until((e) => e.type === "turn.completed");
       return {
         home,
@@ -723,3 +725,6 @@ describe("Windows without symlink rights (file ops mocked: no runner here)", () 
     }
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

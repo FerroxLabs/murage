@@ -1,7 +1,9 @@
+import { rebaseScheduledAttachmentPaths } from "./scheduled-attachment-paths.ts";
 import { REQUIRED_MCP_SERVERS, startsWithNotDone, toolsUnavailableRunError } from "./drivers/mcp-readiness.ts";
 import { readOwnerTimeZone, nextOwnerDailyOccurrence } from "./cloud-home/timezone.ts";
 import { assertHumanPrincipal, type HumanPrincipal } from "./human-principals.ts";
 import { ROUTINE_INSTRUCTIONS_MAX, routineInstructionsTooLongMessage } from "../shared/routine-instructions.ts";
+import { RetiredTurnRegistry } from "./turn-dispatch-guard.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -22,6 +24,7 @@ import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
 import type { RoutineRequestOperation } from "../shared/routine-request.ts";
 import { channelOriginSchema, routineEventForRun, type ChannelOrigin, type RoutineEvent } from "../shared/routine-event.ts";
 import type { RoutineWatchBinding, RoutineWatchInput, RoutineWatchObservation, RoutineWatchRun, RoutineWatchSource } from "../shared/routine-watch.ts";
+import type { RoutineDetail } from "./routine-detail-line.ts";
 import { completeRoutineWatchCheck, createRoutineWatchState, pauseRoutineWatch, reserveRoutineWatchCheck } from "./routine-watch-state.ts";
 import { readRoutineWatchBinding, routineWatchInputSchema } from "./routine-watch-integration.ts";
 import { turnAskStopped, turnStopped, turnSucceeded } from "./turn-outcome.ts";
@@ -88,6 +91,17 @@ const OPEN_RUN_STATUSES: readonly RoutineRunStatus[] = ["queued", ...LIVE_RUN_ST
 /** What a locked messages.db says (DatabaseBusyError's sentence, or SQLite's own): never a reason to fail a run. */
 const BUSY_MESSAGE = /Busy for a moment, try again|database is locked|SQLITE_BUSY/i;
 const isLive = (status: RoutineRunStatus) => LIVE_RUN_STATUSES.includes(status);
+/** FENCE-RACE-1018 r2: one run's current dispatch: its seq, the pre-acceptance candidate buffers (3.2) and the replay queue of a bound
+ *  channel turn (events in order; a terminal decided in its own live fold is marked "base"). */
+type DispatchEntry = {
+  seq: number;
+  candidates: Map<string, RuntimeEvent[]>;
+  provenanceLost: boolean;
+  lostTurns: Set<string>;
+  replay: Array<{ event: RuntimeEvent; decided?: "base" }>;
+  replayAttempt: number;
+  replayTimer?: ReturnType<typeof setTimeout>;
+};
 const isOpen = (status: RoutineRunStatus) => OPEN_RUN_STATUSES.includes(status);
 /** Queued, running, waiting, or waiting on you: not settled yet. */
 export const isOpenRoutineRunStatus = (status: RoutineRunStatus): boolean => isOpen(status);
@@ -595,6 +609,16 @@ export interface RoutineManagerOptions {
   onRunDispatch?: (run: RoutineRun, reused: boolean) => void;
   /** Telegram messages continue the bot's current conversation. */
   channelThread?: (botId: string, principal?: HumanPrincipal) => { threadId: string } | null;
+  /** FENCE-RACE-1018 r2: is a memory rebuild still owed for this refused provider turn of this run? Then a channel run follows
+   *  the rebuild (the refusal is not its terminal). Every ending of the rebuild that emits no terminal the run binds settles the
+   *  run by its dispatch token (settleDispatch). */
+  memoryRebuildOwed?: (turnId: string, runId: string) => boolean;
+  /** FENCE-RACE-1018 r2 (3.2): the dispatch token whose acceptance has not been handed back yet on this thread (index.ts awaitingHandback).
+   *  An unbound channel run buffers the events of that window as candidates; only confirmChannelTurn binds. Absent (bare unit
+   *  tests): the first fresh turn.started binds, as before. */
+  channelStartOwner?: (event: RuntimeEvent) => { runId: string; seq: number | undefined } | undefined;
+  /** Milliseconds before the n-th retry (n from 0) of a replayed event whose handling threw. Default: 50 * 2^n, at most 5 s. */
+  replayRetryMs?: (attempt: number) => number;
   /** Returns the existing chat after durable project delivery, or null for a channel. */
   projectRoutine?: (run: RoutineRun) => { threadId: string } | null;
   createGoalTask?: (groupId: string, title: string) => { threadId: string } | null;
@@ -610,6 +634,8 @@ export interface RoutineManagerOptions {
     /** SL-L L4: this run's id, so its first-seat wait is recorded (initial dispatch only).
      * 1.0.4 SL-K K2: the same run id lets the turn resolve its model from the bot, never from the reused thread's pin. */
     routineRunId?: string,
+    /** FENCE-RACE-1018 r2: this dispatch's token seq (with routineRunId it names the dispatch a late failure belongs to). */
+    dispatchSeq?: number,
   ) => Promise<void>;
   /** 1.0.4 SL-I I3: is this failure the engine's limit, refused before the run did anything (a turn's
    * failure, or a dispatch refusal such as a paused plan)? Null: an ordinary failure. */
@@ -1132,6 +1158,7 @@ export class RoutineManager {
     // A missing file is a fresh start. Any other read, parse or shape failure
     // stops startup (like webhooks.json) instead of loading empty state that
     // the next save would write over the person's routines.
+    rebaseScheduledAttachmentPaths(this.file, ["routines", "runs"]);
     let original = "";
     const parsedDisk = readPersistedJson(this.file, (path) => (original = readFileSync(path, "utf8")));
     try {
@@ -1346,6 +1373,15 @@ export class RoutineManager {
     return this.routines.map((routine) => ({ name: routine.name, botId: routine.botId, enabled: routine.enabled }));
   }
 
+  /** 1.0.18 U6 F38: what each routine of one bot does and when, for the owner's own direct chat (routine-detail-line.ts). No run history is read. */
+  listRoutineDetails(botId: string): RoutineDetail[] {
+    return this.routines.filter((routine) => routine.botId === botId).map((routine) => ({
+      name: routine.name, botId: routine.botId, enabled: routine.enabled, schedule: { ...routine.schedule } as RoutineSchedule,
+      nextRunAt: routine.nextRunAt, prompt: routine.prompt, createdAt: routine.createdAt,
+      ...(typeof routine.watch?.state.definition.expiresAt === "number" ? { expiresAt: routine.watch.state.definition.expiresAt } : {}),
+    }));
+  }
+
   /** A copy with the derived failure streak. Only failed and completed runs
    * are attempts: a cancelled run was stopped on purpose and a missed one
    * never started. */
@@ -1356,6 +1392,11 @@ export class RoutineManager {
     const success = outcomes.findIndex((run) => run.status === "completed");
     const failures = success < 0 ? outcomes.length : success;
     return { ...cloneRoutine(routine), ...(failures ? { failureStreak: failures } : {}) };
+  }
+
+  /** 1.0.18 U6 E32: true once any run of this routine has started. A routine with none reads "First run". */
+  hasStartedRun(routineId: string): boolean {
+    return this.runs.some((run) => run.routineId === routineId && run.startedAt !== undefined);
   }
 
   listRuns(from?: number, to?: number): RoutineRun[] {
@@ -2270,6 +2311,7 @@ export class RoutineManager {
     if (isOpen(run.status)) throw Object.assign(new Error("This run is still going. Cancel it first, then delete it."), { status: 409 });
     const removed = cloneRun(run);
     this.commitMutation(() => { this.runs.splice(at, 1); });
+    this.liveDispatch.delete(removed.id);
     this.options.emit?.({ kind: "routine.run.deleted", runId: removed.id, routineId: removed.routineId });
     return removed;
   }
@@ -2468,6 +2510,7 @@ export class RoutineManager {
   }
 
   private async tickBody(): Promise<void> {
+    this.sweepDispatchBuffers();
     if (this.halted) return;
     if (this.options.dispatchOpen && !this.options.dispatchOpen()) return;
     // Before the guard, on purpose — see enforceRunLimits.
@@ -2825,6 +2868,14 @@ export class RoutineManager {
         this.heldByStartup.delete(run.id);
         const adopted = owner && this.options.taskExists && owner.threadId !== task.threadId;
         if (adopted) owner.threadId = task.threadId;
+        // FENCE-RACE-1018 r2: this dispatch's token. A late failure settles the run it names, by id, and only on this dispatch.
+        // A new dispatch starts unbound: a turn bound by an aborted dispatch (BUSY or limit requeue, restart) never blocks this one's turn.
+        // The save below persists both.
+        const dispatchSeq = ++this.dispatchSeq;
+        const previousEntry = this.liveDispatch.get(run.id);
+        if (previousEntry?.replayTimer) clearTimeout(previousEntry.replayTimer);
+        this.liveDispatch.set(run.id, { seq: dispatchSeq, candidates: new Map(), provenanceLost: false, lostTurns: new Set(), replay: [], replayAttempt: 0 });
+        run.channelTurnId = undefined;
         try {
           this.save({ runs: [run], routines: adopted ? [owner] : [] });
           this.unsavedStartTasks.delete(run.id);
@@ -2848,20 +2899,7 @@ export class RoutineManager {
           try { this.options.onRunDispatch?.(cloneRun(run), Boolean(reusable)); }
           catch (error) { console.error("routine: run marker failed", error); }
         }
-        const failDispatch = (message: string) => {
-          if (run.target === "bot" && isLive(run.status) && this.limitWaitFor(run, { message })) return;
-          if (BUSY_MESSAGE.test(message)) {
-            // contention is not a failure of the run: it goes back to the queue with its occurrence intact
-            if (isLive(run.status)) this.requeueBusy(run);
-            return;
-          }
-          if (!sharedChannel) return this.failThread(task.threadId, message);
-          // A delayed callback from an earlier message cannot fail the next
-          // message merely because both used this conversation.
-          if (!isLive(run.status)) return;
-          this.failRun(run, message);
-          queueMicrotask(() => void this.tick());
-        };
+        const failDispatch = (message: string) => this.settleDispatch({ runId: run.id, seq: dispatchSeq }, message);
         try {
           const prompt = run.prompt ?? this.routines.find((r) => r.id === run.routineId)?.prompt;
           if (!prompt) {
@@ -2895,6 +2933,7 @@ export class RoutineManager {
               run.event?.budgetId,
               run.notOwnerAudience === true,
               run.id,
+              dispatchSeq,
             );
           }
         } catch (error) {
@@ -3005,6 +3044,24 @@ export class RoutineManager {
     return false;
   }
 
+  /** The routine a turn's usage belongs to on Settings, Usage. A channel message rides a run record of its own
+   * ("Telegram message") but is ordinary conversation, so it stays under Not from a routine (Astra U28b r1 M3). */
+  static usageRoutine(run: Pick<RoutineRun, "routineId" | "routineName" | "triggerSource"> | null | undefined): { id: string; name: string } | undefined {
+    return run && run.triggerSource !== "channel" ? { id: run.routineId, name: run.routineName } : undefined;
+  }
+
+  /** The live room-goal run on a room thread, for Usage's routine share only: its members' turns are spend, not receipts. */
+  roomGoalRunForThread(threadId: string): RoutineRun | null {
+    return this.runs.find((r) => r.threadId === threadId && r.target === "room-goal" && isLive(r.status)) ?? null;
+  }
+
+  /** RESIDUALS-1018-B row 7 (U28b M2): the live run on a thread as a turn starts, for Usage's routine share only (the
+   *  same run handleRuntimeEvent reads), so a turn the run's cancel then stops still counts under its routine. */
+  usageRunForThread(threadId: string): Pick<RoutineRun, "routineId" | "routineName" | "triggerSource"> | null {
+    const run = this.runs.find((r) => r.threadId === threadId && isLive(r.status));
+    return run ? { routineId: run.routineId, routineName: run.routineName, triggerSource: run.triggerSource } : null;
+  }
+
   handleRuntimeEvent(event: RuntimeEvent): RoutineRun | null {
     const run = this.runs.find((r) => r.threadId === event.threadId && isLive(r.status));
     if (!run) return null;
@@ -3012,14 +3069,127 @@ export class RoutineManager {
       // A reused conversation also receives late events from its previous
       // turn. Only the first fresh start can bind this delivery's identity.
       if (!event.turnId) return null;
+      // a turn refused at a late submission whose rebuild this manager passed by is never bound or settled again (any event type)
+      if (this.refusedTurns.has(event.turnId)) return null;
+      const entry = this.liveDispatch.get(run.id);
       if (!run.channelTurnId) {
+        if (this.options.channelStartOwner) {
+          // FENCE-RACE-1018 r2 (3.2): binding needs the dispatch's acceptance. Events of the pre-acceptance window are candidates.
+          const owner = this.options.channelStartOwner(event);
+          if (owner && entry && owner.runId === run.id && (owner.seq === undefined || owner.seq === entry.seq)) this.holdCandidate(entry, event);
+          return null;
+        }
         if (event.type !== "turn.started" || this.runs.some((prior) => prior.id !== run.id &&
           prior.threadId === event.threadId && prior.channelTurnId === event.turnId)) return null;
         run.channelTurnId = event.turnId;
         this.save({ defer: true, runs: [run] });
       }
       if (event.turnId !== run.channelTurnId) return null;
+      const lateRefusal = event.type === "turn.completed" && !turnSucceeded(event) && event.stopReason === "submission_refused";
+      if (entry && entry.replay.length) {
+        // A replay is in progress: order is kept, so the event queues behind it. The pass-by decision of a late refusal is made HERE, in
+        // its own live fold (r6): it runs all of passRefusedTurn now (retire, unbind, drop T's candidates and queued events) and nothing
+        // is queued; the run is unbound before the rebuild starts. Otherwise the terminal queues marked base, once per turn.
+        if (event.type === "turn.completed") {
+          if (lateRefusal && this.options.memoryRebuildOwed?.(event.turnId, run.id)) {
+            this.passRefusedTurn({ runId: run.id, seq: entry.seq }, event.turnId);
+            return null;
+          }
+          if (entry.replay.some((q) => q.event.type === "turn.completed" && q.event.turnId === event.turnId)) return null;
+          entry.replay.push({ event, decided: "base" });
+        } else entry.replay.push({ event });
+        return null;
+      }
+      return this.applyBoundChannelEvent(run, event, false);
     }
+    return this.applyRunEvent(run, event);
+  }
+
+  /** The channel run's bound-turn handling: a late refusal whose rebuild is still owed is passed by (3.4), else the event is applied.
+   *  `base`: the terminal was decided in its own fold as a normal terminal; it is not asked again. */
+  private applyBoundChannelEvent(run: RoutineRun, event: RuntimeEvent, base: boolean): RoutineRun | null {
+    // FENCE-RACE-1018 r2: a turn refused at a late submission whose rebuild is still owed is not this run's end: the run keeps
+    // its place, passes the refused turn by and binds the rebuilt turn through its own acceptance. The rebuild's endings that emit no
+    // terminal settle the run by its dispatch token.
+    if (!base && event.type === "turn.completed" && !turnSucceeded(event) && event.stopReason === "submission_refused" && event.turnId &&
+      this.options.memoryRebuildOwed?.(event.turnId, run.id)) {
+      this.passRefusedTurn({ runId: run.id, seq: this.liveDispatch.get(run.id)?.seq }, event.turnId);
+      return null;
+    }
+    return this.applyRunEvent(run, event);
+  }
+
+  /** Keeps a pre-acceptance event as a candidate: one buffer per turn id (16), 512 events each. An event that cannot be kept sets
+   *  provenanceLost, so a lost terminal ends the run visibly instead of hanging it. */
+  private holdCandidate(entry: DispatchEntry, event: RuntimeEvent): void {
+    const turnId = event.turnId!;
+    let buf = entry.candidates.get(turnId);
+    if (!buf) {
+      if (event.type !== "turn.started") return;
+      if (entry.candidates.size >= 16) { entry.provenanceLost = true; return; }
+      buf = [];
+      entry.candidates.set(turnId, buf);
+    }
+    if (buf.length >= 512) { entry.provenanceLost = true; entry.lostTurns.add(turnId); return; }
+    buf.push(event);
+  }
+
+  /** FENCE-RACE-1018 r2 (3.2): the only way an unbound channel run binds. index.ts calls it once, as the last statement of the
+   *  acceptance callback, with the turn id the acceptance named. Binds, discards every other candidate, and hands the named buffer
+   *  to the replay queue (nothing replays inside the callback). Idempotent for the same turn id. */
+  confirmChannelTurn(token: { runId: string; seq?: number }, turnId: string): void {
+    const run = this.runs.find((r) => r.id === token.runId);
+    if (!run || !isLive(run.status) || run.triggerSource !== "channel") return;
+    const entry = this.liveDispatch.get(token.runId);
+    if (!entry || (token.seq !== undefined && entry.seq !== token.seq)) return;
+    if (run.channelTurnId === turnId) return;
+    const buf = entry.candidates.get(turnId);
+    if (!buf && entry.provenanceLost || entry.lostTurns.has(turnId)) {
+      this.settleDispatch(token, "Murage lost track of this reply; send the message again");
+      return;
+    }
+    run.channelTurnId = turnId;
+    entry.candidates.clear();
+    entry.provenanceLost = false;
+    entry.lostTurns.clear();
+    // the binding is in memory already; a save that throws must never reach the acceptance callback (the next save carries it)
+    try { this.save({ defer: true, runs: [run] }); }
+    catch (error) { console.error("routine: saving a confirmed channel turn failed", error instanceof Error ? error.message : String(error)); }
+    if (buf?.length) {
+      entry.replay.push(...buf.map((event) => ({ event })));
+      this.scheduleReplay(token.runId, entry.seq, 0);
+    }
+  }
+
+  private scheduleReplay(runId: string, seq: number, delayMs: number): void {
+    const entry = this.liveDispatch.get(runId);
+    if (!entry || entry.seq !== seq || entry.replayTimer) return;
+    entry.replayTimer = setTimeout(() => { entry.replayTimer = undefined; this.drainReplay(runId, seq); }, delayMs);
+    entry.replayTimer.unref?.();
+  }
+
+  /** Replays queued events in order, each removed only after its handling returns; a throw retries the same head with backoff. */
+  private drainReplay(runId: string, seq: number): void {
+    const entry = this.liveDispatch.get(runId);
+    if (!entry || entry.seq !== seq) return;
+    while (entry.replay.length) {
+      const run = this.runs.find((r) => r.id === runId);
+      if (!run || !isLive(run.status)) { entry.replay.length = 0; entry.replayAttempt = 0; return; }
+      const head = entry.replay[0];
+      try { this.applyBoundChannelEvent(run, head.event, head.decided === "base"); }
+      catch (error) {
+        const attempt = entry.replayAttempt++;
+        console.error("routine: replay of a held event failed, retrying", error instanceof Error ? error.message : String(error));
+        this.scheduleReplay(runId, seq, (this.options.replayRetryMs ?? ((n) => Math.min(50 * 2 ** n, 5_000)))(attempt));
+        return;
+      }
+      entry.replayAttempt = 0;
+      if (entry.replay[0] === head) entry.replay.shift();
+    }
+  }
+
+  /** The event handling shared by every run kind (the rest of handleRuntimeEvent). */
+  private applyRunEvent(run: RoutineRun, event: RuntimeEvent): RoutineRun | null {
     // A room goal contains several provider turns. Its orchestrator owns the
     // terminal decision and reports it through finishGoalRun; one member's
     // completion and private coordinator envelope are only intermediate
@@ -3130,6 +3300,7 @@ export class RoutineManager {
         }
       }
       run.status = "completed";
+      this.endDispatch(run.id);
       run.attention = undefined;
       run.finishedAt = this.now();
       run.error = undefined;
@@ -3157,6 +3328,44 @@ export class RoutineManager {
     if (previous?.status !== "failed") return;
     try { this.options.onRunRecovered(cloneRun(run), cloneRun(previous)); }
     catch (error) { console.error("routine: recovery note failed", error); }
+  }
+
+  /** FENCE-RACE-1018 r2: the one place a late dispatch failure ends a run. It names the run by id, never by thread or captured
+   *  object, and acts on the LIVE record: a rolled-back save replaces every run object, and a stale callback of an older
+   *  dispatch (the run was requeued and dispatched again) is dropped by its seq. */
+  settleDispatch(token: { runId: string; seq?: number }, message: string): void {
+    const run = this.runs.find((r) => r.id === token.runId);
+    if (!run || !isLive(run.status)) return;
+    if (token.seq !== undefined && this.liveDispatch.get(token.runId)?.seq !== token.seq) return;
+    if (run.target === "bot" && this.limitWaitFor(run, { message })) return;
+    if (BUSY_MESSAGE.test(message)) {
+      // contention is not a failure of the run: it goes back to the queue with its occurrence intact
+      this.requeueBusy(run);
+      return;
+    }
+    this.failRun(run, message);
+    queueMicrotask(() => void this.tick());
+  }
+
+  /** FENCE-RACE-1018 r2: the only place a run gives up a turn. The refused turn id goes into the manager-wide registry (keyed by
+   *  turn id alone, so it outlives any run record); the live run of this dispatch, if it is bound to that turn, lets go of it. */
+  passRefusedTurn(token: { runId: string; seq?: number }, turnId: string): void {
+    this.refusedTurns.retire(turnId);
+    const run = this.runs.find((r) => r.id === token.runId);
+    if (!run || !isLive(run.status)) return;
+    const entry = this.liveDispatch.get(token.runId);
+    if (token.seq !== undefined && entry?.seq !== token.seq) return;
+    // the turn's candidates and any of its events still queued for replay are dropped with it
+    if (entry) {
+      entry.candidates.delete(turnId);
+      entry.replay = entry.replay.filter((q) => q.event.turnId !== turnId);
+    }
+    if (run.triggerSource !== "channel" || run.channelTurnId !== turnId) return;
+    run.channelTurnId = undefined;
+    this.openRequests.delete(run.id);
+    // in memory already: a failing save is carried by the next one (it must not undo the pass-by or throw into the fold)
+    try { this.save({ defer: true, runs: [run] }); }
+    catch (error) { console.error("routine: saving a passed-by turn failed", error instanceof Error ? error.message : String(error)); }
   }
 
   failThread(threadId: string, message: string) {
@@ -3193,6 +3402,7 @@ export class RoutineManager {
       this.emitRun(run);
     } else {
       run.status = status === "stopped" ? "cancelled" : "completed";
+      this.endDispatch(run.id);
       run.attention = undefined;
       run.finishedAt = this.now();
       run.error = undefined;
@@ -3204,6 +3414,38 @@ export class RoutineManager {
     queueMicrotask(() => void this.tick());
     return cloneRun(run);
   }
+
+  /** FENCE-RACE-1018 r2: manager-wide count of scheduler dispatches, and each run's current dispatch seq (keyed by run id). */
+  private dispatchSeq = 0;
+  /** The entry also holds the dispatch's pre-acceptance event buffers (one per turn id) and the lost-provenance flag (3.2, held):
+   *  they live and die with the dispatch, never in a separate map. */
+  private readonly liveDispatch = new Map<string, DispatchEntry>();
+  /** A run that left live status holds no buffers (FENCE-RACE-1018 r2, cleanup). The entry itself goes with the record. */
+  private endDispatch(runId: string): void {
+    const entry = this.liveDispatch.get(runId);
+    if (!entry) return;
+    entry.candidates.clear();
+    entry.provenanceLost = false;
+    entry.lostTurns.clear();
+    entry.replay.length = 0;
+    entry.replayAttempt = 0;
+    if (entry.replayTimer) { clearTimeout(entry.replayTimer); entry.replayTimer = undefined; }
+  }
+  /** Start of every tick: covers every cancel and recovery path that settles a run without failRun. */
+  private sweepDispatchBuffers(): void {
+    for (const [runId, entry] of this.liveDispatch) {
+      if (!entry.candidates.size && !entry.provenanceLost && !entry.replay.length) continue;
+      const run = this.runs.find((r) => r.id === runId);
+      if (!run || !isLive(run.status)) this.endDispatch(runId);
+    }
+  }
+  /** Test accessor: the runs that currently hold a dispatch entry. */
+  liveDispatchRunIds(): string[] { return [...this.liveDispatch.keys()]; }
+  /** FENCE-RACE-1018 r2: provider turns refused at a late submission whose rebuild a run passed by. By turn id only, FIFO bounded,
+   *  never pruned with a run record (turn ids are never reused, so an entry can only ever block its own turn). */
+  private readonly refusedTurns = new RetiredTurnRegistry(4_096);
+  /** Test accessor: is this turn id in the refused-turn registry. */
+  hasRefusedTurn(turnId: string): boolean { return this.refusedTurns.has(turnId); }
 
   /** Calls to required tool families in each live run's turn, by item id. */
   private readonly requiredToolCalls = new Map<string, Map<string, { label: string; failed: boolean; op: string }>>();
@@ -3235,6 +3477,7 @@ export class RoutineManager {
     this.requiredToolCalls.delete(run.id);
     this.unsavedStartTasks.delete(run.id);
     run.status = "failed";
+    this.endDispatch(run.id);
     run.attention = undefined;
     run.error = redactSecretsInText(message).slice(0, 500);
     run.finishedAt = this.now();
@@ -3603,7 +3846,7 @@ export class RoutineManager {
       removed.push(...this.runsRaw.splice(index, 1));
       excess -= 1;
     }
-    for (const run of removed) this.dirtyRuns.delete(run);
+    for (const run of removed) { this.dirtyRuns.delete(run); this.liveDispatch.delete(run.id); }
     this.sweep(removed.length);
     try {
       if (this.fullSave || this.pendingCommit !== null || this.generation === undefined || !this.diskIsOurs()) this.saveFull();

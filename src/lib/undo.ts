@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // L5A (R1-15): one Undo toast every lane uses, so mistakes are cheap.
-// handoffs/UNDO-HOST-DESIGN.md section 8 (the local-only scope for 1.0.12):
+// UNDO-HOST-DESIGN.md section 8 (the local-only scope for 1.0.12):
 // an offer shows a toast for 8 seconds, Undo runs the caller's synchronous
 // local undo, and nothing here ever sends a request, writes storage or is
 // persisted. Server-backed Undo (revert and delayed delete, with a guarded
@@ -10,6 +10,7 @@
 // lands `offerUndo` refuses anything server-shaped, so a request can never
 // gain an Undo by accident.
 
+import { activeTrapCount } from "./focus-trap";
 import { useSyncExternalStore } from "react";
 import { t } from "@/lib/i18n";
 import { UNDO_WINDOW_MS } from "@/lib/undo-window";
@@ -422,7 +423,7 @@ export function connectUndoHost(win: Window, host: UndoHost, toast: () => Elemen
       isComposing: event.isComposing,
       defaultPrevented: event.defaultPrevented,
       inEditable: isEditableTarget(doc.activeElement),
-      modalOpen: doc.querySelector('[aria-modal="true"]') !== null,
+      modalOpen: activeTrapCount() > 0 || doc.querySelector('[aria-modal="true"]') !== null,
     };
     if (undoKeyHandled({ ...base, key: event.key, metaKey: event.metaKey, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: event.altKey, repeat: event.repeat, hasOpen: host.hasOpen() })) {
       event.preventDefault();

@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // Sub agents on the shared ACP core (Fuigo's wire shape), against the fake
 // ACP CLI: the prompt result is not the end of the turn while sub agents run.
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -38,7 +40,7 @@ describe("ACP sub agents (fake CLI)", () => {
     instance.adapter.onEvent((e) => {
       if (e.type === "request.opened" && e.threadId === threadId) void instance.adapter.respondToRequest(threadId, e.requestId!, { behavior: "allow" });
     });
-  const send = (threadId: string, text = "go __fixture_subagents__") => instance.adapter.sendTurn({ threadId, text });
+  const send = (threadId: string, text = "go __fixture_subagents__") => instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text });
 
   beforeEach(async () => {
     ensureDirs();
@@ -163,3 +165,6 @@ describe("ACP sub agents (fake CLI)", () => {
     expect(recorder.events.some((e) => e.type === "turn.subtask")).toBe(false);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

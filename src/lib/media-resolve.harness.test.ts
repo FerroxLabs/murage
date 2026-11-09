@@ -187,25 +187,25 @@ describe("a transcript path through discovery, resolve and the byte route", () =
   it("keeps the chip for a path outside the workspace, a link, and a renamed executable", async () => {
     const f = fixture();
     const outside = f.write(f.base, "Music/private.mp3", wav(1));
-    expect(await resolveLocalMedia({ scope: f.scope, absolutePath: outside }, f.api)).toEqual({ state: "unavailable" });
+    expect(await resolveLocalMedia({ scope: f.scope, absolutePath: outside }, f.api)).toEqual({ state: "unavailable", why: "outside" });
     // Outside the root: refused before discovery is even asked.
     expect(f.calls).toEqual([WORKSPACE_FILES_ROUTES.root]);
 
     f.calls.length = 0;
     symlinkSync(outside, join(f.taskRoot, "linked.wav"));
-    expect(await resolveLocalMedia({ scope: f.scope, absolutePath: join(f.taskRoot, "linked.wav") }, f.api)).toEqual({ state: "unavailable" });
+    expect(await resolveLocalMedia({ scope: f.scope, absolutePath: join(f.taskRoot, "linked.wav") }, f.api)).toEqual({ state: "unavailable", why: "not-listed" });
     // Discovery names it a link: the resolver is never asked for it.
     expect(f.calls).toEqual([WORKSPACE_FILES_ROUTES.root, WORKSPACE_FILES_ROUTES.list]);
 
     f.calls.length = 0;
     const pretend = f.write(f.taskRoot, "outputs/song.wav", exe());
-    expect(await resolveLocalMedia({ scope: f.scope, absolutePath: pretend }, f.api)).toEqual({ state: "unavailable" });
-    // The suffix earned it a question; the bytes answered "not media".
+    expect(await resolveLocalMedia({ scope: f.scope, absolutePath: pretend }, f.api)).toMatchObject({ state: "unplayable", reason: "unsupported", asset: { availability: "unsupported", capabilities: { preview: false, open: false, download: false } } });
+    // The suffix earned it a question; the bytes answered "not media": 1.0.18 (35ec64d8a) hands back the listed asset as unplayable/unsupported, with every capability off, instead of hiding it.
     expect(f.calls).toEqual([WORKSPACE_FILES_ROUTES.root, WORKSPACE_FILES_ROUTES.list, MEDIA_ROUTES.resolve]);
 
     f.calls.length = 0;
     const private_ = f.write(f.taskRoot, "memory/note.wav", wav(1));
-    expect(await resolveLocalMedia({ scope: f.scope, absolutePath: private_ }, f.api)).toEqual({ state: "unavailable" });
+    expect(await resolveLocalMedia({ scope: f.scope, absolutePath: private_ }, f.api)).toEqual({ state: "unavailable", why: "unanswered" });
   });
 
   it("never reads the managed generated-images root or a retained root as this conversation's workspace", async () => {
@@ -215,12 +215,12 @@ describe("a transcript path through discovery, resolve and the byte route", () =
     // transcript path stays a chip; discovery is asked and refuses.
     const managedRoot = join(f.dataDir, "workspaces", "research", "generated-images", "task-7");
     const managedTake = f.write(managedRoot, "take.wav", wav(1));
-    expect(await resolveLocalMedia({ scope: f.scope, absolutePath: managedTake }, f.api)).toEqual({ state: "unavailable" });
+    expect(await resolveLocalMedia({ scope: f.scope, absolutePath: managedTake }, f.api)).toEqual({ state: "unavailable", why: "outside" });
     expect(f.calls).toEqual([WORKSPACE_FILES_ROUTES.root]);
     // A file in a deleted task's retained root: no live conversation owns it.
     f.calls.length = 0;
     const retainedTake = f.write(f.retainedRoots[0]!, "outputs/old.wav", wav(1));
-    expect(await resolveLocalMedia({ scope: f.scope, absolutePath: retainedTake }, f.api)).toEqual({ state: "unavailable" });
+    expect(await resolveLocalMedia({ scope: f.scope, absolutePath: retainedTake }, f.api)).toEqual({ state: "unavailable", why: "outside" });
     expect(f.calls).toEqual([WORKSPACE_FILES_ROUTES.root]);
   });
 
@@ -235,9 +235,9 @@ describe("a transcript path through discovery, resolve and the byte route", () =
     const f = fixture(), audio = wav(1);
     const path = f.write(f.taskRoot, "outputs/take.wav", audio);
     // The same bot, a different thread: that thread's workspace is elsewhere.
-    expect(await resolveLocalMedia({ scope: { botId: "research", threadId: "room-1" }, absolutePath: path }, f.api)).toEqual({ state: "unavailable" });
+    expect(await resolveLocalMedia({ scope: { botId: "research", threadId: "room-1" }, absolutePath: path }, f.api)).toEqual({ state: "unavailable", why: "outside" });
     // An unknown bot: hidden.
-    expect(await resolveLocalMedia({ scope: { botId: "someone-else", threadId: "task-7" }, absolutePath: path }, f.api)).toEqual({ state: "unavailable" });
+    expect(await resolveLocalMedia({ scope: { botId: "someone-else", threadId: "task-7" }, absolutePath: path }, f.api)).toEqual({ state: "unavailable", why: "unanswered" });
     // A take the member rendered into the room's pinned workspace, offered
     // under {member bot, room thread} — the scope GroupView passes.
     const roomTake = f.write(f.roomRoot, "outputs/room-take.wav", audio);

@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The local-only Undo host (handoffs/UNDO-HOST-DESIGN.md section 8): the 8 s
+// The local-only Undo host (UNDO-HOST-DESIGN.md section 8): the 8 s
 // window, holds and the 2 s floor, newer offers, page hide, Esc, the key
 // guards and notices. It never sends a request, so there are no server rows.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

@@ -10,7 +10,8 @@ import { classifyFloor, type FloorFacts, type FloorResult } from "./browser-floo
 import { ACCOUNT_OWNER_PHRASE, FLOOR_OWNER_PHRASE } from "../shared/browser-floor-signatures.ts";
 import { withoutSecretValues } from "./browser-recipient-safety.ts";
 import { ReadLayerError, type ReadLayer } from "./browser-extension-snapshot.ts";
-import { validateHeadlessBrowserCall } from "./browser-engine-policy.ts";
+import { canonicalUrl, validateHeadlessBrowserCall } from "./browser-engine-policy.ts";
+import { BrowserExtensionPolicyError } from "./browser-extension-policy.ts";
 import { redactSecretUrl } from "../shared/browser-secret-classifier.ts";
 
 import { extensionEngineTools, type BrowserExtensionEngineBackend, type EngineObject } from "./browser-extension-engine.ts";
@@ -22,6 +23,10 @@ export interface ExtensionCdpTransport {
   send(method: string, params: Json, document: ExtensionDocument): Promise<any>;
 }
 export type ExtensionAction = { name: string; arguments: Json; document: ExtensionDocument; digest: string; summary: string; mutation: boolean; presentedLink?: boolean;
+  /** A0: set only on the bot's own tool-call admission, never on a redirect, popup or reader-fallback admission. */
+  botCall?: boolean;
+  /** A2: the address exactly as the bot wrote it, before SABLE-B 6.1's canonical form (only on the bot's own call). Read by the owner-named check alone. */
+  botUrl?: string;
   /** What a push notification may say: the operation, the site and field names with a count. Never typed text or values. */
   pushSummary?: string;
   /** The facts the floor and the level were judged on, with the target's visibility block (T23W). Absent for actions with no target. */
@@ -33,21 +38,31 @@ export type ExtensionAction = { name: string; arguments: Json; document: Extensi
   /** Set by the service when the card is one of the always-ask kinds (D1): the card says Murage asks every time. */
   cardKind?: "delete" | "newRecipient" };
 /** The hard floor asked for the owner (spec 2.5.1). `text` is the plain sentence the bot reads. */
-export type ExtensionFloorHandoff = { result: FloorResult; operation: string; document: ExtensionDocument; text: string };
+/** SABLE-B 5.1: one call's scope. `fence` is the dispatch's identity (the service owns its shape); `signal` aborts when the call ends;
+ * `admitted` and `admittedUrls` are the canonical origins and URLs this call admitted. */
+export type CallScope = { fence: unknown; signal: AbortSignal; admitted: Set<string>; admittedUrls: Set<string> };
+export type ExtensionFloorHandoff ={ result: FloorResult; operation: string; document: ExtensionDocument; text: string };
 /** What the executor reports to the activity log itself: the decisions the service cannot see. */
-export type ExtensionActivityEvent = { operation: string; document: ExtensionDocument; decision: "your turn" | "not done"; outcome: "handed over" | "failed"; level: 1 | 2 | 3; target?: string; fromPage?: boolean; textLength?: number };
+export type ExtensionActivityEvent = { operation: string; document: ExtensionDocument; decision: "your turn" | "not done"; outcome: "handed over" | "failed"; level: 1 | 2 | 3; target?: string; fromPage?: boolean; textLength?: number; id?: string };
 export interface ExtensionExecutorOptions {
   transport: ExtensionCdpTransport;
   authorize: () => boolean;
   authorizationError?: () => Error;
   // Access precedes all page observations. Action approval follows protected target inspection.
-  access: (document: ExtensionDocument, destination?: string) => Promise<boolean>;
-  admit: (action: ExtensionAction) => Promise<boolean>;
+  // SABLE-B 7.3: the page consent carries no action; the one destination consent of a step carries the step's action. Both carry the call's scope.
+  access: (document: ExtensionDocument, destination?: string, action?: ExtensionAction, scope?: CallScope) => Promise<boolean>;
+  /** `step` is the token beginStep returned; undefined only for a dialog answered during this call's own read (5.4). */
+  admit: (action: ExtensionAction, scope?: CallScope, step?: unknown) => Promise<boolean>;
+  /** SABLE-B 5.4: one step checked at a time per binding. Throws binding_busy or binding_inactive synchronously. */
+  beginStep?: (scope: CallScope | undefined, action: ExtensionAction) => unknown;
+  endStep?: (step: unknown) => void;
+  /** SABLE-B 5.1: the call's scope is still the running one and the binding is active. */
+  live?: (scope: CallScope | undefined) => boolean;
   settled?: () => void;
   /** Test seam for the facts collector. Production uses collectFloorFacts. A collector that throws is floor. */
   collectFacts?: (io: FloorFactsIo, target: FloorTarget | undefined, operation: string, extra?: FloorFactsExtra) => Promise<FloorFacts>;
   /** Called before the refusal when the floor asks for the owner: the service pauses the binding and tells the owner. */
-  onFloor?: (info: ExtensionFloorHandoff) => Promise<void> | void;
+  onFloor?: (info: ExtensionFloorHandoff, scope?: CallScope) => Promise<void> | void;
   activity?: (event: ExtensionActivityEvent) => void;
   /** T52: phase timestamps of a turn (admitted, first visible content, first input dispatch), in milliseconds on a monotonic clock. */
   phase?: (event: { phase: "admitted" | "first_content" | "first_input"; at: number; sinceAdmitted: number; operation: string }) => void;
@@ -57,6 +72,11 @@ export interface ExtensionExecutorOptions {
 const reads = new Set(["read","snapshot","screenshot","get_text","get_url","get_title","tab_list","wait_ms","wait_for_selector","wait_for_text","wait_for_load","scroll"]);
 const navigation = new Set(["open","back","forward","reload","tab_new","tab_switch"]);
 const administrative = new Set(["close","tab_close","tab_new","tab_list","tab_switch"]);
+/** SABLE-B N21: the shown link in canonical form for the comparison only (a non-web shown link never equals a web destination). */
+const webCanonical = (href: string) => /^https?:/i.test(href) ? canonicalUrl(href) : href;
+/** SABLE-B N4 and 6 (fixer r1): a click link enters in canonical form. A non-web scheme (javascript:, mailto:, blob:, data:) is refused here, at
+ * entry, before any site card, grant or bind, with the refusal the policy gives such a destination (handover_required). */
+const webDestination = (href: string) => { if (!/^https?:/i.test(href)) throw new BrowserExtensionPolicyError("handover_required"); return canonicalUrl(href); };
 /** Items Murage's own read layer already fenced (T24), so the service does not fence them a second time. */
 const markFenced = (output: unknown): unknown => {
   const content = (output as { content?: unknown } | undefined)?.content;
@@ -143,13 +163,24 @@ export class BrowserExtensionExecutor {
   }
   timings(){return {...this.marks};}
   private currentAction?:ExtensionAction;
+  /** SABLE-B 5.1: the running call's scope, for engine hooks only (each hook reads it once at entry and then holds that value). */
+  scope?:CallScope;
+  /** SABLE-B 5.4 (r6): true while this call's own read runs; a dialog answered then is admitted without taking the step lock. */
+  private reading=false;
+  /** SABLE-B 5.2: a dead scope writes nothing. Without a service live() hook (direct executor tests) only the authorisation is checked. */
+  private live(scope:CallScope|undefined){this.authorized();if(this.options.live&&!this.options.live(scope))throw Object.assign(Error("binding_inactive"),{code:"binding_inactive"});}
+  /** SABLE-B 5.4: a step's check (its destination consent and its admission) holds the binding's one lock from start to end. */
+  private async checkStep(scope:CallScope|undefined,action:ExtensionAction,run:(step:unknown)=>Promise<boolean>):Promise<boolean>{
+    const step=this.options.beginStep?.(scope,action);
+    try{return await run(step);}finally{if(step!==undefined)this.options.endStep?.(step);}
+  }
   private currentRole="element";
   private refsDocument = "";
   private busy = false;
   private options: ExtensionExecutorOptions;
   constructor(options: ExtensionExecutorOptions) {
     this.options=options;
-    this.engine=options.createEngine?.({beforeCommand:(document,method,params)=>this.beforeEngineCommand(document,method,params),beforeDestination:(url,document)=>this.destination(url,document)});
+    this.engine=options.createEngine?.({beforeCommand:(document,method,params)=>this.beforeEngineCommand(document,method,params),beforeDestination:(url,document)=>this.destination(url,document,this.scope)});
   }
   tools() { return extensionEngineTools(); }
   private authorized() { if (!this.options.authorize()) { if (this.options.authorizationError) throw this.options.authorizationError(); refuse("Browser control is no longer authorised."); } }
@@ -272,14 +303,14 @@ export class BrowserExtensionExecutor {
    * the service pauses the binding (which lets go of the tab) and only then is the bot told to end its turn. */
   private protectedUnsure = false;
   private handedText = "";
-  private async guard(document: ExtensionDocument, fresh = false) {
+  private async guard(document: ExtensionDocument, scope: CallScope | undefined, fresh = false) {
     if (!await this.protectedDocument(document, fresh)) return;
     if (this.floorHandled) refuse(this.handedText || "YOUR TURN: this step needs the owner. Murage has asked them. End your turn now and wait. Do not try another way to do this step.");
     const unsure = this.protectedUnsure;
-    await this.handOff(document, { floor: "credentials", rule: unsure ? "protected-page-unreadable" : "protected-page", reason: "This page needs the owner to take over.", unsure }, this.callOperation || "read");
+    await this.handOff(document, { floor: "credentials", rule: unsure ? "protected-page-unreadable" : "protected-page", reason: "This page needs the owner to take over.", unsure }, this.callOperation || "read", undefined, scope);
   }
   private backend():BrowserExtensionEngineBackend{
-    this.engine??=this.options.createEngine?.({beforeCommand:(document,method,params)=>this.beforeEngineCommand(document,method,params),beforeDestination:(url,document)=>this.destination(url,document)});
+    this.engine??=this.options.createEngine?.({beforeCommand:(document,method,params)=>this.beforeEngineCommand(document,method,params),beforeDestination:(url,document)=>this.destination(url,document,this.scope)});
     return this.engine??refuse("The pinned browser engine adapter is not connected.");
   }
   private async resolveObject(target:EngineObject){
@@ -332,7 +363,7 @@ export class BrowserExtensionExecutor {
   }
   /** SEC-02: right before an activating input the target is described and classified again. A page can turn the approved button into something
    * else between mousedown and mouseup (or between keydown and keyup); the activation is cancelled, nothing more reaches the page. */
-  private async revalidate(document:ExtensionDocument,target:EngineObject,mouse:boolean){
+  private async revalidate(document:ExtensionDocument,target:EngineObject,mouse:boolean,scope:CallScope|undefined){
     const shape=this.approvedShape;if(!shape)return refuse("The browser action was not approved.");
     const now=await this.describe(target);
     // Round 10 (R9-10): a mouse activation is bound to the whole payload, always, even on a control that holds an editable region (a click does not type, and a
@@ -341,27 +372,32 @@ export class BrowserExtensionExecutor {
     const same=now.observed===shape.observed&&(now.bound===shape.bound||typingOnly);
     if(!same)refuse("The target changed while the action was running. Inspect it again before continuing.");
     const late=await this.floorCheck(document,target,this.currentOperation,this.currentKey);
-    if(late)await this.handOff(document,late,this.currentOperation,now.detail);
+    if(late)await this.handOff(document,late,this.currentOperation,now.detail,scope);
     // The recipients the page is about to send to are the ones the owner approved (changed or unreadable: back to the owner).
     if(recipientKey(this.lastFacts)!==shape.recipients)refuse("The recipients changed while the action was running. Inspect the page again before continuing.");
   }
-  private async destination(url:string,document:ExtensionDocument){
-    this.authorized();if(!await this.options.access(document,url))refuse("Site access was not approved.");
-    // Original navigation already has an exact admission. New redirects, popup URLs and
-    // reader fallbacks use their own destination-bound grant, never a site-only write grant.
-    if(this.currentAction?.arguments.url!==url){
-      let where="a page";try{where=`a page on ${new URL(url).origin}`;}catch{/* the policy refuses an invalid URL */}
-      const action:ExtensionAction={name:"agent_browser_open",arguments:{url},document,mutation:false,digest:createHash("sha256").update(JSON.stringify([document,url])).digest("hex"),summary:`Open ${redactSecretUrl(url)}`,pushSummary:`Open ${where}`};
-      if(!await this.options.admit(action))refuse("The browser destination was not approved.");
-    }
-    this.authorized();
+  private async destination(raw:string,document:ExtensionDocument,scope:CallScope|undefined){
+    const url=canonicalUrl(raw);
+    this.live(scope);
+    // SABLE-B 7.3/7.4: covered only when the canonical URL is EXACTLY one this call admitted (any spelling the engine or reader used).
+    // Without a scope (a direct executor test) base's own "same URL as the action" test stands, canonicalised.
+    if(scope?scope.admittedUrls.has(url):this.currentAction?.arguments.url===url){this.live(scope);return;}
+    // New redirects, popup URLs and reader fallbacks are their own step: lock, consent with the action, admission.
+    let where="a page";try{where=`a page on ${new URL(url).origin}`;}catch{/* the policy refuses an invalid URL */}
+    const action:ExtensionAction={name:"agent_browser_open",arguments:{url},document,mutation:false,digest:createHash("sha256").update(JSON.stringify([document,url])).digest("hex"),summary:`Open ${redactSecretUrl(url)}`,pushSummary:`Open ${where}`};
+    if(!await this.checkStep(scope,action,async step=>{
+      if(!await this.options.access(document,url,action,scope))refuse("Site access was not approved.");
+      return this.options.admit(action,scope,step);
+    }))refuse("The browser destination was not approved.");
+    this.live(scope);
   }
   private dialog?:{tabId:number;type:string;message:string};
   private async beforeEngineCommand(document:ExtensionDocument,method:string,params:Json){
-    this.authorized();if(!await this.options.access(document))refuse("Site access was not approved.");
+    const scope=this.scope;
+    this.authorized();if(!await this.options.access(document,undefined,undefined,scope))refuse("Site access was not approved.");
     // Clipboard editing is never the bot's to do: a paste carries whatever the owner last copied into a page.
     if(isClipboardInput(method,params))refuse("Pasting, copying and select-all are not available in the owner's browser. A paste could hand the page whatever the owner last copied.");
-    if(method==="Page.handleJavaScriptDialog")return this.answerDialog(document,params);
+    if(method==="Page.handleJavaScriptDialog")return this.answerDialog(document,params,scope);
     if(document.url==="about:blank")refuse("Navigate the bootstrap tab before observing it.");
     // Input belongs to an admitted action only: nothing the engine does before admit (resolving a target) may press or type.
     if(method.startsWith("Input.")&&!this.executing)refuse("The browser action was not approved.");
@@ -377,7 +413,7 @@ export class BrowserExtensionExecutor {
     }
     // An escape (open, a new tab) only moves away: setup and navigation need no look at a page the owner must use directly.
     // The guard ends on a confirmed document; only an escape (which skips it) needs its own look.
-    if(!(this.escaping&&ESCAPE_SETUP.has(method)))await this.guard(document,method.startsWith("Input."));else await this.stable(document);
+    if(!(this.escaping&&ESCAPE_SETUP.has(method)))await this.guard(document,scope,method.startsWith("Input."));else await this.stable(document);
     if(method.startsWith("Input.")&&this.executing)this.mark("first_input",this.currentOperation||this.callOperation);
     if(!this.executing||!this.mutation||!this.approvedTarget)return;
     const target=this.approvedTarget;
@@ -402,7 +438,7 @@ export class BrowserExtensionExecutor {
     }
     // SEC-02: the semantics digest and the floor, again, right before every activating input (both halves of a click, Enter or Space).
     if((method==="Input.dispatchMouseEvent"&&(params.type==="mousePressed"||params.type==="mouseReleased"))||(method==="Input.dispatchKeyEvent"&&activationKeyEvent(params)))
-      await this.revalidate(document,target,method==="Input.dispatchMouseEvent");
+      await this.revalidate(document,target,method==="Input.dispatchMouseEvent",scope);
   }
   /** The main frame's loader id: it changes whenever the frame commits a new document. */
   private async loaderId(document:ExtensionDocument){
@@ -427,24 +463,27 @@ export class BrowserExtensionExecutor {
   /** The facts of the most recent floor check in this call, handed on to the decision (T23W). */
   private lastFacts:(FloorFacts&{visibility?:unknown})|undefined;
   /** Refuse with the plain YOUR TURN text; nothing reaches the page. */
-  private async handOff(document:ExtensionDocument,result:FloorResult,operation:string,detail?:Detail):Promise<never>{
+  private async handOff(document:ExtensionDocument,result:FloorResult,operation:string,detail:Detail|undefined,scope:CallScope|undefined):Promise<never>{
+    // SABLE-B 5.2 (fixer r1): the scope is the one the looking continuation captured, never this.scope read after its await. A dead one (a
+    // dialog answer whose floor facts came back after the read ended) writes no hand-off and never reaches onFloor's Pause.
+    this.live(scope);
     this.floorHandled=true;
     const phrase=!result.unsure&&result.floor?` (${result.rule==="owner-account-change"?ACCOUNT_OWNER_PHRASE:FLOOR_OWNER_PHRASE[result.floor]})`:"";
     const text=`YOUR TURN: ${result.rule.startsWith("protected-page")?"this page needs the owner to take over":`this step needs the owner${phrase}`}. Murage has asked them. End your turn now and wait. Do not try another way to do this step.`;
     this.handedText=text;
     this.options.activity?.({operation,document,decision:"your turn",outcome:"handed over",level:2,...(detail?.display.label?{target:String(detail.display.label),fromPage:true}:{})});
-    try{await this.options.onFloor?.({result,operation,document,text});}catch{/* the refusal stands whether or not the owner could be told */}
+    try{await this.options.onFloor?.({result,operation,document,text},scope);}catch{/* the refusal stands whether or not the owner could be told */}
     return refuse(text);
   }
   /** Answering a page's JavaScript dialog. An alert only dismisses; a confirm or prompt decides something, so it needs the owner. */
-  private async answerDialog(document:ExtensionDocument,params:Json){
+  private async answerDialog(document:ExtensionDocument,params:Json,scope:CallScope|undefined){
     const open=this.dialog&&this.dialog.tabId===document.tabId?this.dialog:undefined;
     // Only while a tool call is running: an answer decided outside one has no owner action to belong to. A dialog the owner opened while the bot was
     // not acting is left alone, an alert included (T43).
     if(!this.executing)refuse("A dialog is open on the page. It needs the owner to answer it.");
     const accept=params.accept===true,kind=open?.type??"confirm";
     const dialogFloor=await this.floorCheck(document,undefined,accept?"dialog_accept":"dialog_dismiss",{dialog:{kind,text:String(open?.message??"")}});
-    if(dialogFloor)await this.handOff(document,dialogFloor,accept?"dialog_accept":"dialog_dismiss");
+    if(dialogFloor)await this.handOff(document,dialogFloor,accept?"dialog_accept":"dialog_dismiss",undefined,scope);
     const arguments_:Json={accept,...(typeof params.promptText==="string"?{promptText:params.promptText.slice(0,500)}:{})};
     // Text the bot would type into a prompt is the bot's (it can carry conversation data to the page): the owner sees it.
     const typed=typeof arguments_.promptText==="string"&&accept?`\nText the bot will enter: ${jsonLine(arguments_.promptText)}`:"";
@@ -453,8 +492,10 @@ export class BrowserExtensionExecutor {
     // The level rules read the operation as dialog_accept or dialog_dismiss and the dialog's kind from the facts: alert and dismiss are L2,
     // confirm, prompt and a beforeunload that may discard typed data are L3.
     const action:ExtensionAction={name:`agent_browser_dialog_${accept?"accept":"dismiss"}`,arguments:arguments_,document,mutation:true,...(this.lastFacts?{facts:this.lastFacts}:{}),digest:createHash("sha256").update(JSON.stringify(["dialog",document,arguments_,open?.message??""])).digest("hex"),summary,pushSummary:`Answer a ${kind} dialog on ${document.origin}`};
-    if(!await this.options.admit(action))refuse("The browser action was not approved.");
-    this.authorized();
+    // SABLE-B 5.4 (r6): during this call's own read a dialog answer neither takes nor waits for the step lock (base); outside a read it takes it.
+    if(this.reading){if(!await this.options.admit(action,scope))refuse("The browser action was not approved.");}
+    else if(!await this.checkStep(scope,action,step=>this.options.admit(action,scope,step)))refuse("The browser action was not approved.");
+    this.live(scope);
   }
   private escaping=false;
   /** The page's HTML in slices, so a large page crosses the wire in pieces. */
@@ -465,29 +506,38 @@ export class BrowserExtensionExecutor {
     for(let at=0;at<total&&at<2_400_000;at+=slice)out+=String(await this.evaluate(document,htmlSliceExpression(at,at+slice)));
     return out;
   }
-  async call(name:unknown,args:unknown):Promise<unknown>{
+  async call(name:unknown,args:unknown,outerScope?:CallScope):Promise<unknown>{
     // Some engines call an element reference `ref`; this tool names it `selector` (a reference starts with @).
     if(args&&typeof args==='object'&&!Array.isArray(args)&&typeof (args as Json).ref==='string'&&(args as Json).selector===undefined){const {ref,...rest}=args as Json;args={...rest,selector:String(ref).startsWith('@')?ref:`@${ref}`};}
-    const call=validateHeadlessBrowserCall(name,args);if(!this.tools().some(tool=>tool.name===call.name))refuse("This browser operation is unavailable through the extension.");
+    let call=validateHeadlessBrowserCall(name,args);
+    // SABLE-B 6.1: the URL enters in its one canonical form, before the digest, so every approval binding, card and policy destination carries it.
+    // CHROME-OWNER-NAMED-SITE A2: the bare-origin check reads the bot's own spelling (https://google.com:443 or /%2e is not bare).
+    const botUrl=typeof call.arguments.url==="string"?call.arguments.url:undefined;
+    if(typeof call.arguments.url==="string")call={...call,arguments:{...call.arguments,url:canonicalUrl(call.arguments.url)}};if(!this.tools().some(tool=>tool.name===call.name))refuse("This browser operation is unavailable through the extension.");
     if(this.busy)refuse("This browser has an action in progress.");this.busy=true;this.executing=false;this.mutation=false;this.approvedTarget=undefined;
     let document:ExtensionDocument|undefined,admitted=false,afterAdmit:ExtensionAction|undefined;this.floorHandled=false;this.lastFacts=undefined;this.loaderBase=undefined;this.approvedShape=undefined;this.closedChecked.clear();
     const operation=call.name.replace(/^agent_browser_/,"");this.callOperation=operation;this.handedText="";
+    // SABLE-B 5.1: the call's scope. It dies (synchronously) the moment the call body settles, before any cleanup await.
+    const callCancel=new AbortController();
+    const scope:CallScope|undefined=outerScope?{...outerScope,signal:AbortSignal.any([outerScope.signal,callCancel.signal])}:undefined;
+    this.scope=scope;
     try{
       if(operation==="press"&&isClipboardKeyName(call.arguments.key))refuse("Pasting, copying and select-all are not available in the owner's browser. A paste could hand the page whatever the owner last copied.");
       this.authorized();document=await this.options.transport.document();
       if(["tab_switch","tab_close"].includes(operation)&&typeof call.arguments.tab==="string")document=await this.backend().resolveTab(call.arguments.tab);
       let destination=typeof call.arguments.url==="string"?call.arguments.url:undefined;
-      if(!await this.options.access(document,destination))refuse("Site access was not approved.");
+      // SABLE-B 7.3: the page only here; the destination's one consent comes with the action, under the step lock.
+      if(!await this.options.access(document,undefined,undefined,scope))refuse("Site access was not approved.");
       // T43: a pending dialog is a modal state. Looking (snapshot, screenshot) and answering stay possible; nothing else moves until it is answered.
       const pending=this.dialog&&this.dialog.tabId===document.tabId?this.dialog:undefined;
       if(pending&&!["snapshot","screenshot","dialog","dialog_accept","dialog_dismiss","close"].includes(operation))refuse(`A dialog is open on the page: "${flat(pending.message).slice(0,300)}" (written by the site, not by Murage). Answer it first.`);
       admitted=true;this.mark("admitted",operation);
       const bootstrap=document.url==="about:blank"&&(operation==="open"||administrative.has(operation));
       this.escaping=escapes.has(operation);
-      if(!bootstrap&&!this.escaping)await this.guard(document);
+      if(!bootstrap&&!this.escaping)await this.guard(document,scope);
       if(typeof call.arguments.selector==="string"&&call.arguments.selector.startsWith("@")&&!this.layerOwnsRefs()&&this.refsDocument!==docKey(document))refuse("Element references expired. Take a new snapshot.");
       if(operation==="back"||operation==="forward"){
-        const history=await this.send(document,"Page.getNavigationHistory");const item=history.entries?.[history.currentIndex+(operation==="back"?-1:1)];if(item?.url){destination=item.url;if(!await this.options.access(document,destination))refuse("Site access was not approved.");}
+        const history=await this.send(document,"Page.getNavigationHistory");const item=history.entries?.[history.currentIndex+(operation==="back"?-1:1)];if(item?.url)destination=canonicalUrl(item.url);
       }
       // Closing the session is not free when it would close a tab the owner shared.
       this.mutation=!reads.has(operation)&&!navigation.has(operation)&&(operation!=="close"||!bootstrap);
@@ -510,10 +560,12 @@ export class BrowserExtensionExecutor {
         this.currentRole=String(detail.display.role||detail.display.tag||"element").toLowerCase();
         // The hard floor comes before any card, in every mode.
         const floor=await this.floorCheck(document,target,operation,typeof call.arguments.key==="string"?{key:call.arguments.key}:{});
-        if(floor)await this.handOff(document,floor,operation,detail);
+        if(floor)await this.handOff(document,floor,operation,detail,scope);
       }
       let shownUrl:string|undefined;
-      if(operation==="click"&&detail?.display.href){destination=new URL(privHref??detail.display.href,document.url).href;try{shownUrl=new URL(detail.display.href,document.url).href;}catch{shownUrl=undefined;}if(!await this.options.access(document,destination))refuse("Site access was not approved.");}
+      if(operation==="click"&&detail?.display.href){destination=webDestination(new URL(privHref??detail.display.href,document.url).href);try{shownUrl=new URL(detail.display.href,document.url).href;}catch{shownUrl=undefined;}
+        // SABLE-B N21: the card never shows one link while another is admitted.
+        if(privHref&&shownUrl!==undefined&&webCanonical(shownUrl)!==destination)refuse("The target changed while the action was running. Inspect it again before continuing.");}
       // A link the page itself presents is not data the bot chose: only the owner-visible rule needs to know.
       let presentedLink:boolean|undefined;
       if(destination&&(operation==="open"||operation==="read")&&!bootstrap){try{presentedLink=await this.evaluate(document,presentedLinkExpression(new URL(destination).href))===true;}catch{presentedLink=undefined;}}
@@ -522,28 +574,34 @@ export class BrowserExtensionExecutor {
       if(summary.length>MAX_REVIEW_CHARS)refuse("This action is too large to review. Split the text into smaller parts or take over to continue.");
       const names=(detail?.display.fieldNames??[]).join(", ");
       const pushSummary=`${operation} on ${document.origin}${detail?.display.fieldCount?`. Fields: ${names} (${detail.display.fieldCount})`:""}`;
-      const action:ExtensionAction={...call,arguments:reviewArgs,document,mutation:this.mutation,...(this.lastFacts?{facts:this.lastFacts}:{}),...(detail?.display.label?{target:String(detail.display.label),fromPage:true}:{}),...(typeof call.arguments.text==="string"?{textLength:call.arguments.text.length}:{}),...(target?{node:{backendNodeId:target.backendNodeId,frameId:target.frameId!==undefined?target.frameId:document.frameId}}:{}),...(presentedLink?{presentedLink}:{}),digest:createHash("sha256").update(JSON.stringify([call,document,target?.backendNodeId,observed,bound,createHmac("sha256",VALUE_KEY).update(recipientKey(this.lastFacts)).digest("hex")])).digest("hex"),summary,pushSummary};
+      const action:ExtensionAction={...call,arguments:reviewArgs,document,mutation:this.mutation,botCall:true,...(botUrl!==undefined?{botUrl}:{}),...(this.lastFacts?{facts:this.lastFacts}:{}),...(detail?.display.label?{target:String(detail.display.label),fromPage:true}:{}),...(typeof call.arguments.text==="string"?{textLength:call.arguments.text.length}:{}),...(target?{node:{backendNodeId:target.backendNodeId,frameId:target.frameId!==undefined?target.frameId:document.frameId}}:{}),...(presentedLink?{presentedLink}:{}),digest:createHash("sha256").update(JSON.stringify([call,document,target?.backendNodeId,observed,bound,createHmac("sha256",VALUE_KEY).update(recipientKey(this.lastFacts)).digest("hex")])).digest("hex"),summary,pushSummary};
       // Round 10 (R9-01): the recipients the owner approved are the ones scanned at admission. Every later scan is compared with this set and none replaces it.
       const admittedRecipients=recipientKey(this.lastFacts);
-      this.currentAction=action;if(!await this.options.admit(action))refuse("The browser action was not approved.");
+      // SABLE-B 7.3: the step's one destination consent (with the action) and its admission run under the binding's step lock.
+      this.currentAction=action;
+      if(!await this.checkStep(scope,action,async step=>{
+        if(destination&&!await this.options.access(document!,destination,action,scope))refuse("Site access was not approved.");
+        return this.options.admit(action,scope,step);
+      }))refuse("The browser action was not approved.");
       afterAdmit=this.mutation?action:undefined;
       await this.stable(document);this.closedChecked.clear();
       // L1: the document that was admitted is the one the input may reach.
       if(!bootstrap&&!this.escaping&&this.mutation)this.loaderBase=await this.loaderId(document);
-      if(!bootstrap&&!this.escaping)await this.guard(document);
+      if(!bootstrap&&!this.escaping)await this.guard(document,scope);
       if(target){
         const again=await this.describe(target);if(again.observed!==observed||again.bound!==bound)refuse("The target changed while waiting. Inspect it again before continuing.");
         // A page can change a button after the card: classify again, and drop the approval if it is now floor.
         const late=await this.floorCheck(document,target,operation,typeof call.arguments.key==="string"?{key:call.arguments.key}:{});
-        if(late)await this.handOff(document,late,operation,again.detail);
+        if(late)await this.handOff(document,late,operation,again.detail,scope);
         if(recipientKey(this.lastFacts)!==admittedRecipients)refuse("The recipients changed while waiting. Inspect the page again before continuing.");
       }
       this.approvedTarget=target;this.executing=true;this.currentOperation=operation;this.currentKey=typeof call.arguments.key==="string"?{key:call.arguments.key}:{};
       this.approvedShape=target?{observed,structure:shapeStructure,bound,editable:shapeEditable,recipients:admittedRecipients,macs:shapeMacs,skip:shapeSkip}:undefined;
       const layer=this.layerOwnsRefs()?this.layerFor(document):undefined;
       const engineArgs=layer&&target&&typeof call.arguments.selector==="string"&&call.arguments.selector.startsWith("@")?{...call.arguments,selector:`node:${target.backendNodeId}`}:call.arguments;
-      let output=operation==="read"?await readWithBrowserAuthority(call.arguments as EngineReadOptions,{fenceOrigin:document.origin,currentUrl:document.url,activeHtml:()=>this.activeHtml(document!),authorize:()=>this.options.authorize(),admitUrl:url=>this.destination(url,document!)}):operation==="snapshot"&&layer?{content:[{type:"text",text:layer.fenced(await layer.snapshot()),murage:true}]}:await this.backend().call(call.name,engineArgs);
-      if(operation==="read")output=markFenced(output);
+      this.reading=operation==="read";
+      let output=operation==="read"?await readWithBrowserAuthority(call.arguments as EngineReadOptions,{fenceOrigin:document.origin,currentUrl:document.url,activeHtml:()=>this.activeHtml(document!),authorize:()=>this.options.authorize(),admitUrl:(url,signal)=>this.destination(url,document!,scope?{...scope,signal:signal?AbortSignal.any([scope.signal,signal]):scope.signal}:undefined)}):operation==="snapshot"&&layer?{content:[{type:"text",text:layer.fenced(await layer.snapshot()),murage:true}]}:await this.backend().call(call.name,engineArgs);
+      this.reading=false;if(operation==="read")output=markFenced(output);
       this.authorized();
       if(operation==="close"){await this.engine?.close();this.engine=undefined;this.layers.clear();this.guardRegistered.clear();this.worlds.clear();return output;}
       // After an L2 or L3 action: what changed on the page, fenced, appended to the result.
@@ -553,16 +611,20 @@ export class BrowserExtensionExecutor {
         if(diff&&Array.isArray(content))output={...(output as object),content:[...content,{type:"text",text:diff,murage:true}]};
       }
       // Every resulting document must be admitted before its output reaches a model.
-      const current=await this.options.transport.document();if(current.url!=="about:blank"){if(!await this.options.access(current))refuse("Site access was not approved.");await this.guard(current);}
+      const current=await this.options.transport.document();if(current.url!=="about:blank"){if(!await this.options.access(current,undefined,undefined,scope))refuse("Site access was not approved.");await this.guard(current,scope);}
       if(["read","snapshot","screenshot","get_text"].includes(operation))this.mark("first_content",operation);
       if(operation==="tab_close"){this.layers.delete(document.tabId);this.worlds.delete(document.tabId);this.guardRegistered.delete(`${document.profileId}:${document.tabId}`);}
       if(operation==="snapshot")this.refsDocument=docKey(current);else if(!sameDocument(document,current)||["open","back","forward","reload","tab_new","tab_switch","tab_close"].includes(operation))this.refsDocument="";
       return output;
     }catch(error){
-      // An admitted action that did not happen is still a decision worth a line: not done.
-      if(afterAdmit&&document&&!this.floorHandled)this.options.activity?.({operation,document,decision:"not done",outcome:"failed",level:2,...(afterAdmit.target?{target:afterAdmit.target,fromPage:true}:{}),...(afterAdmit.textLength!==undefined?{textLength:afterAdmit.textLength}:{})});
+      this.scope=undefined;callCancel.abort();
+      // An admitted action that did not happen is still a decision worth a line: not done. A refusal whose line the consent check
+      // already wrote (activityRecorded: a Never-by-default page found after admission) is not counted twice. `recorded` alone is not
+      // enough: the waiting and failed-grant refusals carry it and write no line, so they keep this one.
+      if(afterAdmit&&document&&!this.floorHandled&&(error as {activityRecorded?:boolean}|undefined)?.activityRecorded!==true)this.options.activity?.({operation,document,decision:"not done",outcome:"failed",level:2,...(typeof (error as {activityId?:unknown}|undefined)?.activityId==="string"?{id:(error as {activityId:string}).activityId}:{}),...(afterAdmit.target?{target:afterAdmit.target,fromPage:true}:{}),...(afterAdmit.textLength!==undefined?{textLength:afterAdmit.textLength}:{})});
       throw error;
     }finally{
+      this.scope=undefined;callCancel.abort();this.reading=false;
       this.loaderBase=undefined;
       if(document&&admitted){try{await this.evaluate(document,"globalThis.__murageGuard?.enable(false)");}catch{/* revoked or navigated: no further observation */}}
       this.approvedShape=undefined;this.options.settled?.();this.currentAction=undefined;this.executing=false;this.mutation=false;this.approvedTarget=undefined;this.escaping=false;this.busy=false;

@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -93,7 +95,7 @@ describe.skipIf(process.platform === "win32")("the Codex app-server binary", () 
 
     instance = await CodexDriver.create({ instanceId: "codex-launch", displayName: "Codex", environment: {}, enabled: true, config: { cli: "codex", fullAuto: false } });
     recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: "t-codex-launch", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-codex-launch", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
     expect(jobProbe.jobs).toContainEqual(jobProbe.job); // the turn CLI was started in the engine job
 
@@ -103,3 +105,6 @@ describe.skipIf(process.platform === "win32")("the Codex app-server binary", () 
     expect(existsSync(shellLog) ? readFileSync(shellLog, "utf8") : "").not.toContain("app-server");
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

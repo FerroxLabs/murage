@@ -43,7 +43,9 @@ it("the watchdog waits only after folder-held approval presentation, including r
   const end = source.indexOf("  const localVmTarget", begin);
   let held = true;
   const account = vi.fn();
+  // callSpeech: D24's call speech coordinator; no call is live, so no provider turn feeds call speech here
   const fold = evaluate(`${source.slice(begin, end)} }; return foldRuntimeEvent;`, { ...deps, fluxFirstTokenProbe: { observe() {}, begin() {} }, replyGuardContext: () => null, accountProjectEvent: account,
+    callSpeech: { provider: () => undefined },
     // the real Rule 74a hook index.ts imports from engine-env.ts and calls for every permission event
     accountPresentedProjectEvent, holdProjectWriteApproval: () => held, noteStartupFileEvent });
   const approval = { type: "request.opened", threadId: "room", turnId: "turn", requestId: "approval" };

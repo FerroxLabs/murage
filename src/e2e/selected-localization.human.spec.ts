@@ -28,11 +28,11 @@ for(const locale of ['en','de','es','fr','hi','ja','pt-br','zh'])test('selected 
  test.skip(info.project.name==='desktop'&&locale!=='en'||info.project.name==='mobile'&&locale==='en','one matching viewport per locale');
  const pack=JSON.parse(readFileSync(join(root,'src/locales',locale+'.json'),'utf8'));
  await page.setViewportSize(locale==='en'?{width:1280,height:900}:{width:390,height:844});await page.route('**/*',route=>route.request().url().startsWith(origin)?route.continue():route.abort());await page.goto(origin+'/?lang='+locale);
- const setup=page.getByTestId('setup'),settings=page.getByTestId('settings'),banner=page.getByTestId('banner');
+ const setup=page.getByTestId('setup'),settings=page.getByTestId('settings');
  await setup.getByRole('button',{name:pack['engineSignIn.button'].replace('{name}','Claude'),exact:true}).press('Enter');await expect(page.getByRole('button',{name:pack['engineSignIn.openSignIn'],exact:true})).toBeVisible();await page.getByRole('button',{name:pack['engineSignIn.close'],exact:true}).click();await expect(page.getByRole('button',{name:pack['engineSignIn.openSignIn'],exact:true})).toHaveCount(0);
- await expect(settings.getByText(pack['updates.title'],{exact:true})).toBeVisible();await settings.getByRole('button',{name:pack['updates.download'],exact:true}).click();await page.evaluate(()=>(window as any).fixtureOpenCard());await expect(banner.getByRole('button',{name:pack['updates.restart'],exact:true})).toBeVisible();
+ await expect(settings.getByText(pack['updates.title'],{exact:true})).toBeVisible();await settings.getByRole('button',{name:pack['updates.download'],exact:true}).click();await page.evaluate(()=>(window as any).fixtureOpenCard());await expect(page.getByTestId('update-card').getByRole('button',{name:pack['updates.restart'],exact:true})).toBeVisible();
  await expect(page.getByTestId('call').getByRole('button',{name:pack['calls.call'].replace('{name}',name),exact:true})).toBeVisible();expect(await page.locator('mira').count()).toBe(0);
- await page.evaluate(()=>(window as any).fixtureEmit({status:'error',version:'2.0.0',message:'Fixture interruption'}));await banner.getByRole('button',{name:pack['updates.retry'],exact:true}).click();expect(await page.evaluate(()=>(window as any).fixtureCalls.retry)).toBe(1);
+ await page.evaluate(()=>(window as any).fixtureEmit({status:'error',version:'2.0.0',message:'Fixture interruption'}));await page.getByTestId('update-card').getByRole('button',{name:pack['updates.retry'],exact:true}).click();expect(await page.evaluate(()=>(window as any).fixtureCalls.retry)).toBe(1);
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  if(['en','de','hi','ja'].includes(locale))await page.screenshot({path:info.outputPath('selected-'+locale+'.png'),fullPage:true,animations:'disabled'});
 });

@@ -1,0 +1,177 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "S5",
+  "date": "2026-11-08",
+  "base": "2f4a93ee3",
+  "scope": "S5 copy: 26 rewrites (18 pt-br, 8 hi) plus 1 hi string reviewed unchanged",
+  "strings": {
+    "hi:runtimeError.local.skill-link-foreign.title": {
+      "text": "आपके स्किल के लिंक ज्यों के त्यों रहते हैं",
+      "en": "Your skill links stay unchanged",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "hi:runtimeError.local.skill-link-foreign.message": {
+      "text": "Murage आपके स्किल के लिंक ज्यों के त्यों रखता है, जब वह इस बॉट के कार्य फ़ोल्डर में किसी लिंक की जाँच नहीं कर पाता या उसे बदल नहीं पाता। आपका टर्न शुरू नहीं हुआ।",
+      "en": "Murage keeps your skill links unchanged when it cannot check or replace a link in this bot's working folder. Your turn did not start.",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "hi:runtimeError.local.skill-link-foreign.resolution": {
+      "text": "जारी रखने के लिए इस बॉट के साथ नई बातचीत शुरू करें। अगर आपने वह लिंक बनाया था, तो उसे बॉट के .claude, .agents या .grok स्किल फ़ोल्डर से हटाएँ, फिर दोबारा कोशिश करें।",
+      "en": "Start a new conversation with this bot to keep going. If you made that link, remove it from the bot's .claude, .agents or .grok skills folder, then retry.",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "hi:runtimeError.local.skill-link-staging.title": {
+      "text": "आपके स्किल के लिंक ज्यों के त्यों रहते हैं",
+      "en": "Your skill links stay unchanged",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "hi:runtimeError.local.skill-link-staging.message": {
+      "text": "Murage आपके स्किल के लिंक ज्यों के त्यों रखता है, जब इस बॉट के कार्य फ़ोल्डर में उसका अस्थायी फ़ोल्डर मौजूद न हो, दूसरी ड्राइव पर हो या बदल गया हो, या जब यह कंप्यूटर लिंक को ज्यों का त्यों रखते हुए दूसरी जगह न ले जा सके। आपका टर्न शुरू नहीं हुआ।",
+      "en": "Murage keeps your skill links unchanged when its staging folder in this bot's working folder is missing, on another drive or changed, or when this computer cannot move links while preserving them. Your turn did not start.",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "hi:runtimeError.local.skill-link-staging.resolution": {
+      "text": "जारी रखने के लिए इस बॉट के साथ नई बातचीत शुरू करें। हो सकता है कि Murage ने बॉट के .murage-procedures/.relink फ़ोल्डर में कोई लिंक रखा हो; अगर आपने वहाँ कुछ रखा था, तो उसे हटाएँ, फिर दोबारा कोशिश करें।",
+      "en": "Start a new conversation with this bot to keep going. Murage may have kept a link in the bot's .murage-procedures/.relink folder; if you placed something there, remove it, then retry.",
+      "verdict": "pass",
+      "note": "Reviewed now, text unchanged from base. Held back from the first record only because it sat in the hi skill-link group; the word कौशल is not in it."
+    },
+    "hi:runtimeError.local.pinned-procedures.title": {
+      "text": "आपकी बातचीत के मूल स्किल बनाए रखे जाते हैं",
+      "en": "Your conversation keeps its original skills",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "hi:runtimeError.local.pinned-procedures.message": {
+      "text": "Murage आपकी बातचीत के मूल निर्देश बनाए रखता है। जिन स्किलों के साथ यह बातचीत शुरू हुई थी, वे डिस्क पर मौजूद नहीं हैं या बदल गए हैं, इसलिए आपका टर्न शुरू नहीं हुआ।",
+      "en": "Murage keeps your conversation on its original instructions. The skills it started with are missing or changed on disk, so your turn did not start.",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "hi:runtimeError.local.pinned-procedures.resolution": {
+      "text": "इस बॉट के मौजूदा स्किल इस्तेमाल करने के लिए इसके साथ नई बातचीत शुरू करें।",
+      "en": "Start a new conversation with this bot to use its current skills.",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "pt-br:runtimeError.local.data-dir-moved.message": {
+      "text": "O Murage mantém sua conversa vinculada à pasta original. Após a mudança da pasta de dados, não foi possível associar a pasta desta conversa ao novo local, então o turno não começou.",
+      "en": "Murage keeps your conversation tied to its original folder. After the data folder moved, this conversation's folder could not be matched to the new location, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "pt-br:runtimeError.local.data-dir-moved.resolution": {
+      "text": "Comece uma nova conversa com este bot ou coloque a pasta de dados de volta onde estava e tente de novo.",
+      "en": "Start a new conversation with this bot, or move the data folder back, then retry.",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "pt-br:runtimeError.local.data-root-changed.message": {
+      "text": "O Murage mantém seu turno no local previsto. Uma pasta vinculada dentro da pasta de dados do Murage agora aponta para outro lugar, então o turno não começou.",
+      "en": "Murage keeps your turn in the intended location. A linked folder in Murage's data folder now points somewhere else, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "pt-br:runtimeError.local.data-root-changed.resolution": {
+      "text": "Se você a moveu de propósito, abra Configurações > Pasta de dados e escolha Usar esta pasta. Caso contrário, coloque-a de volta como estava; o próximo turno reconhecerá a mudança. Se nenhuma das duas opções funcionar, reinicie o Murage.",
+      "en": "If you moved it on purpose, open Settings > Data folder and choose Use this folder. Otherwise put it back as it was; the next turn picks it up. If neither works, restart Murage.",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "pt-br:runtimeError.local.data-root-changed-providers.message": {
+      "text": "O Murage mantém seu turno no local previsto. Uma pasta vinculada dentro da pasta de dados do Murage agora aponta para outro lugar, então o turno não começou.",
+      "en": "Murage keeps your turn in the intended location. A linked folder in Murage's data folder now points somewhere else, so the turn did not start.",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "pt-br:runtimeError.local.data-root-changed-providers.resolution": {
+      "text": "Se você a moveu de propósito, abra Configurações > Pasta de dados e escolha Usar esta pasta. Caso contrário, coloque-a de volta como estava; o próximo turno reconhecerá a mudança. Se nenhuma das duas opções funcionar, reinicie o Murage.",
+      "en": "If you moved it on purpose, open Settings > Data folder and choose Use this folder. Otherwise put it back as it was; the next turn picks it up. If neither works, restart Murage.",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "pt-br:runtimeError.local.skill-link-foreign.title": {
+      "text": "Seus links de habilidades continuam sem alterações",
+      "en": "Your skill links stay unchanged",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "pt-br:runtimeError.local.skill-link-foreign.message": {
+      "text": "O Murage mantém seus links de habilidades sem alterações quando não consegue verificar ou substituir um link na pasta de trabalho deste bot. Seu turno não começou.",
+      "en": "Murage keeps your skill links unchanged when it cannot check or replace a link in this bot's working folder. Your turn did not start.",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "pt-br:runtimeError.local.skill-link-foreign.resolution": {
+      "text": "Inicie uma nova conversa com este bot para continuar. Se você criou esse link, remova-o da pasta de habilidades .claude, .agents ou .grok do bot e tente novamente.",
+      "en": "Start a new conversation with this bot to keep going. If you made that link, remove it from the bot's .claude, .agents or .grok skills folder, then retry.",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "pt-br:runtimeError.local.skill-link-staging.title": {
+      "text": "Seus links de habilidades continuam sem alterações",
+      "en": "Your skill links stay unchanged",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "pt-br:runtimeError.local.skill-link-staging.message": {
+      "text": "O Murage mantém seus links de habilidades sem alterações quando a pasta temporária dele na pasta de trabalho deste bot está ausente, está em outra unidade ou foi alterada, ou quando este computador não consegue mover os links mantendo-os intactos. Seu turno não começou.",
+      "en": "Murage keeps your skill links unchanged when its staging folder in this bot's working folder is missing, on another drive or changed, or when this computer cannot move links while preserving them. Your turn did not start.",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "pt-br:runtimeError.local.skill-link-staging.resolution": {
+      "text": "Inicie uma nova conversa com este bot para continuar. O Murage pode ter mantido um link na pasta .murage-procedures/.relink do bot; se você colocou algo lá, remova o que colocou e tente novamente.",
+      "en": "Start a new conversation with this bot to keep going. Murage may have kept a link in the bot's .murage-procedures/.relink folder; if you placed something there, remove it, then retry.",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "pt-br:runtimeError.local.pinned-procedures.title": {
+      "text": "Sua conversa mantém as habilidades originais",
+      "en": "Your conversation keeps its original skills",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "pt-br:runtimeError.local.pinned-procedures.message": {
+      "text": "O Murage mantém as instruções originais da sua conversa. As habilidades com as quais ela foi iniciada estão ausentes ou foram alteradas no disco, então seu turno não começou.",
+      "en": "Murage keeps your conversation on its original instructions. The skills it started with are missing or changed on disk, so your turn did not start.",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "pt-br:runtimeError.local.pinned-procedures.resolution": {
+      "text": "Inicie uma nova conversa com este bot para usar as habilidades atuais dele.",
+      "en": "Start a new conversation with this bot to use its current skills.",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "pt-br:settings.dataFolder.subtitle": {
+      "text": "Uma pasta vinculada dentro da pasta de dados do Murage agora aponta para outro lugar. Se você a moveu de propósito, use essa pasta aqui.",
+      "en": "A linked folder in Murage's data folder now points somewhere else. If you moved it on purpose, use it here.",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "pt-br:settings.dataFolder.restart": {
+      "text": "Reinicie o Murage para poder usar esta pasta.",
+      "en": "Restart Murage so you can use this folder.",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    },
+    "pt-br:settings.dataFolder.error": {
+      "text": "Confira se a pasta continua no lugar e tente de novo para confirmá-la.",
+      "en": "Check that the folder is still in place, then try again to confirm it.",
+      "verdict": "pass",
+      "note": "Rewritten to the pt-br voce register or the hi UI term for skills; rules and call site re-checked."
+    }
+  },
+  "files": {}
+}

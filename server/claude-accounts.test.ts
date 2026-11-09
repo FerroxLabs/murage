@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFil
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { accountDirectory, assertSeparateClaudeAccount, claudeAccountEnvironment, claudeSignInCommand, newClaudeAccount } from "./claude-accounts.ts";
+import { accountDirectory, assertSeparateClaudeAccount, claudeAccountEnvironment, claudeSignInCommand, newClaudeAccount, relativeInsideForTest as relativeInside } from "./claude-accounts.ts";
 import { persistableClaudeInstances, replaceClaudeAccountInstances, restoreClaudeAccountInstances } from "./claude-account-config.ts";
 import type { AppConfig } from "./config.ts";
 import * as processes from "./procs.ts";
@@ -13,6 +13,13 @@ let scratch:string;
 beforeEach(()=>{scratch=mkdtempSync(join(tmpdir(),"murage-accounts-"));vi.stubEnv("HOME",scratch);vi.stubEnv("USERPROFILE",scratch);vi.stubEnv("CLAUDE_CONFIG_DIR","");});
 afterEach(()=>{vi.unstubAllEnvs();removeTempDirSync(scratch);});
 describe("native Claude account boundaries",()=>{
+  it("compares Windows provider paths without case while preserving the relative spelling",()=>{
+    expect(relativeInside("c:\\data\\providers","C:\\DATA\\providers\\account","win32")).toBe("account");
+    expect(relativeInside("c:\\data\\providers","C:\\DATA\\PROVIDERS","win32")).toBe("");
+    expect(relativeInside("c:\\data\\providers","C:\\DATA\\providers2\\x","win32")).toBeUndefined();
+    expect(relativeInside("c:\\data\\providers","C:\\DATA\\providers\\Account","win32")).toBe("Account");
+    expect(relativeInside("/data/providers","/DATA/providers/a","linux")).toBeUndefined();
+  });
   it("leaves the default environment byte-for-byte and isolates explicit accounts",()=>{
     const source={HOME:scratch,CLAUDE_CONFIG_DIR:`${scratch}/default/`,CLAUDE_CODE_OAUTH_TOKEN:"synthetic-only",claude_code_oauth_future:"fake",CLAUDE_SECURESTORAGE_CONFIG_DIR:"wrong",ANTHROPIC_PROFILE:"other",KEEP:"yes"};
     expect(claudeAccountEnvironment(source)).toEqual(source);
@@ -28,7 +35,7 @@ describe("native Claude account boundaries",()=>{
     expect(()=>newClaudeAccount(prior,{displayName:"Default",configDir:join(scratch,".claude")},scratch)).toThrow(/default/);
   });
   it("rejects aliases of a not-yet-created account directory",()=>{
-    mkdirSync(join(scratch,"real"));symlinkSync(join(scratch,"real"),join(scratch,"alias"),"dir");
+    mkdirSync(join(scratch,"real"));symlinkSync(join(scratch,"real"),join(scratch,"alias"),process.platform==="win32"?"junction":"dir");
     expect(()=>assertSeparateClaudeAccount({a:{driver:"claudeAgent",config:{configDir:join(scratch,"real","future")}}},"b",{driver:"claudeAgent",config:{configDir:join(scratch,"alias","future")}})).toThrow(/already configured/);
   });
   it.runIf(process.platform!=="win32")("executes a quoted native login recipe in an isolated subshell",()=>{
