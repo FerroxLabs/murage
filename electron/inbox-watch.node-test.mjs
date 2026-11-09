@@ -50,3 +50,32 @@ test("stop ends the stream and no further change is reported",async()=>{
   stop();for(let i=0;i<5;i++)await settle();
   assert.deepEqual(h.changes,[{}]);
 });
+
+test("onFrame delivers attention.settled, bot and config frames as ids only, and ignores everything else",async()=>{
+  const whole=frame({kind:"message",text:"has \"kind\":\"bot\" inside"},1)
+    +frame({kind:"attention.settled",threadId:"t1",requestId:"r1",secret:"x"},2)
+    +frame({kind:"bot",bot:{id:"b1",name:"Ada",big:"x".repeat(100)}},3)
+    +frame({kind:"config",notifications:{previewContent:false}},4)
+    +frame({kind:"bot",bot:{}},5)
+    +frame({kind:"inbox.changed",pollScale:1},6);
+  const h=harness({chunks:[whole.slice(0,50),whole.slice(50)]});
+  const frames=[];
+  const stop=watchInboxChanges(change=>h.changes.push(change),{...h.options,onFrame:value=>frames.push(value)});
+  for(let i=0;i<10;i++)await settle();
+  assert.deepEqual(frames,[{kind:"attention.settled",threadId:"t1",requestId:"r1"},{kind:"bot",botId:"b1"},{kind:"config"}]);
+  assert.deepEqual(h.changes,[{},{scale:1}]);
+  stop();
+});
+
+test("without onFrame nothing else is parsed and a throwing onFrame never stops the watcher",async()=>{
+  const h=harness({chunks:[frame({kind:"attention.settled",threadId:"t",requestId:"r"},1)+frame({kind:"inbox.changed",pollScale:3},2)]});
+  const stop=watchInboxChanges(change=>h.changes.push(change),h.options);
+  for(let i=0;i<10;i++)await settle();
+  assert.deepEqual(h.changes,[{},{scale:3}]);
+  stop();
+  const g=harness({chunks:[frame({kind:"attention.settled",threadId:"t",requestId:"r"},1)+frame({kind:"inbox.changed",pollScale:4},2)]});
+  const stop2=watchInboxChanges(change=>g.changes.push(change),{...g.options,onFrame:()=>{throw new Error("boom");}});
+  for(let i=0;i<10;i++)await settle();
+  assert.deepEqual(g.changes,[{},{scale:4}]);
+  stop2();
+});

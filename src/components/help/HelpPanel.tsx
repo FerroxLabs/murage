@@ -16,25 +16,31 @@
 // this screen, which opens the Chief of Staff's chat with the screen named
 // (L4B's fallback, src/lib/help-ask-chief.ts), or, with no engine, the line
 // that says how to get one; Search
-// help (GET /api/help/search over the shipped docs); links; and the feedback
+// help (GET /api/help/search over the shipped docs in English; in any other
+// language, that language's Help pack on this device,
+// src/lib/help-pack-search.ts); links; and the feedback
 // form, last, so asking for help always comes first.
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useRegisterHelpDock } from "@/lib/help-dock";
 import { HelpCircle, X } from "lucide-react";
 import { api, useStore } from "@/state/store";
 import { openKeyboardShortcuts, openWhatsNew } from "@/lib/app-events";
 import type { HelpResult } from "../../../shared/help-search";
-import { feedbackEnvelopeForScreen, resolveHelpScreen, type FeedbackSurface, type HelpScreenInput, type ScreenEnvelope } from "@/lib/screen-envelope";
+import { feedbackEnvelopeForPicked, feedbackEnvelopeForScreen, resolveHelpScreen, type FeedbackSurface, type HelpScreenInput, type ScreenEnvelope } from "@/lib/screen-envelope";
 import { resolveSettingsSection } from "@/lib/settings-pages";
 import { shortcutPlatformIsMac } from "@/lib/mod-shortcut";
 import { botRole } from "@/lib/bot-role";
 import { askChiefAboutScreen, chiefFor } from "@/lib/help-ask-chief";
 import { AskAboutScreen } from "./HelpAskChief";
 import { Tip } from "@/components/ui/Tip";
-import type { ScreenIndexEntry } from "@/lib/screens-index";
+import { screenEntry, type ScreenIndexEntry } from "@/lib/screens-index";
+import { canonicalCode, ensureHelp, useHelpCopy } from "@/lib/help-copy-store";
+import { searchHelpPack } from "@/lib/help-pack-search";
+import { languageCode, t } from "@/lib/i18n";
 import { FeedbackForm, type SendFeedback } from "./FeedbackForm";
 import { HelpTips } from "./HelpTips";
 import { hx, modWord } from "./help-copy";
-import { useHintsReset } from "./HelpHost";
+import { HelpFrame, useHintsReset } from "./HelpHost";
 
 // The always-loaded part, named here too so callers and tests have one place.
 export {
@@ -69,14 +75,50 @@ export const searchHelpRoute: SearchHelp = async (query, signal) => {
 
 type SearchState = { phase: "idle" } | { phase: "loading" } | { phase: "done"; results: HelpResult[] } | { phase: "failed" };
 
-function HelpSearch({ search }: { search: SearchHelp }) {
+/** Where search looks: the docs route in English, the language's own Help pack
+ *  on this device in any other language (the route answers from English docs). */
+export function helpSearchMode(code: string): "route" | "pack" {
+  return canonicalCode(code) === "en" ? "route" : "pack";
+}
+
+/** Search in a language other than English: the ready Help pack only, never the route. */
+function PackResults({ query, params, onOpenScreen }: { query: string; params: Record<string, string>; onOpenScreen: (key: string) => void }) {
+  const words = query.trim();
+  const { code } = useHelpCopy();
+  // The results are the active pack's words, so a language change searches again.
+  const results = useMemo(() => (words ? searchHelpPack(words, hx, params) : []), [words, params, code]);
+  if (!words) return null;
+  if (!results.length) return <p className="text-[13px] text-ink-secondary">{hx("ux.l4a.panel.noResults")}</p>;
+  return (
+    <ul className="flex flex-col gap-3" data-help-pack-results>
+      {results.map((result) => (
+        <li key={result.key} className="rounded-lg border border-hairline/40 px-3 py-2.5">
+          <div className="text-[14px] font-semibold text-ink">{result.title}</div>
+          <p className="mt-1 line-clamp-4 text-[13px] leading-5 text-ink-secondary">{result.line}</p>
+          <button type="button" onClick={() => onOpenScreen(result.key)} className="mt-1 inline-flex min-h-9 items-center text-[13px] font-semibold text-accent hover:underline focus-visible:ring-2 focus-visible:ring-accent-border">
+            {hx("ux.l4a.panel.openScreenHelp")}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** What the route search shows: nothing at all unless this language searches the route, so English results never sit beside a pack's. */
+export function visibleSearchState(mode: ReturnType<typeof helpSearchMode>, state: SearchState): SearchState {
+  return mode === "route" ? state : { phase: "idle" };
+}
+
+function HelpSearch({ search, code, params, onOpenScreen, initialQuery = "" }: { search: SearchHelp; code: string; params: Record<string, string>; onOpenScreen: (key: string) => void; initialQuery?: string }) {
   const ids = useId();
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [state, setState] = useState<SearchState>({ phase: "idle" });
   const [attempt, setAttempt] = useState(0);
+  const mode = helpSearchMode(code);
   useEffect(() => {
     const words = query.trim();
-    if (!words) { setState({ phase: "idle" }); return; }
+    // Only English asks the docs route; other languages search their Help pack below.
+    if (mode !== "route" || !words) { if (state.phase !== "idle") setState({ phase: "idle" }); return; }
     const controller = new AbortController();
     const timer = setTimeout(() => {
       setState({ phase: "loading" });
@@ -85,7 +127,10 @@ function HelpSearch({ search }: { search: SearchHelp }) {
         .catch(() => { if (!controller.signal.aborted) setState({ phase: "failed" }); });
     }, 250);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [query, search, attempt]);
+    // state.phase is read only to skip a no-op reset; as a dependency it would abort the search it just started.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, search, attempt, mode]);
+  const shown = visibleSearchState(mode, state);
   return (
     <section aria-labelledby={`${ids}-h`} className="border-b border-hairline/40 px-5 py-4">
       <h3 id={`${ids}-h`} className="mb-2.5 text-[12px] font-semibold uppercase tracking-[0.05em] text-ink-secondary">{hx("ux.l4a.panel.searchHeading")}</h3>
@@ -98,8 +143,9 @@ function HelpSearch({ search }: { search: SearchHelp }) {
         className="min-h-11 w-full rounded-lg border border-hairline/60 bg-app px-3 text-[14px] text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-border"
       />
       <div aria-live="polite" className="mt-3">
-        {state.phase === "loading" && <p className="text-[13px] text-ink-secondary">{hx("ux.l4a.panel.searching")}</p>}
-        {state.phase === "failed" && (
+        {mode === "pack" && <PackResults query={query} params={params} onOpenScreen={onOpenScreen} />}
+        {shown.phase === "loading" && <p className="text-[13px] text-ink-secondary">{hx("ux.l4a.panel.searching")}</p>}
+        {shown.phase === "failed" && (
           <div className="flex items-center gap-3">
             <p className="min-w-0 flex-1 text-[13px] text-ink">{hx("ux.l4a.panel.searchFailed")}</p>
             <button type="button" onClick={() => setAttempt((n) => n + 1)} className="min-h-11 rounded-lg border border-hairline/60 px-3 text-[13px] font-medium text-ink hover:bg-app focus-visible:ring-2 focus-visible:ring-accent-border">
@@ -107,10 +153,10 @@ function HelpSearch({ search }: { search: SearchHelp }) {
             </button>
           </div>
         )}
-        {state.phase === "done" && state.results.length === 0 && <p className="text-[13px] text-ink-secondary">{hx("ux.l4a.panel.noResults")}</p>}
-        {state.phase === "done" && state.results.length > 0 && (
+        {shown.phase === "done" && shown.results.length === 0 && <p className="text-[13px] text-ink-secondary">{hx("ux.l4a.panel.noResults")}</p>}
+        {shown.phase === "done" && shown.results.length > 0 && (
           <ul className="flex flex-col gap-3">
-            {state.results.map((result) => (
+            {shown.results.map((result) => (
               <li key={result.id} className="rounded-lg border border-hairline/40 px-3 py-2.5">
                 <div className="text-[14px] font-semibold text-ink">{result.heading ? `${result.title} · ${result.heading}` : result.title}</div>
                 <p className="mt-1 line-clamp-4 text-[13px] leading-5 text-ink-secondary">{result.text}</p>
@@ -148,18 +194,32 @@ export interface HelpPanelProps {
   onAskBot: () => void;
   /** Ask about this screen: the Chief of Staff's name, and the ask that opens its chat. Drawn only when an engine can answer. */
   chiefName?: string;
-  onAskChief?: (question: string) => void;
+  onAskChief?: (question: string, screenTitle: string) => void;
   /** Replaces Ask about this screen (the full in-panel answer, a later version). Above the feedback form. */
   askSlot?: ReactNode;
   search?: SearchHelp;
   sendFeedback?: SendFeedback;
   /** Tests open the form straight away; the app never passes this. */
   initialFeedbackOpen?: boolean;
+  /** Tests start search with words typed; the app never passes this. */
+  initialSearch?: string;
 }
 
 export function HelpPanel(props: HelpPanelProps) {
-  const { entry, params, title, envelope, surface, noEngine, onClose, onOpenEngines, onAskBot, chiefName, onAskChief, askSlot, search = searchHelpRoute, sendFeedback, initialFeedbackOpen = false } = props;
+  const { params, envelope, surface, noEngine, onClose, onOpenEngines, onAskBot, chiefName, onAskChief, askSlot, search = searchHelpRoute, sendFeedback, initialFeedbackOpen = false, initialSearch } = props;
+  // A search result in another language opens that screen's help here, in place of this screen's.
+  const [picked, setPicked] = useState<ScreenIndexEntry | null>(null);
+  const entry = picked ?? props.entry;
+  const title = picked ? hx(picked.title, params) : props.title;
+  const { code } = useHelpCopy();
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const openScreen = useCallback((key: string) => {
+    const next = screenEntry(key);
+    if (!next) return;
+    setPicked(next);
+    headingRef.current?.focus();
+    headingRef.current?.closest("aside")?.querySelector<HTMLElement>(".overflow-y-auto")?.scrollTo({ top: 0 });
+  }, []);
   const asideRef = useRef<HTMLElement>(null);
   const [width, setWidth] = useState(readWidth);
   const [feedbackOpen, setFeedbackOpen] = useState(initialFeedbackOpen);
@@ -167,6 +227,7 @@ export function HelpPanel(props: HelpPanelProps) {
   useEffect(() => { headingRef.current?.focus(); }, []);
   // The desktop width rides a property the stylesheet reads at 600 px and up; the phone sheet ignores it.
   useLayoutEffect(() => { asideRef.current?.style.setProperty("--help-w", `${width}px`); }, [width]);
+  useRegisterHelpDock(asideRef);
   const resizeTo = useCallback((next: number) => { const clamped = clampHelpWidth(next); setWidth(clamped); rememberWidth(clamped); }, []);
 
   const startDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -220,7 +281,7 @@ export function HelpPanel(props: HelpPanelProps) {
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <HelpTips entry={entry} params={params} />
-        {askSlot ?? (!noEngine && chiefName && onAskChief ? <AskAboutScreen chiefName={chiefName} onAsk={onAskChief} /> : noEngine && (
+        {askSlot ?? (!noEngine && chiefName && onAskChief ? <AskAboutScreen chiefName={chiefName} onAsk={(question) => onAskChief(question, title)} /> : noEngine && (
           <section className="flex items-center gap-3 border-b border-hairline/40 px-5 py-4">
             <p className="min-w-0 flex-1 text-[14px] leading-5 text-ink">{hx("ux.l4a.panel.noEngine")}</p>
             <button type="button" onClick={onOpenEngines} className="min-h-11 shrink-0 rounded-lg bg-accent px-4 text-[14px] font-medium text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-border">
@@ -228,7 +289,7 @@ export function HelpPanel(props: HelpPanelProps) {
             </button>
           </section>
         ))}
-        <HelpSearch search={search} />
+        <HelpSearch search={search} code={code} params={params} onOpenScreen={openScreen} initialQuery={initialSearch} />
         <nav aria-label={hx("ux.l4a.panel.linksHeading")} className="flex flex-wrap gap-x-4 border-b border-hairline/40 px-5 py-2">
           <button type="button" className={linkButton} onClick={openKeyboardShortcuts}>{hx("ux.l4a.panel.shortcuts")}</button>
           <button type="button" className={linkButton} onClick={openWhatsNew}>{hx("ux.l4a.panel.whatsNew")}</button>
@@ -236,7 +297,7 @@ export function HelpPanel(props: HelpPanelProps) {
         </nav>
         <section className="px-5 py-4" data-help-feedback>
           {feedbackOpen ? (
-            <FeedbackForm envelope={envelope} surface={surface} onCancel={() => setFeedbackOpen(false)} onAskBot={onAskBot} send={sendFeedback} />
+            <FeedbackForm envelope={picked ? feedbackEnvelopeForPicked(picked) : envelope} surface={surface} onCancel={() => setFeedbackOpen(false)} onAskBot={onAskBot} send={sendFeedback} name={params.name} />
           ) : (
             <button type="button" onClick={() => setFeedbackOpen(true)}
               className="min-h-11 w-full rounded-lg border border-hairline/60 px-4 text-left text-[14px] font-medium text-ink hover:bg-app focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-border">
@@ -262,8 +323,46 @@ export interface HelpOpenProps {
   onDismiss: () => void;
 }
 
-export function HelpOpen({ surface, noEngines, enginesOff, firstRun, askSlot, onClose, onDismiss }: HelpOpenProps) {
+/** The gate over the whole open panel (L-COPY r3): heading, tips, search, Ask,
+ *  feedback, titles and labels draw only once the active language's Help copy
+ *  is ready. It asks for that copy while rendering, and again in the first
+ *  render after every language change, so the first frame after a switch is
+ *  already this gate, never English. Loading shows the main pack's "Opening
+ *  help." line; a failed load says so with Try again. A closed panel is not
+ *  mounted, so a language change with help closed fetches nothing. */
+export function HelpReady({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  const asked = useRef<string | null>(null);
+  const active = canonicalCode(languageCode());
+  if (asked.current !== active) {
+    asked.current = active;
+    ensureHelp(active, { retryFailed: false });
+  }
+  const { code, status } = useHelpCopy();
+  if (status === "ready") return <>{children}</>;
+  if (status === "failed") {
+    return (
+      <HelpFrame onClose={onClose}>
+        <div role="alert" data-help-failed className="flex flex-col items-start gap-3">
+          <p className="text-ink">{t("ux.l4a.panel.loadFailed")}</p>
+          <button type="button" onClick={() => ensureHelp(code)}
+            className="min-h-11 rounded-lg border border-hairline/60 px-4 text-[14px] font-medium text-ink hover:bg-app focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-border">
+            {t("ux.l4a.panel.retry")}
+          </button>
+        </div>
+      </HelpFrame>
+    );
+  }
+  return <HelpFrame onClose={onClose}><p role="status" data-help-loading className="text-ink-secondary">{t("ux.l4a.panel.loading")}</p></HelpFrame>;
+}
+
+export function HelpOpen(props: HelpOpenProps) {
+  return <HelpReady onClose={props.onClose}><HelpOpenBody {...props} /></HelpReady>;
+}
+
+function HelpOpenBody({ surface, noEngines, enginesOff, firstRun, askSlot, onClose, onDismiss }: HelpOpenProps) {
   const { state, dispatch } = useStore();
+  // The params below hold the modifier word in the app's language, so a language change renders this body again.
+  useHelpCopy();
   const group = state.groups.find((g) => g.id === state.selectedId);
   const bot = group ? undefined : (state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0]);
   const screen = resolveHelpScreen({
@@ -300,13 +399,13 @@ export function HelpOpen({ surface, noEngines, enginesOff, firstRun, askSlot, on
   // Ask about this screen: always the Chief of Staff's chat (else the first bot), with the screen named and the
   // question in its composer, not sent. The panel and any window over the chat close so the chat is what shows.
   const chief = chiefFor(state.bots);
-  const askChief = useCallback((question: string) => {
+  const askChief = useCallback((question: string, screenTitle?: string) => {
     if (state.appSettingsOpen) dispatch({ type: "toggleAppSettings", open: false });
     if (state.settingsOpen) dispatch({ type: "toggleSettings", open: false });
     if (state.pluginsOpen) dispatch({ type: "togglePlugins", open: false });
     if (state.computerOpen) dispatch({ type: "toggleComputer", open: false });
     if (state.inspectorOpen) dispatch({ type: "toggleInspector", open: false });
-    if (askChiefAboutScreen(state.bots, title, question, { select: (id) => dispatch({ type: "select", id }) })) onDismiss();
+    if (askChiefAboutScreen(state.bots, screenTitle ?? title, question, { select: (id) => dispatch({ type: "select", id }) })) onDismiss();
   }, [dispatch, onDismiss, state.appSettingsOpen, state.bots, state.computerOpen, state.inspectorOpen, state.pluginsOpen, state.settingsOpen, title]);
 
   return (

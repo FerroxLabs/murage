@@ -7,17 +7,23 @@
 //    hangs on the wildcard pair instead of each item it cites (withholds more, never less), so no minute runs over budget.
 // 3. A receipt's commit cost counts its consumer edges and the intern rows they take, so admission never undercounts.
 // 4. An owner's inline walk runs under the same budget and deadline, moves only its own revoke and never drains the queued flips.
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { commitRevoke } from "./revoke-commit.ts";
 import { headFlipCost, markerSlice } from "./revoke-marker.ts";
 import { refsLookup } from "./deny-read.ts";
 import { drainRevokeMarkerBounded, memoryRevocationIdle, memoryRevocationStats, resetMemoryRevocationStats, stopMemoryRevocation, wakeMemoryRevocation } from "./memory-revocation.ts";
-import { bytesPerChange, noteRevokeBytes, REVOKE_WRITE_BUDGET, resetRevokeWriteBudget, revokeBytesWritten, setRevokeBudgetClock } from "./revoke-budget.ts";
+import { bytesPerChange, noteRevokeBytes, REVOKE_PACE, REVOKE_PACE_COMMIT, REVOKE_WRITE_BUDGET, resetRevokeWriteBudget, revokeBytesWritten, setRevokeBudgetClock } from "./revoke-budget.ts";
 import { OBJECT_EDGE_LSN, type MemoryRef } from "./lineage-types.ts";
 import { CONTENT, WritetimeFixture } from "./testing/writetime-fixture.ts";
 import { changes, flipAll, num, storm, THREADS } from "./testing/revoke-storm-fixture.ts";
 
-afterEach(() => { setRevokeBudgetClock(); resetRevokeWriteBudget(); REVOKE_WRITE_BUDGET.bytesPerMinute = 20 * 1024 * 1024; stopMemoryRevocation(); resetMemoryRevocationStats(); });
+// These are the 1.0.3 admission properties, tested under the 20 MB admission budget and its whole-minute flip cutoff alone. The idle-budget pace
+// (IO-IDLE-DRAIN-1018 r3.5/r3.6: 0.8 MB a minute, one drain commit capped at REVOKE_PACE_COMMIT.rows, a flip bigger than cap + reserve cut to the wildcard
+// hold, designs/IO-IDLE-r36.md "FLIP CUTOFF") is a second limiter beside it, proven in io-budget-revoke-pace.test.ts and io-budget-revoke-bounds.test.ts,
+// so it is lifted here, as that file's "admission alone" cases do.
+const PACE0 = REVOKE_PACE.bytesPerMinute, ROWS0 = REVOKE_PACE_COMMIT.rows;
+beforeEach(() => { REVOKE_PACE.bytesPerMinute = Number.POSITIVE_INFINITY; REVOKE_PACE_COMMIT.rows = 1_000_000; });
+afterEach(() => { setRevokeBudgetClock(); resetRevokeWriteBudget(); REVOKE_WRITE_BUDGET.bytesPerMinute = 20 * 1024 * 1024; REVOKE_PACE.bytesPerMinute = PACE0; REVOKE_PACE_COMMIT.rows = ROWS0; stopMemoryRevocation(); resetMemoryRevocationStats(); });
 
 const slice = (fx: WritetimeFixture, run: () => unknown) => { fx.db.exec("BEGIN IMMEDIATE"); try { return run(); } finally { fx.db.exec("COMMIT"); } };
 const drainAll = (fx: WritetimeFixture) => { for (let n = 0; n < 100_000; n++) if (!slice(fx, () => markerSlice(fx.db, 256, 8))) return; throw new Error("unbounded"); };

@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // Qwen × Flux Router — the OpenAI chat-completions surface (spec §4.3).
 //
 // Two things are pinned here and they are the whole point of the surface:
@@ -51,7 +53,7 @@ async function spawnFor(model: string | undefined): Promise<{ argv: string[]; en
     config: { cli: FAKE_ACP, fullAuto: true },
   });
   recorder = recordEvents(instance.adapter);
-  await instance.adapter.sendTurn({ threadId: "t-flux", text: "hi", model });
+  await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-flux", text: "hi", model });
   await recorder.until((e) => e.type === "turn.completed");
   const seen = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[]; env: Record<string, string> };
   return { ...seen, argv: withoutQwenIsolation(seen.argv) };
@@ -180,7 +182,7 @@ describe("qwen Flux routing — the gate", () => {
     });
     recorder = recordEvents(instance.adapter);
     const threadId = `t-bad-settings-${newId()}`;
-    await expect(instance.adapter.sendTurn({ threadId, text: "hi", model: "omlx::GLM-5.2-fp8" })).rejects.toThrow(
+    await expect(instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "hi", model: "omlx::GLM-5.2-fp8" })).rejects.toThrow(
       `${join("~", ".qwen", "settings.json")} is not valid JSON, so Murage left it unchanged.`,
     );
     expect(readFileSync(settingsPath(), "utf8")).toBe(before);
@@ -253,3 +255,6 @@ describe("qwen sign-in is reported, not assumed", () => {
     expect(await reportedAuth({ HOME: home, USERPROFILE: home, OPENAI_API_KEY: "sk-fixture" })).toBe(false);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

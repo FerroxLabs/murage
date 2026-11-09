@@ -37,11 +37,11 @@ export function enabledSchedule(draft: ScheduleDraft, status: BackupScheduleStat
 }
 export function scheduleNeedsReview(phase: string) {
   return ["claiming", "capturing", "needs-review", "handoff-prepared", "handoff-armed", "offline-claimed", "return-pending","install-requested"].includes(phase)
-    || !["idle", "due", "waiting-idle", "waiting-backup-mode", "local-verified", "skipped", "returned","upgrade-complete","upgrade-cancelled"].includes(phase);
+    || !["idle", "due", "waiting-idle", "waiting-backup-mode", "waiting", "local-verified", "skipped", "returned","upgrade-complete","upgrade-cancelled"].includes(phase);
 }
 export function schedulePhase(phase: string): string {
   const labels: Record<string, string> = { idle: "No backup in progress", due: "Backup due", "waiting-idle": "Waiting for the workspace to be idle",
-    "waiting-backup-mode": "Waiting for Backup mode", "handoff-prepared": "Preparing the backup restart", "handoff-armed": "Preparing the backup restart",
+    "waiting-backup-mode": "Waiting for Backup mode", waiting: "Waiting to back up. It starts by itself.", "handoff-prepared": "Preparing the backup restart", "handoff-armed": "Preparing the backup restart",
     claiming: "Backup in progress", "offline-claimed": "Backup in progress", capturing: "Backup in progress", "return-pending": "Preparing to reopen Murage",
     returned: "The last backup finished and Murage reopened", "local-verified": "Local backup verified", skipped: "Backup skipped",
     "needs-review": "The last backup didn't finish; backups are paused until you clear it","install-requested":"Update installation requested","upgrade-complete":"Update completed after backup","upgrade-cancelled":"Update cancelled" };

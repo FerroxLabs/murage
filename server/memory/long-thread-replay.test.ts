@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -259,3 +260,5 @@ it("a resumed session past 2048 receipts still decides from its latest frame (ME
   database().prepare("UPDATE memory_disclosures SET record_versions='[]' WHERE bundle_id='old-frame-2100'").run();
   expect(memoryContinuationChanged(bundle, "dax-direct", "fuigo", "native-1")).toBe(true);
 }, 240_000);
+
+useOutsideStoreFixture();

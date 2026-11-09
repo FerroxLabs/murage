@@ -1,19 +1,27 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { ProviderInstance } from "./contracts.ts";
 import { checkerAvailability, checkerAvailabilityFor, FLUX_NO_RETAIN_DEPLOYED } from "./browser-extension-check-availability.ts";
+import { DEFAULT_CHECKER_MODELS } from "./browser-action-checker-connection.ts";
+import { resetFluxKeyModelsForTests, setFluxKeyCatalog } from "./flux-key-models.ts";
 
 const engine = (over: Record<string, unknown> = {}) => ({ instanceId: "e1", driverKind: "x", displayName: "E", enabled: true, reviewPermission: async () => "ALLOW", ...over }) as unknown as ProviderInstance;
 const KEY = () => "flux_test_key_not_real";
 
+// FLUX-FREE-MODEL (d5e190f00, merged): the pinned checker models are asked of Flux only when the key's own catalog lists them; a key with no catalog yet runs on the bot's engine.
+const PAID_CATALOG = () => [DEFAULT_CHECKER_MODELS.stage1, DEFAULT_CHECKER_MODELS.stage2];
+afterEach(() => resetFluxKeyModelsForTests());
 describe("checkerAvailabilityFor (from the resolved connection)", () => {
   it("Flux live and connected: Flux, no fallback", () => {
+    setFluxKeyCatalog(PAID_CATALOG);
     expect(checkerAvailabilityFor({ check: "flux", instances: [], readKey: KEY, noRetainDeployed: true })).toEqual({ checkerAvailable: true, checkerSource: "flux" });
   });
   it("Flux not live with a usable bot engine: falls back to the bot engine and says so", () => {
     expect(checkerAvailabilityFor({ check: "flux", instances: [engine()], readKey: KEY, noRetainDeployed: false })).toEqual({ checkerAvailable: true, checkerSource: "bot", checkerFallback: true });
     expect(FLUX_NO_RETAIN_DEPLOYED).toBe(true);
     expect(checkerAvailabilityFor({ check: "flux", instances: [engine()], readKey: () => null })).toMatchObject({ checkerAvailable: true, checkerSource: "bot", checkerFallback: true });
+    expect(checkerAvailabilityFor({ check: "flux", instances: [engine()], readKey: KEY })).toEqual({ checkerAvailable: true, checkerSource: "bot", checkerFallback: true });
+    setFluxKeyCatalog(PAID_CATALOG);
     expect(checkerAvailabilityFor({ check: "flux", instances: [engine()], readKey: KEY })).toEqual({ checkerAvailable: true, checkerSource: "flux" });
   });
   it("Flux not live and no bot engine: unavailable with the honest reason", () => {

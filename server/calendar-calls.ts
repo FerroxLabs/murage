@@ -1,3 +1,4 @@
+import { rebaseScheduledAttachmentPaths } from "./scheduled-attachment-paths.ts";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -185,6 +186,7 @@ export class CalendarCallManager {
     this.now = options.now ?? Date.now;
     this.botExists = options.botExists;
     this.onDue = options.onDue;
+    rebaseScheduledAttachmentPaths(this.file, ["calls"]);
     let migrated = false;
     try {
       const parsed = fileSchema.safeParse(JSON.parse(readFileSync(this.file, "utf8")));

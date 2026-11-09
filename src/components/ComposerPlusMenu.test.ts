@@ -106,7 +106,7 @@ describe("the composer on a phone", () => {
     for (const marker of [
       'aria-label="Stop this turn"',
       "<ComposerInjectNow",
-      'aria-label={recording ? "Stop dictation" : "Start dictation"}',
+      'aria-label={stopControl === "mic" ? "Stop dictation" : "Start dictation"}',
       "<PushToTalk",
       "<LocalComputerAutoWarning",
       "<LevelConfirmChunk.Component",

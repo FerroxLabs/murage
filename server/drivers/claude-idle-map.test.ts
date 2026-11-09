@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // DRV / D8: idle Claude children are held by the adaptive warm pool (no fixed
 // cap), active children excluded, browser capabilities scoped to turns.
 // Uses the existing scripted CLI and Vitest's disposable home, no live engine.
@@ -40,7 +42,7 @@ type Dump = { pid: number; argv: string[]; mcpConfig: { mcpServers: { browser: {
 async function turn(owner: Owner, threadId: string, extra: Partial<SendTurnInput> = {}) {
   const dumpPath = join(scratch, `${threadId}.json`);
   vi.stubEnv("FAKE_CLAUDE_DUMP", dumpPath);
-  const sent = await owner.instance.adapter.sendTurn({ threadId, text: "Fixture turn", ...extra });
+  const sent = await owner.instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "Fixture turn", ...extra });
   await owner.recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId);
   const dump = JSON.parse(readFileSync(dumpPath, "utf8")) as Dump;
   pids.add(dump.pid);
@@ -77,7 +79,7 @@ it("over budget retires idle children but never an active one", async () => {
   vi.stubEnv("FAKE_CLAUDE_HOLD_GATE", gate);
   vi.stubEnv("FAKE_CLAUDE_HOLD_SEEN", seen);
   const active = await turn(owner, "drv-a");
-  const held = await owner.instance.adapter.sendTurn({ threadId: "drv-a", text: "hold-active", resumeCursor: active.sessionId });
+  const held = await owner.instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "drv-a", text: "hold-active", resumeCursor: active.sessionId });
   await expect.poll(() => existsSync(seen)).toBe(true);
   vi.stubEnv("MURAGE_WARM_POOL_BUDGET_MB", "1"); // now over budget; drv-a is mid-turn
   const b = await turn(owner, "drv-b");
@@ -128,3 +130,6 @@ it("a retained child has no live browser claim and the next turn reissues its MC
     expect(authority.resolve(`Bearer ${secondToken}`)).toBeNull();
   } finally { unsubscribe(); authority.revokeAll(); }
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

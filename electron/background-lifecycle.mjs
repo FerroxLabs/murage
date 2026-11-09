@@ -8,6 +8,11 @@ export function backgroundPreferences(value, platform) {
   };
 }
 
+/** Optional panel seam: trayPanel is createTrayPanel(...), trayPanelOn reads
+ * the device's tray preference. createTray still attaches its passed click
+ * callback. With a panel, setTrayMenu(tray, items, {manual:true}) must build
+ * and RETURN a native Menu without attaching it; without manual it attaches
+ * the menu as before. This keeps Electron's Menu dependency in the caller. */
 export function createBackgroundLifecycle(options) {
   let preferences=backgroundPreferences(options.loadPreferences(),options.platform);
   let tray=null,trayAvailable=false,quitting=false,suspended=false,automationsPaused=null,closePending=null,monitor=null;
@@ -28,8 +33,25 @@ export function createBackgroundLifecycle(options) {
   const notify=()=>options.onChange?.(status());
   const report=error=>options.onError?.(error instanceof Error?error:new Error(String(error)));
   const open=()=>{options.openWindow();notify();};
+  const panelOn=()=>Boolean(options.trayPanel)&&options.trayPanelOn?.()===true;
+  const trayClick=(_event,bounds)=>{if(panelOn())void Promise.resolve(options.trayPanel.toggle(bounds)).catch(report);else open();};
+  let panelMenu=null;
+  const trayRightClick=()=>{if(panelOn())tray?.popUpContextMenu(panelMenu??undefined);};
   let summary=null;
   const openTarget=target=>{open();options.openTarget?.(target);};
+  const openNeedsYou=()=>{open();options.openInbox();};
+  const setPaused=async paused=>{
+    const result=await options.setAutomationsPaused(paused);
+    automationsPaused=result.paused;refreshMenu();notify();
+    return result;
+  };
+  const newChiefTask=async()=>{
+    open();
+    // Read on demand too: a cold launch can precede the tray's first summary.
+    const current=traySummaryValue(await options.harness.get("/api/desktop/tray"));
+    const chief=current?.bots.find(bot=>bot.chief);
+    if(chief)options.openTarget?.({kind:"compose",botId:chief.id});
+  };
   const answer=async(item,behavior)=>{
     // Re-read first: the card must still be waiting, still the same request
     // and still one the menu may answer. The answer then goes through the
@@ -41,14 +63,22 @@ export function createBackgroundLifecycle(options) {
   };
   const decide=(item,behavior)=>()=>void answer(item,behavior).catch(error=>{report(error);openTarget({kind:"approval",botId:item.botId,threadId:item.threadId,messageId:item.messageId});}).finally(()=>void refresh().catch(report));
   const menu=()=>trayMenu({summary,automationsPaused,now:(options.now??Date.now)(),
-    open,openInbox:()=>{open();options.openInbox();},openTarget,decide,
+    openQuickPanel:options.platform==="linux"&&panelOn()?()=>void Promise.resolve(options.trayPanel.show()).catch(report):null,
+    open,openInbox:openNeedsYou,openTarget,decide,
     togglePause:()=>{
       const paused=!automationsPaused;
-      void options.setAutomationsPaused(paused).then(result=>{automationsPaused=result.paused;refreshMenu();notify();}).catch(report);
+      void setPaused(paused).catch(report);
     },
     checkForUpdates:options.checkForUpdates?()=>{open();options.checkForUpdates();}:null,
     quit:()=>{quitting=true;options.quit();}});
-  const refreshMenu=()=>{if(!tray||tray.isDestroyed())return;options.setTrayMenu(tray,menu());try{options.presentTray?.(tray,trayPresentation(summary?.needsYou,options.platform));}catch(error){report(error);}};
+  const refreshMenu=()=>{if(!tray||tray.isDestroyed())return;
+    // The opt-in adapter builds and returns a native Menu without attaching it
+    // when manual is true. Mac left click must not trigger its context menu.
+    if(panelOn()&&options.platform!=="linux"){
+      panelMenu=options.setTrayMenu(tray,menu(),{manual:true});tray.setContextMenu?.(null);
+    }else{panelMenu=null;options.setTrayMenu(tray,menu());}
+    if(!panelOn())options.trayPanel?.hide();
+    try{options.presentTray?.(tray,trayPresentation(summary?.needsYou,options.platform));}catch(error){report(error);}};
   const refresh=async(readSummary=true)=>{
     if(probing)return;probing=true;
     try{
@@ -66,10 +96,10 @@ export function createBackgroundLifecycle(options) {
     }finally{probing=false;}
   };
   return {
-    status,open,
+    status,open,openNeedsYou,newChiefTask,pauseAutomations:()=>setPaused(true),
     async start(){
       disposed=false;
-      try{tray=options.createTray(open);refreshMenu();}catch(error){tray=null;report(error);}
+      try{tray=options.createTray(options.trayPanel?trayClick:open);if(options.trayPanel)tray.on?.("right-click",trayRightClick);refreshMenu();}catch(error){tray=null;report(error);}
       await refresh();
       if(disposed)return status();
       try{stopWatch=options.watch?.(change=>{summaryDirty=true;changes++;if(Number.isFinite(change?.scale)&&change.scale>=1)pollScale=change.scale;void refresh().catch(report);})??null;}catch(error){stopWatch=null;report(error);}
@@ -120,7 +150,7 @@ export function createBackgroundLifecycle(options) {
     keepAliveWithoutWindows(){return preferences.keepRunning&&canReopen()&&!shuttingDown();},
     beginQuit(){quitting=true;notify();},
     setSuspended(value){suspended=value;notify();if(!value)void refresh().catch(report);},
-    dispose(){disposed=true;try{stopWatch?.();}catch{}stopWatch=null;if(monitor)(options.clearInterval??clearInterval)(monitor);monitor=null;if(tray&&!tray.isDestroyed())tray.destroy();tray=null;trayAvailable=false;},
+    dispose(){disposed=true;try{stopWatch?.();}catch{}stopWatch=null;if(monitor)(options.clearInterval??clearInterval)(monitor);monitor=null;options.trayPanel?.destroy();if(tray&&!tray.isDestroyed()){tray.removeListener?.("right-click",trayRightClick);tray.destroy();}tray=null;trayAvailable=false;panelMenu=null;},
   };
 }
 
@@ -152,8 +182,9 @@ export function elapsedLabel(startedAt,now){
 }
 /** The tray menu, top to bottom: what needs the owner, what is running,
  * who to write to, then the app itself. Plain words; no em dashes. */
-export function trayMenu({summary,automationsPaused,now,open,openInbox,openTarget,decide,togglePause,checkForUpdates,quit}){
+export function trayMenu({summary,automationsPaused,now,open,openInbox,openTarget,decide,togglePause,checkForUpdates,quit,openQuickPanel}){
   const items=[];
+  if(openQuickPanel)items.push({label:"Open quick panel",click:openQuickPanel});
   const count=summary?.needsYou??0;
   if(count>0){
     items.push({label:`Needs you  ${count}`,enabled:false});

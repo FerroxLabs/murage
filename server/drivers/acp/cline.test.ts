@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -160,7 +162,7 @@ describe("Cline turns (fake CLI)", () => {
     const dump = join(scratch, "dump.json");
     process.env.FAKE_ACP_DUMP = dump;
     await create();
-    await instance!.adapter.sendTurn({ threadId: "t-cline-key", text: "hi" });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-cline-key", text: "hi" });
     const done = await recorder!.until((event) => event.type === "turn.completed");
     expect(done).toMatchObject({ ok: true });
     const state = dumped(dump);
@@ -187,7 +189,7 @@ describe("Cline turns (fake CLI)", () => {
     process.env.FAKE_ACP_DUMP = dump;
     process.env.FAKE_ACP_AUTH_METHODS = "cline,openai-codex";
     await create();
-    await instance!.adapter.sendTurn({ threadId: "t-cline-oauth", text: "hi" });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-cline-oauth", text: "hi" });
     expect(await recorder!.until((event) => event.type === "turn.completed")).toMatchObject({ ok: true });
     expect(dumped(dump).env.CLINE_API_KEY).toBeUndefined();
     expect(JSON.parse(readFileSync(`${dump}.auth.json`, "utf8"))).toEqual({ methodId: "cline" });
@@ -199,7 +201,7 @@ describe("Cline turns (fake CLI)", () => {
     const dump = join(scratch, "dump.json");
     process.env.FAKE_ACP_DUMP = dump;
     await create();
-    await instance!.adapter.sendTurn({ threadId: "t-cline-none", text: "hi" });
+    await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-cline-none", text: "hi" });
     const done = await recorder!.until((event) => event.type === "turn.completed");
     expect(done).toMatchObject({ ok: false, stopReason: "auth_required" });
     expect(recorder!.events).toContainEqual(expect.objectContaining({ type: "runtime.error", message: CLINE_LOGIN_NOTE, setup: true }));
@@ -219,7 +221,7 @@ describe("a failing-auth engine with no method to call (Grok's shape)", () => {
     const instance = await driver.create({ instanceId: "auth-skip", displayName: "Auth Skip", environment: {}, enabled: true, config: { cli: FAKE_CLI, fullAuto: false } });
     const recorder = recordEvents(instance.adapter);
     try {
-      await instance.adapter.sendTurn({ threadId: "t-auth-skip", text: "hi" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-auth-skip", text: "hi" });
       return await recorder.until((event) => event.type === "turn.completed");
     } finally {
       recorder.stop();
@@ -235,3 +237,6 @@ describe("a failing-auth engine with no method to call (Grok's shape)", () => {
     expect(await run({ skipAuthWhenSignedIn: true })).toMatchObject({ ok: true });
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

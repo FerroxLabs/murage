@@ -17,6 +17,8 @@
 //                    refuse-steer-idle written by the test: the next steer ends the held turn (as `release` does), waits for it to settle, then is rejected,
 //                                      so the server meets an idle bot on the way back from the refused steer (once; it is removed).
 //   FAKE_ASK_TOOLS   "1": the engine mounts the agents server (agentsMcp), so ask_user is its tool. Otherwise it is text only.
+//                    "switch": as "1", except while the test has written `no-tools` in FAKE_ASK_DIR: then it reports no tools (so an
+//                    answered card's continuation is held), without the bot changing engines (which would end its HighLevel grant).
 //   FAKE_ASK_NATIVE  "1": the engine writes the native trace a real engine writes: the turn's prompt as an `out` frame, and (a held turn on a
 //                    tools instance, before any phone call can mark the thread) a claude-shaped `in` frame calling a phone tool with args.
 //   tool-event.txt   written by the test (tools instances): the held turn, once released, first emits a started and a completed phoneJobs tool item
@@ -53,7 +55,8 @@ export function makeAskDriver(kind: string = ASK_DRIVER_KIND): AnyProviderDriver
     defaultConfig: () => ({}),
     async create(input: DriverCreateInput<Record<string, unknown>>): Promise<ProviderInstance> {
       const dir = input.environment.FAKE_ASK_DIR ?? "";
-      const tools = input.environment.FAKE_ASK_TOOLS === "1";
+      const switchable = input.environment.FAKE_ASK_TOOLS === "switch";
+      const tools = input.environment.FAKE_ASK_TOOLS === "1" || switchable;
       const steers = input.environment.FAKE_ASK_STEER === "1";
       const nativeTrace = input.environment.FAKE_ASK_NATIVE === "1";
       const note = (row: Record<string, unknown>) => { if (dir) appendFileSync(join(dir, "dump.jsonl"), `${JSON.stringify(row)}\n`); };
@@ -65,10 +68,12 @@ export function makeAskDriver(kind: string = ASK_DRIVER_KIND): AnyProviderDriver
       const active = new Map<string, { turnId: string; interrupted: boolean }>();
       const adapter: ProviderInstance["adapter"] = {
         provider: kind,
-        capabilities: { sessionModelSwitch: "unsupported", ...(tools ? { agentsMcp: true } : {}), ...(steers ? { queueing: true } : {}) },
+        capabilities: switchable
+          ? Object.defineProperty({ sessionModelSwitch: "unsupported", ...(steers ? { queueing: true } : {}) }, "agentsMcp", { enumerable: true, get: () => !existsSync(join(dir, "no-tools")) })
+          : { sessionModelSwitch: "unsupported", ...(tools ? { agentsMcp: true } : {}), ...(steers ? { queueing: true } : {}) },
         sendTurn: async (turn) => {
           const turnId = `ask-turn-${++counter}`;
-          note({ turnId, threadId: turn.threadId, text: turn.text, system: turn.system ?? "", ...(turn.integrations?.phoneJobs ? { phoneJobs: { tools: turn.integrations.phoneJobs.env.MURAGE_PHONE_TOOLS ?? "", hasToken: Boolean(turn.integrations.phoneJobs.env.MURAGE_CONTROL_TOKEN) } } : {}) });
+          note({ turnId, threadId: turn.threadId, text: turn.text, system: turn.system ?? "", ...(turn.integrations?.phoneJobs ? { phoneJobs: { tools: turn.integrations.phoneJobs.env.MURAGE_PHONE_TOOLS ?? "", hasToken: Boolean(turn.integrations.phoneJobs.env.MURAGE_CONTROL_TOKEN) } } : {}), ...(turn.integrations?.highlevel ? { highlevel: true } : {}) });
           if (dir && turn.integrations?.agents) writeFileSync(join(dir, "agents-env.json"), JSON.stringify(turn.integrations.agents.env));
           if (dir && turn.integrations?.phoneJobs) writeFileSync(join(dir, "phone-jobs-env.json"), JSON.stringify(turn.integrations.phoneJobs.env));
           if (nativeTrace) appendNative(turn.threadId, { dir: "out", source: "fakeAsk", msg: { type: "user", prompt: turn.text, turnId } });

@@ -1,3 +1,4 @@
+import {backupStartupDispatch} from "./backup-startup.mjs";
 import assert from "node:assert/strict";
 import {EventEmitter} from "node:events";
 import {chmodSync,existsSync,mkdtempSync,mkdirSync,readFileSync,realpathSync,writeFileSync} from "node:fs";
@@ -167,9 +168,9 @@ test("ordinary launch forks without waiting on the backup tool check; closed and
   const start=main.slice(main.indexOf("const desktopStartup ="));
   const complete=start.indexOf("await backupScheduleHost.completeUpgrade");
   assert.ok(complete>0&&start.lastIndexOf("await backupToolCheck",complete)>start.lastIndexOf("install-requested",complete),"a pending upgrade awaits the check before completing");
-  assert.ok(start.indexOf("await initializeBackupScheduleHost()")<start.indexOf('phase==="handoff-armed"'),"the armed-handoff check still reads a built host");
+  assert.ok(start.indexOf("await initializeBackupScheduleHost()")<start.indexOf('backupDispatch.route==="offline"'),"the armed-handoff check still reads a built host");
   // The armed-handoff block, up to its own return, waits for the tool before it resumes the backup.
-  const armed=start.slice(start.indexOf('phase==="handoff-armed"'));
+  const armed=start.slice(start.indexOf('backupDispatch.route==="offline"'));
   assert.match(armed.slice(0,armed.indexOf("return;")),/desktopBackupTool\.waitReady\(\)[\s\S]*resumeOffline\(\)/,"the handoff path waits for the tool before resuming");
 });
 test("backup mode awaits the tool check before showing the recovery page",()=>{
@@ -186,11 +187,11 @@ test("actual startup fences closed invocation before normal writers and selected
   const declaration=parsed.statements.find(node=>ts.isVariableStatement(node)&&node.declarationList.declarations.some(value=>value.name.getText(parsed)==="desktopStartup"));assert.ok(declaration);
   const calls=[];
   const traced=[];
-  const context=vm.createContext({cloudLive:{start(){},probeOnFocus(){}},takeLaunchCloudLink:async()=>false,closedTrace:stage=>traced.push(stage),desktopMark:()=>{},app:{whenReady:()=>Promise.resolve()},assertDesktopStartupActive:()=>{},closedBackupRequested:true,desktopRecoveryMode:false,
-    acquireDesktopDataOwner:()=>calls.push("owner"),initializeSentinelHost:async()=>calls.push("sentinel"),initializeBackupScheduleHost:async()=>calls.push("host"),
+  const context=vm.createContext({backupStartupDispatch,cloudLive:{start(){},probeOnFocus(){}},takeLaunchCloudLink:async()=>false,closedTrace:stage=>traced.push(stage),desktopMark:()=>{},app:{whenReady:()=>Promise.resolve()},assertDesktopStartupActive:()=>{},closedBackupRequested:true,desktopRecoveryMode:false,
+    acquireDesktopDataOwner:()=>calls.push("owner"),initializeNotifySurfaces:()=>{},initializeAttentionActions:()=>{},initializeSentinelHost:async()=>calls.push("sentinel"),initializeBackupScheduleHost:async()=>calls.push("host"),
     // A slow first tool check must not turn the closed-app run into "unavailable".
     desktopBackupTool:{waitReady:async()=>{calls.push("tool");}},
-    backupScheduleHost:{runClosedDue:async()=>{calls.push("capture");return{status:"verified"};}},finishClosedBackup:result=>calls.push(result.status),
+    backupScheduleHost:{reconcileStartup:()=>({blocked:false}),publishCommitted(){},runClosedDue:async()=>{calls.push("capture");return{status:"verified"};}},finishClosedBackup:result=>calls.push(result.status),
     createServerConnections:()=>assert.fail("normal startup must not run"),
   });
   vm.runInContext(declaration.getText(parsed),context);await vm.runInContext("desktopStartup",context);for(let i=0;i<5;i++)await new Promise(resolve=>setImmediate(resolve));

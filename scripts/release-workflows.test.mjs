@@ -24,7 +24,7 @@ import { dirname, join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { removeTempDirSync } from "../server/testing/cleanup.ts";
-import { check, deriveOses, readLists, select } from "./ci-test-tiers.mjs";
+import { check, deriveOses, nodeGateFiles, readLists, select } from "./ci-test-tiers.mjs";
 
 describe("WhatsApp final release evidence", () => {
   const jobs = parse(readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8")).jobs;
@@ -442,9 +442,21 @@ describe("scoped CI confirmation", () => {
     expect(scoped.if).toBe("inputs.vitest_file != ''");
     expect(scoped.env.VITEST_FILE).toBe("${{ inputs.vitest_file }}");
     expect(scoped.env.MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE).toBe("${{ matrix.os == 'windows-latest' && '1' || '0' }}");
+    // The scoped step leaves the real Windows round trip to the standard-user step (never an elevated shard) and
+    // still runs every other named file; a selection of only that file exits 0 here and runs there.
     expect(scoped.run.trim().split("\n").slice(1)).toEqual([
-      'test_paths=(); while IFS= read -r test_path; do test_paths+=("$test_path"); done <<< "$VITEST_FILE"', 'pnpm exec vitest run "${test_paths[@]}"',
+      "# The real Windows backup round trip runs only in the standard-user step below (vite.config.ts does not collect",
+      "# it here either); a scoped dispatch that names it still runs it there.",
+      "test_paths=(); while IFS= read -r test_path; do",
+      "  test_path=\"${test_path%$'\\r'}\"",
+      "  case \"$test_path\" in server/installation-windows-backup-roundtrip.test.ts|./server/installation-windows-backup-roundtrip.test.ts) continue ;; esac",
+      "  test_paths+=(\"$test_path\")",
+      "done <<< \"$VITEST_FILE\"",
+      "if [ \"${#test_paths[@]}\" -eq 0 ]; then echo \"scoped selection runs only in the standard-user step\"; exit 0; fi",
+      "pnpm exec vitest run \"${test_paths[@]}\"",
     ]);
+    // The blocking Windows shards leave out the same one file, which the standard-user step runs.
+    expect(full.run).toContain("--skip server/installation-windows-backup-roundtrip.test.ts > \"$RUNNER_TEMP/vitest-args.txt\"");
     // Every downstream gate still runs, unconditionally, in the quality job.
     for (const run of ["pnpm typecheck", "pnpm check:contrast", "pnpm broker:check", "pnpm broker:test", "pnpm test:electron", "pnpm test:packaged-server", "pnpm check:electron"]) {
       const step = steps.find(item => item.run === run);
@@ -780,6 +792,20 @@ describe("only GATE tests block CI (ci/gate-tests.txt)", () => {
     const count = os => (os === "windows" ? 12 : 10);
     const shards = os => Array.from({ length: count(os) }, (_, i) => select({ tier: "gate", os, shard: `${i + 1}/${count(os)}` }).files).flat();
     const all = new Set(["linux", "mac", "windows"].flatMap(shards));
+    // Node GATE files run in quality, not in Vitest shards. Prove that
+    // runner is blocking and covers every declared OS before counting them.
+    const quality = load("ci.yml").jobs.quality;
+    expect(quality["continue-on-error"]).toBeUndefined();
+    expect(quality.strategy.matrix.os).toBe(`\${{ fromJSON(inputs.windows_only && '["windows-latest"]' || '["macos-latest","ubuntu-24.04","windows-latest"]') }}`);
+    const nodeStep = quality.steps.find(step => step.run === "pnpm test:electron");
+    expect(nodeStep).toBeDefined();
+    expect(nodeStep.if).toBeUndefined();
+    expect(nodeStep["continue-on-error"]).toBeUndefined();
+    expect(load("ci.yml").jobs.required.needs).toContain("quality");
+    for (const file of nodeGateFiles().filter(file => gate.has(file))) {
+      expect(all.has(file), `${file} must not run in Vitest`).toBe(false);
+      all.add(file);
+    }
     expect(all).toEqual(new Set(gate.keys()));
     const linux = shards("linux");
     expect(new Set(linux).size).toBe(linux.length);

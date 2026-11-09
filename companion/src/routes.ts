@@ -94,6 +94,20 @@ export function isPresenceRoute(method: string, path: string): boolean {
 export const STREAM_TICKET_ROUTE = /^\/api\/voice\/stream\/ticket$/;
 export const isStreamTicket = (method: string, path: string): boolean => method === "POST" && STREAM_TICKET_ROUTE.test(path);
 
+/** Source authority for retained direct calls, under the existing paired call door. */
+export const CALL_SOURCE_ROUTES = [
+  /^\/api\/bots\/[\w-]+\/voice-host$/,
+  /^\/api\/calls\/sessions$/,
+  /^\/api\/calls\/sessions\/[\w-]{1,64}\/(?:ticket|end)$/,
+  /^\/api\/tts\/call\/reply$/,
+] as const;
+export const isCallSourceRoute = (method: string, path: string): boolean => method === "POST" && (CALL_ROUTE.test(path) || CALL_SOURCE_ROUTES.some(route => route.test(path)));
+
+/** A call id is a locator, never authority; the harness checks it against the proven principal. */
+export function callSourceHeaders(method: string, path: string, value: unknown): Record<string, string> {
+  return isCallSourceRoute(method, path) && typeof value === "string" && /^[\w-]{1,64}$/.test(value) ? { "x-murage-call-id": value } : {};
+}
+
 /** Routes the harness answers only when the sidecar proves it forwarded them:
  *  the Inbox (C2), a call's two routes (C9), an image upload, and presence. */
 export function needsLaunchProof(method: string, path: string): boolean {
@@ -102,7 +116,7 @@ export function needsLaunchProof(method: string, path: string): boolean {
     (method === "POST" && CALL_ROUTE.test(path)) ||
     isImageUpload(method, path) ||
     isPresenceRoute(method, path) ||
-    isStreamTicket(method, path)
+    isStreamTicket(method, path) || isCallSourceRoute(method, path)
   );
 }
 
@@ -174,7 +188,7 @@ export const OWNER_DECISION_ROUTES = [
 export function launchProofHeaders(method: string, path: string, token: string | undefined): Record<string, string> {
   if (isCloudDesktopJoin(method, path)) return { "x-murage-companion-token": token! };
   const usable = typeof token === "string" && /^[a-f0-9]{64}$/.test(token);
-  if (usable && isStreamTicket(method, path)) return { "x-murage-companion-token": token };
+  if (usable && (isStreamTicket(method, path) || isCallSourceRoute(method, path))) return { "x-murage-companion-token": token };
   if (usable && [...OWNER_VOICE_ROUTES, ...OWNER_DECISION_ROUTES].some((route) => route.method === method && route.path.test(path))) return { "x-murage-companion-token": token };
   return {};
 }
@@ -215,6 +229,9 @@ export function doorForwardHeaders(token: string | undefined): Record<string, st
 export const DEVICE_OWNER_READS = [
   { method: "GET", path: /^\/api\/bots$/ },
   { method: "GET", path: /^\/api\/events$/ },
+  // All chats and its message search answer only the owner (the device door's own allowlist above still bounds the search)
+  { method: "GET", path: /^\/api\/chats$/ },
+  { method: "GET", path: /^\/api\/search$/ },
 ] as const;
 
 /** Approve all from the paired phone app (APPROVE-ALL-1016 7.1). The harness takes it only from the desktop app or a
@@ -284,6 +301,7 @@ export function isRoutineWrite(method: string, path: string): boolean {
  * fails to match and is denied rather than forwarded — the failure mode of
  * a strict pattern is a closed door, which is the one to have. */
 const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
+  ...CALL_SOURCE_ROUTES.map(path => ({ method: "POST", path })),
   // terms acceptance: the paired phone shows the same gate and accepts as the owner (the harness checks the proof)
   { method: "GET", path: /^\/api\/terms$/ },
   { method: "POST", path: /^\/api\/terms\/accept$/ },
@@ -539,6 +557,7 @@ export const BROWSER_DENIED: ReadonlyArray<{ method: string; path: RegExp }> = [
  * visible transcript dressed as a search. Adding it wants the query bound
  * from plan-security §5 first. */
 const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
+  ...CALL_SOURCE_ROUTES.map(path => ({ method: "POST", path })),
   // terms acceptance: the paired phone shows the same gate and accepts as the owner (the harness checks the proof)
   { method: "GET", path: /^\/api\/terms$/ },
   { method: "POST", path: /^\/api\/terms\/accept$/ },

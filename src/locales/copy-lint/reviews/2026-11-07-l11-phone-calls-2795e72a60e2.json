@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "l11-7g10",
+  "date": "2026-11-07",
+  "base": "a7fb2937b9dcd375247d8a914a0b18326e04479c",
+  "scope": "L11 phone calls: settings card label and step-up label",
+  "strings": {
+    "en:settings.l1.card.connections.phone-calls": {
+      "text": "Phone calls",
+      "en": "Phone calls",
+      "verdict": "pass",
+      "note": "Clear, short card title."
+    },
+    "de:settings.l1.card.connections.phone-calls": {
+      "text": "Telefonanrufe",
+      "en": "Phone calls",
+      "verdict": "pass",
+      "note": "Natural German with the same meaning."
+    },
+    "es:settings.l1.card.connections.phone-calls": {
+      "text": "Llamadas telefónicas",
+      "en": "Phone calls",
+      "verdict": "pass",
+      "note": "Natural Spanish with the same meaning."
+    },
+    "fr:settings.l1.card.connections.phone-calls": {
+      "text": "Appels téléphoniques",
+      "en": "Phone calls",
+      "verdict": "pass",
+      "note": "Natural French with the same meaning."
+    },
+    "hi:settings.l1.card.connections.phone-calls": {
+      "text": "फ़ोन कॉल",
+      "en": "Phone calls",
+      "verdict": "pass",
+      "note": "Natural Hindi with the same meaning."
+    },
+    "ja:settings.l1.card.connections.phone-calls": {
+      "text": "電話",
+      "en": "Phone calls",
+      "verdict": "pass",
+      "note": "Natural Japanese title for this context."
+    },
+    "pt-br:settings.l1.card.connections.phone-calls": {
+      "text": "Ligações telefônicas",
+      "en": "Phone calls",
+      "verdict": "pass",
+      "note": "Natural Brazilian Portuguese with the same meaning."
+    },
+    "zh:settings.l1.card.connections.phone-calls": {
+      "text": "电话",
+      "en": "Phone calls",
+      "verdict": "pass",
+      "note": "Natural Chinese title for this context."
+    },
+    "stepup/en:label.phoneCalls": {
+      "text": "Manage bot phone calls",
+      "en": "Manage bot phone calls",
+      "verdict": "pass",
+      "note": "Clearly names the action being confirmed."
+    },
+    "stepup/de:label.phoneCalls": {
+      "text": "Telefonanrufe der Bots verwalten",
+      "en": "Manage bot phone calls",
+      "verdict": "pass",
+      "note": "Accurate and consistent with the reference tone."
+    },
+    "stepup/es:label.phoneCalls": {
+      "text": "Gestionar las llamadas telefónicas de los bots",
+      "en": "Manage bot phone calls",
+      "verdict": "pass",
+      "note": "Accurate and consistent with the reference tone."
+    },
+    "stepup/fr:label.phoneCalls": {
+      "text": "Gérer les appels téléphoniques des bots",
+      "en": "Manage bot phone calls",
+      "verdict": "pass",
+      "note": "Accurate and consistent with the reference tone."
+    },
+    "stepup/hi:label.phoneCalls": {
+      "text": "बॉट के फ़ोन कॉल प्रबंधित करना",
+      "en": "Manage bot phone calls",
+      "verdict": "pass",
+      "note": "Accurate and uses the required -ना ending."
+    },
+    "stepup/ja:label.phoneCalls": {
+      "text": "ボットの電話を管理する",
+      "en": "Manage bot phone calls",
+      "verdict": "pass",
+      "note": "Natural action label using the established bot term."
+    },
+    "stepup/pt-br:label.phoneCalls": {
+      "text": "Gerenciar as chamadas telefônicas dos bots",
+      "en": "Manage bot phone calls",
+      "verdict": "pass",
+      "note": "Accurate and natural in Brazilian Portuguese."
+    },
+    "stepup/zh:label.phoneCalls": {
+      "text": "管理机器人的电话",
+      "en": "Manage bot phone calls",
+      "verdict": "pass",
+      "note": "Natural action label using the established bot term."
+    }
+  },
+  "files": {}
+}

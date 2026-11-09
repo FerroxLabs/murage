@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // A Claude turn never starts without the MCP servers it needs. Claude Code
 // connects servers in the background and sends the prompt without one still
 // pending (rig, 2.1.280 and 2.1.296), so the driver asks the CLI (`mcp_status`)
@@ -74,7 +76,7 @@ describe("Claude turns wait for their required MCP servers", () => {
   it("holds the turn until slow connected apps (8 s) connect, then runs with their tools", async () => {
     process.env.FAKE_CLAUDE_MCP_READY_MS = JSON.stringify({ murage_connectors: 8_000 });
     const started = Date.now();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-slow-apps", text: "Founders sweep", integrations: { composio } });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-slow-apps", text: "Founders sweep", integrations: { composio } });
     const done = await completed(turnId);
     expect(done).toMatchObject({ ok: true });
     expect(done.toolsUnavailable).toBeUndefined();
@@ -100,7 +102,7 @@ describe("Claude turns wait for their required MCP servers", () => {
     process.env.MURAGE_MCP_RECONNECT_WAIT_MS = "1000";
     process.env.MURAGE_MCP_RECOVERY_MS = "3000";
     const started = Date.now();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-never-apps", text: "Founders sweep", integrations: { composio } });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-never-apps", text: "Founders sweep", integrations: { composio } });
     const done = await completed(turnId);
     expect(done).toMatchObject({ ok: true, toolsUnavailable: ["connected apps"] });
     const reconnects = controls().filter((c) => c.request.subtype === "mcp_reconnect");
@@ -116,7 +118,7 @@ describe("Claude turns wait for their required MCP servers", () => {
   it("does not hold a turn past the short budget for a slow optional server", async () => {
     process.env.FAKE_CLAUDE_MCP_READY_MS = JSON.stringify({ murage_connectors: 200, browser: 20_000 });
     const started = Date.now();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-slow-browser", text: "hi", integrations: { composio, browser } });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-slow-browser", text: "hi", integrations: { composio, browser } });
     const done = await completed(turnId);
     expect(done).toMatchObject({ ok: true });
     expect(done.toolsUnavailable).toBeUndefined();
@@ -130,10 +132,10 @@ describe("Claude turns wait for their required MCP servers", () => {
 
   it("asks a kept process again before its next turn", async () => {
     process.env.FAKE_CLAUDE_MCP_READY_MS = JSON.stringify({ murage_connectors: 0 });
-    const first = await instance.adapter.sendTurn({ threadId: "t-kept", text: "one", integrations: { composio } });
+    const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-kept", text: "one", integrations: { composio } });
     await completed(first.turnId);
     const before = controls().filter((c) => c.request.subtype === "mcp_status").length;
-    const second = await instance.adapter.sendTurn({ threadId: "t-kept", text: "two", integrations: { composio } });
+    const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-kept", text: "two", integrations: { composio } });
     const done = await completed(second.turnId);
     expect(done).toMatchObject({ ok: true });
     expect(done.toolsUnavailable).toBeUndefined();
@@ -147,14 +149,14 @@ describe("Claude turns wait for their required MCP servers", () => {
     process.env.FAKE_CLAUDE_DUMP_EACH_TURN = "1";
     const killFile = join(scratch, "kill");
     process.env.FAKE_CLAUDE_MCP_KILL_FILE = killFile;
-    const first = await instance.adapter.sendTurn({ threadId: "t-bridge-died", text: "one", integrations: { composio: composioWithToken() } });
+    const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-bridge-died", text: "one", integrations: { composio: composioWithToken() } });
     await completed(first.turnId);
     const firstPid = (JSON.parse(readFileSync(dump, "utf8")) as { pid: number }).pid;
     // Settlement emptied the credential file; then the bridge dies.
     const credPath = seen().credFile.path!;
     expect(JSON.parse(readFileSync(credPath, "utf8"))).toEqual({});
     writeFileSync(killFile, "murage_connectors");
-    const second = await instance.adapter.sendTurn({ threadId: "t-bridge-died", text: "two", integrations: { composio: composioWithToken() } });
+    const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-bridge-died", text: "two", integrations: { composio: composioWithToken() } });
     const done = await completed(second.turnId);
     expect(done).toMatchObject({ ok: true });
     expect(done.toolsUnavailable).toBeUndefined();
@@ -167,7 +169,7 @@ describe("Claude turns wait for their required MCP servers", () => {
 
   const pidOf = () => (JSON.parse(readFileSync(dump, "utf8")) as { pid: number }).pid;
   const custom = { venice: { command: process.execPath, args: ["/fake/venice.js"], env: {} } };
-  const turnOn = async (threadId: string, text: string) => completed((await instance.adapter.sendTurn({ threadId, text, integrations: { custom } })).turnId);
+  const turnOn = async (threadId: string, text: string) => completed((await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text, integrations: { custom } })).turnId);
 
   it("a custom server that failed on a kept process gets a reconnect, and the turn has it back", async () => {
     process.env.FAKE_CLAUDE_DUMP_EACH_TURN = "1";
@@ -224,10 +226,10 @@ describe("Claude turns wait for their required MCP servers", () => {
     process.env.FAKE_CLAUDE_MCP_RECONNECT_MS = JSON.stringify({ murage_connectors: 2_500 });
     const killFile = join(scratch, "kill");
     process.env.FAKE_CLAUDE_MCP_KILL_FILE = killFile;
-    const first = await instance.adapter.sendTurn({ threadId: "t-warm-chip", text: "one", integrations: { composio } });
+    const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-warm-chip", text: "one", integrations: { composio } });
     await completed(first.turnId);
     writeFileSync(killFile, "murage_connectors");
-    const second = await instance.adapter.sendTurn({ threadId: "t-warm-chip", text: "two", integrations: { composio } });
+    const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-warm-chip", text: "two", integrations: { composio } });
     const done = await completed(second.turnId);
     expect(done).toMatchObject({ ok: true });
     expect(done.toolsUnavailable).toBeUndefined();
@@ -243,10 +245,10 @@ describe("Claude turns wait for their required MCP servers", () => {
 
   it("takes this turn's credentials back out when a kept process's turn is refused at submission", async () => {
     process.env.FAKE_CLAUDE_MCP_READY_MS = JSON.stringify({ murage_connectors: 0 });
-    const first = await instance.adapter.sendTurn({ threadId: "t-refused", text: "one", integrations: { composio: composioWithToken() } });
+    const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-refused", text: "one", integrations: { composio: composioWithToken() } });
     await completed(first.turnId);
     const credPath = seen().credFile.path!;
-    await expect(instance.adapter.sendTurn({
+    await expect(instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-refused", text: "two", integrations: { composio: composioWithToken() },
       beforeSubmit: () => { throw new Error("refused at submission"); },
     })).rejects.toThrow("refused at submission");
@@ -256,7 +258,7 @@ describe("Claude turns wait for their required MCP servers", () => {
   it("a build that refuses mcp_status: readiness unknown on the turn and in the notice, the CLI's own hold kept, and it is not asked again", async () => {
     process.env.FAKE_CLAUDE_MCP_STATUS = "error";
     process.env.FAKE_CLAUDE_DUMP_EACH_TURN = "1";
-    const first = await instance.adapter.sendTurn({ threadId: "t-old-cli", text: "one", integrations: { composio } });
+    const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-old-cli", text: "one", integrations: { composio } });
     const done = await completed(first.turnId);
     expect(done).toMatchObject({ ok: true, mcpReadiness: "unknown" });
     expect(done.toolsUnavailable).toBeUndefined();
@@ -264,11 +266,11 @@ describe("Claude turns wait for their required MCP servers", () => {
     expect(seen().prompt.message.content.startsWith(toolsMayBeLoadingNotice(["connected apps", "approvals"]))).toBe(true);
     const asked = controls().filter((c) => c.request.subtype === "mcp_status").length;
     expect(asked).toBe(1);
-    const second = await instance.adapter.sendTurn({ threadId: "t-old-cli", text: "two", integrations: { composio } });
+    const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-old-cli", text: "two", integrations: { composio } });
     expect(await completed(second.turnId)).toMatchObject({ ok: true, mcpReadiness: "unknown" });
     expect(controls().filter((c) => c.request.subtype === "mcp_status").length).toBe(asked);
     // A new process of the same build keeps the CLI's own bounded start-up hold.
-    const other = await instance.adapter.sendTurn({ threadId: "t-old-cli-2", text: "one", integrations: { composio } });
+    const other = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-old-cli-2", text: "one", integrations: { composio } });
     await completed(other.turnId);
     expect(seen().env.CLAUDE_CODE_MCP_STARTUP_WAIT_MS).toBeUndefined();
     expect(seen().env).toMatchObject(claudeMcpStartupEnv(false));
@@ -277,12 +279,12 @@ describe("Claude turns wait for their required MCP servers", () => {
   it("a kept process spawned with the start-up hold off is replaced once its build is learned not to answer mcp_status", async () => {
     process.env.FAKE_CLAUDE_MCP_STATUS = "error";
     process.env.FAKE_CLAUDE_DUMP_EACH_TURN = "1";
-    const first = await instance.adapter.sendTurn({ threadId: "t-hold", text: "one", integrations: { composio } });
+    const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-hold", text: "one", integrations: { composio } });
     await completed(first.turnId);
     const firstDump = seen() as ReturnType<typeof seen> & { pid: number };
     // The learning turn's process was launched with the CLI's own hold off.
     expect(firstDump.env.CLAUDE_CODE_MCP_STARTUP_WAIT_MS).toBe("0");
-    const second = await instance.adapter.sendTurn({ threadId: "t-hold", text: "two", integrations: { composio } });
+    const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-hold", text: "two", integrations: { composio } });
     await completed(second.turnId);
     const secondDump = seen() as ReturnType<typeof seen> & { pid: number };
     // A new process with the CLI's native hold, not the pooled one with none.
@@ -290,7 +292,7 @@ describe("Claude turns wait for their required MCP servers", () => {
     expect(secondDump.env.CLAUDE_CODE_MCP_STARTUP_WAIT_MS).toBeUndefined();
     expect(secondDump.env).toMatchObject(claudeMcpStartupEnv(false));
     // From then on that process is kept.
-    const third = await instance.adapter.sendTurn({ threadId: "t-hold", text: "three", integrations: { composio } });
+    const third = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-hold", text: "three", integrations: { composio } });
     await completed(third.turnId);
     expect((seen() as unknown as { pid: number }).pid).toBe(secondDump.pid);
   }, 60_000);
@@ -301,12 +303,12 @@ describe("Claude turns wait for their required MCP servers", () => {
     const mounts = { composio, "murage-memory": { ...composio, args: ["/fake/memory.js"] }, agents: { ...composio, args: ["/fake/agents.js"] } };
     const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)]!;
     const measure = async (threadId: string, integrations: Record<string, unknown> | undefined): Promise<number> => {
-      const warmUp = await instance.adapter.sendTurn({ threadId, text: "warm", ...(integrations ? { integrations } : {}) });
+      const warmUp = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "warm", ...(integrations ? { integrations } : {}) });
       await completed(warmUp.turnId);
       const samples: number[] = [];
       for (let i = 0; i < 8; i++) {
         const sentAt = Date.now();
-        const { turnId } = await instance.adapter.sendTurn({ threadId, text: `turn ${i}`, ...(integrations ? { integrations } : {}) });
+        const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: `turn ${i}`, ...(integrations ? { integrations } : {}) });
         await completed(turnId);
         samples.push(seen().promptWallMs - sentAt);
       }
@@ -320,3 +322,6 @@ describe("Claude turns wait for their required MCP servers", () => {
     expect(withGate - without).toBeLessThan(50);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

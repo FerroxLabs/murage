@@ -15,6 +15,13 @@ const RENDERER_ORIGIN_ARGUMENT = "--murage-renderer-origin=";
  * Electron rejects with "Error invoking remote method '<channel>': Error:
  * <message>"; only <message> was ever meant to be shown. */
 const IPC_WRAPPER = /^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/;
+const attentionMessage = (value) => {
+  if (!value || typeof value !== "object") return null;
+  if ((value.type === "show" || value.type === "close") && typeof value.ref === "string" && value.ref.length > 0 && value.ref.length <= 64) return { type: value.type, ref: value.ref };
+  if (value.type === "previews" && typeof value.previews === "boolean") return { type: "previews", previews: value.previews };
+  return null;
+};
+
 function invokeShown(channel, ...args) {
   return ipcRenderer.invoke(channel, ...args).catch((error) => {
     throw new Error(String(error?.message ?? error).replace(IPC_WRAPPER, ""));
@@ -150,6 +157,16 @@ contextBridge.exposeInMainWorld("muragebox", {
     applyRetention: (remoteRef, revision, policy, previewId) => ipcRenderer.invoke("backup-remote:applyRetention", remoteRef, revision, policy, previewId),
     clearRetentionReview: (remoteRef, revision, previewId) => ipcRenderer.invoke("backup-remote:clearRetentionReview", remoteRef, revision, previewId),
   },
+  /** NOTIFY-EVERYWHERE-1019 S3: events and what is on screen go to main's router by routing ids only; main answers with a ref to show. */
+  attention: {
+    offer: payload => ipcRenderer.invoke("attention:offer", payload),
+    visible: payload => ipcRenderer.invoke("attention:visible", payload),
+    onShow: cb => {
+      const handler = (_event, value) => { const checked = attentionMessage(value); if (checked) cb(checked); };
+      ipcRenderer.on("attention:show", handler);
+      return () => ipcRenderer.removeListener("attention:show", handler);
+    },
+  },
   approvalNotifications: {
     show: payload => ipcRenderer.invoke("approval-notification:show", payload),
     onOpen: cb => {
@@ -188,6 +205,13 @@ contextBridge.exposeInMainWorld("muragebox", {
     },
   },
   } : {}),
+  notifySurfaces: {
+    get:()=>ipcRenderer.invoke("notify-surfaces:get"),
+    set:(key,value)=>ipcRenderer.invoke("notify-surfaces:set",key,value),
+    reset:()=>ipcRenderer.invoke("notify-surfaces:reset"),
+    capabilities:()=>ipcRenderer.invoke("notify-surfaces:capabilities"),
+    ensurePermission:()=>ipcRenderer.invoke("notify-surfaces:ensure-permission"),
+  },
   startup: {
     status:()=>ipcRenderer.invoke("startup-background:status"),
     update:patch=>ipcRenderer.invoke("startup-background:update",patch),
@@ -273,17 +297,30 @@ contextBridge.exposeInMainWorld("muragebox", {
       ipcRenderer.invoke("android-device:input", serial, payload).then(() => undefined),
   },
   speechStart: (options) => ipcRenderer.invoke("speech:start", options),
-  speechStop: () => ipcRenderer.invoke("speech:stop"),
-  speechFinish: () => ipcRenderer.invoke("speech:finish"),
+  speechStop: (token) => ipcRenderer.invoke("speech:stop", token),
+  speechFinish: (token) => ipcRenderer.invoke("speech:finish", token),
   /** Call mode: 16 kHz mono s16le from the echo-cancelled microphone. */
   speechFeed: (bytes) => ipcRenderer.send("speech:pcm", bytes),
+  // Calls and push-to-talk listen here and never see composer dictation
+  // events, which carry a `session` token.
   onSpeechTranscript: (cb) => {
-    const handler = (_event, line) => cb(line);
+    const handler = (_event, line) => { if (!(line && line.session !== undefined)) cb(line); };
     ipcRenderer.on("speech:transcript", handler);
     return () => ipcRenderer.removeListener("speech:transcript", handler);
   },
   onSpeechEnd: (cb) => {
-    const handler = (_event, info) => cb(info);
+    const handler = (_event, info) => { if (!(info && info.session !== undefined)) cb(info); };
+    ipcRenderer.on("speech:end", handler);
+    return () => ipcRenderer.removeListener("speech:end", handler);
+  },
+  // Composer dictation: only events that carry a `session` token.
+  onDictationTranscript: (cb) => {
+    const handler = (_event, line) => { if (line && line.session !== undefined) cb(line); };
+    ipcRenderer.on("speech:transcript", handler);
+    return () => ipcRenderer.removeListener("speech:transcript", handler);
+  },
+  onDictationEnd: (cb) => {
+    const handler = (_event, info) => { if (info && info.session !== undefined) cb(info); };
     ipcRenderer.on("speech:end", handler);
     return () => ipcRenderer.removeListener("speech:end", handler);
   },
@@ -437,6 +474,11 @@ contextBridge.exposeInMainWorld("muragebox", {
   emailOwnerSignin: {
     start: () => ipcRenderer.invoke("email-owner-signin:start"),
     cancel: () => ipcRenderer.invoke("email-owner-signin:cancel"),
+  },
+  /** Phone calls: the Settings key box. Save sends the key to main once; nothing ever reads it back. Resolves { ok } or { ok:false, code, message }. */
+  phoneKey: {
+    save: (key) => ipcRenderer.invoke("phone-key:save", { key }),
+    remove: () => ipcRenderer.invoke("phone-key:remove"),
   },
   /** Plan sign-in (ChatGPT, Grok). Results and status never carry a token. */
   modelSignIn: {

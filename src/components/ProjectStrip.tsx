@@ -25,6 +25,6 @@ export function ProjectStrip({ project, title, groupId, onBoard }: { project: Pr
       </svg>
       <span aria-hidden="true">{expanded ? "▴" : "▾"}</span>
     </button>
-    {expanded && <div id={`project-details-${groupId}`} className="max-h-[60dvh] overflow-y-auto"><LazyBoundary inline onRetry={Details.retry}><Suspense fallback={<LazyFallback />}><Details.Component groupId={groupId} project={project} onBoard={onBoard} /></Suspense></LazyBoundary></div>}
+    {expanded && <div id={`project-details-${groupId}`} className="max-h-[60dvh] overflow-y-auto"><LazyBoundary inline onRetry={Details.retry}><Suspense fallback={<LazyFallback pane />}><Details.Component groupId={groupId} project={project} onBoard={onBoard} /></Suspense></LazyBoundary></div>}
   </section>;
 }

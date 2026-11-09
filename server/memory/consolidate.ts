@@ -1,7 +1,9 @@
+import { learningDeletionEpoch } from "./deny.ts";
 import { PIP_ALL_KINDS_SQL } from "./pip-kinds.ts";
 import { isLearnableSource } from "./learnable.ts";
 import { recordLearningEvent } from "./learning-ledger.ts";
 import { learningSourceBot,learningWriteDecision,learningEvidenceScopes } from "./learning-guard.ts";
+import { withBotLearningFolder } from "./learning-folder.ts";
 import { readMemoryEvolutionPolicy } from "./evolution-policy.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { database, transaction } from "../database.ts";
@@ -352,7 +354,15 @@ export async function consolidateCompletedMemorySource(jobId:string,extractor:Te
  if(!gate.learnable||!extractor)return;
  return consolidateMemorySource(jobId,extractor,signal,options);
 }
+/** Learning from a bot's own words launches a CLI or ACP engine in THAT bot's folder (setLearningBotFolder, the host's lookup of a bot's resolved
+ * folder), the same folder its turns use. A source with no bot (a room, the owner's own thread) names none: the host default applies. */
 export async function consolidateMemorySource(completedJobId:string,extractor:TextOnlyExtractor|null,signal:AbortSignal,options:{connection?:string|null;reviewOnly?:boolean;budgetGate?:(scopeId:string)=>boolean}={}){
+  let botId:string|undefined;
+  try{botId=learningSourceBot(String(completedSource(completedJobId).thread_id))?.id;}catch{/* the run below reports a missing source */}
+  const run=()=>consolidateSource(completedJobId,extractor,signal,options);
+  return withBotLearningFolder(botId,run);
+}
+async function consolidateSource(completedJobId:string,extractor:TextOnlyExtractor|null,signal:AbortSignal,options:{connection?:string|null;reviewOnly?:boolean;budgetGate?:(scopeId:string)=>boolean}={}){
   const db=database(),id=consolidationId(completedJobId);
   const persist=(scope:unknown,intent:ConsolidationIntent)=>writeConsolidationIntent(db,id,scope,intent);
   const budgetSource=completedSource(completedJobId);
@@ -406,7 +416,7 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
     if((state.extractionAttempts??0)>=SLICE_ATTEMPT_LIMIT&&length)return {done:skipSlice(db,source,state,length,persist)};
     const generation=randomUUID(),meta=db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta").get()!;
     persist(source.scope_id,{...state,status:"running",generation,expiresAt:Date.now()+65000});
-    return {source,state,generation,meta,text,length,at:work.at,learningRevision:readMemoryLearning(db).revision};
+    return {source,state,generation,meta,text,length,at:work.at,deletionFence:learningDeletionEpoch(db),learningRevision:readMemoryLearning(db).revision};
   });
   if(claim.done)return claim.done;
   const {source,state,generation,meta,text,length,at,learningRevision}=claim;
@@ -472,7 +482,7 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
     const current=db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta").get()!;
     completedSource(completedJobId);
     const intent=JSON.parse(String(db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(id)!.intent));
-    if(readMemoryLearning(db).revision!==learningRevision||intent.generation!==generation||(Number(intent.queueRevision)||0)!==(Number(state!.queueRevision)||0)||current.policy_revision!==meta!.policy_revision||current.deletion_epoch!==meta!.deletion_epoch||sourceIsWithheldMessage(LineageAllowance.tool(),source!)||writetimeSourceState(source!)!=="shown")throw new Error("MEMORY_CONSOLIDATION_REVOKED");
+    if(readMemoryLearning(db).revision!==learningRevision||intent.generation!==generation||(Number(intent.queueRevision)||0)!==(Number(state!.queueRevision)||0)||current.policy_revision!==meta!.policy_revision||current.deletion_epoch!==meta!.deletion_epoch||learningDeletionEpoch(db)!==claim.deletionFence||sourceIsWithheldMessage(LineageAllowance.tool(),source!)||writetimeSourceState(source!)!=="shown")throw new Error("MEMORY_CONSOLIDATION_REVOKED");
     // the counters as the reserve transactions left them
     // a call that never reached the provider gives back what it charged: a network failure is no mark against the slice
     const refund="noReply" in result&&result.noReply===true;

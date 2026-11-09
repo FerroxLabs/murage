@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "./testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -273,7 +275,7 @@ describe("the 0.1.61 upgrade pin (O12)", () => {
       config: { cli: FAKE_ACP, fullAuto: true, ...config },
     });
     const recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: "t-sticky", text: "who are you", model: HERMES_CONFIG_MODEL_ID });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-sticky", text: "who are you", model: HERMES_CONFIG_MODEL_ID });
     await recorder.until((event) => event.type === "turn.completed");
     recorder.stop();
     const { argv } = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[] };
@@ -336,3 +338,6 @@ describe("Import from Hermes binds to the listed root (audit round 1, Astra 2)",
       .toEqual([{ profile: "fred", action: "create", instanceId: "mine", newInstance: false }]);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

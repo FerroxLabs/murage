@@ -1,8 +1,12 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import { preloadModelMetadata } from "./model-metadata";
 import { picturesElsewhereHint } from "./picture-hint";
 import { pickerModels } from "./provider-model-picker";
+
+// The snapshot is its own chunk since 1.0.18 (BUNDLE-HEADROOM-1018); these tests read it.
+beforeAll(() => preloadModelMetadata());
 
 const engine = (instanceId: string, displayName: string, ids: string[], over: Record<string, unknown> = {}) => ({
   instanceId, driverKind: instanceId === "grok" ? "grokAgent" : "fuigoAgent", displayName, enabled: true,

@@ -1,3 +1,5 @@
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
+import { fixtureLearningBot } from "../testing/learning-bot-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -83,7 +85,7 @@ describe("T5b and T18e per transport", () => {
       { text: "The owner prefers tea.", quote: "prefers tea", claimType: "owner-statement", speaker: "owner", outcome: "sent" }, 64, signal(), g));
   });
   it("PIP HTTP (http-text-only's aliased fetch)", async () => {
-    const turn = (g: LearningGate): TextOnlyTurnInput => ({
+    const turn = (g: LearningGate): TextOnlyTurnInput => ({ cwd: fixtureBotFolder(),
       system: fixedPrompt("SYS"), text: "USER", model: "m", signal: signal(), maxOutputTokens: 100, maxOutputBytes: 12 * 1024,
       outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } }, additionalProperties: false },
       context: { botId: "b", runId: randomUUID(), family: "lived", attempt: 1 }, transport: { fence: () => "none", gate: g },
@@ -107,7 +109,7 @@ describe("T5b and T18e per transport", () => {
       },
       respondToRequest: async () => "rejected", interruptTurn: async () => undefined, resetSession: async () => undefined,
     };
-    const instance = withCliMemoryLearning({ instanceId: "codex-fixture", driverKind: "codex", displayName: "Codex", enabled: true, adapter, dispose: async () => undefined } as unknown as ProviderInstance);
+    const instance = fixtureLearningBot(withCliMemoryLearning({ instanceId: "codex-fixture", driverKind: "codex", displayName: "Codex", enabled: true, adapter, dispose: async () => undefined } as unknown as ProviderInstance));
     await holds("hook-admit", g => instance.groundMemory!({ text: "The owner prefers tea.", quote: "prefers tea", claimType: "owner-statement", speaker: "owner", outcome: "sent" }, 64, signal(), g));
     expect(written.length).toBe(N);
   });
@@ -121,7 +123,7 @@ describe("T5b and T18e per transport", () => {
         pathValue: "/usr/bin:/bin", fluxKey: "flux-test-key", postResultGraceMs: 3000,
         preflight: { etcRoot: etc, home, grokHome: join(home, ".grok"), platform: "linux" as const, mdmDir: null, claudeManagedPath: join(dir, "no-managed.json") },
       };
-      const turn = (g: LearningGate): TextOnlyTurnInput => ({
+      const turn = (g: LearningGate): TextOnlyTurnInput => ({ cwd: fixtureBotFolder(),
         system: fixedPrompt("SYS"), text: "USER", model: "model-x", signal: signal(), maxOutputTokens: 1500, maxOutputBytes: 12 * 1024,
         outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } }, additionalProperties: false },
         context: { botId: "b", runId: randomUUID(), family: "lived", attempt: 1 }, transport: { fence: () => "none", gate: g },
@@ -139,7 +141,7 @@ describe("T5b and T18e per transport", () => {
         env: { PATH: "/usr/bin:/bin" } as NodeJS.ProcessEnv, platform: "linux" as const, postResultGraceMs: 3000,
         preflight: { etcRoot: etc, home, grokHome: join(home, ".grok"), platform: "linux" as const, mdmDir: null, claudeManagedPath: join(dir, "no-managed.json") },
       };
-      const turn = (g: LearningGate): TextOnlyTurnInput => ({
+      const turn = (g: LearningGate): TextOnlyTurnInput => ({ cwd: fixtureBotFolder(),
         system: fixedPrompt("SYS"), text: "USER", model: "model-x", signal: signal(), maxOutputTokens: 1500, maxOutputBytes: 12 * 1024,
         outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } }, additionalProperties: false },
         context: { botId: "b", runId: randomUUID(), family: "lived", attempt: 1 }, transport: { fence: () => "none", gate: g },
@@ -164,7 +166,7 @@ describe("no gate, no send (r6 section 0/4, MurageMain ruling 1)", () => {
   it.skipIf(process.platform === "win32")("each headless PIP transport refuses a turn without a gate: no temp root, no process", async () => {
     const dir = mkdtempSync(join(tmpdir(), "pip-ungated-"));
     try {
-      const input = {
+      const input = { cwd: fixtureBotFolder(),
         system: fixedPrompt("SYS"), text: "zqungated", model: "m", signal: signal(), maxOutputTokens: 100, maxOutputBytes: 12 * 1024,
         outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } }, additionalProperties: false },
         context: { botId: "b", runId: "r", family: "lived", attempt: 1 }, transport: { fence: () => "none" },

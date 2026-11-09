@@ -41,7 +41,7 @@ function setup(o: { voice?: boolean; running?: { turnId: string; botId: string }
   });
   const deps: CallsRouteDeps = {
     db: () => db, runtime, tickets: createCallTickets(), caller: () => "desktop", visible: (id) => id === "t1",
-    bot: (id) => id === "scout" ? { id, name: "Scout" } : null, opener: () => "", quietHours: () => null, voiceReady: () => voice,
+    bot: (id) => id === "scout" ? { id, name: "Scout", threadId: "t1" } : null, opener: () => "", quietHours: () => null, voiceReady: () => voice,
     setRingsForCalls: () => true, readBody: async () => ({}), now: () => now, runningTurn: () => o.running === undefined ? { turnId: "turn-1", botId: "scout" } : o.running,
   };
   const call = (method: string, path: string, body: unknown = {}) => handleCallsRoute(method, path, new URL(`http://x${path}`), { ...deps, readBody: async () => body });

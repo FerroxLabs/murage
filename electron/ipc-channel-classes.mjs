@@ -43,6 +43,8 @@ export const CLOUD_SAFE_CHANNELS = Object.freeze([
   "desktop:open-external", // main re-validates: a credential-free web URL (https only from a Cloud-home window), opened in the default browser
   "desktop:unread-count", // a number; main applies it to the main window only
   "approval-notification:show", // an OS notification; main validates the payload
+  "cloud-attention:offer", // routing ids only (kind, thread, request, delivery, an opaque ref); main derives the HOME from the Cloud window itself
+  "cloud-attention:visible", // {threadId|null, focused}; the home is derived by main
 ]);
 
 /**
@@ -216,6 +218,9 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   "perm:open-settings",
   "perm:request-mic",
   "perm:status",
+  // phone-key (1.0.20 bot calls): the Settings key box hands the Vapi key to main once; main stores it encrypted, nothing reads it back
+  "phone-key:remove",
+  "phone-key:save",
   // screen
   "screen:frame",
   "screen:preview-intent",
@@ -229,6 +234,15 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   "speech:pcm",
   "speech:start",
   "speech:stop",
+  // attention router (the local window only; a Cloud window uses the cloud-attention:* pair above)
+  "attention:offer",
+  "attention:visible",
+  // notify-surfaces
+  "notify-surfaces:capabilities",
+  "notify-surfaces:ensure-permission",
+  "notify-surfaces:get",
+  "notify-surfaces:reset",
+  "notify-surfaces:set",
   // startup-background
   "startup-background:status",
   "startup-background:update",
@@ -245,7 +259,8 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
  * Channels main registers in a loop from a template string (backup-closed:${action}, backup-remote:${action}); the
  * preload calls them by their expanded names. All local-only.
  */
-export const LOCAL_ONLY_PREFIXES = Object.freeze(["backup-closed:", "backup-remote:", "local-engine-login:"]);
+// attention-window:* is the attention windows' own gate (electron/attention-ipc.mjs), registered there and never from a Cloud window.
+export const LOCAL_ONLY_PREFIXES = Object.freeze(["backup-closed:", "backup-remote:", "local-engine-login:", "attention-window:"]);
 
 const mainOnlyCloud = new Set(MAIN_ONLY_CLOUD_CHANNELS);
 
