@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { SETTINGS_CARDS } from "./settings-card-registry";
+import { MERGED_CARD_ANCHORS, SETTINGS_CARDS } from "./settings-card-registry";
 import { CLOUD_COMPUTER_ONLY_CARDS, CLOUD_SETTINGS_CLASS, ON_YOUR_COMPUTER_ONLY, cloudCardBlocked, cloudCardHidden, cloudSectionBlocked } from "./cloud-settings";
 import { SETTINGS_SECTIONS, type AppSettingsSection } from "./settings-sections";
 import { SECTION_ALIASES, SECTION_PAGES, type SettingsAlias, type SettingsPage } from "./settings-pages";
@@ -31,12 +31,12 @@ describe("Settings in a Cloud window", () => {
 
   it("blocks exactly the computer-only pages, only in a Cloud window", () => {
     const blocked = SETTINGS_SECTIONS.filter((entry) => cloudSectionBlocked(entry.id, true)).map((entry) => entry.id).sort();
-    expect(blocked).toEqual(["backups", "channels", "companion", "computer", "engines", "experimental", "models", "storage", "voice", "webSearch"]);
+    expect(blocked).toEqual(["backups", "companion", "computer", "engines", "experimental", "models", "storage", "voice", "webSearch"]);
     for (const entry of SETTINGS_SECTIONS) expect(cloudSectionBlocked(entry.id, false)).toBe(false);
   });
 
   it("keeps every credential, backup, phone and folder page computer-only", () => {
-    for (const id of ["models", "webSearch", "voice", "channels", "companion", "backups", "computer", "engines"] as const) {
+    for (const id of ["models", "webSearch", "voice", "companion", "backups", "computer", "engines"] as const) {
       expect(CLOUD_SETTINGS_CLASS[id]).toBe("computer-only");
     }
   });
@@ -50,26 +50,31 @@ describe("Settings in a Cloud window", () => {
   });
 
   it("SettingsModal routes blocked sections through the classifier and stubs this computer's cards", () => {
-    const source = read("SettingsModal.tsx");
+    const source = read("SettingsModal.tsx") + read("settings/pages/AboutPage.tsx") + read("settings/pages/about-rows.tsx");
     expect(source).toContain("cloudSectionBlocked(requested)");
-    // 1.0.3: the 20 ids land on 12 pages (settings-pages.ts); a blocked id lands on none of them.
-    expect(source).toContain('const section = (blocked ? "" : resolveSettingsSection(requested).section) as SettingsPage;');
-    expect(source).toContain("const pageComputerOnly = !blocked && cloudSectionBlocked(section);");
+    // 1.0.19: the ids land on 13 pages (settings-pages.ts); a blocked id lands on none of them, and neither does Browse bots.
+    expect(source).toContain('const resolved = (blocked || browsing ? "" : resolveSettingsSection(requested).section) as SettingsPage;');
+    expect(source).toContain('const section = (mountedPage ? "" : resolved) as SettingsPage;');
+    expect(source).toContain("const pageComputerOnly = !blocked && cloudSectionBlocked(resolved);");
     expect(source).toContain("ON_YOUR_COMPUTER_ONLY");
     // SETTINGS-UX-1011 S1: a Cloud window renders each of this computer's cards as the "set this on your computer" stub, never nothing.
     expect(source).toContain('{desktop === true && <Anchor id="startup-heading">{cloudCardHidden("startup-heading", cloud) ? <ComputerOnlyStub anchor="startup-heading" /> : <StartupSettings />}</Anchor>}');
-    expect(source).toContain('<Anchor id="diagnostics-heading">{cloudCardHidden("diagnostics-heading", cloud) ? <ComputerOnlyStub anchor="diagnostics-heading" /> : <DiagnosticsRow />}</Anchor>');
-    expect(source).toContain('{desktop === true && <Anchor id="setup-heading">{cloudCardHidden("setup-heading", cloud) ? <ComputerOnlyStub anchor="setup-heading" /> : <SetupAgainRow />}</Anchor>}');
+    expect(source).toContain('cloudCardHidden("diagnostics-heading", cloud) ? <ComputerOnlyStub anchor="diagnostics-heading" /> : <DiagnosticsRow />');
+    expect(source).toContain('cloudCardHidden("setup-heading", cloud) ? <ComputerOnlyStub anchor="setup-heading" /> : <SetupAgainRow />');
     // 1.0.10 copy moved the one update control into the version card; on a Cloud window it is the stub there (int/1011)
-    expect(source).toContain('<Anchor id="updates-heading">{cloudCardHidden("updates-heading") ? <ComputerOnlyStub anchor="updates-heading" /> : <UpdateActionButton state={s} />}</Anchor>');
+    expect(source).toContain('cloudCardHidden("updates-heading") ? <ComputerOnlyStub anchor="updates-heading" inline /> : <UpdateActionButton state={s} />');
     // 1.0.3 moved the MCP servers button into the Connected apps Advanced; a Cloud window gets the stub in its place.
-    expect(source).toMatch(/\{cloudCardHidden\("mcp-servers-heading"\) \? <ComputerOnlyStub anchor="mcp-servers-heading" \/> : \(\s*<Card[\s\S]*?openPanel\("mcp"\)/);
+    // 1.0.19: the Connected apps page file holds it (the tools card).
+    const connections = read("settings/pages/ConnectionsPage.tsx");
+    expect(connections).toMatch(/cloudCardHidden\("mcp-servers-heading", cloud\) \? <ComputerOnlyStub anchor="mcp-servers-heading" \/> : \(\s*<Card[\s\S]*?<McpServersPanel embedded \/>/);
     expect(source).not.toContain("!cloudCardHidden(");
-    expect(source.match(/openPanel\("mcp"\)/g)).toHaveLength(1);
+    expect(connections.match(/<McpServersPanel embedded \/>/g)).toHaveLength(1);
     // every page body reads `section`, which is "" for a blocked id, and the nav and redirect read `requested`
-    for (const entry of SECTION_PAGES) expect(source, entry.id).toContain(`section === "${entry.id}"`);
+    // A page with a file of its own (settings/page-registry.tsx) has no legacy block left to match.
+    const loaded = read("settings/page-registry.tsx");
+    for (const entry of SECTION_PAGES) if (!new RegExp(`^  ${entry.id}: \\(\\) => import`, "m").test(loaded)) expect(source, entry.id).toContain(`section === "${entry.id}"`);
     expect(source).not.toMatch(/\bsection === id\b/);
-    expect(source).toContain("const navPage = resolveSettingsSection(requested).section;");
+    expect(source).toContain("const navPage = browsing ? null : resolveSettingsSection(requested).section;");
     // UX-L3B S7: one Settings window; a bot's row takes the page mark while its settings are open
     expect(source).toContain('aria-current={!bot && navPage === id ? "page" : undefined}');
     expect(ON_YOUR_COMPUTER_ONLY).toBe("On your computer only");
@@ -117,13 +122,14 @@ describe("Settings search in a Cloud window", () => {
 
   // The modal and search read one list: every card the modal hides on a page a Cloud window renders.
   it("each of this computer's cards on a Cloud-usable page is a registered card, and the modal stubs it by that list", () => {
-    const modal = read("SettingsModal.tsx");
-    expect([...CLOUD_COMPUTER_ONLY_CARDS].sort()).toEqual(["diagnostics-heading", "mcp-servers-heading", "setup-heading", "skill-recorder-heading", "startup-heading", "updates-heading"]);
+    const modal = read("SettingsModal.tsx") + read("settings/pages/AboutPage.tsx") + read("settings/pages/about-rows.tsx") + read("settings/pages/ConnectionsPage.tsx");
+    expect([...CLOUD_COMPUTER_ONLY_CARDS].sort()).toEqual(["claude-code-import-heading", "diagnostics-heading", "mcp-servers-heading", "setup-heading", "skill-recorder-heading", "startup-heading", "updates-heading"]);
     for (const anchor of CLOUD_COMPUTER_ONLY_CARDS) {
-      const card = cards.find((entry) => entry.anchor === anchor);
+      // The updater row sits inside the merged Version and updates card, so its stub names that card.
+      const card = cards.find((entry) => entry.anchor === (MERGED_CARD_ANCHORS[anchor] ?? anchor));
       expect(card, anchor).toBeDefined();
       expect(cloudSectionBlocked(card!.section, true), anchor).toBe(false);
-      expect(modal, anchor).toMatch(new RegExp(`cloudCardHidden\\("${anchor}"(, cloud)?\\) \\? <ComputerOnlyStub anchor="${anchor}" />`));
+      expect(modal, anchor).toMatch(new RegExp(`cloudCardHidden\\("${anchor}"(, cloud)?\\) \\? <ComputerOnlyStub anchor="${anchor}"( inline)? />`));
       expect(cloudCardHidden(anchor, true)).toBe(true);
       expect(cloudCardHidden(anchor, false)).toBe(false);
     }
@@ -135,10 +141,11 @@ describe("Settings search in a Cloud window", () => {
     const { searchSettingsCards } = await import("./settings-search");
     for (const word of ["startup", "set up", "updates", "diagnostics", "teach a skill", "mcp"]) {
       const cloudHits = searchSettingsCards(word, true, cards, undefined, undefined, true).map((hit) => hit.card.anchor);
-      for (const anchor of CLOUD_COMPUTER_ONLY_CARDS) expect(cloudHits, word).not.toContain(anchor);
+      // A row inside a merged card (the updater) is not a card: its card stays findable, the card shows the stub for that row.
+      for (const anchor of CLOUD_COMPUTER_ONLY_CARDS) if (!MERGED_CARD_ANCHORS[anchor]) expect(cloudHits, word).not.toContain(anchor);
     }
     const desktopHits = new Set(["startup", "setup", "updates", "diagnostics", "teach a skill", "mcp"].flatMap((word) => searchSettingsCards(word, true, cards, undefined, undefined, false)).map((hit) => hit.card.anchor));
-    for (const anchor of CLOUD_COMPUTER_ONLY_CARDS) expect(desktopHits.has(anchor), anchor).toBe(true);
+    for (const anchor of CLOUD_COMPUTER_ONLY_CARDS) expect(desktopHits.has(MERGED_CARD_ANCHORS[anchor] ?? anchor), anchor).toBe(true);
     const kept = (word: string, anchor: string) => expect(searchSettingsCards(word, true, cards, undefined, undefined, true).map((hit) => hit.card.anchor), word).toContain(anchor);
     kept("appearance", "appearance-heading");
     kept("shortcuts", "shortcuts-heading");

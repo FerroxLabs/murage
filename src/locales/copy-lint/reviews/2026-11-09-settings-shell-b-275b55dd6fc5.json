@@ -1,0 +1,1820 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "SETTINGS19d",
+  "date": "2026-11-09",
+  "base": "40b87b6ef",
+  "scope": "settings shell B and help strings (calls, computer)",
+  "strings": {
+    "en:settings.group.bots": {
+      "text": "Each bot",
+      "en": "Each bot",
+      "verdict": "pass"
+    },
+    "en:settings.groupNote.bots": {
+      "text": "Settings for one bot at a time",
+      "en": "Settings for one bot at a time",
+      "verdict": "pass"
+    },
+    "en:settings.pageNote.webSearch": {
+      "text": "Let bots search the web, make pictures and turn speech into text.",
+      "en": "Let bots search the web, make pictures and turn speech into text.",
+      "verdict": "pass"
+    },
+    "en:settings.group.ai": {
+      "text": "Models and tools",
+      "en": "Models and tools",
+      "verdict": "pass"
+    },
+    "en:settings.group.reach": {
+      "text": "Connections",
+      "en": "Connections",
+      "verdict": "pass"
+    },
+    "en:settings.page.botDefaults": {
+      "text": "How every bot behaves",
+      "en": "How every bot behaves",
+      "verdict": "pass"
+    },
+    "en:settings.page.webSearch": {
+      "text": "Search, images and dictation",
+      "en": "Search, images and dictation",
+      "verdict": "pass"
+    },
+    "en:settings.page.companion": {
+      "text": "Phone and other devices",
+      "en": "Phone and other devices",
+      "verdict": "pass"
+    },
+    "en:settings.page.about": {
+      "text": "About & help",
+      "en": "About & help",
+      "verdict": "pass"
+    },
+    "en:settings.page.calls": {
+      "text": "Calls",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "en:settings.page.browseBots": {
+      "text": "Browse bots",
+      "en": "Browse bots",
+      "verdict": "pass"
+    },
+    "en:settings.pageNote.calls": {
+      "text": "Calls from your bots, and a record of them.",
+      "en": "Calls from your bots, and a record of them.",
+      "verdict": "pass"
+    },
+    "en:settings.pageNote.browseBots": {
+      "text": "Every bot you have, and the way into its settings.",
+      "en": "Every bot you have, and the way into its settings.",
+      "verdict": "pass"
+    },
+    "en:settings.group.allBots": {
+      "text": "All bots",
+      "en": "All bots",
+      "verdict": "pass"
+    },
+    "en:settings.l1.card.general.mode": {
+      "text": "Advanced mode",
+      "en": "Advanced mode",
+      "verdict": "pass"
+    },
+    "en:settings.section.calls": {
+      "text": "Calls",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "en:settings.l1.card.calls.calls": {
+      "text": "Calls",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "en:settings.page.computer": {
+      "text": "Computer & browser",
+      "en": "Computer & browser",
+      "verdict": "pass"
+    },
+    "en:settings.section.browseBots": {
+      "text": "Browse bots",
+      "en": "Browse bots",
+      "verdict": "pass"
+    },
+    "en:settings.groupNote.allBots": {
+      "text": "How every bot works",
+      "en": "How every bot works",
+      "verdict": "pass"
+    },
+    "en:settings.mode.note": {
+      "text": "Show every setting, including the detailed ones for each bot, your apps and the AI behind your bots. Turn it off for a simpler view. Nothing is deleted either way.",
+      "en": "Show every setting, including the detailed ones for each bot, your apps and the AI behind your bots. Turn it off for a simpler view. Nothing is deleted either way.",
+      "verdict": "pass"
+    },
+    "en:settings.mode.moreHidden": {
+      "text": "More settings are in Advanced mode.",
+      "en": "More settings are in Advanced mode.",
+      "verdict": "pass"
+    },
+    "en:settings.mode.setInAdvanced": {
+      "text": "Set in Advanced",
+      "en": "Set in Advanced",
+      "verdict": "pass"
+    },
+    "en:settings.mode.footer": {
+      "text": "Advanced mode is on",
+      "en": "Advanced mode is on",
+      "verdict": "pass"
+    },
+    "en:settings.mode.footerChange": {
+      "text": "Change",
+      "en": "Change",
+      "verdict": "pass"
+    },
+    "en:settings.crumb.aria": {
+      "text": "Where you are",
+      "en": "Where you are",
+      "verdict": "pass"
+    },
+    "en:settings.crumb.copy": {
+      "text": "Copy link to this page",
+      "en": "Copy link to this page",
+      "verdict": "pass"
+    },
+    "en:settings.crumb.copied": {
+      "text": "Link copied",
+      "en": "Link copied",
+      "verdict": "pass"
+    },
+    "en:settings.crumb.copyFailed": {
+      "text": "Could not copy. Select the address instead.",
+      "en": "Could not copy. Select the address instead.",
+      "verdict": "pass"
+    },
+    "en:settings.browse.filter": {
+      "text": "Find a bot",
+      "en": "Find a bot",
+      "verdict": "pass"
+    },
+    "en:settings.browse.open": {
+      "text": "Open",
+      "en": "Open",
+      "verdict": "pass"
+    },
+    "en:settings.browse.openBot": {
+      "text": "Open {name}",
+      "en": "Open {name}",
+      "verdict": "pass"
+    },
+    "en:settings.browse.none": {
+      "text": "No bots match.",
+      "en": "No bots match.",
+      "verdict": "pass"
+    },
+    "en:settings.browse.noBots": {
+      "text": "No bots yet. Your Chief arrives when setup finishes.",
+      "en": "No bots yet. Your Chief arrives when setup finishes.",
+      "verdict": "pass"
+    },
+    "en:settings.browse.toggle": {
+      "text": "Browse bots ({count})",
+      "en": "Browse bots ({count})",
+      "verdict": "pass"
+    },
+    "en:settings.mode.title": {
+      "text": "Advanced mode",
+      "en": "Advanced mode",
+      "verdict": "pass"
+    },
+    "en:settings.crumb.root": {
+      "text": "Settings",
+      "en": "Settings",
+      "verdict": "pass"
+    },
+    "en:ux.l4a.screen.settings.calls.title": {
+      "text": "Settings · Calls",
+      "en": "Settings · Calls",
+      "verdict": "pass"
+    },
+    "en:ux.l4a.screen.settings.calls.intro": {
+      "text": "Turn your bots' calls off for today, and see the history of calls they have made.",
+      "en": "Turn your bots' calls off for today, and see the history of calls they have made.",
+      "verdict": "pass"
+    },
+    "en:ux.l4a.screen.settings.calls.tip1": {
+      "text": "Switch calls off for today to keep them quiet until midnight.",
+      "en": "Switch calls off for today to keep them quiet until midnight.",
+      "verdict": "pass"
+    },
+    "en:ux.l4a.screen.settings.calls.why": {
+      "text": "When your bots may call you, and a record of their calls.",
+      "en": "When your bots may call you, and a record of their calls.",
+      "verdict": "pass"
+    },
+    "en:ux.l4a.screen.settings.computer.title": {
+      "text": "Settings · Computer & browser",
+      "en": "Settings · Computer & browser",
+      "verdict": "pass"
+    },
+    "en:ux.l4a.screen.settings.computer.intro": {
+      "text": "Set up the computer and browser your bots can use, on this machine or a remote one.",
+      "en": "Set up the computer and browser your bots can use, on this machine or a remote one.",
+      "verdict": "pass"
+    },
+    "en:ux.l4a.screen.settings.computer.tip1": {
+      "text": "Turn on the built-in browser to watch your bot work and take over.",
+      "en": "Turn on the built-in browser to watch your bot work and take over.",
+      "verdict": "pass"
+    },
+    "en:ux.l4a.screen.settings.computer.why": {
+      "text": "The computer and browser your bots borrow.",
+      "en": "The computer and browser your bots borrow.",
+      "verdict": "pass"
+    },
+    "de:settings.group.bots": {
+      "text": "Jeder Bot",
+      "en": "Each bot",
+      "verdict": "pass"
+    },
+    "de:settings.groupNote.bots": {
+      "text": "Einstellungen für jeweils einen Bot",
+      "en": "Settings for one bot at a time",
+      "verdict": "pass"
+    },
+    "de:settings.pageNote.webSearch": {
+      "text": "Lass Bots im Web suchen, Bilder machen und Sprache in Text umwandeln.",
+      "en": "Let bots search the web, make pictures and turn speech into text.",
+      "verdict": "pass"
+    },
+    "de:settings.group.ai": {
+      "text": "Modelle und Tools",
+      "en": "Models and tools",
+      "verdict": "pass"
+    },
+    "de:settings.group.reach": {
+      "text": "Verbindungen",
+      "en": "Connections",
+      "verdict": "pass"
+    },
+    "de:settings.page.botDefaults": {
+      "text": "Wie sich jeder Bot verhält",
+      "en": "How every bot behaves",
+      "verdict": "pass"
+    },
+    "de:settings.page.webSearch": {
+      "text": "Suche, Bilder und Diktat",
+      "en": "Search, images and dictation",
+      "verdict": "pass"
+    },
+    "de:settings.page.companion": {
+      "text": "Telefon und andere Geräte",
+      "en": "Phone and other devices",
+      "verdict": "pass"
+    },
+    "de:settings.page.about": {
+      "text": "Info & Hilfe",
+      "en": "About & help",
+      "verdict": "pass"
+    },
+    "de:settings.page.calls": {
+      "text": "Anrufe",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "de:settings.page.browseBots": {
+      "text": "Bots durchsuchen",
+      "en": "Browse bots",
+      "verdict": "pass"
+    },
+    "de:settings.pageNote.calls": {
+      "text": "Anrufe deiner Bots und ein Protokoll dazu.",
+      "en": "Calls from your bots, and a record of them.",
+      "verdict": "pass"
+    },
+    "de:settings.pageNote.browseBots": {
+      "text": "Alle deine Bots und der Weg zu ihren Einstellungen.",
+      "en": "Every bot you have, and the way into its settings.",
+      "verdict": "pass"
+    },
+    "de:settings.group.allBots": {
+      "text": "Alle Bots",
+      "en": "All bots",
+      "verdict": "pass"
+    },
+    "de:settings.l1.card.general.mode": {
+      "text": "Erweiterter Modus",
+      "en": "Advanced mode",
+      "verdict": "pass"
+    },
+    "de:settings.mode.note": {
+      "text": "Zeige jede Einstellung, auch die detaillierten für jeden Bot, deine Apps und die KI hinter deinen Bots. Schalte es aus für eine einfachere Ansicht. In beiden Fällen wird nichts gelöscht.",
+      "en": "Show every setting, including the detailed ones for each bot, your apps and the AI behind your bots. Turn it off for a simpler view. Nothing is deleted either way.",
+      "verdict": "pass"
+    },
+    "de:settings.mode.moreHidden": {
+      "text": "Weitere Einstellungen findest du im erweiterten Modus.",
+      "en": "More settings are in Advanced mode.",
+      "verdict": "pass"
+    },
+    "de:settings.mode.setInAdvanced": {
+      "text": "Im erweiterten Modus einstellen",
+      "en": "Set in Advanced",
+      "verdict": "pass"
+    },
+    "de:settings.mode.footer": {
+      "text": "Erweiterter Modus ist an",
+      "en": "Advanced mode is on",
+      "verdict": "pass"
+    },
+    "de:settings.mode.footerChange": {
+      "text": "Ändern",
+      "en": "Change",
+      "verdict": "pass"
+    },
+    "de:settings.crumb.aria": {
+      "text": "Wo du bist",
+      "en": "Where you are",
+      "verdict": "pass"
+    },
+    "de:settings.crumb.copy": {
+      "text": "Link zu dieser Seite kopieren",
+      "en": "Copy link to this page",
+      "verdict": "pass"
+    },
+    "de:settings.crumb.copied": {
+      "text": "Link kopiert",
+      "en": "Link copied",
+      "verdict": "pass"
+    },
+    "de:settings.crumb.copyFailed": {
+      "text": "Kopieren hat nicht geklappt. Markiere stattdessen die Adresse.",
+      "en": "Could not copy. Select the address instead.",
+      "verdict": "pass"
+    },
+    "de:settings.browse.filter": {
+      "text": "Bot finden",
+      "en": "Find a bot",
+      "verdict": "pass"
+    },
+    "de:settings.browse.open": {
+      "text": "Öffnen",
+      "en": "Open",
+      "verdict": "pass"
+    },
+    "de:settings.browse.openBot": {
+      "text": "{name} öffnen",
+      "en": "Open {name}",
+      "verdict": "pass"
+    },
+    "de:settings.browse.none": {
+      "text": "Kein Bot passt.",
+      "en": "No bots match.",
+      "verdict": "pass"
+    },
+    "de:settings.browse.noBots": {
+      "text": "Noch keine Bots. Dein Chief kommt, sobald die Einrichtung fertig ist.",
+      "en": "No bots yet. Your Chief arrives when setup finishes.",
+      "verdict": "pass"
+    },
+    "de:settings.browse.toggle": {
+      "text": "Bots durchsuchen ({count})",
+      "en": "Browse bots ({count})",
+      "verdict": "pass"
+    },
+    "de:settings.section.calls": {
+      "text": "Anrufe",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "de:settings.l1.card.calls.calls": {
+      "text": "Anrufe",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "de:settings.page.computer": {
+      "text": "Computer & Browser",
+      "en": "Computer & browser",
+      "verdict": "pass"
+    },
+    "de:settings.section.browseBots": {
+      "text": "Bots durchsuchen",
+      "en": "Browse bots",
+      "verdict": "pass"
+    },
+    "de:settings.groupNote.allBots": {
+      "text": "Wie jeder Bot arbeitet",
+      "en": "How every bot works",
+      "verdict": "pass"
+    },
+    "de:settings.mode.title": {
+      "text": "Erweiterter Modus",
+      "en": "Advanced mode",
+      "verdict": "pass"
+    },
+    "de:settings.crumb.root": {
+      "text": "Einstellungen",
+      "en": "Settings",
+      "verdict": "pass"
+    },
+    "de:ux.l4a.screen.settings.calls.title": {
+      "text": "Einstellungen · Anrufe",
+      "en": "Settings · Calls",
+      "verdict": "pass"
+    },
+    "de:ux.l4a.screen.settings.calls.intro": {
+      "text": "Schalte die Anrufe deiner Bots für heute aus und sieh dir den Verlauf ihrer Anrufe an.",
+      "en": "Turn your bots' calls off for today, and see the history of calls they have made.",
+      "verdict": "pass"
+    },
+    "de:ux.l4a.screen.settings.calls.tip1": {
+      "text": "Schalte Anrufe für heute aus, dann bleiben sie bis Mitternacht still.",
+      "en": "Switch calls off for today to keep them quiet until midnight.",
+      "verdict": "pass"
+    },
+    "de:ux.l4a.screen.settings.calls.why": {
+      "text": "Wann deine Bots dich anrufen dürfen, und ein Protokoll ihrer Anrufe.",
+      "en": "When your bots may call you, and a record of their calls.",
+      "verdict": "pass"
+    },
+    "de:ux.l4a.screen.settings.computer.title": {
+      "text": "Einstellungen · Computer & Browser",
+      "en": "Settings · Computer & browser",
+      "verdict": "pass"
+    },
+    "de:ux.l4a.screen.settings.computer.intro": {
+      "text": "Richte den Computer und Browser ein, die deine Bots nutzen können, auf diesem Gerät oder einem entfernten.",
+      "en": "Set up the computer and browser your bots can use, on this machine or a remote one.",
+      "verdict": "pass"
+    },
+    "de:ux.l4a.screen.settings.computer.tip1": {
+      "text": "Schalte den eingebauten Browser ein, um deinem Bot bei der Arbeit zuzusehen und zu übernehmen.",
+      "en": "Turn on the built-in browser to watch your bot work and take over.",
+      "verdict": "pass"
+    },
+    "de:ux.l4a.screen.settings.computer.why": {
+      "text": "Der Computer und Browser, die deine Bots mitnutzen.",
+      "en": "The computer and browser your bots borrow.",
+      "verdict": "pass"
+    },
+    "es:settings.group.bots": {
+      "text": "Cada bot",
+      "en": "Each bot",
+      "verdict": "pass"
+    },
+    "es:settings.groupNote.bots": {
+      "text": "Ajustes de un bot a la vez",
+      "en": "Settings for one bot at a time",
+      "verdict": "pass"
+    },
+    "es:settings.pageNote.webSearch": {
+      "text": "Deja que los bots busquen en la web, creen imágenes y conviertan voz en texto.",
+      "en": "Let bots search the web, make pictures and turn speech into text.",
+      "verdict": "pass"
+    },
+    "es:settings.group.ai": {
+      "text": "Modelos y herramientas",
+      "en": "Models and tools",
+      "verdict": "pass"
+    },
+    "es:settings.group.reach": {
+      "text": "Conexiones",
+      "en": "Connections",
+      "verdict": "pass"
+    },
+    "es:settings.page.botDefaults": {
+      "text": "Cómo se comporta cada bot",
+      "en": "How every bot behaves",
+      "verdict": "pass"
+    },
+    "es:settings.page.webSearch": {
+      "text": "Búsqueda, imágenes y dictado",
+      "en": "Search, images and dictation",
+      "verdict": "pass"
+    },
+    "es:settings.page.companion": {
+      "text": "Teléfono y otros dispositivos",
+      "en": "Phone and other devices",
+      "verdict": "pass"
+    },
+    "es:settings.page.about": {
+      "text": "Acerca de y ayuda",
+      "en": "About & help",
+      "verdict": "pass"
+    },
+    "es:settings.page.calls": {
+      "text": "Llamadas",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "es:settings.page.browseBots": {
+      "text": "Explorar bots",
+      "en": "Browse bots",
+      "verdict": "pass"
+    },
+    "es:settings.pageNote.calls": {
+      "text": "Llamadas de tus bots y su registro.",
+      "en": "Calls from your bots, and a record of them.",
+      "verdict": "pass"
+    },
+    "es:settings.pageNote.browseBots": {
+      "text": "Todos tus bots y el acceso a sus ajustes.",
+      "en": "Every bot you have, and the way into its settings.",
+      "verdict": "pass"
+    },
+    "es:settings.group.allBots": {
+      "text": "Todos los bots",
+      "en": "All bots",
+      "verdict": "pass"
+    },
+    "es:settings.l1.card.general.mode": {
+      "text": "Modo avanzado",
+      "en": "Advanced mode",
+      "verdict": "pass"
+    },
+    "es:settings.mode.note": {
+      "text": "Muestra todos los ajustes, incluidos los detallados de cada bot, tus apps y la IA que hay detrás de tus bots. Desactívalo para una vista más sencilla. En ningún caso se borra nada.",
+      "en": "Show every setting, including the detailed ones for each bot, your apps and the AI behind your bots. Turn it off for a simpler view. Nothing is deleted either way.",
+      "verdict": "pass"
+    },
+    "es:settings.mode.moreHidden": {
+      "text": "Hay más ajustes en el modo avanzado.",
+      "en": "More settings are in Advanced mode.",
+      "verdict": "pass"
+    },
+    "es:settings.mode.setInAdvanced": {
+      "text": "Ajustar en Avanzado",
+      "en": "Set in Advanced",
+      "verdict": "pass"
+    },
+    "es:settings.mode.footer": {
+      "text": "El modo avanzado está activado",
+      "en": "Advanced mode is on",
+      "verdict": "pass"
+    },
+    "es:settings.mode.footerChange": {
+      "text": "Cambiar",
+      "en": "Change",
+      "verdict": "pass"
+    },
+    "es:settings.crumb.aria": {
+      "text": "Dónde estás",
+      "en": "Where you are",
+      "verdict": "pass"
+    },
+    "es:settings.crumb.copy": {
+      "text": "Copiar enlace a esta página",
+      "en": "Copy link to this page",
+      "verdict": "pass"
+    },
+    "es:settings.crumb.copied": {
+      "text": "Enlace copiado",
+      "en": "Link copied",
+      "verdict": "pass"
+    },
+    "es:settings.crumb.copyFailed": {
+      "text": "No se pudo copiar. Selecciona la dirección.",
+      "en": "Could not copy. Select the address instead.",
+      "verdict": "pass"
+    },
+    "es:settings.browse.filter": {
+      "text": "Buscar un bot",
+      "en": "Find a bot",
+      "verdict": "pass"
+    },
+    "es:settings.browse.open": {
+      "text": "Abrir",
+      "en": "Open",
+      "verdict": "pass"
+    },
+    "es:settings.browse.openBot": {
+      "text": "Abrir {name}",
+      "en": "Open {name}",
+      "verdict": "pass"
+    },
+    "es:settings.browse.none": {
+      "text": "Ningún bot coincide.",
+      "en": "No bots match.",
+      "verdict": "pass"
+    },
+    "es:settings.browse.noBots": {
+      "text": "Aún no hay bots. Tu Chief llega cuando termine la configuración.",
+      "en": "No bots yet. Your Chief arrives when setup finishes.",
+      "verdict": "pass"
+    },
+    "es:settings.browse.toggle": {
+      "text": "Explorar bots ({count})",
+      "en": "Browse bots ({count})",
+      "verdict": "pass"
+    },
+    "es:settings.section.calls": {
+      "text": "Llamadas",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "es:settings.l1.card.calls.calls": {
+      "text": "Llamadas",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "es:settings.page.computer": {
+      "text": "Ordenador y navegador",
+      "en": "Computer & browser",
+      "verdict": "pass"
+    },
+    "es:settings.section.browseBots": {
+      "text": "Explorar bots",
+      "en": "Browse bots",
+      "verdict": "pass"
+    },
+    "es:settings.groupNote.allBots": {
+      "text": "Cómo funciona cada bot",
+      "en": "How every bot works",
+      "verdict": "pass"
+    },
+    "es:settings.mode.title": {
+      "text": "Modo avanzado",
+      "en": "Advanced mode",
+      "verdict": "pass"
+    },
+    "es:settings.crumb.root": {
+      "text": "Ajustes",
+      "en": "Settings",
+      "verdict": "pass"
+    },
+    "es:ux.l4a.screen.settings.calls.title": {
+      "text": "Ajustes · Llamadas",
+      "en": "Settings · Calls",
+      "verdict": "pass"
+    },
+    "es:ux.l4a.screen.settings.calls.intro": {
+      "text": "Desactiva las llamadas de tus bots por hoy y consulta el historial de las que han hecho.",
+      "en": "Turn your bots' calls off for today, and see the history of calls they have made.",
+      "verdict": "pass"
+    },
+    "es:ux.l4a.screen.settings.calls.tip1": {
+      "text": "Desactiva las llamadas por hoy para mantenerlas en silencio hasta medianoche.",
+      "en": "Switch calls off for today to keep them quiet until midnight.",
+      "verdict": "pass"
+    },
+    "es:ux.l4a.screen.settings.calls.why": {
+      "text": "Cuándo pueden llamarte tus bots, y un registro de sus llamadas.",
+      "en": "When your bots may call you, and a record of their calls.",
+      "verdict": "pass"
+    },
+    "es:ux.l4a.screen.settings.computer.title": {
+      "text": "Ajustes · Ordenador y navegador",
+      "en": "Settings · Computer & browser",
+      "verdict": "pass"
+    },
+    "es:ux.l4a.screen.settings.computer.intro": {
+      "text": "Configura el ordenador y el navegador que pueden usar tus bots, en este equipo o en uno remoto.",
+      "en": "Set up the computer and browser your bots can use, on this machine or a remote one.",
+      "verdict": "pass"
+    },
+    "es:ux.l4a.screen.settings.computer.tip1": {
+      "text": "Activa el navegador integrado para ver trabajar a tu bot y tomar el control.",
+      "en": "Turn on the built-in browser to watch your bot work and take over.",
+      "verdict": "pass"
+    },
+    "es:ux.l4a.screen.settings.computer.why": {
+      "text": "El ordenador y el navegador que usan tus bots.",
+      "en": "The computer and browser your bots borrow.",
+      "verdict": "pass"
+    },
+    "fr:settings.group.bots": {
+      "text": "Chaque bot",
+      "en": "Each bot",
+      "verdict": "pass"
+    },
+    "fr:settings.groupNote.bots": {
+      "text": "Les réglages d'un bot à la fois",
+      "en": "Settings for one bot at a time",
+      "verdict": "pass"
+    },
+    "fr:settings.pageNote.webSearch": {
+      "text": "Laisse les bots chercher sur le web, créer des images et transformer la voix en texte.",
+      "en": "Let bots search the web, make pictures and turn speech into text.",
+      "verdict": "pass"
+    },
+    "fr:settings.group.ai": {
+      "text": "Modèles et outils",
+      "en": "Models and tools",
+      "verdict": "pass"
+    },
+    "fr:settings.group.reach": {
+      "text": "Connexions",
+      "en": "Connections",
+      "verdict": "pass"
+    },
+    "fr:settings.page.botDefaults": {
+      "text": "Comment chaque bot se comporte",
+      "en": "How every bot behaves",
+      "verdict": "pass"
+    },
+    "fr:settings.page.webSearch": {
+      "text": "Recherche, images et dictée",
+      "en": "Search, images and dictation",
+      "verdict": "pass"
+    },
+    "fr:settings.page.companion": {
+      "text": "Téléphone et autres appareils",
+      "en": "Phone and other devices",
+      "verdict": "pass"
+    },
+    "fr:settings.page.about": {
+      "text": "À propos et aide",
+      "en": "About & help",
+      "verdict": "pass"
+    },
+    "fr:settings.page.calls": {
+      "text": "Appels",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "fr:settings.page.browseBots": {
+      "text": "Parcourir les bots",
+      "en": "Browse bots",
+      "verdict": "pass"
+    },
+    "fr:settings.pageNote.calls": {
+      "text": "Les appels de tes bots et leur historique.",
+      "en": "Calls from your bots, and a record of them.",
+      "verdict": "pass"
+    },
+    "fr:settings.pageNote.browseBots": {
+      "text": "Tous tes bots et l'accès à leurs réglages.",
+      "en": "Every bot you have, and the way into its settings.",
+      "verdict": "pass"
+    },
+    "fr:settings.group.allBots": {
+      "text": "Tous les bots",
+      "en": "All bots",
+      "verdict": "pass"
+    },
+    "fr:settings.l1.card.general.mode": {
+      "text": "Mode avancé",
+      "en": "Advanced mode",
+      "verdict": "pass"
+    },
+    "fr:settings.mode.note": {
+      "text": "Affiche tous les réglages, y compris les plus détaillés pour chaque bot, tes apps et l'IA derrière tes bots. Désactive-le pour une vue plus simple. Rien n'est supprimé dans les deux cas.",
+      "en": "Show every setting, including the detailed ones for each bot, your apps and the AI behind your bots. Turn it off for a simpler view. Nothing is deleted either way.",
+      "verdict": "pass"
+    },
+    "fr:settings.mode.moreHidden": {
+      "text": "D'autres réglages se trouvent dans le mode avancé.",
+      "en": "More settings are in Advanced mode.",
+      "verdict": "pass"
+    },
+    "fr:settings.mode.setInAdvanced": {
+      "text": "Régler en mode avancé",
+      "en": "Set in Advanced",
+      "verdict": "pass"
+    },
+    "fr:settings.mode.footer": {
+      "text": "Le mode avancé est activé",
+      "en": "Advanced mode is on",
+      "verdict": "pass"
+    },
+    "fr:settings.mode.footerChange": {
+      "text": "Modifier",
+      "en": "Change",
+      "verdict": "pass"
+    },
+    "fr:settings.crumb.aria": {
+      "text": "Où tu es",
+      "en": "Where you are",
+      "verdict": "pass"
+    },
+    "fr:settings.crumb.copy": {
+      "text": "Copier le lien de cette page",
+      "en": "Copy link to this page",
+      "verdict": "pass"
+    },
+    "fr:settings.crumb.copied": {
+      "text": "Lien copié",
+      "en": "Link copied",
+      "verdict": "pass"
+    },
+    "fr:settings.crumb.copyFailed": {
+      "text": "Impossible de copier. Sélectionne plutôt l'adresse.",
+      "en": "Could not copy. Select the address instead.",
+      "verdict": "pass"
+    },
+    "fr:settings.browse.filter": {
+      "text": "Trouver un bot",
+      "en": "Find a bot",
+      "verdict": "pass"
+    },
+    "fr:settings.browse.open": {
+      "text": "Ouvrir",
+      "en": "Open",
+      "verdict": "pass"
+    },
+    "fr:settings.browse.openBot": {
+      "text": "Ouvrir {name}",
+      "en": "Open {name}",
+      "verdict": "pass"
+    },
+    "fr:settings.browse.none": {
+      "text": "Aucun bot ne correspond.",
+      "en": "No bots match.",
+      "verdict": "pass"
+    },
+    "fr:settings.browse.noBots": {
+      "text": "Pas encore de bots. Ton Chief arrive à la fin de la configuration.",
+      "en": "No bots yet. Your Chief arrives when setup finishes.",
+      "verdict": "pass"
+    },
+    "fr:settings.browse.toggle": {
+      "text": "Parcourir les bots ({count})",
+      "en": "Browse bots ({count})",
+      "verdict": "pass"
+    },
+    "fr:settings.section.calls": {
+      "text": "Appels",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "fr:settings.l1.card.calls.calls": {
+      "text": "Appels",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "fr:settings.page.computer": {
+      "text": "Ordinateur et navigateur",
+      "en": "Computer & browser",
+      "verdict": "pass"
+    },
+    "fr:settings.section.browseBots": {
+      "text": "Parcourir les bots",
+      "en": "Browse bots",
+      "verdict": "pass"
+    },
+    "fr:settings.groupNote.allBots": {
+      "text": "Comment chaque bot fonctionne",
+      "en": "How every bot works",
+      "verdict": "pass"
+    },
+    "fr:settings.mode.title": {
+      "text": "Mode avancé",
+      "en": "Advanced mode",
+      "verdict": "pass"
+    },
+    "fr:settings.crumb.root": {
+      "text": "Réglages",
+      "en": "Settings",
+      "verdict": "pass"
+    },
+    "fr:ux.l4a.screen.settings.calls.title": {
+      "text": "Réglages · Appels",
+      "en": "Settings · Calls",
+      "verdict": "pass"
+    },
+    "fr:ux.l4a.screen.settings.calls.intro": {
+      "text": "Désactive les appels de tes bots pour aujourd'hui et consulte l'historique de leurs appels.",
+      "en": "Turn your bots' calls off for today, and see the history of calls they have made.",
+      "verdict": "pass"
+    },
+    "fr:ux.l4a.screen.settings.calls.tip1": {
+      "text": "Désactive les appels pour aujourd'hui pour les garder silencieux jusqu'à minuit.",
+      "en": "Switch calls off for today to keep them quiet until midnight.",
+      "verdict": "pass"
+    },
+    "fr:ux.l4a.screen.settings.calls.why": {
+      "text": "Quand tes bots peuvent t'appeler, et l'historique de leurs appels.",
+      "en": "When your bots may call you, and a record of their calls.",
+      "verdict": "pass"
+    },
+    "fr:ux.l4a.screen.settings.computer.title": {
+      "text": "Réglages · Ordinateur et navigateur",
+      "en": "Settings · Computer & browser",
+      "verdict": "pass"
+    },
+    "fr:ux.l4a.screen.settings.computer.intro": {
+      "text": "Configure l'ordinateur et le navigateur que tes bots peuvent utiliser, sur cet appareil ou sur un autre à distance.",
+      "en": "Set up the computer and browser your bots can use, on this machine or a remote one.",
+      "verdict": "pass"
+    },
+    "fr:ux.l4a.screen.settings.computer.tip1": {
+      "text": "Active le navigateur intégré pour regarder ton bot travailler et reprendre la main.",
+      "en": "Turn on the built-in browser to watch your bot work and take over.",
+      "verdict": "pass"
+    },
+    "fr:ux.l4a.screen.settings.computer.why": {
+      "text": "L'ordinateur et le navigateur que tes bots empruntent.",
+      "en": "The computer and browser your bots borrow.",
+      "verdict": "pass"
+    },
+    "hi:settings.group.bots": {
+      "text": "हर बॉट",
+      "en": "Each bot",
+      "verdict": "pass"
+    },
+    "hi:settings.groupNote.bots": {
+      "text": "एक बार में एक बॉट की सेटिंग",
+      "en": "Settings for one bot at a time",
+      "verdict": "pass"
+    },
+    "hi:settings.pageNote.webSearch": {
+      "text": "बॉट को वेब पर खोजने, तस्वीरें बनाने और बोली को टेक्स्ट में बदलने दें।",
+      "en": "Let bots search the web, make pictures and turn speech into text.",
+      "verdict": "pass"
+    },
+    "hi:settings.group.ai": {
+      "text": "मॉडल और टूल",
+      "en": "Models and tools",
+      "verdict": "pass"
+    },
+    "hi:settings.group.reach": {
+      "text": "कनेक्शन",
+      "en": "Connections",
+      "verdict": "pass"
+    },
+    "hi:settings.page.botDefaults": {
+      "text": "हर बॉट कैसे व्यवहार करता है",
+      "en": "How every bot behaves",
+      "verdict": "pass"
+    },
+    "hi:settings.page.webSearch": {
+      "text": "खोज, तस्वीरें और बोलकर लिखना",
+      "en": "Search, images and dictation",
+      "verdict": "pass"
+    },
+    "hi:settings.page.companion": {
+      "text": "फ़ोन और अन्य डिवाइस",
+      "en": "Phone and other devices",
+      "verdict": "pass"
+    },
+    "hi:settings.page.about": {
+      "text": "परिचय और सहायता",
+      "en": "About & help",
+      "verdict": "pass"
+    },
+    "hi:settings.page.calls": {
+      "text": "कॉल",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "hi:settings.page.browseBots": {
+      "text": "बॉट देखें",
+      "en": "Browse bots",
+      "verdict": "pass"
+    },
+    "hi:settings.pageNote.calls": {
+      "text": "आपके बॉट के कॉल और उनका रिकॉर्ड।",
+      "en": "Calls from your bots, and a record of them.",
+      "verdict": "pass"
+    },
+    "hi:settings.pageNote.browseBots": {
+      "text": "आपके सभी बॉट और उनकी सेटिंग तक का रास्ता।",
+      "en": "Every bot you have, and the way into its settings.",
+      "verdict": "pass"
+    },
+    "hi:settings.group.allBots": {
+      "text": "सभी बॉट",
+      "en": "All bots",
+      "verdict": "pass"
+    },
+    "hi:settings.l1.card.general.mode": {
+      "text": "उन्नत मोड",
+      "en": "Advanced mode",
+      "verdict": "pass"
+    },
+    "hi:settings.mode.note": {
+      "text": "हर सेटिंग दिखाएँ, जिसमें हर बॉट, आपके ऐप और बॉट के पीछे की AI की विस्तृत सेटिंग भी शामिल हैं। सरल दृश्य के लिए इसे बंद करें। दोनों स्थितियों में कुछ भी नहीं हटता।",
+      "en": "Show every setting, including the detailed ones for each bot, your apps and the AI behind your bots. Turn it off for a simpler view. Nothing is deleted either way.",
+      "verdict": "pass"
+    },
+    "hi:settings.mode.moreHidden": {
+      "text": "और सेटिंग उन्नत मोड में हैं।",
+      "en": "More settings are in Advanced mode.",
+      "verdict": "pass"
+    },
+    "hi:settings.mode.setInAdvanced": {
+      "text": "उन्नत मोड में सेट करें",
+      "en": "Set in Advanced",
+      "verdict": "pass"
+    },
+    "hi:settings.mode.footer": {
+      "text": "उन्नत मोड चालू है",
+      "en": "Advanced mode is on",
+      "verdict": "pass"
+    },
+    "hi:settings.mode.footerChange": {
+      "text": "बदलें",
+      "en": "Change",
+      "verdict": "pass"
+    },
+    "hi:settings.crumb.aria": {
+      "text": "आप कहाँ हैं",
+      "en": "Where you are",
+      "verdict": "pass"
+    },
+    "hi:settings.crumb.copy": {
+      "text": "इस पेज का लिंक कॉपी करें",
+      "en": "Copy link to this page",
+      "verdict": "pass"
+    },
+    "hi:settings.crumb.copied": {
+      "text": "लिंक कॉपी हो गया",
+      "en": "Link copied",
+      "verdict": "pass"
+    },
+    "hi:settings.crumb.copyFailed": {
+      "text": "कॉपी नहीं हो सका। इसके बजाय पता चुनें।",
+      "en": "Could not copy. Select the address instead.",
+      "verdict": "pass"
+    },
+    "hi:settings.browse.filter": {
+      "text": "बॉट खोजें",
+      "en": "Find a bot",
+      "verdict": "pass"
+    },
+    "hi:settings.browse.open": {
+      "text": "खोलें",
+      "en": "Open",
+      "verdict": "pass"
+    },
+    "hi:settings.browse.openBot": {
+      "text": "{name} खोलें",
+      "en": "Open {name}",
+      "verdict": "pass"
+    },
+    "hi:settings.browse.none": {
+      "text": "कोई बॉट मेल नहीं खाता।",
+      "en": "No bots match.",
+      "verdict": "pass"
+    },
+    "hi:settings.browse.noBots": {
+      "text": "अभी कोई बॉट नहीं है। सेटअप पूरा होने पर आपका Chief आ जाएगा।",
+      "en": "No bots yet. Your Chief arrives when setup finishes.",
+      "verdict": "pass"
+    },
+    "hi:settings.browse.toggle": {
+      "text": "बॉट देखें ({count})",
+      "en": "Browse bots ({count})",
+      "verdict": "pass"
+    },
+    "hi:settings.section.calls": {
+      "text": "कॉल",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "hi:settings.l1.card.calls.calls": {
+      "text": "कॉल",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "hi:settings.page.computer": {
+      "text": "कंप्यूटर और ब्राउज़र",
+      "en": "Computer & browser",
+      "verdict": "pass"
+    },
+    "hi:settings.section.browseBots": {
+      "text": "बॉट देखें",
+      "en": "Browse bots",
+      "verdict": "pass"
+    },
+    "hi:settings.groupNote.allBots": {
+      "text": "हर बॉट कैसे काम करता है",
+      "en": "How every bot works",
+      "verdict": "pass"
+    },
+    "hi:settings.mode.title": {
+      "text": "उन्नत मोड",
+      "en": "Advanced mode",
+      "verdict": "pass"
+    },
+    "hi:settings.crumb.root": {
+      "text": "सेटिंग",
+      "en": "Settings",
+      "verdict": "pass"
+    },
+    "hi:ux.l4a.screen.settings.calls.title": {
+      "text": "सेटिंग · कॉल",
+      "en": "Settings · Calls",
+      "verdict": "pass"
+    },
+    "hi:ux.l4a.screen.settings.calls.intro": {
+      "text": "आज के लिए अपने बॉट के कॉल बंद करें, और उनके किए हुए कॉल का इतिहास देखें।",
+      "en": "Turn your bots' calls off for today, and see the history of calls they have made.",
+      "verdict": "pass"
+    },
+    "hi:ux.l4a.screen.settings.calls.tip1": {
+      "text": "आज के लिए कॉल बंद करें, तो वे आधी रात तक शांत रहेंगे।",
+      "en": "Switch calls off for today to keep them quiet until midnight.",
+      "verdict": "pass"
+    },
+    "hi:ux.l4a.screen.settings.calls.why": {
+      "text": "आपके बॉट आपको कब कॉल कर सकते हैं, और उनके कॉल का रिकॉर्ड।",
+      "en": "When your bots may call you, and a record of their calls.",
+      "verdict": "pass"
+    },
+    "hi:ux.l4a.screen.settings.computer.title": {
+      "text": "सेटिंग · कंप्यूटर और ब्राउज़र",
+      "en": "Settings · Computer & browser",
+      "verdict": "pass"
+    },
+    "hi:ux.l4a.screen.settings.computer.intro": {
+      "text": "वह कंप्यूटर और ब्राउज़र सेट करें जिन्हें आपके बॉट इस्तेमाल कर सकते हैं, इसी मशीन पर या किसी दूर की मशीन पर।",
+      "en": "Set up the computer and browser your bots can use, on this machine or a remote one.",
+      "verdict": "pass"
+    },
+    "hi:ux.l4a.screen.settings.computer.tip1": {
+      "text": "अपने बॉट को काम करते देखने और कमान संभालने के लिए बिल्ट-इन ब्राउज़र चालू करें।",
+      "en": "Turn on the built-in browser to watch your bot work and take over.",
+      "verdict": "pass"
+    },
+    "hi:ux.l4a.screen.settings.computer.why": {
+      "text": "वह कंप्यूटर और ब्राउज़र जो आपके बॉट इस्तेमाल करते हैं।",
+      "en": "The computer and browser your bots borrow.",
+      "verdict": "pass"
+    },
+    "ja:settings.group.bots": {
+      "text": "ボットごと",
+      "en": "Each bot",
+      "verdict": "pass"
+    },
+    "ja:settings.groupNote.bots": {
+      "text": "ボットを1体ずつ設定します",
+      "en": "Settings for one bot at a time",
+      "verdict": "pass"
+    },
+    "ja:settings.pageNote.webSearch": {
+      "text": "ボットに Web 検索、画像づくり、音声の文字起こしをさせます。",
+      "en": "Let bots search the web, make pictures and turn speech into text.",
+      "verdict": "pass"
+    },
+    "ja:settings.group.ai": {
+      "text": "モデルとツール",
+      "en": "Models and tools",
+      "verdict": "pass"
+    },
+    "ja:settings.group.reach": {
+      "text": "接続",
+      "en": "Connections",
+      "verdict": "pass"
+    },
+    "ja:settings.page.botDefaults": {
+      "text": "すべてのボットのふるまい",
+      "en": "How every bot behaves",
+      "verdict": "pass"
+    },
+    "ja:settings.page.webSearch": {
+      "text": "検索、画像、音声入力",
+      "en": "Search, images and dictation",
+      "verdict": "pass"
+    },
+    "ja:settings.page.companion": {
+      "text": "電話とその他のデバイス",
+      "en": "Phone and other devices",
+      "verdict": "pass"
+    },
+    "ja:settings.page.about": {
+      "text": "概要とヘルプ",
+      "en": "About & help",
+      "verdict": "pass"
+    },
+    "ja:settings.page.calls": {
+      "text": "通話",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "ja:settings.page.browseBots": {
+      "text": "ボットを見る",
+      "en": "Browse bots",
+      "verdict": "pass"
+    },
+    "ja:settings.pageNote.calls": {
+      "text": "ボットからの通話と、その記録です。",
+      "en": "Calls from your bots, and a record of them.",
+      "verdict": "pass"
+    },
+    "ja:settings.pageNote.browseBots": {
+      "text": "すべてのボットと、それぞれの設定への入口です。",
+      "en": "Every bot you have, and the way into its settings.",
+      "verdict": "pass"
+    },
+    "ja:settings.group.allBots": {
+      "text": "すべてのボット",
+      "en": "All bots",
+      "verdict": "pass"
+    },
+    "ja:settings.l1.card.general.mode": {
+      "text": "詳細モード",
+      "en": "Advanced mode",
+      "verdict": "pass"
+    },
+    "ja:settings.mode.note": {
+      "text": "すべての設定を表示します。ボットごとの詳しい設定、アプリ、ボットの裏で動くAIの設定も含まれます。オフにするとシンプルな表示になります。どちらでも何も削除されません。",
+      "en": "Show every setting, including the detailed ones for each bot, your apps and the AI behind your bots. Turn it off for a simpler view. Nothing is deleted either way.",
+      "verdict": "pass"
+    },
+    "ja:settings.mode.moreHidden": {
+      "text": "ほかの設定は詳細モードにあります。",
+      "en": "More settings are in Advanced mode.",
+      "verdict": "pass"
+    },
+    "ja:settings.mode.setInAdvanced": {
+      "text": "詳細モードで設定",
+      "en": "Set in Advanced",
+      "verdict": "pass"
+    },
+    "ja:settings.mode.footer": {
+      "text": "詳細モードはオンです",
+      "en": "Advanced mode is on",
+      "verdict": "pass"
+    },
+    "ja:settings.mode.footerChange": {
+      "text": "変更",
+      "en": "Change",
+      "verdict": "pass"
+    },
+    "ja:settings.crumb.aria": {
+      "text": "現在の場所",
+      "en": "Where you are",
+      "verdict": "pass"
+    },
+    "ja:settings.crumb.copy": {
+      "text": "このページのリンクをコピー",
+      "en": "Copy link to this page",
+      "verdict": "pass"
+    },
+    "ja:settings.crumb.copied": {
+      "text": "リンクをコピーしました",
+      "en": "Link copied",
+      "verdict": "pass"
+    },
+    "ja:settings.crumb.copyFailed": {
+      "text": "コピーできませんでした。代わりにアドレスを選択してください。",
+      "en": "Could not copy. Select the address instead.",
+      "verdict": "pass"
+    },
+    "ja:settings.browse.filter": {
+      "text": "ボットを探す",
+      "en": "Find a bot",
+      "verdict": "pass"
+    },
+    "ja:settings.browse.open": {
+      "text": "開く",
+      "en": "Open",
+      "verdict": "pass"
+    },
+    "ja:settings.browse.openBot": {
+      "text": "{name} を開く",
+      "en": "Open {name}",
+      "verdict": "pass"
+    },
+    "ja:settings.browse.none": {
+      "text": "一致するボットはありません。",
+      "en": "No bots match.",
+      "verdict": "pass"
+    },
+    "ja:settings.browse.noBots": {
+      "text": "まだボットはいません。セットアップが終わるとChiefが来ます。",
+      "en": "No bots yet. Your Chief arrives when setup finishes.",
+      "verdict": "pass"
+    },
+    "ja:settings.browse.toggle": {
+      "text": "ボットを見る（{count}）",
+      "en": "Browse bots ({count})",
+      "verdict": "pass"
+    },
+    "ja:settings.section.calls": {
+      "text": "通話",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "ja:settings.l1.card.calls.calls": {
+      "text": "通話",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "ja:settings.page.computer": {
+      "text": "コンピューターとブラウザー",
+      "en": "Computer & browser",
+      "verdict": "pass"
+    },
+    "ja:settings.section.browseBots": {
+      "text": "ボットを見る",
+      "en": "Browse bots",
+      "verdict": "pass"
+    },
+    "ja:settings.groupNote.allBots": {
+      "text": "すべてのボットの動き方",
+      "en": "How every bot works",
+      "verdict": "pass"
+    },
+    "ja:settings.mode.title": {
+      "text": "詳細モード",
+      "en": "Advanced mode",
+      "verdict": "pass"
+    },
+    "ja:settings.crumb.root": {
+      "text": "設定",
+      "en": "Settings",
+      "verdict": "pass"
+    },
+    "ja:ux.l4a.screen.settings.calls.title": {
+      "text": "設定 · 通話",
+      "en": "Settings · Calls",
+      "verdict": "pass"
+    },
+    "ja:ux.l4a.screen.settings.calls.intro": {
+      "text": "今日はボットの通話をオフにして、ボットがかけた電話の履歴を確認します。",
+      "en": "Turn your bots' calls off for today, and see the history of calls they have made.",
+      "verdict": "pass"
+    },
+    "ja:ux.l4a.screen.settings.calls.tip1": {
+      "text": "今日の通話をオフにすると、真夜中まで静かになります。",
+      "en": "Switch calls off for today to keep them quiet until midnight.",
+      "verdict": "pass"
+    },
+    "ja:ux.l4a.screen.settings.calls.why": {
+      "text": "ボットがいつあなたに電話できるか、そして通話の記録。",
+      "en": "When your bots may call you, and a record of their calls.",
+      "verdict": "pass"
+    },
+    "ja:ux.l4a.screen.settings.computer.title": {
+      "text": "設定 · コンピューターとブラウザー",
+      "en": "Settings · Computer & browser",
+      "verdict": "pass"
+    },
+    "ja:ux.l4a.screen.settings.computer.intro": {
+      "text": "ボットが使えるコンピューターとブラウザーを、この端末または遠隔の端末に設定します。",
+      "en": "Set up the computer and browser your bots can use, on this machine or a remote one.",
+      "verdict": "pass"
+    },
+    "ja:ux.l4a.screen.settings.computer.tip1": {
+      "text": "内蔵ブラウザーをオンにすると、ボットの作業を見ながら操作を引き継げます。",
+      "en": "Turn on the built-in browser to watch your bot work and take over.",
+      "verdict": "pass"
+    },
+    "ja:ux.l4a.screen.settings.computer.why": {
+      "text": "ボットが借りるコンピューターとブラウザー。",
+      "en": "The computer and browser your bots borrow.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.group.bots": {
+      "text": "Cada bot",
+      "en": "Each bot",
+      "verdict": "pass"
+    },
+    "pt-br:settings.groupNote.bots": {
+      "text": "Ajustes de um bot de cada vez",
+      "en": "Settings for one bot at a time",
+      "verdict": "pass"
+    },
+    "pt-br:settings.pageNote.webSearch": {
+      "text": "Deixe os bots pesquisarem na web, criarem imagens e transformarem fala em texto.",
+      "en": "Let bots search the web, make pictures and turn speech into text.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.group.ai": {
+      "text": "Modelos e ferramentas",
+      "en": "Models and tools",
+      "verdict": "pass"
+    },
+    "pt-br:settings.group.reach": {
+      "text": "Conexões",
+      "en": "Connections",
+      "verdict": "pass"
+    },
+    "pt-br:settings.page.botDefaults": {
+      "text": "Como cada bot se comporta",
+      "en": "How every bot behaves",
+      "verdict": "pass"
+    },
+    "pt-br:settings.page.webSearch": {
+      "text": "Pesquisa, imagens e ditado",
+      "en": "Search, images and dictation",
+      "verdict": "pass"
+    },
+    "pt-br:settings.page.companion": {
+      "text": "Telefone e outros dispositivos",
+      "en": "Phone and other devices",
+      "verdict": "pass"
+    },
+    "pt-br:settings.page.about": {
+      "text": "Sobre e ajuda",
+      "en": "About & help",
+      "verdict": "pass"
+    },
+    "pt-br:settings.page.calls": {
+      "text": "Ligações",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "pt-br:settings.page.browseBots": {
+      "text": "Ver bots",
+      "en": "Browse bots",
+      "verdict": "pass"
+    },
+    "pt-br:settings.pageNote.calls": {
+      "text": "Ligações dos seus bots e o registro delas.",
+      "en": "Calls from your bots, and a record of them.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.pageNote.browseBots": {
+      "text": "Todos os seus bots e o caminho até os ajustes deles.",
+      "en": "Every bot you have, and the way into its settings.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.group.allBots": {
+      "text": "Todos os bots",
+      "en": "All bots",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l1.card.general.mode": {
+      "text": "Modo avançado",
+      "en": "Advanced mode",
+      "verdict": "pass"
+    },
+    "pt-br:settings.mode.note": {
+      "text": "Mostra todos os ajustes, incluindo os detalhados de cada bot, seus apps e a IA por trás dos seus bots. Desative para uma visão mais simples. Nada é apagado em nenhum dos casos.",
+      "en": "Show every setting, including the detailed ones for each bot, your apps and the AI behind your bots. Turn it off for a simpler view. Nothing is deleted either way.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.mode.moreHidden": {
+      "text": "Há mais ajustes no modo avançado.",
+      "en": "More settings are in Advanced mode.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.mode.setInAdvanced": {
+      "text": "Ajustar no Avançado",
+      "en": "Set in Advanced",
+      "verdict": "pass"
+    },
+    "pt-br:settings.mode.footer": {
+      "text": "O modo avançado está ativado",
+      "en": "Advanced mode is on",
+      "verdict": "pass"
+    },
+    "pt-br:settings.mode.footerChange": {
+      "text": "Alterar",
+      "en": "Change",
+      "verdict": "pass"
+    },
+    "pt-br:settings.crumb.aria": {
+      "text": "Onde você está",
+      "en": "Where you are",
+      "verdict": "pass"
+    },
+    "pt-br:settings.crumb.copy": {
+      "text": "Copiar link desta página",
+      "en": "Copy link to this page",
+      "verdict": "pass"
+    },
+    "pt-br:settings.crumb.copied": {
+      "text": "Link copiado",
+      "en": "Link copied",
+      "verdict": "pass"
+    },
+    "pt-br:settings.crumb.copyFailed": {
+      "text": "Não foi possível copiar. Selecione o endereço.",
+      "en": "Could not copy. Select the address instead.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.browse.filter": {
+      "text": "Encontrar um bot",
+      "en": "Find a bot",
+      "verdict": "pass"
+    },
+    "pt-br:settings.browse.open": {
+      "text": "Abrir",
+      "en": "Open",
+      "verdict": "pass"
+    },
+    "pt-br:settings.browse.openBot": {
+      "text": "Abrir {name}",
+      "en": "Open {name}",
+      "verdict": "pass"
+    },
+    "pt-br:settings.browse.none": {
+      "text": "Nenhum bot corresponde.",
+      "en": "No bots match.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.browse.noBots": {
+      "text": "Ainda não há bots. Seu Chief chega quando a configuração terminar.",
+      "en": "No bots yet. Your Chief arrives when setup finishes.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.browse.toggle": {
+      "text": "Ver bots ({count})",
+      "en": "Browse bots ({count})",
+      "verdict": "pass"
+    },
+    "pt-br:settings.section.calls": {
+      "text": "Ligações",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l1.card.calls.calls": {
+      "text": "Ligações",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "pt-br:settings.page.computer": {
+      "text": "Computador e navegador",
+      "en": "Computer & browser",
+      "verdict": "pass"
+    },
+    "pt-br:settings.section.browseBots": {
+      "text": "Ver bots",
+      "en": "Browse bots",
+      "verdict": "pass"
+    },
+    "pt-br:settings.groupNote.allBots": {
+      "text": "Como cada bot funciona",
+      "en": "How every bot works",
+      "verdict": "pass"
+    },
+    "pt-br:settings.mode.title": {
+      "text": "Modo avançado",
+      "en": "Advanced mode",
+      "verdict": "pass"
+    },
+    "pt-br:settings.crumb.root": {
+      "text": "Configurações",
+      "en": "Settings",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l4a.screen.settings.calls.title": {
+      "text": "Configurações · Ligações",
+      "en": "Settings · Calls",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l4a.screen.settings.calls.intro": {
+      "text": "Desligue as ligações dos seus bots por hoje e veja o histórico das ligações que eles fizeram.",
+      "en": "Turn your bots' calls off for today, and see the history of calls they have made.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l4a.screen.settings.calls.tip1": {
+      "text": "Desligue as ligações por hoje para mantê-las em silêncio até a meia-noite.",
+      "en": "Switch calls off for today to keep them quiet until midnight.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l4a.screen.settings.calls.why": {
+      "text": "Quando seus bots podem ligar para você, e um registro das ligações.",
+      "en": "When your bots may call you, and a record of their calls.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l4a.screen.settings.computer.title": {
+      "text": "Configurações · Computador e navegador",
+      "en": "Settings · Computer & browser",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l4a.screen.settings.computer.intro": {
+      "text": "Configure o computador e o navegador que seus bots podem usar, neste aparelho ou em um remoto.",
+      "en": "Set up the computer and browser your bots can use, on this machine or a remote one.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l4a.screen.settings.computer.tip1": {
+      "text": "Ligue o navegador integrado para você ver seu bot trabalhar e poder assumir o controle.",
+      "en": "Turn on the built-in browser to watch your bot work and take over.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l4a.screen.settings.computer.why": {
+      "text": "O computador e o navegador que seus bots usam.",
+      "en": "The computer and browser your bots borrow.",
+      "verdict": "pass"
+    },
+    "zh:settings.group.bots": {
+      "text": "每个机器人",
+      "en": "Each bot",
+      "verdict": "pass"
+    },
+    "zh:settings.groupNote.bots": {
+      "text": "一次设置一个机器人",
+      "en": "Settings for one bot at a time",
+      "verdict": "pass"
+    },
+    "zh:settings.pageNote.webSearch": {
+      "text": "让机器人搜索网页、生成图片，并把语音转成文字。",
+      "en": "Let bots search the web, make pictures and turn speech into text.",
+      "verdict": "pass"
+    },
+    "zh:settings.group.ai": {
+      "text": "模型与工具",
+      "en": "Models and tools",
+      "verdict": "pass"
+    },
+    "zh:settings.group.reach": {
+      "text": "连接",
+      "en": "Connections",
+      "verdict": "pass"
+    },
+    "zh:settings.page.botDefaults": {
+      "text": "每个机器人的行为方式",
+      "en": "How every bot behaves",
+      "verdict": "pass"
+    },
+    "zh:settings.page.webSearch": {
+      "text": "搜索、图片与听写",
+      "en": "Search, images and dictation",
+      "verdict": "pass"
+    },
+    "zh:settings.page.companion": {
+      "text": "手机和其他设备",
+      "en": "Phone and other devices",
+      "verdict": "pass"
+    },
+    "zh:settings.page.about": {
+      "text": "关于与帮助",
+      "en": "About & help",
+      "verdict": "pass"
+    },
+    "zh:settings.page.calls": {
+      "text": "通话",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "zh:settings.page.browseBots": {
+      "text": "浏览机器人",
+      "en": "Browse bots",
+      "verdict": "pass"
+    },
+    "zh:settings.pageNote.calls": {
+      "text": "机器人打来的电话及通话记录。",
+      "en": "Calls from your bots, and a record of them.",
+      "verdict": "pass"
+    },
+    "zh:settings.pageNote.browseBots": {
+      "text": "你的所有机器人，以及进入各自设置的入口。",
+      "en": "Every bot you have, and the way into its settings.",
+      "verdict": "pass"
+    },
+    "zh:settings.group.allBots": {
+      "text": "所有机器人",
+      "en": "All bots",
+      "verdict": "pass"
+    },
+    "zh:settings.l1.card.general.mode": {
+      "text": "高级模式",
+      "en": "Advanced mode",
+      "verdict": "pass"
+    },
+    "zh:settings.mode.note": {
+      "text": "显示所有设置，包括每个机器人、你的应用和机器人背后的 AI 的详细设置。关闭后是更简洁的视图。两种方式下都不会删除任何内容。",
+      "en": "Show every setting, including the detailed ones for each bot, your apps and the AI behind your bots. Turn it off for a simpler view. Nothing is deleted either way.",
+      "verdict": "pass"
+    },
+    "zh:settings.mode.moreHidden": {
+      "text": "更多设置在高级模式中。",
+      "en": "More settings are in Advanced mode.",
+      "verdict": "pass"
+    },
+    "zh:settings.mode.setInAdvanced": {
+      "text": "在高级模式中设置",
+      "en": "Set in Advanced",
+      "verdict": "pass"
+    },
+    "zh:settings.mode.footer": {
+      "text": "高级模式已开启",
+      "en": "Advanced mode is on",
+      "verdict": "pass"
+    },
+    "zh:settings.mode.footerChange": {
+      "text": "更改",
+      "en": "Change",
+      "verdict": "pass"
+    },
+    "zh:settings.crumb.aria": {
+      "text": "你所在的位置",
+      "en": "Where you are",
+      "verdict": "pass"
+    },
+    "zh:settings.crumb.copy": {
+      "text": "复制此页链接",
+      "en": "Copy link to this page",
+      "verdict": "pass"
+    },
+    "zh:settings.crumb.copied": {
+      "text": "链接已复制",
+      "en": "Link copied",
+      "verdict": "pass"
+    },
+    "zh:settings.crumb.copyFailed": {
+      "text": "无法复制。请改为选中地址。",
+      "en": "Could not copy. Select the address instead.",
+      "verdict": "pass"
+    },
+    "zh:settings.browse.filter": {
+      "text": "查找机器人",
+      "en": "Find a bot",
+      "verdict": "pass"
+    },
+    "zh:settings.browse.open": {
+      "text": "打开",
+      "en": "Open",
+      "verdict": "pass"
+    },
+    "zh:settings.browse.openBot": {
+      "text": "打开 {name}",
+      "en": "Open {name}",
+      "verdict": "pass"
+    },
+    "zh:settings.browse.none": {
+      "text": "没有匹配的机器人。",
+      "en": "No bots match.",
+      "verdict": "pass"
+    },
+    "zh:settings.browse.noBots": {
+      "text": "还没有机器人。设置完成后你的 Chief 就会出现。",
+      "en": "No bots yet. Your Chief arrives when setup finishes.",
+      "verdict": "pass"
+    },
+    "zh:settings.browse.toggle": {
+      "text": "浏览机器人（{count}）",
+      "en": "Browse bots ({count})",
+      "verdict": "pass"
+    },
+    "zh:settings.section.calls": {
+      "text": "通话",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "zh:settings.l1.card.calls.calls": {
+      "text": "通话",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "zh:settings.page.computer": {
+      "text": "电脑与浏览器",
+      "en": "Computer & browser",
+      "verdict": "pass"
+    },
+    "zh:settings.section.browseBots": {
+      "text": "浏览机器人",
+      "en": "Browse bots",
+      "verdict": "pass"
+    },
+    "zh:settings.groupNote.allBots": {
+      "text": "每个机器人的工作方式",
+      "en": "How every bot works",
+      "verdict": "pass"
+    },
+    "zh:settings.mode.title": {
+      "text": "高级模式",
+      "en": "Advanced mode",
+      "verdict": "pass"
+    },
+    "zh:settings.crumb.root": {
+      "text": "设置",
+      "en": "Settings",
+      "verdict": "pass"
+    },
+    "zh:ux.l4a.screen.settings.calls.title": {
+      "text": "设置 · 通话",
+      "en": "Settings · Calls",
+      "verdict": "pass"
+    },
+    "zh:ux.l4a.screen.settings.calls.intro": {
+      "text": "把机器人今天的通话关掉，并查看它们的通话记录。",
+      "en": "Turn your bots' calls off for today, and see the history of calls they have made.",
+      "verdict": "pass"
+    },
+    "zh:ux.l4a.screen.settings.calls.tip1": {
+      "text": "把今天的通话关掉，通话会保持关闭，直到午夜。",
+      "en": "Switch calls off for today to keep them quiet until midnight.",
+      "verdict": "pass"
+    },
+    "zh:ux.l4a.screen.settings.calls.why": {
+      "text": "你的机器人何时可以给你打电话，以及它们的通话记录。",
+      "en": "When your bots may call you, and a record of their calls.",
+      "verdict": "pass"
+    },
+    "zh:ux.l4a.screen.settings.computer.title": {
+      "text": "设置 · 电脑与浏览器",
+      "en": "Settings · Computer & browser",
+      "verdict": "pass"
+    },
+    "zh:ux.l4a.screen.settings.computer.intro": {
+      "text": "设置你的机器人可以使用的电脑和浏览器，在这台设备上或远程的设备上。",
+      "en": "Set up the computer and browser your bots can use, on this machine or a remote one.",
+      "verdict": "pass"
+    },
+    "zh:ux.l4a.screen.settings.computer.tip1": {
+      "text": "打开内置浏览器，看着你的机器人工作并随时接手。",
+      "en": "Turn on the built-in browser to watch your bot work and take over.",
+      "verdict": "pass"
+    },
+    "zh:ux.l4a.screen.settings.computer.why": {
+      "text": "你的机器人借用的电脑和浏览器。",
+      "en": "The computer and browser your bots borrow.",
+      "verdict": "pass"
+    }
+  },
+  "files": {
+    "same-as-english.json": {
+      "text": "{\n  \"de:browserUnavailable.details\": \"45989de49fb7f66dfe17a8fc26f3a02c7abcd74f7e8e6cf9f39fa0e3775780df\",\n  \"de:chatHeader.findShortcut\": \"12aaa51aad3d0b795c86d67d0f5be15e691030ba3bb2e0a4b739dd9c921f4c16\",\n  \"de:chatLinks.github.commit\": \"82a9c46ffa4789945d9f2359d75891558ef6faa8dee09e4b25e4e0597704f5bd\",\n  \"de:chatLinks.github.issue\": \"48dc76dfa23ae03fea1372c5ed6c0e1bd62eaeca7bba6d804eb0afa87972f031\",\n  \"de:engines.cloud\": \"b977b950c1ae31e5aeb9ef778cc20a66fc034eb81e738e0206104b677962c465\",\n  \"de:err.plain.details\": \"45989de49fb7f66dfe17a8fc26f3a02c7abcd74f7e8e6cf9f39fa0e3775780df\",\n  \"de:filesWorkspace.filter.bot\": \"9e3fb291086b39e660660f2bf2810760ee764bd1ea596c4277494665c2eeca67\",\n  \"de:highlevel.title\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"de:imageLibrary.block.text\": \"71988c4d8e0803ba4519f0b2864c1331c14a1890bf8694e251379177bfedb5c3\",\n  \"de:imageLibrary.scope.workspace\": \"87bb59ba2f92f2a5a9f13e021fd58dd14ae5c065b1046146875e6e68d5ebc8b7\",\n  \"de:importGuard.whereNoLine\": \"63560a435427a4e5437381a252cff54d618f1da58dc57e1fd5362909da672ed6\",\n  \"de:learningScreen.recent.procedure.routine\": \"90c5c0b92def5bb0c771ee0423909bd06548627abf97716f6b501dad752ec36f\",\n  \"de:mcp.add.name\": \"dcd1d5223f73b3a965c07e3ff5dbee3eedcfedb806686a05b9b3868a2c3d6d50\",\n  \"de:mcp.row.details\": \"45989de49fb7f66dfe17a8fc26f3a02c7abcd74f7e8e6cf9f39fa0e3775780df\",\n  \"de:mcp.row.sourceLink\": \"90d326db726070816add45bb709d2a75db4731a4e9038b7014366f8603356247\",\n  \"de:memoryNeeds.filter\": \"638e249f4a15ebb84957da130701d138a6e06d88dceeaa2e6dcd91db70cc1381\",\n  \"de:memoryPeople.kindTeam\": \"5985039f106df054b43c3529139613bf7c2372937539f344c7c5ee47d00a0d63\",\n  \"de:nav.apps\": \"89dd748442c194857825848e1500abbbc5f52fb067ad27fb05dc9fb23eebba3b\",\n  \"de:notificationSettings.timeZonePlaceholder\": \"e8def32656206d2574e163cff4330221cbca79a584c6debd922546da0bb0ff74\",\n  \"de:procedureAdmissions.kindRoutine\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"de:project.team.label\": \"5985039f106df054b43c3529139613bf7c2372937539f344c7c5ee47d00a0d63\",\n  \"de:projects.board.aria\": \"4816cbfd74aa8297b9c9cdaae89e2f0d2ced6041e952dfcd114e01b4c82e9c6d\",\n  \"de:projects.board.bot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"de:projects.boardCard.details\": \"45989de49fb7f66dfe17a8fc26f3a02c7abcd74f7e8e6cf9f39fa0e3775780df\",\n  \"de:projects.common.tokens\": \"a039dfb9628b53ddaebcfe8ef0793e3fdf19867601295f00d192acef59050869\",\n  \"de:projects.new.budgetLegend\": \"8687555f210f4891dd76a3071530ccafc415e179b2866a9ab50ad620714673d7\",\n  \"de:projects.request.routine\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"de:projects.request.wake\": \"adc719587244723baf63cc93777b53f02f6cf19dd16ed3323daa34c80e9e126c\",\n  \"de:projects.tabs.board\": \"4816cbfd74aa8297b9c9cdaae89e2f0d2ced6041e952dfcd114e01b4c82e9c6d\",\n  \"de:projects.tabs.chat\": \"460b3a7da007b7af9d35bca54181dc91382263b2bf133ca214871ca1fed1fc1c\",\n  \"de:providerError.said.team\": \"f89a7d144a9ba182897efbbad0a6fc5e2d14d49419430e62dfbaf2f28951b081\",\n  \"de:settings.bot.browser.title\": \"d31de1a5c5c8ba2a210a167cf0d0dc2425c57ea7525f4b73a4b7ab934af79dfc\",\n  \"de:settings.bot.computer.cloud\": \"b977b950c1ae31e5aeb9ef778cc20a66fc034eb81e738e0206104b677962c465\",\n  \"de:settings.bot.computer.title\": \"76ed42d22129dc354362704eb4b54208041b68736f976932aada43bc0035f7c0\",\n  \"de:settings.bot.identity.name\": \"dcd1d5223f73b3a965c07e3ff5dbee3eedcfedb806686a05b9b3868a2c3d6d50\",\n  \"de:settings.group.app\": \"0d04bfeb7d64b71c74fc925cca93d683154e8cc7e6e5838faced498e34c9984d\",\n  \"de:settings.l1.card.connections.highlevel\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"de:settings.l1.card.models.engines\": \"b9bf0c84842bfa7937024fad674df9af19acc232461e6f089fc21f1a96e916d7\",\n  \"de:settings.l4.engines.title\": \"b9bf0c84842bfa7937024fad674df9af19acc232461e6f089fc21f1a96e916d7\",\n  \"de:settings.l6.usage.colBot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"de:settings.l6.usage.colRoutine\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"de:settings.page.backups\": \"3334fee2c77fef827371cc6c0e618fad0717a345db95b74f74a0facf51eaa647\",\n  \"de:settings.section.backups\": \"3334fee2c77fef827371cc6c0e618fad0717a345db95b74f74a0facf51eaa647\",\n  \"de:settings.section.engines\": \"b9bf0c84842bfa7937024fad674df9af19acc232461e6f089fc21f1a96e916d7\",\n  \"de:settings.sidebar.standard\": \"ef6691545d2c5523efed00424407cb261aeb0037d165ca5792f7f8bac3381362\",\n  \"de:slik.scheduleLimitEngine\": \"8e75ebbdb21505d2f18439f43fe046abc67fc567515bb1d53b855a020a179092\",\n  \"de:task.link\": \"a6a32dbc5618ea39f6df5b0f9808e3588b19e00d5f6f96c69492e40386e5aeab\",\n  \"de:updates.title\": \"22e2bada8f1c65cd83f4ba976f0027c5dd7cb81d5d2199cd1b0130792841eef4\",\n  \"de:ux.l1.card.details\": \"45989de49fb7f66dfe17a8fc26f3a02c7abcd74f7e8e6cf9f39fa0e3775780df\",\n  \"de:ux.l1.settings.inFolder\": \"cdf2dc13bb0320de35bf4fcde5fb6611b998f979a01849abf7b855a9a5d0dda5\",\n  \"de:ux.l2a.door.chats\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"de:ux.l2a.health.area.backups\": \"3334fee2c77fef827371cc6c0e618fad0717a345db95b74f74a0facf51eaa647\",\n  \"de:ux.l2a.health.engines\": \"b9bf0c84842bfa7937024fad674df9af19acc232461e6f089fc21f1a96e916d7\",\n  \"de:ux.l4a.control.engines\": \"b9bf0c84842bfa7937024fad674df9af19acc232461e6f089fc21f1a96e916d7\",\n  \"de:ux.l4a.control.level\": \"1709305c9fa966d14f56f0da3c3614bbc10adcf53d72f90341bb96d24afcfca3\",\n  \"de:ux.l4a.feedback.chatWord\": \"460b3a7da007b7af9d35bca54181dc91382263b2bf133ca214871ca1fed1fc1c\",\n  \"de:ux.l4a.mod.mac\": \"1695b48bccfe51266dd35bb43ee32680b77986c98a3f69a9db1f0dbf0e158557\",\n  \"de:ux.l4a.screen.bot.skills.title\": \"4697d1e6b8706dfda010bb1c06a0e0fb6c3c03d0c7e301fce33af996313cc5af\",\n  \"de:ux.l4a.screen.bot.teams.title\": \"8a3397e9f55688ec83c46bf6e2ab69dbe747ffdc7f3d5c818e72b46fb921c882\",\n  \"de:ux.l4a.screen.chats.title\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"de:ux.l4a.screen.cloud.title\": \"b7ffc38fc386ea046ae7fdc44e115c5db2f26dfe767d3864877d635c74a68fa7\",\n  \"de:ux.l4a.screen.computer.title\": \"76ed42d22129dc354362704eb4b54208041b68736f976932aada43bc0035f7c0\",\n  \"de:ux.l4a.screen.routine.title\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"de:ux.l5b.level.label\": \"1709305c9fa966d14f56f0da3c3614bbc10adcf53d72f90341bb96d24afcfca3\",\n  \"de:ux.l6a.hire.nameLabel\": \"dcd1d5223f73b3a965c07e3ff5dbee3eedcfedb806686a05b9b3868a2c3d6d50\",\n  \"de:widget.details\": \"45989de49fb7f66dfe17a8fc26f3a02c7abcd74f7e8e6cf9f39fa0e3775780df\",\n  \"es:chatHeader.findShortcut\": \"12aaa51aad3d0b795c86d67d0f5be15e691030ba3bb2e0a4b739dd9c921f4c16\",\n  \"es:chatHeader.inspector\": \"da188e3b1cefc8a70813b78ef4ef13461693a08eb69b0327fbc897cf8981702f\",\n  \"es:chatLinks.github.commit\": \"82a9c46ffa4789945d9f2359d75891558ef6faa8dee09e4b25e4e0597704f5bd\",\n  \"es:chatLinks.github.issue\": \"48dc76dfa23ae03fea1372c5ed6c0e1bd62eaeca7bba6d804eb0afa87972f031\",\n  \"es:chatLinks.github.pull\": \"f3dba6629c69d91bd65527f178591b6ab2ac3843cfbf76943801e8dd45bcb7d6\",\n  \"es:engines.local\": \"8c31e6e7223097e2e4847773c47a4efab6aaf79deeecc92a7759891c74976dde\",\n  \"es:filesWorkspace.filter.bot\": \"9e3fb291086b39e660660f2bf2810760ee764bd1ea596c4277494665c2eeca67\",\n  \"es:highlevel.title\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"es:learningScreen.no\": \"1ea442a134b2a184bd5d40104401f2a37fbc09ccf3f4bc9da161c6099be3691d\",\n  \"es:memoryNotebook.general\": \"c910d474dcd724bff83ddedeb06bf1eceaf9fb3af7c76bb282be057f36e6dffa\",\n  \"es:memorySettings.general\": \"c910d474dcd724bff83ddedeb06bf1eceaf9fb3af7c76bb282be057f36e6dffa\",\n  \"es:notificationSettings.timeZonePlaceholder\": \"e8def32656206d2574e163cff4330221cbca79a584c6debd922546da0bb0ff74\",\n  \"es:projects.board.bot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"es:projects.budget.tokens\": \"b92bd9c11e8f4e9d1a9fa2e7acf5d789f427eea1d3d09f6f4de37fca77efa9a3\",\n  \"es:projects.common.tokens\": \"a039dfb9628b53ddaebcfe8ef0793e3fdf19867601295f00d192acef59050869\",\n  \"es:projects.face.tokens\": \"bc17ff48c05229eb1e7470573c5c85a0334cb3ea42c1672c50064261e387ead2\",\n  \"es:projects.sheet.no\": \"1ea442a134b2a184bd5d40104401f2a37fbc09ccf3f4bc9da161c6099be3691d\",\n  \"es:projects.tabs.chat\": \"460b3a7da007b7af9d35bca54181dc91382263b2bf133ca214871ca1fed1fc1c\",\n  \"es:projects.time.days\": \"3f2e9c59984c0b941ec09da664cdc7ce175b29200487805f6c9dd7f03f9097dd\",\n  \"es:projects.time.hours\": \"068deca46a360c34fb4de3abc11555221ddb4440f5f2a1f1dfaa602d9a56ebce\",\n  \"es:projects.time.hoursMin\": \"99422830232cdc3aeea013ffed15fc46da14d5271535388eac5b9ce40c1bdc63\",\n  \"es:projects.time.min\": \"913185ba21fbe409494debb11eaeaad2fea9ccc97bc227f813f3884faf0d317d\",\n  \"es:projects.work.budgetLine\": \"af16f559cd6fdedab2e760526b75427cc3a618363f58a2e11251d73257239bf1\",\n  \"es:projects.work.budgetLineTokens\": \"af041f18902a49a7cd34a41cc7fd52c386d64056422e68ecdd5880ff8778ac5b\",\n  \"es:settings.botsToggle\": \"fc1da572d3f0b2c7e2cdfa7f85a2c1f6b2aceb1969b9cac6ec4391422887a64b\",\n  \"es:settings.l1.card.connections.highlevel\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"es:settings.l6.usage.colBot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"es:settings.l6.usage.plan.dh\": \"64a6ac2a25ab8f5577894d09a2f06d15e887cde3ccb65415a86a03258fe4b3a0\",\n  \"es:settings.l6.usage.plan.hm\": \"cf8484035b7fa8c13811a16b0f926ad7f56b4161501e105431231873eae43156\",\n  \"es:settings.l6.usage.plan.m\": \"e1bded87ee24b702d6c1baf5edf99fccfc0d2e1d5bca603aef4937fb6c282fe2\",\n  \"es:settings.page.general\": \"c910d474dcd724bff83ddedeb06bf1eceaf9fb3af7c76bb282be057f36e6dffa\",\n  \"es:settings.section.general\": \"c910d474dcd724bff83ddedeb06bf1eceaf9fb3af7c76bb282be057f36e6dffa\",\n  \"es:ux.l2a.door.chats\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"es:ux.l2a.health.botsMany\": \"38ccee81b2654ed9ecad68227e6229e27a486f59e5c6c717d0c66569fff9411f\",\n  \"es:ux.l2a.health.botsOne\": \"ba521a424af39db3760405fe7d15f30a2639067b0d8b8049be65cddbeba65140\",\n  \"es:ux.l4a.feedback.chatWord\": \"460b3a7da007b7af9d35bca54181dc91382263b2bf133ca214871ca1fed1fc1c\",\n  \"es:ux.l4a.mod.mac\": \"1695b48bccfe51266dd35bb43ee32680b77986c98a3f69a9db1f0dbf0e158557\",\n  \"es:ux.l4a.mod.other\": \"e2ee2909fe279f5cbcfc09de8e6daf6c238a3af213840182b679ac4997c50eab\",\n  \"es:ux.l4a.screen.chats.title\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"es:ux.l4a.screen.cloud.title\": \"b7ffc38fc386ea046ae7fdc44e115c5db2f26dfe767d3864877d635c74a68fa7\",\n  \"es:ux.l4a.screen.inspector.title\": \"da188e3b1cefc8a70813b78ef4ef13461693a08eb69b0327fbc897cf8981702f\",\n  \"es:ux.l5b.limit.minutes\": \"1829c58ba472520fd39e61f9e337a1b7da27e86299332dde5bfdea355c3895a8\",\n  \"fr:botImages.title\": \"be7e2f20129365c2899b2c11bfc465541e61b1858f45bf0248cf99b9271bc707\",\n  \"fr:chatHeader.findShortcut\": \"12aaa51aad3d0b795c86d67d0f5be15e691030ba3bb2e0a4b739dd9c921f4c16\",\n  \"fr:chatLinks.github.commit\": \"82a9c46ffa4789945d9f2359d75891558ef6faa8dee09e4b25e4e0597704f5bd\",\n  \"fr:chatLinks.github.pull\": \"f3dba6629c69d91bd65527f178591b6ab2ac3843cfbf76943801e8dd45bcb7d6\",\n  \"fr:engines.cloud\": \"b977b950c1ae31e5aeb9ef778cc20a66fc034eb81e738e0206104b677962c465\",\n  \"fr:engines.local\": \"8c31e6e7223097e2e4847773c47a4efab6aaf79deeecc92a7759891c74976dde\",\n  \"fr:filesWorkspace.filter.bot\": \"9e3fb291086b39e660660f2bf2810760ee764bd1ea596c4277494665c2eeca67\",\n  \"fr:filesWorkspace.filter.type\": \"cb489c29cf31825141051ec622c8d00b9088b98c7afd3af00d04110c3d938a56\",\n  \"fr:filesWorkspace.kind.image\": \"be7e2f20129365c2899b2c11bfc465541e61b1858f45bf0248cf99b9271bc707\",\n  \"fr:highlevel.title\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"fr:imageLibrary.pack.line\": \"504a046f7c812e7fa74353fb8d89bd2c605637de3e5c6cf1c77626ab1f0bedfc\",\n  \"fr:imageLibrary.pack.lineOne\": \"28665c32766cd030526b64d2d207b1e1b25b313e1c234a5eab9d59428a613577\",\n  \"fr:learningScreen.suggestions.heading\": \"2e4da343a56a177f43633f9437deb198ded9f9503085dcc5142f49f606200de7\",\n  \"fr:media.image.untitled\": \"1aa4cb0bcca76e92e30677e809bb3d4b5c066715ef4d558184e319496bcc5125\",\n  \"fr:memoryPeople.kindAudience\": \"545c02357695a6ffed97b01a94a46b9aeb4686f4480173da6d0faeae8eb85053\",\n  \"fr:memoryReview.sources\": \"caf85b0888d78f1f83771a07b25c3d30fa1210242f2fae6e5ae5d9a686602800\",\n  \"fr:memorySettings.audience.label\": \"545c02357695a6ffed97b01a94a46b9aeb4686f4480173da6d0faeae8eb85053\",\n  \"fr:memorySettings.page\": \"a456627ace382cd7eac7c2e266b2ae8b326f7f1bc8579b15af3c009ce2ba0923\",\n  \"fr:nav.routines\": \"61b7bb44e2b47b7c0ccaccff4872fdcf3e298345d0f003ea4bf54e8c84e2a889\",\n  \"fr:notificationSettings.timeZonePlaceholder\": \"e8def32656206d2574e163cff4330221cbca79a584c6debd922546da0bb0ff74\",\n  \"fr:notificationSettings.title\": \"788011833a5a0f22db90c91e8eb7bd8e9f5cd423354ff5ef8c338e7895f44ba9\",\n  \"fr:procedureAdmissions.audience\": \"545c02357695a6ffed97b01a94a46b9aeb4686f4480173da6d0faeae8eb85053\",\n  \"fr:procedureAdmissions.kindRoutine\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"fr:procedureAdmissions.testSetValue\": \"a290a24bc3c2d9e1e76977f15759e8aff8cc2d9bf23f49f26f8ffd8967ff0600\",\n  \"fr:projects.board.bot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"fr:projects.common.description\": \"526e0087cc3f254d9f86f6c7d8e23d954c4dfda2b312efc29194ae8a860106ba\",\n  \"fr:projects.goalView.brief\": \"ac40ae1e8d41291c59c7f09640725d31f88930b2074aad8adb17959d97bc1497\",\n  \"fr:projects.goalView.note\": \"d8da2c49df39d91df7ecd199b92da7bf264f026242ccc69b08daeadfe587c45b\",\n  \"fr:projects.kb.position\": \"75e8fcf0797349f5124b611bb8da0853bf3e0ce98464a073974afe3b762fae11\",\n  \"fr:projects.kb.positionLane\": \"986a5d4ee3ecb1ad69ae41aeb4be9fd35c332a3b6519ebf5c51853f3a84e057f\",\n  \"fr:projects.request.message\": \"2f77668a9dfbf8d5848b9eeb4a7145ca94c6ed9236e4a773f6dcafa5132b2f91\",\n  \"fr:projects.request.routine\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"fr:projects.since.messageOne\": \"011052fed01983b3279365be61a90ca8a0426b55b35c4095dae842101ffc9c4c\",\n  \"fr:projects.since.messageOther\": \"d7b79bfdb6b9e53598a786daa82879bc1a8c82494bcbc04cbab5083d35a0ca9d\",\n  \"fr:projects.time.hours\": \"068deca46a360c34fb4de3abc11555221ddb4440f5f2a1f1dfaa602d9a56ebce\",\n  \"fr:projects.time.hoursMin\": \"99422830232cdc3aeea013ffed15fc46da14d5271535388eac5b9ce40c1bdc63\",\n  \"fr:projects.time.min\": \"913185ba21fbe409494debb11eaeaad2fea9ccc97bc227f813f3884faf0d317d\",\n  \"fr:routines.editor.descriptionLabel\": \"526e0087cc3f254d9f86f6c7d8e23d954c4dfda2b312efc29194ae8a860106ba\",\n  \"fr:routines.editor.instructionsLabel\": \"934652dce41d62d3c9ff34b2c5e44e3addaedc67d6137328a9fe75a63c51dbac\",\n  \"fr:settings.bot.computer.cloud\": \"b977b950c1ae31e5aeb9ef778cc20a66fc034eb81e738e0206104b677962c465\",\n  \"fr:settings.bot.effort.title\": \"4387e5d3966fc436532792769763cd1ab7cccd6464d4c01c2b91261894e96b77\",\n  \"fr:settings.bot.identity.instructions\": \"934652dce41d62d3c9ff34b2c5e44e3addaedc67d6137328a9fe75a63c51dbac\",\n  \"fr:settings.bot.notifications.title\": \"788011833a5a0f22db90c91e8eb7bd8e9f5cd423354ff5ef8c338e7895f44ba9\",\n  \"fr:settings.botsToggle\": \"fc1da572d3f0b2c7e2cdfa7f85a2c1f6b2aceb1969b9cac6ec4391422887a64b\",\n  \"fr:settings.l1.card.connections.highlevel\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"fr:settings.l6.usage.colBot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"fr:settings.l6.usage.colRoutine\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"fr:settings.l6.usage.plan.hm\": \"cf8484035b7fa8c13811a16b0f926ad7f56b4161501e105431231873eae43156\",\n  \"fr:settings.l6.usage.plan.m\": \"e1bded87ee24b702d6c1baf5edf99fccfc0d2e1d5bca603aef4937fb6c282fe2\",\n  \"fr:settings.section.images\": \"be7e2f20129365c2899b2c11bfc465541e61b1858f45bf0248cf99b9271bc707\",\n  \"fr:settings.sidebar.standard\": \"ef6691545d2c5523efed00424407cb261aeb0037d165ca5792f7f8bac3381362\",\n  \"fr:settings.voice.title\": \"30bf7b9b9540d4e11819ffbadf3ae6fe4c7ca94c8b433391e50e47e14a9d6cbf\",\n  \"fr:ux.l2a.door.chats\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"fr:ux.l2a.door.routines\": \"61b7bb44e2b47b7c0ccaccff4872fdcf3e298345d0f003ea4bf54e8c84e2a889\",\n  \"fr:ux.l2a.health.botsMany\": \"38ccee81b2654ed9ecad68227e6229e27a486f59e5c6c717d0c66569fff9411f\",\n  \"fr:ux.l2a.health.botsOne\": \"ba521a424af39db3760405fe7d15f30a2639067b0d8b8049be65cddbeba65140\",\n  \"fr:ux.l4a.mod.mac\": \"1695b48bccfe51266dd35bb43ee32680b77986c98a3f69a9db1f0dbf0e158557\",\n  \"fr:ux.l4a.mod.other\": \"e2ee2909fe279f5cbcfc09de8e6daf6c238a3af213840182b679ac4997c50eab\",\n  \"fr:ux.l4a.screen.bot.routines.title\": \"026bff195769a19c1d5bf32c0f46139e3bc20eb0d92030e66750b3ea1e704eb5\",\n  \"fr:ux.l4a.screen.bot.skills.title\": \"4697d1e6b8706dfda010bb1c06a0e0fb6c3c03d0c7e301fce33af996313cc5af\",\n  \"fr:ux.l4a.screen.chats.title\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"fr:ux.l4a.screen.clients-card.title\": \"65a7256542c30138e6f979959b13707ef238bbf5aaf8472dde584c05b0c07529\",\n  \"fr:ux.l4a.screen.cloud.title\": \"b7ffc38fc386ea046ae7fdc44e115c5db2f26dfe767d3864877d635c74a68fa7\",\n  \"fr:ux.l4a.screen.routine.title\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"fr:ux.l4a.screen.routines.title\": \"61b7bb44e2b47b7c0ccaccff4872fdcf3e298345d0f003ea4bf54e8c84e2a889\",\n  \"fr:ux.l5b.instructions.label\": \"934652dce41d62d3c9ff34b2c5e44e3addaedc67d6137328a9fe75a63c51dbac\",\n  \"fr:ux.l5b.limit.minutes\": \"1829c58ba472520fd39e61f9e337a1b7da27e86299332dde5bfdea355c3895a8\",\n  \"fr:ux.l5b.list.count\": \"55cf322eaf09a705044f499aad0ad813749259bac78845d049e6804340e288f1\",\n  \"fr:whatsapp.groups.mention\": \"d820d8de70e4347c8c8e6927b4fd17a22678ab8f51c5a8ba10d51b608d3af5ef\",\n  \"fr:widget.image\": \"1aa4cb0bcca76e92e30677e809bb3d4b5c066715ef4d558184e319496bcc5125\",\n  \"fr:workspacePane.imageLabel\": \"6feae89a36296ee3e2f5248fe468ab9213b81f47dbd054e945f622b24299d603\",\n  \"fr:workspacePane.source\": \"0e570ca6fabe24f94e52c1833f3ffd25567022beb826fa16891f3322051bc221\",\n  \"hi:chatHeader.findShortcut\": \"12aaa51aad3d0b795c86d67d0f5be15e691030ba3bb2e0a4b739dd9c921f4c16\",\n  \"hi:highlevel.title\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"hi:notificationSettings.timeZonePlaceholder\": \"e8def32656206d2574e163cff4330221cbca79a584c6debd922546da0bb0ff74\",\n  \"hi:publish.sites.add.placeholder\": \"1b05d2efefda710401553058eee0ef78f8faeb699fa06e8234944b24a62903c6\",\n  \"hi:settings.l1.card.connections.highlevel\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"hi:ux.l4a.mod.mac\": \"1695b48bccfe51266dd35bb43ee32680b77986c98a3f69a9db1f0dbf0e158557\",\n  \"hi:ux.l4a.mod.other\": \"e2ee2909fe279f5cbcfc09de8e6daf6c238a3af213840182b679ac4997c50eab\",\n  \"hi:ux.l4a.screen.cloud.title\": \"b7ffc38fc386ea046ae7fdc44e115c5db2f26dfe767d3864877d635c74a68fa7\",\n  \"ja:chatHeader.findShortcut\": \"12aaa51aad3d0b795c86d67d0f5be15e691030ba3bb2e0a4b739dd9c921f4c16\",\n  \"ja:chatLinks.github.issue\": \"48dc76dfa23ae03fea1372c5ed6c0e1bd62eaeca7bba6d804eb0afa87972f031\",\n  \"ja:highlevel.title\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"ja:notificationSettings.timeZonePlaceholder\": \"e8def32656206d2574e163cff4330221cbca79a584c6debd922546da0bb0ff74\",\n  \"ja:publish.sites.add.placeholder\": \"1b05d2efefda710401553058eee0ef78f8faeb699fa06e8234944b24a62903c6\",\n  \"ja:settings.l1.card.connections.highlevel\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"ja:ux.l4a.mod.other\": \"e2ee2909fe279f5cbcfc09de8e6daf6c238a3af213840182b679ac4997c50eab\",\n  \"ja:ux.l4a.screen.cloud.title\": \"b7ffc38fc386ea046ae7fdc44e115c5db2f26dfe767d3864877d635c74a68fa7\",\n  \"pt-br:chatHeader.findShortcut\": \"12aaa51aad3d0b795c86d67d0f5be15e691030ba3bb2e0a4b739dd9c921f4c16\",\n  \"pt-br:chatLinks.github.commit\": \"82a9c46ffa4789945d9f2359d75891558ef6faa8dee09e4b25e4e0597704f5bd\",\n  \"pt-br:chatLinks.github.issue\": \"48dc76dfa23ae03fea1372c5ed6c0e1bd62eaeca7bba6d804eb0afa87972f031\",\n  \"pt-br:chatLinks.github.pull\": \"f3dba6629c69d91bd65527f178591b6ab2ac3843cfbf76943801e8dd45bcb7d6\",\n  \"pt-br:engines.local\": \"8c31e6e7223097e2e4847773c47a4efab6aaf79deeecc92a7759891c74976dde\",\n  \"pt-br:filesWorkspace.filter.bot\": \"9e3fb291086b39e660660f2bf2810760ee764bd1ea596c4277494665c2eeca67\",\n  \"pt-br:highlevel.title\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"pt-br:mcp.row.sourceLink\": \"90d326db726070816add45bb709d2a75db4731a4e9038b7014366f8603356247\",\n  \"pt-br:nav.apps\": \"89dd748442c194857825848e1500abbbc5f52fb067ad27fb05dc9fb23eebba3b\",\n  \"pt-br:notificationSettings.timeZonePlaceholder\": \"e8def32656206d2574e163cff4330221cbca79a584c6debd922546da0bb0ff74\",\n  \"pt-br:projects.board.bot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"pt-br:projects.budget.tokens\": \"b92bd9c11e8f4e9d1a9fa2e7acf5d789f427eea1d3d09f6f4de37fca77efa9a3\",\n  \"pt-br:projects.common.tokens\": \"a039dfb9628b53ddaebcfe8ef0793e3fdf19867601295f00d192acef59050869\",\n  \"pt-br:projects.face.tokens\": \"bc17ff48c05229eb1e7470573c5c85a0334cb3ea42c1672c50064261e387ead2\",\n  \"pt-br:projects.request.wake\": \"adc719587244723baf63cc93777b53f02f6cf19dd16ed3323daa34c80e9e126c\",\n  \"pt-br:projects.tabs.chat\": \"460b3a7da007b7af9d35bca54181dc91382263b2bf133ca214871ca1fed1fc1c\",\n  \"pt-br:projects.time.days\": \"3f2e9c59984c0b941ec09da664cdc7ce175b29200487805f6c9dd7f03f9097dd\",\n  \"pt-br:projects.time.hours\": \"068deca46a360c34fb4de3abc11555221ddb4440f5f2a1f1dfaa602d9a56ebce\",\n  \"pt-br:projects.time.hoursMin\": \"99422830232cdc3aeea013ffed15fc46da14d5271535388eac5b9ce40c1bdc63\",\n  \"pt-br:projects.time.min\": \"913185ba21fbe409494debb11eaeaad2fea9ccc97bc227f813f3884faf0d317d\",\n  \"pt-br:projects.work.budgetLine\": \"af16f559cd6fdedab2e760526b75427cc3a618363f58a2e11251d73257239bf1\",\n  \"pt-br:projects.work.budgetLineTokens\": \"af041f18902a49a7cd34a41cc7fd52c386d64056422e68ecdd5880ff8778ac5b\",\n  \"pt-br:settings.bot.computer.cloud\": \"b977b950c1ae31e5aeb9ef778cc20a66fc034eb81e738e0206104b677962c465\",\n  \"pt-br:settings.botsToggle\": \"fc1da572d3f0b2c7e2cdfa7f85a2c1f6b2aceb1969b9cac6ec4391422887a64b\",\n  \"pt-br:settings.l1.card.connections.highlevel\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"pt-br:settings.l6.usage.colBot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"pt-br:settings.l6.usage.plan.dh\": \"64a6ac2a25ab8f5577894d09a2f06d15e887cde3ccb65415a86a03258fe4b3a0\",\n  \"pt-br:settings.l6.usage.plan.hm\": \"cf8484035b7fa8c13811a16b0f926ad7f56b4161501e105431231873eae43156\",\n  \"pt-br:settings.l6.usage.plan.m\": \"e1bded87ee24b702d6c1baf5edf99fccfc0d2e1d5bca603aef4937fb6c282fe2\",\n  \"pt-br:settings.page.backups\": \"3334fee2c77fef827371cc6c0e618fad0717a345db95b74f74a0facf51eaa647\",\n  \"pt-br:settings.section.backups\": \"3334fee2c77fef827371cc6c0e618fad0717a345db95b74f74a0facf51eaa647\",\n  \"pt-br:task.link\": \"a6a32dbc5618ea39f6df5b0f9808e3588b19e00d5f6f96c69492e40386e5aeab\",\n  \"pt-br:ux.l2a.door.chats\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"pt-br:ux.l2a.health.area.backups\": \"3334fee2c77fef827371cc6c0e618fad0717a345db95b74f74a0facf51eaa647\",\n  \"pt-br:ux.l2a.health.botsMany\": \"38ccee81b2654ed9ecad68227e6229e27a486f59e5c6c717d0c66569fff9411f\",\n  \"pt-br:ux.l2a.health.botsOne\": \"ba521a424af39db3760405fe7d15f30a2639067b0d8b8049be65cddbeba65140\",\n  \"pt-br:ux.l4a.feedback.chatWord\": \"460b3a7da007b7af9d35bca54181dc91382263b2bf133ca214871ca1fed1fc1c\",\n  \"pt-br:ux.l4a.mod.mac\": \"1695b48bccfe51266dd35bb43ee32680b77986c98a3f69a9db1f0dbf0e158557\",\n  \"pt-br:ux.l4a.mod.other\": \"e2ee2909fe279f5cbcfc09de8e6daf6c238a3af213840182b679ac4997c50eab\",\n  \"pt-br:ux.l4a.screen.bot.skills.title\": \"4697d1e6b8706dfda010bb1c06a0e0fb6c3c03d0c7e301fce33af996313cc5af\",\n  \"pt-br:ux.l4a.screen.chats.title\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"pt-br:ux.l4a.screen.cloud.title\": \"b7ffc38fc386ea046ae7fdc44e115c5db2f26dfe767d3864877d635c74a68fa7\",\n  \"pt-br:ux.l5b.limit.minutes\": \"1829c58ba472520fd39e61f9e337a1b7da27e86299332dde5bfdea355c3895a8\",\n  \"zh:chatHeader.findShortcut\": \"12aaa51aad3d0b795c86d67d0f5be15e691030ba3bb2e0a4b739dd9c921f4c16\",\n  \"zh:highlevel.title\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"zh:notificationSettings.timeZonePlaceholder\": \"e8def32656206d2574e163cff4330221cbca79a584c6debd922546da0bb0ff74\",\n  \"zh:publish.sites.add.placeholder\": \"1b05d2efefda710401553058eee0ef78f8faeb699fa06e8234944b24a62903c6\",\n  \"zh:settings.l1.card.connections.highlevel\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"zh:ux.l4a.mod.other\": \"e2ee2909fe279f5cbcfc09de8e6daf6c238a3af213840182b679ac4997c50eab\",\n  \"zh:ux.l4a.screen.cloud.title\": \"b7ffc38fc386ea046ae7fdc44e115c5db2f26dfe767d3864877d635c74a68fa7\",\n  \"stepup/de:line.bot\": \"294e91606a271fbbd426f1b4d71ba091072a00b9059de14028fdccfc1da81d5b\",\n  \"stepup/de:line.name\": \"8b9507f57685b27800e1967ad3e8255b09369a6994186f70f4aac4210cda672e\",\n  \"stepup/es:line.bot\": \"294e91606a271fbbd426f1b4d71ba091072a00b9059de14028fdccfc1da81d5b\",\n  \"stepup/pt-br:line.bot\": \"294e91606a271fbbd426f1b4d71ba091072a00b9059de14028fdccfc1da81d5b\",\n  \"de:noLimits.v1.source.git\": \"9a881b9b9f23849475296a8cd768ea1965bc3152df7118e60c145975af6aa58a\",\n  \"es:noLimits.v1.source.git\": \"9a881b9b9f23849475296a8cd768ea1965bc3152df7118e60c145975af6aa58a\",\n  \"fr:noLimits.v1.source.git\": \"9a881b9b9f23849475296a8cd768ea1965bc3152df7118e60c145975af6aa58a\",\n  \"hi:noLimits.v1.source.git\": \"9a881b9b9f23849475296a8cd768ea1965bc3152df7118e60c145975af6aa58a\",\n  \"ja:noLimits.v1.source.git\": \"9a881b9b9f23849475296a8cd768ea1965bc3152df7118e60c145975af6aa58a\",\n  \"pt-br:noLimits.v1.source.git\": \"9a881b9b9f23849475296a8cd768ea1965bc3152df7118e60c145975af6aa58a\",\n  \"zh:noLimits.v1.source.git\": \"9a881b9b9f23849475296a8cd768ea1965bc3152df7118e60c145975af6aa58a\",\n  \"fr:noLimits.v1.source.archive\": \"0eb3e36bfb24dcd9bb1d1bece1531216b59539a8fde17ee80224af0653c92aa3\"\n}\n",
+      "verdict": "pass"
+    }
+  }
+}
