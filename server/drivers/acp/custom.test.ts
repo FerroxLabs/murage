@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // Contract tests for the bring-your-own ACP driver. The scripted fake ACP
 // CLI stands in for "any agent that speaks ACP over stdio" — exactly the
 // promise the driver makes to users.
@@ -87,7 +89,7 @@ describe("CustomAcpDriver turns (fake CLI)", () => {
 
   it("runs a full turn through an arbitrary ACP CLI with canonical events", async () => {
     await create();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-custom", text: "hi" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-custom", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const types = recorder.events.map((e) => e.type);
@@ -112,7 +114,7 @@ describe("CustomAcpDriver turns (fake CLI)", () => {
     const dump = join(scratch, "dump.json");
     process.env.FAKE_ACP_DUMP = dump;
     await create({ MY_AGENT_TOKEN: "tok-123" });
-    await instance.adapter.sendTurn({ threadId: "t-custom-env", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-custom-env", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8")) as { env: Record<string, string | undefined> };
@@ -125,7 +127,7 @@ describe("CustomAcpDriver turns (fake CLI)", () => {
   it("names the tool the bot actually ran, not the wrapper it went through", async () => {
     process.env.FAKE_ACP_MODE = "wrapped-tool";
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-custom-wrapped", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-custom-wrapped", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const started = recorder.events.find((e) => e.type === "item.started" && (e as { itemType?: string }).itemType === "tool")!;
@@ -138,7 +140,7 @@ describe("CustomAcpDriver turns (fake CLI)", () => {
   it("surfaces an MCP tool's image and withholds the computer surface's frame", async () => {
     process.env.FAKE_ACP_MODE = "tool-image";
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-custom-tool-image", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-custom-tool-image", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const images = recorder.events.filter((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "assistant_image");
@@ -156,7 +158,7 @@ describe("CustomAcpDriver turns (fake CLI)", () => {
   it("withholds the computer surface's frame even when the chip reads as the shell command", async () => {
     process.env.FAKE_ACP_MODE = "computer-exec-image";
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-custom-computer-exec", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-custom-computer-exec", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
 
     // the chip still says what it ran — that part is the point of the label
@@ -173,7 +175,7 @@ describe("CustomAcpDriver turns (fake CLI)", () => {
   it("keeps a custom MCP server's screenshot reached through a wrapper tool", async () => {
     process.env.FAKE_ACP_MODE = "wrapped-tool-image";
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-custom-wrapped-image", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-custom-wrapped-image", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
 
     // the chip still names the inner tool, not the wrapper and not the mount
@@ -191,7 +193,7 @@ describe("CustomAcpDriver turns (fake CLI)", () => {
   it("carries a failed tool's reason out of the engine instead of only a red flag", async () => {
     process.env.FAKE_ACP_MODE = "wrapped-tool";
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-custom-failed-tool", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-custom-failed-tool", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const done = recorder.events.find((e) => e.type === "item.completed" && (e as { itemType?: string }).itemType === "tool")!;
@@ -206,3 +208,6 @@ describe("CustomAcpDriver turns (fake CLI)", () => {
     expect(snapshot).toMatchObject({ state: "available" });
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

@@ -45,6 +45,9 @@ const HEARD_KEEP = 60;
 
 /** Each member's own host history and hand-downs on this call, and what the
  *  owner and each member's voice said, for the others to be told. */
+/** One host exchange as record() kept it: the exact entries heardReply() may later correct. */
+export interface RoomRecord { host?: HostEntry; heard?: RoomHeard & { memberId: string } }
+
 export class RoomHostMemory {
   private histories = new Map<string, HostEntry[]>();
   private downs = new Map<string, CallHandDown[]>();
@@ -72,10 +75,26 @@ export class RoomHostMemory {
     this.downs.set(memberId, [...this.handDowns(memberId), handDown].slice(-HISTORY_MAX));
   }
 
-  record(member: Pick<Bot, "id" | "name">, owner: string, host: HostEntry): void {
+  record(member: Pick<Bot, "id" | "name">, owner: string, host: HostEntry): RoomRecord {
     const keep = host.text || host.handDown ? [host] : [];
     this.histories.set(member.id, [...this.history(member.id), { role: "owner" as const, text: owner }, ...keep].slice(-HISTORY_MAX));
-    if (host.text) this.heard = [...this.heard, { memberId: member.id, member: member.name, owner, reply: host.text }].slice(-HEARD_KEEP);
+    const heard = host.text ? { memberId: member.id, member: member.name, owner, reply: host.text } : undefined;
+    if (heard) this.heard = [...this.heard, heard].slice(-HEARD_KEEP);
+    return { host: keep[0], heard };
+  }
+
+  /** The owner heard only `text` of the host reply `record` kept (cut off part-way, its audio failed, or its job was
+   *  discarded before it played: ""). That exact history entry and what the others hear of it say that instead of
+   *  the reply as sent; an entry already gone (capped out) is left alone. A hand-down keeps its entry. */
+  heardReply(memberId: string, record: RoomRecord, text: string): void {
+    const history = this.history(memberId);
+    const at = record.host ? history.indexOf(record.host) : -1;
+    if (record.host && at >= 0) {
+      const kept = text || record.host.handDown ? [{ ...record.host, text }] : [];
+      this.histories.set(memberId, [...history.slice(0, at), ...kept, ...history.slice(at + 1)]);
+    }
+    const heardAt = record.heard ? this.heard.indexOf(record.heard) : -1;
+    if (heardAt >= 0) this.heard = text ? this.heard.map((entry, i) => (i === heardAt ? { ...entry, reply: text } : entry)) : this.heard.filter((_, i) => i !== heardAt);
   }
 
   heardBy(memberId: string): RoomHeard[] {

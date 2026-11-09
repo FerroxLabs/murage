@@ -5,7 +5,7 @@ import { closeSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { captureThreadDeletion } from "./capture.ts";
 import {
@@ -13,9 +13,10 @@ import {
   resetMemoryRevocationStats, revocationWorkPending, stopMemoryRevocation,
   wakeMemoryRevocation, type RevocationJob,
 } from "./memory-revocation.ts";
-import { resetRevokeWriteBudget } from "./revoke-budget.ts";
+import { REVOKE_PACE, REVOKE_PACE_COMMIT, REVOKE_WRITE_BUDGET, resetRevokeWriteBudget } from "./revoke-budget.ts";
 import { ensureRevokeLateObjects, migrateMemorySchema } from "./schema.ts";
 import { WritetimeFixture } from "./testing/writetime-fixture.ts";
+import { learningDeletionEpoch } from "./deny.ts";
 import { FIRST_LSN } from "./lineage-types.ts";
 
 const roots: string[] = [], connections: DatabaseSync[] = [];
@@ -37,7 +38,12 @@ function transaction<T>(db: DatabaseSync, fn: () => T): T {
   try { const value = fn(); db.exec("COMMIT"); return value; }
   catch (error) { if (db.isTransaction) db.exec("ROLLBACK"); throw error; }
 }
+// The in-process revoke runs at full speed here, as revoke-bounded and revoke-window do: the write budget, idle pace and commit pace are lifted
+// for each test and restored after it. Without this the drain waits out the production pace and times out.
+const BUDGET0 = REVOKE_WRITE_BUDGET.bytesPerMinute, PACE0 = REVOKE_PACE.bytesPerMinute, ROWS0 = REVOKE_PACE_COMMIT.rows;
+beforeEach(() => { REVOKE_WRITE_BUDGET.bytesPerMinute = Number.POSITIVE_INFINITY; REVOKE_PACE.bytesPerMinute = Number.POSITIVE_INFINITY; REVOKE_PACE_COMMIT.rows = 1_000_000; resetRevokeWriteBudget(); });
 afterEach(() => {
+  REVOKE_WRITE_BUDGET.bytesPerMinute = BUDGET0; REVOKE_PACE.bytesPerMinute = PACE0; REVOKE_PACE_COMMIT.rows = ROWS0; resetRevokeWriteBudget();
   stopMemoryRevocation();
   vi.restoreAllMocks();
   for (const db of connections.splice(0).reverse()) db.close();
@@ -236,9 +242,11 @@ it("a deny without its write-time receipt still admits cleanup", async () => {
   transaction(db, () => captureThreadDeletion(db, THREAD));
   await drain(db);
   db.prepare("DELETE FROM memory_deny_line WHERE thread_id=? AND lsn=? AND reason='delete-conversation'").run(THREAD, FIRST_LSN);
-  const epoch = scalar(db, "SELECT deletion_epoch FROM memory_meta WHERE id=1");
+  const epoch = learningDeletionEpoch(db);
+  const foregroundEpoch = scalar(db, "SELECT deletion_epoch FROM memory_meta WHERE id=1");
   transaction(db, () => captureThreadDeletion(db, THREAD));
-  expect(scalar(db, "SELECT deletion_epoch FROM memory_meta WHERE id=1")).toBe(epoch + 1);
+  expect(learningDeletionEpoch(db)).toBe(epoch + 1);
+  expect(scalar(db, "SELECT deletion_epoch FROM memory_meta WHERE id=1")).toBe(foregroundEpoch);
   expect(db.prepare("SELECT 1 FROM memory_deny_line WHERE thread_id=? AND lsn=? AND reason='delete-conversation'").get(THREAD, FIRST_LSN)).toBeTruthy();
   await drain(db);
 }, 50_000);

@@ -76,9 +76,9 @@ export function TurnPresence({
     <span data-testid="turn-speaker" className="text-[11px] font-medium text-ink-secondary">{name}</span>
   ) : null;
   return (
-    <div className="turn-presence flex flex-col items-start">
+    <div className="turn-presence flex w-full flex-col items-start">
       {showAnswer ? (
-        <div className="turn-answer flex flex-col items-start gap-1">
+        <div className="turn-answer flex flex-col items-start gap-1 self-stretch">
           {speaker}
           {children}
         </div>

@@ -126,3 +126,27 @@ it("gives a reused attachment name a fresh thumbnail when its bytes changed", as
     expect(after).not.toEqual(before);
   } finally { await session.close(); }
 }, 30000);
+
+it("SEAN-ASK-ATTACH-CAP: a picture upload is held to what a turn can deliver and a refusal names the real limit", async () => {
+  const session = await launchVerificationServer();
+  try {
+    const head = png(1, 1);
+    const body = (bytes: number) => Buffer.concat([head, Buffer.alloc(bytes - head.length)]);
+    // 12 MB: over the old flat 10 MB. With the resizer it is kept; without
+    // it the server refuses with the engine's own number, never a bare 413.
+    const mid = await fetch(`${session.info.url}/api/attachments`, { method: "POST", headers: { "content-type": "image/png" }, body: body(12 * 1024 * 1024) });
+    const midBody = await mid.json() as { bytes?: number; error?: string; limitBytes?: number };
+    if (mid.status === 201) expect(midBody.bytes).toBe(12 * 1024 * 1024);
+    else {
+      expect(mid.status).toBe(413);
+      expect(midBody.limitBytes).toBeGreaterThan(0);
+      expect(midBody.error).toMatch(/Images can be up to \d/);
+    }
+    // Over every limit: refused before it is buffered, with the limit in the answer.
+    const over = await fetch(`${session.info.url}/api/attachments`, { method: "POST", headers: { "content-type": "image/png" }, body: body(26 * 1024 * 1024) });
+    expect(over.status).toBe(413);
+    const overBody = await over.json() as { error: string; limitBytes: number };
+    expect(overBody.limitBytes).toBeLessThanOrEqual(25 * 1024 * 1024);
+    expect(overBody.error).toContain("Images can be up to");
+  } finally { await session.close(); }
+}, 60000);

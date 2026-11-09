@@ -4,6 +4,7 @@
 import type { LocalSetupFailure } from "../shared/provider-error.ts";
 import { ScopeUnavailableError, scopeLocalFailureOf } from "./drivers/scoped-cli-home.ts";
 import { ProjectFolderLeaseError } from "./project-folder-leases.ts";
+import { WorkspaceTreeError } from "./data-roots.ts";
 
 export class LocalSetupError extends Error {
   readonly localFailure: LocalSetupFailure;
@@ -20,6 +21,8 @@ export class LocalSetupError extends Error {
 export function localSetupFailureOf(error: unknown): LocalSetupFailure | undefined {
   if (error instanceof LocalSetupError) return error.localFailure;
   if (error instanceof ProjectFolderLeaseError) return "working-folder";
+  // WT4 (S5-DATADIR-PATHS r4.1): a changed root is worded from its code; every other tree refusal is a working-folder card with its text
+  if (error instanceof WorkspaceTreeError) return error.code === "root-changed" ? (error.root === "providers" ? "data-root-changed-providers" : "data-root-changed") : "working-folder";
   if (error instanceof ScopeUnavailableError) return scopeLocalFailureOf(error);
   return undefined;
 }

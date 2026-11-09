@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "S5",
+  "date": "2026-11-08",
+  "base": "455ec9d54",
+  "scope": "S5 follow-up: hi learningScreen skill term",
+  "strings": {
+    "hi:learningScreen.procedure.skill": {
+      "text": "स्किल \"{name}\" को बेहतर बनाएँ: {change}",
+      "en": "Improve the skill \"{name}\": {change}",
+      "verdict": "pass",
+      "note": "Only the skill term changed, कौशल to स्किल, to match the app UI and the other hi skill strings; placeholders {name} and {change} intact."
+    },
+    "hi:learningScreen.recent.procedure.skill": {
+      "text": "स्किल: {name}",
+      "en": "Skill: {name}",
+      "verdict": "pass",
+      "note": "Only the skill term changed, कौशल to स्किल, to match the app UI and the other hi skill strings; placeholders {name} and {change} intact."
+    }
+  },
+  "files": {}
+}

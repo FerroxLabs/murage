@@ -54,11 +54,14 @@ async function recoverAlias(stateDir: string, aliasPath: string, priorLease: boo
   await fs.unlink(aliasPath);
 }
 /** Windows uses the explicit native ACL adapter; missing helper fails closed. */
-export async function startBrowserExtensionBroker({ stateDir, onMessage, configAlias, maxRequestsPerConnection = 100000 }: {
+export async function startBrowserExtensionBroker({ stateDir, onMessage, configAlias, maxRequestsPerConnection = 100000, onHello }: {
   stateDir: string;
   /** Stable basename for owner-installed launchers; absent keeps isolated per-instance paths. */
   configAlias?: string;
   onMessage?: (profileId: string, message: BrowserExtensionMessage) => void;
+  /** SABLE-B 5.7: called once per accepted hello, synchronously after the profile is registered, so requests to it already go out on the new
+   * connection. Never awaited, never retried; a throw never reaches the decoder. */
+  onHello?: (profileId: string) => void;
   /** Request ids are remembered per connection; at this many the connection is rotated. Tests lower it. */
   maxRequestsPerConnection?: number;
 }) {
@@ -128,6 +131,7 @@ export async function startBrowserExtensionBroker({ stateDir, onMessage, configA
       if (!connection.hello) {
         if (message.type !== 'hello' || !message.capabilities.includes('ordered_requests_v1') || profiles.has(message.profileId)) throw Error('profile_handshake_required');
         connection.hello = message; profiles.set(message.profileId, connection); clearTimeout(timer);
+        try { onHello?.(message.profileId); } catch { /* a hook never breaks the connection */ }
       } else if (message.type === 'response') {
         const pending = connection.pending.get(message.id);
         // Late responses never complete a new request; IDs cannot be reused per connection. The one thing
@@ -171,6 +175,11 @@ export async function startBrowserExtensionBroker({ stateDir, onMessage, configA
   return {
     configPath,
     profiles: () => [...profiles.values()].map(connection => structuredClone(connection.hello!)),
+    /** SABLE-B 5.7: close one profile's connection. Its `close` runs the per-connection drop (the profile leaves `profiles`, pending requests
+     * reject host_lost_uncertain), and the native host session ends, so the extension fences every binding of that profile. */
+    drop(profileId: string): boolean {
+      const connection = profiles.get(profileId); if (!connection) return false; connection.socket.destroy(); return true;
+    },
     request(profileId: string, command: BrowserExtensionCommand, timeoutMs = 15000): Promise<BrowserExtensionResponse> {
       const checked = parseBrowserExtensionMessage(command);
       if (checked.type !== 'command') return Promise.reject(Error('command_required'));
@@ -181,6 +190,7 @@ export async function startBrowserExtensionBroker({ stateDir, onMessage, configA
       if (ids.has(command.id)) return Promise.reject(Error('request_replay'));
       // A connection that has used all its request ids is rotated, not left refusing forever: the
       // extension reconnects on a fresh connection. Nothing in flight is replayed (they fail as uncertain).
+      if (command.operation === 'avatar' && (ids.size >= maxRequestsPerConnection - 1 || connection.pending.size >= 31)) return Promise.reject(Error('broker_busy'));
       if (ids.size >= maxRequestsPerConnection) { connection.socket.destroy(); return Promise.reject(Error('reconnect_required')); }
       if (connection.pending.size >= 32 || connection.socket.writableLength > MAX_NATIVE_FRAME * 2) return Promise.reject(Error('broker_busy'));
       const nextSequence = connection.wireSequence + 1;

@@ -4,7 +4,7 @@ import type { PublicProviderConnection, ProviderModel } from "../../shared/provi
 import { providerEngineProtocol } from "../../shared/provider-engine.ts";
 import { localEngineSupport, localPickerModel } from "../../shared/local-models.ts";
 import { resolveModelLabel } from "../../shared/model-label.ts";
-import { fillModelMetadata, fluxRoutePriceLabel, modelMetadataUpdatedAt, providerHint } from "./model-metadata.ts";
+import { fillModelMetadata, fluxRoutePriceLabel, modelMetadataReady, modelMetadataUpdatedAt, providerHint } from "./model-metadata.ts";
 export interface PickerSelection { instanceId: string; model: string; connectionId?: string }
 export interface PickerEngine { instanceId: string; driverKind: string; displayName: string; enabled?: boolean; snapshot: {state: "available"|"unavailable"; authenticated?: boolean}; models: {default:string;options:Array<{id:string;label:string;custom?:boolean;provider?:string;localServer?:string;localTools?:"pass"|"partial"|"failed"}>} }
 export interface PickerModel { key: string; selection: PickerSelection; label: string; group: string; provider: string; contextWindow?: number; pricing?: ProviderModel["pricing"]; stale?: boolean;
@@ -12,6 +12,8 @@ export interface PickerModel { key: string; selection: PickerSelection; label: s
    *  and otherwise from the bundled models.dev snapshot (src/lib/model-metadata.ts).
    *  Absent means "not stated" — never "cannot". */
   capabilities?: { vision?: boolean; tools?: boolean; reasoning?: boolean };
+  /** Follows the current catalog, including a live CLI or configured default. */
+  recommended?: boolean;
   /** Local models only (spec V3): the server serving this model, already in
    *  the form the picker shows ("llama.cpp on seanbeast"). */
   localServer?: string;
@@ -66,6 +68,11 @@ export function priceBand(price: ProviderModel["pricing"]): string { const n=pri
 /** Is this row's price cell the unknown state rather than a band or a range?
  *  For the picker to draw it differently — muted, not $-coloured. */
 export function isPriceUnknown(row: Pick<PickerModel, "selection"|"pricing">): boolean { return modelPriceLabel(row)===PRICE_UNKNOWN; }
+/** Is this row's band still on its way? The bundled snapshot arrives after the
+ *  first paint (1.0.18), and until then a row with no live price and no Flux
+ *  band is not known to be unknown: the picker draws a placeholder, never
+ *  "Price unavailable", and fills the band when the snapshot lands. */
+export function isPricePending(row: Pick<PickerModel, "selection"|"pricing">): boolean { return !row.pricing&&!fluxRoutePriceLabel(row.selection.model)&&!modelMetadataReady(); }
 /** Published rates move constantly and a band is a snapshot of one day's
  *  prices, so the picker says so ONCE, under the list — not as a disclaimer
  *  on every row. Dated from the snapshot itself so it cannot quietly go
@@ -129,7 +136,7 @@ export function pickerModels(instance: PickerEngine, connections: readonly Publi
       if(instance.snapshot.authenticated===false&&!option.custom)continue;
       const selection={instanceId:instance.instanceId,model:option.id};
       const metadata=option as typeof option&{contextWindow?:number};
-      const row:PickerModel={key:pickerKey(selection),selection,label:resolveModelLabel(option.id,{catalogLabel:option.label}),group:option.localServer?LOCAL_MODELS_GROUP:option.custom?CUSTOM_MODELS_GROUP:"Engine models",provider:option.provider??option.localServer??instance.displayName,contextWindow:metadata.contextWindow,...(option.localServer?{localServer:option.localServer}:{}),...(option.localTools?{localTools:option.localTools}:{}),...(option.localServer&&localEngineSupport(instance.driverKind)==="any-model"?{anyModel:true as const}:{})};
+      const row:PickerModel={key:pickerKey(selection),selection,...(option.id===instance.models.default?{recommended:true}:{}),label:resolveModelLabel(option.id,{catalogLabel:option.label}),group:option.localServer?LOCAL_MODELS_GROUP:option.custom?CUSTOM_MODELS_GROUP:"Engine models",provider:option.provider??option.localServer??instance.displayName,contextWindow:metadata.contextWindow,...(option.localServer?{localServer:option.localServer}:{}),...(option.localTools?{localTools:option.localTools}:{}),...(option.localServer&&localEngineSupport(instance.driverKind)==="any-model"?{anyModel:true as const}:{})};
       // A local model runs on this computer and costs nothing per token, so a
       // cloud price would be a lie about the user's own hardware — local rows
       // are left exactly as their server described them.

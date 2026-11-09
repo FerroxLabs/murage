@@ -9,6 +9,7 @@ process.env.HOME = "/home/tester";
 process.env.USERPROFILE = "/home/tester";
 vi.resetModules();
 const { alwaysAskCommand } = await import("./always-ask.ts");
+const { expectProtectedPath, expectCardsEverywhere } = await import("./testing/marks-doubt-free.ts");
 
 type Row = { cmd: string; rule: string | null; why: string };
 
@@ -112,10 +113,50 @@ const ROWS: Row[] = [
   { cmd: "python3 -c \"open('/dev/sda', 'wb')\"", rule: "unreadable", why: "dev a disk in inline code" },
 ];
 
+// MARKS r9 C1: no known cwd cards a path in write or exec position (value-path). probe pv /dev/sda | gzip > disk.img.gz -> null with cwd /w;
+// unreadable (value-path) with no cwd. The row runs at cwd /w; the (no cwd) twin asserts the card.
+const R9_NOCWD: Record<string, string> = {
+  "1 cp source reads": "unreadable",
+  "1 pv reads": "unreadable",
+  "1 ddrescue first operand reads": "unreadable",
+  "dev a folder in a path": "unreadable",
+  "dev the descriptor folder": "unreadable",
+};
+// MARKS r9 C1/C4: the cwd does not clear these. probe python3 -c "import sys; print(sys.platform, '/')" -> unreadable (value-path) at cwd /w;
+// probe python3 -c "a = [1, 2]; a.remove(1); print(a)" -> unreadable (tokenizer); probe cp /dev/sda disk.img -> protected-path at cwd /w
+// (unreadable/value-path with no cwd); probe Rscript --vanilla -e '...' -> unreadable (tokenizer); gcc -Os -c main.c && ./s -> unreadable (command).
+const R9_NOW: Record<string, string> = {
+  "3 a join separator": "unreadable",
+  "3 a split separator": "unreadable",
+  "6 a compiler optimization level is no file": "unreadable",
+  "10.7 R computes with no profile (1.0.5 r8)": "unreadable",
+  // the dangerous Tcl form (file delete -force "/") names the root: protected-path (b18: unreadable, still a card)
+  // MARKS r12 re-baseline: "10.7 Tcl string" is back to b18 (unreadable, no cwd): the doubt-free read gives b18's answer
+  "fa platform carries no rm": "unreadable",
+  "fa model carries no del": "unreadable",
+  "fa format beside a root is data (10.3, r5)": "unreadable",
+  "dev a folder in inline code": "unreadable",
+};
+
 describe("always-ask round 4 invariants", () => {
   for (const row of ROWS) {
     it(`${row.why}`, () => {
-      expect(alwaysAskCommand(row.cmd)?.rule ?? null).toBe(row.rule);
+      const cwd = row.why in R9_NOCWD || row.why in R9_NOW ? "/w" : undefined;
+      // MARKS r12 re-baseline (MurageMain 11-07 item 1): the doubt-free read names it; strict read and every level still card
+      if ((R9_NOW[row.why] ?? row.rule) === "protected-path") return expectProtectedPath(row.cmd, cwd);
+      expect(alwaysAskCommand(row.cmd, cwd)?.rule ?? null).toBe(R9_NOW[row.why] ?? row.rule);
+    });
+  }
+  // MARKS r13 (Astra M4): the r12 re-baseline left "10.7 Tcl string" on its b18 strict-only check; at /w it keeps a card
+  // at every level, and the strict read there names the root
+  it("10.7 Tcl string cards at every level at /w (MARKS r13)", () => {
+    const cmd = ROWS.find((r) => r.why === "10.7 Tcl string")!.cmd;
+    expect(alwaysAskCommand(cmd, "/w")).not.toBeNull();
+    expectCardsEverywhere(cmd, "/w");
+  });
+  for (const row of ROWS.filter((r) => r.why in R9_NOCWD)) {
+    it(`${row.why} (no cwd)`, () => {
+      expect(alwaysAskCommand(row.cmd)?.rule ?? null).toBe(R9_NOCWD[row.why]);
     });
   }
 });

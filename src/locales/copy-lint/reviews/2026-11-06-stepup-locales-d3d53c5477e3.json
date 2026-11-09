@@ -1,0 +1,5775 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "claude-opus-stepup-locales",
+  "date": "2026-11-06",
+  "base": "47eea05b194c187f57e89d881fe2c5ac8368f0ce",
+  "scope": "Cloud step-up confirmation catalogues and the Help line about them",
+  "strings": {
+    "en:ux.l4a.screen.cloud.tip2": {
+      "text": "Security confirmations always use this computer's language.",
+      "en": "Security confirmations always use this computer's language.",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "de:ux.l4a.screen.cloud.tip2": {
+      "text": "Sicherheitsbestätigungen erscheinen immer in der Sprache dieses Computers.",
+      "en": "Security confirmations always use this computer's language.",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "es:ux.l4a.screen.cloud.tip2": {
+      "text": "Las confirmaciones de seguridad siempre usan el idioma de este ordenador.",
+      "en": "Security confirmations always use this computer's language.",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "fr:ux.l4a.screen.cloud.tip2": {
+      "text": "Les confirmations de sécurité utilisent toujours la langue de cet ordinateur.",
+      "en": "Security confirmations always use this computer's language.",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "hi:ux.l4a.screen.cloud.tip2": {
+      "text": "सिक्योरिटी की पुष्टि हमेशा इस कंप्यूटर की भाषा में दिखती है।",
+      "en": "Security confirmations always use this computer's language.",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "ja:ux.l4a.screen.cloud.tip2": {
+      "text": "セキュリティの確認は常にこのコンピューターの言語で表示されます。",
+      "en": "Security confirmations always use this computer's language.",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "pt-br:ux.l4a.screen.cloud.tip2": {
+      "text": "As confirmações de segurança sempre usam o idioma deste computador.",
+      "en": "Security confirmations always use this computer's language.",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "zh:ux.l4a.screen.cloud.tip2": {
+      "text": "安全确认始终使用这台电脑的语言。",
+      "en": "Security confirmations always use this computer's language.",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.cloudPairing": {
+      "text": "Add a new device to your Cloud home",
+      "en": "Add a new device to your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.cloudDevicesAccount": {
+      "text": "Change the devices or the account on your Cloud home",
+      "en": "Change the devices or the account on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.modelSigninStart": {
+      "text": "Start a model sign-in on your Cloud home",
+      "en": "Start a model sign-in on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.modelSigninSignOut": {
+      "text": "Sign a model out of your Cloud home",
+      "en": "Sign a model out of your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.modelSigninCancel": {
+      "text": "Cancel a model sign-in on your Cloud home",
+      "en": "Cancel a model sign-in on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.modelSigninRemove": {
+      "text": "Remove a model connection from your Cloud home",
+      "en": "Remove a model connection from your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.ownServer": {
+      "text": "Change the server your bots use as a computer",
+      "en": "Change the server your bots use as a computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.engineLogin": {
+      "text": "Sign in or out of an engine on your Cloud home",
+      "en": "Sign in or out of an engine on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.botCreate": {
+      "text": "Create a bot",
+      "en": "Create a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.botDelete": {
+      "text": "Delete a bot and its conversations",
+      "en": "Delete a bot and its conversations",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.botSettings": {
+      "text": "Change a bot's settings",
+      "en": "Change a bot's settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.botProfile": {
+      "text": "Change a bot's name, personality or voice",
+      "en": "Change a bot's name, personality or voice",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.botTask": {
+      "text": "Change a task of a bot",
+      "en": "Change a task of a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.botPermissionsRefresh": {
+      "text": "Give the bot's open chats its new default permissions",
+      "en": "Give the bot's open chats its new default permissions",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.taskPermissionsRefresh": {
+      "text": "Give a chat the bot's current permissions",
+      "en": "Give a chat the bot's current permissions",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.limitBackup": {
+      "text": "Change the engine that takes over when a bot hits its limit",
+      "en": "Change the engine that takes over when a bot hits its limit",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.botAccess": {
+      "text": "Change who can ask a bot to work",
+      "en": "Change who can ask a bot to work",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.botSharing": {
+      "text": "Change how a bot is shared",
+      "en": "Change how a bot is shared",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.botShareSkills": {
+      "text": "Share a bot's skills",
+      "en": "Share a bot's skills",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.botShareCopy": {
+      "text": "Make a copy of a bot for a team",
+      "en": "Make a copy of a bot for a team",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.botAlwaysAllow": {
+      "text": "Change what a bot is always allowed to do",
+      "en": "Change what a bot is always allowed to do",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.botTaskAllow": {
+      "text": "Take back what a bot was allowed to do for a task",
+      "en": "Take back what a bot was allowed to do for a task",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.botSkills": {
+      "text": "Change a bot's skills",
+      "en": "Change a bot's skills",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.botSkill": {
+      "text": "Change a bot's skill or return it to an earlier version",
+      "en": "Change a bot's skill or return it to an earlier version",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/en:label.heldContinuation": {
+      "text": "Let a bot continue a paused step",
+      "en": "Let a bot continue a paused step",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/en:label.restoreHold": {
+      "text": "Release an item held back when you restored your data",
+      "en": "Release an item held back when you restored your data",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/en:label.botMessageAllow": {
+      "text": "Change who a bot can message",
+      "en": "Change who a bot can message",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.secretCard": {
+      "text": "Answer a bot's request for a key",
+      "en": "Answer a bot's request for a key",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.connectorCard": {
+      "text": "Answer a bot's request to connect an app",
+      "en": "Answer a bot's request to connect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.mcpSigninCard": {
+      "text": "Answer a bot's request to sign in to a tool",
+      "en": "Answer a bot's request to sign in to a tool",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.mcpEnableCard": {
+      "text": "Turn on a tool server a bot added",
+      "en": "Turn on a tool server a bot added",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.publishedSites": {
+      "text": "Change or take down a site a bot published",
+      "en": "Change or take down a site a bot published",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.cloudComputerJoin": {
+      "text": "Open a bot's cloud computer",
+      "en": "Open a bot's cloud computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.cloudComputerControl": {
+      "text": "Control a bot's cloud computer",
+      "en": "Control a bot's cloud computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.botHostComputer": {
+      "text": "Control a bot's host computer",
+      "en": "Control a bot's host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.botBrowser": {
+      "text": "Change a bot's browser access",
+      "en": "Change a bot's browser access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.browserClients": {
+      "text": "Pair a browser or remove a browser pairing",
+      "en": "Pair a browser or remove a browser pairing",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/en:label.linuxSandbox": {
+      "text": "Enable the bot browser on this Linux computer",
+      "en": "Enable the bot browser on this Linux computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.projectBudgetChange": {
+      "text": "Change a project's budget",
+      "en": "Change a project's budget",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.projectBudgetSet": {
+      "text": "Set a project's budget",
+      "en": "Set a project's budget",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.projectWorkRoots": {
+      "text": "Choose the folders a project can work in",
+      "en": "Choose the folders a project can work in",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.projectWorkProfile": {
+      "text": "Change a project's work profile",
+      "en": "Change a project's work profile",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.projectSettings": {
+      "text": "Change a project's settings",
+      "en": "Change a project's settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.roomShareAnswer": {
+      "text": "Share or keep private what a bot found in its other chats",
+      "en": "Share or keep private what a bot found in its other chats",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.roomShareAsk": {
+      "text": "Ask a bot to look in its other chats for this room",
+      "en": "Ask a bot to look in its other chats for this room",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.groupChange": {
+      "text": "Change a team or group",
+      "en": "Change a team or group",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.groupDelete": {
+      "text": "Delete a team or group",
+      "en": "Delete a team or group",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.teamsImportExport": {
+      "text": "Import or export a team",
+      "en": "Import or export a team",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.teamLibraryGithub": {
+      "text": "Download a team from GitHub",
+      "en": "Download a team from GitHub",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.teamLibraryGrok": {
+      "text": "Bring in a Grok Bot",
+      "en": "Bring in a Grok Bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.packagesImportExport": {
+      "text": "Import or export a package",
+      "en": "Import or export a package",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.starterProfiles": {
+      "text": "Install a starter profile",
+      "en": "Install a starter profile",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.moveLend": {
+      "text": "Move or lend a bot's work between teams",
+      "en": "Move or lend a bot's work between teams",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.appConfig": {
+      "text": "Change app settings",
+      "en": "Change app settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.fluxConnection": {
+      "text": "Change your Flux connection",
+      "en": "Change your Flux connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.providerConnection": {
+      "text": "Change a model provider connection",
+      "en": "Change a model provider connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.localModels": {
+      "text": "Change the local models",
+      "en": "Change the local models",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.claudeAccounts": {
+      "text": "Change a Claude account",
+      "en": "Change a Claude account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.chatChannels": {
+      "text": "Change a Telegram, Slack or Discord connection",
+      "en": "Change a Telegram, Slack or Discord connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.whatsapp": {
+      "text": "Change the WhatsApp connection",
+      "en": "Change the WhatsApp connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.memory": {
+      "text": "Change memory",
+      "en": "Change memory",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.skillsCollection": {
+      "text": "Change the skills collection",
+      "en": "Change the skills collection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.mcpServers": {
+      "text": "Install or change a tool server",
+      "en": "Install or change a tool server",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.mcpInspect": {
+      "text": "Check a tool server",
+      "en": "Check a tool server",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.folderTrust": {
+      "text": "Change which folders an engine trusts",
+      "en": "Change which folders an engine trusts",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.hostComputer": {
+      "text": "Control the host computer",
+      "en": "Control the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.cliTest": {
+      "text": "Run a check using a text command",
+      "en": "Run a check using a text command",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/en:label.engineManagement": {
+      "text": "Install or change an engine",
+      "en": "Install or change an engine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.instanceStart": {
+      "text": "Change how an engine starts",
+      "en": "Change how an engine starts",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.claudeUpdate": {
+      "text": "Update Claude Code",
+      "en": "Update Claude Code",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.hermesImport": {
+      "text": "Add Hermes profiles as engines",
+      "en": "Add Hermes profiles as engines",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.engineSetupCheck": {
+      "text": "Check that an engine can answer",
+      "en": "Check that an engine can answer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.engineSigninRecipe": {
+      "text": "Start signing in to an engine",
+      "en": "Start signing in to an engine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.engineSigninProbe": {
+      "text": "Check whether an engine is signed in",
+      "en": "Check whether an engine is signed in",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.emailAccount": {
+      "text": "Turn bot email on or off for this account",
+      "en": "Turn bot email on or off for this account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.emailOtherSetup": {
+      "text": "Remove an email address from another setup",
+      "en": "Remove an email address from another setup",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.emailBot": {
+      "text": "Change a bot's email address or who can email it",
+      "en": "Change a bot's email address or who can email it",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.email": {
+      "text": "Change bot email",
+      "en": "Change bot email",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.attachmentsRemove": {
+      "text": "Remove attachment files for good",
+      "en": "Remove attachment files for good",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.netlifyCheck": {
+      "text": "Check a Netlify connection",
+      "en": "Check a Netlify connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.voiceLibraryAdd": {
+      "text": "Add a Voice Library voice to your ElevenLabs account",
+      "en": "Add a Voice Library voice to your ElevenLabs account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.mcpGrantCreate": {
+      "text": "Create script access for a bot",
+      "en": "Create script access for a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.mcpGrantDelete": {
+      "text": "Turn off an access permission for scripts",
+      "en": "Turn off an access permission for scripts",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/en:label.callRules": {
+      "text": "Change when a bot can call you",
+      "en": "Change when a bot can call you",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.callsOffToday": {
+      "text": "Turn bot calls off for today",
+      "en": "Turn bot calls off for today",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.noLimitsTerms": {
+      "text": "Accept the No limits terms",
+      "en": "Accept the No limits terms",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.callsRearm": {
+      "text": "Turn bot calls back on",
+      "en": "Turn bot calls back on",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.callTurnEnd": {
+      "text": "Call you when this task finishes",
+      "en": "Call you when this task finishes",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.routineCreate": {
+      "text": "Create a routine",
+      "en": "Create a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.routineRun": {
+      "text": "Run a routine now",
+      "en": "Run a routine now",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.routineAlwaysAllow": {
+      "text": "Change what a routine is always allowed to do",
+      "en": "Change what a routine is always allowed to do",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.routineChange": {
+      "text": "Change a routine",
+      "en": "Change a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.routineDelete": {
+      "text": "Delete a routine",
+      "en": "Delete a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.webhooksCreate": {
+      "text": "Create or list external triggers",
+      "en": "Create or list external triggers",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.webhookChange": {
+      "text": "Change or delete an external trigger",
+      "en": "Change or delete an external trigger",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.webhookRotate": {
+      "text": "Change an external trigger's key or test the trigger",
+      "en": "Change an external trigger's key or test the trigger",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/en:label.connectorAuthorize": {
+      "text": "Connect an app",
+      "en": "Connect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.connectorDisconnect": {
+      "text": "Disconnect an app",
+      "en": "Disconnect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:label.fallback": {
+      "text": "Make a change on your Cloud home",
+      "en": "Make a change on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:flag.fullAccess": {
+      "text": "Full access",
+      "en": "Full access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:flag.noLimits": {
+      "text": "No limits",
+      "en": "No limits",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:flag.fullAccessChannelMessages": {
+      "text": "Full access for channel messages",
+      "en": "Full access for channel messages",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:flag.fullAccessSetupRequests": {
+      "text": "Full access for setup requests",
+      "en": "Full access for setup requests",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:flag.autoApprove": {
+      "text": "Auto-approve",
+      "en": "Auto-approve",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:flag.localAuto": {
+      "text": "Auto-approve on the host computer",
+      "en": "Auto-approve on the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:flag.permissionMode": {
+      "text": "Permission mode \"{mode}\"",
+      "en": "Permission mode \"{mode}\"",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:flag.hostComputerBot": {
+      "text": "A bot using the host computer",
+      "en": "A bot using the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:flag.hostComputerConsent": {
+      "text": "Host computer access",
+      "en": "Host computer access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:flag.alwaysAllow": {
+      "text": "An always-allow rule",
+      "en": "An always-allow rule",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:line.bot": {
+      "text": "Bot: {bot}",
+      "en": "Bot: {bot}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:line.name": {
+      "text": "Name: {name}",
+      "en": "Name: {name}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:line.deviceType": {
+      "text": "Device type: {type}",
+      "en": "Device type: {type}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:line.deviceKey": {
+      "text": "Device key: {key}",
+      "en": "Device key: {key}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:line.settings": {
+      "text": "Settings: {names}",
+      "en": "Settings: {names}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:line.turnsOn": {
+      "text": "Turns on: {flags}",
+      "en": "Turns on: {flags}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:line.unknown": {
+      "text": "unknown",
+      "en": "unknown",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:dialog.title": {
+      "text": "Confirm on your Cloud",
+      "en": "Confirm on your Cloud",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:dialog.confirm": {
+      "text": "Confirm",
+      "en": "Confirm",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/en:dialog.cancel": {
+      "text": "Cancel",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.cloudPairing": {
+      "text": "Ein neues Gerät zu deinem Cloud-Home hinzufügen",
+      "en": "Add a new device to your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.cloudDevicesAccount": {
+      "text": "Die Geräte oder das Konto deines Cloud-Homes ändern",
+      "en": "Change the devices or the account on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.modelSigninStart": {
+      "text": "Eine Modell-Anmeldung auf deinem Cloud-Home starten",
+      "en": "Start a model sign-in on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.modelSigninSignOut": {
+      "text": "Ein Modell von deinem Cloud-Home abmelden",
+      "en": "Sign a model out of your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.modelSigninCancel": {
+      "text": "Eine Modell-Anmeldung auf deinem Cloud-Home abbrechen",
+      "en": "Cancel a model sign-in on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.modelSigninRemove": {
+      "text": "Eine Modell-Verbindung von deinem Cloud-Home entfernen",
+      "en": "Remove a model connection from your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.ownServer": {
+      "text": "Den Server ändern, den deine Bots als Computer nutzen",
+      "en": "Change the server your bots use as a computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.engineLogin": {
+      "text": "Dich bei einer Engine auf deinem Cloud-Home an- oder abmelden",
+      "en": "Sign in or out of an engine on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.botCreate": {
+      "text": "Einen Bot erstellen",
+      "en": "Create a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.botDelete": {
+      "text": "Einen Bot und seine Unterhaltungen löschen",
+      "en": "Delete a bot and its conversations",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.botSettings": {
+      "text": "Die Einstellungen eines Bots ändern",
+      "en": "Change a bot's settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.botProfile": {
+      "text": "Name, Persönlichkeit oder Stimme eines Bots ändern",
+      "en": "Change a bot's name, personality or voice",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.botTask": {
+      "text": "Eine Aufgabe eines Bots ändern",
+      "en": "Change a task of a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.botPermissionsRefresh": {
+      "text": "Den offenen Chats des Bots seine neuen Standardberechtigungen geben",
+      "en": "Give the bot's open chats its new default permissions",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.taskPermissionsRefresh": {
+      "text": "Einem Chat die aktuellen Berechtigungen des Bots geben",
+      "en": "Give a chat the bot's current permissions",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.limitBackup": {
+      "text": "Die Engine ändern, die übernimmt, wenn ein Bot sein Limit erreicht",
+      "en": "Change the engine that takes over when a bot hits its limit",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.botAccess": {
+      "text": "Ändern, wer einen Bot um Arbeit bitten kann",
+      "en": "Change who can ask a bot to work",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.botSharing": {
+      "text": "Ändern, wie ein Bot geteilt wird",
+      "en": "Change how a bot is shared",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.botShareSkills": {
+      "text": "Die Skills eines Bots teilen",
+      "en": "Share a bot's skills",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.botShareCopy": {
+      "text": "Eine Kopie eines Bots für ein Team erstellen",
+      "en": "Make a copy of a bot for a team",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.botAlwaysAllow": {
+      "text": "Ändern, was ein Bot immer tun darf",
+      "en": "Change what a bot is always allowed to do",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.botTaskAllow": {
+      "text": "Die Berechtigungen eines Bots für eine Aufgabe zurücknehmen",
+      "en": "Take back what a bot was allowed to do for a task",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/de:label.botSkills": {
+      "text": "Die Skills eines Bots ändern",
+      "en": "Change a bot's skills",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.botSkill": {
+      "text": "Einen Skill eines Bots ändern oder auf eine frühere Version zurücksetzen",
+      "en": "Change a bot's skill or return it to an earlier version",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/de:label.heldContinuation": {
+      "text": "Einen angehaltenen Schritt eines Bots fortsetzen lassen",
+      "en": "Let a bot continue a paused step",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/de:label.restoreHold": {
+      "text": "Ein Element freigeben, das deine Wiederherstellung zurückgehalten hat",
+      "en": "Release an item held back when you restored your data",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/de:label.botMessageAllow": {
+      "text": "Ändern, wem ein Bot Nachrichten schicken darf",
+      "en": "Change who a bot can message",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.secretCard": {
+      "text": "Die Anfrage eines Bots nach einem Schlüssel beantworten",
+      "en": "Answer a bot's request for a key",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.connectorCard": {
+      "text": "Die Anfrage eines Bots, eine App zu verbinden, beantworten",
+      "en": "Answer a bot's request to connect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.mcpSigninCard": {
+      "text": "Die Anfrage eines Bots, sich bei einem Tool anzumelden, beantworten",
+      "en": "Answer a bot's request to sign in to a tool",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.mcpEnableCard": {
+      "text": "Einen Tool-Server einschalten, den ein Bot hinzugefügt hat",
+      "en": "Turn on a tool server a bot added",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.publishedSites": {
+      "text": "Eine von einem Bot veröffentlichte Website ändern oder offline nehmen",
+      "en": "Change or take down a site a bot published",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.cloudComputerJoin": {
+      "text": "Den Cloud-Computer eines Bots öffnen",
+      "en": "Open a bot's cloud computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.cloudComputerControl": {
+      "text": "Den Cloud-Computer eines Bots steuern",
+      "en": "Control a bot's cloud computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.botHostComputer": {
+      "text": "Den Host-Computer eines Bots steuern",
+      "en": "Control a bot's host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.botBrowser": {
+      "text": "Den Browser-Zugriff eines Bots ändern",
+      "en": "Change a bot's browser access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.browserClients": {
+      "text": "Einen Browser koppeln oder eine Browser-Kopplung entfernen",
+      "en": "Pair a browser or remove a browser pairing",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/de:label.linuxSandbox": {
+      "text": "Den Bot-Browser auf diesem Linux-Computer aktivieren",
+      "en": "Enable the bot browser on this Linux computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.projectBudgetChange": {
+      "text": "Das Budget eines Projekts ändern",
+      "en": "Change a project's budget",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.projectBudgetSet": {
+      "text": "Das Budget eines Projekts festlegen",
+      "en": "Set a project's budget",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.projectWorkRoots": {
+      "text": "Die Ordner auswählen, in denen ein Projekt arbeiten darf",
+      "en": "Choose the folders a project can work in",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.projectWorkProfile": {
+      "text": "Das Arbeitsprofil eines Projekts ändern",
+      "en": "Change a project's work profile",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.projectSettings": {
+      "text": "Die Einstellungen eines Projekts ändern",
+      "en": "Change a project's settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.roomShareAnswer": {
+      "text": "Teilen oder privat halten, was ein Bot in seinen anderen Chats gefunden hat",
+      "en": "Share or keep private what a bot found in its other chats",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.roomShareAsk": {
+      "text": "Einen Bot bitten, für diesen Raum in seinen anderen Chats nachzusehen",
+      "en": "Ask a bot to look in its other chats for this room",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.groupChange": {
+      "text": "Ein Team oder eine Gruppe ändern",
+      "en": "Change a team or group",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.groupDelete": {
+      "text": "Ein Team oder eine Gruppe löschen",
+      "en": "Delete a team or group",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.teamsImportExport": {
+      "text": "Ein Team importieren oder exportieren",
+      "en": "Import or export a team",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.teamLibraryGithub": {
+      "text": "Ein Team von GitHub herunterladen",
+      "en": "Download a team from GitHub",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.teamLibraryGrok": {
+      "text": "Einen Grok Bot importieren",
+      "en": "Bring in a Grok Bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.packagesImportExport": {
+      "text": "Ein Paket importieren oder exportieren",
+      "en": "Import or export a package",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.starterProfiles": {
+      "text": "Ein Starterprofil installieren",
+      "en": "Install a starter profile",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.moveLend": {
+      "text": "Die Arbeit eines Bots zwischen Teams verschieben oder verleihen",
+      "en": "Move or lend a bot's work between teams",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.appConfig": {
+      "text": "Die App-Einstellungen ändern",
+      "en": "Change app settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.fluxConnection": {
+      "text": "Deine Flux-Verbindung ändern",
+      "en": "Change your Flux connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.providerConnection": {
+      "text": "Eine Verbindung zu einem Modellanbieter ändern",
+      "en": "Change a model provider connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.localModels": {
+      "text": "Die lokalen Modelle ändern",
+      "en": "Change the local models",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.claudeAccounts": {
+      "text": "Ein Claude-Konto ändern",
+      "en": "Change a Claude account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.chatChannels": {
+      "text": "Eine Telegram-, Slack- oder Discord-Verbindung ändern",
+      "en": "Change a Telegram, Slack or Discord connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.whatsapp": {
+      "text": "Die WhatsApp-Verbindung ändern",
+      "en": "Change the WhatsApp connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.memory": {
+      "text": "Das Gedächtnis ändern",
+      "en": "Change memory",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.skillsCollection": {
+      "text": "Die Skills-Sammlung ändern",
+      "en": "Change the skills collection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.mcpServers": {
+      "text": "Einen Tool-Server installieren oder ändern",
+      "en": "Install or change a tool server",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.mcpInspect": {
+      "text": "Einen Tool-Server prüfen",
+      "en": "Check a tool server",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.folderTrust": {
+      "text": "Ändern, welchen Ordnern eine Engine vertraut",
+      "en": "Change which folders an engine trusts",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.hostComputer": {
+      "text": "Den Host-Computer steuern",
+      "en": "Control the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.cliTest": {
+      "text": "Eine Prüfung mit einem Textbefehl ausführen",
+      "en": "Run a check using a text command",
+      "verdict": "pass",
+      "note": "Sol wrote this wording in round 2."
+    },
+    "stepup/de:label.engineManagement": {
+      "text": "Eine Engine installieren oder ändern",
+      "en": "Install or change an engine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.instanceStart": {
+      "text": "Ändern, wie eine Engine startet",
+      "en": "Change how an engine starts",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.claudeUpdate": {
+      "text": "Claude Code aktualisieren",
+      "en": "Update Claude Code",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.hermesImport": {
+      "text": "Hermes-Profile als Engines hinzufügen",
+      "en": "Add Hermes profiles as engines",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.engineSetupCheck": {
+      "text": "Prüfen, ob eine Engine antworten kann",
+      "en": "Check that an engine can answer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.engineSigninRecipe": {
+      "text": "Die Anmeldung bei einer Engine starten",
+      "en": "Start signing in to an engine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.engineSigninProbe": {
+      "text": "Prüfen, ob eine Engine angemeldet ist",
+      "en": "Check whether an engine is signed in",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.emailAccount": {
+      "text": "Bot-E-Mail für dieses Konto ein- oder ausschalten",
+      "en": "Turn bot email on or off for this account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.emailOtherSetup": {
+      "text": "Eine E-Mail-Adresse aus einer anderen Einrichtung entfernen",
+      "en": "Remove an email address from another setup",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.emailBot": {
+      "text": "Die E-Mail-Adresse eines Bots ändern oder ändern, wer ihm mailen darf",
+      "en": "Change a bot's email address or who can email it",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.email": {
+      "text": "Die Bot-E-Mail ändern",
+      "en": "Change bot email",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.attachmentsRemove": {
+      "text": "Anhangsdateien endgültig entfernen",
+      "en": "Remove attachment files for good",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.netlifyCheck": {
+      "text": "Eine Netlify-Verbindung prüfen",
+      "en": "Check a Netlify connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.voiceLibraryAdd": {
+      "text": "Eine Voice Library-Stimme zu deinem ElevenLabs-Konto hinzufügen",
+      "en": "Add a Voice Library voice to your ElevenLabs account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.mcpGrantCreate": {
+      "text": "Skript-Zugriff für einen Bot erstellen",
+      "en": "Create script access for a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.mcpGrantDelete": {
+      "text": "Einen Skript-Zugriff ausschalten",
+      "en": "Turn off an access permission for scripts",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/de:label.callRules": {
+      "text": "Ändern, wann ein Bot dich anrufen darf",
+      "en": "Change when a bot can call you",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.callsOffToday": {
+      "text": "Bot-Anrufe für heute ausschalten",
+      "en": "Turn bot calls off for today",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.noLimitsTerms": {
+      "text": "Die Bedingungen für Keine Grenzen akzeptieren",
+      "en": "Accept the No limits terms",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.callsRearm": {
+      "text": "Bot-Anrufe wieder einschalten",
+      "en": "Turn bot calls back on",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.callTurnEnd": {
+      "text": "Dich anrufen, wenn diese Aufgabe fertig ist",
+      "en": "Call you when this task finishes",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.routineCreate": {
+      "text": "Eine Routine erstellen",
+      "en": "Create a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.routineRun": {
+      "text": "Eine Routine jetzt ausführen",
+      "en": "Run a routine now",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.routineAlwaysAllow": {
+      "text": "Ändern, was eine Routine immer tun darf",
+      "en": "Change what a routine is always allowed to do",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.routineChange": {
+      "text": "Eine Routine ändern",
+      "en": "Change a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.routineDelete": {
+      "text": "Eine Routine löschen",
+      "en": "Delete a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.webhooksCreate": {
+      "text": "Externe Auslöser erstellen oder auflisten",
+      "en": "Create or list external triggers",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/de:label.webhookChange": {
+      "text": "Einen externen Auslöser ändern oder löschen",
+      "en": "Change or delete an external trigger",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/de:label.webhookRotate": {
+      "text": "Den Schlüssel eines externen Auslösers wechseln oder den Auslöser testen",
+      "en": "Change an external trigger's key or test the trigger",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/de:label.connectorAuthorize": {
+      "text": "Eine App verbinden",
+      "en": "Connect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.connectorDisconnect": {
+      "text": "Eine App trennen",
+      "en": "Disconnect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:label.fallback": {
+      "text": "Eine Änderung auf deinem Cloud-Home vornehmen",
+      "en": "Make a change on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:flag.fullAccess": {
+      "text": "Vollzugriff",
+      "en": "Full access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:flag.noLimits": {
+      "text": "Keine Grenzen",
+      "en": "No limits",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:flag.fullAccessChannelMessages": {
+      "text": "Vollzugriff für Kanalnachrichten",
+      "en": "Full access for channel messages",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:flag.fullAccessSetupRequests": {
+      "text": "Vollzugriff für Einrichtungsanfragen",
+      "en": "Full access for setup requests",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:flag.autoApprove": {
+      "text": "Automatische Freigabe",
+      "en": "Auto-approve",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:flag.localAuto": {
+      "text": "Automatische Freigabe auf dem Host-Computer",
+      "en": "Auto-approve on the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:flag.permissionMode": {
+      "text": "Berechtigungsmodus \"{mode}\"",
+      "en": "Permission mode \"{mode}\"",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:flag.hostComputerBot": {
+      "text": "Ein Bot, der den Host-Computer nutzt",
+      "en": "A bot using the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:flag.hostComputerConsent": {
+      "text": "Zugriff auf den Host-Computer",
+      "en": "Host computer access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:flag.alwaysAllow": {
+      "text": "Eine Immer-erlauben-Regel",
+      "en": "An always-allow rule",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:line.bot": {
+      "text": "Bot: {bot}",
+      "en": "Bot: {bot}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:line.name": {
+      "text": "Name: {name}",
+      "en": "Name: {name}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:line.deviceType": {
+      "text": "Gerätetyp: {type}",
+      "en": "Device type: {type}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:line.deviceKey": {
+      "text": "Geräteschlüssel: {key}",
+      "en": "Device key: {key}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:line.settings": {
+      "text": "Einstellungen: {names}",
+      "en": "Settings: {names}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:line.turnsOn": {
+      "text": "Schaltet ein: {flags}",
+      "en": "Turns on: {flags}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:line.unknown": {
+      "text": "unbekannt",
+      "en": "unknown",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:dialog.title": {
+      "text": "Auf deiner Cloud bestätigen",
+      "en": "Confirm on your Cloud",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:dialog.confirm": {
+      "text": "Bestätigen",
+      "en": "Confirm",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/de:dialog.cancel": {
+      "text": "Abbrechen",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.cloudPairing": {
+      "text": "Añadir un dispositivo nuevo a tu hogar en Cloud",
+      "en": "Add a new device to your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.cloudDevicesAccount": {
+      "text": "Cambiar los dispositivos o la cuenta de tu hogar en Cloud",
+      "en": "Change the devices or the account on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.modelSigninStart": {
+      "text": "Comenzar el proceso de inicio de sesión de un modelo en tu hogar en Cloud",
+      "en": "Start a model sign-in on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/es:label.modelSigninSignOut": {
+      "text": "Cerrar la sesión de un modelo en tu hogar en Cloud",
+      "en": "Sign a model out of your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.modelSigninCancel": {
+      "text": "Cancelar un inicio de sesión de modelo en tu hogar en Cloud",
+      "en": "Cancel a model sign-in on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.modelSigninRemove": {
+      "text": "Quitar una conexión de modelo de tu hogar en Cloud",
+      "en": "Remove a model connection from your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.ownServer": {
+      "text": "Cambiar el servidor que tus bots usan como ordenador",
+      "en": "Change the server your bots use as a computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.engineLogin": {
+      "text": "Iniciar o cerrar sesión en un motor de tu hogar en Cloud",
+      "en": "Sign in or out of an engine on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.botCreate": {
+      "text": "Crear un bot",
+      "en": "Create a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.botDelete": {
+      "text": "Eliminar un bot y sus conversaciones",
+      "en": "Delete a bot and its conversations",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.botSettings": {
+      "text": "Cambiar los ajustes de un bot",
+      "en": "Change a bot's settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.botProfile": {
+      "text": "Cambiar el nombre, la personalidad o la voz de un bot",
+      "en": "Change a bot's name, personality or voice",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.botTask": {
+      "text": "Cambiar una tarea de un bot",
+      "en": "Change a task of a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.botPermissionsRefresh": {
+      "text": "Dar a los chats abiertos del bot sus nuevos permisos predeterminados",
+      "en": "Give the bot's open chats its new default permissions",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.taskPermissionsRefresh": {
+      "text": "Dar a un chat los permisos actuales del bot",
+      "en": "Give a chat the bot's current permissions",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.limitBackup": {
+      "text": "Cambiar el motor que toma el relevo cuando un bot llega a su límite",
+      "en": "Change the engine that takes over when a bot hits its limit",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.botAccess": {
+      "text": "Cambiar quién puede pedirle a un bot que trabaje",
+      "en": "Change who can ask a bot to work",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/es:label.botSharing": {
+      "text": "Cambiar cómo se comparte un bot",
+      "en": "Change how a bot is shared",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.botShareSkills": {
+      "text": "Compartir las habilidades de un bot",
+      "en": "Share a bot's skills",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.botShareCopy": {
+      "text": "Hacer una copia de un bot para un equipo",
+      "en": "Make a copy of a bot for a team",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.botAlwaysAllow": {
+      "text": "Cambiar lo que un bot tiene permitido hacer siempre",
+      "en": "Change what a bot is always allowed to do",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.botTaskAllow": {
+      "text": "Retirar los permisos concedidos a un bot para una tarea",
+      "en": "Take back what a bot was allowed to do for a task",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/es:label.botSkills": {
+      "text": "Cambiar las habilidades de un bot",
+      "en": "Change a bot's skills",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.botSkill": {
+      "text": "Cambiar o revertir una habilidad de un bot",
+      "en": "Change a bot's skill or return it to an earlier version",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/es:label.heldContinuation": {
+      "text": "Dejar que un bot continúe un paso en pausa",
+      "en": "Let a bot continue a paused step",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/es:label.restoreHold": {
+      "text": "Liberar un elemento que tu restauración retuvo",
+      "en": "Release an item held back when you restored your data",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/es:label.botMessageAllow": {
+      "text": "Cambiar a quién puede escribir un bot",
+      "en": "Change who a bot can message",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.secretCard": {
+      "text": "Responder a la petición de una clave de un bot",
+      "en": "Answer a bot's request for a key",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.connectorCard": {
+      "text": "Responder a la petición de un bot para conectar una aplicación",
+      "en": "Answer a bot's request to connect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.mcpSigninCard": {
+      "text": "Responder a la petición de un bot para iniciar sesión en una herramienta",
+      "en": "Answer a bot's request to sign in to a tool",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.mcpEnableCard": {
+      "text": "Activar un servidor de herramientas que añadió un bot",
+      "en": "Turn on a tool server a bot added",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.publishedSites": {
+      "text": "Cambiar o retirar un sitio que publicó un bot",
+      "en": "Change or take down a site a bot published",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.cloudComputerJoin": {
+      "text": "Abrir el ordenador en la nube de un bot",
+      "en": "Open a bot's cloud computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.cloudComputerControl": {
+      "text": "Controlar el ordenador en la nube de un bot",
+      "en": "Control a bot's cloud computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.botHostComputer": {
+      "text": "Controlar el ordenador anfitrión de un bot",
+      "en": "Control a bot's host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.botBrowser": {
+      "text": "Cambiar el acceso de un bot al navegador",
+      "en": "Change a bot's browser access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.browserClients": {
+      "text": "Vincular un navegador o eliminar su vinculación",
+      "en": "Pair a browser or remove a browser pairing",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/es:label.linuxSandbox": {
+      "text": "Activar el navegador del bot en este ordenador Linux",
+      "en": "Enable the bot browser on this Linux computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.projectBudgetChange": {
+      "text": "Cambiar el presupuesto de un proyecto",
+      "en": "Change a project's budget",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.projectBudgetSet": {
+      "text": "Fijar el presupuesto de un proyecto",
+      "en": "Set a project's budget",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.projectWorkRoots": {
+      "text": "Elegir las carpetas en las que puede trabajar un proyecto",
+      "en": "Choose the folders a project can work in",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.projectWorkProfile": {
+      "text": "Cambiar el perfil de trabajo de un proyecto",
+      "en": "Change a project's work profile",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.projectSettings": {
+      "text": "Cambiar los ajustes de un proyecto",
+      "en": "Change a project's settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.roomShareAnswer": {
+      "text": "Compartir o mantener en privado lo que un bot encontró en sus otros chats",
+      "en": "Share or keep private what a bot found in its other chats",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.roomShareAsk": {
+      "text": "Pedir a un bot que busque en sus otros chats para esta sala",
+      "en": "Ask a bot to look in its other chats for this room",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.groupChange": {
+      "text": "Cambiar un equipo o grupo",
+      "en": "Change a team or group",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.groupDelete": {
+      "text": "Eliminar un equipo o grupo",
+      "en": "Delete a team or group",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.teamsImportExport": {
+      "text": "Importar o exportar un equipo",
+      "en": "Import or export a team",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.teamLibraryGithub": {
+      "text": "Descargar un equipo desde GitHub",
+      "en": "Download a team from GitHub",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.teamLibraryGrok": {
+      "text": "Traer un Grok Bot",
+      "en": "Bring in a Grok Bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.packagesImportExport": {
+      "text": "Importar o exportar un paquete",
+      "en": "Import or export a package",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.starterProfiles": {
+      "text": "Instalar un perfil inicial",
+      "en": "Install a starter profile",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.moveLend": {
+      "text": "Mover o prestar el trabajo de un bot entre equipos",
+      "en": "Move or lend a bot's work between teams",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.appConfig": {
+      "text": "Cambiar los ajustes de la aplicación",
+      "en": "Change app settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.fluxConnection": {
+      "text": "Cambiar tu conexión con Flux",
+      "en": "Change your Flux connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.providerConnection": {
+      "text": "Cambiar la conexión con un proveedor de modelos",
+      "en": "Change a model provider connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.localModels": {
+      "text": "Cambiar los modelos locales",
+      "en": "Change the local models",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.claudeAccounts": {
+      "text": "Cambiar una cuenta de Claude",
+      "en": "Change a Claude account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.chatChannels": {
+      "text": "Cambiar una conexión de Telegram, Slack o Discord",
+      "en": "Change a Telegram, Slack or Discord connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.whatsapp": {
+      "text": "Cambiar la conexión de WhatsApp",
+      "en": "Change the WhatsApp connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.memory": {
+      "text": "Cambiar la memoria",
+      "en": "Change memory",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.skillsCollection": {
+      "text": "Cambiar la colección de habilidades",
+      "en": "Change the skills collection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.mcpServers": {
+      "text": "Instalar o cambiar un servidor de herramientas",
+      "en": "Install or change a tool server",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.mcpInspect": {
+      "text": "Comprobar un servidor de herramientas",
+      "en": "Check a tool server",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.folderTrust": {
+      "text": "Cambiar en qué carpetas confía un motor",
+      "en": "Change which folders an engine trusts",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.hostComputer": {
+      "text": "Controlar el ordenador anfitrión",
+      "en": "Control the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.cliTest": {
+      "text": "Ejecutar una comprobación usando un comando de texto",
+      "en": "Run a check using a text command",
+      "verdict": "pass",
+      "note": "Sol wrote this wording in round 2."
+    },
+    "stepup/es:label.engineManagement": {
+      "text": "Instalar o cambiar un motor",
+      "en": "Install or change an engine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.instanceStart": {
+      "text": "Cambiar cómo arranca un motor",
+      "en": "Change how an engine starts",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.claudeUpdate": {
+      "text": "Actualizar Claude Code",
+      "en": "Update Claude Code",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.hermesImport": {
+      "text": "Añadir perfiles de Hermes como motores",
+      "en": "Add Hermes profiles as engines",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.engineSetupCheck": {
+      "text": "Comprobar que un motor puede responder",
+      "en": "Check that an engine can answer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.engineSigninRecipe": {
+      "text": "Empezar a iniciar sesión en un motor",
+      "en": "Start signing in to an engine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.engineSigninProbe": {
+      "text": "Comprobar si hay sesión iniciada en un motor",
+      "en": "Check whether an engine is signed in",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.emailAccount": {
+      "text": "Activar o desactivar el correo del bot para esta cuenta",
+      "en": "Turn bot email on or off for this account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.emailOtherSetup": {
+      "text": "Quitar una dirección de correo de otra configuración",
+      "en": "Remove an email address from another setup",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.emailBot": {
+      "text": "Cambiar la dirección de correo de un bot o quién puede escribirle",
+      "en": "Change a bot's email address or who can email it",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.email": {
+      "text": "Cambiar el correo del bot",
+      "en": "Change bot email",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.attachmentsRemove": {
+      "text": "Eliminar archivos adjuntos para siempre",
+      "en": "Remove attachment files for good",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.netlifyCheck": {
+      "text": "Comprobar una conexión de Netlify",
+      "en": "Check a Netlify connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.voiceLibraryAdd": {
+      "text": "Añadir una voz de Voice Library a tu cuenta de ElevenLabs",
+      "en": "Add a Voice Library voice to your ElevenLabs account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.mcpGrantCreate": {
+      "text": "Crear acceso por script para un bot",
+      "en": "Create script access for a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.mcpGrantDelete": {
+      "text": "Desactivar un acceso por script",
+      "en": "Turn off an access permission for scripts",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/es:label.callRules": {
+      "text": "Cambiar cuándo puede llamarte un bot",
+      "en": "Change when a bot can call you",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.callsOffToday": {
+      "text": "Desactivar las llamadas del bot por hoy",
+      "en": "Turn bot calls off for today",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.noLimitsTerms": {
+      "text": "Aceptar los términos de Sin límites",
+      "en": "Accept the No limits terms",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.callsRearm": {
+      "text": "Volver a activar las llamadas del bot",
+      "en": "Turn bot calls back on",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.callTurnEnd": {
+      "text": "Llamarte cuando termine esta tarea",
+      "en": "Call you when this task finishes",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.routineCreate": {
+      "text": "Crear una rutina",
+      "en": "Create a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.routineRun": {
+      "text": "Ejecutar una rutina ahora",
+      "en": "Run a routine now",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.routineAlwaysAllow": {
+      "text": "Cambiar lo que una rutina tiene permitido hacer siempre",
+      "en": "Change what a routine is always allowed to do",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.routineChange": {
+      "text": "Cambiar una rutina",
+      "en": "Change a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.routineDelete": {
+      "text": "Eliminar una rutina",
+      "en": "Delete a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.webhooksCreate": {
+      "text": "Crear o listar disparadores externos",
+      "en": "Create or list external triggers",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.webhookChange": {
+      "text": "Cambiar o eliminar un disparador externo",
+      "en": "Change or delete an external trigger",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.webhookRotate": {
+      "text": "Cambiar la clave de un disparador externo o probar el disparador",
+      "en": "Change an external trigger's key or test the trigger",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/es:label.connectorAuthorize": {
+      "text": "Conectar una aplicación",
+      "en": "Connect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.connectorDisconnect": {
+      "text": "Desconectar una aplicación",
+      "en": "Disconnect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:label.fallback": {
+      "text": "Hacer un cambio en tu hogar en Cloud",
+      "en": "Make a change on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:flag.fullAccess": {
+      "text": "Acceso total",
+      "en": "Full access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:flag.noLimits": {
+      "text": "Sin límites",
+      "en": "No limits",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:flag.fullAccessChannelMessages": {
+      "text": "Acceso total para mensajes de canales",
+      "en": "Full access for channel messages",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:flag.fullAccessSetupRequests": {
+      "text": "Acceso total para peticiones de configuración",
+      "en": "Full access for setup requests",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:flag.autoApprove": {
+      "text": "Aprobación automática",
+      "en": "Auto-approve",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:flag.localAuto": {
+      "text": "Aprobación automática en el ordenador anfitrión",
+      "en": "Auto-approve on the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:flag.permissionMode": {
+      "text": "Modo de permisos \"{mode}\"",
+      "en": "Permission mode \"{mode}\"",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:flag.hostComputerBot": {
+      "text": "Un bot que usa el ordenador anfitrión",
+      "en": "A bot using the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:flag.hostComputerConsent": {
+      "text": "Acceso al ordenador anfitrión",
+      "en": "Host computer access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:flag.alwaysAllow": {
+      "text": "Una regla de permitir siempre",
+      "en": "An always-allow rule",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:line.bot": {
+      "text": "Bot: {bot}",
+      "en": "Bot: {bot}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:line.name": {
+      "text": "Nombre: {name}",
+      "en": "Name: {name}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:line.deviceType": {
+      "text": "Tipo de dispositivo: {type}",
+      "en": "Device type: {type}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:line.deviceKey": {
+      "text": "Clave del dispositivo: {key}",
+      "en": "Device key: {key}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:line.settings": {
+      "text": "Ajustes: {names}",
+      "en": "Settings: {names}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:line.turnsOn": {
+      "text": "Activa: {flags}",
+      "en": "Turns on: {flags}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:line.unknown": {
+      "text": "desconocido",
+      "en": "unknown",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:dialog.title": {
+      "text": "Confirmar en tu Cloud",
+      "en": "Confirm on your Cloud",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:dialog.confirm": {
+      "text": "Confirmar",
+      "en": "Confirm",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/es:dialog.cancel": {
+      "text": "Cancelar",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.cloudPairing": {
+      "text": "Ajouter un nouvel appareil à ton foyer Cloud",
+      "en": "Add a new device to your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.cloudDevicesAccount": {
+      "text": "Modifier les appareils ou le compte de ton foyer Cloud",
+      "en": "Change the devices or the account on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.modelSigninStart": {
+      "text": "Démarrer une connexion de modèle sur ton foyer Cloud",
+      "en": "Start a model sign-in on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.modelSigninSignOut": {
+      "text": "Fermer la session d'un modèle sur ton foyer Cloud",
+      "en": "Sign a model out of your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/fr:label.modelSigninCancel": {
+      "text": "Annuler une connexion de modèle sur ton foyer Cloud",
+      "en": "Cancel a model sign-in on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.modelSigninRemove": {
+      "text": "Supprimer une connexion de modèle de ton foyer Cloud",
+      "en": "Remove a model connection from your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.ownServer": {
+      "text": "Modifier le serveur que tes bots utilisent comme ordinateur",
+      "en": "Change the server your bots use as a computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.engineLogin": {
+      "text": "Te connecter à un moteur ou t'en déconnecter sur ton foyer Cloud",
+      "en": "Sign in or out of an engine on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.botCreate": {
+      "text": "Créer un bot",
+      "en": "Create a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.botDelete": {
+      "text": "Supprimer un bot et ses conversations",
+      "en": "Delete a bot and its conversations",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.botSettings": {
+      "text": "Modifier les réglages d'un bot",
+      "en": "Change a bot's settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.botProfile": {
+      "text": "Modifier le nom, la personnalité ou la voix d'un bot",
+      "en": "Change a bot's name, personality or voice",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.botTask": {
+      "text": "Modifier une tâche d'un bot",
+      "en": "Change a task of a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.botPermissionsRefresh": {
+      "text": "Donner aux conversations ouvertes du bot ses nouvelles permissions par défaut",
+      "en": "Give the bot's open chats its new default permissions",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.taskPermissionsRefresh": {
+      "text": "Donner à une conversation les permissions actuelles du bot",
+      "en": "Give a chat the bot's current permissions",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.limitBackup": {
+      "text": "Modifier le moteur qui prend le relais quand un bot atteint sa limite",
+      "en": "Change the engine that takes over when a bot hits its limit",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.botAccess": {
+      "text": "Modifier qui peut demander à un bot de travailler",
+      "en": "Change who can ask a bot to work",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.botSharing": {
+      "text": "Modifier la façon dont un bot est partagé",
+      "en": "Change how a bot is shared",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.botShareSkills": {
+      "text": "Partager les compétences d'un bot",
+      "en": "Share a bot's skills",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.botShareCopy": {
+      "text": "Faire une copie d'un bot pour une équipe",
+      "en": "Make a copy of a bot for a team",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.botAlwaysAllow": {
+      "text": "Modifier ce qu'un bot a toujours le droit de faire",
+      "en": "Change what a bot is always allowed to do",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.botTaskAllow": {
+      "text": "Retirer à un bot les permissions accordées pour une tâche",
+      "en": "Take back what a bot was allowed to do for a task",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/fr:label.botSkills": {
+      "text": "Modifier les compétences d'un bot",
+      "en": "Change a bot's skills",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.botSkill": {
+      "text": "Modifier une compétence d'un bot ou revenir à sa version précédente",
+      "en": "Change a bot's skill or return it to an earlier version",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/fr:label.heldContinuation": {
+      "text": "Laisser un bot poursuivre une étape en pause",
+      "en": "Let a bot continue a paused step",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/fr:label.restoreHold": {
+      "text": "Libérer un élément mis en attente lors de ta restauration",
+      "en": "Release an item held back when you restored your data",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/fr:label.botMessageAllow": {
+      "text": "Modifier à qui un bot peut écrire",
+      "en": "Change who a bot can message",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.secretCard": {
+      "text": "Répondre à la demande de clé d'un bot",
+      "en": "Answer a bot's request for a key",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.connectorCard": {
+      "text": "Répondre à la demande d'un bot pour connecter une application",
+      "en": "Answer a bot's request to connect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.mcpSigninCard": {
+      "text": "Répondre à la demande d'un bot pour se connecter à un outil",
+      "en": "Answer a bot's request to sign in to a tool",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.mcpEnableCard": {
+      "text": "Activer un serveur d'outils ajouté par un bot",
+      "en": "Turn on a tool server a bot added",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.publishedSites": {
+      "text": "Modifier ou retirer un site publié par un bot",
+      "en": "Change or take down a site a bot published",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.cloudComputerJoin": {
+      "text": "Ouvrir l'ordinateur cloud d'un bot",
+      "en": "Open a bot's cloud computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.cloudComputerControl": {
+      "text": "Contrôler l'ordinateur cloud d'un bot",
+      "en": "Control a bot's cloud computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.botHostComputer": {
+      "text": "Contrôler l'ordinateur hôte d'un bot",
+      "en": "Control a bot's host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.botBrowser": {
+      "text": "Modifier l'accès d'un bot au navigateur",
+      "en": "Change a bot's browser access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.browserClients": {
+      "text": "Associer un navigateur ou supprimer son association",
+      "en": "Pair a browser or remove a browser pairing",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/fr:label.linuxSandbox": {
+      "text": "Activer le navigateur du bot sur cet ordinateur Linux",
+      "en": "Enable the bot browser on this Linux computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.projectBudgetChange": {
+      "text": "Modifier le budget d'un projet",
+      "en": "Change a project's budget",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.projectBudgetSet": {
+      "text": "Définir le budget d'un projet",
+      "en": "Set a project's budget",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.projectWorkRoots": {
+      "text": "Choisir les dossiers dans lesquels un projet peut travailler",
+      "en": "Choose the folders a project can work in",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.projectWorkProfile": {
+      "text": "Modifier le profil de travail d'un projet",
+      "en": "Change a project's work profile",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.projectSettings": {
+      "text": "Modifier les réglages d'un projet",
+      "en": "Change a project's settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.roomShareAnswer": {
+      "text": "Partager ou garder privé ce qu'un bot a trouvé dans ses autres conversations",
+      "en": "Share or keep private what a bot found in its other chats",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.roomShareAsk": {
+      "text": "Demander à un bot de chercher dans ses autres conversations pour ce salon",
+      "en": "Ask a bot to look in its other chats for this room",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.groupChange": {
+      "text": "Modifier une équipe ou un groupe",
+      "en": "Change a team or group",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.groupDelete": {
+      "text": "Supprimer une équipe ou un groupe",
+      "en": "Delete a team or group",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.teamsImportExport": {
+      "text": "Importer ou exporter une équipe",
+      "en": "Import or export a team",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.teamLibraryGithub": {
+      "text": "Télécharger une équipe depuis GitHub",
+      "en": "Download a team from GitHub",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.teamLibraryGrok": {
+      "text": "Importer un Grok Bot",
+      "en": "Bring in a Grok Bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.packagesImportExport": {
+      "text": "Importer ou exporter un paquet",
+      "en": "Import or export a package",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.starterProfiles": {
+      "text": "Installer un profil de départ",
+      "en": "Install a starter profile",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.moveLend": {
+      "text": "Déplacer ou prêter le travail d'un bot entre équipes",
+      "en": "Move or lend a bot's work between teams",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.appConfig": {
+      "text": "Modifier les réglages de l'application",
+      "en": "Change app settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.fluxConnection": {
+      "text": "Modifier ta connexion Flux",
+      "en": "Change your Flux connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.providerConnection": {
+      "text": "Modifier la connexion d'un fournisseur de modèles",
+      "en": "Change a model provider connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.localModels": {
+      "text": "Modifier les modèles locaux",
+      "en": "Change the local models",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.claudeAccounts": {
+      "text": "Modifier un compte Claude",
+      "en": "Change a Claude account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.chatChannels": {
+      "text": "Modifier une connexion Telegram, Slack ou Discord",
+      "en": "Change a Telegram, Slack or Discord connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.whatsapp": {
+      "text": "Modifier la connexion WhatsApp",
+      "en": "Change the WhatsApp connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.memory": {
+      "text": "Modifier la mémoire",
+      "en": "Change memory",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.skillsCollection": {
+      "text": "Modifier la collection de compétences",
+      "en": "Change the skills collection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.mcpServers": {
+      "text": "Installer ou modifier un serveur d'outils",
+      "en": "Install or change a tool server",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.mcpInspect": {
+      "text": "Vérifier un serveur d'outils",
+      "en": "Check a tool server",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.folderTrust": {
+      "text": "Modifier les dossiers auxquels un moteur fait confiance",
+      "en": "Change which folders an engine trusts",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.hostComputer": {
+      "text": "Contrôler l'ordinateur hôte",
+      "en": "Control the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.cliTest": {
+      "text": "Lancer une vérification avec une commande textuelle",
+      "en": "Run a check using a text command",
+      "verdict": "pass",
+      "note": "Sol wrote this wording in round 2."
+    },
+    "stepup/fr:label.engineManagement": {
+      "text": "Installer ou modifier un moteur",
+      "en": "Install or change an engine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.instanceStart": {
+      "text": "Modifier la façon dont un moteur démarre",
+      "en": "Change how an engine starts",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.claudeUpdate": {
+      "text": "Mettre à jour Claude Code",
+      "en": "Update Claude Code",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.hermesImport": {
+      "text": "Ajouter des profils Hermes comme moteurs",
+      "en": "Add Hermes profiles as engines",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.engineSetupCheck": {
+      "text": "Vérifier qu'un moteur peut répondre",
+      "en": "Check that an engine can answer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.engineSigninRecipe": {
+      "text": "Commencer à te connecter à un moteur",
+      "en": "Start signing in to an engine",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/fr:label.engineSigninProbe": {
+      "text": "Vérifier si une session est ouverte sur un moteur",
+      "en": "Check whether an engine is signed in",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.emailAccount": {
+      "text": "Activer ou désactiver l'e-mail des bots pour ce compte",
+      "en": "Turn bot email on or off for this account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.emailOtherSetup": {
+      "text": "Retirer une adresse e-mail d'une autre installation",
+      "en": "Remove an email address from another setup",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.emailBot": {
+      "text": "Modifier l'adresse e-mail d'un bot ou qui peut lui écrire",
+      "en": "Change a bot's email address or who can email it",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.email": {
+      "text": "Modifier l'e-mail des bots",
+      "en": "Change bot email",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.attachmentsRemove": {
+      "text": "Supprimer définitivement des fichiers joints",
+      "en": "Remove attachment files for good",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.netlifyCheck": {
+      "text": "Vérifier une connexion Netlify",
+      "en": "Check a Netlify connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.voiceLibraryAdd": {
+      "text": "Ajouter une voix de la Voice Library à ton compte ElevenLabs",
+      "en": "Add a Voice Library voice to your ElevenLabs account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.mcpGrantCreate": {
+      "text": "Créer un accès par script pour un bot",
+      "en": "Create script access for a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.mcpGrantDelete": {
+      "text": "Désactiver un accès par script",
+      "en": "Turn off an access permission for scripts",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/fr:label.callRules": {
+      "text": "Modifier quand un bot peut t'appeler",
+      "en": "Change when a bot can call you",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.callsOffToday": {
+      "text": "Désactiver les appels des bots pour aujourd'hui",
+      "en": "Turn bot calls off for today",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.noLimitsTerms": {
+      "text": "Accepter les conditions de Sans limites",
+      "en": "Accept the No limits terms",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.callsRearm": {
+      "text": "Réactiver les appels des bots",
+      "en": "Turn bot calls back on",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.callTurnEnd": {
+      "text": "T'appeler quand cette tâche est terminée",
+      "en": "Call you when this task finishes",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.routineCreate": {
+      "text": "Créer une routine",
+      "en": "Create a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.routineRun": {
+      "text": "Lancer une routine maintenant",
+      "en": "Run a routine now",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.routineAlwaysAllow": {
+      "text": "Modifier ce qu'une routine a toujours le droit de faire",
+      "en": "Change what a routine is always allowed to do",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.routineChange": {
+      "text": "Modifier une routine",
+      "en": "Change a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.routineDelete": {
+      "text": "Supprimer une routine",
+      "en": "Delete a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.webhooksCreate": {
+      "text": "Créer ou lister des déclencheurs externes",
+      "en": "Create or list external triggers",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.webhookChange": {
+      "text": "Modifier ou supprimer un déclencheur externe",
+      "en": "Change or delete an external trigger",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.webhookRotate": {
+      "text": "Changer la clé d'un déclencheur externe ou le tester",
+      "en": "Change an external trigger's key or test the trigger",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/fr:label.connectorAuthorize": {
+      "text": "Connecter une application",
+      "en": "Connect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.connectorDisconnect": {
+      "text": "Déconnecter une application",
+      "en": "Disconnect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:label.fallback": {
+      "text": "Effectuer une modification sur ton foyer Cloud",
+      "en": "Make a change on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:flag.fullAccess": {
+      "text": "Accès complet",
+      "en": "Full access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:flag.noLimits": {
+      "text": "Sans limites",
+      "en": "No limits",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:flag.fullAccessChannelMessages": {
+      "text": "Accès complet pour les messages de canal",
+      "en": "Full access for channel messages",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:flag.fullAccessSetupRequests": {
+      "text": "Accès complet pour les demandes de configuration",
+      "en": "Full access for setup requests",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:flag.autoApprove": {
+      "text": "Approbation automatique",
+      "en": "Auto-approve",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:flag.localAuto": {
+      "text": "Approbation automatique sur l'ordinateur hôte",
+      "en": "Auto-approve on the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:flag.permissionMode": {
+      "text": "Mode de permission « {mode} »",
+      "en": "Permission mode \"{mode}\"",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:flag.hostComputerBot": {
+      "text": "Un bot qui utilise l'ordinateur hôte",
+      "en": "A bot using the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:flag.hostComputerConsent": {
+      "text": "Accès à l'ordinateur hôte",
+      "en": "Host computer access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:flag.alwaysAllow": {
+      "text": "Une règle d'autorisation permanente",
+      "en": "An always-allow rule",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:line.bot": {
+      "text": "Bot : {bot}",
+      "en": "Bot: {bot}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:line.name": {
+      "text": "Nom : {name}",
+      "en": "Name: {name}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:line.deviceType": {
+      "text": "Type d'appareil : {type}",
+      "en": "Device type: {type}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:line.deviceKey": {
+      "text": "Clé de l'appareil : {key}",
+      "en": "Device key: {key}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:line.settings": {
+      "text": "Réglages : {names}",
+      "en": "Settings: {names}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:line.turnsOn": {
+      "text": "Active : {flags}",
+      "en": "Turns on: {flags}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:line.unknown": {
+      "text": "inconnu",
+      "en": "unknown",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:dialog.title": {
+      "text": "Confirmer sur ton Cloud",
+      "en": "Confirm on your Cloud",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:dialog.confirm": {
+      "text": "Confirmer",
+      "en": "Confirm",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/fr:dialog.cancel": {
+      "text": "Annuler",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.cloudPairing": {
+      "text": "अपने Cloud होम में नया डिवाइस जोड़ना",
+      "en": "Add a new device to your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.cloudDevicesAccount": {
+      "text": "अपने Cloud होम के डिवाइस या खाते को बदलना",
+      "en": "Change the devices or the account on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.modelSigninStart": {
+      "text": "अपने Cloud होम पर मॉडल का साइन-इन शुरू करना",
+      "en": "Start a model sign-in on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.modelSigninSignOut": {
+      "text": "अपने Cloud होम से किसी मॉडल को साइन आउट करना",
+      "en": "Sign a model out of your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.modelSigninCancel": {
+      "text": "अपने Cloud होम पर मॉडल का साइन-इन रद्द करना",
+      "en": "Cancel a model sign-in on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.modelSigninRemove": {
+      "text": "अपने Cloud होम से मॉडल कनेक्शन हटाना",
+      "en": "Remove a model connection from your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.ownServer": {
+      "text": "आपके बॉट जिस सर्वर को कंप्यूटर की तरह इस्तेमाल करते हैं, उसे बदलना",
+      "en": "Change the server your bots use as a computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.engineLogin": {
+      "text": "अपने Cloud होम पर किसी इंजन में साइन इन या साइन आउट करना",
+      "en": "Sign in or out of an engine on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.botCreate": {
+      "text": "बॉट बनाना",
+      "en": "Create a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.botDelete": {
+      "text": "बॉट और उसकी बातचीत हटाना",
+      "en": "Delete a bot and its conversations",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.botSettings": {
+      "text": "बॉट की सेटिंग बदलना",
+      "en": "Change a bot's settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.botProfile": {
+      "text": "बॉट का नाम, व्यक्तित्व या आवाज़ बदलना",
+      "en": "Change a bot's name, personality or voice",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.botTask": {
+      "text": "बॉट का कोई कार्य बदलना",
+      "en": "Change a task of a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.botPermissionsRefresh": {
+      "text": "बॉट की खुली चैट को उसकी नई डिफ़ॉल्ट अनुमतियाँ देना",
+      "en": "Give the bot's open chats its new default permissions",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.taskPermissionsRefresh": {
+      "text": "किसी चैट को बॉट की मौजूदा अनुमतियाँ देना",
+      "en": "Give a chat the bot's current permissions",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.limitBackup": {
+      "text": "बॉट की सीमा पूरी होने पर काम सँभालने वाला इंजन बदलना",
+      "en": "Change the engine that takes over when a bot hits its limit",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.botAccess": {
+      "text": "बदलना कि बॉट से काम करने को कौन कह सकता है",
+      "en": "Change who can ask a bot to work",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.botSharing": {
+      "text": "बॉट को साझा करने का तरीका बदलना",
+      "en": "Change how a bot is shared",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.botShareSkills": {
+      "text": "बॉट की स्किल साझा करना",
+      "en": "Share a bot's skills",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.botShareCopy": {
+      "text": "किसी टीम के लिए बॉट की प्रति बनाना",
+      "en": "Make a copy of a bot for a team",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.botAlwaysAllow": {
+      "text": "बदलना कि बॉट को हमेशा क्या करने की अनुमति है",
+      "en": "Change what a bot is always allowed to do",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.botTaskAllow": {
+      "text": "किसी कार्य के लिए बॉट को दी गई अनुमति वापस लेना",
+      "en": "Take back what a bot was allowed to do for a task",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.botSkills": {
+      "text": "बॉट की स्किल बदलना",
+      "en": "Change a bot's skills",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.botSkill": {
+      "text": "बॉट की कोई स्किल बदलना या पिछले रूप में लौटाना",
+      "en": "Change a bot's skill or return it to an earlier version",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/hi:label.heldContinuation": {
+      "text": "बॉट के रोके गए चरण को आगे बढ़ने देना",
+      "en": "Let a bot continue a paused step",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/hi:label.restoreHold": {
+      "text": "अपना डेटा वापस लाते समय रोकी गई किसी चीज़ पर लगी रोक हटाना",
+      "en": "Release an item held back when you restored your data",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/hi:label.botMessageAllow": {
+      "text": "बदलना कि बॉट किसे संदेश भेज सकता है",
+      "en": "Change who a bot can message",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.secretCard": {
+      "text": "कुंजी माँगने वाले बॉट के अनुरोध का जवाब देना",
+      "en": "Answer a bot's request for a key",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/hi:label.connectorCard": {
+      "text": "बॉट के ऐप कनेक्ट करने के अनुरोध का जवाब देना",
+      "en": "Answer a bot's request to connect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.mcpSigninCard": {
+      "text": "बॉट के किसी टूल में साइन इन करने के अनुरोध का जवाब देना",
+      "en": "Answer a bot's request to sign in to a tool",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.mcpEnableCard": {
+      "text": "बॉट द्वारा जोड़ा गया टूल सर्वर चालू करना",
+      "en": "Turn on a tool server a bot added",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.publishedSites": {
+      "text": "बॉट की प्रकाशित साइट को बदलना या हटाना",
+      "en": "Change or take down a site a bot published",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.cloudComputerJoin": {
+      "text": "बॉट का क्लाउड कंप्यूटर खोलना",
+      "en": "Open a bot's cloud computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.cloudComputerControl": {
+      "text": "बॉट के क्लाउड कंप्यूटर को नियंत्रित करना",
+      "en": "Control a bot's cloud computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.botHostComputer": {
+      "text": "बॉट के होस्ट कंप्यूटर को नियंत्रित करना",
+      "en": "Control a bot's host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.botBrowser": {
+      "text": "बॉट की ब्राउज़र पहुँच बदलना",
+      "en": "Change a bot's browser access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.browserClients": {
+      "text": "ब्राउज़र को जोड़ना या उसका कनेक्शन हटाना",
+      "en": "Pair a browser or remove a browser pairing",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/hi:label.linuxSandbox": {
+      "text": "इस Linux कंप्यूटर पर बॉट ब्राउज़र चालू करना",
+      "en": "Enable the bot browser on this Linux computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.projectBudgetChange": {
+      "text": "प्रोजेक्ट का बजट बदलना",
+      "en": "Change a project's budget",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.projectBudgetSet": {
+      "text": "प्रोजेक्ट का बजट तय करना",
+      "en": "Set a project's budget",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.projectWorkRoots": {
+      "text": "वे फ़ोल्डर चुनना जिनमें प्रोजेक्ट काम कर सकता है",
+      "en": "Choose the folders a project can work in",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.projectWorkProfile": {
+      "text": "प्रोजेक्ट की कार्य प्रोफ़ाइल बदलना",
+      "en": "Change a project's work profile",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.projectSettings": {
+      "text": "प्रोजेक्ट की सेटिंग बदलना",
+      "en": "Change a project's settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.roomShareAnswer": {
+      "text": "बॉट को अपनी दूसरी चैट में जो मिला, उसे साझा करना या निजी रखना",
+      "en": "Share or keep private what a bot found in its other chats",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.roomShareAsk": {
+      "text": "बॉट से इस रूम के लिए उसकी दूसरी चैट में देखने को कहना",
+      "en": "Ask a bot to look in its other chats for this room",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.groupChange": {
+      "text": "टीम या समूह को बदलना",
+      "en": "Change a team or group",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.groupDelete": {
+      "text": "टीम या समूह को हटाना",
+      "en": "Delete a team or group",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.teamsImportExport": {
+      "text": "टीम इंपोर्ट या एक्सपोर्ट करना",
+      "en": "Import or export a team",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.teamLibraryGithub": {
+      "text": "GitHub से टीम डाउनलोड करना",
+      "en": "Download a team from GitHub",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.teamLibraryGrok": {
+      "text": "Grok Bot को लाना",
+      "en": "Bring in a Grok Bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.packagesImportExport": {
+      "text": "पैकेज इंपोर्ट या एक्सपोर्ट करना",
+      "en": "Import or export a package",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.starterProfiles": {
+      "text": "स्टार्टर प्रोफ़ाइल इंस्टॉल करना",
+      "en": "Install a starter profile",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.moveLend": {
+      "text": "बॉट के काम को टीमों के बीच ले जाना या उधार देना",
+      "en": "Move or lend a bot's work between teams",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.appConfig": {
+      "text": "ऐप की सेटिंग बदलना",
+      "en": "Change app settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.fluxConnection": {
+      "text": "अपना Flux कनेक्शन बदलना",
+      "en": "Change your Flux connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.providerConnection": {
+      "text": "मॉडल प्रदाता का कनेक्शन बदलना",
+      "en": "Change a model provider connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.localModels": {
+      "text": "लोकल मॉडल बदलना",
+      "en": "Change the local models",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.claudeAccounts": {
+      "text": "Claude खाता बदलना",
+      "en": "Change a Claude account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.chatChannels": {
+      "text": "Telegram, Slack या Discord कनेक्शन बदलना",
+      "en": "Change a Telegram, Slack or Discord connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.whatsapp": {
+      "text": "WhatsApp कनेक्शन बदलना",
+      "en": "Change the WhatsApp connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.memory": {
+      "text": "मेमोरी बदलना",
+      "en": "Change memory",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.skillsCollection": {
+      "text": "स्किल संग्रह बदलना",
+      "en": "Change the skills collection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.mcpServers": {
+      "text": "टूल सर्वर इंस्टॉल करना या बदलना",
+      "en": "Install or change a tool server",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.mcpInspect": {
+      "text": "टूल सर्वर की जाँच करना",
+      "en": "Check a tool server",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.folderTrust": {
+      "text": "बदलना कि इंजन किन फ़ोल्डर पर भरोसा करता है",
+      "en": "Change which folders an engine trusts",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.hostComputer": {
+      "text": "होस्ट कंप्यूटर को नियंत्रित करना",
+      "en": "Control the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.cliTest": {
+      "text": "टेक्स्ट कमांड से जाँच चलाना",
+      "en": "Run a check using a text command",
+      "verdict": "pass",
+      "note": "Sol wrote this wording in round 2."
+    },
+    "stepup/hi:label.engineManagement": {
+      "text": "इंजन इंस्टॉल करना या बदलना",
+      "en": "Install or change an engine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.instanceStart": {
+      "text": "बदलना कि इंजन कैसे शुरू होता है",
+      "en": "Change how an engine starts",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.claudeUpdate": {
+      "text": "Claude Code अपडेट करना",
+      "en": "Update Claude Code",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.hermesImport": {
+      "text": "Hermes प्रोफ़ाइल को इंजन के रूप में जोड़ना",
+      "en": "Add Hermes profiles as engines",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.engineSetupCheck": {
+      "text": "जाँचना कि इंजन जवाब दे सकता है",
+      "en": "Check that an engine can answer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.engineSigninRecipe": {
+      "text": "किसी इंजन में साइन इन करना शुरू करना",
+      "en": "Start signing in to an engine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.engineSigninProbe": {
+      "text": "जाँचना कि इंजन में साइन इन है या नहीं",
+      "en": "Check whether an engine is signed in",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.emailAccount": {
+      "text": "इस खाते के लिए बॉट ईमेल चालू या बंद करना",
+      "en": "Turn bot email on or off for this account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.emailOtherSetup": {
+      "text": "किसी दूसरे सेटअप से ईमेल पता हटाना",
+      "en": "Remove an email address from another setup",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.emailBot": {
+      "text": "बॉट का ईमेल पता या उसे ईमेल कौन कर सकता है, यह बदलना",
+      "en": "Change a bot's email address or who can email it",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.email": {
+      "text": "बॉट ईमेल बदलना",
+      "en": "Change bot email",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.attachmentsRemove": {
+      "text": "अटैचमेंट फ़ाइलें हमेशा के लिए हटाना",
+      "en": "Remove attachment files for good",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.netlifyCheck": {
+      "text": "Netlify कनेक्शन की जाँच करना",
+      "en": "Check a Netlify connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.voiceLibraryAdd": {
+      "text": "Voice Library की कोई आवाज़ अपने ElevenLabs खाते में जोड़ना",
+      "en": "Add a Voice Library voice to your ElevenLabs account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.mcpGrantCreate": {
+      "text": "बॉट के लिए स्क्रिप्ट एक्सेस बनाना",
+      "en": "Create script access for a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.mcpGrantDelete": {
+      "text": "किसी स्क्रिप्ट एक्सेस को बंद करना",
+      "en": "Turn off an access permission for scripts",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/hi:label.callRules": {
+      "text": "बदलना कि बॉट आपको कब कॉल कर सकता है",
+      "en": "Change when a bot can call you",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.callsOffToday": {
+      "text": "आज के लिए बॉट कॉल बंद करना",
+      "en": "Turn bot calls off for today",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.noLimitsTerms": {
+      "text": "कोई सीमा नहीं की शर्तें स्वीकार करना",
+      "en": "Accept the No limits terms",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.callsRearm": {
+      "text": "बॉट कॉल फिर से चालू करना",
+      "en": "Turn bot calls back on",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.callTurnEnd": {
+      "text": "यह कार्य पूरा होने पर आपको कॉल करना",
+      "en": "Call you when this task finishes",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.routineCreate": {
+      "text": "रूटीन बनाना",
+      "en": "Create a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.routineRun": {
+      "text": "रूटीन अभी चलाना",
+      "en": "Run a routine now",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.routineAlwaysAllow": {
+      "text": "बदलना कि रूटीन को हमेशा क्या करने की अनुमति है",
+      "en": "Change what a routine is always allowed to do",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.routineChange": {
+      "text": "रूटीन बदलना",
+      "en": "Change a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.routineDelete": {
+      "text": "रूटीन हटाना",
+      "en": "Delete a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.webhooksCreate": {
+      "text": "बाहरी ट्रिगर बनाना या सूची में देखना",
+      "en": "Create or list external triggers",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.webhookChange": {
+      "text": "बाहरी ट्रिगर बदलना या हटाना",
+      "en": "Change or delete an external trigger",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.webhookRotate": {
+      "text": "बाहरी ट्रिगर की कुंजी बदलना या ट्रिगर की जाँच करना",
+      "en": "Change an external trigger's key or test the trigger",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/hi:label.connectorAuthorize": {
+      "text": "ऐप कनेक्ट करना",
+      "en": "Connect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.connectorDisconnect": {
+      "text": "ऐप डिसकनेक्ट करना",
+      "en": "Disconnect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:label.fallback": {
+      "text": "अपने Cloud होम पर बदलाव करना",
+      "en": "Make a change on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:flag.fullAccess": {
+      "text": "पूरी पहुँच",
+      "en": "Full access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:flag.noLimits": {
+      "text": "कोई सीमा नहीं",
+      "en": "No limits",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:flag.fullAccessChannelMessages": {
+      "text": "चैनल संदेशों के लिए पूरी पहुँच",
+      "en": "Full access for channel messages",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:flag.fullAccessSetupRequests": {
+      "text": "सेटअप अनुरोधों के लिए पूरी पहुँच",
+      "en": "Full access for setup requests",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:flag.autoApprove": {
+      "text": "अपने आप मंज़ूरी",
+      "en": "Auto-approve",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:flag.localAuto": {
+      "text": "होस्ट कंप्यूटर पर अपने आप मंज़ूरी",
+      "en": "Auto-approve on the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:flag.permissionMode": {
+      "text": "अनुमति मोड \"{mode}\"",
+      "en": "Permission mode \"{mode}\"",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:flag.hostComputerBot": {
+      "text": "होस्ट कंप्यूटर इस्तेमाल करने वाला बॉट",
+      "en": "A bot using the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:flag.hostComputerConsent": {
+      "text": "होस्ट कंप्यूटर तक पहुँच",
+      "en": "Host computer access",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/hi:flag.alwaysAllow": {
+      "text": "हमेशा अनुमति देने वाला नियम",
+      "en": "An always-allow rule",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:line.bot": {
+      "text": "बॉट: {bot}",
+      "en": "Bot: {bot}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:line.name": {
+      "text": "नाम: {name}",
+      "en": "Name: {name}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:line.deviceType": {
+      "text": "डिवाइस का प्रकार: {type}",
+      "en": "Device type: {type}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:line.deviceKey": {
+      "text": "डिवाइस की कुंजी: {key}",
+      "en": "Device key: {key}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:line.settings": {
+      "text": "सेटिंग: {names}",
+      "en": "Settings: {names}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:line.turnsOn": {
+      "text": "चालू होगा: {flags}",
+      "en": "Turns on: {flags}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:line.unknown": {
+      "text": "अज्ञात",
+      "en": "unknown",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:dialog.title": {
+      "text": "अपने Cloud पर पुष्टि करें",
+      "en": "Confirm on your Cloud",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:dialog.confirm": {
+      "text": "पुष्टि करें",
+      "en": "Confirm",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/hi:dialog.cancel": {
+      "text": "रद्द करें",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.cloudPairing": {
+      "text": "Cloud ホームに新しいデバイスを追加する",
+      "en": "Add a new device to your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.cloudDevicesAccount": {
+      "text": "Cloud ホームのデバイスまたはアカウントを変更する",
+      "en": "Change the devices or the account on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.modelSigninStart": {
+      "text": "Cloud ホームでモデルのログインを開始する",
+      "en": "Start a model sign-in on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.modelSigninSignOut": {
+      "text": "Cloud ホーム上のモデルをログアウトさせる",
+      "en": "Sign a model out of your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/ja:label.modelSigninCancel": {
+      "text": "Cloud ホームでモデルのログインをキャンセルする",
+      "en": "Cancel a model sign-in on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.modelSigninRemove": {
+      "text": "Cloud ホームからモデルの接続を削除する",
+      "en": "Remove a model connection from your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.ownServer": {
+      "text": "ボットがコンピューターとして使うサーバーを変更する",
+      "en": "Change the server your bots use as a computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.engineLogin": {
+      "text": "Cloud ホームでエンジンにログインするか、エンジンからログアウトする",
+      "en": "Sign in or out of an engine on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/ja:label.botCreate": {
+      "text": "ボットを作成する",
+      "en": "Create a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.botDelete": {
+      "text": "ボットとその会話を削除する",
+      "en": "Delete a bot and its conversations",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.botSettings": {
+      "text": "ボットの設定を変更する",
+      "en": "Change a bot's settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.botProfile": {
+      "text": "ボットの名前、性格、または声を変更する",
+      "en": "Change a bot's name, personality or voice",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.botTask": {
+      "text": "ボットのタスクを変更する",
+      "en": "Change a task of a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.botPermissionsRefresh": {
+      "text": "ボットの開いているチャットに新しい既定の権限を適用する",
+      "en": "Give the bot's open chats its new default permissions",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.taskPermissionsRefresh": {
+      "text": "チャットにボットの現在の権限を適用する",
+      "en": "Give a chat the bot's current permissions",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.limitBackup": {
+      "text": "ボットが上限に達したときに引き継ぐエンジンを変更する",
+      "en": "Change the engine that takes over when a bot hits its limit",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.botAccess": {
+      "text": "ボットに作業を依頼できる人を変更する",
+      "en": "Change who can ask a bot to work",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.botSharing": {
+      "text": "ボットの共有方法を変更する",
+      "en": "Change how a bot is shared",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.botShareSkills": {
+      "text": "ボットのスキルを共有する",
+      "en": "Share a bot's skills",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.botShareCopy": {
+      "text": "チーム用にボットのコピーを作成する",
+      "en": "Make a copy of a bot for a team",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.botAlwaysAllow": {
+      "text": "ボットに常に許可していることを変更する",
+      "en": "Change what a bot is always allowed to do",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.botTaskAllow": {
+      "text": "タスク用にボットへ許可したことを取り消す",
+      "en": "Take back what a bot was allowed to do for a task",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.botSkills": {
+      "text": "ボットのスキルを変更する",
+      "en": "Change a bot's skills",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.botSkill": {
+      "text": "ボットのスキルを変更するか、以前のバージョンに戻す",
+      "en": "Change a bot's skill or return it to an earlier version",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/ja:label.heldContinuation": {
+      "text": "ボットの保留中のステップを続行させる",
+      "en": "Let a bot continue a paused step",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/ja:label.restoreHold": {
+      "text": "復元時に保留された項目の保留を解除する",
+      "en": "Release an item held back when you restored your data",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/ja:label.botMessageAllow": {
+      "text": "ボットがメッセージを送れる相手を変更する",
+      "en": "Change who a bot can message",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.secretCard": {
+      "text": "ボットのキーのリクエストに応答する",
+      "en": "Answer a bot's request for a key",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.connectorCard": {
+      "text": "ボットのアプリ接続のリクエストに応答する",
+      "en": "Answer a bot's request to connect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.mcpSigninCard": {
+      "text": "ボットのツールへのログインのリクエストに応答する",
+      "en": "Answer a bot's request to sign in to a tool",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.mcpEnableCard": {
+      "text": "ボットが追加したツールサーバーをオンにする",
+      "en": "Turn on a tool server a bot added",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.publishedSites": {
+      "text": "ボットが公開したサイトを変更または取り下げる",
+      "en": "Change or take down a site a bot published",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.cloudComputerJoin": {
+      "text": "ボットのクラウドコンピューターを開く",
+      "en": "Open a bot's cloud computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.cloudComputerControl": {
+      "text": "ボットのクラウドコンピューターを操作する",
+      "en": "Control a bot's cloud computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.botHostComputer": {
+      "text": "ボットのホストコンピューターを操作する",
+      "en": "Control a bot's host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.botBrowser": {
+      "text": "ボットのブラウザアクセスを変更する",
+      "en": "Change a bot's browser access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.browserClients": {
+      "text": "ブラウザをペアリングするか、そのペアリングを解除する",
+      "en": "Pair a browser or remove a browser pairing",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/ja:label.linuxSandbox": {
+      "text": "この Linux コンピューターでボットのブラウザを有効にする",
+      "en": "Enable the bot browser on this Linux computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.projectBudgetChange": {
+      "text": "プロジェクトの予算を変更する",
+      "en": "Change a project's budget",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.projectBudgetSet": {
+      "text": "プロジェクトの予算を設定する",
+      "en": "Set a project's budget",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.projectWorkRoots": {
+      "text": "プロジェクトが作業できるフォルダーを選ぶ",
+      "en": "Choose the folders a project can work in",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.projectWorkProfile": {
+      "text": "プロジェクトの作業プロファイルを変更する",
+      "en": "Change a project's work profile",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.projectSettings": {
+      "text": "プロジェクトの設定を変更する",
+      "en": "Change a project's settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.roomShareAnswer": {
+      "text": "ボットが他のチャットで見つけたことを共有する、または非公開にする",
+      "en": "Share or keep private what a bot found in its other chats",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.roomShareAsk": {
+      "text": "このルームのために他のチャットを調べるようボットに依頼する",
+      "en": "Ask a bot to look in its other chats for this room",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.groupChange": {
+      "text": "チームまたはグループを変更する",
+      "en": "Change a team or group",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.groupDelete": {
+      "text": "チームまたはグループを削除する",
+      "en": "Delete a team or group",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.teamsImportExport": {
+      "text": "チームをインポートまたはエクスポートする",
+      "en": "Import or export a team",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.teamLibraryGithub": {
+      "text": "GitHub からチームをダウンロードする",
+      "en": "Download a team from GitHub",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.teamLibraryGrok": {
+      "text": "Grok Bot を取り込む",
+      "en": "Bring in a Grok Bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.packagesImportExport": {
+      "text": "パッケージをインポートまたはエクスポートする",
+      "en": "Import or export a package",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.starterProfiles": {
+      "text": "スタータープロファイルをインストールする",
+      "en": "Install a starter profile",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.moveLend": {
+      "text": "ボットの作業をチーム間で移動または貸し出す",
+      "en": "Move or lend a bot's work between teams",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.appConfig": {
+      "text": "アプリの設定を変更する",
+      "en": "Change app settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.fluxConnection": {
+      "text": "Flux の接続を変更する",
+      "en": "Change your Flux connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.providerConnection": {
+      "text": "モデルプロバイダーの接続を変更する",
+      "en": "Change a model provider connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.localModels": {
+      "text": "ローカルモデルを変更する",
+      "en": "Change the local models",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.claudeAccounts": {
+      "text": "Claude アカウントを変更する",
+      "en": "Change a Claude account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.chatChannels": {
+      "text": "Telegram、Slack、または Discord の接続を変更する",
+      "en": "Change a Telegram, Slack or Discord connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.whatsapp": {
+      "text": "WhatsApp の接続を変更する",
+      "en": "Change the WhatsApp connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.memory": {
+      "text": "メモリを変更する",
+      "en": "Change memory",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.skillsCollection": {
+      "text": "スキルコレクションを変更する",
+      "en": "Change the skills collection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.mcpServers": {
+      "text": "ツールサーバーをインストールまたは変更する",
+      "en": "Install or change a tool server",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.mcpInspect": {
+      "text": "ツールサーバーを確認する",
+      "en": "Check a tool server",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.folderTrust": {
+      "text": "エンジンが信頼するフォルダーを変更する",
+      "en": "Change which folders an engine trusts",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.hostComputer": {
+      "text": "ホストコンピューターを操作する",
+      "en": "Control the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.cliTest": {
+      "text": "テキストコマンドを使ってチェックを実行する",
+      "en": "Run a check using a text command",
+      "verdict": "pass",
+      "note": "Sol wrote this wording in round 2."
+    },
+    "stepup/ja:label.engineManagement": {
+      "text": "エンジンをインストールまたは変更する",
+      "en": "Install or change an engine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.instanceStart": {
+      "text": "エンジンの起動方法を変更する",
+      "en": "Change how an engine starts",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.claudeUpdate": {
+      "text": "Claude Code をアップデートする",
+      "en": "Update Claude Code",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.hermesImport": {
+      "text": "Hermes プロファイルをエンジンとして追加する",
+      "en": "Add Hermes profiles as engines",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.engineSetupCheck": {
+      "text": "エンジンが応答できるか確認する",
+      "en": "Check that an engine can answer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.engineSigninRecipe": {
+      "text": "エンジンへのログインを開始する",
+      "en": "Start signing in to an engine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.engineSigninProbe": {
+      "text": "エンジンがログイン済みか確認する",
+      "en": "Check whether an engine is signed in",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.emailAccount": {
+      "text": "このアカウントのボットメールをオンまたはオフにする",
+      "en": "Turn bot email on or off for this account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.emailOtherSetup": {
+      "text": "別の設定からメールアドレスを削除する",
+      "en": "Remove an email address from another setup",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.emailBot": {
+      "text": "ボットのメールアドレス、またはボットにメールできる人を変更する",
+      "en": "Change a bot's email address or who can email it",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.email": {
+      "text": "ボットのメールを変更する",
+      "en": "Change bot email",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.attachmentsRemove": {
+      "text": "添付ファイルを完全に削除する",
+      "en": "Remove attachment files for good",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.netlifyCheck": {
+      "text": "Netlify の接続を確認する",
+      "en": "Check a Netlify connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.voiceLibraryAdd": {
+      "text": "Voice Library のボイスを ElevenLabs アカウントに追加する",
+      "en": "Add a Voice Library voice to your ElevenLabs account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.mcpGrantCreate": {
+      "text": "ボットのスクリプトアクセスを作成する",
+      "en": "Create script access for a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.mcpGrantDelete": {
+      "text": "スクリプトアクセスをオフにする",
+      "en": "Turn off an access permission for scripts",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/ja:label.callRules": {
+      "text": "ボットがあなたに電話できるタイミングを変更する",
+      "en": "Change when a bot can call you",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.callsOffToday": {
+      "text": "今日はボットの通話をオフにする",
+      "en": "Turn bot calls off for today",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.noLimitsTerms": {
+      "text": "制限なしの利用規約に同意する",
+      "en": "Accept the No limits terms",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.callsRearm": {
+      "text": "ボットの通話をオンに戻す",
+      "en": "Turn bot calls back on",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.callTurnEnd": {
+      "text": "このタスクが終わったら電話をかける",
+      "en": "Call you when this task finishes",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.routineCreate": {
+      "text": "ルーティンを作成する",
+      "en": "Create a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.routineRun": {
+      "text": "ルーティンを今すぐ実行する",
+      "en": "Run a routine now",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.routineAlwaysAllow": {
+      "text": "ルーティンに常に許可していることを変更する",
+      "en": "Change what a routine is always allowed to do",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.routineChange": {
+      "text": "ルーティンを変更する",
+      "en": "Change a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.routineDelete": {
+      "text": "ルーティンを削除する",
+      "en": "Delete a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.webhooksCreate": {
+      "text": "外部トリガーを作成または一覧表示する",
+      "en": "Create or list external triggers",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.webhookChange": {
+      "text": "外部トリガーを変更または削除する",
+      "en": "Change or delete an external trigger",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.webhookRotate": {
+      "text": "外部トリガーのキーを変更するか、そのトリガーをテストする",
+      "en": "Change an external trigger's key or test the trigger",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/ja:label.connectorAuthorize": {
+      "text": "アプリを接続する",
+      "en": "Connect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.connectorDisconnect": {
+      "text": "アプリの接続を解除する",
+      "en": "Disconnect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:label.fallback": {
+      "text": "Cloud ホームで変更を行う",
+      "en": "Make a change on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:flag.fullAccess": {
+      "text": "フルアクセス",
+      "en": "Full access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:flag.noLimits": {
+      "text": "制限なし",
+      "en": "No limits",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:flag.fullAccessChannelMessages": {
+      "text": "チャンネルメッセージのフルアクセス",
+      "en": "Full access for channel messages",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:flag.fullAccessSetupRequests": {
+      "text": "設定リクエストのフルアクセス",
+      "en": "Full access for setup requests",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:flag.autoApprove": {
+      "text": "自動承認",
+      "en": "Auto-approve",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:flag.localAuto": {
+      "text": "ホストコンピューターでの 自動承認",
+      "en": "Auto-approve on the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:flag.permissionMode": {
+      "text": "権限モード「{mode}」",
+      "en": "Permission mode \"{mode}\"",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:flag.hostComputerBot": {
+      "text": "ホストコンピューターを使うボット",
+      "en": "A bot using the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:flag.hostComputerConsent": {
+      "text": "ホストコンピューターへのアクセス",
+      "en": "Host computer access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:flag.alwaysAllow": {
+      "text": "常に許可するルール",
+      "en": "An always-allow rule",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:line.bot": {
+      "text": "ボット: {bot}",
+      "en": "Bot: {bot}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:line.name": {
+      "text": "名前: {name}",
+      "en": "Name: {name}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:line.deviceType": {
+      "text": "デバイスの種類: {type}",
+      "en": "Device type: {type}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:line.deviceKey": {
+      "text": "デバイスキー: {key}",
+      "en": "Device key: {key}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:line.settings": {
+      "text": "設定: {names}",
+      "en": "Settings: {names}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:line.turnsOn": {
+      "text": "オンになるもの: {flags}",
+      "en": "Turns on: {flags}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:line.unknown": {
+      "text": "不明",
+      "en": "unknown",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:dialog.title": {
+      "text": "Cloud で確認",
+      "en": "Confirm on your Cloud",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:dialog.confirm": {
+      "text": "確認",
+      "en": "Confirm",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/ja:dialog.cancel": {
+      "text": "キャンセル",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.cloudPairing": {
+      "text": "Adicionar um novo dispositivo à sua casa na Cloud",
+      "en": "Add a new device to your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.cloudDevicesAccount": {
+      "text": "Alterar os dispositivos ou a conta da sua casa na Cloud",
+      "en": "Change the devices or the account on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.modelSigninStart": {
+      "text": "Iniciar um login de modelo na sua casa na Cloud",
+      "en": "Start a model sign-in on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.modelSigninSignOut": {
+      "text": "Encerrar a sessão de um modelo na sua casa na Cloud",
+      "en": "Sign a model out of your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/pt-br:label.modelSigninCancel": {
+      "text": "Cancelar um login de modelo na sua casa na Cloud",
+      "en": "Cancel a model sign-in on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.modelSigninRemove": {
+      "text": "Remover uma conexão de modelo da sua casa na Cloud",
+      "en": "Remove a model connection from your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.ownServer": {
+      "text": "Alterar o servidor que seus bots usam como computador",
+      "en": "Change the server your bots use as a computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.engineLogin": {
+      "text": "Entrar ou sair de um mecanismo na sua casa na Cloud",
+      "en": "Sign in or out of an engine on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.botCreate": {
+      "text": "Criar um bot",
+      "en": "Create a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.botDelete": {
+      "text": "Excluir um bot e suas conversas",
+      "en": "Delete a bot and its conversations",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.botSettings": {
+      "text": "Alterar as configurações de um bot",
+      "en": "Change a bot's settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.botProfile": {
+      "text": "Alterar o nome, a personalidade ou a voz de um bot",
+      "en": "Change a bot's name, personality or voice",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.botTask": {
+      "text": "Alterar uma tarefa de um bot",
+      "en": "Change a task of a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.botPermissionsRefresh": {
+      "text": "Dar às conversas abertas do bot as novas permissões padrão",
+      "en": "Give the bot's open chats its new default permissions",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.taskPermissionsRefresh": {
+      "text": "Dar a uma conversa as permissões atuais do bot",
+      "en": "Give a chat the bot's current permissions",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.limitBackup": {
+      "text": "Alterar o mecanismo que assume quando um bot atinge o limite",
+      "en": "Change the engine that takes over when a bot hits its limit",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.botAccess": {
+      "text": "Alterar quem pode pedir a um bot que trabalhe",
+      "en": "Change who can ask a bot to work",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.botSharing": {
+      "text": "Alterar como um bot é compartilhado",
+      "en": "Change how a bot is shared",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.botShareSkills": {
+      "text": "Compartilhar as habilidades de um bot",
+      "en": "Share a bot's skills",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.botShareCopy": {
+      "text": "Fazer uma cópia de um bot para uma equipe",
+      "en": "Make a copy of a bot for a team",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.botAlwaysAllow": {
+      "text": "Alterar o que um bot sempre tem permissão para fazer",
+      "en": "Change what a bot is always allowed to do",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.botTaskAllow": {
+      "text": "Retirar as permissões dadas a um bot para uma tarefa",
+      "en": "Take back what a bot was allowed to do for a task",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/pt-br:label.botSkills": {
+      "text": "Alterar as habilidades de um bot",
+      "en": "Change a bot's skills",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.botSkill": {
+      "text": "Alterar ou reverter uma habilidade de um bot",
+      "en": "Change a bot's skill or return it to an earlier version",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/pt-br:label.heldContinuation": {
+      "text": "Deixar um bot continuar uma etapa pausada",
+      "en": "Let a bot continue a paused step",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/pt-br:label.restoreHold": {
+      "text": "Liberar um item que ficou bloqueado durante a sua restauração",
+      "en": "Release an item held back when you restored your data",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/pt-br:label.botMessageAllow": {
+      "text": "Alterar para quem um bot pode enviar mensagens",
+      "en": "Change who a bot can message",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.secretCard": {
+      "text": "Responder ao pedido de chave de um bot",
+      "en": "Answer a bot's request for a key",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.connectorCard": {
+      "text": "Responder ao pedido de um bot para conectar um app",
+      "en": "Answer a bot's request to connect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.mcpSigninCard": {
+      "text": "Responder ao pedido de um bot para entrar em uma ferramenta",
+      "en": "Answer a bot's request to sign in to a tool",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.mcpEnableCard": {
+      "text": "Ativar um servidor de ferramentas que um bot adicionou",
+      "en": "Turn on a tool server a bot added",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.publishedSites": {
+      "text": "Alterar ou tirar do ar um site que um bot publicou",
+      "en": "Change or take down a site a bot published",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.cloudComputerJoin": {
+      "text": "Abrir o computador na nuvem de um bot",
+      "en": "Open a bot's cloud computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.cloudComputerControl": {
+      "text": "Controlar o computador na nuvem de um bot",
+      "en": "Control a bot's cloud computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.botHostComputer": {
+      "text": "Controlar o computador host de um bot",
+      "en": "Control a bot's host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.botBrowser": {
+      "text": "Alterar o acesso de um bot ao navegador",
+      "en": "Change a bot's browser access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.browserClients": {
+      "text": "Vincular um navegador ou remover seu vínculo",
+      "en": "Pair a browser or remove a browser pairing",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/pt-br:label.linuxSandbox": {
+      "text": "Ativar o navegador do bot neste computador Linux",
+      "en": "Enable the bot browser on this Linux computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.projectBudgetChange": {
+      "text": "Alterar o orçamento de um projeto",
+      "en": "Change a project's budget",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.projectBudgetSet": {
+      "text": "Definir o orçamento de um projeto",
+      "en": "Set a project's budget",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.projectWorkRoots": {
+      "text": "Escolher as pastas em que um projeto pode trabalhar",
+      "en": "Choose the folders a project can work in",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.projectWorkProfile": {
+      "text": "Alterar o perfil de trabalho de um projeto",
+      "en": "Change a project's work profile",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.projectSettings": {
+      "text": "Alterar as configurações de um projeto",
+      "en": "Change a project's settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.roomShareAnswer": {
+      "text": "Compartilhar ou manter privado o que um bot encontrou em suas outras conversas",
+      "en": "Share or keep private what a bot found in its other chats",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.roomShareAsk": {
+      "text": "Pedir a um bot que procure em suas outras conversas para esta sala",
+      "en": "Ask a bot to look in its other chats for this room",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.groupChange": {
+      "text": "Alterar uma equipe ou um grupo",
+      "en": "Change a team or group",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.groupDelete": {
+      "text": "Excluir uma equipe ou um grupo",
+      "en": "Delete a team or group",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.teamsImportExport": {
+      "text": "Importar ou exportar uma equipe",
+      "en": "Import or export a team",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.teamLibraryGithub": {
+      "text": "Baixar uma equipe do GitHub",
+      "en": "Download a team from GitHub",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.teamLibraryGrok": {
+      "text": "Trazer um Grok Bot",
+      "en": "Bring in a Grok Bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.packagesImportExport": {
+      "text": "Importar ou exportar um pacote",
+      "en": "Import or export a package",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.starterProfiles": {
+      "text": "Instalar um perfil inicial",
+      "en": "Install a starter profile",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.moveLend": {
+      "text": "Mover ou emprestar o trabalho de um bot entre equipes",
+      "en": "Move or lend a bot's work between teams",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.appConfig": {
+      "text": "Alterar as configurações do app",
+      "en": "Change app settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.fluxConnection": {
+      "text": "Alterar sua conexão com o Flux",
+      "en": "Change your Flux connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.providerConnection": {
+      "text": "Alterar a conexão de um provedor de modelos",
+      "en": "Change a model provider connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.localModels": {
+      "text": "Alterar os modelos locais",
+      "en": "Change the local models",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.claudeAccounts": {
+      "text": "Alterar uma conta do Claude",
+      "en": "Change a Claude account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.chatChannels": {
+      "text": "Alterar uma conexão com Telegram, Slack ou Discord",
+      "en": "Change a Telegram, Slack or Discord connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.whatsapp": {
+      "text": "Alterar a conexão com o WhatsApp",
+      "en": "Change the WhatsApp connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.memory": {
+      "text": "Alterar a memória",
+      "en": "Change memory",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.skillsCollection": {
+      "text": "Alterar a coleção de habilidades",
+      "en": "Change the skills collection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.mcpServers": {
+      "text": "Instalar ou alterar um servidor de ferramentas",
+      "en": "Install or change a tool server",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.mcpInspect": {
+      "text": "Verificar um servidor de ferramentas",
+      "en": "Check a tool server",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.folderTrust": {
+      "text": "Alterar em quais pastas um mecanismo confia",
+      "en": "Change which folders an engine trusts",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.hostComputer": {
+      "text": "Controlar o computador host",
+      "en": "Control the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.cliTest": {
+      "text": "Executar uma verificação usando um comando de texto",
+      "en": "Run a check using a text command",
+      "verdict": "pass",
+      "note": "Sol wrote this wording in round 2."
+    },
+    "stepup/pt-br:label.engineManagement": {
+      "text": "Instalar ou alterar um mecanismo",
+      "en": "Install or change an engine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.instanceStart": {
+      "text": "Alterar como um mecanismo inicia",
+      "en": "Change how an engine starts",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.claudeUpdate": {
+      "text": "Atualizar o Claude Code",
+      "en": "Update Claude Code",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.hermesImport": {
+      "text": "Adicionar perfis do Hermes como mecanismos",
+      "en": "Add Hermes profiles as engines",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.engineSetupCheck": {
+      "text": "Verificar se um mecanismo consegue responder",
+      "en": "Check that an engine can answer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.engineSigninRecipe": {
+      "text": "Começar a entrar em um mecanismo",
+      "en": "Start signing in to an engine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.engineSigninProbe": {
+      "text": "Verificar se há uma sessão iniciada em um mecanismo",
+      "en": "Check whether an engine is signed in",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.emailAccount": {
+      "text": "Ativar ou desativar o e-mail dos bots para esta conta",
+      "en": "Turn bot email on or off for this account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.emailOtherSetup": {
+      "text": "Remover um endereço de e-mail de outra instalação",
+      "en": "Remove an email address from another setup",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.emailBot": {
+      "text": "Alterar o endereço de e-mail de um bot ou quem pode enviar e-mail a ele",
+      "en": "Change a bot's email address or who can email it",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.email": {
+      "text": "Alterar o e-mail dos bots",
+      "en": "Change bot email",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.attachmentsRemove": {
+      "text": "Remover arquivos anexos permanentemente",
+      "en": "Remove attachment files for good",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.netlifyCheck": {
+      "text": "Verificar uma conexão com o Netlify",
+      "en": "Check a Netlify connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.voiceLibraryAdd": {
+      "text": "Adicionar uma voz da Voice Library à sua conta do ElevenLabs",
+      "en": "Add a Voice Library voice to your ElevenLabs account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.mcpGrantCreate": {
+      "text": "Criar acesso por script para um bot",
+      "en": "Create script access for a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.mcpGrantDelete": {
+      "text": "Desativar um acesso por script",
+      "en": "Turn off an access permission for scripts",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/pt-br:label.callRules": {
+      "text": "Alterar quando um bot pode ligar para você",
+      "en": "Change when a bot can call you",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.callsOffToday": {
+      "text": "Desativar as ligações dos bots por hoje",
+      "en": "Turn bot calls off for today",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.noLimitsTerms": {
+      "text": "Aceitar os termos do Sem limites",
+      "en": "Accept the No limits terms",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.callsRearm": {
+      "text": "Reativar as ligações dos bots",
+      "en": "Turn bot calls back on",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.callTurnEnd": {
+      "text": "Ligar para você quando esta tarefa terminar",
+      "en": "Call you when this task finishes",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.routineCreate": {
+      "text": "Criar uma rotina",
+      "en": "Create a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.routineRun": {
+      "text": "Executar uma rotina agora",
+      "en": "Run a routine now",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.routineAlwaysAllow": {
+      "text": "Alterar o que uma rotina sempre tem permissão para fazer",
+      "en": "Change what a routine is always allowed to do",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.routineChange": {
+      "text": "Alterar uma rotina",
+      "en": "Change a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.routineDelete": {
+      "text": "Excluir uma rotina",
+      "en": "Delete a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.webhooksCreate": {
+      "text": "Criar ou listar gatilhos externos",
+      "en": "Create or list external triggers",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.webhookChange": {
+      "text": "Alterar ou excluir um gatilho externo",
+      "en": "Change or delete an external trigger",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.webhookRotate": {
+      "text": "Trocar a chave de um gatilho externo ou testá-lo",
+      "en": "Change an external trigger's key or test the trigger",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/pt-br:label.connectorAuthorize": {
+      "text": "Conectar um app",
+      "en": "Connect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.connectorDisconnect": {
+      "text": "Desconectar um app",
+      "en": "Disconnect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:label.fallback": {
+      "text": "Fazer uma alteração na sua casa na Cloud",
+      "en": "Make a change on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:flag.fullAccess": {
+      "text": "Acesso total",
+      "en": "Full access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:flag.noLimits": {
+      "text": "Sem limites",
+      "en": "No limits",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:flag.fullAccessChannelMessages": {
+      "text": "Acesso total para mensagens de canal",
+      "en": "Full access for channel messages",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:flag.fullAccessSetupRequests": {
+      "text": "Acesso total para pedidos de configuração",
+      "en": "Full access for setup requests",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:flag.autoApprove": {
+      "text": "Aprovação automática",
+      "en": "Auto-approve",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:flag.localAuto": {
+      "text": "Aprovação automática no computador host",
+      "en": "Auto-approve on the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:flag.permissionMode": {
+      "text": "Modo de permissão \"{mode}\"",
+      "en": "Permission mode \"{mode}\"",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:flag.hostComputerBot": {
+      "text": "Um bot que usa o computador host",
+      "en": "A bot using the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:flag.hostComputerConsent": {
+      "text": "Acesso ao computador host",
+      "en": "Host computer access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:flag.alwaysAllow": {
+      "text": "Uma regra de permissão permanente",
+      "en": "An always-allow rule",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:line.bot": {
+      "text": "Bot: {bot}",
+      "en": "Bot: {bot}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:line.name": {
+      "text": "Nome: {name}",
+      "en": "Name: {name}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:line.deviceType": {
+      "text": "Tipo de dispositivo: {type}",
+      "en": "Device type: {type}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:line.deviceKey": {
+      "text": "Chave do dispositivo: {key}",
+      "en": "Device key: {key}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:line.settings": {
+      "text": "Configurações: {names}",
+      "en": "Settings: {names}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:line.turnsOn": {
+      "text": "Ativa: {flags}",
+      "en": "Turns on: {flags}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:line.unknown": {
+      "text": "desconhecido",
+      "en": "unknown",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:dialog.title": {
+      "text": "Confirmar na sua Cloud",
+      "en": "Confirm on your Cloud",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:dialog.confirm": {
+      "text": "Confirmar",
+      "en": "Confirm",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/pt-br:dialog.cancel": {
+      "text": "Cancelar",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.cloudPairing": {
+      "text": "向你的 Cloud 主页添加新设备",
+      "en": "Add a new device to your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/zh:label.cloudDevicesAccount": {
+      "text": "更改你的 Cloud 主页上的设备或账户",
+      "en": "Change the devices or the account on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/zh:label.modelSigninStart": {
+      "text": "在你的 Cloud 主页上开始模型登录",
+      "en": "Start a model sign-in on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/zh:label.modelSigninSignOut": {
+      "text": "让你的 Cloud 主页上的模型退出登录",
+      "en": "Sign a model out of your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/zh:label.modelSigninCancel": {
+      "text": "在你的 Cloud 主页上取消模型登录",
+      "en": "Cancel a model sign-in on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/zh:label.modelSigninRemove": {
+      "text": "从你的 Cloud 主页移除模型连接",
+      "en": "Remove a model connection from your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/zh:label.ownServer": {
+      "text": "更改你的机器人用作电脑的服务器",
+      "en": "Change the server your bots use as a computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.engineLogin": {
+      "text": "在你的 Cloud 主页上登录引擎或退出登录",
+      "en": "Sign in or out of an engine on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/zh:label.botCreate": {
+      "text": "创建机器人",
+      "en": "Create a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.botDelete": {
+      "text": "删除机器人及其对话",
+      "en": "Delete a bot and its conversations",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.botSettings": {
+      "text": "更改机器人的设置",
+      "en": "Change a bot's settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.botProfile": {
+      "text": "更改机器人的名字、性格或声音",
+      "en": "Change a bot's name, personality or voice",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.botTask": {
+      "text": "更改机器人的一项任务",
+      "en": "Change a task of a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.botPermissionsRefresh": {
+      "text": "为机器人已打开的聊天应用新的默认权限",
+      "en": "Give the bot's open chats its new default permissions",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.taskPermissionsRefresh": {
+      "text": "为一个聊天应用机器人当前的权限",
+      "en": "Give a chat the bot's current permissions",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.limitBackup": {
+      "text": "更改机器人达到上限时接替的引擎",
+      "en": "Change the engine that takes over when a bot hits its limit",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.botAccess": {
+      "text": "更改谁可以请求机器人工作",
+      "en": "Change who can ask a bot to work",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.botSharing": {
+      "text": "更改机器人的共享方式",
+      "en": "Change how a bot is shared",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.botShareSkills": {
+      "text": "共享机器人的技能",
+      "en": "Share a bot's skills",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.botShareCopy": {
+      "text": "为团队创建机器人的副本",
+      "en": "Make a copy of a bot for a team",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.botAlwaysAllow": {
+      "text": "更改机器人始终被允许做的事",
+      "en": "Change what a bot is always allowed to do",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.botTaskAllow": {
+      "text": "撤销机器人在某项任务中获得的权限",
+      "en": "Take back what a bot was allowed to do for a task",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/zh:label.botSkills": {
+      "text": "更改机器人的技能",
+      "en": "Change a bot's skills",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.botSkill": {
+      "text": "更改或回退机器人的一项技能",
+      "en": "Change a bot's skill or return it to an earlier version",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/zh:label.heldContinuation": {
+      "text": "让机器人继续执行一个暂停的步骤",
+      "en": "Let a bot continue a paused step",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/zh:label.restoreHold": {
+      "text": "解除恢复时对某项内容的暂停使用限制",
+      "en": "Release an item held back when you restored your data",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/zh:label.botMessageAllow": {
+      "text": "更改机器人可以给谁发消息",
+      "en": "Change who a bot can message",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.secretCard": {
+      "text": "回复机器人对密钥的请求",
+      "en": "Answer a bot's request for a key",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.connectorCard": {
+      "text": "回复机器人连接应用的请求",
+      "en": "Answer a bot's request to connect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.mcpSigninCard": {
+      "text": "回复机器人登录工具的请求",
+      "en": "Answer a bot's request to sign in to a tool",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.mcpEnableCard": {
+      "text": "开启机器人添加的工具服务器",
+      "en": "Turn on a tool server a bot added",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.publishedSites": {
+      "text": "更改或下线机器人发布的网站",
+      "en": "Change or take down a site a bot published",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.cloudComputerJoin": {
+      "text": "打开机器人的云电脑",
+      "en": "Open a bot's cloud computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.cloudComputerControl": {
+      "text": "控制机器人的云电脑",
+      "en": "Control a bot's cloud computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.botHostComputer": {
+      "text": "控制机器人的主机电脑",
+      "en": "Control a bot's host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.botBrowser": {
+      "text": "更改机器人的浏览器访问权限",
+      "en": "Change a bot's browser access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.browserClients": {
+      "text": "配对浏览器或解除已有的浏览器配对",
+      "en": "Pair a browser or remove a browser pairing",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/zh:label.linuxSandbox": {
+      "text": "在这台 Linux 电脑上启用机器人浏览器",
+      "en": "Enable the bot browser on this Linux computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.projectBudgetChange": {
+      "text": "更改项目的预算",
+      "en": "Change a project's budget",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.projectBudgetSet": {
+      "text": "设置项目的预算",
+      "en": "Set a project's budget",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.projectWorkRoots": {
+      "text": "选择项目可以工作的文件夹",
+      "en": "Choose the folders a project can work in",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.projectWorkProfile": {
+      "text": "更改项目的工作配置",
+      "en": "Change a project's work profile",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.projectSettings": {
+      "text": "更改项目的设置",
+      "en": "Change a project's settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.roomShareAnswer": {
+      "text": "共享机器人在其他聊天中发现的内容，或将其保持私密",
+      "en": "Share or keep private what a bot found in its other chats",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.roomShareAsk": {
+      "text": "请机器人在其他聊天中为这个房间查找内容",
+      "en": "Ask a bot to look in its other chats for this room",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.groupChange": {
+      "text": "更改团队或群组",
+      "en": "Change a team or group",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.groupDelete": {
+      "text": "删除团队或群组",
+      "en": "Delete a team or group",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.teamsImportExport": {
+      "text": "导入或导出团队",
+      "en": "Import or export a team",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.teamLibraryGithub": {
+      "text": "从 GitHub 下载团队",
+      "en": "Download a team from GitHub",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.teamLibraryGrok": {
+      "text": "引入 Grok Bot",
+      "en": "Bring in a Grok Bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.packagesImportExport": {
+      "text": "导入或导出软件包",
+      "en": "Import or export a package",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.starterProfiles": {
+      "text": "安装入门配置",
+      "en": "Install a starter profile",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.moveLend": {
+      "text": "在团队之间移动或借出机器人的工作",
+      "en": "Move or lend a bot's work between teams",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.appConfig": {
+      "text": "更改应用设置",
+      "en": "Change app settings",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.fluxConnection": {
+      "text": "更改你的 Flux 连接",
+      "en": "Change your Flux connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.providerConnection": {
+      "text": "更改模型提供商的连接",
+      "en": "Change a model provider connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.localModels": {
+      "text": "更改本地模型",
+      "en": "Change the local models",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.claudeAccounts": {
+      "text": "更改 Claude 账户",
+      "en": "Change a Claude account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.chatChannels": {
+      "text": "更改 Telegram、Slack 或 Discord 的连接",
+      "en": "Change a Telegram, Slack or Discord connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.whatsapp": {
+      "text": "更改 WhatsApp 连接",
+      "en": "Change the WhatsApp connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.memory": {
+      "text": "更改记忆",
+      "en": "Change memory",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.skillsCollection": {
+      "text": "更改技能集合",
+      "en": "Change the skills collection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.mcpServers": {
+      "text": "安装或更改工具服务器",
+      "en": "Install or change a tool server",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.mcpInspect": {
+      "text": "检查工具服务器",
+      "en": "Check a tool server",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.folderTrust": {
+      "text": "更改引擎信任哪些文件夹",
+      "en": "Change which folders an engine trusts",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.hostComputer": {
+      "text": "控制主机电脑",
+      "en": "Control the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.cliTest": {
+      "text": "使用文字命令运行检查",
+      "en": "Run a check using a text command",
+      "verdict": "pass",
+      "note": "Sol wrote this wording in round 2."
+    },
+    "stepup/zh:label.engineManagement": {
+      "text": "安装或更改引擎",
+      "en": "Install or change an engine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.instanceStart": {
+      "text": "更改引擎的启动方式",
+      "en": "Change how an engine starts",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.claudeUpdate": {
+      "text": "更新 Claude Code",
+      "en": "Update Claude Code",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.hermesImport": {
+      "text": "将 Hermes 配置添加为引擎",
+      "en": "Add Hermes profiles as engines",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.engineSetupCheck": {
+      "text": "检查引擎能否回答",
+      "en": "Check that an engine can answer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.engineSigninRecipe": {
+      "text": "开始登录引擎",
+      "en": "Start signing in to an engine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.engineSigninProbe": {
+      "text": "检查引擎是否已登录",
+      "en": "Check whether an engine is signed in",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.emailAccount": {
+      "text": "为此账户开启或关闭机器人邮件",
+      "en": "Turn bot email on or off for this account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.emailOtherSetup": {
+      "text": "从另一套设置中移除一个邮箱地址",
+      "en": "Remove an email address from another setup",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.emailBot": {
+      "text": "更改机器人的邮箱地址或谁可以给它发邮件",
+      "en": "Change a bot's email address or who can email it",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.email": {
+      "text": "更改机器人邮件",
+      "en": "Change bot email",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.attachmentsRemove": {
+      "text": "永久移除附件文件",
+      "en": "Remove attachment files for good",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.netlifyCheck": {
+      "text": "检查 Netlify 连接",
+      "en": "Check a Netlify connection",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.voiceLibraryAdd": {
+      "text": "将 Voice Library 中的一个声音添加到你的 ElevenLabs 账户",
+      "en": "Add a Voice Library voice to your ElevenLabs account",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.mcpGrantCreate": {
+      "text": "为机器人创建脚本访问权限",
+      "en": "Create script access for a bot",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.mcpGrantDelete": {
+      "text": "关闭一项脚本访问权限",
+      "en": "Turn off an access permission for scripts",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/zh:label.callRules": {
+      "text": "更改机器人何时可以给你打电话",
+      "en": "Change when a bot can call you",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.callsOffToday": {
+      "text": "今天关闭机器人来电",
+      "en": "Turn bot calls off for today",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.noLimitsTerms": {
+      "text": "接受无限制条款",
+      "en": "Accept the No limits terms",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.callsRearm": {
+      "text": "重新开启机器人来电",
+      "en": "Turn bot calls back on",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.callTurnEnd": {
+      "text": "此任务完成时给你打电话",
+      "en": "Call you when this task finishes",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.routineCreate": {
+      "text": "创建例行任务",
+      "en": "Create a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.routineRun": {
+      "text": "立即运行例行任务",
+      "en": "Run a routine now",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.routineAlwaysAllow": {
+      "text": "更改例行任务始终被允许做的事",
+      "en": "Change what a routine is always allowed to do",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.routineChange": {
+      "text": "更改例行任务",
+      "en": "Change a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.routineDelete": {
+      "text": "删除例行任务",
+      "en": "Delete a routine",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.webhooksCreate": {
+      "text": "创建或列出外部触发器",
+      "en": "Create or list external triggers",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.webhookChange": {
+      "text": "更改或删除外部触发器",
+      "en": "Change or delete an external trigger",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.webhookRotate": {
+      "text": "更换外部触发器的密钥或测试该触发器",
+      "en": "Change an external trigger's key or test the trigger",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/zh:label.connectorAuthorize": {
+      "text": "连接应用",
+      "en": "Connect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.connectorDisconnect": {
+      "text": "断开应用",
+      "en": "Disconnect an app",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:label.fallback": {
+      "text": "在你的 Cloud 主页上进行更改",
+      "en": "Make a change on your Cloud home",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/zh:flag.fullAccess": {
+      "text": "完全访问",
+      "en": "Full access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:flag.noLimits": {
+      "text": "无限制",
+      "en": "No limits",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:flag.fullAccessChannelMessages": {
+      "text": "用于频道消息的完全访问权限",
+      "en": "Full access for channel messages",
+      "verdict": "pass",
+      "note": "Read in round 2."
+    },
+    "stepup/zh:flag.fullAccessSetupRequests": {
+      "text": "设置请求的完全访问",
+      "en": "Full access for setup requests",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:flag.autoApprove": {
+      "text": "自动批准",
+      "en": "Auto-approve",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:flag.localAuto": {
+      "text": "主机电脑上的 自动批准",
+      "en": "Auto-approve on the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:flag.permissionMode": {
+      "text": "权限模式“{mode}”",
+      "en": "Permission mode \"{mode}\"",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:flag.hostComputerBot": {
+      "text": "使用主机电脑的机器人",
+      "en": "A bot using the host computer",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:flag.hostComputerConsent": {
+      "text": "主机电脑访问权限",
+      "en": "Host computer access",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:flag.alwaysAllow": {
+      "text": "一条始终允许规则",
+      "en": "An always-allow rule",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:line.bot": {
+      "text": "机器人：{bot}",
+      "en": "Bot: {bot}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:line.name": {
+      "text": "名称：{name}",
+      "en": "Name: {name}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:line.deviceType": {
+      "text": "设备类型：{type}",
+      "en": "Device type: {type}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:line.deviceKey": {
+      "text": "设备密钥：{key}",
+      "en": "Device key: {key}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:line.settings": {
+      "text": "设置：{names}",
+      "en": "Settings: {names}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:line.turnsOn": {
+      "text": "将开启：{flags}",
+      "en": "Turns on: {flags}",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:line.unknown": {
+      "text": "未知",
+      "en": "unknown",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:dialog.title": {
+      "text": "在你的 Cloud 上确认",
+      "en": "Confirm on your Cloud",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:dialog.confirm": {
+      "text": "确认",
+      "en": "Confirm",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    },
+    "stepup/zh:dialog.cancel": {
+      "text": "取消",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Read in round 1."
+    }
+  },
+  "files": {}
+}

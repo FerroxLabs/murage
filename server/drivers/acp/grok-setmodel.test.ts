@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // GROK-SETMODEL-PIN (1.0.11, the session-level cut of GROK-SETMODEL-1010 r3): a fresh grok process whose catalog fetch has not
@@ -482,3 +483,6 @@ describe("T8 a confirmed pin is reported when a later Ask step fails (shared cor
     }
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

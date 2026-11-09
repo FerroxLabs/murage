@@ -6,6 +6,9 @@ import { startCall, endCall } from "./call";
 import { CODE_OMITTED, canReadAloud, readAloudLabel, readAloudText, toggleReadAloud } from "./read-aloud";
 import { speaker as windowSpeaker, Speaker } from "./tts";
 
+// This suite pins the retained phone Speaker contract (D24 section 7.1).
+vi.mock("./surface", () => ({ knownComputer: () => false, surface: async () => "remote" }));
+
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
 
 describe("what is read aloud", () => {
@@ -87,7 +90,7 @@ describe("toggleReadAloud", () => {
   it("speaks with that bot's own voice and the code omitted", () => {
     const fake = { state: { status: "idle" as const }, speak: vi.fn(async () => {}), stop: vi.fn() };
     toggleReadAloud(fake as never, message);
-    expect(fake.speak).toHaveBeenCalledWith(`Hello.\n${CODE_OMITTED}`, { botId: "bot_1", messageId: "m1", voiceId: "nova" });
+    expect(fake.speak).toHaveBeenCalledWith(message.text, { botId: "bot_1", messageId: "m1", voiceId: "nova" });
   });
 
   it("stops when this message is the one playing", () => {

@@ -16,6 +16,7 @@ import type { ModelSelection } from "./contracts.ts";
 import type { EngineBilling } from "./limit-backup.ts";
 import { billingLabel } from "./limit-backup.ts";
 import { channelReply, channelReplyTime } from "./channels/reply-text.ts";
+import { FLUX_REFUSAL_CODES, type FluxRefusalCode } from "./flux-refusal.ts";
 
 export interface LimitTurn {
   botId: string;
@@ -47,6 +48,12 @@ export interface LimitTurn {
   /** structured facts of that error (ACP engines relay only sanitised prose): Fuigo's error_kind, the engine's own code, a reset time */
   errorKind?: string;
   engineCode?: string;
+  /** Flux's refusal code, carried structurally (server/flux-refusal.ts): the sanitised errorText may have lost it */
+  gatewayCode?: FluxRefusalCode;
+  /** FLUX-BURN-COPY-1018: when Flux's hourly spend gate lifts (epoch ms), only from the retry_after its body carried */
+  gatewayResetsAt?: number;
+  /** the HTTP status of that error, when the driver reported one structurally (providerError.httpStatus, Astra r4) */
+  httpStatus?: number;
   errorResetsAt?: number;
   /** 1.0.9 X2: this turn minted a phone authority (set by markPhoneHeld right after the mint). */
   phoneHeld?: boolean;
@@ -82,7 +89,7 @@ export class LimitTurns {
     return turn;
   }
   /** Fold one engine event into the thread's record. */
-  observe(event: { type: string; threadId: string; turnId?: string; streamKind?: string; itemType?: string; itemId?: string; origin?: string; message?: string; errorKind?: unknown; engineCode?: unknown; limitResetsAt?: unknown; delta?: unknown; text?: unknown }): void {
+  observe(event: { type: string; threadId: string; turnId?: string; streamKind?: string; itemType?: string; itemId?: string; origin?: string; message?: string; errorKind?: unknown; engineCode?: unknown; gatewayCode?: unknown; gatewayResetsAt?: unknown; providerError?: { httpStatus?: unknown } | null; limitResetsAt?: unknown; delta?: unknown; text?: unknown }): void {
     const turn = this.turns.get(event.threadId);
     if (!turn) return;
     if (event.type === "turn.started") { if (event.turnId && !turn.providerTurnId) turn.providerTurnId = event.turnId; return; }
@@ -100,6 +107,10 @@ export class LimitTurns {
       turn.errorText = event.message.slice(0, 2000);
       turn.errorKind = typeof event.errorKind === "string" ? event.errorKind : undefined;
       turn.engineCode = typeof event.engineCode === "string" ? event.engineCode : undefined;
+      turn.gatewayCode = typeof event.gatewayCode === "string" && FLUX_REFUSAL_CODES.has(event.gatewayCode) ? event.gatewayCode as FluxRefusalCode : undefined;
+      turn.gatewayResetsAt = turn.gatewayCode === "hourly_burn_limit" && typeof event.gatewayResetsAt === "number" && Number.isFinite(event.gatewayResetsAt) ? event.gatewayResetsAt : undefined;
+      const status = event.providerError?.httpStatus;
+      turn.httpStatus = typeof status === "number" && Number.isInteger(status) && status >= 100 && status < 600 ? status : undefined;
       turn.errorResetsAt = typeof event.limitResetsAt === "number" && Number.isFinite(event.limitResetsAt) ? event.limitResetsAt : undefined;
     }
   }
@@ -126,9 +137,51 @@ export function aboutTime(at: number): string {
   return channelReplyTime(at);
 }
 
-/** The plain line: no backup, a second hop, or a refusal the owner has to wait out. */
-export function plainLimitLine(engine: string, until: number): string {
-  return `${engine} is at its limit until about ${aboutTime(until)}.`;
+/** 1.0.18 (a Masterclass customer's card): Fuigo and Flux show a customer no usage limit. A refusal from them (Fuigo, a plan
+ * sign-in through the gateway, a Flux key) is a busy moment unless the server itself sent a reset time: it records no limit
+ * state, names no "until" time and shows one plain busy card. A payment refusal (402) is never busy: it keeps its own card. */
+export function isGatewayEngine(turn: Pick<LimitTurn, "driverKind" | "viaGateway">, preset?: string): boolean {
+  return turn.viaGateway || turn.driverKind === "fuigoAgent" || preset === "flux";
+}
+/** Why a gateway refusal is not a limit, read by Flux's own code words first (flux_credit_state): `credit` (402
+ * credit_exhausted), `unresolved` (402 credit_unresolved), `hold` (429 while low credit is reserved by requests in flight),
+ * `hourly` (429 hourly_burn_limit, Flux's hourly spend gate), `busy` (a 429 with no reset time). `null`: a limit or a payment card as before. */
+export type GatewayBusyReason = "busy" | "credit" | "unresolved" | "hold" | "freeCap" | "hourly";
+export const GATEWAY_HOLD = /because other requests have temporarily reserved it|x-flux-hold-reason/i;
+export function gatewayBusy(turn: Pick<LimitTurn, "driverKind" | "viaGateway" | "errorText" | "gatewayCode">, facts: { preset?: string; resetsAt: number | null }): GatewayBusyReason | null {
+  if (!isGatewayEngine(turn, facts.preset)) return null;
+  // The structured code first: Flux puts it in error.state, a header or a Python repr the engine's sanitiser drops.
+  const coded = { free_cap_reached: "freeCap", credit_exhausted: "credit", credit_unresolved: "unresolved", hourly_burn_limit: "hourly", hold: "hold" } as const;
+  if (turn.gatewayCode && Object.hasOwn(coded, turn.gatewayCode)) return coded[turn.gatewayCode];
+  const text = turn.errorText ?? "";
+  // Flux rate_limiter.py: a free key past this month's allowance (429, state free_cap_reached). Never retried.
+  if (/\bfree_cap_reached\b/i.test(text)) return "freeCap";
+  if (/\bcredit_exhausted\b/i.test(text)) return "credit";
+  if (/\bcredit_unresolved\b/i.test(text)) return "unresolved";
+  // FLUX-BURN-COPY-1018: Flux's hourly spend gate (forge_hook.py, 429 hourly_burn_limit). Never retried.
+  if (/\bhourly_burn_limit\b/i.test(text)) return "hourly";
+  if (GATEWAY_HOLD.test(text)) return "hold";
+  if (facts.resetsAt !== null) return null;
+  return /\b402\b|payment|credits?\b|billing/i.test(text) ? null : "busy";
+}
+/** FLUX-BURN-COPY-1018: the one row a gateway refusal's card is put on: the turn's own error row. A person's message is
+ * never that row, so it stays in the thread as sent ("Your message is kept") and Send again resends its text. */
+export function isGatewayBusyRow(message: { role: string; turnId?: string; tool?: { name: string } }, providerTurnId?: string): boolean {
+  return message.role === "bot" && message.tool?.name.startsWith("error:") === true && (!providerTurnId || message.turnId === providerTurnId);
+}
+export function gatewayBusyLine(engine: string, reason?: GatewayBusyReason): string {
+  return reason === "hourly" ? "You've reached your Flux hourly limit. Your message is kept." : `${engine} is busy right now. Your message is kept.`;
+}
+/** The one card's facts on the turn's error row: the engine, the reason and, for the hourly gate only, the reset Flux sent. */
+export interface GatewayBusyFacts { engine: string; reason: GatewayBusyReason; resetsAt?: number }
+export function gatewayBusyFacts(turn: Pick<LimitTurn, "engineName" | "gatewayResetsAt">, reason: GatewayBusyReason): GatewayBusyFacts {
+  const engine = turn.engineName.slice(0, 80);
+  return reason === "hourly" && turn.gatewayResetsAt !== undefined ? { engine, reason, resetsAt: turn.gatewayResetsAt } : { engine, reason };
+}
+
+/** The plain line: no backup, a second hop, or a refusal the owner has to wait out. Only a reset time the engine sent names a time. */
+export function plainLimitLine(engine: string, until: number, resetsAt: number | null = until): string {
+  return resetsAt === null ? `${engine} is at its limit.` : `${engine} is at its limit until about ${aboutTime(until)}.`;
 }
 export function failoverLine(from: string, to: string): string {
   return `${from} hit its limit; ${to} took over until it resets`;
@@ -173,7 +226,7 @@ export function limitChoiceLabel(engine: string, billing: EngineBilling): string
 export function limitOfferCard(input: { requestId: string; engine: string; until: number; sourceMessageId: string; from: ModelSelection; resetsAt: number | null; choices: Array<{ engine: string; selection: ModelSelection; billing: EngineBilling }> }) {
   const choices: LimitChoice[] = input.choices.map(choice => ({ label: limitChoiceLabel(choice.engine, choice.billing), selection: structuredClone(choice.selection), billing: choice.billing }));
   return {
-    title: `${input.engine} is at its limit until ${aboutTime(input.until)}.`,
+    title: input.resetsAt === null ? `${input.engine} is at its limit.` : `${input.engine} is at its limit until ${aboutTime(input.until)}.`,
     subtitle: choices.length
       ? "Pick an engine to answer your message now, or wait for the limit to reset."
       : "No other engine can answer right now. Your message is kept; send it again after the limit resets.",

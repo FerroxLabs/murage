@@ -1,3 +1,4 @@
+import { probeFolder } from "../probe-folder.ts";
 // Windows only (see browser-beforeunload-guard.ts). The engine registers its init scripts on the page
 // that is active at launch, so a tab it opens later has none, and a beforeunload prompt there blocks
 // the navigating call. This holds a second CDP connection to the engine's own Chrome: every new page
@@ -36,7 +37,7 @@ export function cdpUrlFromCli(spec: AgentBrowserSpec, timeoutMs = 5_000): Promis
     let out = "";
     // Through the shared launcher (Rule 74c): no controlling terminal, stdin a pipe closed at once.
     let child: ReturnType<typeof spawnCli>;
-    try { child = spawnCli(spec.command, ["--session", spec.env.AGENT_BROWSER_SESSION ?? "", "get", "cdp-url"], { env: spec.env, shell: false, stdio: ["ignore", "pipe", "ignore"] }); }
+    try { child = spawnCli(spec.command, ["--session", spec.env.AGENT_BROWSER_SESSION ?? "", "get", "cdp-url"], { cwd: probeFolder(), env: spec.env, shell: false, stdio: ["ignore", "pipe", "ignore"] }); }
     catch { resolve(undefined); return; }
     const timer = setTimeout(() => { void forceCliTreeStopped(child); }, timeoutMs);
     child.stdout.on("data", (chunk) => { out = (out + chunk).slice(-4096); });

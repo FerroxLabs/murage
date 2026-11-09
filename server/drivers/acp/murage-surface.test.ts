@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 import { murageToolList } from "../../testing/murage-tool-list.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -79,3 +80,6 @@ it.each(drivers)("$driverKind resolves references against the real session mount
     }
   } finally { recorder.stop(); await instance.dispose(); removeTempDirSync(dir); }
 }, 60000);
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

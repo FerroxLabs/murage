@@ -1,0 +1,303 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "fixg4",
+  "date": "2026-11-09",
+  "base": "5172fe54d87080463b6890fa4de3bf026538fe45",
+  "scope": "step-up labels for linked data folder confirm and five HighLevel owner actions",
+  "strings": {
+    "stepup/en:label.dataDirConfirmRoot": {
+      "text": "Confirm where a linked data folder now points",
+      "en": "Confirm where a linked data folder now points",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/en:label.highlevelCheck": {
+      "text": "Check a HighLevel location",
+      "en": "Check a HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/en:label.highlevelConnect": {
+      "text": "Connect a HighLevel location",
+      "en": "Connect a HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/en:label.highlevelAccess": {
+      "text": "Change what a bot can read in HighLevel",
+      "en": "Change what a bot can read in HighLevel",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/en:label.highlevelDisconnect": {
+      "text": "Disconnect your HighLevel location",
+      "en": "Disconnect your HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/en:label.highlevelChange": {
+      "text": "Change your HighLevel connection",
+      "en": "Change your HighLevel connection",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/de:label.dataDirConfirmRoot": {
+      "text": "Bestätigen, wohin ein verknüpfter Datenordner jetzt zeigt",
+      "en": "Confirm where a linked data folder now points",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/de:label.highlevelCheck": {
+      "text": "Einen HighLevel-Standort prüfen",
+      "en": "Check a HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/de:label.highlevelConnect": {
+      "text": "Einen HighLevel-Standort verbinden",
+      "en": "Connect a HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/de:label.highlevelAccess": {
+      "text": "Ändern, was ein Bot in HighLevel lesen darf",
+      "en": "Change what a bot can read in HighLevel",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/de:label.highlevelDisconnect": {
+      "text": "Den HighLevel-Standort trennen",
+      "en": "Disconnect your HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/de:label.highlevelChange": {
+      "text": "Die HighLevel-Verbindung ändern",
+      "en": "Change your HighLevel connection",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/es:label.dataDirConfirmRoot": {
+      "text": "Confirmar adónde apunta ahora una carpeta de datos vinculada",
+      "en": "Confirm where a linked data folder now points",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/es:label.highlevelCheck": {
+      "text": "Comprobar una ubicación de HighLevel",
+      "en": "Check a HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/es:label.highlevelConnect": {
+      "text": "Conectar una ubicación de HighLevel",
+      "en": "Connect a HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/es:label.highlevelAccess": {
+      "text": "Cambiar lo que un bot puede leer en HighLevel",
+      "en": "Change what a bot can read in HighLevel",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/es:label.highlevelDisconnect": {
+      "text": "Desconectar la ubicación de HighLevel",
+      "en": "Disconnect your HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/es:label.highlevelChange": {
+      "text": "Cambiar la conexión con HighLevel",
+      "en": "Change your HighLevel connection",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/fr:label.dataDirConfirmRoot": {
+      "text": "Confirmer vers où pointe maintenant un dossier de données lié",
+      "en": "Confirm where a linked data folder now points",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/fr:label.highlevelCheck": {
+      "text": "Vérifier un emplacement HighLevel",
+      "en": "Check a HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/fr:label.highlevelConnect": {
+      "text": "Connecter un emplacement HighLevel",
+      "en": "Connect a HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/fr:label.highlevelAccess": {
+      "text": "Modifier ce qu'un bot peut lire dans HighLevel",
+      "en": "Change what a bot can read in HighLevel",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/fr:label.highlevelDisconnect": {
+      "text": "Déconnecter l'emplacement HighLevel",
+      "en": "Disconnect your HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/fr:label.highlevelChange": {
+      "text": "Modifier la connexion HighLevel",
+      "en": "Change your HighLevel connection",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/hi:label.dataDirConfirmRoot": {
+      "text": "जुड़ा हुआ डेटा फ़ोल्डर अब कहाँ इंगित करता है, इसकी पुष्टि करना",
+      "en": "Confirm where a linked data folder now points",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/hi:label.highlevelCheck": {
+      "text": "HighLevel लोकेशन की जाँच करना",
+      "en": "Check a HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/hi:label.highlevelConnect": {
+      "text": "HighLevel लोकेशन कनेक्ट करना",
+      "en": "Connect a HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/hi:label.highlevelAccess": {
+      "text": "HighLevel में बॉट क्या पढ़ सकता है, यह बदलना",
+      "en": "Change what a bot can read in HighLevel",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/hi:label.highlevelDisconnect": {
+      "text": "HighLevel लोकेशन डिसकनेक्ट करना",
+      "en": "Disconnect your HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/hi:label.highlevelChange": {
+      "text": "HighLevel कनेक्शन बदलना",
+      "en": "Change your HighLevel connection",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/ja:label.dataDirConfirmRoot": {
+      "text": "リンクされたデータフォルダの現在の参照先を確認する",
+      "en": "Confirm where a linked data folder now points",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/ja:label.highlevelCheck": {
+      "text": "HighLevelのロケーションを確認する",
+      "en": "Check a HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/ja:label.highlevelConnect": {
+      "text": "HighLevelのロケーションを接続する",
+      "en": "Connect a HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/ja:label.highlevelAccess": {
+      "text": "ボットがHighLevelで読み取れる内容を変更する",
+      "en": "Change what a bot can read in HighLevel",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/ja:label.highlevelDisconnect": {
+      "text": "HighLevelのロケーションを切断する",
+      "en": "Disconnect your HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/ja:label.highlevelChange": {
+      "text": "HighLevelの接続を変更する",
+      "en": "Change your HighLevel connection",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/pt-br:label.dataDirConfirmRoot": {
+      "text": "Confirmar para onde uma pasta de dados vinculada aponta agora",
+      "en": "Confirm where a linked data folder now points",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/pt-br:label.highlevelCheck": {
+      "text": "Verificar um local do HighLevel",
+      "en": "Check a HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/pt-br:label.highlevelConnect": {
+      "text": "Conectar um local do HighLevel",
+      "en": "Connect a HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/pt-br:label.highlevelAccess": {
+      "text": "Alterar o que um bot pode ler no HighLevel",
+      "en": "Change what a bot can read in HighLevel",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/pt-br:label.highlevelDisconnect": {
+      "text": "Desconectar o local do HighLevel",
+      "en": "Disconnect your HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/pt-br:label.highlevelChange": {
+      "text": "Alterar a conexão com o HighLevel",
+      "en": "Change your HighLevel connection",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/zh:label.dataDirConfirmRoot": {
+      "text": "确认已关联的数据文件夹现在指向的位置",
+      "en": "Confirm where a linked data folder now points",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/zh:label.highlevelCheck": {
+      "text": "检查 HighLevel 位置",
+      "en": "Check a HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/zh:label.highlevelConnect": {
+      "text": "连接 HighLevel 位置",
+      "en": "Connect a HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/zh:label.highlevelAccess": {
+      "text": "更改机器人在 HighLevel 中可读取的内容",
+      "en": "Change what a bot can read in HighLevel",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/zh:label.highlevelDisconnect": {
+      "text": "断开 HighLevel 位置",
+      "en": "Disconnect your HighLevel location",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    },
+    "stepup/zh:label.highlevelChange": {
+      "text": "更改 HighLevel 连接",
+      "en": "Change your HighLevel connection",
+      "verdict": "pass",
+      "note": "Accurate and natural."
+    }
+  },
+  "files": {}
+}

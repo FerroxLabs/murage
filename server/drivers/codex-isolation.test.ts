@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Codex bot turns: Murage's own mounts present, the owner's MCP servers and personal skills
@@ -75,7 +77,7 @@ describe("codex personal setup isolation", () => {
       environment: { HOME: home, CODEX_HOME: codex }, config: { cli: FAKE_CLI, fullAuto: false } });
     const recorder = recordEvents(instance.adapter);
     try {
-      const sent = await instance.adapter.sendTurn({ threadId: "codex-iso-1", text: "go",
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "codex-iso-1", text: "go",
         integrations: { agents: { command: process.execPath, args: ["fixture-agents"], env: {} } } });
       await recorder.until((event) => event.type === "turn.completed" && event.turnId === sent.turnId);
       const argv: string[] = JSON.parse(readFileSync(dump, "utf8")).argv;
@@ -167,3 +169,6 @@ describe("codex personal setup isolation", () => {
     expect(readFileSync(join(codex, "AGENTS.md"), "utf8")).toBe("PERSONAL GLOBAL INSTRUCTIONS");
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

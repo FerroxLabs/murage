@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "./testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -116,13 +118,15 @@ describe("where the block is applied (section 2)", () => {
     expect(claude.match(/engineJob\(\{ posixHostPower: false \}\)/g)).toHaveLength(2);
     expect(claude).not.toMatch(/engineJob\(\)\)/);
     // Codex: Windows only (revision 4.1).
-    expect(codex).toContain("}, engineJob({ posixHostPower: false }));");
+    // NOLIMITS 1.0.18 envfix c0f4afed4: spawnCli also takes the thread whose PATH it notes; the job is unchanged
+    // STOP-NONACP 628bc2fab: the spawn now sits inside gate.launch(entry, () => spawnCli(...)); the job and thread arguments are unchanged
+    expect(codex).toContain("}, engineJob({ posixHostPower: false }), undefined, threadId));");
     // ACP: Fuigo is not wrapped on Mac or Linux, every other ACP engine is.
     expect(acp).toContain('const hostPowerOptions = { posixHostPower: support.driverKind !== "fuigoAgent" };');
-    expect(acp).toContain("}, engineJob(hostPowerOptions));");
+    expect(acp).toContain("}, engineJob(hostPowerOptions), undefined, threadId);"); // envfix c0f4afed4
     // Antigravity: the turn and the helper prompt pass engineJob() on every OS; Pi's turn too.
     expect(antigravity.match(/engineJob\(\)/g)!.length).toBeGreaterThanOrEqual(2);
-    expect(pi).toContain("}, engineJob());");
+    expect(pi).toContain("}, engineJob(), undefined, threadId);"); // envfix c0f4afed4
     // The block does not read the channel flag, and this phase does not edit auto-approve.ts.
     expect(source("host-power.ts")).not.toContain("fullAccessChannelMessages");
   });
@@ -188,7 +192,7 @@ describe("Linux plan (section 4)", () => {
   it.skipIf(process.platform === "win32")("builds the bwrap argv in the design's order, PATH-only bwrap environment, the turn env inside", () => {
     const dir = fakeCage("exit 0");
     linux(dir);
-    const plan = planHostPower("/usr/bin/engine", ["--flag", "echo reboot"], { HOME: "/home/u", PATH: "/usr/bin", DBUS_SESSION_BUS_ADDRESS: `unix:path=${stub}` }, "/work");
+    const plan = planHostPower("/usr/bin/engine", ["--flag", "echo reboot"], { HOME: "/home/u", PATH: "/usr/bin", DBUS_SESSION_BUS_ADDRESS: `unix:path=${stub}` }, fixtureBotFolder());
     expect(plan.kind).toBe("bwrap");
     if (plan.kind !== "bwrap") return;
     expect(plan.command).toBe(join(dir, "bwrap"));
@@ -206,7 +210,7 @@ describe("Linux plan (section 4)", () => {
     expect(a.slice(a.indexOf("--proc"), a.indexOf("--proc") + 2)).toEqual(["--proc", "/proc"]);
     expect(a.slice(a.indexOf("--ro-bind"), a.indexOf("--ro-bind") + 3)).toEqual(["--ro-bind", dir, dir]);
     expect(a.slice(a.indexOf("--seccomp"), a.indexOf("--seccomp") + 2)).toEqual(["--seccomp", "3"]);
-    expect(a.slice(a.indexOf("--chdir"), a.indexOf("--chdir") + 2)).toEqual(["--chdir", "/work"]);
+    expect(a.slice(a.indexOf("--chdir"), a.indexOf("--chdir") + 2)).toEqual(["--chdir", fixtureBotFolder()]);
     // The session bus path (here the stub itself, which exists) is covered by the stub inode.
     expect(a).toEqual(expect.arrayContaining(["--bind", stub, stub]));
     for (const absent of ["--unshare-net", "--dev-bind", "--tmpfs"]) expect(a).not.toContain(absent);
@@ -241,7 +245,7 @@ describe("Linux plan (section 4)", () => {
     const dir = fakeCage("exit 0");
     linux(dir);
     const env = { CLINE_API_KEY: "sk-cline-secret-1", MURAGE_PI_GATE: "gate-secret-2", EMPTY: "", SPACED: "a b=c", PATH: "/opt/turn-path/bin" };
-    const plan = planHostPower("/usr/bin/engine", ["--flag"], env, "/work");
+    const plan = planHostPower("/usr/bin/engine", ["--flag"], env, fixtureBotFolder());
     expect(plan.kind).toBe("bwrap");
     if (plan.kind !== "bwrap") return;
     const visible = [plan.command, ...plan.args].join("\0");
@@ -401,7 +405,7 @@ describe("spawnCli with the block (sections 2 and 8)", () => {
 
   it.skipIf(process.platform !== "linux")("a refused Linux launch has no pid, EPOWER and the sentence, and is not ECONTAIN", async () => {
     Object.assign(hostPowerDeps, { helperDir: () => null });
-    const child = spawnCli("/bin/true", [], { stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
+    const child = spawnCli("/bin/true", [], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
     expect(child.pid).toBeUndefined();
     const result = await collect(child);
     expect(result.errors).toHaveLength(1);
@@ -419,7 +423,7 @@ describe("spawnCli with the block (sections 2 and 8)", () => {
     const dir = fakeCage(`[ -e /proc/self/fd/3 ] && echo fd3; env | sort; echo CMDLINE; tr "\\0" "\\n" </proc/$$/cmdline; echo PAYLOAD; tr "\\0" "\\n" <&4; echo END; ${STARTED()}`);
     Object.assign(hostPowerDeps, { helperDir: () => dir, writable: () => false });
     const secret = "sk-turn-secret-value-7f3a";
-    const child = spawnCli("/bin/true", ["echo reboot"], { stdio: ["pipe", "pipe", "pipe"], env: { SECRET_TURN: secret, PATH: "/usr/bin" } }, { hostPower: true });
+    const child = spawnCli("/bin/true", ["echo reboot"], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"], env: { SECRET_TURN: secret, PATH: "/usr/bin" } }, { hostPower: true });
     expect(child.pid).toBeGreaterThan(0);
     const result = await collect(child);
     expect(result.code).toBe(0);
@@ -462,7 +466,7 @@ process.exit(r.status ?? 91);
     const dir = fakeCage(standIn, { whole: true });
     Object.assign(hostPowerDeps, { helperDir: () => dir, writable: () => false });
     const env = { CLINE_API_KEY: "sk-cline-secret-1", MURAGE_PI_GATE: "gate-secret-2", EMPTY: "", SPACED: "a b=c", PATH: "/usr/bin:/bin" };
-    const child = spawnCli("/usr/bin/env", [], { stdio: ["pipe", "pipe", "pipe"], env }, { hostPower: true });
+    const child = spawnCli("/usr/bin/env", [], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"], env }, { hostPower: true });
     const result = await collect(child);
     expect(result.code).toBe(0);
     expect(hostPowerRefused(child)).toBe(false);
@@ -475,7 +479,7 @@ process.exit(r.status ?? 91);
     // The manifest names the pin, the file on disk holds other bytes: the plan passes, the fd hash refuses.
     const dir = fakeCage("exit 0", { bpf: Buffer.alloc(16, 1) });
     Object.assign(hostPowerDeps, { helperDir: () => dir, writable: () => false });
-    const child = spawnCli("/bin/true", [], { stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
+    const child = spawnCli("/bin/true", [], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
     expect(child.pid).toBeUndefined();
     const result = await collect(child);
     expect(result.errors.map((error) => [error.code, error.message])).toEqual([[HOST_POWER_CODE, HOST_POWER_MESSAGE]]);
@@ -488,7 +492,7 @@ process.exit(r.status ?? 91);
     // the cage is staged for the arch the test pins (x64), so its pin is found on an arm64 host too
     const dir = fakeCage('echo "bwrap: setting up uid map: Permission denied" >&2; exit 1', { source: true, arch: "x64" });
     Object.assign(hostPowerDeps, { helperDir: () => dir, writable: () => false, arch: () => "x64" });
-    const child = spawnCli("/bin/true", [], { stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
+    const child = spawnCli("/bin/true", [], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
     expect(child.pid).toBeGreaterThan(0);
     const result = await collect(child);
     expect(result.errors).toHaveLength(0);
@@ -501,7 +505,7 @@ process.exit(r.status ?? 91);
     await startHostPowerStub();
     const dir = fakeCage(`echo "engine: bad flag" >&2; ${STARTED(2)}; exit 2`);
     Object.assign(hostPowerDeps, { helperDir: () => dir, writable: () => false });
-    const child = spawnCli("/bin/true", [], { stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
+    const child = spawnCli("/bin/true", [], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
     expect((await collect(child)).code).toBe(2);
     expect(hostPowerRefused(child)).toBe(false);
   });
@@ -510,7 +514,7 @@ process.exit(r.status ?? 91);
     await startHostPowerStub();
     const dir = fakeCage(`echo "bwrap: this line came from the engine" >&2; ${STARTED(1)}; exit 1`);
     Object.assign(hostPowerDeps, { helperDir: () => dir, writable: () => false });
-    const child = spawnCli("/bin/true", [], { stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
+    const child = spawnCli("/bin/true", [], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
     expect((await collect(child)).code).toBe(1);
     expect(hostPowerRefused(child)).toBe(false);
   });
@@ -528,7 +532,7 @@ process.exit(r.status ?? 91);
       await startHostPowerStub();
       const dir = fakeCage(script);
       Object.assign(hostPowerDeps, { helperDir: () => dir, writable: () => false });
-      const child = spawnCli("/bin/true", [], { stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
+      const child = spawnCli("/bin/true", [], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
       expect(child.pid).toBeGreaterThan(0);
       const result = await collect(child);
       expect(result.errors).toHaveLength(0);
@@ -540,7 +544,7 @@ process.exit(r.status ?? 91);
     await startHostPowerStub();
     const dir = fakeCage("exec sleep 30");
     Object.assign(hostPowerDeps, { helperDir: () => dir, writable: () => false });
-    const child = spawnCli("/bin/true", [], { stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
+    const child = spawnCli("/bin/true", [], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
     expect(child.pid).toBeGreaterThan(0);
     const closed = collect(child);
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -561,26 +565,26 @@ process.exit(r.status ?? 91);
 
   it.skipIf(process.platform === "win32")("no marker, a cloud launch, and the docker server tool are not wrapped", async () => {
     Object.assign(hostPowerDeps, { helperDir: () => null, sandboxExec: "/nonexistent/sandbox-exec" });
-    const plain = spawnCli("/bin/sh", ["-c", "exit 0"], { stdio: ["pipe", "pipe", "pipe"] });
+    const plain = spawnCli("/bin/sh", ["-c", "exit 0"], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] });
     expect((await collect(plain)).code).toBe(0);
     const marker = join(scratch(), cloud.marker);
     writeFileSync(marker, "#!/bin/sh\nexit 0\n"); chmodSync(marker, 0o755);
-    const cloudChild = spawnCli(marker, [], { stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
+    const cloudChild = spawnCli(marker, [], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
     expect(cloudChild.pid).toBeGreaterThan(0);
     await collect(cloudChild);
     expect(hostPowerRefused(cloudChild)).toBe(false);
-    const docker = spawnCli("docker", ["--version"], { stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true }, { serverTool: "docker" });
+    const docker = spawnCli("docker", ["--version"], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true }, { serverTool: "docker" });
     const dockerResult = await collect(docker);
     expect(dockerResult.errors.map((error) => error.code)).not.toContain(HOST_POWER_CODE);
   });
 
   it.skipIf(process.platform !== "darwin")("macOS: sandbox-exec runs true, a shell redirection and node writing a byte; the logind lookup is denied", async () => {
     for (const [cli, args] of [["/usr/bin/true", []], ["/bin/sh", ["-c", "echo ok >/dev/null"]], [process.execPath, ["-e", "process.stdout.write('x')"]]] as const) {
-      const child = spawnCli(cli, [...args], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } }, { hostPower: true });
+      const child = spawnCli(cli, [...args], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } }, { hostPower: true });
       expect((await collect(child)).code).toBe(0);
     }
     // launchctl print of the logind service needs its bootstrap lookup; under the profile it is denied, without it it is not.
-    const probe = spawnCli("/usr/bin/python3", ["-c", "import ctypes,sys;l=ctypes.CDLL('/usr/lib/libSystem.B.dylib');p=ctypes.c_uint(0);bp=ctypes.c_uint.in_dll(l,'bootstrap_port');sys.exit(0 if l.bootstrap_look_up(bp,b'com.apple.logind',ctypes.byref(p))!=0 else 3)"], { stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
+    const probe = spawnCli("/usr/bin/python3", ["-c", "import ctypes,sys;l=ctypes.CDLL('/usr/lib/libSystem.B.dylib');p=ctypes.c_uint(0);bp=ctypes.c_uint.in_dll(l,'bootstrap_port');sys.exit(0 if l.bootstrap_look_up(bp,b'com.apple.logind',ctypes.byref(p))!=0 else 3)"], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
     const probed = await collect(probe);
     if (!/No such file|not found/.test(probed.err)) expect(probed.code).toBe(0);
   });
@@ -627,7 +631,7 @@ describe("Windows privilege removal (section 6)", () => {
   it("simulated Windows: a failed drop refuses the engine launch (no pid, EPOWER, the sentence); non-engine spawns are not refused", async () => {
     resetShutdownDropForTests();
     withAddon({ dropShutdownPrivileges: () => ({ ok: false, step: "adjust", error: 5 }) });
-    const child = asPlatform("win32", () => spawnCli(process.execPath, ["-e", ""], { stdio: ["pipe", "pipe", "pipe"] }, { name: "Local\\murage-pip-eng-test", hostPower: true }));
+    const child = asPlatform("win32", () => spawnCli(process.execPath, ["-e", ""], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, { name: "Local\\murage-pip-eng-test", hostPower: true }));
     expect(child.pid).toBeUndefined();
     const errors: NodeJS.ErrnoException[] = [];
     child.on("error", (error) => errors.push(error));
@@ -1223,7 +1227,7 @@ describe("environment gap: the turn runs without the block (1.0.9)", () => {
     linux(denying(UID_MAP));
     await probeHostPowerEnvironment();
     for (const job of [engineJob(), engineJob({ posixHostPower: true }), { hostPower: true } as const]) {
-      const child = spawnCli("/bin/echo", ["engine ran"], { stdio: ["pipe", "pipe", "pipe"] }, job);
+      const child = spawnCli("/bin/echo", ["engine ran"], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, job);
       expect(child.pid).toBeGreaterThan(0);
       const result = await collect(child);
       expect(result.errors).toEqual([]);
@@ -1243,7 +1247,7 @@ describe("environment gap: the turn runs without the block (1.0.9)", () => {
       hostPowerProbeDeps.run = () => new Promise(() => {});
       void probeHostPowerEnvironment();
       hostPowerProbeDeps.runSync = realProbeDeps.runSync;
-      const child = spawnCli("/bin/echo", ["engine ran"], { stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
+      const child = spawnCli("/bin/echo", ["engine ran"], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
       const result = await collect(child);
       expect(result.errors).toEqual([]);
       expect(result.out).toBe("engine ran\n");
@@ -1254,7 +1258,7 @@ describe("environment gap: the turn runs without the block (1.0.9)", () => {
     resetHostPowerGapForTests();
     linux(fakeCage("exit 0"));
     hostPowerProbeDeps.runSync = () => ({ code: null, stderr: "", timedOut: true });
-    const late = spawnCli("/bin/echo", ["engine ran"], { stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
+    const late = spawnCli("/bin/echo", ["engine ran"], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
     expect((await collect(late)).out).toBe("engine ran\n");
     expect(hostPowerRefused(late)).toBe(false);
     // A probe that answered "the block starts here" leaves the turn wrapped.
@@ -1272,7 +1276,7 @@ describe("environment gap: the turn runs without the block (1.0.9)", () => {
     for (const said of [UID_MAP, `bwrap: Can't chdir to /x\n${UID_MAP}`]) {
       resetHostPowerGapForTests();
       linux(fakeCage(`[ "$1" = "--unshare-user" ] && exit 0; ${said.split("\n").map((line) => `echo "${line}" >&2`).join("; ")}; exit 1`));
-      const first = spawnCli("/bin/echo", ["engine ran"], { stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
+      const first = spawnCli("/bin/echo", ["engine ran"], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
       expect((await collect(first)).out).toBe("");
       expect(hostPowerRefused(first)).toBe(true);
       expect(await probeHostPowerEnvironment()).toBeNull();
@@ -1314,3 +1318,6 @@ describe("environment gap: the turn runs without the block (1.0.9)", () => {
     expect(DRAFT_ONLY_ENGINE_LINE).toMatch(/Choose one of those in this bot's settings/);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

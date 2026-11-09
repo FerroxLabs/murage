@@ -70,7 +70,10 @@ beforeEach(async () => {
     config: { cli: FAKE_CLI, permissionMode: "acceptEdits" },
   });
   recorder = recordEvents(instance.adapter);
-  await instance.adapter.sendTurn({ threadId: THREAD, text: "what is our plan?" });
+  // Keep the edit outside the launch folder so the driver emits the ask for
+  // the server policy wiring under test instead of settling it in-project.
+  const cwd = mkdtempSync(join(dataDir, "launch-bot-"));
+  await instance.adapter.sendTurn({ cwd, threadId: THREAD, text: "what is our plan?" });
   await recorder.until(event => event.type === "session.started");
   conn = await connectSocket(permissionSocketPath(THREAD));
 });

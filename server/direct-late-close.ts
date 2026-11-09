@@ -26,19 +26,30 @@ export interface LateCloseRelease {
   note: () => void;
   /** The same release a confirmed close at the deadline would have run. */
   release: () => void;
+  /** FENCE-RACE-1018 r2 (E12): called once when the watch ends WITHOUT calling release (ownership lost, thread gone, a rejected
+   *  close, a throwing note), so whatever waited on the release can still be decided. */
+  abandon?: () => void;
 }
 
 /** RETAINED -> RELEASED_LATE. A no-op when a replacement run or a Stop already
  * took the thread, when the conversation is gone, or on a repeated callback. */
 export function releaseOnLateClose(input: LateCloseRelease): void {
   let settled = false;
+  let abandoned = false;
+  const abandon = () => {
+    if (abandoned) return;
+    abandoned = true;
+    try { input.abandon?.(); } catch (abandonError) { console.error("[direct-late-close] abandon", String(abandonError).slice(0, 200)); }
+  };
   void input.closed.then(() => {
     if (settled) return;
     settled = true;
-    if (!input.owns() || !input.threadExists()) return;
+    if (!input.owns() || !input.threadExists()) { abandon(); return; }
     input.note();
     input.release();
   }).catch((error: unknown) => {
     console.error("[direct-late-close]", String(error instanceof Error ? error.message : error).slice(0, 200));
+    settled = true;
+    abandon();
   });
 }
