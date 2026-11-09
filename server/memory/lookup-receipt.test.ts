@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -105,3 +106,5 @@ it("Astra r1 #9: past the receipt bound a lookup is refused, not handed over unr
   const many = Array.from({ length: 257 }, (_, index) => ({ id: `r${index}`, version: 1, evidence: [] }));
   expect(() => receipt.noteLookup(many, turn)).toThrow("MEMORY_LOOKUP_LIMIT");
 });
+
+useOutsideStoreFixture();

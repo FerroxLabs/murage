@@ -12,8 +12,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { PublicProviderConnection } from "../../shared/provider-connections";
+import { preloadModelMetadata } from "@/lib/model-metadata";
 import { EngineListNote, EngineOptionRows, PickerPriceNote, PickerRowMeta, pickerRowTitle, ModelPickerBusyNotice, ModelPickerNotices, isThreadModelMutationLocked, modelPickerMaxHeight, modelPickerViewportOffset, refreshModelPickerCatalog } from "./ModelPicker";
 import { ENGINE_DISABLED_SUFFIX, PRICE_UNKNOWN, engineMenuFamilies, priceBandNote, type PickerEngine, type PickerModel } from "@/lib/provider-model-picker";
 
@@ -24,9 +25,11 @@ const connection = (id: string, catalog: Partial<PublicProviderConnection["catal
 // window focus), not at Refresh models: that button also re-POSTs every
 // enabled provider's catalog refresh, which is far more than a fleet probe
 // (FOLLOW7; the wording claudeAccounts.fleetRefreshError already uses).
-const fleetLine = "The engine list could not refresh; the engines shown are the last known ones. Switch to another window and back to probe the engines again.";
+const fleetLine = "The engine list could not refresh; the engines shown are the last known ones. Switch to another window and back to check the engines again.";
 const partialLine = "Some model lists could not refresh. Their last saved models are preserved; check Models settings for details.";
 const pickerSource = readFileSync(fileURLToPath(new URL("./ModelPicker.tsx", import.meta.url)), "utf8");
+// The snapshot is its own chunk since 1.0.18 (BUNDLE-HEADROOM-1018); these tests read it.
+beforeAll(() => preloadModelMetadata());
 
 describe("model picker viewport placement", () => {
   it.each([
@@ -324,6 +327,20 @@ describe("the price-band note", () => {
     expect(renderToStaticMarkup(createElement(PickerPriceNote, { shown: false }))).toBe("");
   });
 
+  it("ends with a row for your own account that opens Settings, Engines", async () => {
+    const { OwnAccountRow } = await import("./ModelPicker");
+    let opened = 0;
+    const html = renderToStaticMarkup(createElement(OwnAccountRow, { onOpen: () => { opened++; } }));
+    expect(html).toContain("data-own-account-row");
+    expect(html).toContain("Use your own account");
+    expect(opened).toBe(0);
+    const manage = pickerSource.indexOf("Manage models and providers");
+    const row = pickerSource.indexOf("<OwnAccountRow onOpen={openOwnAccount}/>");
+    expect(row).toBeGreaterThan(manage);
+    expect(pickerSource.slice(row).indexOf("</div>}")).toBeLessThan(80);
+    expect(pickerSource).toMatch(/const openOwnAccount=\(\)=>navigate\(\(\)=>\{setOpen\(false\);dispatch\(\{type:'toggleAppSettings',open:true,section:'models',anchor:'engines-heading'\}\);\}\);/);
+  });
+
   it("sits outside the scrolling list, so it cannot scroll away", () => {
     // The list is `<div className="min-h-0 flex-1 overflow-y-auto p-2">…</div>`;
     // the note must come after its close and before the Manage footer.
@@ -397,8 +414,38 @@ describe("the Cloud engine line", () => {
     expect(renderToStaticMarkup(createElement(EngineListNote, { note: "" }))).toBe("");
   });
   it("reads the line the home sends, and the desktop sends none", () => {
-    expect(pickerSource).toContain("<EngineListNote note={state.engineNote}/>");
+    expect(pickerSource).toContain("<EngineListNote note={state.engineNote} localOnly={state.localOnlyEngines}/>");
     const store = readFileSync(fileURLToPath(new URL("../state/store.tsx", import.meta.url)), "utf8");
     expect(store).toContain('engineNote: action.engineNote ?? ""');
+    // A setup card's own engine refresh sends no names; the lines stay until the next full probe.
+    expect(store).toContain("localOnlyEngines: action.localOnlyEngines ?? state.localOnlyEngines");
   });
+});
+
+describe("Cline and Copilot on a Cloud home", () => {
+  it("are a state line each, never a pickable engine row", () => {
+    const html = renderToStaticMarkup(createElement(EngineListNote, { note: "", localOnly: ["Cline", "GitHub Copilot"] }));
+    expect(html).toContain("Cline runs on your computer. Open Murage on your computer to use it.");
+    expect(html).toContain("GitHub Copilot runs on your computer. Open Murage on your computer to use it.");
+    expect(html).toContain('data-engine-local-only="Cline"');
+    expect(html).not.toContain("<option");
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("data-model-choice");
+  });
+  it("sit under the Cloud line when both are sent", () => {
+    const html = renderToStaticMarkup(createElement(EngineListNote, { note: "More engines are coming to Cloud soon. They work in the desktop app today.", localOnly: ["Cline"] }));
+    expect(html.indexOf("data-engine-cloud-note")).toBeLessThan(html.indexOf("data-engine-local-only"));
+  });
+  it("show nothing on the desktop, which sends neither", () => {
+    expect(renderToStaticMarkup(createElement(EngineListNote, { note: "" }))).toBe("");
+    expect(renderToStaticMarkup(createElement(EngineListNote, { note: "", localOnly: [] }))).toBe("");
+  });
+});
+
+
+it("renders the catalog recommendation as readable text", () => {
+  const row: PickerModel = { key: "model", selection: { instanceId: "codex", model: "gpt-6.1-sol" },
+    label: "GPT-6.1 Sol", group: "Engine models", provider: "Codex", recommended: true };
+  expect(renderToStaticMarkup(createElement(PickerRowMeta, { row }))).toContain("Recommended");
+  expect(renderToStaticMarkup(createElement(PickerRowMeta, { row: { ...row, recommended: false } }))).not.toContain("Recommended");
 });

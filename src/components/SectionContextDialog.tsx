@@ -2,14 +2,16 @@
 // delivered to every bot in that team at the start of each turn. Opened from
 // the Team map and from a team's header in the sidebar — the same dialog and
 // the same GET/PUT /api/section-context contract in both places.
+import { useFocusTrap } from "@/lib/focus-trap";
+import { LayerSurface } from "@/components/LayerSurface";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { BookOpen, Loader2, Save, X } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { loadSectionContext, saveSectionContext } from "@/lib/section-context-client";
 import { api } from "@/state/store";
 import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
+import { useBotSettingsDraft, useInBotSettings } from "./bot-settings-drafts";
 
 export function SectionContextDialog({ section, label, onClose }: { section: string; label: string; onClose: () => void }) {
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -29,6 +31,10 @@ export function SectionContextDialog({ section, label, onClose }: { section: str
   onCloseRef.current = onClose;
   savingRef.current = saving;
   dirtyRef.current = dirty;
+  // Over a bot's settings page (What shapes), the page's own unsaved-edit check, and every opener the store holds for it,
+  // counts this editor; its portal stays part of the Settings session for focus return (lib/settings-leave.ts).
+  const inBotSettings = useInBotSettings();
+  useBotSettingsDraft("section-context", dirty, saving);
 
   const requestClose = useCallback(() => {
     if (savingRef.current) return;
@@ -36,42 +42,16 @@ export function SectionContextDialog({ section, label, onClose }: { section: str
     onCloseRef.current();
   }, []);
 
+  const layer = useFocusTrap(dialogRef, true, { name: "section-context", kind: "dialog", initialFocus: null, onEscape: requestClose });
+  const activeLayer = useRef(layer); activeLayer.current = layer;
+  // BF-13: the textarea is the initial target, but it mounts only once loading is false. A timer set when the
+  // text arrives can run before that commit and find no textarea, so the focus waits for the commit itself.
+  const focusOnLoad = useRef(false);
   useEffect(() => {
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    dialogRef.current?.focus();
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !savingRef.current) {
-        event.preventDefault();
-        requestClose();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const dialog = dialogRef.current;
-      if (!dialog) return;
-      const focusable = [...dialog.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), textarea:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
-      )];
-      if (focusable.length === 0) {
-        event.preventDefault();
-        dialog.focus();
-        return;
-      }
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      previousFocus?.focus();
-    };
-  }, [requestClose]);
+    if (loading || !focusOnLoad.current) return;
+    focusOnLoad.current = false;
+    if (activeLayer.current?.active) textareaRef.current?.focus();
+  }, [loading]);
 
   useEffect(() => {
     let cancelled = false;
@@ -84,7 +64,7 @@ export function SectionContextDialog({ section, label, onClose }: { section: str
         setSavedText(result.text);
         setUpdatedAt(result.updatedAt);
         setMaxBytes(result.maxBytes);
-        window.setTimeout(() => textareaRef.current?.focus(), 0);
+        focusOnLoad.current = true;
       })
       .catch((cause) => {
         if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
@@ -114,9 +94,9 @@ export function SectionContextDialog({ section, label, onClose }: { section: str
     }
   };
 
-  return createPortal(
-    <div
-      className="overlay-inset fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/55 p-4 backdrop-blur-[2px] sm:p-6"
+  return <LayerSurface handle={layer}><div
+      data-settings-owned={inBotSettings ? "" : undefined}
+      className="overlay-inset fixed inset-x-0 top-0 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/55 p-4 backdrop-blur-[2px] sm:p-6"
       onMouseDown={(event) => event.target === event.currentTarget && requestClose()}
     >
       <div
@@ -192,8 +172,6 @@ export function SectionContextDialog({ section, label, onClose }: { section: str
           </button>
         </BoxFoot>
       </div>
-    </div>,
-    document.body,
-  );
+    </div></LayerSurface>;
 }
 

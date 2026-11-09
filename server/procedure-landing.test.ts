@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
+import { resetDataRootsForTest } from "./data-roots.ts";
 import { closeDatabase, database, transaction } from "./database.ts";
 import { Store } from "./store.ts";
 import { RoutineManager, routineInstructionRevision } from "./routines.ts";
@@ -28,6 +29,7 @@ async function resetDataDir() {
   try { flushCoalesced(); } catch { /* nothing left to write */ }
   closeMessageDb(); await stopWalMaintenance(); closeDatabase();
   removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
+  resetDataRootsForTest();
 }
 beforeEach(resetDataDir);
 const markdown = (text: string) => `---\nname: checked-method\ndescription: Check actual results\n---\n${text}\n`;

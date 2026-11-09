@@ -9,6 +9,9 @@
 // Same modal contract as ChannelDetailsPanel: focus lands on the field the
 // person asked for, Escape closes, Tab stays inside, and focus goes back to
 // whatever opened it. Delete asks inline, never with a browser confirm().
+import { useFocusTrap } from "@/lib/focus-trap";
+import { LayerSurface } from "@/components/LayerSurface";
+import type { LoadedLayerProps } from "@/components/LazyOverlay";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, X } from "lucide-react";
 
@@ -52,6 +55,7 @@ const DANGER =
   "min-h-11 rounded-lg bg-danger px-3 py-2 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
 
 export interface TeamSettingsDialogBodyProps {
+  dialogRef?: React.RefObject<HTMLDivElement | null>;
   team: TeamView;
   /** every bot the members list offers: visible, never the Chief of Staff */
   candidates: Bot[];
@@ -93,6 +97,8 @@ export function TeamSettingsDialogBody(props: TeamSettingsDialogBodyProps) {
   const noun = team.members.length ? "team" : "section";
   return (
     <div
+      ref={props.dialogRef}
+      tabIndex={-1}
       role="dialog"
       aria-modal="true"
       aria-labelledby="team-settings-title"
@@ -310,7 +316,7 @@ export function TeamSettingsDialogBody(props: TeamSettingsDialogBodyProps) {
 
 /** The dialog with its state. `onRenamed` lets the sidebar carry the
  * heading's place and open/closed state over to the new name. */
-export function TeamSettingsDialog({
+export function TeamSettingsDialog({ layerLifecycle,
   section,
   focus,
   onClose,
@@ -320,7 +326,7 @@ export function TeamSettingsDialog({
   focus: TeamSettingsFocus;
   onClose: () => void;
   onRenamed?: (from: string, to: string) => void;
-}) {
+} & { layerLifecycle?: LoadedLayerProps }) {
   const { state, dispatch } = useStore();
   const [team, setTeam] = useState<TeamView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -363,57 +369,17 @@ export function TeamSettingsDialog({
     return !leadershipPromotionBlocked(botRole(bot), engine?.capabilities?.agentsMcp === true);
   };
 
+  const layer = useFocusTrap(dialogRef, true, { name: "team-settings", kind: "dialog", initialFocus: undefined, onEscape: () => { if (confirmingDelete) setConfirmingDelete(false); else onClose(); }, returnFocusTo: layerLifecycle?.opener, lease: layerLifecycle?.lease });
   // Focus the part the person asked for, once the team has loaded.
   useEffect(() => {
-    if (!team || focusedOnce.current) return;
+    if (!team || focusedOnce.current || !layer?.active) return;
     focusedOnce.current = true;
     const target = dialogRef.current?.querySelector<HTMLElement>(`[data-team-focus="${focus}"]`);
     (target ?? dialogRef.current?.querySelector<HTMLElement>("button"))?.focus();
-  }, [team, focus]);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        if (confirmingDelete) setConfirmingDelete(false);
-        else onClose();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const controls = [
-        ...dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'),
-      ];
-      if (!controls.length) return event.preventDefault();
-      const first = controls[0];
-      const last = controls[controls.length - 1];
-      // A save disables the button that had focus, which drops focus to the
-      // page; Tab brings it back inside rather than to the sidebar behind.
-      if (!dialog.contains(document.activeElement)) {
-        event.preventDefault();
-        (event.shiftKey ? last : first).focus();
-      } else if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    // On the window, so Escape and Tab still work after focus fell out.
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [confirmingDelete, onClose, team]);
+  }, [team, focus, layer]);
 
   // Read after mount, not during render: a panel that closed to open this
   // one has put focus back on its own opener by then.
-  useEffect(() => {
-    const opener = document.activeElement;
-    return () => {
-      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
-    };
-  }, []);
 
   const applyChanges = (changed: TeamChanges) => {
     const patches = teamChangePatches(changed);
@@ -476,14 +442,13 @@ export function TeamSettingsDialog({
       onClose();
     });
 
-  return (
-    <div
-      ref={dialogRef}
-      className="overlay-inset fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40 p-3"
+  return <LayerSurface handle={layer}><div
+      className="overlay-inset fixed inset-x-0 top-0 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40 p-3"
       onMouseDown={(event) => event.target === event.currentTarget && !busy && onClose()}
     >
       {team ? (
         <TeamSettingsDialogBody
+          dialogRef={dialogRef}
           team={team}
           candidates={candidates}
           existing={existing}
@@ -514,13 +479,13 @@ export function TeamSettingsDialog({
             setConfirmingDelete(true);
             // The panel replaces the button that had focus; Cancel is the
             // choice that changes nothing, so it gets focus.
-            window.setTimeout(() => dialogRef.current?.querySelector<HTMLElement>('[data-team-focus="delete"]')?.focus(), 0);
+            window.setTimeout(() => layer?.active && dialogRef.current?.querySelector<HTMLElement>('[data-team-focus="delete"]')?.focus(), 0);
           }}
           onDeleteChoice={setDeleteChoice}
           onConfirmDelete={() => void confirmDelete()}
           onCancelDelete={() => {
             setConfirmingDelete(false);
-            window.setTimeout(() => dialogRef.current?.querySelector<HTMLElement>('[data-team-focus="delete-ask"]')?.focus(), 0);
+            window.setTimeout(() => layer?.active && dialogRef.current?.querySelector<HTMLElement>('[data-team-focus="delete-ask"]')?.focus(), 0);
           }}
           onClose={onClose}
           onOpenShared={(botId) => {
@@ -530,7 +495,7 @@ export function TeamSettingsDialog({
           }}
         />
       ) : (
-        <div role="dialog" aria-modal="true" aria-label="Team settings" className={cn(BOX_FRAME, "max-h-[calc(var(--vvh,100dvh)-1.5rem)] rounded-2xl border border-hairline/50 bg-card shadow-2xl")}>
+        <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Team settings" className={cn(BOX_FRAME, "max-h-[calc(var(--vvh,100dvh)-1.5rem)] rounded-2xl border border-hairline/50 bg-card shadow-2xl")}>
           <BoxBody className="px-4 pt-4">
           <p className={cn("text-[13px]", loadError ? "text-danger" : "text-ink-secondary")} role="status">
             {loadError ?? "Loading the team…"}
@@ -543,6 +508,5 @@ export function TeamSettingsDialog({
           </BoxFoot>
         </div>
       )}
-    </div>
-  );
+    </div></LayerSurface>;
 }

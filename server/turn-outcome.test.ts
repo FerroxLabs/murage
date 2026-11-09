@@ -25,7 +25,9 @@ describe("turn outcome", () => {
     expect(classify({ ok: true })).toEqual({ stopped: false, succeeded: true, outcome: "completed" });
   });
 
-  it("an engine that still reports an interrupt as ok:false is a failure, not a stop", () => {
+  // NAMED expectation change (MurageMain ruling, STOP-FENCE goal line): Muse no longer reports a Stop BEFORE its prompt as ok:false
+  // "interrupted" (that is the stopped pair above). An interrupt Muse did not confirm AFTER its prompt was written still is, and still a failure.
+  it("an interrupt the engine did not confirm after its prompt was written (ok:false) is a failure, not a stop", () => {
     expect(classify({ ok: false, stopReason: "interrupted" })).toEqual({ stopped: false, succeeded: false, outcome: "failed" });
   });
 

@@ -1,0 +1,78 @@
+[
+  {
+    "name": "chai",
+    "from": "6.2.2",
+    "to": "6.3.0",
+    "consumers": [
+      "@vitest/expect@4.1.12"
+    ],
+    "reason": "The prior pnpm update vitest --depth Infinity re-resolved this compatible transitive range. Retained explicitly to match the installed and verified test/build graph; this is not an advisory fix. Other consumers can retain their earlier compatible resolution."
+  },
+  {
+    "name": "@jridgewell/sourcemap-codec",
+    "from": "1.5.5",
+    "to": "1.6.0",
+    "consumers": [
+      "magic-string@0.30.21"
+    ],
+    "reason": "The prior pnpm update vitest --depth Infinity re-resolved this compatible transitive range. Retained explicitly to match the installed and verified test/build graph; this is not an advisory fix. Other consumers can retain their earlier compatible resolution."
+  },
+  {
+    "name": "es-module-lexer",
+    "from": "2.3.1",
+    "to": "2.3.2",
+    "consumers": [
+      "vitest@4.1.12"
+    ],
+    "reason": "The prior pnpm update vitest --depth Infinity re-resolved this compatible transitive range. Retained explicitly to match the installed and verified test/build graph; this is not an advisory fix. Other consumers can retain their earlier compatible resolution."
+  },
+  {
+    "name": "obug",
+    "from": "2.1.4",
+    "to": "2.2.1",
+    "consumers": [
+      "vitest@4.1.12"
+    ],
+    "reason": "The prior pnpm update vitest --depth Infinity re-resolved this compatible transitive range. Retained explicitly to match the installed and verified test/build graph; this is not an advisory fix. Other consumers can retain their earlier compatible resolution."
+  },
+  {
+    "name": "picomatch",
+    "from": "4.0.5",
+    "to": "4.0.7",
+    "consumers": [
+      "vitest@4.1.12",
+      "tinyglobby@0.2.17"
+    ],
+    "reason": "The prior pnpm update vitest --depth Infinity re-resolved this compatible transitive range. Retained explicitly to match the installed and verified test/build graph; this is not an advisory fix. Other consumers can retain their earlier compatible resolution."
+  },
+  {
+    "name": "std-env",
+    "from": "4.2.0",
+    "to": "4.3.0",
+    "consumers": [
+      "vitest@4.1.12"
+    ],
+    "reason": "The prior pnpm update vitest --depth Infinity re-resolved this compatible transitive range. Retained explicitly to match the installed and verified test/build graph; this is not an advisory fix. Other consumers can retain their earlier compatible resolution."
+  },
+  {
+    "name": "tinyrainbow",
+    "from": "3.1.1",
+    "to": "3.2.0",
+    "consumers": [
+      "vitest@4.1.12",
+      "@vitest/expect@4.1.12",
+      "@vitest/pretty-format@4.1.12",
+      "@vitest/utils@4.1.12"
+    ],
+    "reason": "The prior pnpm update vitest --depth Infinity re-resolved this compatible transitive range. Retained explicitly to match the installed and verified test/build graph; this is not an advisory fix. Other consumers can retain their earlier compatible resolution."
+  },
+  {
+    "name": "tinyexec",
+    "from": "1.3.0",
+    "to": "1.3.1",
+    "consumers": [
+      "vitest@4.1.12"
+    ],
+    "reason": "The prior pnpm update vitest --depth Infinity re-resolved this compatible transitive range. Retained explicitly to match the installed and verified test/build graph; this is not an advisory fix. Other consumers can retain their earlier compatible resolution."
+  }
+]

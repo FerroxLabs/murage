@@ -215,4 +215,11 @@ describe("attachment read gate", () => {
       "server/fixture-home.ts: an AttachmentsHome in a template string",
     ]));
   }, 120_000);
+  it("P8: attachment-paths.ts reaches the attachments folder only through rebasedAttachmentPath; a direct attachmentsFolderForWriter call there fails the gate", () => {
+    const found = fixtureProgram({
+      "server/attachment-read.ts": `declare const homeKey: unique symbol;\nexport type AttachmentsHome = { readonly [homeKey]: true };\nexport declare function attachmentsFolderForWriter(home: AttachmentsHome): string;\nexport declare function attachmentsHomeOf(dataDir: string): AttachmentsHome;\nexport declare function rebasedAttachmentPath(root: string, name: string): string | null;\n`,
+      "server/attachment-paths.ts": `import { attachmentsFolderForWriter, attachmentsHomeOf, rebasedAttachmentPath } from "./attachment-read.ts";\nexport const direct = (root: string) => attachmentsFolderForWriter(attachmentsHomeOf(root));\nexport const gated = (root: string, name: string) => rebasedAttachmentPath(root, name);\n`,
+    });
+    expect(found.boundaryViolations).toEqual(["server/attachment-paths.ts: attachmentsFolderForWriter outside the writer"]);
+  }, 120_000);
 });

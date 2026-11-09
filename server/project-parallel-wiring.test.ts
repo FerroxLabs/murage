@@ -61,7 +61,7 @@ it("an interrupt never crosses a generation replacement during browser cleanup",
   const end = source.indexOf("\n/**", begin);
   const code = ts.transpileModule(source.slice(begin, end), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   let generation = "first"; const interruptTurn = vi.fn();
-  const deps = { directRuns: { get: () => ({ generation }) }, internalTurnOwners: new Map(), botForDirectThread: () => ({ modelSelection: { instanceId: "fake" } }),
+  const deps = { replyState: { invalidate: vi.fn() }, callSpeech: { invalidate: vi.fn() }, directRuns: { get: () => ({ generation }) }, internalTurnOwners: new Map(), botForDirectThread: () => ({ modelSelection: { instanceId: "fake" } }),
     cancelDirectTurnDispatch: () => ({ phase: "dispatching" }), releaseBrowserCapabilityForThread: async () => { generation = "replacement"; },
     registry: { get: () => ({ adapter: { interruptTurn } }) }, closeOpenApprovals: vi.fn(), stopCloseConfirmed: () => true,
     // bot email (4.5): the Stop hands the stopped generation to email's own withdraw rule (off here)

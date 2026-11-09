@@ -86,3 +86,15 @@ it("Leave paused survives a restart: the choice is read back from the data folde
   setSpend(1000, 10, next.getTime());
   expect(learningPausedRow(database(), next.getTime())).not.toBeNull();
 });
+
+it.each([false,true])("31: unseen pause reaches Inbox, both causes prefer limit, and doubling clears unseen (limit=%s)",async limit=>{
+  setCeiling(1000,500);setSpend(limit?1000:10,1);
+  database().prepare("UPDATE memory_scope_bindings SET intent=json_set(intent,'$.unmetered',2) WHERE id=?").run(learningSpendLedgerId(learningSpendMonth()));
+  const row=learningPausedRow(database())!;expect(row.pausedBy).toBe(limit?"limit":"unseen");
+  const status=await memoryOwnerRoute("/api/memory/action",{action:"configure",ceiling:{input:2000,output:1000},learningRevision:row.learningRevision},ownerMemoryTicket(),roster) as unknown as {learning:{ceiling:Record<string,unknown>}};
+  expect(status.learning.ceiling.paused).toBe(false);expect(status.learning.ceiling.pausedBy).toBeUndefined();expect(learningPausedRow(database())).toBeNull();
+});
+it.each([[1e12,500],[1000,1e12],[1e12,1e12]])("31: Leave paused works at maximum ceilings (%s, %s)",(input,output)=>{
+  setCeiling(input,output);setSpend(10,1);database().prepare("UPDATE memory_scope_bindings SET intent=json_set(intent,'$.unmetered',2) WHERE id=?").run(learningSpendLedgerId(learningSpendMonth()));
+  expect(learningPausedRow(database())?.pausedBy).toBe("unseen");expect(leaveLearningPaused(database())).toBe(learningSpendMonth());expect(learningPausedRow(database())).toBeNull();
+});

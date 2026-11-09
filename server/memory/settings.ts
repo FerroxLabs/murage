@@ -34,7 +34,7 @@ import { ownerMemoryList } from "./owner-list.ts";
 import { pastChatsCounters } from "./past-chats-build.ts";
 import type { MemoryRecord } from "../../shared/memory.ts";
 import { prepareMemorySkillReview } from "../skills.ts";
-import { learningCeilingSchema, memoryLearningPatchSchema, readMemoryLearning, retrySkippedRequestSchema, updateMemoryLearning } from "./learning-policy.ts";
+import { LEARNING_CEILING_MAX, learningCeilingSchema, memoryLearningPatchSchema, readMemoryLearning, retrySkippedRequestSchema, updateMemoryLearning } from "./learning-policy.ts";
 import { ceilingReached, learningSpendLedgerId, learningSpendMonth, type LearningCeilingStatus } from "../../shared/memory-learning-contract.ts";
 import { releaseCeilingDeferrals, retrySkippedSlice } from "./consolidate.ts";
 import { clearUnseenExcess, unmeteredPause } from "./extract.ts";
@@ -302,7 +302,8 @@ export function learningCeilingStatus(db:ReturnType<typeof database>,ceiling:{in
   const month=learningSpendMonth(at),row=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(learningSpendLedgerId(month));
   const spend=row?JSON.parse(String(row.intent)):{};
   const used={input:Math.max(0,Number(spend.input)||0),output:Math.max(0,Number(spend.output)||0)};
-  return {month,input:ceiling.input,output:ceiling.output,inputUsed:used.input,outputUsed:used.output,paused:ceilingReached(ceiling,used)||unmeteredPause(spend)};
+  const limit=ceilingReached(ceiling,used),paused=limit||unmeteredPause(spend);
+  return {month,input:ceiling.input,output:ceiling.output,inputUsed:used.input,outputUsed:used.output,paused,...(paused?{pausedBy:limit?"limit" as const:"unseen" as const}:{})};
 }
 /** Bumped whenever the last reading is forgotten: a reading that began before then is not kept (it may predate an owner's change). */
 let figuresGeneration=0;
@@ -543,11 +544,12 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
       if(input.learning||input.ceiling){
         const before=readMemoryLearning(db).ceiling;
         const next=updateMemoryLearning(db,{...input.learning,...input.ceiling?{ceiling:input.ceiling}:{}},input.learningRevision);
-        // a raise applies now: every source waiting for next month's ceiling is due at once
-        // a raise of both sides is also the owner's answer to unmetered replies, so they are cleared with it (one side alone is not:
-        // their unknown excess may sit on the other)
-        if(next.ceiling.input>before.input||next.ceiling.output>before.output)releaseCeilingDeferrals(db);
-        if(next.ceiling.input>before.input&&next.ceiling.output>before.output)clearUnseenExcess(db);
+        // An explicit ceiling save accepts unseen usage on each raised or maximum side.
+        const acceptsUnseen = (next.ceiling.input > before.input || (input.ceiling !== undefined && next.ceiling.input === LEARNING_CEILING_MAX))
+          && (next.ceiling.output > before.output || (input.ceiling !== undefined && next.ceiling.output === LEARNING_CEILING_MAX));
+        if (acceptsUnseen) clearUnseenExcess(db);
+        // Accepted unseen usage also frees sources held until next month.
+        if (acceptsUnseen || next.ceiling.input > before.input || next.ceiling.output > before.output) releaseCeilingDeferrals(db);
       }
       db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system','owner-settings',0,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent").run(SETTINGS,scope,JSON.stringify(updated));
       if(input.mode)db.prepare("UPDATE memory_meta SET mode=?").run(input.mode);

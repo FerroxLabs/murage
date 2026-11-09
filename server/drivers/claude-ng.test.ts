@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -228,3 +229,6 @@ describe("14.5 the sign-in card remembers the owner's answer (routines and unatt
     expect(fresh.recall({ ...scope, canonical: `${scope.canonical} ` })).toBeUndefined();
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

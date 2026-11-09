@@ -1,0 +1,286 @@
+{
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 1,
+      "moderate": 11,
+      "high": 6,
+      "critical": 0
+    },
+    "dependencies": 1199,
+    "devDependencies": 0,
+    "optionalDependencies": 0,
+    "totalDependencies": 1199
+  },
+  "muted": [],
+  "advisories": [
+    {
+      "id": "GHSA-xcpc-8h2w-3j85",
+      "module": "adm-zip",
+      "severity": "high",
+      "affected": "<0.6.0",
+      "patched": ">=0.6.0",
+      "findings": [
+        {
+          "version": "0.5.18",
+          "paths": [
+            ".>@huggingface/transformers>onnxruntime-node>adm-zip"
+          ]
+        }
+      ],
+      "url": "https://github.com/advisories/GHSA-xcpc-8h2w-3j85"
+    },
+    {
+      "id": "GHSA-82fw-gwwq-j7x9",
+      "module": "vitest",
+      "severity": "moderate",
+      "affected": ">=2.1.0 <4.1.11",
+      "patched": ">=4.1.11",
+      "findings": [
+        {
+          "version": "4.1.10",
+          "paths": [
+            ".>vitest"
+          ]
+        }
+      ],
+      "url": "https://github.com/advisories/GHSA-82fw-gwwq-j7x9"
+    },
+    {
+      "id": "GHSA-82fw-gwwq-j7x9",
+      "module": "@vitest/mocker",
+      "severity": "moderate",
+      "affected": ">=2.1.0 <4.1.11",
+      "patched": ">=4.1.11",
+      "findings": [
+        {
+          "version": "4.1.10",
+          "paths": [
+            ".>vitest>@vitest/mocker"
+          ]
+        }
+      ],
+      "url": "https://github.com/advisories/GHSA-82fw-gwwq-j7x9"
+    },
+    {
+      "id": "GHSA-vwc7-r8mq-g2x9",
+      "module": "adm-zip",
+      "severity": "moderate",
+      "affected": ">=0.5.9 <=0.6.0",
+      "patched": "<0.0.0",
+      "findings": [
+        {
+          "version": "0.5.18",
+          "paths": [
+            ".>@huggingface/transformers>onnxruntime-node>adm-zip"
+          ]
+        }
+      ],
+      "url": "https://github.com/advisories/GHSA-vwc7-r8mq-g2x9"
+    },
+    {
+      "id": "GHSA-7q85-xj36-vmfc",
+      "module": "adm-zip",
+      "severity": "high",
+      "affected": "<0.6.1",
+      "patched": ">=0.6.1",
+      "findings": [
+        {
+          "version": "0.5.18",
+          "paths": [
+            ".>@huggingface/transformers>onnxruntime-node>adm-zip"
+          ]
+        }
+      ],
+      "url": "https://github.com/advisories/GHSA-7q85-xj36-vmfc"
+    },
+    {
+      "id": "GHSA-rcw4-f5rp-g42v",
+      "module": "adm-zip",
+      "severity": "high",
+      "affected": "<=0.6.0",
+      "patched": ">=0.6.1",
+      "findings": [
+        {
+          "version": "0.5.18",
+          "paths": [
+            ".>@huggingface/transformers>onnxruntime-node>adm-zip"
+          ]
+        }
+      ],
+      "url": "https://github.com/advisories/GHSA-rcw4-f5rp-g42v"
+    },
+    {
+      "id": "GHSA-j5f4-cc29-5x44",
+      "module": "adm-zip",
+      "severity": "high",
+      "affected": "<=0.6.0",
+      "patched": ">=0.6.1",
+      "findings": [
+        {
+          "version": "0.5.18",
+          "paths": [
+            ".>@huggingface/transformers>onnxruntime-node>adm-zip"
+          ]
+        }
+      ],
+      "url": "https://github.com/advisories/GHSA-j5f4-cc29-5x44"
+    },
+    {
+      "id": "GHSA-p634-w6r4-rjp2",
+      "module": "adm-zip",
+      "severity": "moderate",
+      "affected": "<=0.6.0",
+      "patched": ">=0.6.1",
+      "findings": [
+        {
+          "version": "0.5.18",
+          "paths": [
+            ".>@huggingface/transformers>onnxruntime-node>adm-zip"
+          ]
+        }
+      ],
+      "url": "https://github.com/advisories/GHSA-p634-w6r4-rjp2"
+    },
+    {
+      "id": "GHSA-c6fg-446q-cg94",
+      "module": "adm-zip",
+      "severity": "moderate",
+      "affected": "<=0.6.0",
+      "patched": ">=0.6.1",
+      "findings": [
+        {
+          "version": "0.5.18",
+          "paths": [
+            ".>@huggingface/transformers>onnxruntime-node>adm-zip"
+          ]
+        }
+      ],
+      "url": "https://github.com/advisories/GHSA-c6fg-446q-cg94"
+    },
+    {
+      "id": "GHSA-8238-w5pm-2374",
+      "module": "adm-zip",
+      "severity": "high",
+      "affected": "<=0.6.0",
+      "patched": ">=0.6.1",
+      "findings": [
+        {
+          "version": "0.5.18",
+          "paths": [
+            ".>@huggingface/transformers>onnxruntime-node>adm-zip"
+          ]
+        }
+      ],
+      "url": "https://github.com/advisories/GHSA-8238-w5pm-2374"
+    },
+    {
+      "id": "GHSA-q2hr-2g5m-vwhr",
+      "module": "brace-expansion",
+      "severity": "moderate",
+      "affected": ">=4.0.0 <5.0.12",
+      "patched": ">=5.0.12",
+      "findings": [
+        {
+          "version": "5.0.11",
+          "paths": [
+            ".>electron-builder>app-builder-lib>minimatch>brace-expansion"
+          ]
+        }
+      ],
+      "url": "https://github.com/advisories/GHSA-q2hr-2g5m-vwhr"
+    },
+    {
+      "id": "GHSA-238p-pmpm-9mq7",
+      "module": "katex",
+      "severity": "low",
+      "affected": ">=0.11.0 <0.18.2",
+      "patched": ">=0.18.2",
+      "findings": [
+        {
+          "version": "0.16.47",
+          "paths": [
+            ".>mermaid>katex"
+          ]
+        }
+      ],
+      "url": "https://github.com/advisories/GHSA-238p-pmpm-9mq7"
+    },
+    {
+      "id": "GHSA-qxg6-89mg-rqv8",
+      "module": "@vitest/mocker",
+      "severity": "moderate",
+      "affected": ">=2.1.0-beta.7 <4.1.12",
+      "patched": ">=4.1.12",
+      "findings": [
+        {
+          "version": "4.1.11",
+          "paths": [
+            "cloudflare__control-plane>vitest>@vitest/mocker"
+          ]
+        },
+        {
+          "version": "4.1.10",
+          "paths": [
+            ".>vitest>@vitest/mocker"
+          ]
+        }
+      ],
+      "url": "https://github.com/advisories/GHSA-qxg6-89mg-rqv8"
+    },
+    {
+      "id": "GHSA-xp26-3454-mjgp",
+      "module": "@vitest/mocker",
+      "severity": "moderate",
+      "affected": ">=4.1.11 <4.1.12",
+      "patched": ">=4.1.12",
+      "findings": [
+        {
+          "version": "4.1.11",
+          "paths": [
+            "cloudflare__control-plane>vitest>@vitest/mocker"
+          ]
+        }
+      ],
+      "url": "https://github.com/advisories/GHSA-xp26-3454-mjgp"
+    },
+    {
+      "id": "GHSA-mrhx-c7xc-m3w5",
+      "module": "zod",
+      "severity": "high",
+      "affected": "<4.6.6",
+      "patched": ">=4.6.6",
+      "findings": [
+        {
+          "version": "3.25.76",
+          "paths": [
+            ".>jimp>@jimp/plugin-blit>zod"
+          ]
+        }
+      ],
+      "url": "https://github.com/advisories/GHSA-mrhx-c7xc-m3w5"
+    },
+    {
+      "id": "GHSA-g3hv-75wg-m249",
+      "module": "minimatch",
+      "severity": "moderate",
+      "affected": ">=7.0.0 <11.0.1",
+      "patched": ">=11.0.1",
+      "findings": [
+        {
+          "version": "9.0.9",
+          "paths": [
+            ".>electron-builder>app-builder-lib>@electron/universal>minimatch"
+          ]
+        },
+        {
+          "version": "10.2.6",
+          "paths": [
+            ".>electron-builder>app-builder-lib>minimatch"
+          ]
+        }
+      ],
+      "url": "https://github.com/advisories/GHSA-g3hv-75wg-m249"
+    }
+  ]
+}

@@ -16,6 +16,8 @@
 // none of it, pictures included, rides the first paint. Whoever mounts it
 // decides what each shortcut does and records the page as seen when it
 // closes, however it closes: X, Escape, Got it, Let's go, or any shortcut.
+import { useNativeDialogLayer } from "@/lib/native-dialog-layer";
+import type { LoadedLayerProps } from "@/components/LazyOverlay";
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
@@ -238,10 +240,10 @@ export function whatsNewArrowStep(key: string): -1 | 0 | 1 {
 
 const FOCUSABLE = 'button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
 
-export function WhatsNewDialog({
+export function WhatsNewDialog({ layerLifecycle,
   open,
   version,
-  onClose,
+  onClose: requestedClose,
   onAction,
   releaseNotesUrl,
 }: {
@@ -253,23 +255,21 @@ export function WhatsNewDialog({
   releaseNotesUrl: string;
   /** The version whose page this is. */
   version?: string;
-}) {
+} & { layerLifecycle?: LoadedLayerProps }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const native = useNativeDialogLayer(dialog, { name: "whats-new-native", returnFocusTo: layerLifecycle?.opener, lease: layerLifecycle?.lease });
+  const onClose = () => native.dismiss(requestedClose);
   const heading = useRef<HTMLHeadingElement | null>(null);
   const [index, setIndex] = useState(0);
   const moved = useRef(false);
 
   useLayoutEffect(() => {
     if (!open || !dialog.current) return;
-    const element = dialog.current, previous = document.activeElement;
+    const element = dialog.current;
     setIndex(0);
     moved.current = false;
-    if (!element.open) element.showModal();
+    if (!element.open) native.show();
     heading.current?.focus();
-    return () => {
-      element.close();
-      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
-    };
   }, [open]);
   // A new card: its title takes focus, so a screen reader reads where it is.
   useEffect(() => {

@@ -1,3 +1,6 @@
+import { openLayers } from "@/lib/focus-trap";
+import { CalendarLifetime, useCalendarLayer, type CalendarLayerProps } from "@/components/CalendarLayer";
+import { LayerSurface } from "@/components/LayerSurface";
 import { RoutineSchedulerNotice, useRoutineSchedulerLate } from "./RoutineSchedulerNotice";
 import { limitWaitLabel } from "./ThreadFollowControls";
 import { t } from "@/lib/i18n";
@@ -50,6 +53,9 @@ import { useDesktopSurface } from "@/lib/use-surface";
 import { WebhooksPanel } from "@/components/WebhooksPanel";
 import { RoutineWatchPicker } from "@/components/RoutineWatchPicker";
 import { RoutineProblemsList, unseenRoutineProblems } from "@/components/routines/RoutineProblemsList";
+import { RoutineListSheet, RoutineSheet } from "@/components/routines/RoutineSheet";
+import { NewRoutineSheet, type SentenceChange } from "@/components/routines/NewRoutineSheet";
+import { PhoneRoutineList } from "@/components/phone/PhoneRoutineList";
 import { routineHealthNotes, routineOverlapHelp } from "@/lib/routine-health";
 import { routineInstructionsLimit } from "@/lib/routine-instructions-limit";
 import { isUnseenRoutineProblem } from "../../shared/routine-problems";
@@ -57,7 +63,7 @@ import type { CalendarCall, CalendarCallAttachment, CalendarCallInput } from "@/
 import { botRole } from "@/lib/bot-role";
 import { cn } from "@/lib/cn";
 import { imeComposing } from "@/lib/composer-enter";
-import { calendarCardLayout } from "@/lib/calendar-card-layout";
+import { CALENDAR_STATUS_DOT, CALENDAR_STATUS_SPOKEN, calendarCardLayout, calendarStatusTone } from "@/lib/calendar-card-layout";
 import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 import {
   intakeFiles,
@@ -88,13 +94,13 @@ import type {
   RoutineContextAttachment,
   RoutineGoalStatus,
   RoutineInput,
+  RoutineRun,
   RoutineRunOn,
   RoutineRunStatus,
   RoutineSchedule,
   RoutineTarget,
 } from "@/lib/routines";
 import { api, useStore, type Bot, type Group } from "@/state/store";
-import { useModalDialog } from "@/hooks/use-modal-dialog";
 import { useDirtyBaseline } from "@/hooks/use-dirty-baseline";
 import { permissionModeOf } from "@/lib/permission-mode";
 import { engineKey, limitEngineOptions } from "../../shared/limit-engine-key";
@@ -138,6 +144,9 @@ type EventSeed = {
   /** Carried from the quick form into "More options" so the repeat a person
    * already chose survives the trip. */
   recurrence?: CalendarRecurrenceChoice;
+  /** A schedule read from a sentence (L5B Change): its interval or custom
+   * weekdays open in the editor as read. */
+  schedule?: RoutineSchedule;
   routine?: Routine;
   call?: CalendarCall;
 };
@@ -409,7 +418,7 @@ function toContextAttachments(attachments: Attachment[]): Array<RoutineContextAt
   }]);
 }
 
-function EventEditor({
+export function EventEditor({ lifecycle,
   seed,
   bots,
   lockedBotId,
@@ -426,7 +435,7 @@ function EventEditor({
   onSavedCall: (call: CalendarCall) => void;
   /** So the page can say what it saved and bring it into view. */
   onSaved?: (saved: { name: string; schedule: RoutineSchedule | CalendarCall["schedule"] }) => void;
-}) {
+} & CalendarLayerProps) {
   const { state, dispatch } = useStore();
   const existingRoutine = seed.routine;
   const existingCall = seed.call;
@@ -445,7 +454,7 @@ function EventEditor({
         : existingCall?.schedule.type === "daily"
           ? atLocalTime(seed.at, existingCall.schedule.time)
           : seed.at;
-  const schedule = existingRoutine?.schedule ?? existingCall?.schedule ?? { type: "once" as const, at: initialAt };
+  const schedule = existingRoutine?.schedule ?? existingCall?.schedule ?? seed.schedule ?? { type: "once" as const, at: initialAt };
   const [date, setDate] = useState(toLocalDateInput(initialAt));
   const [startTime, setStartTime] = useState(toLocalTimeInput(initialAt));
   const [durationMinutes, setDurationMinutes] = useState(existingRoutine?.durationMinutes ?? existingCall?.durationMinutes ?? seed.durationMinutes);
@@ -478,7 +487,7 @@ function EventEditor({
   const [attachmentNotice, setAttachmentNotice] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
   const cloudInstance = state.instances.find((instance) => instance.driverKind === "boxAgent");
-  const cloudReady = Boolean(state.config?.box.configured && cloudInstance?.snapshot.state === "available");
+  const cloudReady = Boolean(state.config?.box?.configured && cloudInstance?.snapshot.state === "available");
   const rooms = state.groups.filter(roomCanRunGoal);
   const selectedRoom = rooms.find((group) => group.id === groupId);
   const roomMembers = activeRoomMembers(selectedRoom, state.bots);
@@ -615,10 +624,11 @@ function EventEditor({
     kind, name, description, date, startTime, durationMinutes, timeoutMinutes, recurrence, weekdays, intervalMinutes,
     botIds, routineTarget, groupId, runOn, overlap, deliverTo, permissionMode, attachments,
   });
-  useModalDialog(modalRef, onClose, true, editorDirty.isDirty);
-
-  return (
-    <div className="overlay-inset fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/65 p-3 backdrop-blur-sm" onMouseDown={(event) => event.target === event.currentTarget && editorDirty.closeWithAsk(onClose)}>
+  const layer = useCalendarLayer(modalRef, "routine-editor", () => editorDirty.closeWithAsk(onClose), lifecycle, "input");
+  const customIntervalRef = useRef<HTMLInputElement>(null);
+  const customIntervalShown = kind === "routine" && recurrence === "interval" && !INTERVAL_PRESETS.includes(intervalMinutes);
+  useEffect(() => { if (customIntervalShown && layer?.active) customIntervalRef.current?.focus(); }, [customIntervalShown, layer]);
+  return <LayerSurface handle={layer}><div className="overlay-inset fixed inset-x-0 top-0 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/65 p-3 backdrop-blur-sm" onMouseDown={(event) => event.target === event.currentTarget && editorDirty.closeWithAsk(onClose)}>
       <div ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={existingRoutine || existingCall ? "Edit routine" : "New routine"} className={cn(BOX_FRAME, "max-h-[calc(0.94*var(--vvh,100dvh))] w-full max-w-[760px] rounded-2xl border border-hairline/60 bg-panel shadow-2xl")}>
         <BoxHead className="border-b border-hairline/40 px-5 py-3.5">
           <div className="text-[15px] font-semibold text-ink">{existingRoutine || existingCall ? (kind === "call" ? "Edit call" : "Edit routine") : (kind === "call" ? "New call" : "New routine")}</div>
@@ -659,7 +669,16 @@ function EventEditor({
 
           <div className="flex items-start gap-4">
             <span className="mt-3 size-4 shrink-0 rounded bg-accent" />
-            <input autoFocus value={name} onChange={(event) => setName(event.target.value)} aria-label={t("routines.editor.titleLabel")} placeholder={kind === "routine" ? "Add title" : "Add call title"} className="keep-font-size min-w-0 flex-1 border-b border-hairline/60 bg-transparent px-1 pb-2 text-[22px] font-medium text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
+            <input value={name} onChange={(event) => setName(event.target.value)} aria-label={t("routines.editor.titleLabel")} placeholder={kind === "routine" ? "Add title" : "Add call title"} className="keep-font-size min-w-0 flex-1 border-b border-hairline/60 bg-transparent px-1 pb-2 text-[22px] font-medium text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
+          </div>
+
+          {/* Instructions right under the title, so they show without scrolling (ten-jobs gate). */}
+          <div className="flex items-start gap-4">
+            <FileText size={18} className="mt-2.5 shrink-0 text-ink-secondary" />
+            <div className="min-w-0 flex-1">
+              <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={5} aria-label={t(kind === "call" ? "routines.editor.descriptionLabel" : "routines.editor.instructionsLabel")} aria-invalid={instructionsLimit?.over || undefined} aria-describedby={instructionsLimit ? "routine-instructions-limit" : undefined} placeholder={isRoomGoal ? "What should the team accomplish?" : kind === "routine" ? "Add instructions for the bot" : "Add description or agenda"} className="block w-full min-w-0 resize-y rounded-xl border border-hairline/50 bg-inset px-3.5 py-3 text-[13px] leading-relaxed text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
+              {instructionsLimit && <p id="routine-instructions-limit" role={instructionsLimit.over ? "alert" : undefined} className={cn("mt-1.5 text-[12px]", instructionsLimit.over ? "text-danger" : "text-ink-secondary")}>{instructionsLimit.line}</p>}
+            </div>
           </div>
 
           <div className="flex items-start gap-4">
@@ -726,10 +745,10 @@ function EventEditor({
                         step={1}
                         value={intervalMinutes || ""}
                         onChange={(event) => setIntervalMinutes(Number(event.target.value))}
+                        ref={customIntervalRef}
                         aria-label="Custom interval in minutes"
                         aria-invalid={intervalInvalid}
                         aria-describedby={intervalInvalid ? "routine-interval-error" : "routine-interval-help"}
-                        autoFocus
                         className={cn("w-20 rounded-lg border bg-inset px-3 py-2 text-[12.5px] tabular-nums text-ink outline-none focus:border-accent", intervalInvalid ? "border-danger/70" : "border-hairline/50")}
                       />
                     )}
@@ -842,14 +861,6 @@ function EventEditor({
           </div>
 
           <div className="flex items-start gap-4">
-            <FileText size={18} className="mt-2.5 shrink-0 text-ink-secondary" />
-            <div className="min-w-0 flex-1">
-              <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={5} aria-label={t(kind === "call" ? "routines.editor.descriptionLabel" : "routines.editor.instructionsLabel")} aria-invalid={instructionsLimit?.over || undefined} aria-describedby={instructionsLimit ? "routine-instructions-limit" : undefined} placeholder={isRoomGoal ? "What should the team accomplish?" : kind === "routine" ? "Add instructions for the bot" : "Add description or agenda"} className="block w-full min-w-0 resize-y rounded-xl border border-hairline/50 bg-inset px-3.5 py-3 text-[13px] leading-relaxed text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
-              {instructionsLimit && <p id="routine-instructions-limit" role={instructionsLimit.over ? "alert" : undefined} className={cn("mt-1.5 text-[12px]", instructionsLimit.over ? "text-danger" : "text-ink-secondary")}>{instructionsLimit.line}</p>}
-            </div>
-          </div>
-
-          <div className="flex items-start gap-4">
             <Paperclip size={18} className="mt-2.5 shrink-0 text-ink-secondary" />
             {isRoomGoal ? (
               <div className="min-w-0 flex-1 rounded-xl border border-hairline/50 bg-inset px-3.5 py-3">
@@ -900,11 +911,10 @@ function EventEditor({
           <button onClick={save} disabled={saving || !valid} className="flex items-center gap-2 rounded-lg bg-accent px-5 py-2 text-[12.5px] font-semibold text-white hover:brightness-110 disabled:opacity-40">{saving && <Loader2 size={14} className="animate-spin" />}{existingRoutine || existingCall ? "Save" : kind === "call" ? "Schedule call" : isRoomGoal ? "Schedule team goal" : "Schedule routine"}</button>
         </BoxFoot>
       </div>
-    </div>
-  );
+    </div></LayerSurface>;
 }
 
-function QuickComposer({
+export function QuickComposer({ lifecycle,
   seed,
   bots,
   onClose,
@@ -920,7 +930,7 @@ function QuickComposer({
   onSavedRoutine: (routine: Routine) => void;
   onSavedCall: (call: CalendarCall) => void;
   onSaved?: (saved: { name: string; schedule: RoutineSchedule | CalendarCall["schedule"] }) => void;
-}) {
+} & CalendarLayerProps) {
   const { dispatch } = useStore();
   const [kind, setKind] = useState<EventKind>(seed.kind);
   const [name, setName] = useState(seed.name ?? "");
@@ -934,7 +944,7 @@ function QuickComposer({
   const [error, setError] = useState("");
   const dialogRef = useRef<HTMLDivElement>(null);
   const quickDirty = useDirtyBaseline({ kind, name, description, botIds, recurrence });
-  useModalDialog(dialogRef, onClose, true, quickDirty.isDirty);
+  const layer = useCalendarLayer(dialogRef, "routine-quick-create", () => quickDirty.closeWithAsk(onClose), lifecycle, "input");
   const [dialogPosition, setDialogPosition] = useState<{ left: number; top: number } | null>(null);
   const durationMinutes = kind === "routine" ? 30 : seed.durationMinutes;
 
@@ -1006,19 +1016,18 @@ function QuickComposer({
 
   const instructionsLimit = kind === "call" ? null : routineInstructionsLimit(description);
   const valid = Boolean(name.trim() && botIds.length && !instructionsLimit?.over && (kind === "call" || description.trim()));
-  // C5: the title field below is autoFocus, so the keyboard is up the whole
-  // time this is open. `fixed` + `top-1/2` centres against the layout viewport,
-  // which iOS does not shrink — hence --vvh for both the cap and the centre.
-  return (
-    <>
-      <div className="fixed inset-0 z-40 bg-black/25" onMouseDown={() => quickDirty.closeWithAsk(onClose)} />
-    <div ref={dialogRef} tabIndex={-1} role="dialog" aria-label="Quick create" style={dialogPosition ?? undefined} className={cn(BOX_FRAME, "fixed z-50 max-h-[calc(var(--vvh,100dvh)-24px)] w-[min(430px,calc(100vw-24px))] rounded-2xl border border-hairline/60 bg-panel shadow-2xl", !dialogPosition && "left-1/2 top-[calc(var(--vvh,100dvh)/2)] -translate-x-1/2 -translate-y-1/2")}>
+  // C5: active-layer title focus can open the on-screen keyboard. Centre and
+  // cap the form against --vvh, since iOS does not shrink the layout viewport
+  // when the keyboard opens.
+  return <LayerSurface handle={layer}><>
+      <div className="fixed inset-0 bg-black/25" onMouseDown={() => quickDirty.closeWithAsk(onClose)} />
+    <div ref={dialogRef} tabIndex={-1} role="dialog" aria-label="Quick create" style={dialogPosition ?? undefined} className={cn(BOX_FRAME, "fixed max-h-[calc(var(--vvh,100dvh)-24px)] w-[min(430px,calc(100vw-24px))] rounded-2xl border border-hairline/60 bg-panel shadow-2xl", !dialogPosition && "left-1/2 top-[calc(var(--vvh,100dvh)/2)] -translate-x-1/2 -translate-y-1/2")}>
       <BoxHead className="bg-raised/70 px-4 py-2.5">
         <div className="text-[12px] font-medium text-ink-secondary">{kind === "routine" ? "New routine" : "New call"}</div>
         <button onClick={onClose} className="rounded-full p-1.5 text-ink-secondary hover:bg-inset hover:text-ink" aria-label="Close"><X size={16} /></button>
       </BoxHead>
       <BoxBody className="space-y-3 p-4">
-        <input autoFocus value={name} onChange={(event) => setName(event.target.value)} aria-label={t("routines.editor.titleLabel")} placeholder="Add title" onKeyDown={(event) => { if (event.key === "Enter" && valid && !imeComposing({ isComposing: event.nativeEvent.isComposing, keyCode: event.keyCode })) void save(); }} className="keep-font-size w-full border-b border-hairline/60 bg-transparent pb-2 text-[18px] font-medium text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
+        <input value={name} onChange={(event) => setName(event.target.value)} aria-label={t("routines.editor.titleLabel")} placeholder="Add title" onKeyDown={(event) => { if (event.key === "Enter" && valid && !imeComposing({ isComposing: event.nativeEvent.isComposing, keyCode: event.keyCode })) void save(); }} className="keep-font-size w-full border-b border-hairline/60 bg-transparent pb-2 text-[18px] font-medium text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
         <div className="flex items-center gap-1 border-b border-hairline/35 pb-2">
           <button type="button" onClick={() => { setKind("routine"); setBotIds((ids) => ids.slice(0, 1)); }} className={cn("rounded-lg px-3 py-1.5 text-[12px] font-medium", kind === "routine" ? "bg-accent/15 text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink")}>Routine</button>
           <button type="button" onClick={() => setKind("call")} className={cn("rounded-lg px-3 py-1.5 text-[12px] font-medium", kind === "call" ? "bg-accent/15 text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink")}>Call</button>
@@ -1062,12 +1071,11 @@ function QuickComposer({
         {error && <div className="rounded-lg bg-danger/10 px-3 py-2 text-[11.5px] text-danger">{error}</div>}
       </BoxBody>
       <BoxFoot className="border-t border-hairline/40 px-4 py-3">
-        <button onClick={() => onMore({ ...seed, kind, botIds, name, description, recurrence })} className="rounded-lg px-3 py-2 text-[12px] font-medium text-accent hover:bg-accent/10">More options</button>
+        <button onClick={() => { layer?.release(); onMore({ ...seed, kind, botIds, name, description, recurrence }); }} className="rounded-lg px-3 py-2 text-[12px] font-medium text-accent hover:bg-accent/10">More options</button>
         <button onClick={save} disabled={!valid || working} className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-40">{working && <Loader2 size={13} className="animate-spin" />}Save</button>
       </BoxFoot>
     </div>
-    </>
-  );
+    </></LayerSurface>;
 }
 
 function CalendarEventCard({
@@ -1136,6 +1144,7 @@ function CalendarEventCard({
 
   const height = Math.max(16, (previewDuration / 60) * HOUR_HEIGHT);
   const fit = calendarCardLayout(height);
+  const tone = fit === "roomy" || isCall ? null : calendarStatusTone(status);
   const detail = intervalCadence ?? (isCall ? `${ownerBots.length} bot${ownerBots.length === 1 ? "" : "s"}` : isRoomGoal ? `Team goal · ${room?.name ?? "Channel"}${statusLabel ? ` · ${statusLabel}` : ""}` : statusLabel ?? primary?.name);
 
   return (
@@ -1163,6 +1172,8 @@ function CalendarEventCard({
     >
       <div className="flex min-w-0 items-start gap-1.5 text-white">
         {fit === "roomy" && (isCall ? <Video size={compact ? 11 : 13} className="mt-0.5 shrink-0" /> : primary ? <BotAvatar bot={primary} state={status ? statusState(status) : "idle"} size={compact ? 22 : 26} animated={status === "running" || status === "waiting" || status === "needs-you"} /> : null)}
+        {tone && <span data-calendar-status={tone} aria-hidden="true" className={cn("shrink-0 self-center rounded-full ring-1 ring-black/30", fit === "tiny" ? "h-1.5 w-1.5" : "h-2 w-2", CALENDAR_STATUS_DOT[tone])} />}
+        {tone && <span className="sr-only" data-calendar-status-text="">{t(CALENDAR_STATUS_SPOKEN[tone])}</span>}
         <div className="min-w-0 flex-1">
           <div className={cn("truncate text-[11px] font-semibold", fit === "tiny" ? "leading-none" : "leading-tight")}>{name}{fit === "compact" && <span className="ml-1 font-normal text-white/75">{niceTime(item.at)}</span>}</div>
           {fit === "roomy" && <div className="mt-0.5 truncate text-[9.5px] text-white/75">{niceTime(item.at)} · {detail}</div>}
@@ -1309,7 +1320,7 @@ function CalendarGrid({
   );
 }
 
-function EventDetails({
+export function EventDetails({ lifecycle,
   item,
   bots,
   onClose,
@@ -1323,7 +1334,7 @@ function EventDetails({
   onEdit: () => void;
   onCallChanged: (id: string | null) => void;
   onOpenRoom: (id: string) => void;
-}) {
+} & CalendarLayerProps) {
   const { state, dispatch } = useStore();
   const canEdit = useDesktopSurface() === true;
   const [working, setWorking] = useState(false);
@@ -1440,10 +1451,8 @@ function EventDetails({
   });
 
   const modalRef = useRef<HTMLDivElement>(null);
-  useModalDialog(modalRef, onClose);
-
-  return (
-    <div className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 backdrop-blur-[2px]" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+  const layer = useCalendarLayer(modalRef, "routine-event-details", onClose, lifecycle);
+  return <LayerSurface handle={layer}><div className="overlay-inset fixed inset-0 flex items-center justify-center bg-black/50 p-3 backdrop-blur-[2px]" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Routine details" className={cn(BOX_FRAME, "max-h-[calc(var(--vvh,100dvh)-1.5rem)] w-full max-w-[520px] rounded-2xl border border-hairline/60 bg-panel shadow-2xl")}>
         <BoxHead className="items-start justify-start gap-4 border-b border-hairline/40 px-5 py-4">
           <span className={cn("mt-1 size-4 shrink-0 rounded", isCall ? "bg-[#6d7cff]" : "bg-accent")} />
@@ -1503,11 +1512,10 @@ function EventDetails({
           </div>}
         </BoxFoot>
       </div>
-    </div>
-  );
+    </div></LayerSurface>;
 }
 
-function PausedList({
+export function PausedList({ lifecycle,
   routines,
   bots,
   groups,
@@ -1521,7 +1529,7 @@ function PausedList({
   onClose: () => void;
   onEdit: (routine: Routine) => void;
   onOpenRoom: (id: string) => void;
-}) {
+} & CalendarLayerProps) {
   const { dispatch } = useStore();
   const canEdit = useDesktopSurface() === true;
   const [working, setWorking] = useState<string | null>(null);
@@ -1540,10 +1548,8 @@ function PausedList({
     }
   };
   const modalRef = useRef<HTMLDivElement>(null);
-  useModalDialog(modalRef, onClose);
-
-  return (
-    <div className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+  const layer = useCalendarLayer(modalRef, "routine-paused-list", onClose, lifecycle);
+  return <LayerSurface handle={layer}><div className="overlay-inset fixed inset-0 flex items-center justify-center bg-black/60 p-3" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Paused routines" className={cn(BOX_FRAME, "max-h-[calc(var(--vvh,100dvh)-1.5rem)] w-full max-w-[520px] rounded-2xl border border-hairline/60 bg-panel shadow-2xl")}>
         <BoxHead className="border-b border-hairline/40 px-5 py-4"><div><div className="text-[16px] font-semibold text-ink">Paused routines</div><div className="mt-0.5 text-[11.5px] text-ink-secondary">History is kept; no new tasks will run.</div></div><button onClick={onClose} aria-label="Close" className="rounded-full p-2 text-ink-secondary hover:bg-raised"><X size={17} /></button></BoxHead>
         <BoxBody className="space-y-1 p-3">
@@ -1568,34 +1574,33 @@ function PausedList({
           })}
         </BoxBody>
       </div>
-    </div>
-  );
+    </div></LayerSurface>;
 }
 
-export function RoutineEditor({
-  routine,
-  bots,
-  lockedBotId,
-  defaultRunOn,
-  onClose,
-}: {
+interface RoutineEditorProps {
   routine?: Routine;
   bots: Bot[];
   lockedBotId?: string;
   defaultRunOn?: RoutineRunOn;
   onClose: () => void;
-}) {
-  const canEdit = useDesktopSurface() === true;
+}
+
+export function RoutineEditor(props: RoutineEditorProps) {
+  return <CalendarLifetime>{lifecycle => <RoutineEditorBranch {...props} lifecycle={lifecycle} />}</CalendarLifetime>;
+}
+function RoutineEditorUnavailable({ onClose, lifecycle }: Pick<RoutineEditorProps, 'onClose'> & CalendarLayerProps) {
   const modalRef = useRef<HTMLDivElement>(null);
-  useModalDialog(modalRef, onClose);
-  if (!canEdit) return (
-    <div className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Routine editing" className={cn(BOX_FRAME, "max-h-[calc(var(--vvh,100dvh)-2rem)] max-w-md rounded-xl border border-hairline bg-panel text-ink")}>
-        <BoxBody className="p-5 pb-0"><p>Create or change schedules in the desktop app, or ask the bot to propose a routine for your review here.</p></BoxBody>
-        <BoxFoot className="justify-start p-5 pt-4"><button autoFocus onClick={onClose} className="rounded-lg bg-accent px-4 py-2 text-white">Close</button></BoxFoot>
-      </div>
+  const layer = useCalendarLayer(modalRef, "routine-editor-unavailable", onClose, lifecycle, "[data-layer-close]");
+  return <LayerSurface handle={layer}><div className="overlay-inset fixed inset-0 flex items-center justify-center bg-black/50 p-4">
+    <div ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Routine editing" className={cn(BOX_FRAME, "max-h-[calc(var(--vvh,100dvh)-2rem)] max-w-md rounded-xl border border-hairline bg-panel text-ink")}>
+      <BoxBody className="p-5 pb-0"><p>Create or change schedules in the desktop app, or ask the bot to propose a routine for your review here.</p></BoxBody>
+      <BoxFoot className="justify-start p-5 pt-4"><button data-layer-close onClick={onClose} className="rounded-lg bg-accent px-4 py-2 text-white">Close</button></BoxFoot>
     </div>
-  );
+  </div></LayerSurface>;
+}
+function RoutineEditorBranch({ routine, bots, lockedBotId, defaultRunOn, onClose, lifecycle }: RoutineEditorProps & CalendarLayerProps) {
+  const canEdit = useDesktopSurface() === true;
+  if (!canEdit) return <RoutineEditorUnavailable onClose={onClose} lifecycle={lifecycle} />;
   const at = routine?.schedule.type === "once"
     ? routine.schedule.at
     : routine?.schedule.type === "daily"
@@ -1603,7 +1608,7 @@ export function RoutineEditor({
       : routine?.schedule.type === "interval"
         ? routine.schedule.anchorAt
       : nextHour();
-  return <EventEditor seed={{ kind: "routine", at, durationMinutes: routine?.durationMinutes ?? 30, botIds: lockedBotId ? [lockedBotId] : routine ? [routine.botId] : [], routine }} bots={bots} lockedBotId={lockedBotId} defaultRunOn={defaultRunOn} onClose={onClose} onSavedCall={() => {}} />;
+  return <EventEditor lifecycle={lifecycle} seed={{ kind: "routine", at, durationMinutes: routine?.durationMinutes ?? 30, botIds: lockedBotId ? [lockedBotId] : routine ? [routine.botId] : [], routine }} bots={bots} lockedBotId={lockedBotId} defaultRunOn={defaultRunOn} onClose={onClose} onSavedCall={() => {}} />;
 }
 
 export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpenRoom: (id: string) => void }) {
@@ -1626,6 +1631,10 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
   const [selected, setSelected] = useState<CalendarEventItem | null>(null);
   const [pausedOpen, setPausedOpen] = useState(false);
   const [problemsOpen, setProblemsOpen] = useState(false);
+  // UX L5B: the routine sheet (by id, so it follows live state), All routines, and New routine from a sentence.
+  const [sheetRoutineId, setSheetRoutineId] = useState<string | null>(null);
+  const [listOpen, setListOpen] = useState(false);
+  const [newOpen, setNewOpen] = useState(false);
   const [watchPickerOpen, setWatchPickerOpen] = useState(false);
   // Saving used to be silent: the grid stayed where it was, and a 7 AM daily
   // routine landed off screen. Now the page says what it saved and goes there.
@@ -1646,7 +1655,7 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
   useEffect(() => { void loadCalls(); }, [loadCalls]);
   // The scheduler's own health: shown while it is behind, cleared by the next good check.
   const schedulerLate = useRoutineSchedulerLate(loadSchedulerLate);
-  useEffect(() => { backButtonRef.current?.focus({ preventScroll: true }); }, []);
+  useEffect(() => { if (!openLayers().some(entry => entry.kind !== "page")) backButtonRef.current?.focus({ preventScroll: true }); }, []);
 
   const items = useMemo<CalendarEventItem[]>(() => {
     const routineItems = projectedRoutineItems(state.routines, state.routineRuns, rangeStart, rangeEnd).map((item) => ({ ...item, kind: "routine" as const }));
@@ -1681,16 +1690,41 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
     setAnchor((current) => startOfDay(current));
   };
   const goToday = useCallback(() => setAnchor(startOfDay(Date.now())), []);
+  // One New routine entry (the header button, the sidebar, the phone button and C) opens the sentence
+  // sheet; a click on an empty slot of the grid still opens the quick form at that time.
   const openCreate = useCallback((seed?: Partial<EventSeed>) => {
     if (!canEdit) return;
     setSelected(null);
+    // One sheet at a time: the list and a routine sheet close before the editor opens.
+    setListOpen(false);
+    setSheetRoutineId(null);
+    if (!seed) { setNewOpen(true); return; }
     setQuick({ kind: "routine", at: nextHour(), durationMinutes: 30, botIds: [], ...seed });
   }, [canEdit]);
+  const editRoutine = (routine: Routine) => {
+    const at = routine.schedule.type === "once" ? routine.schedule.at : routine.schedule.type === "interval" ? routine.schedule.anchorAt : routine.schedule.type === "limit_reset" || routine.schedule.type === "app_event" ? routine.nextRunAt ?? Date.now() : atLocalTime(Date.now(), routine.schedule.time);
+    setEditor({ kind: "routine", at, durationMinutes: routine.durationMinutes, botIds: [routine.botId], routine });
+  };
+  const openRun = (run: RoutineRun) => {
+    setSheetRoutineId(null);
+    setAnchor(startOfDay(run.scheduledFor));
+    setSelected({ kind: "routine", id: run.id, at: run.scheduledFor, durationMinutes: run.durationMinutes ?? 30, routine: state.routines.find((routine) => routine.id === run.routineId) ?? null, run });
+    if (isUnseenRoutineProblem(run)) dispatch({ type: "markRoutineRunSeen", runId: run.id });
+  };
+  const changeFromSentence = (change: SentenceChange) => {
+    setNewOpen(false);
+    // The full schedule goes in, so an interval or custom weekdays open as read
+    // (the editor works out the repeat from it).
+    setEditor({ kind: "routine", at: change.at, durationMinutes: 30, botIds: [change.botId], name: change.name, description: change.prompt, ...(change.schedule ? { schedule: change.schedule } : {}) });
+  };
+  const sheetRoutine = sheetRoutineId ? state.routines.find((routine) => routine.id === sheetRoutineId) ?? null : null;
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.matches("input, textarea, select, [contenteditable=true]")) return;
+      // No page shortcut while a sheet or dialog is open (the All routines list included).
+      if (listOpen || newOpen || sheetRoutineId || watchPickerOpen || document.querySelector("[role=dialog][aria-modal=true]")) return;
       if (section !== "calendar" || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key.toLowerCase() === "c") { event.preventDefault(); openCreate(); }
       if (event.key.toLowerCase() === "t") goToday();
@@ -1700,7 +1734,7 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [section, openCreate, goToday, anchor]);
+  }, [section, openCreate, goToday, anchor, listOpen, newOpen, sheetRoutineId, watchPickerOpen]);
 
   const upsertCall = (call: CalendarCall) => setCalls((current) => current.some((candidate) => candidate.id === call.id) ? current.map((candidate) => candidate.id === call.id ? call : candidate) : [call, ...current]);
   const moveEvent = async (dragged: { kind: EventKind; id: string; at: number }, nextAt: number) => {
@@ -1765,6 +1799,8 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
           </div>
           <div className="min-w-[220px] px-2 text-[15px] font-medium text-ink">{calendarRangeLabel(rangeStart, viewDays)}</div>
           <div className="ml-auto flex items-center gap-2" style={windowNoDragStyle}>
+            <button type="button" onClick={() => setListOpen(true)} className="min-h-11 rounded-lg border border-hairline/50 px-3 text-[11.5px] font-medium text-ink hover:bg-raised">{t("ux.l5b.list.open")}</button>
+            {canEdit && <button type="button" onClick={() => openCreate()} disabled={!visibleBots.length} className="hidden min-h-11 items-center gap-1.5 rounded-lg bg-accent px-3 text-[11.5px] font-semibold text-white hover:brightness-110 disabled:opacity-40 sm:flex"><Plus size={13} aria-hidden />{t("ux.l5b.new.button")}</button>}
             {running > 0 && <span className="hidden items-center gap-1.5 rounded-full bg-accent/10 px-2.5 py-1.5 text-[10.5px] text-accent sm:flex"><Loader2 size={11} className="animate-spin" />{running} active</span>}
             <RoutineSchedulerNotice late={schedulerLate} />
             {unseenFailures > 0 && <button type="button" onClick={() => setProblemsOpen(true)} aria-label="Show routine problems" title="Show routine problems" className="hidden items-center gap-1.5 rounded-full bg-danger/10 px-2.5 py-1.5 text-[10.5px] text-danger hover:bg-danger/15 sm:flex"><CircleAlert size={11} />{unseenFailures}</button>}
@@ -1789,20 +1825,28 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
         {section === "calendar" && <UnloadableRoutines canEdit={canEdit} />}
       </header>
 
+      {!canEdit && section === "calendar" && <PhoneRoutineList routines={state.routines} botName={(botId) => state.bots.find((bot) => bot.id === botId)?.name} now={Date.now()} onOpen={(routine) => setSheetRoutineId(routine.id)} onNew={visibleBots.length > 0 ? () => setNewOpen(true) : null} />}
       {canEdit && section === "webhooks" ? <WebhooksPanel bots={visibleBots} /> : (
-        <div className="flex min-h-0 flex-1">
+        <div className={canEdit ? "flex min-h-0 flex-1" : "hidden min-h-0 flex-1 md:flex"}>
           <div className="hidden shrink-0 lg:block"><CalendarSidebar bots={visibleBots} anchor={anchor} onSelectDate={(at) => setAnchor(startOfDay(at))} onCreate={() => openCreate()} canCreate={canEdit} /></div>
           <CalendarGrid anchor={rangeStart} days={viewDays} items={items} bots={state.bots} groups={state.groups} focusAt={saved?.at ?? null} onOpen={(item) => { setSelected(item); if (item.kind === "routine" && item.run && isUnseenRoutineProblem(item.run)) dispatch({ type: "markRoutineRunSeen", runId: item.run.id }); }} onCreate={openCreate} onMove={(item, at) => void moveEvent(item, at)} onResize={(item, duration) => void resizeEvent(item, duration)} />
           {canEdit && <button onClick={() => openCreate()} disabled={!visibleBots.length} className="fixed bottom-5 right-5 z-30 flex size-12 items-center justify-center rounded-2xl bg-accent text-white shadow-xl shadow-black/30 hover:brightness-110 disabled:opacity-40 lg:hidden" aria-label="New routine"><Plus size={20} /></button>}
         </div>
       )}
 
-      {canEdit && quick && <><QuickComposer seed={quick} bots={visibleBots} onClose={() => setQuick(null)} onMore={(seed) => { setQuick(null); setEditor(seed); }} onSavedRoutine={(routine) => dispatch({ type: "routinePatched", routine })} onSavedCall={upsertCall} onSaved={announceSaved} /></>}
-      {canEdit && editor && <EventEditor seed={editor} bots={visibleBots} onClose={() => setEditor(null)} onSavedCall={upsertCall} onSaved={announceSaved} />}
-      {canEdit && watchPickerOpen && <RoutineWatchPicker bots={visibleBots} onClose={() => setWatchPickerOpen(false)} />}
-      {liveSelected && <EventDetails item={liveSelected} bots={state.bots} onClose={() => setSelected(null)} onEdit={() => { const seed: EventSeed = liveSelected.kind === "call" ? { kind: "call", at: liveSelected.at, durationMinutes: liveSelected.call.durationMinutes, botIds: liveSelected.call.botIds, call: liveSelected.call } : { kind: "routine", at: liveSelected.at, durationMinutes: liveSelected.routine?.durationMinutes ?? liveSelected.run?.durationMinutes ?? 30, botIds: [liveSelected.routine?.botId ?? liveSelected.run?.botId ?? ""].filter(Boolean), routine: liveSelected.routine ?? undefined }; setSelected(null); setEditor(seed); }} onCallChanged={(id) => { if (id) setCalls((current) => current.filter((call) => call.id !== id)); else void loadCalls(); }} onOpenRoom={onOpenRoom} />}
-      {problemsOpen && <RoutineProblemsList runs={state.routineRuns} bots={state.bots} onClose={() => setProblemsOpen(false)} onMarkAllSeen={() => { dispatch({ type: "markAllRoutineRunsSeen" }); setProblemsOpen(false); }} onOpen={(run) => { setProblemsOpen(false); setAnchor(startOfDay(run.scheduledFor)); setSelected({ kind: "routine", id: run.id, at: run.scheduledFor, durationMinutes: run.durationMinutes ?? 30, routine: state.routines.find((routine) => routine.id === run.routineId) ?? null, run }); dispatch({ type: "markRoutineRunSeen", runId: run.id }); }} />}
-      {pausedOpen && <PausedList routines={paused} bots={state.bots} groups={state.groups} onClose={() => setPausedOpen(false)} onEdit={(routine) => { setPausedOpen(false); const at = routine.schedule.type === "once" ? routine.schedule.at : routine.schedule.type === "interval" ? routine.schedule.anchorAt : routine.schedule.type === "limit_reset" || routine.schedule.type === "app_event" ? routine.nextRunAt ?? Date.now() : atLocalTime(Date.now(), routine.schedule.time); setEditor({ kind: "routine", at, durationMinutes: routine.durationMinutes, botIds: [routine.botId], routine }); }} onOpenRoom={onOpenRoom} />}
+      {(quick || editor || liveSelected || sheetRoutine || listOpen || newOpen || problemsOpen || pausedOpen || watchPickerOpen) && <CalendarLifetime>{lifecycle => <>
+      {/* Quick and editor share lifecycle.opener; More options releases its handle before this swap. */}
+      {canEdit && quick && <><QuickComposer lifecycle={lifecycle} seed={quick} bots={visibleBots} onClose={() => setQuick(null)} onMore={(seed) => { setQuick(null); setEditor(seed); }} onSavedRoutine={(routine) => dispatch({ type: "routinePatched", routine })} onSavedCall={upsertCall} onSaved={announceSaved} /></>}
+      {canEdit && editor && <EventEditor lifecycle={lifecycle} seed={editor} bots={visibleBots} onClose={() => setEditor(null)} onSavedCall={upsertCall} onSaved={announceSaved} />}
+      {canEdit && watchPickerOpen && <RoutineWatchPicker lifecycle={lifecycle} bots={visibleBots} onClose={() => setWatchPickerOpen(false)} />}
+      {liveSelected?.kind === "routine" && liveSelected.routine && !liveSelected.run && <RoutineSheet lifecycle={lifecycle} routine={liveSelected.routine} canEdit={canEdit} onClose={() => setSelected(null)} onEdit={(routine) => { setSelected(null); editRoutine(routine); }} onOpenRun={openRun} />}
+      {sheetRoutine && <RoutineSheet lifecycle={lifecycle} routine={sheetRoutine} canEdit={canEdit} onClose={() => setSheetRoutineId(null)} onEdit={(routine) => { setSheetRoutineId(null); editRoutine(routine); }} onOpenRun={openRun} />}
+      {listOpen && <RoutineListSheet lifecycle={lifecycle} canCreate={canEdit && visibleBots.length > 0} onClose={() => setListOpen(false)} onOpen={(routine) => { setListOpen(false); setSheetRoutineId(routine.id); }} onNew={() => { setListOpen(false); openCreate(); }} />}
+      {newOpen && <NewRoutineSheet lifecycle={lifecycle} chatOnly={!canEdit} onClose={() => setNewOpen(false)} onChange={changeFromSentence} onAskInChat={(botId) => { setNewOpen(false); onOpenRoom(botId); }} />}
+      {liveSelected && !(liveSelected.kind === "routine" && liveSelected.routine && !liveSelected.run) && <EventDetails lifecycle={lifecycle} item={liveSelected} bots={state.bots} onClose={() => setSelected(null)} onEdit={() => { const seed: EventSeed = liveSelected.kind === "call" ? { kind: "call", at: liveSelected.at, durationMinutes: liveSelected.call.durationMinutes, botIds: liveSelected.call.botIds, call: liveSelected.call } : { kind: "routine", at: liveSelected.at, durationMinutes: liveSelected.routine?.durationMinutes ?? liveSelected.run?.durationMinutes ?? 30, botIds: [liveSelected.routine?.botId ?? liveSelected.run?.botId ?? ""].filter(Boolean), routine: liveSelected.routine ?? undefined }; setSelected(null); setEditor(seed); }} onCallChanged={(id) => { if (id) setCalls((current) => current.filter((call) => call.id !== id)); else void loadCalls(); }} onOpenRoom={onOpenRoom} />}
+      {problemsOpen && <RoutineProblemsList lifecycle={lifecycle} runs={state.routineRuns} bots={state.bots} onClose={() => setProblemsOpen(false)} onMarkAllSeen={() => { dispatch({ type: "markAllRoutineRunsSeen" }); setProblemsOpen(false); }} onOpen={(run) => { setProblemsOpen(false); setAnchor(startOfDay(run.scheduledFor)); setSelected({ kind: "routine", id: run.id, at: run.scheduledFor, durationMinutes: run.durationMinutes ?? 30, routine: state.routines.find((routine) => routine.id === run.routineId) ?? null, run }); dispatch({ type: "markRoutineRunSeen", runId: run.id }); }} />}
+      {pausedOpen && <PausedList lifecycle={lifecycle} routines={paused} bots={state.bots} groups={state.groups} onClose={() => setPausedOpen(false)} onEdit={(routine) => { setPausedOpen(false); const at = routine.schedule.type === "once" ? routine.schedule.at : routine.schedule.type === "interval" ? routine.schedule.anchorAt : routine.schedule.type === "limit_reset" || routine.schedule.type === "app_event" ? routine.nextRunAt ?? Date.now() : atLocalTime(Date.now(), routine.schedule.time); setEditor({ kind: "routine", at, durationMinutes: routine.durationMinutes, botIds: [routine.botId], routine }); }} onOpenRoom={onOpenRoom} />}
+      </>}</CalendarLifetime>}
     </main>
   );
 }
