@@ -654,3 +654,187 @@ test("update-available carries the release notes as plain text, capped", async (
   updater.emit("update-available", { version: "2.0.3" });
   assert.ok(!("releaseNotesText" in getState()) || getState().releaseNotesText === "Plain note");
 });
+
+import {createInstallWitness} from "./updater-coordinator.mjs";
+import {createReturnAuthority,joinExplicitQuit} from "./backup-offline-return.mjs";
+import {captureUpdateCandidate} from "./updater-candidate.mjs";
+import {mkdtempSync,writeFileSync} from "node:fs";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import {createHash} from "node:crypto";
+import {safeWipeSync} from "../server/testing/safe-wipe.mjs";
+async function nativeFixture(t,options={}){
+  const root=mkdtempSync(join(tmpdir(),"macwd-native-"));t.after(()=>safeWipeSync(root));
+  const file=join(root,"update.zip"),bytes="fixture only";writeFileSync(file,bytes);
+  const sha512=createHash("sha512").update(bytes).digest("base64"),info={version:"2.0.0",files:[{url:"update.zip",sha512}]};
+  const events=new EventEmitter(),timers=new Map(),authority=createReturnAuthority();const recoveryDetails=[];let calls=0,recoveries=0;
+  const h=harness({returnAuthority:authority,installerFallback:{blocked:()=>null,offer:()=>({status:"error"}),stallMs:180000,events,persist:()=>{},recover:info=>{recoveries++;recoveryDetails.push(info);}},setTimer:(fn,ms)=>{const key={fn,ms};timers.set(key,key);return key;},clearTimer:key=>timers.delete(key),...options});
+  h.updater.downloadedUpdateHelper={cacheDir:root,file,versionInfo:info,fileInfo:{info:info.files[0]}};
+  h.updater.checkForUpdates=async()=>({isUpdateAvailable:true,updateInfo:info});
+  h.updater.downloadUpdate=async()=>{h.updater.emit("update-downloaded",info);return [file];};
+  h.updater.quitAndInstall=()=>{calls++;events.emit("update-downloaded");};
+  return {...h,events,timers,authority,recoveryDetails,calls:()=>calls,recoveries:()=>recoveries,candidate:await captureUpdateCandidate(h.updater)};
+}
+for(const path of ["install","resumeInstall"])for(const boundary of ["cleanup","final revalidation"])test(`BF-1 pending native ${path} stops when Quit arrives during ${boundary}`,async t=>{
+  const held=deferred(),entered=deferred();let admitted=false,quits=0,relaunches=0;
+  const h=await nativeFixture(t,{beforeInstall:async()=>{admitted=true;if(boundary==="cleanup"){entered.resolve();await held.promise;}return {status:"continue"};},
+    verifyDownload:async()=>({recheck:async()=>{if(admitted&&boundary==="final revalidation"){entered.resolve();await held.promise;}}})});
+  const admit=async()=>{admitted=true;if(boundary==="cleanup"){entered.resolve();await held.promise;}return {status:"continue"};};
+  if(path==="install")await h.coordinator.download();
+  const pending=path==="install"?h.coordinator.install():h.coordinator.resumeInstall(h.candidate,{beforeInstall:admit});
+  await entered.promise;
+  const quitting=joinExplicitQuit({authority:h.authority,app:{quit:()=>{quits++;},exit:()=>{}},cleanup:()=>held.promise,takeProgress:()=>null,setTimer:()=>{},relaunch:()=>{relaunches++;}});
+  held.resolve();assert.deepEqual(await pending,{status:"stopped"});await quitting;
+  assert.equal(h.calls(),0);assert.equal(h.recoveries(),0);assert.equal(h.timers.size,0);assert.equal(h.events.listenerCount("update-downloaded"),0);assert.equal(h.events.listenerCount("before-quit-for-update"),0);
+  assert.equal(relaunches,0);assert.equal(quits,1);assert.equal(errorStates(h.states).length,0);
+});
+test("T16 witness is monotonic, replays immediately and detaches",()=>{
+  const events=new EventEmitter(),w=createInstallWitness(events),states=[];
+  events.emit("update-downloaded");w.subscribe(s=>states.push(s));events.emit("before-quit-for-update");events.emit("update-downloaded");
+  assert.deepEqual(states,[{staged:true,quitting:false},{staged:true,quitting:true}]);w.detach();assert.equal(events.listenerCount("update-downloaded"),0);
+});
+for(const path of ["install","resumeInstall"])test(`T13 T16 ${path} catches synchronous stage and bounds quitting then recovers once`,async t=>{
+  const h=await nativeFixture(t);
+  if(path==="install"){await h.coordinator.download();await h.coordinator.install();}else await h.coordinator.resumeInstall(h.candidate,{beforeInstall:()=>({status:"continue"})});
+  assert.equal(h.calls(),1);assert.equal(h.timers.size,1);assert.equal([...h.timers.values()][0].ms,180000);
+  h.events.emit("before-quit-for-update");assert.equal([...h.timers.values()][0].ms,30000);
+  [...h.timers.values()][0].fn();h.updater.emit("error",Error("late"));assert.equal(h.recoveries(),1);
+});
+test("BF-1 synchronous witness subscription reentry cannot launch after Quit",async t=>{
+ const h=await nativeFixture(t);await h.coordinator.download();
+ h.events.once("newListener",()=>{h.authority.userQuitRequested=true;h.authority.generation++;});
+ assert.deepEqual(await h.coordinator.install(),{status:"stopped"});assert.equal(h.calls(),0);assert.equal(h.timers.size,0);assert.equal(h.events.listenerCount("update-downloaded"),0);
+});
+
+// MAC-UPDATE-WATCHDOG (1.0.18): Squirrel.Mac can stop at an admin password prompt and report nothing (rel1017 canary-mac).
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const OFFER = (version) => ({ status: "error", action: "download-installer", version, downloadUrl: `dmg:${version}` });
+function macFallback({ blocked = null, stallMs = 30 } = {}) {
+  const events = new EventEmitter();
+  const recovered = [];
+  const checks = [];
+  return {
+    events, recovered, checks,
+    options: { events, stallMs, blocked: () => { checks.push("checked"); return blocked; }, offer: OFFER, recover: (info) => { recovered.push(info); return "relaunched"; } },
+  };
+}
+
+test("watchdog: Squirrel silent after Restart to update brings the app back once and offers the dmg", async () => {
+  const mac = macFallback();
+  let cleanups = 0;
+  const h = harness({ installerFallback: mac.options, beforeInstall: () => { cleanups++; } });
+  h.updater.quitAndInstall = () => {};
+  await downloadInto(h, ["update.zip"]);
+  await h.coordinator.install();
+  assert.equal(cleanups, 1);
+  assert.equal(h.getState().status, "installing");
+  await sleep(80);
+  assert.deepEqual(mac.recovered, [{ version: "2.0.0", reason: "install-stalled", staged: false }]);
+  assert.deepEqual({ ...h.getState(), message: undefined }, { ...OFFER("2.0.0"), message: undefined });
+  assert.equal(mac.events.listenerCount("update-downloaded"), 0);
+  await sleep(80);
+  assert.equal(mac.recovered.length, 1, "recovers once");
+});
+
+test("watchdog: a native update-downloaded restarts the wait and before-quit-for-update ends it", async () => {
+  const mac = macFallback({ stallMs: 60 });
+  const h = harness({ installerFallback: mac.options, beforeInstall: () => {} });
+  h.updater.quitAndInstall = () => {};
+  await downloadInto(h, ["update.zip"]);
+  await h.coordinator.install();
+  await sleep(40);
+  mac.events.emit("update-downloaded");
+  await sleep(40);
+  assert.deepEqual(mac.recovered, [], "staged in time: the wait starts again");
+  mac.events.emit("before-quit-for-update");
+  await sleep(100);
+  assert.deepEqual(mac.recovered, []);
+  assert.equal(h.getState().status, "installing");
+});
+
+test("watchdog: an install error after the server stopped brings the app back instead of a dead window", async () => {
+  const mac = macFallback({ stallMs: 10_000 });
+  const h = harness({ installerFallback: mac.options, beforeInstall: () => {} });
+  h.updater.quitAndInstall = () => h.updater.emit("error", new Error("native staging failed"));
+  await downloadInto(h, ["update.zip"]);
+  await h.coordinator.install();
+  assert.deepEqual(mac.recovered, [{ version: "2.0.0", reason: "install-error", staged: false }]);
+  assert.equal(h.getState().action, "download-installer");
+  assert.doesNotMatch(JSON.stringify(h.states), /Murage has finished closing/);
+});
+
+test("pre-check: a copy this person cannot replace goes straight to the dmg; nothing stops and nothing installs", async () => {
+  const mac = macFallback({ blocked: "app-owner-differs" });
+  let cleanups = 0;
+  const h = harness({ installerFallback: mac.options, beforeInstall: () => { cleanups++; } });
+  h.updater.quitAndInstall = () => assert.fail("Squirrel must not be started");
+  await downloadInto(h, ["update.zip"]);
+  await h.coordinator.install();
+  await sleep(50);
+  assert.equal(cleanups, 0, "the server keeps running");
+  assert.deepEqual(mac.recovered, []);
+  assert.equal(h.getState().action, "download-installer");
+  assert.equal(h.getState().version, "2.0.0");
+  assert.ok(!h.states.some((entry) => entry.status === "installing"));
+});
+
+test("pre-check that throws does not block the install; the watchdog still covers it", async () => {
+  const mac = macFallback();
+  mac.options.blocked = () => { throw new Error("stat failed"); };
+  let installs = 0;
+  const h = harness({ installerFallback: mac.options, beforeInstall: () => {} });
+  h.updater.quitAndInstall = () => installs++;
+  await downloadInto(h, ["update.zip"]);
+  await h.coordinator.install();
+  assert.equal(installs, 1);
+  await sleep(80);
+  assert.equal(mac.recovered.length, 1);
+});
+
+test("the relaunched app shows its previous run's offer and a background check does not erase it", async () => {
+  const mac = macFallback();
+  const h = harness({ installerFallback: mac.options });
+  assert.equal(h.coordinator.showInstallerOffer("2.0.0", "install-stalled"), true);
+  assert.equal(h.getState().action, "download-installer");
+  h.updater.checkForUpdates = () => { h.updater.emit("update-available", { version: "2.0.0" }); return Promise.resolve(); };
+  await h.coordinator.check();
+  assert.equal(h.getState().action, "download-installer");
+  assert.equal(harness().coordinator.showInstallerOffer("2.0.0"), false, "no fallback, no offer");
+});
+
+test("without the macOS fallback the install timeout is unchanged", async () => {
+  const h = harness({ beforeInstall: () => {} });
+  h.updater.quitAndInstall = () => {};
+  await downloadInto(h, ["update.zip"]);
+  await h.coordinator.install();
+  assert.equal(h.getState().status, "installing");
+  assert.equal(typeof h.coordinator.showInstallerOffer, "function");
+});
+test("resume pre-check offers the installer before request marking or cleanup",async t=>{
+ let admitted=0;const h=await nativeFixture(t,{installerFallback:{blocked:()=>"app-not-writable",offer:()=>({status:"error",action:"download-installer"})}});
+ assert.equal((await h.coordinator.resumeInstall(h.candidate,{beforeInstall:()=>{admitted++;return {status:"continue"};}})).status,"installer-offered");
+ assert.equal(admitted,0);assert.equal(h.calls(),0);assert.equal(h.getState().action,"download-installer");
+});
+
+for(const mode of ["emit","throw"])for(const staged of [false,true])test(`F4 resumed synchronous native error has one handled outcome staged=${staged} mode=${mode}`,async t=>{
+ const h=await nativeFixture(t);
+ // Observe the real fallback through its offered state and witness deadline cleanup.
+ h.updater.quitAndInstall=()=>{if(staged)h.events.emit('update-downloaded');if(mode==='throw')throw Error('native failed');h.updater.emit('error',Error('native failed'));};
+ const result=await h.coordinator.resumeInstall(h.candidate,{beforeInstall:()=>({status:'continue'})});
+ assert.equal(result.status,'install-requested');assert.equal(h.recoveryDetails[0].staged,staged);assert.equal(h.recoveries(),1);assert.equal(h.timers.size,0);assert.equal(errorStates(h.states).length,1);
+});
+
+test('r33 Grok stopped arming remains stopped through real install',async t=>{
+ const h=await nativeFixture(t,{beforeInstall:()=>({status:'stopped'})});await h.coordinator.download();
+ assert.deepEqual(await h.coordinator.install(),{status:'stopped'});assert.equal(h.calls(),0);assert.equal(h.recoveries(),0);assert.equal(errorStates(h.states).length,0);assert.equal(h.timers.size,0);assert.equal(h.events.listenerCount('update-downloaded'),0);
+});
+
+for(const path of ['install','resumeInstall'])test(`F3 ${path} blocks Return while admission is pending and releases it on failure`,async t=>{
+ const held=deferred(),entered=deferred();const admit=async()=>{entered.resolve();await held.promise;return {status:'continue'};};
+ const h=await nativeFixture(t,{beforeInstall:admit});let pending=false,launched=false;
+ h.authority.markInstallPending=()=>{pending=true;};h.authority.markNativeLaunch=()=>{launched=true;};h.authority.releasePendingInstall=()=>{pending=false;};
+ if(path==='install')await h.coordinator.download();
+ const running=path==='install'?h.coordinator.install():h.coordinator.resumeInstall(h.candidate,{beforeInstall:admit});const outcome=running.catch(error=>error);
+ await entered.promise;const pendingObserved=pending;held.reject(Error('cleanup rejected'));await outcome;
+ assert.equal(pendingObserved,true);assert.equal(pending,false);assert.equal(launched,false);assert.equal(h.calls(),0);
+});

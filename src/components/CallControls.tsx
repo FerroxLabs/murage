@@ -1,14 +1,15 @@
-import { t } from "@/lib/i18n";
 // The call controls that are on screen before anyone calls: the header's
 // call buttons and the overlay switch. The call screens behind them (the
 // turn-taking loop, the voice host, the microphone and its speech model)
 // load on the first call (spec §6), so a phone that never calls never
 // downloads them.
-import { Suspense, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { LazyOverlay } from "@/components/LazyOverlay";
+import { t } from "@/lib/i18n";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Phone, PhoneOff } from "lucide-react";
 
 import { useStore, viewedTaskBot, type Bot, type Group } from "@/state/store";
-import { endCall, startCall, takeCallRequest, useCallRequest, useOnCall } from "@/lib/call";
+import { useCallBudgetEnded, dismissCallBudgetEnded, endCall, startCall, takeCallRequest, useCallRequest, useOnCall } from "@/lib/call";
 import { useCallBarState } from "@/lib/call-bar";
 import { CallBarContent } from "./CallBarContent";
 import { cn } from "@/lib/cn";
@@ -16,8 +17,7 @@ import { track } from "@/lib/analytics";
 import { callSupport, helpPanelLeft, showsGroupCallButton } from "@/lib/call-support";
 import { isPhoneClient } from "@/lib/phone-client";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
-import { LazyFallback } from "./LazyFallback";
-import { LazyBoundary, retryableLazy } from "./LazyBoundary";
+import { retryableLazy } from "./LazyBoundary";
 
 const CallChunk = retryableLazy(() => import("./CallView").then((module) => ({ default: module.Call })));
 const GroupCallChunk = retryableLazy(() => import("./GroupCallView").then((module) => ({ default: module.GroupCall })));
@@ -239,11 +239,9 @@ export function CallOverlay({
   // Close ends the call: a call screen that cannot load must not leave the
   // app covered with a call still running.
   return (
-    <LazyBoundary onRetry={CallChunk.retry} onDismiss={() => endCall(bot.id)}>
-      <Suspense fallback={<LazyFallback />}>
+    <LazyOverlay name="call" kind="dialog" covers="while-loading" onRetry={CallChunk.retry} onDismiss={() => endCall(bot.id)}>
         <Call bot={bot} collapsed={collapsed} onExpand={onExpand} />
-      </Suspense>
-    </LazyBoundary>
+    </LazyOverlay>
   );
 }
 
@@ -261,11 +259,9 @@ export function GroupCallOverlay({
   const active = useOnCall() === group.id;
   if (!active) return null;
   return (
-    <LazyBoundary onRetry={GroupCallChunk.retry} onDismiss={() => endCall(group.id)}>
-      <Suspense fallback={<LazyFallback />}>
+    <LazyOverlay name="group-call" kind="dialog" covers="while-loading" onRetry={GroupCallChunk.retry} onDismiss={() => endCall(group.id)}>
         <GroupCall group={group} members={members} collapsed={collapsed} onExpand={onExpand} />
-      </Suspense>
-    </LazyBoundary>
+    </LazyOverlay>
   );
 }
 
@@ -299,6 +295,7 @@ export function CallOverlaySlot({
   uncoverCallTarget?: (id: string) => void;
 }) {
   const activeCallId = useOnCall();
+  const budgetEnded = useCallBudgetEnded();
   const activeCallGroup = activeCallId ? state.groups.find((g) => g.id === activeCallId) : undefined;
   const activeCallBotRaw = !activeCallGroup && activeCallId ? state.bots.find((b) => b.id === activeCallId) : undefined;
   // Projected through the same task-thread view ChatView gives every other
@@ -339,6 +336,7 @@ export function CallOverlaySlot({
   };
   return (
     <>
+      {budgetEnded && !activeCallId && <div role="status" className="fixed bottom-4 left-4 right-4 z-50 rounded-xl bg-card p-4 text-ink">{t("call.budgetStop")} <button type="button" onClick={dismissCallBudgetEnded}>{t("composer.dismissNotice")}</button></div>}
       {activeCallBot && (
         <CallOverlay key={activeCallId} bot={activeCallBot} collapsed={!callIsSelected} onExpand={returnToCall} />
       )}

@@ -8,7 +8,7 @@ function fixture(overrides = {}) {
     chooseBackup: async () => ({ path: "/operator/selected.zip", name: "Selected backup" }),
     chooseDestination: async () => "/operator/new.zip", confirm: async () => true,
     run: async (operation, options) => { calls.push({ operation, options }); return { ok: true, operation, sha256: "a".repeat(64), snapshotId: "snapshot", activationAvailable: false }; },
-    retry: async () => {}, openDiagnostics: async () => {}, ...overrides };
+    relaunchAfterRestore: overrides.retry ?? (async () => {}), retry: async () => {}, openDiagnostics: async () => {}, ...overrides };
   return { event, calls, host, controller: createInstallationRecoveryController(host) };
 }
 test("rejects foreign frames and renderer-supplied paths before any host action", async () => {
@@ -126,4 +126,19 @@ test("snapshot confirmation cannot survive navigation or publish an incomplete r
     runCaptureSeparate: async confirm => { await confirm({ destination: "/private", installation: "/new" }); return { status: "copied", activationAvailable: false }; },
     confirm: async () => { trusted = false; return true; }, retry: async () => { restarted = true; } });
   assert.equal((await f.controller.handle(f.event, { action: "capture-separate" })).error, "UNTRUSTED_RECOVERY_SENDER"); assert.equal(restarted, false);
+});
+
+for(const action of ["choose-backup","choose-separate-backup","restore-separate","capture-separate","backup","restore","rollback","review-installation","activate","backup-encrypted","choose-encrypted-backup","restore-encrypted-new"])test(`T23 update pause denies ${action} before side effects`,async()=>{
+  let calls=0;
+  const f=fixture({updatePause:()=>true,isAvailable:()=>true,encryptedAvailable:()=>true,canRestoreSeparate:()=>true,canCaptureSeparate:()=>true,
+    chooseBackup:()=>{calls++;},chooseDestination:()=>{calls++;},run:()=>{calls++;},confirm:()=>{calls++;},retry:()=>{calls++;},relaunchAfterRestore:()=>{calls++;}});
+  const state=await f.controller.handle(f.event,{action});
+  assert.equal(state.error,"BACKUP_UPGRADE_ACTION_UNAVAILABLE");assert.equal(state.busy,false);assert.equal(calls,0);
+  assert.deepEqual(state.allowedActions,["state","diagnostics","retry"]);
+});
+test("T23 Quit disables Return but retains diagnostics",async()=>{
+  let returned=0,diagnostics=0;
+  const f=fixture({updatePause:()=>true,returnRevoked:()=>true,retry:()=>{returned++;},openDiagnostics:()=>{diagnostics++;}});
+  assert.equal((await f.controller.handle(f.event,{action:"retry"})).error,"BACKUP_UPGRADE_ACTION_UNAVAILABLE");
+  await f.controller.handle(f.event,{action:"diagnostics"});assert.equal(returned,0);assert.equal(diagnostics,1);
 });

@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -162,7 +163,7 @@ describe("ISSUE-PERMS-1010 on a fake ACP engine", () => {
     process.env.FAKE_ACP_PERMISSION_TOOLCALL = JSON.stringify(toolCall);
     instance = await GrokAgentDriver.create({ instanceId: "acp-test", displayName: "ACP Test", environment: {}, enabled: true, config: { cli: FAKE_CLI, fullAuto: false } });
     recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: id, text: "go" } as any);
+    await instance.adapter.sendTurn({ cwd: workspace, threadId: id, text: "go" } as any);
     const opened = (await recorder.until((e) => e.type === "request.opened")) as any;
     await instance.adapter.respondToRequest(id, opened.requestId, { behavior: "deny" });
     await recorder.until((e) => e.type === "turn.completed");
@@ -469,3 +470,6 @@ describe("ISSUE-PERMS-1010 A: a slow environment check at the routine's own leve
     expect(command(FULL, { fullAccessOrigin: "owner-channel", routineLevel: true, unattended: false }).approve).toBeNull();
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

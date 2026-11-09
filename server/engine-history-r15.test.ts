@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "./testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -224,7 +226,7 @@ describe("Murage's own sessions wait while a deleted conversation is removed fro
     const decorated = decorateHoldInstance(fake.instance, holds);
     const held = await holds.hold(["claude-1"], 50, async () => undefined);
     expect(held.busy).toEqual([]);
-    const sending = decorated.adapter.sendTurn({ threadId: "T1", text: "hi" } as never);
+    const sending = decorated.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "T1", text: "hi" } as never);
     await delay(40);
     expect(fake.sent).toEqual([]); // queued, not refused and not started
     expect(notes).toEqual(["T1"]);
@@ -238,7 +240,7 @@ describe("Murage's own sessions wait while a deleted conversation is removed fro
     const holds = new InstanceHolds();
     const fake = fakeInstance("claude-1");
     const decorated = decorateHoldInstance(fake.instance, holds);
-    await decorated.adapter.sendTurn({ threadId: "T1", text: "long" } as never);
+    await decorated.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "T1", text: "long" } as never);
     fake.emit("turn.started", "T1");
     // finishes inside the wait
     const soon = holds.hold(["claude-1"], 500, async () => undefined);
@@ -251,7 +253,7 @@ describe("Murage's own sessions wait while a deleted conversation is removed fro
     const late = await holds.hold(["claude-1"], 30, async () => undefined);
     expect(late.busy).toEqual(["claude-1"]);
     expect(holds.isHeld("claude-1")).toBe(false); // not held: the owner's turn went on, and new turns are not blocked
-    const next = await decorated.adapter.sendTurn({ threadId: "T2", text: "free" } as never);
+    const next = await decorated.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "T2", text: "free" } as never);
     expect(next).toEqual({ turnId: "t" });
   });
 
@@ -444,3 +446,6 @@ describe("when an engine keeps its files busy", () => {
   });
 });
 
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

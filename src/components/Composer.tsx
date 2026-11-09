@@ -2,11 +2,11 @@ import { useSlashSkills } from "@/lib/use-slash-skills";
 import { CallMeWhenDone } from "./CallMeWhenDone";
 import { track } from "@/lib/analytics";
 import { closedComposerLine } from "@/lib/shared-teams";
-import { dictationDisabledNote, isDictationDisabled } from "@/lib/dictation-notes";
 import { FOCUS_COMPOSER_EVENT } from "./useTrayIntents";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
-import { ArrowUp, BookOpen, Clock, ListChecks, Mic, Paperclip, Sparkles, Square, Target, Terminal, Users, X } from "lucide-react";
+import { ArrowUp, BookOpen, Clock, ListChecks, Megaphone, Mic, Paperclip, Sparkles, Square, Target, Terminal, Users, X } from "lucide-react";
+import { POST_IN_LABEL, postInOffered, postInTooltip, postPickFields, type VenuePickState } from "@/lib/venue-post-pick";
 import { useWarmIntent } from "@/hooks/use-warm-intent";
 import { api, olderOpenCards, useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
@@ -88,6 +88,7 @@ import { pendingApprovals, type Pending } from "@/lib/pending-approval";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { autoMountsThisComputer, autoNeedsLocalComputerWarning, localAutoHostPlatform } from "@/lib/local-computer";
 import { LazyBoundary, retryableLazy } from "@/components/LazyBoundary";
+import { inPhoneSheet } from "@/components/phone/sheet-layer";
 import { ComposerReplyStrip } from "./ReplyQuote";
 import { escapeCancelsReply } from "@/lib/replies";
 import { t } from "@/lib/i18n";
@@ -95,15 +96,23 @@ import { ComposerInjectNow, composerCanInjectNow } from "./ComposerInjectNow";
 import { ComposerPlusMenu } from "./ComposerPlusMenu";
 import { PushToTalk, browserPushToTalkFacts } from "./PushToTalk";
 import {
-  applyCleanupResult,
   cleanupEnabled,
-  dictatedPortion,
-  finishThenStop,
-  requestCleanup,
   undoCleanup,
   undoOffered,
   type CleanupUndo,
 } from "@/lib/dictation-cleanup";
+import {
+  dictationPress,
+  dictationSend,
+  dictationStartEligible,
+  dictationStopAgain,
+  dictationStopControl,
+  dictationStopRequest,
+  registerDictationSink,
+  useDictation,
+  useLayerCover,
+} from "@/lib/dictation-session";
+import { DictationControl } from "./DictationStatusBar";
 import { AudioAttachmentIntake } from "./AudioAttachmentIntake";
 import { ComposerSendNotice, type ComposerSendNoticeState } from "./ComposerSendNotice";
 import { fluxBridge, readFluxStatus, saveFluxKey } from "@/lib/flux-key-paste";
@@ -172,7 +181,7 @@ function PermissionModeSelector({ bot, onSetMode, routine }: {
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) setOpen(false);
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node) && !inPhoneSheet(e.target)) setOpen(false);
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
@@ -230,6 +239,11 @@ const LevelConfirmChunk = retryableLazy(() => import("@/components/approval/Leve
 // line and the words it reads (src/lib/pending-approval.ts) are the first paint.
 const PendingApprovalQueueChunk = retryableLazy(() => import("./PendingApprovalQueue").then((module) => ({ default: module.PendingApprovalQueue })));
 const PendingApprovalQueue = PendingApprovalQueueChunk.Component;
+// VENUE-POST-1017 section 6: the Post in… list loads only when the owner opens it.
+const VenuePostMenuChunk = retryableLazy(() => import("./VenuePostMenu").then((module) => ({ default: module.VenuePostMenu })));
+const VenuePostMenu = VenuePostMenuChunk.Component;
+// UX L7 part 2: below md the level chip opens the phone's level sheet (Ask and Auto only), loaded on first open.
+const PhoneLevelSheetChunk = retryableLazy(() => import("@/components/phone/PhoneLevelSheet").then((module) => ({ default: module.PhoneLevelSheet })));
 
 function PermissionLevelMenu({ bot, routine, onPick, onDone }: {
   bot: Bot;
@@ -243,6 +257,25 @@ function PermissionLevelMenu({ bot, routine, onPick, onDone }: {
   const engine = state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId);
   // 3.1: the bot's own record holds the default for new conversations
   const profile = state.bots.find((candidate) => candidate.id === bot.id);
+  // The sheet is for the phone or browser door (desktop false); a narrowed desktop window keeps the full menu.
+  const phone = useNarrowViewport() && desktop === false;
+  if (phone) {
+    return (
+      <LazyBoundary inline onRetry={PhoneLevelSheetChunk.retry} onDismiss={onDone}>
+        <Suspense fallback={null}>
+          <PhoneLevelSheetChunk.Component
+            botName={bot.name}
+            current={current}
+            routine={routine?.name}
+            engineCannotAsk={engineCannotAsk(engine?.driverKind) ? engine!.displayName : undefined}
+            engineOwnApprovals={engine?.capabilities?.runsOnOwnTools === true ? engine.displayName : undefined}
+            onPick={onPick}
+            onClose={onDone}
+          />
+        </Suspense>
+      </LazyBoundary>
+    );
+  }
   return (
     <PermissionModeMenu
       botName={bot.name}
@@ -268,7 +301,14 @@ export function Composer({
   onClearReply,
   onConsumeReply,
   locked: setupLocked = false,
+  compact,
+  onSent,
 }: {
+  /** Today's Tell box (1.0.18): the same composer and send, drawn small. Its placeholder is the one given here;
+   *  no toolbar, no attaching, and no slash menu (so none of the menu's reads). */
+  compact?: { placeholder: string; sendLabel: string };
+  /** Called once the server has acknowledged a send from this box (`watchDraftSend` outcome `acked`), never before. */
+  onSent?: () => void;
   bot?: Bot;
   group?: Group;
   members?: Bot[];
@@ -303,6 +343,14 @@ export function Composer({
   // offers members plus @everyone; explicit mentions override the room's
   // configured default responder.
   const busy = group ? Boolean(group.working || group.busyBotId) : Boolean(bot?.busy);
+  // VENUE-POST-1017 section 6: the owner's Post in… pick for the next send. It stays until a send carrying it is acknowledged
+  // or the owner clears it; a different conversation starts with none.
+  const [postPick, setPostPick] = useState<VenuePickState | null>(null);
+  const [postMenuOpen, setPostMenuOpen] = useState(false);
+  const postPickRef = useRef<VenuePickState | null>(null);
+  postPickRef.current = postPick;
+  useEffect(() => { setPostPick(null); setPostMenuOpen(false); }, [draftId0]);
+  const closePostMenu = useCallback(() => setPostMenuOpen(false), []);
   // an engine with a live session takes a message INTO the running turn;
   // for those the composer never locks — the server steers instead of 409
   const canSteer =
@@ -316,7 +364,8 @@ export function Composer({
   // ride beside it (openCards) and count while that branch reaches them.
   const approvals = pendingApprovals(group ? olderOpenCards(group, group.messages) : bot ? olderOpenCards(bot, visibleMessages(bot)) : []);
   // Rule 83: every one of them is listed and answerable, not only the oldest.
-  const approval = approvals[0];
+  // Compact (Today's Tell box): the approval takeover stays in the chat; the Tell box is never blocked by it.
+  const approval = compact ? undefined : approvals[0];
   // Rule 83b: who asked comes from the card's own sender, never the member that happens to be busy.
   const approvalBotFor = (pending: Pending): Bot | undefined =>
     group ? members?.find((member) => member.id === pending.message.from?.botId) : bot;
@@ -375,7 +424,8 @@ export function Composer({
     if (uploadsPending) return;
     setSendNotice((prev) => (prev?.kind === "upload-pending" ? null : prev));
   }, [uploadsPending]);
-  useWarmIntent(bot?.id, threadId, text);
+  // Compact (Today's Tell box): no passive warming or typing beats from Today; opening Today never wakes an engine.
+  useWarmIntent(compact ? undefined : bot?.id, threadId, text);
   const editText = useCallback(
     (next: string) => {
       if (isDraftHeld(draftId)) return;
@@ -425,7 +475,6 @@ export function Composer({
     },
     [text, editText, editAttachments],
   );
-  const [recording, setRecording] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
   // The send went through but the setup question did not hear it. Said quietly beside the composer, never as a failed send.
   const [intakeNotice, setIntakeNotice] = useState<string | null>(null);
@@ -480,6 +529,8 @@ export function Composer({
   // without clicking the box first. Touch screens are skipped, because
   // focusing there opens the keyboard over the conversation.
   useEffect(() => {
+    // Compact (Today's Tell box): opening Today never takes the caret; FOCUS_COMPOSER_EVENT still can.
+    if (compact) return;
     if (globalThis.matchMedia?.(COARSE_POINTER_QUERY).matches) return;
     const frame = requestAnimationFrame(() => {
       const input = inputRef.current;
@@ -513,15 +564,10 @@ export function Composer({
   }, [replyToId]);
   const mentionListRef = useRef<HTMLDivElement>(null);
   const commandListRef = useRef<HTMLDivElement>(null);
-  // what was typed before the mic went on — partials append after it
-  const baseText = useRef("");
   // Clean up dictation: the box as it was before clean-up replaced it, so one
   // tap puts the raw words back. Offered only while the box still holds what
   // clean-up wrote (undoOffered), so it never overwrites later typing.
   const [cleanupUndo, setCleanupUndo] = useState<CleanupUndo | null>(null);
-  const textRef = useRef("");
-  textRef.current = text;
-  const wasRecording = useRef(false);
 
   // image paste is offered only when every bot that will actually answer
   // can open one. sendGroup routes to mentions, else the room default —
@@ -547,7 +593,8 @@ export function Composer({
   const engineSupportsImages = imageTargetsSupport(effectiveText, effectiveChannelMode);
 
   // ── slash command menu (configure the whole send) ────────────────────
-  const slash = composerSlashTrigger(text, caret);
+  // Compact (Today's Tell box): no slash menu, so no engine-command or skill read either.
+  const slash = compact ? null : composerSlashTrigger(text, caret);
   const commandCandidates = useMemo(() => {
     if (!slash || slash.start === dismissedSlashAt) return [];
     const supportsAgents = (candidate?: Bot) =>
@@ -936,6 +983,9 @@ export function Composer({
     // The harness can still answer 413 (a different bound, or a body JSON
     // escaping pushed past it). That failure is shown here, beside the text
     // it kept, instead of as a passing toast.
+    // From here the message is going out. Dictation ends in the same synchronous step, before any await: the
+    // box takes no more words, a pending tidy-up is void, and the recognizer is stopped (or its stop is retried).
+    dictationSend(draftId);
     const refusedForSize = (error: unknown) => {
       if (!isMessageSizeRefusal(error)) return false;
       setSendNotice({ kind: "refused", sizeBytes: messageTextBytes(t) });
@@ -946,12 +996,15 @@ export function Composer({
     const shown = { text, att: [...attachments], mode: channelMode };
     const requestText = t;
     const groupMode = effectiveChannelMode;
+    const pickFields = !group ? postPickFields(postPickRef.current, replyTo ? { id: replyTo.id, fromBot: Boolean(replyTo.from?.botId) } : null) : {};
     const dispatchSend = (sendId: string, attemptId: string, replyToId: string | undefined) => {
     sendingRef.current = sendId;
     setSendingId(sendId);
     // UI only: the record is the state. Settled once, however the attempt ends (here, another tab, a reload).
     watchDraftSend(draftId, sendId, attemptId, (outcome) => {
       if (sendingRef.current === sendId) { sendingRef.current = null; setSendingId(null); }
+      if (outcome === "acked" && pickFields.postTo) setPostPick((current) => (current?.venueId === pickFields.postTo?.venueId ? null : current));
+      if (outcome === "acked") onSent?.();
       if (outcome === "acked" || outcome === "refused") {
         if (!readComposerDraft(draftId).text) {
           setSendNotice(null);
@@ -1024,6 +1077,7 @@ export function Composer({
         sendId,
         outboxDraft,
         replyToId,
+        ...pickFields,
         threadId,
         onError: failedSend,
       });
@@ -1041,6 +1095,7 @@ export function Composer({
       threadId,
       text: requestText,
       ...(content.reply ? { replyToId: content.reply } : {}),
+      ...pickFields,
       at: Date.now(),
       attempts: 0,
     })).then((begun) => {
@@ -1059,88 +1114,66 @@ export function Composer({
     });
   };
 
-  // native dictation: partials stream into the input while the Swift
-  // helper runs; the final transcript stays in the box, ready to edit/send
+  // Native dictation: partials stream into the input while the Swift helper
+  // runs; the final transcript stays in the box, ready to edit or send. The
+  // session itself (start, finish, stop, tidy-up, every guard) lives in
+  // lib/dictation-session.ts, because the recognizer outlives this component.
+  // This Composer registers where words go, and reads the session.
+  const dictation = useDictation();
+  const cover = useLayerCover();
+  const dictationKind = dictation.state.kind;
+  const ownsDictation = dictation.state.owner === draftId;
+  const editTextRef = useRef(editText);
+  editTextRef.current = editText;
+  const draftIdRef = useRef(draftId);
+  draftIdRef.current = draftId;
+  const targetRef = useRef({ botId: bot?.id, groupId: group?.id });
+  targetRef.current = { botId: bot?.id, groupId: group?.id };
+  useEffect(
+    () =>
+      registerDictationSink(draftId, {
+        write: (next) => editTextRef.current(next),
+        read: () => readComposerDraft(draftIdRef.current).text,
+        target: () => targetRef.current,
+        applyCleanup: (next, undo) => {
+          setCleanupUndo(undo);
+          editTextRef.current(next);
+        },
+      }),
+    [draftId],
+  );
+  // A message from the session about this draft (could not start, off during a call, no access).
+  const dictationNotice = dictation.state.notice;
   useEffect(() => {
-    if (!recording) return;
-    const bridge = window.muragebox;
-    if (!bridge) {
-      setRecording(false);
-      return;
-    }
-    setSpeechError(null);
-    const offTranscript = bridge.onSpeechTranscript((line) => {
-      if (typeof line.text === "string") {
-        const base = baseText.current;
-        editText(base ? `${base} ${line.text}` : line.text);
-      }
-    });
-    const offEnd = bridge.onSpeechEnd(({ code, reason }) => {
-      setRecording(false);
-      if (code === 2) {
-        setSpeechError("Dictation is only available on macOS for now.");
-      } else if (code === 1) {
-        setSpeechError(
-          reason === "helper-stop-pending"
-            ? "The previous dictation session is still closing. Try again in a moment."
-            : isDictationDisabled(reason)
-              ? dictationDisabledNote()
-              : "Dictation needs Microphone + Speech Recognition access. Turn it on in System Settings → Privacy & Security.",
-        );
-      }
-    });
-    void bridge.speechStart();
-    return () => {
-      offTranscript();
-      offEnd();
-      void bridge.speechStop();
-    };
-  }, [recording, editText]);
-
-  // When native dictation stops, tidy what it added and replace the box with
-  // the result. Any failure leaves the raw words where they are. Skipped if the
-  // person typed, sent or switched draft while the request was out.
+    if (dictationNotice && dictationNotice.owner === draftId) setSpeechError(dictationNotice.text);
+  }, [dictationNotice, draftId]);
+  // An approval card, a locked box or a layer opening above this box takes the
+  // box over: dictation finishes (the words are kept) and the stop control
+  // stays reachable (the strip here, or the bar in the app shell).
+  const dictationTakeover = Boolean(approval) || locked || cover.covered;
   useEffect(() => {
-    const was = wasRecording.current;
-    wasRecording.current = recording;
-    if (!was || recording || !cleanupEnabled()) return;
-    const atStop = textRef.current;
-    const base = baseText.current;
-    const said = dictatedPortion(base, atStop);
-    if (!said) return;
-    void requestCleanup(said, { botId: bot?.id, groupId: group?.id }).then((result) => {
-      // read at the moment the answer lands: typing, sending or switching
-      // draft meanwhile keeps what the person did
-      const applied = applyCleanupResult({ atStop, base, current: textRef.current, result });
-      if (!applied) return;
-      setCleanupUndo(applied.undo);
-      editText(applied.next);
-    });
-  }, [recording, bot?.id, group?.id, editText]);
-
-  // Stop dictating without dropping the last words: ask the helper to finish,
-  // keep the transcript listener attached until it reports the end (or 1.5 s),
-  // and only then flip `recording`, which runs the clean-up on the full text.
-  const finishing = useRef<(() => void) | null>(null);
-  const stopDictation = useCallback(() => {
-    const bridge = window.muragebox;
-    if (finishing.current) return;
-    if (!bridge?.speechFinish) return setRecording(false);
-    finishing.current = finishThenStop({
-      finish: () => bridge.speechFinish!(),
-      onEnd: (cb) => bridge.onSpeechEnd(() => cb()),
-      done: () => {
-        finishing.current = null;
-        setRecording(false);
-      },
-    });
-  }, []);
-  useEffect(() => {
-    if (!recording && finishing.current) {
-      finishing.current();
-      finishing.current = null;
-    }
-  }, [recording]);
+    if (dictationTakeover) dictationStopRequest(draftId);
+  }, [dictationTakeover, dictationKind, draftId]);
+  const dictationAvailable = capabilities.dictation.available;
+  const stopControl = ownsDictation
+    ? dictationStopControl(dictationKind, {
+        ownerMounted: true,
+        covered: cover.covered,
+        approval: Boolean(approval),
+        locked,
+        available: dictationAvailable,
+      })
+    : null;
+  const startEligible = dictationStartEligible({
+    kind: dictationKind,
+    available: dictationAvailable,
+    locked,
+    busy,
+    hasContent,
+    approval: Boolean(approval),
+    covered: cover.covered,
+  });
+  const dictationListening = ownsDictation && (dictationKind === "starting" || dictationKind === "listening");
 
   // Typed "/goal …" and pressed the lit chip: that reads as "no, not a goal", so un-type the command rather than
   // leaving a lit chip the draft still contradicts. The chip and the phone + menu share it.
@@ -1187,13 +1220,12 @@ export function Composer({
       setSpeechError("Dictation isn't available in this build.");
       return;
     }
-    if (recording) return stopDictation();
-    baseText.current = text.trim();
-    setRecording(true);
+    setSpeechError(null);
+    dictationPress(draftId, text.trim());
   };
 
   return (
-    <div data-composer className="pointer-events-none relative px-5 pb-3">
+    <div data-composer className="pointer-events-none relative px-5 pb-3" data-composer-compact={compact ? "" : undefined}>
       {/* No fill or hairline on this wrapper — those were the black frame
           in the pill's top corners. The dock overlays the transcript. */}
       {cleanupUndo && undoOffered(cleanupUndo, text) && (
@@ -1220,6 +1252,14 @@ export function Composer({
         <div className="pointer-events-auto mb-2 w-full rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12px] text-warning">
           {speechError}
         </div>
+      )}
+      {stopControl === "strip" && (
+        <DictationControl
+          kind={dictationKind}
+          onStop={() => dictationStopRequest(draftId)}
+          onStopAgain={dictationStopAgain}
+          className="pointer-events-auto mb-2 w-full"
+        />
       )}
       <div className="pointer-events-auto relative w-full">
         {failedSends.map((failed) => (
@@ -1377,7 +1417,8 @@ export function Composer({
           </div>
         )}
         <span role="status" aria-live="polite" className="sr-only">{replyCancelled ? t("composer.replyCancelled") : ""}</span>
-        <ComposerAttachments
+        {/* Compact adds no attachments; chips already in this draft (it is the chat's own) stay visible, as they go with the send. */}
+        {(!compact || attachments.length > 0) && <ComposerAttachments
           items={attachments}
           onAdd={addUploadedAttachments}
           threadId={threadId}
@@ -1389,7 +1430,8 @@ export function Composer({
           onManageStorage={() => dispatch({ type: "toggleAppSettings", open: true, section: "storage" })}
           onAudioFile={queueAudioFile}
           frozen={sendPending}
-        />
+          intake={!compact}
+        />}
         {audioFile && <AudioAttachmentIntake file={audioFile} configured={Boolean(state.config?.flux?.configured)}
           onAddTranscript={transcript => addAttachments([pasteAttachment(transcript)])} onRemove={removeAudioFile}
           onSettings={() => dispatch({ type: "toggleAppSettings", open: true, section: "engines" })} />}
@@ -1397,10 +1439,10 @@ export function Composer({
           {/* App-ground from the pill midline down, full-bleed. Bubbles may
               tuck into the top half of the radius; they must not show below
               center — including the corner pockets around the paperclip. */}
-          <div
+          {!compact && <div
             aria-hidden
             className="absolute -left-5 -right-5 top-1/2 h-[50vh] bg-app"
-          />
+          />}
         {/* A COLUMN, not a row. As a row this was `items-end`, so the chip
             cluster sat at the bottom of a container whose height is set by the
             textarea -- and the textarea grows to 9rem. Long dictation therefore
@@ -1409,7 +1451,7 @@ export function Composer({
             them removes the dead space at every height and gives both clusters
             one baseline. */}
         <div className={phoneComposer ? "flex items-end gap-2" : "contents"}>
-        {phoneComposer && !locked && !approval && (
+        {!compact && phoneComposer && !locked && !approval && (
           <ComposerPlusMenu
             onAttach={() => fileInput.current?.click()}
             attachDisabled={sendPending}
@@ -1466,6 +1508,8 @@ export function Composer({
             setDismissedSlashAt(null);
           }}
           onPaste={(e) => {
+            // Compact attaches nothing: a paste is the browser's own (text in, an image ignored).
+            if (compact) return;
             // an image from the clipboard becomes an uploaded attachment —
             // but only for engines that can open one; a grok bot politely
             // refuses instead of receiving a path it cannot read
@@ -1549,7 +1593,7 @@ export function Composer({
               }
             }
             // Escape drops a pending reply and keeps the draft; an open menu closed first, above
-            if (escapeCancelsReply({ key: e.key, isComposing: e.nativeEvent.isComposing }, { replying: Boolean(replyTo), recording })) {
+            if (escapeCancelsReply({ key: e.key, isComposing: e.nativeEvent.isComposing }, { replying: Boolean(replyTo), recording: ownsDictation && (dictationKind === "starting" || dictationKind === "listening" || dictationKind === "stopping") })) {
               e.preventDefault();
               onClearReply?.();
               setReplyCancelled(true);
@@ -1567,7 +1611,7 @@ export function Composer({
               e.preventDefault();
               send();
             }
-            if (e.key === "Escape" && recording) stopDictation();
+            if (e.key === "Escape" && dictationListening) dictationStopRequest(draftId);
           }}
           disabled={Boolean(approval) || locked}
           hidden={Boolean(approval)}
@@ -1580,7 +1624,7 @@ export function Composer({
               ? { lead: "Loading replacement conversation…" }
               : setupLocked
               ? { lead: "Finish channel setup to start chatting" }
-              : recording
+              : dictationListening
               ? { lead: "Listening…" }
               : canInject
                 ? { lead: `${busyName} is working`, hint: "inject now to interrupt with the queued message" }
@@ -1594,16 +1638,20 @@ export function Composer({
                   ? channelMode === "goal"
                     ? { lead: `Describe what ${group.name} should finish together` }
                     : { lead: `Message ${group.name}`, hint: groupComposerHint(group, members ?? []) }
-                  : { lead: `Message ${bot?.name ?? ""}` },
+                  : compact
+                    ? { lead: compact.placeholder }
+                    : { lead: `Message ${bot?.name ?? ""}` },
           )}
           aria-label={`Message ${group ? group.name : (bot?.name ?? "")}`}
           aria-invalid={sendNotice ? true : undefined}
           aria-describedby={sendNotice ? sendNoticeId : undefined}
-            className={cn("max-h-[9rem] min-h-6 w-full resize-none overflow-y-auto bg-transparent px-2 pb-0.5 pt-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none", phoneComposer && "w-auto min-w-0 flex-1 basis-[8rem]", approval && "hidden")}
+            className={cn(compact ? "max-h-24" : "max-h-[9rem]", "min-h-6 w-full resize-none overflow-y-auto bg-transparent px-2 pb-0.5 pt-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none", phoneComposer && "w-auto min-w-0 flex-1 basis-[8rem]", approval && "hidden")}
           />
           {/* One controls row: chips on the left, send and dictation on the
               right, sharing a baseline at every composer height. */}
-          <div data-composer-controls className={cn("flex items-center gap-1", phoneComposer && "contents", approval && "hidden")}>
+          <div data-composer-controls className={cn("flex items-center gap-1", phoneComposer && "contents", approval && "hidden", compact && "max-[760px]:[&_button:not([data-tell-send])]:size-11")}>
+          {/* Compact (Today's Tell box): no toolbar. */}
+          {!compact && <>
           {!locked && !phoneComposer && (
             <div className="flex items-center gap-1">
               <button
@@ -1616,6 +1664,43 @@ export function Composer({
               >
                 <Paperclip size={17} />
               </button>
+              {postInOffered({ bot: Boolean(bot), group: Boolean(group), locked }) && bot && (
+                <div className="relative flex items-center">
+                  {postPick ? (
+                    <span data-venue-post-pick className="flex h-8 max-w-[12rem] items-center gap-1 rounded-full bg-control pl-3 pr-1 text-[13px] text-ink">
+                      <Megaphone size={14} aria-hidden />
+                      <span className="truncate">{`Post in ${postPick.name}`}</span>
+                      <button type="button" disabled={sendPending} aria-label={`Don't post in ${postPick.name}`} title={`Don't post in ${postPick.name}`}
+                        onClick={() => setPostPick(null)} className="flex size-6 items-center justify-center rounded-full text-ink-secondary hover:text-ink">
+                        <X size={13} />
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      data-venue-post-button
+                      // Greyed, not disabled, while the bot works: a disabled button shows no tooltip.
+                      onClick={() => { if (!busy) setPostMenuOpen((open) => !open); }}
+                      disabled={sendPending}
+                      aria-disabled={busy || undefined}
+                      aria-expanded={postMenuOpen}
+                      aria-label={POST_IN_LABEL}
+                      title={postInTooltip(bot.name, busy)}
+                      className={cn("flex size-8 shrink-0 items-center justify-center rounded-full text-ink-secondary hover:bg-control hover:text-ink", busy && "cursor-not-allowed opacity-50 hover:bg-transparent")}
+                    >
+                      <Megaphone size={17} />
+                    </button>
+                  )}
+                  {postMenuOpen && !postPick && !busy && (
+                    <LazyBoundary inline onRetry={VenuePostMenuChunk.retry}>
+                      <Suspense fallback={null}>
+                        <VenuePostMenu botId={bot.id} threadId={threadId} onClose={closePostMenu}
+                          onPick={(venue) => { setPostPick(venue); setPostMenuOpen(false); refocusInput(); }} />
+                      </Suspense>
+                    </LazyBoundary>
+                  )}
+                </div>
+              )}
               {group && !group.dm && (
                 <button
                   type="button"
@@ -1638,6 +1723,7 @@ export function Composer({
               {autoBot && <PermissionModeSelector bot={autoBot} onSetMode={setMode} routine={routineLevel} />}
             </div>
           )}
+          </>}
           <div className="ml-auto flex items-center gap-1">
           {/* Inject is stop-then-steer made visible. The square stop would
               drain the same queue, so it yields while a send is waiting.
@@ -1655,17 +1741,17 @@ export function Composer({
             <Square size={14} className="fill-current" />
           </button>
         )}
-        {!locked && !busy && !hasContent && capabilities.dictation.available && (
+        {(stopControl === "mic" || startEligible) && (
           <button
             onClick={toggleMic}
-            aria-label={recording ? "Stop dictation" : "Start dictation"}
+            aria-label={stopControl === "mic" ? "Stop dictation" : "Start dictation"}
             className={cn(
               "flex size-8 shrink-0 items-center justify-center rounded-full",
-              recording
+              stopControl === "mic"
                 ? "animate-pulse bg-danger/20 text-danger"
                 : "text-ink-secondary hover:bg-raised hover:text-ink",
             )}
-            title={recording ? "Stop dictation (Esc)" : "Dictate"}
+            title={stopControl === "mic" ? "Stop dictation (Esc)" : "Dictate"}
           >
             <Mic size={18} />
           </button>
@@ -1702,7 +1788,19 @@ export function Composer({
             onNote={setSpeechError}
           />
         )}
-        {hasContent && !locked && (
+        {/* Compact (Today's Tell box): a Send button always drawn, with its word, disabled while the box is empty. */}
+        {compact && !locked && (
+          <button
+            type="button"
+            data-tell-send
+            onClick={send}
+            disabled={sendPending || !hasContent}
+            className="min-h-11 shrink-0 rounded-lg bg-accent px-4 text-[13px] font-medium text-accent-ink hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:cursor-default disabled:opacity-50"
+          >
+            {compact.sendLabel}
+          </button>
+        )}
+        {!compact && hasContent && !locked && (
           <button
             onClick={send}
             disabled={sendPending}
@@ -1766,6 +1864,7 @@ export function Composer({
         botName={autoBot?.name ?? ""}
         level={fullWarn === false ? "full" : fullWarn.level}
         scope="conversation"
+        openClaw={state.instances.find((i) => i.instanceId === autoBot?.modelSelection.instanceId)?.driverKind === "openclawAgent"}
         onThisComputer={fullWarn !== false && fullWarn.onThisComputer}
         onCancel={() => setFullWarn(false)}
         onConfirm={() => {

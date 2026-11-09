@@ -18,6 +18,30 @@ function source(bots: ChatSourceBot[], groups: ChatSourceGroup[] = [], activity:
 
 const ids = (rows: Array<{ threadId: string }> | undefined) => (rows ?? []).map((row) => row.threadId);
 
+it("combines Date, Pinned, Unread and Archived before both list and search limits", () => {
+  const s = source([{ id: "b", name: "Bot", threadId: "a", hidden: true, tasks: [
+    { threadId: "a", title: "First", createdAt: 1, pinned: true, unread: true },
+    { threadId: "b", title: "At upper bound", createdAt: 1, pinned: true, unread: true },
+    { threadId: "c", title: "Read", createdAt: 1, pinned: true },
+    { threadId: "d", title: "Not pinned", createdAt: 1, unread: true },
+  ] }], [], { a: 100, b: 200, c: 150, d: 150 });
+  const filters = chatFiltersFromQuery(new URLSearchParams("bot=b&pinned=1&unread=1&archived=1&date_from=100&date_to=200"));
+  expect(pageChats(s, filters, null, 1)?.chats.map(row => row.threadId)).toEqual(["a"]);
+  expect(chatSearchThreads(s, filters)).toEqual(["a"]);
+  expect(chatSearchThreads(s, { ...filters, archived: false })).toEqual([]);
+  expect(chatSearchThreads(s, { ...filters, dateFrom: 201 })).toEqual([]);
+});
+
+it("chat search looks up activity times only when a Date filter is set", () => {
+  let lookups = 0;
+  const s = source([{ id: "b", name: "Bot", threadId: "a", tasks: [{ threadId: "a", title: "A", createdAt: 1 }, { threadId: "b", title: "B", createdAt: 1 }] }], [], {},
+    { lastActivityAt: () => { lookups++; return 150; } });
+  expect(chatSearchThreads(s, { botId: "b" }).sort()).toEqual(["a", "b"]);
+  expect(lookups).toBe(0);
+  expect(chatSearchThreads(s, { botId: "b", dateFrom: 100 }).sort()).toEqual(["a", "b"]);
+  expect(lookups).toBe(2);
+});
+
 describe("pageChats", () => {
   const bots: ChatSourceBot[] = [
     { id: "ember", name: "Ember", threadId: "e1", tasks: [

@@ -5,6 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants, openSync, closeSync, fstatSync, readFileSync, lstatSync, realpathSync, readdirSync, existsSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { DATA_DIR } from "../config.ts";
+import { ownedPath, rootFor, WorkspaceTreeError } from "../data-roots.ts";
 import { transaction, database, isDatabaseBusy } from "../database.ts";
 import { requireMemoryOwner } from "./authority.ts";
 import { ensureScope, type MemoryRoster } from "./policy.ts";
@@ -63,11 +64,23 @@ function importSourceId(db:ReturnType<typeof database>,scopeId:string,path:strin
  * regular non-symlink file. Never accept arbitrary paths from import requests.
  */
 function readSelected(parts:string[],maximum=262144):string {
-  if(lstatSync(DATA_DIR).isSymbolicLink())throw new Error("MEMORY_IMPORT_SYMLINK");
-  const root=realpathSync(DATA_DIR),path=join(root,...parts);
-  const rel=relative(root,path);if(rel.startsWith(`..${sep}`)||rel===".."||resolve(path)===root)throw new Error("MEMORY_IMPORT_PATH_DENIED");
-  let at=root;
-  for(const part of parts){at=join(at,part);if(lstatSync(at).isSymbolicLink())throw new Error("MEMORY_IMPORT_SYMLINK");}
+  let path:string;
+  if(parts[0]==="workspaces"){
+    // C6 (S5-DATADIR-PATHS r4.1): a linked workspaces root is followed once, at its admitted canonical target (DR3/DR4);
+    // a link below the root, or a root that is not ok, is still MEMORY_IMPORT_SYMLINK.
+    if(parts.length<2||parts.some(part=>!part||part==="."||part===".."))throw new Error("MEMORY_IMPORT_PATH_DENIED");
+    let dir:string;
+    try{dir=ownedPath(join(DATA_DIR,...parts.slice(0,-1)),{create:false}).canonical;}
+    catch(error){if(error instanceof WorkspaceTreeError)throw new Error("MEMORY_IMPORT_SYMLINK");throw error;}
+    path=join(dir,parts[parts.length-1]!);
+    if(lstatSync(path).isSymbolicLink())throw new Error("MEMORY_IMPORT_SYMLINK");
+  } else {
+    if(lstatSync(DATA_DIR).isSymbolicLink())throw new Error("MEMORY_IMPORT_SYMLINK");
+    const root=realpathSync(DATA_DIR);path=join(root,...parts);
+    const rel=relative(root,path);if(rel.startsWith(`..${sep}`)||rel===".."||resolve(path)===root)throw new Error("MEMORY_IMPORT_PATH_DENIED");
+    let at=root;
+    for(const part of parts){at=join(at,part);if(lstatSync(at).isSymbolicLink())throw new Error("MEMORY_IMPORT_SYMLINK");}
+  }
   const fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW);
   try {
     const stat=fstatSync(fd);if(!stat.isFile()||stat.size>maximum)throw new Error("MEMORY_IMPORT_FILE_LIMIT");
@@ -339,11 +352,13 @@ export function migrateDetectedMemoryNotebooks(roster:MemoryRoster,cursor?:strin
   if(!botId)return {imported:0,skipped:0,needsReview:0,paused:false};
   const scopeId=ensureScope("bot",botId),base=join(DATA_DIR,"workspaces",botId);
   const selections:ImportSelection[]=[];
-  const unsafeBase=[DATA_DIR,join(DATA_DIR,"workspaces"),base].some(path=>existsSync(path)&&lstatSync(path).isSymbolicLink());
-  if(unsafeBase||existsSync(join(base,"MEMORY.md")))selections.push({kind:"bot",botId});
-  const topics=join(base,"memory");
+  // C6: the workspaces root through rootFor + ownedPath (a linked root at its canonical target); a link below it stays unsafe.
+  let canonicalBase:string|undefined;
+  try{if(lstatSync(DATA_DIR).isSymbolicLink())throw new Error("MEMORY_IMPORT_SYMLINK");rootFor("workspaces");canonicalBase=ownedPath(base,{create:false}).canonical;}catch{canonicalBase=undefined;}
+  const unsafeBase=canonicalBase===undefined;
+  if(unsafeBase||existsSync(join(canonicalBase!,"MEMORY.md")))selections.push({kind:"bot",botId});
   // Invalid descendants are recorded by selectionItem, never followed.
-  try{if(!unsafeBase&&!lstatSync(topics).isSymbolicLink())for(const topic of readdirSync(topics).sort())if(isMemoryTopicName(topic))selections.push({kind:"bot",botId,topic});}catch{/* No topic directory. */}
+  try{if(!unsafeBase){const topics=join(canonicalBase!,"memory");if(!lstatSync(topics).isSymbolicLink())for(const topic of readdirSync(topics).sort())if(isMemoryTopicName(topic))selections.push({kind:"bot",botId,topic});}}catch{/* No topic directory. */}
   const key=(selection:ImportSelection)=>selection.kind==="bot"&&selection.topic?`memory/${selection.topic}`:"MEMORY.md";
   const pending=selections.filter(selection=>botId!==after.bot||key(selection)>after.file).sort((a,b)=>key(a)<key(b)?-1:1);
   let imported=0,skipped=0,needsReview=0;
@@ -379,15 +394,17 @@ export function availableMemoryNotebooks(ticket:object,roster:MemoryRoster){
   const issues:{label:string;error:string}[]=[];
   for(const bot of roster.bots){
     if(existsSync(join(DATA_DIR,"workspaces",bot.id,"MEMORY.md")))selections.push({kind:"bot",botId:bot.id});
-    const topics=join(DATA_DIR,"workspaces",bot.id,"memory");
     try{
+      // C6: walked from the workspaces root's canonical target; a link at the bot folder or memory throws here
+      const topics=ownedPath(join(DATA_DIR,"workspaces",bot.id,"memory"),{create:false}).canonical;
       if(existsSync(topics)){
         if(lstatSync(topics).isSymbolicLink())throw new Error("MEMORY_IMPORT_SYMLINK");
         for(const name of readdirSync(topics).slice(0,100))if(isMemoryTopicName(name))selections.push({kind:"bot",botId:bot.id,topic:name});
       }
     }catch{issues.push({label:bot.id,error:"Topic directory could not be read."});}
     for(const suffix of ["teams","projects","rooms","general"] as const){
-      const base=join(DATA_DIR,"workspaces",`${bot.id}.${suffix}`);
+      let base:string;
+      try{base=ownedPath(join(DATA_DIR,"workspaces",`${bot.id}.${suffix}`),{create:false}).canonical;}catch{continue;}
       if(!existsSync(base)||lstatSync(base).isSymbolicLink())continue;
       const keys=suffix==="general"?[""]:readdirSync(base).filter(key=>/^[\w-]+$/.test(key)).slice(0,100);
       for(const key of keys){

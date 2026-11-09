@@ -57,7 +57,7 @@ export function learningPausedRow(db: MemoryDb, at = Date.now(), left?: Readonly
     const ceiling = learningCeilingStatus(db, settings.ceiling, at);
     // A limit of 0 is the owner switching learning off, which Memory says in its own words; nothing doubles from 0.
     if (!ceiling.paused || ceiling.input <= 0 || ceiling.output <= 0 || (left ?? storedLeftMonths()).has(ceiling.month)) return null;
-    return { month: ceiling.month, input: ceiling.input, output: ceiling.output, inputUsed: ceiling.inputUsed, outputUsed: ceiling.outputUsed, learningRevision: settings.revision };
+    return { pausedBy: ceiling.pausedBy, month: ceiling.month, input: ceiling.input, output: ceiling.output, inputUsed: ceiling.inputUsed, outputUsed: ceiling.outputUsed, learningRevision: settings.revision };
   } catch { return null; }
 }
 

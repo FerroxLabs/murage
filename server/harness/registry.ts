@@ -4,10 +4,14 @@
 // startup failure (that behavior is what makes settings forward/backward
 // compatible — do not remove it); dispose tears an instance down without
 // touching its siblings.
+import { isDeepStrictEqual } from "node:util";
 import { forgetAllInstanceMarks, forgetInstanceMark, withInstanceMark } from "../key-rejections.ts";
 import { findCliCandidates } from "../env-path.ts";
 import { withWslNote } from "./wsl-launch.ts";
 import { MODEL_CATALOG_REFRESH_MS } from "../model-catalog-refresh.ts";
+/** An empty catalogue is read again after this long, at most EMPTY_CATALOG_RETRIES times before the 24 h age applies. */
+export const EMPTY_CATALOG_RETRY_MS = 1500;
+export const EMPTY_CATALOG_RETRIES = 5;
 import { filterFluxRows } from "../flux-surface.ts";
 import { runInLocalProbeScope } from "../drivers/local-inject.ts";
 import { decorateMemoryInstance } from "./memory-adapter.ts";
@@ -35,8 +39,8 @@ export interface ShadowInstance {
 }
 
 export type RegistryEntry =
-  | { instanceId: InstanceId; live: ProviderInstance; shadow?: undefined }
-  | { instanceId: InstanceId; live?: undefined; shadow: ShadowInstance };
+  | { builtFrom: InstanceConfigMap[string]; instanceId: InstanceId; live: ProviderInstance; shadow?: undefined }
+  | { builtFrom: InstanceConfigMap[string]; instanceId: InstanceId; live?: undefined; shadow: ShadowInstance };
 
 /** The `cli` field off a driver's default config, when it has one — the
  * placeholder an override input shows when nothing is set. */
@@ -64,7 +68,46 @@ export function withServerPlatform(install: EngineInstall | undefined, platform:
   return SERVER_PLATFORMS.has(platform) ? { ...install, platform: platform as "darwin" | "win32" | "linux" } : install;
 }
 
+export interface ScanReading {
+  seq: number;
+  epoch: number;
+  rows: Array<{ instanceId: string; driverKind: string; enabled: boolean; authenticated?: boolean; billing?: "metered" | "subscription" }>;
+}
+export interface DescribeFlight {
+  readonly epoch: number;
+  readonly seq: number;
+  readonly run: Promise<Awaited<ReturnType<ProviderRegistry["describe"]>>>;
+}
+
 export class ProviderRegistry {
+  private retired = new Set<InstanceId>();
+  private terminal = false;
+  private reading: ScanReading | null = null;
+
+  retire(ids: Iterable<InstanceId>): void { for (const id of ids) this.retired.add(id); }
+  beginShutdown(): void { this.terminal = true; }
+  isShuttingDown(): boolean { return this.terminal; }
+  isRetired(id: InstanceId): boolean { return this.terminal || this.retired.has(id); }
+  retiredIds(): InstanceId[] { return [...this.retired]; }
+  settle(saved: InstanceConfigMap): void {
+    if (this.terminal) return;
+    for (const id of this.retired) {
+      const entry = this.byId.get(id), want = saved[id];
+      if ((!entry && !want) || (entry && want && isDeepStrictEqual(entry.builtFrom, want))) this.retired.delete(id);
+    }
+  }
+  scanReading(): ScanReading | null { return this.reading?.epoch === this.epoch ? this.reading : null; }
+  publishScan(flight: DescribeFlight, rows: Awaited<ReturnType<ProviderRegistry["describe"]>>): void {
+    if (flight.epoch !== this.epoch || (this.reading && flight.seq <= this.reading.seq)) return;
+    this.reading = { epoch: flight.epoch, seq: flight.seq, rows: rows.map(row => ({
+      instanceId: row.instanceId, driverKind: row.driverKind, enabled: row.enabled !== false,
+      ...(row.snapshot.state === "available" ? {
+        ...(row.snapshot.authenticated === undefined ? {} : { authenticated: row.snapshot.authenticated }),
+        ...(row.snapshot.billing === undefined ? {} : { billing: row.snapshot.billing }),
+      } : {}),
+    })) };
+  }
+
   private byId = new Map<InstanceId, RegistryEntry>();
   /** decoded per-instance `cli` overrides, for describe() — drivers spawn
    * from their own config; this map only reports what was configured */
@@ -73,7 +116,7 @@ export class ProviderRegistry {
 
   /** Bumped whenever the set of engines changes, so a scan that began before a change is never shared with a caller that came after it. */
   private epoch = 0;
-  private catalogRefreshes = new WeakMap<ProviderInstance, { attemptedAt: number; pending?: Promise<void> }>();
+  private catalogRefreshes = new WeakMap<ProviderInstance, { attemptedAt: number; pending?: Promise<void>; emptyRetries?: number }>();
 
   private readonly now: () => number;
   /** Murage's own sessions wait on an instance while a deleted conversation is removed from its engine's files. */
@@ -151,12 +194,13 @@ export class ProviderRegistry {
   }
 
   private async resolveEntry([instanceId, entry]: [string, InstanceConfigMap[string]]): Promise<[string, RegistryEntry]> {
+    const builtFrom = structuredClone(entry);
     const driver = this.driversByKind.get(entry.driver);
     // Disabled is an admission barrier, not merely metadata on an already
     // constructed adapter. Factory/catalog discovery can spawn native CLIs.
     if (entry.enabled === false) {
       return [instanceId, {
-        instanceId,
+        instanceId, builtFrom,
         shadow: {
           instanceId, driverKind: entry.driver, displayName: entry.displayName,
           cli: cliOfRaw(entry.config), shadow: true, disabled: true,
@@ -166,7 +210,7 @@ export class ProviderRegistry {
     }
     if (!driver) {
       return [instanceId, {
-        instanceId,
+        instanceId, builtFrom,
         shadow: {
           instanceId,
           driverKind: entry.driver,
@@ -194,10 +238,10 @@ export class ProviderRegistry {
       // Outermost: every engine call for a draft-only bot is judged here before any other wrapper runs (draft-only-adapter.ts).
       const decorated = decorateDraftOnlyInstance(decorateAskNoteInstance(decorateHoldInstance(decorateMemoryInstance(live), this.holds)));
       this.catalogRefreshes.set(decorated, { attemptedAt: this.now() });
-      return [instanceId, { instanceId, live: decorated }];
+      return [instanceId, { instanceId, builtFrom, live: decorated }];
     } catch (e) {
       return [instanceId, {
-        instanceId,
+        instanceId, builtFrom,
         shadow: {
           instanceId,
           driverKind: entry.driver,
@@ -208,6 +252,39 @@ export class ProviderRegistry {
         },
       }];
     }
+  }
+
+  /** Close idle child processes for logoff without disposing an engine or resetting a native session.
+   * Keep admission held through the caller's seal. A timeout releases the fleet hold and releases late adapter holds when they arrive. */
+  async holdIdleForFlush(budgetMs = 900): Promise<{ confirmed: boolean; release(): void }> {
+    const instances = this.instances();
+    const epoch = this.epoch;
+    const releaseFleet = this.holds.holdNow(instances.map((instance) => instance.instanceId));
+    const releases: Array<() => void> = [];
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      for (const back of releases) { try { back(); } catch { /* the fleet admission hold must still be released */ } }
+      releaseFleet();
+    };
+    // Check under the same synchronous hold used by adapter admission. Never close an in-flight turn.
+    if (instances.some((instance) => this.holds.runningTurns(instance.instanceId) > 0)) return { confirmed: false, release };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const closed = Promise.all(instances.map(async (instance) => {
+      try {
+        const held = await instance.adapter.holdIdle?.();
+        if (held) {
+          if (released) held.release();
+          else releases.push(held.release);
+        }
+        return held?.confirmed ?? true;
+      } catch { return false; }
+    })).then((results) => results.every(Boolean) && this.epoch === epoch);
+    const confirmed = await Promise.race([closed, new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(false), budgetMs);
+    })]).finally(() => { if (timer) clearTimeout(timer); });
+    return { confirmed, release };
   }
 
   /** Holds these instances (see instance-holds.ts): new turns wait, running turns get `waitMs` to finish, idle engines close. The
@@ -226,6 +303,11 @@ export class ProviderRegistry {
     return this.byId.get(instanceId)?.live ?? null;
   }
 
+  /** Is this engine still set up (running or not); a removed one is not. */
+  has(instanceId: InstanceId): boolean {
+    return this.byId.has(instanceId);
+  }
+
   entries(): RegistryEntry[] {
     return [...this.byId.values()];
   }
@@ -238,7 +320,14 @@ export class ProviderRegistry {
     if (!instance.refreshModels || instance.enabled === false) return Promise.resolve();
     const state = this.catalogRefreshes.get(instance) ?? { attemptedAt: -Infinity };
     if (state.pending) return state.pending;
-    if (dueOnly && this.now() - state.attemptedAt < MODEL_CATALOG_REFRESH_MS) return Promise.resolve();
+    // CATALOG-BOOT-EMPTY-NO-RETRY: an engine whose catalogue is still empty (its first read at boot found nothing) is due again after
+    // a short pause, a few times only, so the boot engine pass and the minute poll can recover it without a key save.
+    // A full catalogue keeps the 24 h age.
+    const empty = !instance.models?.options?.length;
+    if (!empty) state.emptyRetries = 0;
+    const emptyDue = empty && (state.emptyRetries ?? 0) < EMPTY_CATALOG_RETRIES && this.now() - state.attemptedAt >= EMPTY_CATALOG_RETRY_MS;
+    if (dueOnly && !emptyDue && this.now() - state.attemptedAt < MODEL_CATALOG_REFRESH_MS) return Promise.resolve();
+    if (dueOnly && emptyDue && this.now() - state.attemptedAt < MODEL_CATALOG_REFRESH_MS) state.emptyRetries = (state.emptyRetries ?? 0) + 1;
     state.attemptedAt = this.now();
     state.pending = Promise.resolve().then(async () => {
       if (this.get(instance.instanceId) === instance) await instance.refreshModels!({ manual: !dueOnly });
@@ -285,13 +374,18 @@ export class ProviderRegistry {
    *  out on purpose: it says a turn was refused, not whether a login exists, so a sign-in reads the engine itself. Undefined when the
    *  registry lacks the id. */
   async engineLogin(instanceId: InstanceId): Promise<boolean | null | undefined> {
+    const snapshot = await this.engineLoginSnapshot(instanceId);
+    if (snapshot === undefined) return undefined;
+    return snapshot?.state === "available" && typeof snapshot.authenticated === "boolean" ? snapshot.authenticated : null;
+  }
+
+  /** Raw sign-in observation, including whether it is merely local credential shape.
+   * Read once so the answer and its provenance cannot come from different probes. */
+  async engineLoginSnapshot(instanceId: InstanceId): Promise<ProviderSnapshot | null | undefined> {
     const entry = this.byId.get(instanceId);
     if (!entry) return undefined;
     if (entry.shadow) return null;
-    try {
-      const snapshot = await entry.live.snapshot();
-      return snapshot.state === "available" && typeof snapshot.authenticated === "boolean" ? snapshot.authenticated : null;
-    } catch { return null; }
+    try { return await entry.live.snapshot(); } catch { return null; }
   }
 
   /** instance snapshots for the model picker: id, driver, models, health.
@@ -316,17 +410,21 @@ export class ProviderRegistry {
   /** One scan at a time per mode: boot asks for the engine list and the setup view together, and every
    * engine card used to start its own. A caller that arrives mid-scan waits for it. A "fresh" scan also
    * answers a "due" caller (it refreshed at least as much); a "due" scan never answers a "fresh" one. */
-  describe(options: { catalogs?: "fresh" | "due"; startedAfter?: number } = {}) {
+  describe(options: { catalogs?: "fresh" | "due"; startedAfter?: number } = {}): ReturnType<ProviderRegistry["scan"]> {
+    return this.describeFlight(options).run;
+  }
+
+  describeFlight(options: { catalogs?: "fresh" | "due"; startedAfter?: number } = {}): DescribeFlight {
     const mode = options.catalogs === "due" ? "due" : "fresh";
     const after = options.startedAfter;
     const usable = (flight: { epoch: number; seq: number } | null) => flight !== null && flight.epoch === this.epoch && (after === undefined || flight.seq > after);
     const shared = usable(this.describing.fresh) ? this.describing.fresh : mode === "due" && usable(this.describing.due) ? this.describing.due : null;
-    if (shared) return shared.run;
-    const flight = { epoch: this.epoch, seq: ++this.scanSeq, run: this.scan(mode === "due") };
+    if (shared) return shared;
+    const flight = Object.freeze({ epoch: this.epoch, seq: ++this.scanSeq, run: this.scan(mode === "due") });
     this.describing[mode] = flight;
     const clear = () => { if (this.describing[mode] === flight) this.describing[mode] = null; };
     flight.run.then(clear, clear);
-    return flight.run;
+    return flight;
   }
 
   private async scan(dueOnly: boolean) {

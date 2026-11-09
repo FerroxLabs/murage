@@ -67,10 +67,12 @@ export type LineageRef =
   /** One stored line, by message id (a copy, a quote, a replayed or owed line, a tool result naming a line): a `point` carry. */
   | { readonly kind: "line"; readonly threadId: string; readonly messageId: string;
       /** A line of the prompt's own thread its replay shows in words (the last rebuild names them one by one instead of a prefix: prompt-parts.ts
-       * ownReplayRefs). The send fence judges it by content, as it judges a prefix's shown lines, whatever the reader: an audience-only mark
-       * (a receipt flipped by an install-wide revoke) never refuses the owner's own replay (Astra 1.0.3 room High). Lines of other threads
-       * never carry it and stay judged for the reader's audience. */
+       * ownReplayRefs). Judged by content only when it also carries `judge: "content"` (set only for an owner audience): an audience-only
+       * mark (a receipt flipped by an install-wide revoke) never refuses the owner's own replay (Astra 1.0.3 room High). Any other reader
+       * judges the line for its own audience, as the ordinary route does its `audienceShown` lines. Lines of other threads never carry it. */
       readonly replay?: true;
+      /** "content": the owner's own replay, judged by content whatever the reader (deny-read.ts refsLookup). Absent: judged for the reader. */
+      readonly judge?: "content";
       /** An original of a copy (copyOf) that a row of the prompt's OWN thread carries, when that thread is read by content (an owner-only
        * room, roomOwnerAudience): the copy's words are shown by content through the prefix, so its originals are judged by the same reader,
        * never stricter (designs/SEND-FENCE-RECEIPT-RACE.md). Content marks still refuse. Quoted lines of other threads never carry it. */

@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -447,3 +448,5 @@ describe("PIP P1 restore", () => {
     expect(readContinuity(ticket, "moss", roster).records.map(r => r.key)).toEqual(["kept"]);
   });
 });
+
+useOutsideStoreFixture();

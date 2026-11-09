@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "./testing/bot-folder-fixture.ts";
 // A steer quoting a memory-derived reply discloses that reply to the running
 // turn the moment its text is written to the engine. Fuigo acknowledges an
 // interjection later (up to its budget); if the quote's source is revoked in
@@ -5,6 +7,7 @@
 // roots must still be on the running turn and its engine session, so the next
 // write's session check resets the session. Through the real Fuigo driver and
 // the fake ACP CLI, whose interjection echo (the acknowledgement) is delayed.
+import { storeAnchorMessage } from "./memory/testing/anchor-message.ts";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -56,6 +59,7 @@ function access() {
  * resting on thread "older"'s message m1: a permitted memory-derived reply. */
 async function memoryDerivedReply() {
   const text = "The alarm code is 4812.";
+  storeAnchorMessage(database(), "older", "m1", text, "user", 1);
   captureSource(database(), { id: "message:older:m1", threadId: "older", messageId: "m1", kind: "text", speaker: "owner", outcome: "recorded", text });
   const turn = access();
   const record = saveMemoryCandidate(text, [{ sourceId: "message:older:m1", revision: 1, startByte: 0, endByte: Buffer.byteLength(text) }], "k", turn);
@@ -135,7 +139,7 @@ async function runningFuigo(echoMs: number) {
     },
     config: { cli: FAKE_ACP, fullAuto: false },
   });
-  await instance.adapter.sendTurn({ threadId: "desk", text: "Count the invoices" });
+  await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "desk", text: "Count the invoices" });
   // the fake engine rewrites its dump while this polls: a half-written file is "not yet", never a failure
   const prompted = () => { try { return existsSync(dump) && (JSON.parse(readFileSync(dump, "utf8")) as string[]).includes("session/prompt"); } catch { return false; } };
   for (let i = 0; i < 500 && !prompted(); i++) await new Promise((r) => setTimeout(r, 20));
@@ -224,6 +228,7 @@ posixOnly("a steer's quoted reply is recorded at the write, not after the acknow
 // steer sent before then waits in the driver's pre-init queue. It logs every
 // user line it receives.
 const SLOW_INIT_CLAUDE = `#!/usr/bin/env node
+if (process.argv.includes("--version")) { console.log("2.1.292 (Claude Code)"); process.exit(0); }
 const fs = require("node:fs");
 const out = (frame) => process.stdout.write(JSON.stringify(frame) + "\\n");
 const log = (line) => fs.appendFileSync(process.env.STEER_LINEAGE_LOG, line + "\\n");
@@ -268,7 +273,7 @@ posixOnly("a Claude steer that waits for init is checked against its quote at th
         config: { cli, permissionMode: "acceptEdits" },
       });
       const lines = () => (existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : []);
-      await instance.adapter.sendTurn({ threadId: "desk", text: "one SLOW_INIT", warmIdentity: { botId: "bot", audience: "owner" } });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "desk", text: "one SLOW_INIT", warmIdentity: { botId: "bot", audience: "owner" } });
       const lineage: RunningTurnLineage = { roots: { roots: new Set(), over: false }, instanceId: "claude-steer", startGeneration: 0, session: "claude-session", generation: "g-claude", turn: { threadId: "desk", turnId: "t-claude", turnLsn: 0, parents: [] } as unknown as RunningTurnLineage["turn"] };
       const turn = openTurn("desk", "t-desk");
       const session = { threadId: "desk", driverInstance: "claude-steer", nativeSession: "claude-session" };
@@ -306,3 +311,5 @@ posixOnly("a Claude steer that waits for init is checked against its quote at th
     }
   }, 30_000);
 });
+
+useOutsideStoreFixture();

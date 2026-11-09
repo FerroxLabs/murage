@@ -1575,3 +1575,28 @@ describe("review warnings are computed lazily and unchanged", () => {
     expect(checked.prepared.warnings).toBe(checked.prepared.warnings);
   });
 });
+
+
+import { removeLink } from "./link-removal.ts";
+import { readlinkSync } from "node:fs";
+import { syncSkillLinks } from "./skills.ts";
+import { dataRoots } from "./data-roots.ts";
+it.each([false, true])("S5 site 4 rebases discovery links under a recorded root (revision=%s)", revision => {
+  const created = stageSkillWrite(bot, { action: "create", files: [{ path: "SKILL.md", content: SKILL("review") }] });
+  if ("error" in created) throw new Error(created.error);
+  expect(applyStagedSkillWrite(bot, created.id)).toHaveProperty("name", "review");
+  setSkillEnabled(bot, "review", true);
+  if (revision) {
+    const staged = stageSkillWrite(bot, { action: "update", targetName: "review", files: [{ path: "SKILL.md", content: SKILL("review", "Updated.") }] });
+    if ("error" in staged) throw new Error(staged.error);
+    expect(applyStagedSkillWrite(bot, staged.id, { expectedSha256: staged.sha256 })).toHaveProperty("name", "review");
+  }
+  const link = join(workspaceDir(bot), ".claude", "skills", "review");
+  const target = readlinkSync(link);
+  const old = join(scratch, "previous");
+  removeLink(link);
+  symlinkSync(old + target.slice(DATA_DIR.length), link, process.platform === "win32" ? "junction" : "dir");
+  const spy = vi.spyOn(dataRoots(), "previousRoots").mockReturnValue([old]);
+  try { syncSkillLinks(bot); expect(readlinkSync(link)).toBe(target); }
+  finally { spy.mockRestore(); }
+});

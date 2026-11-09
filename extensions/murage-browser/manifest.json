@@ -3,7 +3,7 @@
   "incognito": "not_allowed",
   "default_locale": "en",
   "name": "__MSG_extName__",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "minimum_chrome_version": "151",
   "description": "__MSG_extDescription__",
   "permissions": [

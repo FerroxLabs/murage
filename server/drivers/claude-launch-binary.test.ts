@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -102,7 +104,7 @@ describe.skipIf(process.platform === "win32")("the Claude turn binary", () => {
     const { probedLog, shellLog } = twoBinaries();
     instance = await ClaudeDriver.create({ instanceId: "claude-launch", displayName: "Claude", environment: {}, enabled: true, config: { cli: "claude", permissionMode: "acceptEdits" } });
     recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: "t-claude-launch", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-claude-launch", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
     expect(jobProbe.jobs).toContainEqual(jobProbe.job); // the turn CLI was started in the engine job
 
@@ -124,7 +126,7 @@ describe.skipIf(process.platform === "win32")("the Claude turn binary", () => {
     if (cliFile(BIN, { PATH: augmentedPath() })) ctx.skip();
     instance = await ClaudeDriver.create({ instanceId: "claude-launch", displayName: "Claude", environment: {}, enabled: true, config: { cli: "claude", permissionMode: "acceptEdits" } });
     recorder = recordEvents(instance.adapter);
-    const outcome = await instance.adapter.sendTurn({ threadId: "t-claude-missing", text: "hi" }).then(
+    const outcome = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-claude-missing", text: "hi" }).then(
       () => recorder!.until((e) => e.type === "turn.completed").then((e) => JSON.stringify(e)),
       (error: unknown) => String(error instanceof Error ? `${(error as NodeJS.ErrnoException).code} ${error.message}` : error),
     );
@@ -132,3 +134,6 @@ describe.skipIf(process.platform === "win32")("the Claude turn binary", () => {
     expect(lines(shellLog)).toEqual([]);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

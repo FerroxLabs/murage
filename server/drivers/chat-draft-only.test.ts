@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -29,7 +31,7 @@ describe("a draft-only turn on openai-compat", () => {
     const instance = decorateDraftOnlyInstance(live);
     const recorder = recordEvents(instance.adapter);
     try {
-      await instance.adapter.sendTurn({ threadId: "t-chat-draft", text: "draft a reply to ticket 812", model: "vendor/model", draftOnly: true, integrations: MOUNTS, system: "You are Sorrel." });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-chat-draft", text: "draft a reply to ticket 812", model: "vendor/model", draftOnly: true, integrations: MOUNTS, system: "You are Sorrel." });
       expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
       expect(bodies).toHaveLength(1);
       const body = bodies[0]!;
@@ -43,3 +45,6 @@ describe("a draft-only turn on openai-compat", () => {
     }
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

@@ -76,9 +76,9 @@ const delegationGuidance = (canDelegate: boolean): string =>
  *    an individual never appears as a leaderless team.
  *  - DIRECT REPORTS: whatever else shares the Chief's own section.
  */
-function workspaceRoster(chief: ChiefTeamMember, bots: ChiefTeamMember[]): string {
+function workspaceRoster(chief: ChiefTeamMember, bots: ChiefTeamMember[], named?: string[]): string {
   const chiefSection = sectionKey(chief.section);
-  const sections = new Map<string, { label: string; lead?: ChiefTeamMember; members: ChiefTeamMember[] }>();
+  const sections = new Map<string, { label: string; lead?: ChiefTeamMember; members: ChiefTeamMember[]; source: string }>();
   const individuals: ChiefTeamMember[] = [];
   const direct: ChiefTeamMember[] = [];
   for (const bot of bots) {
@@ -93,7 +93,7 @@ function workspaceRoster(chief: ChiefTeamMember, bots: ChiefTeamMember[]): strin
       direct.push(bot);
       continue;
     }
-    const entry = sections.get(key) ?? { label: clip(bot.section?.trim() || "General", ROSTER_SECTION_MAX), members: [] };
+    const entry = sections.get(key) ?? { label: clip(bot.section?.trim() || "General", ROSTER_SECTION_MAX), members: [], source: bot.id };
     // A second Chief in one section is not a second leader; treat the later
     // one as an ordinary member rather than trusting it.
     if (bot.chiefOfStaff && !entry.lead) entry.lead = bot;
@@ -118,6 +118,12 @@ function workspaceRoster(chief: ChiefTeamMember, bots: ChiefTeamMember[]): strin
     0,
     Math.max(0, ROSTER_MAX_BOTS - listedTeams.length - listedIndividuals.length),
   );
+  if (named) {
+    // S4 R-c: the ids the text above names (a leader per listed team, the listed individuals and direct reports; never a specialist)
+    // the team label is the section text of the first bot filed in it (`source`), so that bot is named too, led or leaderless
+    const leads = [...sections.values()].slice(0, listedTeams.length).flatMap((entry) => [...(entry.lead ? [entry.lead.id] : []), entry.source]);
+    named.push(...leads, ...individuals.slice(0, listedIndividuals.length).map((bot) => bot.id), ...direct.slice(0, listedDirect.length).map((bot) => bot.id));
+  }
   return [
     "Team leaders:",
     listedTeams.length ? withOverflow(listedTeams, teamLines.length) : "- No team leaders yet. Say so rather than inventing one.",
@@ -196,6 +202,30 @@ export function chiefOfStaffSystemPrompt(
  * exactly one peer, the workspace Chief. Telling it about "the other bots in
  * your section" — the generic line every non-Chief gets — would send it
  * looking for teammates that the predicate will not return. */
+/** S4 R-c: the ids an individual assistant prompt actually names: the workspace Chief and the listed bots filed beside it
+ *  (reachable, not hidden, within the roster cap). The turn-start own-write check reads only these. */
+export function chiefPromptRosterIds(chiefId: string, bots: ChiefTeamMember[]): string[] {
+  const chief = bots.find((bot) => bot.id === chiefId);
+  if (!chief) return [];
+  const named: string[] = [];
+  if (isWorkspaceChief(chief)) { workspaceRoster(chief, bots, named); return named; }
+  const chiefSection = sectionKey(chief.section);
+  const team = bots.filter((bot) => bot.id !== chiefId && !bot.hidden && (bot.shared || sectionKey(bot.section) === chiefSection));
+  named.push(...team.slice(0, ROSTER_MAX_BOTS).map((bot) => bot.id));
+  const workspaceChief = chief.chiefOfStaff ? bots.find((bot) => bot.id !== chiefId && !bot.hidden && isWorkspaceChief(bot) && canReach(chief, bot)) : undefined;
+  if (workspaceChief) named.push(workspaceChief.id);
+  return named;
+}
+
+export function individualAssistantRosterIds(selfId: string, bots: ChiefTeamMember[]): string[] {
+  const self = bots.find((bot) => bot.id === selfId);
+  if (!self) return [];
+  const reachable = bots.filter((bot) => bot.id !== selfId && !bot.hidden && canReach(self, bot));
+  const chief = reachable.find(isWorkspaceChief);
+  const others = reachable.filter((bot) => !isWorkspaceChief(bot)).slice(0, ROSTER_MAX_BOTS);
+  return [...(chief ? [chief.id] : []), ...others.map((bot) => bot.id)];
+}
+
 export function individualAssistantSystemPrompt(
   selfId: string,
   bots: ChiefTeamMember[],

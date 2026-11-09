@@ -27,6 +27,18 @@ describe("execution timeline", () => {
     ]);
   });
 
+  it("1.0.18 U6 E15: a step the server marked unrecorded reads No result, never running; an unmarked open step keeps running", () => {
+    const start = { id: "tool", role: "bot" as const, kind: "activity" as const, tool: { name: "browser.search" }, at: 2 };
+    expect(timelineEvents([{ ...start, tool: { name: "browser.search", unrecorded: true } }])).toMatchObject([
+      { label: "browser.search", state: "unrecorded" },
+    ]);
+    // invariant: a live row is never hidden or relabelled without the mark
+    expect(timelineEvents([start])).toMatchObject([{ state: "running" }]);
+    // a real outcome always wins over a stale mark
+    expect(timelineEvents([{ ...start, tool: { name: "browser.search", ok: false, unrecorded: true } }])).toMatchObject([{ state: "failed" }]);
+    expect(timelineEvents([{ ...start, tool: { name: "browser.search", ok: true, unrecorded: true } }])).toMatchObject([{ state: "complete" }]);
+  });
+
   it("reads a host-stop notice as 'Stopped: why' with the neutral dot, not a failure (STOP2)", () => {
     expect(timelineEvents([
       { id: "stop", role: "bot", kind: "activity", tool: { name: "stopped: this computer was switched off for the bot", ok: false }, at: 2 },

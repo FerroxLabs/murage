@@ -1,3 +1,4 @@
+import { fixtureBotFolder } from "./testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -76,8 +77,8 @@ describe.skipIf(!posix || !INNER)("engine processes have no controlling terminal
     "#!/bin/sh",
     "out=\"$FAKE_OUT\"",
     "python3 -c 'import os,sys; print(os.getsid(int(sys.argv[1])))' $$ > \"$out.sid\"",
-    "sh -c 'exec 3<>/dev/tty' 2>/dev/null; echo $? > \"$out.tty\"",
-    "sh -c 'sh -c \"exec 3<>/dev/tty\"' 2>/dev/null; echo $? > \"$out.desc\"",
+    "sh -c 'exec 3<>/dev/tty' 2>\"$out.tty-stderr\"; echo $? > \"$out.tty\"",
+    "sh -c 'sh -c \"exec 3<>/dev/tty\"' 2>\"$out.desc-stderr\"; echo $? > \"$out.desc\"",
     "",
   ].join("\n"));
   chmodSync(engine, 0o755);
@@ -103,7 +104,7 @@ describe.skipIf(!posix || !INNER)("engine processes have no controlling terminal
   });
 
   it("spawnCli: the engine and its descendants cannot open /dev/tty, in a session of their own", async () => {
-    const child = spawnCli(engine, [], { env: env("spawncli"), stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawnCli(engine, [], { cwd: fixtureBotFolder(), env: env("spawncli"), stdio: ["pipe", "pipe", "pipe"] });
     child.stdin.end();
     await closed(child);
     const seen = result("spawncli");

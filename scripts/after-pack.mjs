@@ -309,7 +309,7 @@ export async function validatePackagedMemoryRuntime(resources, platform, archVal
   const arch = typeof archValue === "string" ? archValue : ({ 1: "x64", 3: "arm64" })[archValue];
   const target = `${platform}-${arch}`;
   if (!["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"].includes(target)) throw new Error(`Unsupported packaged memory target: ${target}`);
-  for (const file of [manifestFile, path.join(server, "memory-model-manifest.json"), path.join(server, "memory/worker.js"), path.join(server, "bot-package-guard-worker.js"), path.join(server, "engine-history-worker.js"),
+  for (const file of [manifestFile, path.join(server, "memory-model-manifest.json"), path.join(server, "memory/worker.js"), path.join(server, "browser-extension-panel-avatar-encoder.js"), path.join(server, "bot-package-guard-worker.js"), path.join(server, "engine-history-worker.js"),
     path.join(server, "transcript-read-worker.js"), path.join(server, "inbox-fill-worker.js")]) await requireRegularFile(file);
   const manifest = JSON.parse(await readFile(manifestFile, "utf8"));
   const model = JSON.parse(await readFile(path.join(server, "memory-model-manifest.json"), "utf8"));

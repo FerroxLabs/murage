@@ -10,9 +10,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { initialState, reducer, type AppState, type Bot } from "@/state/store";
 import { LAZY_RETRY_TEXT, LazyBoundary, PANEL_ERROR_TEXT } from "@/components/LazyBoundary";
+import { LazyFallback } from "@/components/LazyFallback";
 import { healthReturn, trackShellOrigins, type ShellOrigins } from "../shell/shell-nav";
 import { OPEN_ON_TOP } from "@/lib/escape-layer";
-import { HealthExitButtons, HealthFrame, escapeLeavesHealth, healthEscapeListener } from "./HealthExit";
+import { HealthExitButtons, HealthFrame, escapeLeavesHealth, focusCarriedHeadButton, focusedHeadButton, healthEscapeListener } from "./HealthExit";
 import { HealthPage } from "./HealthPage";
 
 // HealthPage is called as a plain function below to read the tree it returns; its one hook binds Esc, tested on its own.
@@ -20,7 +21,12 @@ vi.mock("./HealthExit", async (original) => ({ ...(await original<typeof import(
 
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 const onHealth: AppState = { ...initialState, activeView: "health" };
-const noDoc = { querySelector: () => null };
+/** A typed stand-in for document.querySelector: finds something on top when `found`, and notes each selector asked. */
+type QueryDoc = Pick<Document, "querySelector">;
+const fakeDoc = (found: boolean, seen: string[] = []): QueryDoc => ({
+  querySelector: ((selector: string) => { seen.push(selector); return found ? ({} as Element) : null; }) as Document["querySelector"],
+});
+const noDoc = fakeDoc(false);
 const key = (k: string, extra: Partial<{ defaultPrevented: boolean; target: unknown }> = {}) => ({ key: k, defaultPrevented: false, target: null, preventDefault: vi.fn(), ...extra });
 
 describe("Health's Back and close buttons", () => {
@@ -99,6 +105,26 @@ describe("Health while it loads or after it failed to load", () => {
     expect(leave).toHaveBeenCalledOnce();
   });
 
+  it("keeps focus on the same header button when the body arrives", () => {
+    const row = (count: number) => {
+      const buttons = Array.from({ length: count }, () => ({ focus: vi.fn() }));
+      return { buttons, querySelectorAll: (selector: string) => (selector === "button" ? buttons : []) };
+    };
+    const loading = row(3), loaded = row(3);
+    // Back (index 1 after the bot-list button) held focus in the loading header
+    expect(focusedHeadButton(loading, loading.buttons[1])).toBe(1);
+    expect(focusedHeadButton(loading, { focus: vi.fn() })).toBeNull();
+    expect(focusedHeadButton(null, loading.buttons[1])).toBeNull();
+    expect(focusCarriedHeadButton(loaded, 1)).toBe(true);
+    expect(loaded.buttons[1]!.focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(loaded.buttons[0]!.focus).not.toHaveBeenCalled();
+    // nothing carried, or a row without that button: focus is left alone
+    expect(focusCarriedHeadButton(loaded, null)).toBe(false);
+    expect(focusCarriedHeadButton(row(1), 2)).toBe(false);
+    // both headers are the one HealthHeadTop, which carries it
+    expect(read("./HealthExit.tsx")).toContain("useCarriedHeadFocus(row);");
+  });
+
   it("binds Esc in the eager door, outside the lazy body", () => {
     const door = read("./HealthPage.tsx");
     expect(door).toContain("useHealthEscape(props.onLeave);");
@@ -126,8 +152,7 @@ describe("Esc on Health", () => {
 
   it("lets a dialog, Settings or a menu on top close first", () => {
     const seen: string[] = [];
-    const open = { querySelector: (selector: string) => { seen.push(selector); return {} as Element; } };
-    expect(escapeLeavesHealth(key("Escape"), open)).toBe(false);
+    expect(escapeLeavesHealth(key("Escape"), fakeDoc(true, seen))).toBe(false);
     expect(seen).toEqual([OPEN_ON_TOP]);
     for (const part of ["dialog[open]", '[role="dialog"][aria-modal="true"]', '[role="menu"]', "[data-bot-menu]", "[data-room-menu]"]) expect(OPEN_ON_TOP).toContain(part);
   });
@@ -143,6 +168,27 @@ describe("Esc on Health", () => {
     const onLeave = vi.fn();
     healthEscapeListener(onLeave, () => noDoc)(key("Escape", { defaultPrevented: true }));
     expect(onLeave).not.toHaveBeenCalled();
+  });
+
+  it("stays while a panel opened over it (Settings) is still loading, or failed to load or to show", () => {
+    expect(OPEN_ON_TOP).toContain("[data-lazy-overlay]");
+    // a loading panel that can be closed marks itself, binds Esc and offers Close; one that cannot leaves Esc to the page
+    const loading = renderToStaticMarkup(LazyFallback({ onDismiss: vi.fn() }) as ReactElement);
+    expect(loading).toContain("data-lazy-overlay");
+    expect(loading).toContain(">Close<");
+    expect(renderToStaticMarkup(createElement(LazyFallback))).not.toContain("data-lazy-overlay");
+    expect(read("../LazyFallback.tsx")).toContain('<OverlayShell label="Loading" onDismiss={onDismiss}');
+    expect(read("../../App.tsx")).toContain('<LazyOverlay name="settings" kind="window" covers="always" opener={settingsSession.current} holdFocus={false} onRetry={Settings.retry} onDismiss={() => dispatch({ type: "toggleAppSettings", open: false })}>');
+    // Every loading view but an always-cover's null goes through the shell (behaviour: lazy-overlay.dom R5-M8).
+    expect(read("../LazyOverlay.tsx")).toContain(": <LazyFallback onDismiss={owner.dismiss}>{fallback ?? undefined}</LazyFallback>");
+    const boundary = new LazyBoundary({ onRetry: vi.fn(), onDismiss: vi.fn(), children: null });
+    for (const state of [{ failed: true, broken: false }, { failed: false, broken: true }]) {
+      boundary.state = state;
+      expect(renderToStaticMarkup(boundary.render() as ReactElement)).toContain("data-lazy-overlay");
+    }
+    // The shell attaches to the open owner; mounted lazy-overlay DOM cases drive Esc.
+    expect(read("../LazyBoundary.tsx")).toContain("useLayerContainer(ref, { onEscape: onDismiss }");
+    expect(read("../LazyBoundary.tsx")).not.toContain("trapFocus(");
   });
 
   it("leaves an Esc that ends an IME composition alone", () => {

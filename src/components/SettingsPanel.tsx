@@ -1024,6 +1024,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
       botName={bot.name}
       level={fullAccessWarning?.level ?? "full"}
       scope="bot"
+      openClaw={engine?.driverKind === "openclawAgent"}
       onThisComputer={false}
       onCancel={() => setFullAccessWarning(null)}
       onConfirm={() => {
@@ -1040,6 +1041,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
       botName={bot.name}
       level="unlimited"
       terms
+      openClaw={engine?.driverKind === "openclawAgent"}
       onThisComputer={false}
       onCancel={() => setReviewingTerms(false)}
       onConfirm={() => { setReviewingTerms(false); void acceptTerms(); }}

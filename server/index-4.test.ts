@@ -2103,7 +2103,9 @@ describe("internal capability authority", () => {
       rmSync(fakeClaudeDump, { force: true });
       const queued = await desktopApi("POST", `/api/routines/${routineId}/run`);
       expect(queued.status).toBe(201); runId = queued.body.run.id;
-      const first = await readJsonFileWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(fakeClaudeDump);
+      // The run's fake engine spawn can pass the 20 s default under a loaded runner: on the fixed rig it failed exactly at that wait on X2, X3,
+      // U22 and an X2 base run (20.8 to 23.1 s), and passed in 1 to 11 s at lower load. The wait and this test's own bound allow for it.
+      const first = await readJsonFileWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(fakeClaudeDump, 60_000);
       const env = first.mcpConfig.mcpServers.agents.env;
       const threadId = env.MURAGE_THREAD_ID;
       const headers = { authorization: `Bearer ${env.MURAGE_COMMS_TOKEN}`, "content-type": "application/json" };
@@ -2144,7 +2146,7 @@ describe("internal capability authority", () => {
       for (const target of targets) await desktopApi("DELETE", `/api/bots/${target.id}`);
       await desktopApi("DELETE", `/api/bots/${bot.id}`);
     }
-  });
+  }, 120_000);
 
   it("bounds concurrent creates by the server-owned generation budget", async () => {
     const bot = (await desktopApi("POST", "/api/bots")).body.bot;
