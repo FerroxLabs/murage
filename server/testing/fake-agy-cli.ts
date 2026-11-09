@@ -310,10 +310,13 @@ function hookDenial(name: string, args: unknown = {}, stepIdx = 0, always = fals
   return null;
 }
 out({ event: "init", conversation_id: CONV, init: { cwd: process.cwd(), tools: ["run_command", "write_to_file", ...(mode === "ask-peer" ? ["list_bots", "ask_bot"] : [])], permission_mode: "accept-edits" } });
+if (mode === "big-frame") out({ event: "fake_big_frame", conversation_id: CONV, fake_big_frame: { text: `BIGFRAME-CANARY ${"x".repeat(70_000)}` } });
 // A relayed ask-peer turn's tools are its MCP calls (call_mcp_tool steps, below): no step of its own.
 const toolCalls: Array<{ name: string; args: Record<string, unknown> }> | null = process.env.FAKE_AGY_TOOL_CALLS
   ? JSON.parse(process.env.FAKE_AGY_TOOL_CALLS)
   : mode === "ask-peer" && argv.includes("--log-file") ? [] : null;
+// FAKE_AGY_USAGE_FIRST=1: the per-step usage is reported BEFORE the first tool step (an Ask-stop halt lands at the tool, so the usage must already be out)
+if (process.env.FAKE_AGY_USAGE_FIRST === "1") out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 1, state: "DONE", step_type: "agent_response", usage: { input_tokens: 100, output_tokens: 20, thinking_tokens: 0, cache_read_tokens: 5, total_tokens: 125 } } });
 if (!toolCalls) out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 0, state: "ACTIVE", step_type: "tool", tool_name: toolName, tool_info: { name: toolName, parameters: {} } } });
 // FAKE_AGY_EXTRA_STEPS=1: steps agy streams that carry no chat content
 // (planning, a response still being written), as a long model step does.
@@ -411,10 +414,18 @@ if (toolCalls) {
   out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 0, state: "DONE", step_type: "tool", tool_name: toolName, tool_info: { name: toolName, parameters: {} } } });
 }
 out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 1, state: "DONE", step_type: "agent_response", usage: { input_tokens: 100, output_tokens: 20, thinking_tokens: 0, cache_read_tokens: 5, total_tokens: 125 } } });
+// FAKE_AGY_CRASH_AFTER_USAGE=1: the per-step usage is out, then the child dies on its own (nobody asked it to stop, no dispose)
+if (process.env.FAKE_AGY_CRASH_AFTER_USAGE === "1") {
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  process.stderr.write("fake agy: simulated crash after usage\n");
+  process.exit(3);
+}
+// FAKE_AGY_HOLD_AFTER_USAGE=1: the per-step usage is out, then the child waits with no result (a Stop or a dispose lands mid-turn)
+if (process.env.FAKE_AGY_HOLD_AFTER_USAGE === "1") await new Promise((resolve) => setTimeout(resolve, 30_000));
 // FAKE_AGY_DENIED_COMMAND=1: accept-edits denied run_command and agy wrote no reply (agy result.denied_actions).
 const deniedCommand = process.env.FAKE_AGY_DENIED_COMMAND === "1";
 if (deniedCommand) response = "";
-out({ event: "result", conversation_id: CONV, result: { conversation_id: CONV, status: "SUCCESS", response, ...(deniedCommand ? { denied_actions: ["RunCommand"] } : {}), duration_seconds: 1, num_turns: 1, usage: { input_tokens: 100, output_tokens: 20, thinking_tokens: 0, cache_read_tokens: 5, total_tokens: 125 } } });
+out({ event: "result", conversation_id: CONV, result: { conversation_id: CONV, status: "SUCCESS", response, ...(deniedCommand ? { denied_actions: ["RunCommand"] } : {}), duration_seconds: 1, num_turns: 1, usage: { input_tokens: 100, output_tokens: Number(process.env.FAKE_AGY_RESULT_OUTPUT ?? 20), thinking_tokens: 0, cache_read_tokens: 5, total_tokens: 125 } } });
 // FAKE_AGY_POST_RESULT_STEP=1: a step line written after the result, while
 // the process is still closing
 if (process.env.FAKE_AGY_POST_RESULT_STEP === "1") {

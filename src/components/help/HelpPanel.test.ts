@@ -12,7 +12,7 @@ import { clampHelpWidth, HELP_LAYER, HELP_WIDTH, HelpLauncher, HelpPanel, helpKe
 import { feedbackEnvelopeForScreen, resolveHelpScreen } from "@/lib/screen-envelope";
 import { LazyBoundary } from "@/components/LazyBoundary";
 import { HelpFrame, HelpOpenChunk } from "./HelpHost";
-import { hx } from "./help-copy";
+import { hx, modWord } from "./help-copy";
 import { SHORTCUT_GROUPS } from "@/lib/keyboard-shortcuts";
 
 const key = (over: Partial<Parameters<typeof helpKeyAction>[0]>) => ({ key: "", metaKey: false, ctrlKey: false, altKey: false, ...over });
@@ -70,7 +70,7 @@ describe("help panel", () => {
   const screen = resolveHelpScreen({ activeView: "routines", connected: true });
   const props = (over: Partial<HelpPanelProps> = {}): HelpPanelProps => ({
     entry: screen.entry,
-    params: { ...screen.params, mod: "Ctrl" },
+    params: { ...screen.params, mod: modWord(false) },
     title: "Routines",
     envelope: feedbackEnvelopeForScreen(screen),
     surface: "desktop",
@@ -219,6 +219,15 @@ describe("help panel", () => {
     expect(read("./HelpHost.tsx").match(/z-\[80\]/g)).toHaveLength(2); // the tab, and help's frame while the panel loads
     expect(HELP_LAYER).toBe(80);
   });
+
+  it("keeps the dictation Stop bar under the panel layer and draws it inside help while help is open", () => {
+    const here = (name: string) => readFileSync(fileURLToPath(new URL(name, import.meta.url)), "utf8");
+    const bar = here("../DictationStatusBar.tsx");
+    expect(bar).toContain("z-[79]");
+    expect(bar).toContain("cover.root.contains(helpDock)");
+    expect(here("./HelpPanel.tsx")).toContain("useRegisterHelpDock(asideRef)");
+    expect(here("./HelpHost.tsx")).toContain("useRegisterHelpDock(frameRef)");
+  });
 });
 
 describe("the Workspace pane's own help control", () => {
@@ -325,7 +334,7 @@ describe("the panel's chunk, loaded on first use", () => {
     const source = host();
     expect(source).not.toMatch(/\blazy\(/);
     expect(source).toContain("export const HelpOpenChunk = retryableLazy(");
-    expect(source).toMatch(/<LazyBoundary inline onRetry=\{HelpOpenChunk\.retry\} onDismiss=\{close\} frame=\{\(alert\) => <HelpFrame onClose=\{close\}>\{alert\}<\/HelpFrame>\}>/);
+    expect(source).toMatch(/<LazyBoundary inline onRetry=\{HelpOpenChunk\.retry\} onDismiss=\{close\} frame=\{\(alert\) => <HelpFrame onClose=\{close\}>\{alert\}<\/HelpFrame>\} \{\.\.\.helpBoundaryLabels\(\)\}>/);
     // the boundary sits inside the host, so a failure never reaches App's shell
     expect(source.indexOf("<LazyBoundary inline")).toBeLessThan(source.indexOf("<HelpOpenChunk.Component"));
     expect(source).not.toContain("fallback={null}");

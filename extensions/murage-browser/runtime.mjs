@@ -164,6 +164,7 @@ const clip = (value, max) => String(value ?? '').replace(/[\u0000-\u001f\u007f]/
 // Lifecycle (T44). Planned capabilities (levels_v1, presence_v1, handoff_v1, upload_token_v1) are declared only once their code ships here.
 export const LIFECYCLE_CAPABILITY = 'lifecycle_v1';
 export const MIN_APP_PROTOCOL = 1;
+const isAvatar = v => typeof v === 'string' && v.length <= 16384 && /^data:image\/(?:webp|png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/.test(v);
 const MUTATING = new Set(['cdp', 'navigate', 'click', 'fill', 'type', 'press', 'scroll', 'hover', 'drag', 'select', 'back', 'forward', 'reload', 'tab_new', 'tab_close', 'tab_switch']);
 // Only a command that may have acted is journaled (so a restart can report it uncertain). Reads and setup calls write nothing.
 const ACTING_CDP = new Set(['Runtime.callFunctionOn', 'Page.navigate', 'Page.reload', 'Page.navigateToHistoryEntry', 'Page.handleJavaScriptDialog', 'Page.addScriptToEvaluateOnNewDocument', 'Page.removeScriptToEvaluateOnNewDocument', 'Emulation.setDeviceMetricsOverride', 'Emulation.clearDeviceMetricsOverride', 'Emulation.setEmulatedMedia']);
@@ -192,7 +193,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
   // The last mutating request still running. It is stored so a worker that dies mid-action can report it uncertain, never replay it.
   let inFlight, restartReport;
   const save = () => {
-    const state = { profileId, retired: [...retired], ...(inFlight ? { inFlight } : {}), bindings: [...bindings.values()].map(b => ({ ...b, tabs: [...b.tabs.values()].map(({tabId, navigationEpoch, origin, url, bootstrap}) => ({tabId, navigationEpoch, origin, url, bootstrap})), attached: undefined, ready: undefined })) };
+    const state = { profileId, retired: [...retired], ...(inFlight ? { inFlight } : {}), bindings: [...bindings.values()].map(b => ({ ...b, tabs: [...b.tabs.values()].map(({tabId, navigationEpoch, origin, url, bootstrap}) => ({tabId, navigationEpoch, origin, url, bootstrap})), attached: undefined, ready: undefined, botAvatar: undefined, botAvatarId: undefined })) };
     if (readOnly) return Promise.reject(Object.assign(new Error('persistence_unavailable'), { code: 'persistence_failed' }));
     // Each save starts from a settled tail, so one rejection never poisons the saves after it.
     const run = async () => { try { await api.storage.local.set({ [STORAGE_KEY]: { schema: STATE_SCHEMA, ...state } }); persistenceFailed = false; } catch (error) { persistenceFailed = true; throw error; } };
@@ -208,7 +209,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     const selected = tabs.find(t => t.tabId === b.selectedTabId) ?? tabs[0];
     return { ...(selected ?? {}), bindingId: b.id, generation: b.generation, botName: b.botName, state: b.state, ready: b.ready,
       ...(b.state === 'paused' && b.pausedReason ? { pausedReason: b.pausedReason } : {}), ...(persistenceFailed ? { persistenceFailed: true } : {}),
-      ...(selected ? { selectedTabId: selected.tabId } : {}), tabs, approvedOrigins: b.approvedOrigins };
+      ...(selected ? { selectedTabId: selected.tabId } : {}), tabs, approvedOrigins: b.approvedOrigins, avatarId: b.botAvatar && b.botAvatarId ? b.botAvatarId : '' };
   };
   // ---- The side panel's view of one binding (PANEL-CONTRACT.md). Only what the runtime knows; nothing is invented. ----
   const handoffWaiting = b => b.state === 'paused' && b.pausedReason === 'handoff';
@@ -221,7 +222,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     // What an active bot is doing, from what the runtime knows: a read in flight, a binding not yet ready (first time: starting; after that: connecting), or the app saying a card waits for the owner.
     const phase = b.state !== 'active' ? undefined : b.appPhase === 'waiting' ? 'waiting' : b.reading > 0 ? 'reading' : !b.ready ? (b.everReady ? 'connecting' : 'starting') : undefined;
     // The older summary fields (selected tab, epoch, approved sites) stay, so every earlier reader of the status keeps working.
-    return { ...base, bindingId: b.id, generation: b.generation, botName: b.botName, ...(b.botColor ? { botColor: b.botColor } : {}), ...(b.conversation ? { conversation: b.conversation } : {}),
+    return { ...base, bindingId: b.id, generation: b.generation, botName: b.botName, ...(b.botColor ? { botColor: b.botColor } : {}), ...(b.botAvatar ? { botAvatarId: b.botAvatarId } : {}), ...(b.conversation ? { conversation: b.conversation } : {}),
       state: b.state, ...(waiting ? { pausedReason: 'handoff', ...(b.handoff ? { handoff: b.handoff } : {}), canContinue: connected } : {}),
       ready: !!b.ready && connected, ...(phase ? { phase } : {}), mode, tabs,
       grants: (b.grants ?? b.approvedOrigins.map(origin => ({ origin }))).filter(g => !b.revoked?.includes(g.origin)), activity: b.panelActivity ?? [], sites: b.sites ?? [],
@@ -590,7 +591,10 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     if (state === 'paused' && handoff) { const id = b.selectedTabId; if (id !== undefined) await Promise.resolve(api.tabs.update?.(id, { active: true })).catch(() => {}); }
     return summary(b);
   }
-  async function addTab(b, tabId, bootstrap = false) {
+  // SABLE-B r8: `generation` (given by page-popup adoption only) is the generation the caller checked; the tab is inserted only if the binding is
+  // still connected, active, ready and at that generation after the tabs.get await, so an adoption that began before a Pause, a disconnect or a
+  // bind that took a site back cannot land after it.
+  async function addTab(b, tabId, bootstrap = false, generation) {
     if ([...bindings.values()].some(other => other.id !== b.id && other.tabs.has(tabId))) fail('tab_owned');
     const tab = await api.tabs.get(tabId);
     // A private window is never shared, and nothing about it is stored: refused before the binding records the tab.
@@ -598,6 +602,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     if (tab.url === 'about:blank' && !bootstrap) fail('site_denied');
     const origin = tab.url === 'about:blank' ? 'null' : originOf(tab.url);
     if (origin !== 'null' && !b.approvedOrigins.includes(origin)) fail('site_denied');
+    if (generation !== undefined && !(connected && b.state === 'active' && b.ready && b.generation === generation)) fail('binding_inactive');
     b.tabs.set(tabId, { tabId, navigationEpoch: 1, origin, url: tab.url, bootstrap });
     const groupId = await api.tabs.group({ tabIds: [tabId], ...(b.groupId === undefined ? {} : { groupId: b.groupId }) });
     b.groupId = groupId; b.windowId = tab.windowId; b.selectedTabId ??= tabId; await save(); await indicator(b);
@@ -864,6 +869,14 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     if (!b) fail('unknown_binding');
     if (req.operation === 'status') { if (req.params.panel) { applyPanel(b, req.params.panel); pushStatus(); } return summary(b); }
     if (b.generation !== req.generation) fail('stale_generation');
+    if (req.operation === 'avatar') {
+      const id = req.params?.avatarId;
+      if (id === '') { delete b.botAvatar; delete b.botAvatarId; }
+      else if (typeof id === 'string' && /^[0-9a-f]{16}$/.test(id) && isAvatar(req.params.data)) { b.botAvatar = req.params.data; b.botAvatarId = id; }
+      else fail('invalid_params');
+      pushStatus(); return { avatarId: b.botAvatarId ?? '' };
+    }
+
     if (req.operation === 'retire') {
       if (b.state !== 'stopped') fail('not_stopped');
       retire(b.id); await save(); return { retired: true };
@@ -889,6 +902,19 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     if (req.operation !== 'cdp') fail('unsupported_operation');
     const { method, params = {} } = req.params;
     if (method === 'Target.getTargets') return { targetInfos: summary(b).tabs.map(t => ({ targetId: String(t.tabId), type: 'page', attached: b.attached.has(t.tabId), url: t.url })) };
+    // BRLOCK19: Page.getFrameTree cannot see a frame that lives in another process, so the page lock asks the browser for every frame
+    // of the tab. Read-only, scoped to a shared and approved tab, and any failure is an error the lock treats as "locked".
+    if (method === 'Murage.getAllFrames') {
+      active(b, req.generation);
+      const t = await checkedTab(b, req.params);
+      const frames = await api.webNavigation.getAllFrames({ tabId: t.tabId });
+      active(b, req.generation);
+      if (!Array.isArray(frames)) fail('frames_unavailable');
+      await checkedTab(b, req.params);
+      // Only live documents: a back/forward-cached or prerendered one is not on the page. An unreadable url goes through as missing, so the lock reads it as doubt.
+      const live = frames.filter(f => f.documentLifecycle === undefined || f.documentLifecycle === 'active');
+      return { result: { frames: live.map(f => ({ frameId: f.frameId, parentFrameId: f.parentFrameId, ...(typeof f.url === 'string' ? { url: f.url } : {}) })) }, tabId: t.tabId, navigationEpoch: t.navigationEpoch, origin: t.origin, url: t.url };
+    }
     if (!METHODS.has(method) || params.sessionId || params.targetId || params.uniqueContextId) fail('method_denied');
     if (isClipboardInput(method, params)) fail('clipboard_denied');
     const t = await checkedTab(b, req.params, BOOTSTRAP_METHODS.has(method));
@@ -1050,12 +1076,15 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     // The page was read across awaits: a Stop, Pause or disconnect that landed meanwhile wins, and nothing here brings the task back.
     if (!connected || b.state === 'stopped' || b.generation !== generation || bindings.get(b.id) !== b) fail('binding_inactive');
     for (const [t, origin, url] of seen) { t.origin = origin; t.url = url; t.navigationEpoch++; }
-    b.generation++; b.state = 'active'; b.ready = false; delete b.pausedReason; delete b.handoff; delete b.yourTurn;
-    await save(); await indicator(b); event(b, 'resumed', summary(b)); return summary(b);
+    // 1.0.1: resumedAt is the generation this Resume made, recorded at the bump and never changed. The app takes a Resume in only
+    // through it (the event's own generation is stamped at emit, after the awaits below, and an unshare meanwhile moves it).
+    b.generation++; const resumedAt = b.generation; b.state = 'active'; b.ready = false; delete b.pausedReason; delete b.handoff; delete b.yourTurn;
+    await save(); await indicator(b); event(b, 'resumed', { ...summary(b), resumedAt }); return summary(b);
   }
   async function handlePanel(action) {
     if (action.action === 'status') return statusSnapshot();
     const b = bindings.get(action.bindingId); if (!b) fail('unknown_binding');
+    if (action.action === 'avatar') return b.botAvatar ? { botAvatarId: b.botAvatarId, botAvatar: b.botAvatar } : {};
     if (action.action === 'stop' || action.action === 'pause') return fence(b, action.action === 'stop' ? 'stopped' : 'paused', action.action === 'stop' ? 'stopped' : 'paused');
     if (action.action === 'unshare') return unshare(b, action.tabId);
     // Owner actions the app carries out (it holds the bot's mode and the task). The runtime checks they apply, tells the app, and the app's next status shows the result.
@@ -1140,10 +1169,11 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     // The new tab showed a page, so its first address was not a download: it no longer stands for one.
     const announced = popupUrls.get(details.tabId); popupUrls.delete(details.tabId); if (announced) blockedUrls.delete(announced);
     if (!b || !connected || b.state !== 'active' || !b.ready) return;
+    const generation = b.generation;
     let origin = '';
     try { origin = originOf(details.url); } catch { origin = ''; }
     if (origin && b.approvedOrigins.includes(origin)) {
-      try { await addTab(b, details.tabId); event(b, 'notice', { kind: 'tab_opened', tabId: details.tabId, origin, adopted: true }); return; } catch { /* reported below */ }
+      try { await addTab(b, details.tabId, false, generation); event(b, 'notice', { kind: 'tab_opened', tabId: details.tabId, origin, adopted: true }); return; } catch { /* reported below */ }
     }
     event(b, 'notice', { kind: 'tab_opened', tabId: details.tabId, origin, adopted: false });
   }
@@ -1275,7 +1305,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
       })();
       await disconnecting;
     }
-    return { version: 1, type: 'hello', profileId, browser: 'chromium', extensionVersion: api.runtime.getManifest().version, capabilities: ['scoped_cdp', 'durable_stop', 'explicit_share', 'manual_pause', 'unexpected_input_pause', 'engine_cdp_v1', 'ordered_requests_v1', LIFECYCLE_CAPABILITY] };
+    return { version: 1, type: 'hello', profileId, browser: 'chromium', extensionVersion: api.runtime.getManifest().version, capabilities: ['panel_avatar_v1', 'scoped_cdp', 'durable_stop', 'explicit_share', 'manual_pause', 'unexpected_input_pause', 'engine_cdp_v1', 'ordered_requests_v1', LIFECYCLE_CAPABILITY] };
   }
   // The browser restarted during an action: tell the server it may have run. Never retried here.
   function restartReports() {

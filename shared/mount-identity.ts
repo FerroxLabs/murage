@@ -188,6 +188,9 @@ export interface ExecEnv {
   /** Section 11 D1, informational: the names a managed settings file's `env` sets that redefine a pinned or turn-owned
    *  name (managed settings outrank Murage's overlay: org policy, said, not fought). */
   managedEnv?: readonly string[];
+  /** WIN-PWSH-1018 H1, Windows only: the Git Bash this hand's discovery found (the Claude driver's), the identity a PowerShell
+   *  `bash` must resolve to for the pwsh `bash` admissions. Never in the value-free view. */
+  gitBash?: string;
 }
 
 export interface ExecEnvProvenance {
@@ -249,6 +252,7 @@ export function isExecEnv(value: unknown): value is ExecEnv {
     if (record.unread || !unchecked || typeof unchecked !== "object"
       || !["launch-failed", "timeout"].includes(unchecked.reason as string)) return false;
   }
+  if (record.gitBash !== undefined && typeof record.gitBash !== "string") return false;
   if (record.ssh !== undefined) {
     const ssh = record.ssh as Record<string, unknown> | null;
     const source = ssh && typeof ssh === "object" ? ssh.source as Record<string, unknown> | null : null;

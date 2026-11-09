@@ -176,7 +176,8 @@ it("the kept receipt groups of a thread are brought up to date by a look at the 
 // ---- 1.0.2 lineage-cold, third pass: every read is paid for BEFORE it is made --------------------------------------------------------------
 
 // (revoke-bounded r3: the lookup also reads the deny facts, deny.ts)
-const SOURCE_LOOKUP = `SELECT s.state,s.revision,${DENIED_SOURCE("s")} AS denied FROM memory_sources s WHERE s.id=?`;
+// (TURNCACHE-FAILOPEN: it also reads the thread, for the branch-change fence key, and the kind, for a bring-in's origins)
+const SOURCE_LOOKUP = `SELECT s.state,s.revision,s.thread_id,s.kind,${DENIED_SOURCE("s")} AS denied FROM memory_sources s WHERE s.id=?`;
 const TOMBSTONE_PROBE = "SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)";
 
 it("3,000 receipts citing 16 sources each: the content check pays one node per lookup before it makes it, so lookups never outrun the nodes charged (r2: 48,000 lookups, 187 nodes)", () => {

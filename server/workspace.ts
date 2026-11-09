@@ -9,13 +9,14 @@ import { executionStore, partitionRoots, threadPartition, isHomePartition, type 
 // memory/ holds topic files the bot reads on demand with its ordinary
 // file tools. Plain markdown on purpose — the user can open, edit, or
 // delete anything the bot believes.
-import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, renameSync, statSync, unlinkSync, writeFileSync, type Stats } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, renameSync, statSync, unlinkSync, writeFileSync, type Stats } from "node:fs";
+import { dirname, join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 
 import { renameWithRetry, syncParentDirectory, writeFileAtomic } from "./atomic.ts";
 
 import { DATA_DIR } from "./config.ts";
+import { ownedLeaf, ownedPath, WorkspaceTreeError, type RootSnapshot } from "./data-roots.ts";
 import { artifactWorkspaceIdentity, workspacePathWithin } from "./artifacts.ts";
 import type { Store } from "./store.ts";
 import { maskFinancialIdentifiers } from "../shared/financial-ids.ts";
@@ -37,13 +38,19 @@ Longer notes belong in memory/<topic>.md files, read on demand.
 
 /** Create (once) and return the bot's workspace directory. Idempotent and
  * cheap enough to call at every turn dispatch. */
-export function ensureWorkspace(botId: string): string {
+export function ensureWorkspace(botId: string, snapshot?: RootSnapshot): string {
   const dir = join(WORKSPACES_DIR, botId);
   // Memories can contain personal details and task history. New workspace
   // directories should not be readable by other local accounts.
-  mkdirSync(join(dir, "memory"), { recursive: true, mode: 0o700 });
-  const memoryFile = join(dir, "MEMORY.md");
-  if (!existsSync(memoryFile)) writeFileAtomic(memoryFile, MEMORY_SEED, { mode: 0o600 });
+  // WT1/WT2 (S5-DATADIR-PATHS r4.1): the one walker (data-roots.ts ownedPath) starts at the root's canonical target,
+  // creates each folder non-recursively (0o700) and refuses a link below the root; a recursive mkdir would follow one.
+  const memory = ownedPath(join(dir, "memory"), { create: true, snapshot });
+  const memoryFile = join(memory.canonical, "..", "MEMORY.md");
+  let seen: Stats | null = null;
+  try { seen = lstatSync(memoryFile); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  // absent: temp + rename in the checked dir, which replaces a link planted at the name and never writes through it
+  if (!seen) writeFileAtomic(memoryFile, MEMORY_SEED, { mode: 0o600 });
+  else if (!seen.isFile() || seen.isSymbolicLink()) throw new WorkspaceTreeError("link-below-root", "workspaces");
   return dir;
 }
 
@@ -52,10 +59,11 @@ export function workspaceDir(botId: string): string {
 }
 
 /** New threads have separate default desks; existing pinned task cwd stays put. */
-export function ensureTaskWorkspace(botId:string,threadId:string):string {
+export function ensureTaskWorkspace(botId:string,threadId:string,snapshot?:RootSnapshot):string {
   const dir=taskWorkspacePath(DATA_DIR,botId,threadId);
-  ensureWorkspace(botId);
-  mkdirSync(dir,{recursive:true,mode:0o700});return dir;
+  // WT3: the HOME workspace and the computed task desk are both walked, independently of any persisted cwd
+  ensureWorkspace(botId,snapshot);
+  ownedPath(dir,{create:true,snapshot});return dir;
 }
 
 /** The bot's own workspace folder under a given data dir. `workspaceDir`
@@ -201,12 +209,12 @@ export function memoryFileRevision(botId: string, partition: Partition = { kind:
  * Every lost race answers { saved: false } with the revision now on disk. */
 export function saveMemoryFile(botId: string, text: string, baseRevision: string, partition: Partition = { kind: "home" }): { saved: true; revision: string } | { saved: false; revision: string } {
   const root = notebookRoot(botId, partition);
-  // links are refused before anything is created under them, and again once the directories exist
-  assertNoNotebookLinks(root);
-  mkdirSync(join(root, "memory"), { recursive: true, mode: 0o700 });
-  assertNoNotebookLinks(root);
+  // C2 (BUILD-FIX 9): the one walker refuses links below the workspaces root before anything is created under them, makes memory/
+  // without following a link, and the save opens the canonical folder it checked (a linked `workspaces` root itself works).
+  const owned = notebookPath(() => ownedPath(join(root, "memory"), { create: true }));
   const name = partition.kind === "general" ? "GENERAL.md" : "MEMORY.md";
-  const file = join(root, name);
+  const file = join(owned.canonical, "..", name);
+  const stageDir = dirname(file);
   const conflict = (): { saved: false; revision: string } => ({ saved: false, revision: memoryFileRevision(botId, partition) });
   const witness = openWitness(file);
   if (witness === "changed") return conflict();
@@ -217,7 +225,7 @@ export function saveMemoryFile(botId: string, text: string, baseRevision: string
     const seen = witness ? memoryFileRevisionOf(readWhole(witness.fd)) : "none";
     if (seen !== baseRevision) return { saved: false, revision: seen };
     if (process.platform === "win32") release();
-    const staged = stageText(root, name, text);
+    const staged = stageText(stageDir, name, text);
     // the witnessed file's bytes now: through the held handle, or by name only while the path is still that same file
     const current = (stat: Stats): string | null => held !== null ? readWhole(held) : readSameFile(file, stat);
     // the path is still the witnessed notebook with the base bytes (or still empty), checked again right before every rename attempt
@@ -232,7 +240,7 @@ export function saveMemoryFile(botId: string, text: string, baseRevision: string
     if (late !== null && memoryFileRevisionOf(late) !== baseRevision) {
       // a writer that held the notebook open wrote into it after the last check: its words are newer than the editor's base, so they go
       // back, but only while the path still holds exactly what this save wrote (a later writer's words are newer still and stay)
-      const back = stageText(root, name, late);
+      const back = stageText(stageDir, name, late);
       checkedRename(back.path, file, () => sameInode(lstatOrNull(file), staged.stat) && memoryFileRevision(botId, partition) === memoryFileRevisionOf(text));
       return conflict();
     }
@@ -424,8 +432,8 @@ export function notebookRoot(botId: string, partition: Partition = { kind: "home
 }
 
 function readNotebookText(botId: string, partition: Partition, ...parts: string[]): string {
-  const path = join(notebookRoot(botId, partition), ...parts);
-  assertNoNotebookLinks(path);
+  // C2: the file read is ownedLeaf (directories walked from the root's canonical target, the leaf a plain file); it opens the canonical
+  const path = notebookPath(() => ownedLeaf(join(notebookRoot(botId, partition), ...parts))).canonical;
   const before = lstatSync(path);
   if (!isPlainNotebookFile(before)) throw new Error("Notebook links are not readable.");
   // the last component is opened without following a link, and the opened file must be the one just checked (where O_NOFOLLOW does not
@@ -443,17 +451,7 @@ function isPlainNotebookFile(stat: Stats): boolean {
   return stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1;
 }
 
-/** Refuse a path under WORKSPACES_DIR when it, or any directory on the way to it, is a link. A component that does not exist yet ends
- * the walk (nothing under it exists either); a reader then fails on the missing file as before. */
-function assertNoNotebookLinks(path: string): void {
-  let at = WORKSPACES_DIR;
-  const isLink = (where: string): boolean | null => { const stat = lstatOrNull(where); return stat ? stat.isSymbolicLink() : null; };
-  let link = isLink(at);
-  for (const part of relative(WORKSPACES_DIR, path).split(sep)) {
-    if (link === null) return;
-    if (link) throw new Error("Notebook links are not readable.");
-    at = join(at, part);
-    link = isLink(at);
-  }
-  if (link) throw new Error("Notebook links are not readable.");
+/** A link below the workspaces root (a linked bot folder, memory/, or a notebook file) keeps the notebook's own refusal text. */
+function notebookPath<T>(walk: () => T): T {
+  try { return walk(); } catch (error) { if (error instanceof WorkspaceTreeError && (error.code === "link-below-root" || error.code === "not-a-folder")) throw new Error("Notebook links are not readable."); throw error; }
 }

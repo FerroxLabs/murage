@@ -15,10 +15,12 @@ const modal = read("SettingsModal.tsx");
 // Every file a page draws its cards from.
 const PAGE_FILES: Record<string, string[]> = {
   general: ["SettingsModal.tsx", "AboutMeSettings.tsx", "NotificationSettings.tsx", "StartupSettings.tsx", "ScriptAccessSettings.tsx"],
+  calls: ["CallsSettings.tsx"],
   botDefaults: ["BotsSettings.tsx", "HouseRulesSettings.tsx", "StarterProfiles.tsx", "RoomTurnTimeoutSettings.tsx", "RoomRoutingSettings.tsx", "ProjectAutonomySetting.tsx"],
   models: ["AiSettings.tsx", "ModelsSettings.tsx", "EnginesSettings.tsx", "ClaudeAccountsSettings.tsx", "LocalModelsSettings.tsx"],
   webSearch: ["ToolsSettings.tsx", "SearchSettings.tsx", "ImageSettings.tsx", "TranscriptionSettings.tsx"],
-  companion: ["SettingsModal.tsx", "DevicesSettings.tsx", "CompanionSection.tsx", "ScriptAccessSettings.tsx"],
+  computer: ["SettingsModal.tsx", "DevicesSettings.tsx", "LocalComputerSection.tsx", "ScriptAccessSettings.tsx"],
+  companion: ["SettingsModal.tsx", "DevicesSettings.tsx", "CompanionSection.tsx"],
   about: ["SettingsModal.tsx", "AnnouncementsSettings.tsx"],
 };
 
@@ -36,7 +38,7 @@ describe("the regrouped pages", () => {
   it("gives each page one Advanced, and each Advanced card a home inside it", () => {
     const pageSource: Record<string, string> = {
       general: modal, botDefaults: read("BotsSettings.tsx"), models: read("AiSettings.tsx"),
-      webSearch: read("ToolsSettings.tsx"), companion: read("DevicesSettings.tsx"), about: modal,
+      webSearch: read("ToolsSettings.tsx"), computer: read("DevicesSettings.tsx"), about: modal,
     };
     for (const [page, source] of Object.entries(pageSource)) {
       const advanced = SETTINGS_CARDS.filter((card) => card.section === page && card.advanced);
@@ -70,7 +72,7 @@ describe("the regrouped pages", () => {
     for (const page of ["general", "about"]) expect(SECTION_PAGES.find((entry) => entry.id === page)!.desktopOnly, page).toBeFalsy();
     expect(modal).toMatch(/desktop === true && <Anchor id="announcements-heading">/);
     expect(modal).toMatch(/desktop === true && section === "skills" && \([\s\S]*?<WorkspaceFeatureRow feature="skillRecorder"/);
-    expect(modal).toMatch(/desktop === true && section === "companion" && \([\s\S]*?<WorkspaceFeatureRow feature="browser"/);
+    expect(modal).toMatch(/desktop === true && section === "computer" && \([\s\S]*?<WorkspaceFeatureRow feature="browser"/);
     expect(modal).not.toContain("ExperimentalFeaturesRow");
     expect(modal).not.toContain('id="experimental-settings"');
   });

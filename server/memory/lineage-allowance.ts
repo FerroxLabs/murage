@@ -19,6 +19,9 @@ let turnNodesOverride: number | null = null;
 /** Wall-clock time one turn's lineage reads may take in all (1.0.2 lineage-cold r3, the 48 GB rig): 3,000 nodes bound the count of reads, not
  * their time (a few ms of SQL each on an overloaded machine is seconds). Past it the checks stop as when the nodes run out ("checking"). */
 export const TURN_LINEAGE_MS = 50;
+/** 1.0.18 TURNSTART r14 1E / r14.1 X2: the half of a turn's nodes the warm confirm leaves to the turn's overlapped recall. The confirm
+ * charges exactly this (spend) before E1, so E1 is proven at the least room a turn within the contract can have. */
+export const RECALL_RESERVE = TURN_LINEAGE_NODES / 2;
 /** A check made outside a turn's setup (a bot's own memory tool, a route) on the same thread. */
 export const TOOL_LINEAGE_MS = 100;
 /** The time of a resume check's one second look (designs/RESUME-SECOND-LOOK-1013.md). A check that ran out of time on the coldest read of
@@ -90,8 +93,8 @@ export class LineageAllowance {
   static search(ms: number): LineageAllowance { return new LineageAllowance("tool", LineageAllowance.nodes(), undefined, defaultMs(ms)); }
   /** A steer folded into a running turn. */
   static steer(nodes?: number): LineageAllowance { return new LineageAllowance("steer", LineageAllowance.nodes(nodes), undefined, nodes === undefined ? defaultMs(TURN_LINEAGE_MS) : Infinity); }
-  /** One slice of the warmer. */
-  static warm(nodes: number): LineageAllowance { return new LineageAllowance("warm", nodes); }
+  /** One slice of the warmer; `ms` is its wall-clock budget (r14 1E: the confirm's turn-shaped half; none by default). */
+  static warm(nodes: number, ms = Infinity): LineageAllowance { return new LineageAllowance("warm", nodes, undefined, ms); }
   /** For the writers that record what a turn was shown: they read ONE stored root set whole, and a stored set is never past the
    * root ceiling, so `nodes` (replay-lineage.ts writerAllowance: what a set at the ceiling costs) bounds the read by construction.
    * There is no unlimited allowance: every read of the history is paid for (grep `writerAllowance(`). */
@@ -103,6 +106,11 @@ export class LineageAllowance {
     try { return work(); }
     finally { if (--this.depth === 0) this.msUsed += performance.now() - this.sectionAt; }
   }
+  /** The wall-clock ms the timed reads have used so far, the read in progress included (r14 1E: CLEAN needs <= TURN_LINEAGE_MS / 2). */
+  spentMs(): number { return this.msUsed + (this.depth > 0 ? performance.now() - this.sectionAt : 0); }
+  /** Pays `count` nodes with no read behind them (r14.1 X2: the confirm's RECALL_RESERVE charge standing in for the turn's recall). Stops
+   * with the limit error, as a read would, when the allowance cannot pay; no thread is named, so no warming is asked for. */
+  spend(count: number): void { this.spendNodes("", count); }
   /** Whether the timed reads have used the wall-clock budget. */
   overTime(): boolean {
     if (this.msBudget === Infinity) return false;

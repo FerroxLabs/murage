@@ -12,6 +12,7 @@ import { monitorEventLoopDelay } from "node:perf_hooks";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { awaitWriterGateForeground, DatabaseBusyError, FOREGROUND_GATE_MAX_MS, gateWriteRequest, guardedWriter, holdWritersForIndexBuild } from "./database.ts";
+import { waitingAtWriterGate } from "./db-busy.ts";
 import { downgradeMemorySchema, migrateMemorySchema } from "./memory/schema.ts";
 import { initializeMobilePush, PushStore } from "./mobile-push-store.ts";
 import { mobilePushRoute, type PushRouteDeps } from "./mobile-push-routes.ts";
@@ -173,6 +174,31 @@ it("a hold released while a write waits lets that write go at once", async () =>
   await awaitWriterGateForeground();
   expect(Date.now() - t0).toBeLessThan(FOREGROUND_GATE_MAX_MS);
   write("after-hold"); expect(count("after-hold")).toBe(1);
+});
+
+it("two overlapping waits at one named gate keep its mark until the second ends (Grok, ALL.eld250)", async () => {
+  vi.useFakeTimers();
+  try {
+    holdWritersForIndexBuild(true);
+    let firstDone = false, secondDone = false;
+    const first = awaitWriterGateForeground("team-import").then(() => { firstDone = true; });
+    await vi.advanceTimersByTimeAsync(1000);
+    const second = awaitWriterGateForeground("team-import").then(() => { secondDone = true; });
+    expect(waitingAtWriterGate("team-import")).toBe(true);
+    // the first wait reaches its ceiling and ends; the second is still waiting, so the mark stays
+    await vi.advanceTimersByTimeAsync(FOREGROUND_GATE_MAX_MS - 1000);
+    await first;
+    expect(firstDone).toBe(true); expect(secondDone).toBe(false);
+    expect(waitingAtWriterGate("team-import")).toBe(true);
+    expect(waitingAtWriterGate("other-site")).toBe(false);
+    holdWritersForIndexBuild(false);
+    await second;
+    expect(secondDone).toBe(true);
+    expect(waitingAtWriterGate("team-import")).toBe(false);
+  } finally {
+    holdWritersForIndexBuild(false);
+    vi.useRealTimers();
+  }
 });
 
 it("a foreground write with no hold in force costs nothing and never waits", async () => {

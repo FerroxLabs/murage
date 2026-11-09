@@ -53,7 +53,7 @@ export function cloudChoiceAction(workspace: CloudWorkspace): { kind: "open"; ho
 }
 
 /** The bridge for badge and native notifications: the desktop's in the main window, the Cloud window's own in a Cloud window. */
-export function notificationBridge(): { platform?: string; setUnreadCount?: (count: number) => void; approvalNotifications?: NonNullable<Muragebox["approvalNotifications"]> } | undefined {
+export function notificationBridge(): { platform?: string; setUnreadCount?: (count: number) => void; approvalNotifications?: NonNullable<Muragebox["approvalNotifications"]>; attention?: import("./attention-offer").AttentionBridge } | undefined {
   if (typeof window === "undefined") return undefined;
   return isCloudOrigin() ? window.muragecloud : window.muragebox;
 }

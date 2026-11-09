@@ -43,6 +43,7 @@
 // requires the extension. server/index.ts already writes its shared imports
 // this way, and the renderer build does not care either way.
 import type { SetupCardVariant } from "../../shared/setup-card.ts";
+import type { FirstRunJobId } from "./first-run-jobs.ts";
 
 export const TAILSCALE_DOWNLOAD_URL = "https://tailscale.com/download";
 
@@ -172,6 +173,19 @@ export const FIRST_RUN_STEP_HEADINGS: Partial<Record<SetupCardVariant, string>> 
 export function stepHeadingFor(variant: SetupCardVariant): string | null {
   return FIRST_RUN_STEP_HEADINGS[variant] ?? null;
 }
+
+/**
+ * What each ticked job says to the Chief when it is set up (FIRSTRUN-1019 1.12, Astra r2 NEW-3). One explicit map, so
+ * every id has an ask. The first ticked job runs through its own flow; every other one is sent as an ordinary message in
+ * the Chief's thread, automatically, one at a time. `brief` is always first so it is never sent, and still has its line.
+ */
+export const FIRST_RUN_JOB_ASK: Readonly<Record<FirstRunJobId, string>> = {
+  brief: "Brief me every morning.",
+  day: "Organise my day for me.",
+  notes: "Help me make sense of some notes.",
+  research: "Look into something for me.",
+  business: "Help me run my business.",
+};
 
 export const FIRST_RUN_COPY = {
   /** Every setup step, on a phone or any screen that is not the computer.
@@ -596,11 +610,25 @@ export const FIRST_RUN_COPY = {
   chat: {
     jobs: {
       question: "What can I take off your plate",
-      lead: "Pick one and I will do it now. I only ask for what that job needs, when it needs it.",
+      lead: "Tick everything that would help and I will set them all up. I start with the first one now, and I only ask for what each job needs, when it needs it.",
       /** A machine with nothing to think with. The jobs are still shown,
        *  because seeing what this would do for you is the reason to connect
        *  anything, but not one of them is claimed to be ready. */
-      leadNoBrain: "Pick one anyway. I will show you exactly what it needs before anything happens.",
+      leadNoBrain: "Tick them anyway. I will show you exactly what each needs before anything happens.",
+      /** Under the lead on a machine with nothing to think with. */
+      waiting: "These start the moment I have something to think with. Connect Flux Router above, or sign in to an AI tool you already have.",
+      tickAll: "Tick all 5",
+      setUpNone: "Tick at least one",
+      /** After the press, in the Chief's own words, before the first job's lines. */
+      onIt: "On it.",
+      settledPrefix: "Set up:",
+      /** The other ticked jobs, said under the first job's result. */
+      nextPrefix: "Next on your list:",
+      /** One ask per job: what the Chief is told when that job is set up. */
+      asks: FIRST_RUN_JOB_ASK,
+      failed: "did not start.",
+      tryAgain: "Try again",
+      stop: "Stop",
       status: {
         connected: "Connected. Smart routing on, and your apps are a click away when a job needs them.",
         noBrain: "Nothing to think with yet, so every job below is waiting on one connection.",
@@ -1257,6 +1285,45 @@ export const FIRST_RUN_COPY = {
    * composer takes it out of the message before anything leaves the machine
    * and says so plainly rather than silently eating what they typed.
    */
+  /** FIRSTRUN-1019 1.10: the card that hosts the notification chooser. The chooser draws its own words. */
+  notify: {
+    settled: "Notifications stay as they are. You can change them any time under Notify me.",
+    failure: "That did not save. Try again.",
+    retry: "Try again",
+  },
+  /** FIRSTRUN-1019 1.11: hire your first teammates. */
+  hire: {
+    heading: "Hire your first teammates",
+    /** {chief} is the Chief's name. Three sentences, no money, no promise about where anything goes. */
+    lead: "I am {chief}. I run the day and I ask before I send, buy or change anything. These three cover what most people ask for first, and each one starts on Ask.",
+    greatFit: "Great fit",
+    later: "Later, maybe",
+    pickNone: "Pick at least one",
+    hireFits: "Hire all 3 great fits",
+    notNow: "Not now",
+    bringingOne: "Bringing your teammate in",
+    bringingMany: "Bringing your teammates in",
+    notNowSettled: "Noted. You can hire anyone later from Your team",
+    failure: "That did not work. Try again.",
+    rows: {
+      "business-planner": { name: "Business Planner", title: "Priorities and scope", line: "Turns your notes into a weekly plan with clear priorities." },
+      "draft-partner": { name: "Draft Partner", title: "Drafts and review", line: "Writes first drafts of emails, posts and proposals for you to check." },
+      "review-partner": { name: "Review Partner", title: "Evidence and gaps", line: "Checks the facts and spots the gaps before anything goes out." },
+      "team-coordinator": { name: "Team Coordinator", title: "Scope and coordination", line: "Keeps bigger projects moving when the team grows." },
+    },
+  },
+  /** FIRSTRUN-1019 1.14: Move from Grok Bot. */
+  moveGrok: {
+    heading: "Move from Grok Bot",
+    body: "Bring your Bots here, with their skills and routines.",
+    found: "Grok Bot",
+    move: "Move my bots",
+    notNow: "Not now",
+    moving: "Moving your bots",
+    failure: "That did not work. Try again.",
+    settled: "Your Grok Bot data stays where it is. You can move it later.",
+    moved: "Your bots are here.",
+  },
   pastedKey: {
     saved: "I caught that key before it reached our conversation and put it straight into secure storage. You are connected.",
     failed: "That looked like a key, so I kept it out of our conversation. It did not save though, so try it again on the key card.",
@@ -1345,9 +1412,36 @@ export function botsEyebrowLine(count: number): string {
   return `${SPELLED[whole] ?? String(whole)} ${words.botsEyebrowMany}`;
 }
 
-/** "Claude Code", "Claude Code and Codex", "Claude Code, Codex and Fuigo". */
+/** "Claude Code", "Claude Code and Codex", "Fuigo, Claude Code and Codex". Fuigo and Flux lead any list they are in
+ * (Sean's copy rule); the other names keep their order. */
+/** "Hire all 3" and friends: the primary button, worded from the ticks (FIRSTRUN-1019 1.11). */
+export function hireButtonLabel(ticked: readonly string[], fits: readonly string[], all: readonly string[], names: Readonly<Record<string, string>>): string {
+  if (ticked.length === 0) return FIRST_RUN_COPY.hire.pickNone;
+  if (ticked.length === 1) return `Hire ${names[ticked[0]] ?? ticked[0]}`;
+  if (ticked.length === all.length) return `Hire everyone (${ticked.length})`;
+  const exactlyFits = ticked.length === fits.length && fits.every((key) => ticked.includes(key));
+  return exactlyFits ? `Hire all ${ticked.length}` : `Hire these ${ticked.length}`;
+}
+
+/** The hire card's lead with the Chief's name in it. */
+export function hireLead(chief: string): string {
+  return FIRST_RUN_COPY.hire.lead.replace("{chief}", chief.trim() || "your Chief of Staff");
+}
+
+/** "Set up these 3", or the disabled "Tick at least one". */
+export function setUpJobsLabel(count: number): string {
+  return count <= 0 ? FIRST_RUN_COPY.chat.jobs.setUpNone : `Set up these ${count}`;
+}
+
+/** Today's line while the queue works: "Setting up 2 more: Organise my day, Make sense of these notes". */
+export function settingUpMoreLine(titles: readonly string[]): string {
+  return `Setting up ${titles.length} more: ${titles.join(", ")}`;
+}
+
 export function joinNames(names: readonly string[]): string {
-  const clean = names.map((name) => name.trim()).filter(Boolean);
+  const trimmed = names.map((name) => name.trim()).filter(Boolean);
+  const ours = (name: string) => /^(?:Fuigo|Flux)\b/.test(name);
+  const clean = [...trimmed.filter(ours), ...trimmed.filter((name) => !ours(name))];
   if (clean.length === 0) return "";
   if (clean.length === 1) return clean[0];
   return `${clean.slice(0, -1).join(", ")} and ${clean[clean.length - 1]}`;

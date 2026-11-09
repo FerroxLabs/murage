@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
+import { fetchPinned } from "./download-retry.mjs";
 import { BACKUP_AGE_PINS, BACKUP_AGE_LICENSE_SHA256 } from "../shared/backup-age-pins.mjs";
 const repository = fileURLToPath(new URL("../", import.meta.url));
 const oldLicenseHash = "76f9171771a05e91cfd270480ba507dcf57b05a391d2aea8329be42aaf963813";
@@ -37,7 +38,7 @@ export async function stageBackupAge({root=repository,target,archive}={}) {
   try{
     const input=archive??join(scratch,"age.tar.gz");
     if(!archive){
-      const response=await fetch(pin.url,{signal:AbortSignal.timeout(60000)});
+      const response=await fetchPinned(pin.url,{},{sha256:pin.archiveSha256});
       if(!response.ok||!response.body)throw Error("BACKUP_AGE_DOWNLOAD_FAILED");
       let total=0;const chunks=[];
       for await(const chunk of response.body){total+=chunk.length;if(total>64*1024**2)throw Error("BACKUP_AGE_DOWNLOAD_LIMIT");chunks.push(Buffer.from(chunk));}

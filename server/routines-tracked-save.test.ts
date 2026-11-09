@@ -151,7 +151,16 @@ const DRIVERS: Record<string, (f: Fixture) => unknown> = {
   eventKindDeclined: f => f.m.eventKindDeclined(f.webhook.id, "create"),
   interruptUnresolvedEventTimeouts: f => { f.m.admitEventAction(f.webhook.id, "admission-7", "handoff"); f.m.recordEventAdmissionReceipt(f.webhook.id, "admission-7", "timeout:task-9"); expect(f.m.interruptUnresolvedEventTimeouts(() => false)).toBe(1); },
   listRoutineNames: f => f.m.listRoutineNames(),
+  // 1.0.18 U6 F38 (c8ce9d59e) and E32 (221b41699), U28 B45 (1034c9dc3): read-only additions, driven so a save after each still matches disk
+  listRoutineDetails: f => expect(f.m.listRoutineDetails("bot-a").map(detail => detail.name)).toEqual(["A"]),
+  hasStartedRun: f => f.m.hasStartedRun(f.a.id),
+  roomGoalRunForThread: f => f.m.roomGoalRunForThread(f.goalThread),
   activeWebhookRunCount: f => f.m.activeWebhookRunCount("hook-1"),
+  // RESIDUALS-B U28b (1fe2378a1): which routine a turn's usage belongs to. A read: a live run answers, any other thread does not
+  usageRunForThread: f => {
+    expect(f.m.usageRunForThread(f.thread)).toEqual({ routineId: f.a.id, routineName: "A", triggerSource: "manual" });
+    expect(f.m.usageRunForThread("no-such-thread")).toBeNull();
+  },
   cancelQueuedWebhook: f => f.m.cancelQueuedWebhook("hook-1", "The webhook was removed"),
   cancelRun: f => f.m.cancelRun(f.running.id),
   markAllSeen: f => expect(f.m.markAllSeen().length).toBeGreaterThan(0),
@@ -166,6 +175,12 @@ const DRIVERS: Record<string, (f: Fixture) => unknown> = {
   noteRunLine: f => f.m.noteRunLine(f.thread, "Ran a write whose folder Murage could not read: x"),
   handleRuntimeEvent: f => f.m.handleRuntimeEvent({ eventId: "done-1", provider: "fake", threadId: f.thread, createdAt: new Date(START).toISOString(), type: "turn.completed", ok: true } as never),
   failThread: f => f.m.failThread(f.thread, "Stopped"),
+  // FENCE-RACE-1018 r2: the dispatch token, the passed-by turn and their test accessors
+  settleDispatch: f => f.m.settleDispatch({ runId: f.running.id }, "Stopped"),
+  passRefusedTurn: f => { f.m.passRefusedTurn({ runId: f.running.id }, "refused-turn"); expect(f.m.hasRefusedTurn("refused-turn")).toBe(true); },
+  hasRefusedTurn: f => expect(f.m.hasRefusedTurn("none")).toBe(false),
+  confirmChannelTurn: f => { f.m.confirmChannelTurn({ runId: f.running.id }, "confirmed-turn"); },
+  liveDispatchRunIds: f => expect(f.m.liveDispatchRunIds()).toContain(f.running.id),
   finishGoalRun: f => f.m.finishGoalRun(f.goal.id, "completed", "Done"),
   runSeatWait: f => { f.m.runSeatWait(f.running.id, "working-folder"); f.m.runSeatWait(f.running.id, null); },
   notePinnedBundle: f => f.m.notePinnedBundle(f.thread, "bundle-1"),
@@ -318,7 +333,7 @@ describe("preparing to reinstall 1.0.1 folds journal-only routine state into the
     m.stop();
 
     // the "Prepare to reinstall Murage 1.0.1" step (memory-downgrade); no memory database in this folder
-    expect(() => downgradeInstallationMemorySchema(dir, 6)).toThrow("MEMORY_DATABASE_MISSING");
+    expect(() => downgradeInstallationMemorySchema(dir, 6, { testOnlyBefore102: true })).toThrow("MEMORY_DATABASE_MISSING");
 
     const prepared = read101(dir);
     expect(prepared.routines[0]!.nextRunAt).toBe(cursor);
@@ -328,7 +343,7 @@ describe("preparing to reinstall 1.0.1 folds journal-only routine state into the
     // no 1.0.2-only lines remain for 1.0.1 to skip
     for (const name of readdirSync(routineRunsDir(dir))) expect(readFileSync(join(routineRunsDir(dir), name), "utf8")).not.toContain("$routine");
     // idempotent, and 1.0.2 starting again reads the same schedule
-    expect(() => downgradeInstallationMemorySchema(dir, 6)).toThrow("MEMORY_DATABASE_MISSING");
+    expect(() => downgradeInstallationMemorySchema(dir, 6, { testOnlyBefore102: true })).toThrow("MEMORY_DATABASE_MISSING");
     expect(read101(dir)).toEqual(prepared);
     const again = new RoutineManager(options(file, clock));
     expect(again.listRoutines()[0]!.nextRunAt).toBe(cursor);

@@ -171,10 +171,13 @@ test("refusals never echo the rejected address", () => {
 
 const LOG_HREF = "file:///Users/test/Library/Logs/Murage/server.log";
 const ERROR_PAGE = "data:text/html;charset=utf-8,%3Cbody%3E";
+const TRUSTED = { trustedOrigin: "http://127.0.0.1:5199", errorPageUrl: ERROR_PAGE };
 
-test("window.open opens credential-free web links and only the startup page's exact log link", () => {
+test("window.open opens credential-free web links and only the private log link from the app origin or the exact startup page", () => {
   assert.deepEqual(mainWindowOpenAction("https://example.com/a", { currentUrl: LOCAL_PAGE, diagnosticsLogHref: LOG_HREF }), { kind: "external", url: "https://example.com/a" });
-  assert.deepEqual(mainWindowOpenAction(LOG_HREF, { currentUrl: ERROR_PAGE, diagnosticsLogHref: LOG_HREF }), { kind: "diagnostics-log" });
+  assert.deepEqual(mainWindowOpenAction("murage-open-log:now", { currentUrl: ERROR_PAGE, ...TRUSTED }), { kind: "diagnostics-log" });
+  assert.deepEqual(mainWindowOpenAction("murage-open-log:now", { currentUrl: LOCAL_PAGE, ...TRUSTED }), { kind: "diagnostics-log" });
+  assert.deepEqual(mainWindowOpenAction("murage-open-log:now", { currentUrl: ERROR_PAGE }), { kind: "refuse" });
 
   for (const [url, context] of [
     ["https://user:pass@example.com", { currentUrl: LOCAL_PAGE, diagnosticsLogHref: LOG_HREF }],
@@ -209,7 +212,8 @@ function windowOpenFixture({ current = LOCAL_PAGE, openExternal, openDiagnostics
     openExternal: openExternal ?? (async (url) => { opened.push(url); }),
     openDiagnosticsLog: openDiagnosticsLog ?? (async () => { logs.push("server.log"); }),
     currentUrl: () => current,
-    diagnosticsLogHref: () => LOG_HREF,
+    trustedOrigin: () => "http://127.0.0.1:5199",
+    errorPageUrl: () => ERROR_PAGE,
     warn: (message) => warnings.push(message),
   });
   return { handler, opened, logs, warnings };
@@ -227,14 +231,23 @@ test("the main-window popup handler always denies and opens only what the policy
   assert.deepEqual(handler({ url: LOG_HREF }), { action: "deny" });
   await settle();
   assert.deepEqual(opened, ["https://example.com/docs"]);
-  assert.deepEqual(logs, [], "log link is not honoured from the app page");
+  assert.deepEqual(logs, [], "a file: log address is never honoured");
   assert.deepEqual(warnings, []);
 
+  // The private log address is honoured from the app origin (the server's setup page) and from the exact startup page, nowhere else.
+  assert.deepEqual(handler({ url: "murage-open-log:now" }), { action: "deny" });
+  await settle();
+  assert.deepEqual(logs, ["server.log"]);
   const errorPage = windowOpenFixture({ current: ERROR_PAGE });
+  assert.deepEqual(errorPage.handler({ url: "murage-open-log:now" }), { action: "deny" });
   assert.deepEqual(errorPage.handler({ url: LOG_HREF }), { action: "deny" });
   await settle();
   assert.deepEqual(errorPage.logs, ["server.log"]);
   assert.deepEqual(errorPage.opened, []);
+  const elsewhere = windowOpenFixture({ current: "https://other.example/" });
+  assert.deepEqual(elsewhere.handler({ url: "murage-open-log:now" }), { action: "deny" });
+  await settle();
+  assert.deepEqual(elsewhere.logs, []);
 });
 
 test("popup opening failures are contained and logged without the address", async () => {
@@ -243,7 +256,7 @@ test("popup opening failures are contained and logged without the address", asyn
   const thrown = windowOpenFixture({ openExternal: () => { throw new Error("sync"); } });
   assert.deepEqual(thrown.handler({ url: "https://secret.example/path" }), { action: "deny" });
   const logFailure = windowOpenFixture({ current: ERROR_PAGE, openDiagnosticsLog: async () => { throw new Error("gone"); } });
-  assert.deepEqual(logFailure.handler({ url: LOG_HREF }), { action: "deny" });
+  assert.deepEqual(logFailure.handler({ url: "murage-open-log:now" }), { action: "deny" });
   await settle();
   assert.deepEqual(rejected.warnings, ["The external web link could not be opened"]);
   assert.deepEqual(thrown.warnings, ["The external web link could not be opened"]);

@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "./testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -74,7 +76,7 @@ describe("I14: dispatchedIn means released to the engine's write", () => {
     globalThis.fetch = (async () => { requests++; throw connectFailure(); }) as typeof fetch;
     const instance = chat();
     const recorder = recordEvents(instance.adapter);
-    const { turnId } = await instance.adapter.sendTurn({
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-chat-fail", text: "question",
       beforeSubmit: () => boundary.beforeSubmit(() => {}),
       notWritten: () => boundary.notWritten(),
@@ -92,7 +94,7 @@ describe("I14: dispatchedIn means released to the engine's write", () => {
     globalThis.fetch = (async () => new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } })) as typeof fetch;
     const instance = chat();
     const recorder = recordEvents(instance.adapter);
-    const { turnId } = await instance.adapter.sendTurn({
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-chat-ok", text: "question",
       beforeSubmit: () => boundary.beforeSubmit(() => {}),
       notWritten: () => boundary.notWritten(),
@@ -109,7 +111,7 @@ describe("I14: dispatchedIn means released to the engine's write", () => {
     globalThis.fetch = (async () => { throw brokenAfterConnect(); }) as typeof fetch;
     const instance = chat();
     const recorder = recordEvents(instance.adapter);
-    const { turnId } = await instance.adapter.sendTurn({
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-chat-reset", text: "question",
       beforeSubmit: () => boundary.beforeSubmit(() => {}),
       notWritten: () => boundary.notWritten(),
@@ -131,7 +133,7 @@ describe("I14: dispatchedIn means released to the engine's write", () => {
       const { row, attribution, boundary } = rows();
       let fenced!: () => void;
       const firstFence = new Promise<void>((resolve) => { fenced = resolve; });
-      const sending = instance.adapter.sendTurn({
+      const sending = instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
         threadId: "t-claude-stop", text: "Founders sweep",
         integrations: { composio: { command: process.execPath, args: ["/fake/connector-proxy.js"], env: { MURAGE_BOT_ID: "dax" } } },
         beforeSubmit: () => { boundary.beforeSubmit(() => {}); fenced(); },
@@ -172,3 +174,6 @@ describe("I14: dispatchedIn means released to the engine's write", () => {
     expect(row.dispatchedIn).toBeUndefined();
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

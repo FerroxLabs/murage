@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -99,7 +101,7 @@ describe.skipIf(process.platform === "win32")("the ACP (Droid) turn binary", () 
     const { probedLog, shellLog } = twoBinaries();
     instance = await DroidAgentDriver.create({ instanceId: "droid-launch", displayName: "Droid", environment: {}, enabled: true, config: { cli: "droid", fullAuto: true } });
     recorder = recordEvents(instance.adapter);
-    await instance.adapter.sendTurn({ threadId: "t-droid-launch", text: "hi", model: "claude-sonnet-5" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-droid-launch", text: "hi", model: "claude-sonnet-5" });
     await recorder.until((e) => e.type === "turn.completed");
     expect(jobProbe.jobs).toContainEqual(jobProbe.job); // the turn CLI was started in the engine job
 
@@ -120,7 +122,7 @@ describe.skipIf(process.platform === "win32")("the ACP (Droid) turn binary", () 
     if (cliFile(BIN, { PATH: augmentedPath() })) ctx.skip();
     instance = await DroidAgentDriver.create({ instanceId: "droid-launch", displayName: "Droid", environment: {}, enabled: true, config: { cli: "droid", fullAuto: true } });
     recorder = recordEvents(instance.adapter);
-    const outcome = await instance.adapter.sendTurn({ threadId: "t-droid-missing", text: "hi", model: "claude-sonnet-5" }).then(
+    const outcome = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-droid-missing", text: "hi", model: "claude-sonnet-5" }).then(
       () => recorder!.until((e) => e.type === "turn.completed").then((e) => JSON.stringify(e)),
       (error: unknown) => String(error instanceof Error ? `${(error as NodeJS.ErrnoException).code} ${error.message}` : error),
     );
@@ -129,3 +131,6 @@ describe.skipIf(process.platform === "win32")("the ACP (Droid) turn binary", () 
     expect(lines(shellLog)).toEqual([]);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

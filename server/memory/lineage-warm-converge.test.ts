@@ -22,6 +22,8 @@ afterEach(() => thawRootSetWritesForTest(false));
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { retainedSessionInvalid } from "./dispatch.ts";
+import { allowanceHooks } from "./lineage-allowance.ts";
+import { lineageWantedPending } from "./replay-lineage.ts";
 import { bumpLineageWarm, kickLineageWarm, lineageWarmIdle, lineageWarmParked, lineageWarmStep, resetLineageWarmForTest, setLineageWarmSlicesForTest } from "./lineage-warm.ts";
 import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
@@ -242,3 +244,39 @@ it("successive sessions after a cold start: the long session is reset once for w
     expect(retainedSessionInvalid(LineageAllowance.tool(), thread, driver, "fresh", why), `turn ${index}: ${why.reason}`).toBe(false);
   }
 }, 600_000);
+
+it("a thread parked before the file retired does not hold the warmer busy: retired means idle, parked or not", () => {
+  database();
+  setMemoryMode("active");
+  reconcileMemoryRoster({ bots: [{ id: "b", threadId: thread }], groups: [] });
+  const db = database(), scope = ensureScope("conversation", thread);
+  // a ring of replies each of whose receipts cites the next: a cycle no verdict can be kept through
+  const n = 12;
+  db.exec("BEGIN");
+  for (let index = 0; index < n; index++) {
+    db.prepare("INSERT INTO memory_sources VALUES(?,?,?,?,NULL,1,'hash','text','bot:b','settled',NULL,'active')").run(`message:${thread}:r${index}`, scope, thread, `r${index}`);
+    db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run(thread, `r${index}`, index, "bot", "text", `reply ${index}`, "{}");
+  }
+  for (let index = 0; index < n; index++) {
+    db.prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES(?,?,?,NULL,'[]',?,?,0,0,0,'delivered',9)")
+      .run(`rc${index}`, thread, driver, JSON.stringify([{ id: `message:${thread}:r${(index + 1) % n}`, revision: 1 }]), JSON.stringify([`r${index}`]));
+  }
+  db.exec("COMMIT");
+  restart();
+  warmToCompletion();
+  expect(lineageWarmParked(), "precondition: the ring leaves a thread parked").toBeGreaterThan(0);
+  expect(lineageWarmIdle(), "parked and not retired: busy").toBe(false);
+  // the root sets are handed back: the read-time judge retires and the warmer step returns at once, so nothing parked can ever be unparked
+  database().prepare("INSERT OR REPLACE INTO memory_lineage_lsn_meta(key,value) VALUES('root_sets_dropped',1)").run();
+  expect(lineageWarmStep(25)).toBe(false);
+  expect(lineageWarmIdle(), "retired: idle, whatever was parked before").toBe(true);
+});
+
+it("a thread a turn wanted on a retired file is drained by the warmer step, not left pending (wantedThreads)", () => {
+  database();
+  database().prepare("INSERT OR REPLACE INTO memory_lineage_lsn_meta(key,value) VALUES('root_sets_dropped',1)").run();
+  for (let index = 0; index < 50; index++) allowanceHooks.wanted(thread + "-w" + index);
+  expect(lineageWantedPending(), "precondition: wanted threads are noted").toBe(true);
+  expect(lineageWarmStep(25)).toBe(false);
+  expect(lineageWantedPending(), "retired: the step drains what was wanted").toBe(false);
+});

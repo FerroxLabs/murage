@@ -1,0 +1,25 @@
+import { readFileSync } from "node:fs";
+import ts from "typescript";
+import { afterEach, expect, it, vi } from "vitest";
+import { ReplyController } from "./reply-controller";
+const source = readFileSync(new URL("../../state/store.tsx", import.meta.url), "utf8");
+const compile = (code: string) => ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
+const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
+afterEach(() => vi.restoreAllMocks());
+it("S-hydrate executes the actual store raw tap and pendingFrames drain without replaying a pre-hydration candidate", async () => {
+  const post = vi.fn(async (path: string) => path.endsWith("/session") ? json({ sessionId: "s", bootId: "boot", threadId: "thread", revision: 0 }) : new Response(null, { status: 204 }));
+  const controller = new ReplyController({ post, player: vi.fn(), enabled: true });
+  const context = { desktop: true, hydrated: true, threadId: "thread", visible: true, call: false };
+  controller.configure(context); controller.hello("connection", "boot"); controller.caughtUp(); await vi.waitFor(() => expect(controller.snapshot.status).toBe("idle"));
+  const start = source.indexOf("        onFrame: (frame, delivery) => {"); const end = source.indexOf("\n        stillSignedIn:", start);
+  expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
+  const arrow = source.slice(start, end).trim().replace(/^onFrame: /, "").replace(/,$/, "");
+  const drain = source.match(/for \(const pending of pendingFrames\.splice\(0\)\)[^\n]+/)![0]; expect(drain).toContain("handleFrame");
+  const handled = vi.fn();
+  const actual = new Function("replyController", "syncReplyContext", "handleFrame", compile(`let hydrated=false; let liveGen=0; const pendingFrames=[]; const receive=${arrow}; return { receive, hydrate:()=>{hydrated=true; ${drain}}, count:()=>pendingFrames.length };`))(controller, (hydrated: boolean) => controller.configure({ ...context, hydrated }), handled);
+  const tap = vi.spyOn(controller, "receive");
+  actual.receive({ kind: "speech.ready", threadId: "thread", messageId: "before", settlementId: "old", revision: 0, bootId: "boot" }, { replayed: false });
+  expect(tap).toHaveBeenCalledOnce(); expect(actual.count()).toBe(1); actual.hydrate(); expect(tap).toHaveBeenCalledOnce(); expect(handled).toHaveBeenCalledOnce();
+  controller.configure(context); controller.caughtUp(); await vi.waitFor(() => expect(controller.snapshot.status).toBe("idle"));
+  expect(post.mock.calls.some(([path]) => path === "/api/tts/reply")).toBe(false); controller.disconnect();
+});

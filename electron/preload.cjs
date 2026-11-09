@@ -15,6 +15,40 @@ const RENDERER_ORIGIN_ARGUMENT = "--murage-renderer-origin=";
  * Electron rejects with "Error invoking remote method '<channel>': Error:
  * <message>"; only <message> was ever meant to be shown. */
 const IPC_WRAPPER = /^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/;
+const ATTENTION_SESSION = /^[a-z0-9]{16,64}$/;
+const ATTENTION_REFS_MAX = 288; // LEDGER_MAX = CAP_HOME + 32 (NOTIFY-EVERYWHERE-1019 S3R R4)
+const ATTENTION_ICON_MAX = 65536; // a data:image/png of at most 64 KB; main checks the same bound
+const attentionRef = (value) => typeof value === "string" && value.length > 0 && value.length <= 64;
+const attentionGen = (value) => Number.isSafeInteger(value) && value >= 0;
+const attentionText = (value, max) => typeof value === "string" && value.length <= max;
+/** main -> window push: bounded, session-addressed, nothing else passes (S3R R3). */
+const attentionMessage = (value) => {
+  if (!value || typeof value !== "object" || typeof value.session !== "string" || !ATTENTION_SESSION.test(value.session)) return null;
+  if (value.type === "show" && attentionRef(value.ref) && attentionGen(value.gen) && typeof value.previews === "boolean") return { type: "show", session: value.session, ref: value.ref, gen: value.gen, previews: value.previews };
+  if (value.type === "close" && attentionRef(value.ref) && attentionGen(value.gen)) return { type: "close", session: value.session, ref: value.ref, gen: value.gen };
+  if (value.type === "previews" && typeof value.previews === "boolean") return { type: "previews", session: value.session, previews: value.previews };
+  return null;
+};
+/** window -> main: the new delivery shapes are checked here and again in main (S3R R3 bounds). Anything malformed never leaves the window. */
+const attentionHello = (value) => (value && typeof value === "object" && typeof value.session === "string" && ATTENTION_SESSION.test(value.session) ? { session: value.session } : null);
+const attentionPresent = (value) => {
+  if (!value || typeof value !== "object" || typeof value.session !== "string" || !ATTENTION_SESSION.test(value.session) || !attentionRef(value.ref) || !attentionGen(value.gen)) return null;
+  if (!attentionText(value.title, 256) || !attentionText(value.body, 1024)) return null;
+  const out = { session: value.session, ref: value.ref, gen: value.gen, title: value.title, body: value.body };
+  for (const field of ["botId", "threadId"]) if (value[field] !== undefined) { if (!attentionText(value[field], 512)) return null; out[field] = value[field]; }
+  for (const field of ["privatePreview", "silent"]) if (value[field] !== undefined) { if (typeof value[field] !== "boolean") return null; out[field] = value[field]; }
+  if (value.icon !== undefined) {
+    if (typeof value.icon !== "string" || value.icon.length > ATTENTION_ICON_MAX || !value.icon.startsWith("data:image/png;base64,")) return null;
+    out.icon = value.icon;
+  }
+  return out;
+};
+const attentionGone = (value) => (value && typeof value === "object" && typeof value.session === "string" && ATTENTION_SESSION.test(value.session) && attentionRef(value.ref) && attentionGen(value.gen) ? { session: value.session, ref: value.ref, gen: value.gen } : null);
+const attentionFreed = (value) => {
+  if (!value || typeof value !== "object" || typeof value.session !== "string" || !ATTENTION_SESSION.test(value.session) || !Array.isArray(value.refs) || value.refs.length > ATTENTION_REFS_MAX || !value.refs.every(attentionRef)) return null;
+  return { session: value.session, refs: [...value.refs] };
+};
+
 function invokeShown(channel, ...args) {
   return ipcRenderer.invoke(channel, ...args).catch((error) => {
     throw new Error(String(error?.message ?? error).replace(IPC_WRAPPER, ""));
@@ -68,6 +102,9 @@ ipcRenderer.on("tray:open",(_event,target)=>{
   if(!trayListeners.size){pendingTrayTarget=target;return;}
   for(const listener of trayListeners)listener(target);
 });
+
+// Main probes after a navigation that never committed; one reply proves this renderer is alive (app-readiness.mjs).
+ipcRenderer.on("app-readiness:probe", (_event, t) => { if (Number.isInteger(t)) ipcRenderer.send("app-readiness:alive", t); });
 
 let pendingPackageInstallUrl = null;
 const packageInstallListeners = new Set();
@@ -150,6 +187,20 @@ contextBridge.exposeInMainWorld("muragebox", {
     applyRetention: (remoteRef, revision, policy, previewId) => ipcRenderer.invoke("backup-remote:applyRetention", remoteRef, revision, policy, previewId),
     clearRetentionReview: (remoteRef, revision, previewId) => ipcRenderer.invoke("backup-remote:clearRetentionReview", remoteRef, revision, previewId),
   },
+  /** NOTIFY-EVERYWHERE-1019 S3: events and what is on screen go to main's router by routing ids only; main answers with a ref to show. */
+  attention: {
+    hello: payload => { const checked = attentionHello(payload); return checked ? ipcRenderer.invoke("attention:hello", checked) : Promise.resolve({ ok: false }); },
+    offer: payload => ipcRenderer.invoke("attention:offer", payload),
+    visible: payload => ipcRenderer.invoke("attention:visible", payload),
+    present: payload => { const checked = attentionPresent(payload); return checked ? ipcRenderer.invoke("attention:present", checked) : Promise.resolve({ ok: false }); },
+    gone: payload => { const checked = attentionGone(payload); return checked ? ipcRenderer.invoke("attention:gone", checked) : Promise.resolve({ ok: false }); },
+    freed: payload => { const checked = attentionFreed(payload); if (checked) ipcRenderer.send("attention:freed", checked); },
+    onShow: cb => {
+      const handler = (_event, value) => { const checked = attentionMessage(value); if (checked) cb(checked); };
+      ipcRenderer.on("attention:show", handler);
+      return () => ipcRenderer.removeListener("attention:show", handler);
+    },
+  },
   approvalNotifications: {
     show: payload => ipcRenderer.invoke("approval-notification:show", payload),
     onOpen: cb => {
@@ -188,11 +239,25 @@ contextBridge.exposeInMainWorld("muragebox", {
     },
   },
   } : {}),
+  notifySurfaces: {
+    get:()=>ipcRenderer.invoke("notify-surfaces:get"),
+    set:(key,value)=>ipcRenderer.invoke("notify-surfaces:set",key,value),
+    reset:()=>ipcRenderer.invoke("notify-surfaces:reset"),
+    capabilities:()=>ipcRenderer.invoke("notify-surfaces:capabilities"),
+    ensurePermission:()=>ipcRenderer.invoke("notify-surfaces:ensure-permission"),
+  },
   startup: {
     status:()=>ipcRenderer.invoke("startup-background:status"),
     update:patch=>ipcRenderer.invoke("startup-background:update",patch),
     onChange:cb=>{const handler=(_event,state)=>cb(state);ipcRenderer.on("startup-background:changed",handler);return()=>ipcRenderer.removeListener("startup-background:changed",handler);},
     onOpenInbox:cb=>{startupInboxListeners.add(cb);if(pendingStartupInbox){pendingStartupInbox=false;queueMicrotask(cb);}return()=>startupInboxListeners.delete(cb);},
+    pendingWhatsNew:()=>ipcRenderer.invoke("startup:pending-whats-new"),
+    ackWhatsNew:()=>ipcRenderer.invoke("startup:ack-whats-new"),
+    onWhatsNew:cb=>{const handler=()=>cb();ipcRenderer.on("startup:whats-new",handler);return()=>ipcRenderer.removeListener("startup:whats-new",handler);},
+  },
+  startupPicture: {
+    save:payload=>ipcRenderer.invoke("startup-picture:save",payload),
+    sessionTip:()=>ipcRenderer.invoke("startup-picture:session-tip"),
   },
   tray: {
     onOpen:cb=>{trayListeners.add(cb);if(pendingTrayTarget){const target=pendingTrayTarget;pendingTrayTarget=null;queueMicrotask(()=>cb(target));}return()=>trayListeners.delete(cb);},
@@ -273,17 +338,30 @@ contextBridge.exposeInMainWorld("muragebox", {
       ipcRenderer.invoke("android-device:input", serial, payload).then(() => undefined),
   },
   speechStart: (options) => ipcRenderer.invoke("speech:start", options),
-  speechStop: () => ipcRenderer.invoke("speech:stop"),
-  speechFinish: () => ipcRenderer.invoke("speech:finish"),
+  speechStop: (token) => ipcRenderer.invoke("speech:stop", token),
+  speechFinish: (token) => ipcRenderer.invoke("speech:finish", token),
   /** Call mode: 16 kHz mono s16le from the echo-cancelled microphone. */
   speechFeed: (bytes) => ipcRenderer.send("speech:pcm", bytes),
+  // Calls and push-to-talk listen here and never see composer dictation
+  // events, which carry a `session` token.
   onSpeechTranscript: (cb) => {
-    const handler = (_event, line) => cb(line);
+    const handler = (_event, line) => { if (!(line && line.session !== undefined)) cb(line); };
     ipcRenderer.on("speech:transcript", handler);
     return () => ipcRenderer.removeListener("speech:transcript", handler);
   },
   onSpeechEnd: (cb) => {
-    const handler = (_event, info) => cb(info);
+    const handler = (_event, info) => { if (!(info && info.session !== undefined)) cb(info); };
+    ipcRenderer.on("speech:end", handler);
+    return () => ipcRenderer.removeListener("speech:end", handler);
+  },
+  // Composer dictation: only events that carry a `session` token.
+  onDictationTranscript: (cb) => {
+    const handler = (_event, line) => { if (line && line.session !== undefined) cb(line); };
+    ipcRenderer.on("speech:transcript", handler);
+    return () => ipcRenderer.removeListener("speech:transcript", handler);
+  },
+  onDictationEnd: (cb) => {
+    const handler = (_event, info) => { if (info && info.session !== undefined) cb(info); };
     ipcRenderer.on("speech:end", handler);
     return () => ipcRenderer.removeListener("speech:end", handler);
   },
@@ -437,6 +515,11 @@ contextBridge.exposeInMainWorld("muragebox", {
   emailOwnerSignin: {
     start: () => ipcRenderer.invoke("email-owner-signin:start"),
     cancel: () => ipcRenderer.invoke("email-owner-signin:cancel"),
+  },
+  /** Phone calls: the Settings key box. Save sends the key to main once; nothing ever reads it back. Resolves { ok } or { ok:false, code, message }. */
+  phoneKey: {
+    save: (key) => ipcRenderer.invoke("phone-key:save", { key }),
+    remove: () => ipcRenderer.invoke("phone-key:remove"),
   },
   /** Plan sign-in (ChatGPT, Grok). Results and status never carry a token. */
   modelSignIn: {

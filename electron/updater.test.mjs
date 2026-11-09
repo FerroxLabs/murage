@@ -178,14 +178,15 @@ it("the actual main createWindow and activate wiring retargets the process updat
     APP_ICON: "fixture", skinChrome: () => ({ color: "#000000" }), windowChromeOptions: () => ({}),
     process: { platform: "darwin", env: {} }, path, __dirname: "/unused-fixture",
     startBrowserSurface: vi.fn(), installWindowStatePersistence: vi.fn(), applyUnreadBadge: vi.fn(),
-    app: { isPackaged: true }, serverReady: true, SERVER_PORT: 18888, desktopShutdownStarted: false, desktopRecoveryMode: false,
+    createMacInstallerFallback:()=>({peekPendingOffer:()=>null}),returnAuthority:{generation:0,userQuitRequested:false},backupScheduleHost:null,
+    app: { isPackaged: true, getPath:()=>"/unused-fixture" }, serverReady: true, SERVER_PORT: 18888, desktopShutdownStarted: false, desktopRecoveryMode: false,
     backgroundLifecycle: null, loginLaunch: false, background: null,
     cloudHome: null, // Cloud flag off: createWindow passes --murage-cloud=1 only when installCloudHome returned a controller
     // createWindow now closes the startup splash (4931ea16d); the fixture has none to close.
     closeStartupSplash: vi.fn(), startupSplash: null, desktopMark: vi.fn(), noteVersionStarted: vi.fn(),
     shell: { openExternal: vi.fn(), openPath: vi.fn() }, LOG_DIR: "/unused-log-dir", pathToFileURL: (value) => new URL(`file://${value}`),
     createMainWindowOpenHandler: () => vi.fn(), createMainNavigationGuard: () => ({ willNavigate: vi.fn(), willRedirect: vi.fn() }),
-    trustedRendererOrigin: () => "http://127.0.0.1:18888", rendererOriginArguments: () => [], deliverPackageInstall: vi.fn(),
+    trustedRendererOrigin: () => "http://127.0.0.1:18888", rendererOriginArguments: () => [], deliverPackageInstall: vi.fn(), appReadiness: { track: vi.fn() }, lastErrorPageUrl: null,
     console: { warn: vi.fn(), error: vi.fn(), log: vi.fn() },
     createRendererRecovery: () => ({ onGone: async () => "ignored" }), splashPage: () => "data:,", RECONNECTING_LINE: "Reconnecting",
     // Module state the lane's startup reveal (pendingRevealWindows, 15 s fallback) reads.

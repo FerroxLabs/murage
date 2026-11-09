@@ -28,7 +28,7 @@ describe("approval ask reason logging", () => {
     for (const [id, command, patch] of rows) expect(autoVerdict({ ...full, id }, "shell", sentinel, context(command, patch)).approve).toBeNull();
     expect(log.mock.calls.map(([line]) => line)).toEqual([
       "approvals: asked bot=wipe tool=shell reason=always-ask:delete-root origin=owner unattended=0 cmd=shell level=full owner=0 suppressed=0",
-      "approvals: asked bot=unreadable tool=shell reason=unreadable origin=other unattended=0 cmd=shell reader=held level=full owner=0 held=unread suppressed=0",
+      "approvals: asked bot=unreadable tool=shell reason=unreadable origin=other unattended=0 cmd=shell reader=held level=full owner=0 held=unread suppressed=0 why=tokenizer shape=other", // MARKS r12: the strict read names its closed-list doubt
       "approvals: asked bot=env tool=shell reason=unread-call:U20 origin=owner unattended=0 cmd=shell level=full owner=0 held=unread suppressed=0",
       "approvals: asked bot=pin tool=shell reason=unread-call:U19 origin=owner unattended=0 cmd=shell level=full owner=0 held=unread suppressed=0",
       "approvals: asked bot=stop tool=shell reason=stop-line:pay origin=owner unattended=0 cmd=shell level=full owner=0 suppressed=0",

@@ -46,6 +46,7 @@ async function fixture(extra: Record<string, unknown> = {}) {
       if (command.operation === 'cdp') {
         const { method, params } = command.params as any; let value: any = {};
         if (method === 'Page.getFrameTree') value = { frameTree: { frame: { id: 'frame', loaderId: 'L' } } };
+        if (method === "Murage.getAllFrames") value = { frames: [{ frameId: 0, parentFrameId: -1 }] };
         if (method === 'Page.createIsolatedWorld') value = { executionContextId: 7 };
         if (method === 'DOM.getDocument') value = { root: { nodeType: 9, children: [] } };
         if (method === 'DOM.describeNode') value = { node: { backendNodeId: 12 } };
@@ -94,7 +95,7 @@ const stateOf = async (f: F) => JSON.parse(await fs.readFile(f.options.stateFile
 const restart = async (f: F, extra: Record<string, unknown> = {}) => track(await createBrowserExtensionService({ ...f.options, ...extra } as never));
 const resume = async (f: F, service: Awaited<ReturnType<typeof restart>>) => {
   const b = f.bindings.get(f.id)!; b.state = 'active'; b.generation++;
-  await service.handleMessage('profile', { version: 1, type: 'event', bindingId: f.id, generation: b.generation, event: 'resumed', data: {} } as never);
+  await service.handleMessage('profile', { version: 1, type: 'event', bindingId: f.id, generation: b.generation, event: 'resumed', data: { resumedAt: b.generation } } as never);
 };
 
 describe('T22 state.json version 2', () => {

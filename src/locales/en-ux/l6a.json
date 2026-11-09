@@ -1,1 +1,27 @@
-{}
+{
+  "ux.l6a.hire.title": "Hire a bot",
+  "ux.l6a.hire.ask": "What should this bot do?",
+  "ux.l6a.hire.placeholder": "For example: chase unpaid invoices and follow up with clients",
+  "ux.l6a.hire.nameLabel": "Name",
+  "ux.l6a.hire.level": "{name} starts on {level}, so it checks with you before it acts. You can change that in its settings.",
+  "ux.l6a.hire.browse": "Browse templates",
+  "ux.l6a.hire.cancel": "Cancel",
+  "ux.l6a.hire.go": "Hire this bot",
+  "ux.l6a.hire.going": "Hiring",
+  "ux.l6a.hire.tooShort": "Say a few words about the job first.",
+  "ux.l6a.hire.close": "Close",
+  "ux.l6a.hire.failed": "That bot was not hired. Try once more.",
+  "ux.l6a.hire.entry": "Hire in one sentence",
+  "ux.l6a.today.bareTitle": "Your bots need a brain first",
+  "ux.l6a.today.bareSub": "Connect Flux Router, or sign in to an AI tool on this computer.",
+  "ux.l6a.today.open": "Open setup",
+  "ux.l6a.today.left": "{n} short cards, then your first result.",
+  "ux.l6a.today.leftOne": "One short card, then your first result.",
+  "ux.l6a.today.resultNext": "Your first result is next.",
+  "ux.l6a.today.tagBare": "Nothing to think with yet",
+  "ux.l6a.connect.notNow": "Not now",
+  "ux.l6a.connect.waiting": "I will wait here. Connect {app} when you are ready.",
+  "ux.l6a.connect.unfinished": "{provider} did not finish the sign-in.",
+  "ux.l6a.connect.again": "Try again",
+  "ux.l6a.connect.other": "Use a different account"
+}

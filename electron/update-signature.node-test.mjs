@@ -299,7 +299,7 @@ test("cached continuation verifies the publisher before admission and rechecks a
     const h = coordinator(f);
     const sha512 = createHash("sha512").update(await readFile(f.file)).digest("base64");
     const info = { version: "2.0.0", files: [{ url: name, sha512 }] };
-    h.updater.downloadedUpdateHelper = { file: f.file, versionInfo: info, fileInfo: { info: info.files[0] } };
+    h.updater.downloadedUpdateHelper = { cacheDir: f.dir, file: f.file, versionInfo: info, fileInfo: { info: info.files[0] } };
     h.updater.checkForUpdates = async () => ({ isUpdateAvailable: true, updateInfo: info });
     const candidate = await captureUpdateCandidate(h.updater, { downloadedFiles: [f.file] });
     let admitted = 0;
@@ -324,7 +324,9 @@ test("cached continuation verifies the publisher before admission and rechecks a
 test("both error surfaces use the external-open bridge and every locale carries the action and refusal", async () => {
   for (const file of ["UpdateBanner.tsx", "SettingsModal.tsx"]) {
     const source = await readFile(new URL(`../src/components/${file}`, import.meta.url), "utf8");
-    assert.match(source, /openExternal\?\.\("https:\/\/murage\.ai\/download"\)/);
+    // both surfaces open the download page through a local openPage helper (1.0.18 action feedback): the call site passes the download page and the helper is the external-open bridge
+    assert.match(source, /openPage\("https:\/\/murage\.ai\/download"\)/);
+    assert.match(source, /const openPage = \(url: string\) => \{[^}]*window\.muragebox\?\.openExternal\?\.\(url\)/);
     assert.match(source, /t\("updates.verificationRefused"\)/);
     assert.match(source, /t\("updates.downloadFromMurage"\)/);
   }

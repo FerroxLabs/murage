@@ -1,3 +1,4 @@
+import { fixtureBotFolder } from "./testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { ChildProcess } from "node:child_process";
@@ -38,7 +39,7 @@ function closeWrapper() {
   child.emit("close", null, "SIGTERM");
 }
 function launch(report = true) {
-  child = spawnCli("/bin/sh", [], { stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
+  child = spawnCli("/bin/sh", [], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
   // Pin the init while the wrapper is alive, just as the real status pipe does.
   if (report) (child.stdio as unknown as PassThrough[])[BWRAP_STATUS_FD].emit("data", Buffer.from(JSON.stringify({ "child-pid": state.init.pid }) + "\n"));
   return child;

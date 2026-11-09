@@ -10,6 +10,7 @@
 // chooses its heading, and never the engine's text.
 import { t } from "@/lib/i18n";
 import { engineErrorCategory, isWordedLocalFailure, type ProviderErrorInfo } from "../../shared/provider-error";
+import { serviceIdentity, type ServiceIdentity } from "../../shared/provider-service";
 import { isProviderSafetyBlock } from "../../shared/provider-safety";
 import { plainTurnError } from "../../shared/turn-error-code";
 
@@ -21,8 +22,24 @@ export function providerErrorCategory(info: ProviderErrorInfo): ProviderErrorCat
   return (PROVIDER_CATEGORIES as readonly string[]).includes(info.kind) ? info.kind as ProviderErrorCategory : "unknown";
 }
 
-/** The card's heading for a structured provider error. */
+/** Which reviewed copy a named error uses where it differs from the generic one (ERRORS-NAME-THE-SERVICE): a payment, a refused
+ * sign-in or a refused key, or a reply with no category. Every other category keeps its copy with the service named in it. */
+export function namedProviderVariant(info: ProviderErrorInfo, service: ServiceIdentity): "payment" | "fluxPayment" | "signIn" | "key" | "unknown" | undefined {
+  const category = providerErrorCategory(info);
+  // A provider label with no server stamp (a message from an earlier build) keeps the generic copy: it names no plan to top up.
+  if (category === "payment") return !info.engine && !info.connection ? undefined : service.account === "flux" ? "fluxPayment" : "payment";
+  if (category === "authentication" && service.account !== "flux") return service.account === "own-key" ? "key" : "signIn";
+  return category === "unknown" ? "unknown" : undefined;
+}
+
+/** The card's heading for a structured provider error. Names the service when the server stamped which one it was. */
 export function providerErrorTitle(info: ProviderErrorInfo): string {
+  const service = serviceIdentity(info);
+  if (service) {
+    const variant = namedProviderVariant(info, service);
+    if (variant) return t(`providerError.named.${variant}.title`, { service: service.name });
+    return t(`providerError.${providerErrorCategory(info)}.title`, { provider: service.name });
+  }
   const provider = info.provider === "flux-router" ? "Flux Router" : t("providerError.provider");
   return t(`providerError.${providerErrorCategory(info)}.title`, { provider });
 }

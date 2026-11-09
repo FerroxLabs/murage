@@ -395,3 +395,32 @@ describe("the opener plays out before the owner's turn (CallView sayOpener)", ()
     expect(playing.current).toBe(false);
   });
 });
+
+describe("D24 call speech identities", () => {
+  it("accepts only this live channel's reply and drops identities and pending waits on connection loss", async () => {
+    const ws = await answered();
+    const signal = new AbortController().signal;
+    const seen: unknown[] = [];
+    const off = mod.onCallSpeechReply(reply => seen.push(reply));
+    try {
+      const waiting = mod.callSpeechReply("message", "thread", signal);
+      const frame = { callId: CALL_ID, threadId: "thread", botId: "scout", messageId: "message", replyId: "reply", bootId: "boot" };
+      ws.frame("call.speech.ready", { ...frame, callId: "someone-else" });
+      expect(seen).toEqual([]);
+      ws.frame("call.speech.ready", frame);
+      expect(await waiting).toMatchObject({ callSessionId: CALL_ID, replyId: "reply" });
+      expect(seen).toHaveLength(1);
+      ws.frame("call.speech.ready", frame);
+      expect(seen).toHaveLength(1);
+      ws.frame("call.speech.invalidated", { callId: CALL_ID });
+      expect(seen.at(-1)).toBeNull();
+      const pending = mod.callSpeechReply("next", "thread", signal);
+      ws.drop();
+      expect(await pending).toBeNull();
+      expect(seen.at(-1)).toBeNull();
+      const old = mod.callSpeechReply("message", "thread", signal);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await old).toBeNull();
+    } finally { off(); }
+  });
+});

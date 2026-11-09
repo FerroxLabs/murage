@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SETTINGS-UX-1011 S3: the ranker, against the 40-query table Fable wrote before it was built
-// (handoffs/HANDOFF-1012-UX-L3A.md carries the table's ordering rule and why each row expects what it does).
+// (HANDOFF-1012-UX-L3A.md carries the table's ordering rule and why each row expects what it does).
 import { describe, expect, it } from "vitest";
 
 import { SETTINGS_CARDS, cardNameWords } from "./settings-card-registry";
@@ -43,7 +43,7 @@ const TABLE: Array<{ q: string; ctx: keyof typeof CONTEXT; first: string; top5?:
   {"q": "command line", "ctx": "app", "first": "models.command-lines"},
   {"q": "api key", "ctx": "app", "first": "models.paste-keys", "top5": ["models.providers", "connections.apps", "webSearch.provider-keys"]},
   {"q": "model", "ctx": "app", "first": "models.providers", "top5": ["models.providers", "bot.model.model@Nova", "models.catalogs"]},
-  {"q": "permission", "ctx": "app", "first": "bot.permissions.level@Nova", "top5": ["bot.permissions.level@Nova", "bot.permissions.can-talk@Nova"]},
+  {"q": "permission", "ctx": "app", "first": "bot.permissions.level@Nova", "top5": ["bot.permissions.level@Nova", "explainer.approve-all"]},
   {"q": "workspace", "ctx": "app", "first": "bot.access.folder@Nova"},
   {"q": "sandbox", "ctx": "app", "first": "companion.computer", "top5": ["companion.computer", "bot.access.computer@Nova"]},
   {"q": "mobile", "ctx": "app", "first": "companion.pairing", "top5": ["companion.pairing", "bot.access.phone@Nova"]},

@@ -32,6 +32,7 @@ async function world() {
       if (command.operation === "cdp") {
         const { method, params } = command.params as any; let value: any = {};
         if (method === "Page.getFrameTree") value = { frameTree: { frame: { id: "frame", loaderId: "L" } } };
+        if (method === "Murage.getAllFrames") value = { frames: [{ frameId: 0, parentFrameId: -1 }] };
         if (method === "Page.createIsolatedWorld") value = { executionContextId: 7 };
         if (method === "DOM.getDocument") value = { root: { nodeType: 9, children: [] } };
         if (method === "DOM.describeNode") value = { node: { backendNodeId: 12 } };
@@ -80,7 +81,7 @@ describe("C2 RES-002: an uncertain restart report reaches the service", () => {
     expect(status.state).toBe("paused"); expect(status.pausedReason).toBe("uncertain"); expect(status.outcomeUnknown).toBe(true);
     // The owner resumes in the browser: the runtime reports it and the mark goes.
     const runtime = w.bindings.get(bindingId)!; runtime.generation++; runtime.state = "active";
-    await service.handleMessage("profile", { version: 1, type: "event", bindingId, generation: runtime.generation, event: "resumed", data: {} } as never);
+    await service.handleMessage("profile", { version: 1, type: "event", bindingId, generation: runtime.generation, event: "resumed", data: { resumedAt: runtime.generation } } as never);
     expect(statusOf(service, bindingId).outcomeUnknown).toBeUndefined();
   });
   it("a late uncertain report on a binding that is already stopped does not revive or mark it", async () => {
@@ -179,7 +180,7 @@ describe("C2 T25 server half: Your turn", () => {
     const w = await world(); const service = await w.open(); const { bindingId } = await w.bind(service);
     w.setGuard(true); await expect(click(service, bindingId)).rejects.toThrow();
     const runtime = w.bindings.get(bindingId)!; runtime.generation++; runtime.state = "active";
-    await service.handleMessage("profile", { version: 1, type: "event", bindingId, generation: runtime.generation, event: "resumed", data: {} } as never);
+    await service.handleMessage("profile", { version: 1, type: "event", bindingId, generation: runtime.generation, event: "resumed", data: { resumedAt: runtime.generation } } as never);
     expect(w.continued).toHaveLength(1);
     expect(w.continued[0].text).toBe("The owner finished the step on fixture.test. Take a new snapshot and continue the task.");
     expect(handoffContinueText("fixture.test")).toBe(w.continued[0].text);
@@ -189,7 +190,7 @@ describe("C2 T25 server half: Your turn", () => {
     const w = await world(); const service = await w.open(); const { bindingId } = await w.bind(service);
     await service.pause(bindingId);
     const runtime = w.bindings.get(bindingId)!; runtime.generation++; runtime.state = "active";
-    await service.handleMessage("profile", { version: 1, type: "event", bindingId, generation: runtime.generation, event: "resumed", data: {} } as never);
+    await service.handleMessage("profile", { version: 1, type: "event", bindingId, generation: runtime.generation, event: "resumed", data: { resumedAt: runtime.generation } } as never);
     expect(w.continued).toHaveLength(0);
   });
   it("Stop task from a Your turn card stops it, and a stopped task cannot be continued", async () => {

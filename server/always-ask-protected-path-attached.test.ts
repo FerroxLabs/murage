@@ -16,6 +16,7 @@ process.env.HOME = "/home/tester";
 process.env.USERPROFILE = "/home/tester";
 vi.resetModules();
 const { alwaysAskCommand } = await import("./always-ask.ts");
+const { expectProtectedPath } = await import("./testing/marks-doubt-free.ts");
 
 type Row = [cmd: string, rule: string | null];
 
@@ -124,6 +125,8 @@ const WRAPPED_ORDINARY: Row[] = [
 
 describe("A+: an option value glued to its option is read as the separate form", () => {
   it.each(ATTACHED)("%s -> %s", (cmd, rule) => {
+    // MARKS r12 re-baseline (MurageMain 11-07 item 1): the doubt-free read names it; strict read and every level still card
+    if (rule === "protected-path") return expectProtectedPath(cmd, "/home/tester/dev/project");
     expect(alwaysAskCommand(cmd, "/home/tester/dev/project")?.rule ?? null).toBe(rule);
   });
   it.each(ATTACHED_ORDINARY)("%s -> %s", (cmd, rule) => {
@@ -133,10 +136,14 @@ describe("A+: an option value glued to its option is read as the separate form",
 
 describe("A+: a wrapper's own arguments are judged before what it runs", () => {
   it.each(WRAPPED)("%s -> %s", (cmd, rule) => {
+    // MARKS r12 re-baseline (MurageMain 11-07 item 1): the doubt-free read names it; strict read and every level still card
+    if (rule === "protected-path") return expectProtectedPath(cmd, "/home/tester/dev/project");
     expect(alwaysAskCommand(cmd, "/home/tester/dev/project")?.rule ?? null).toBe(rule);
   });
   it.each(WRAPPED_ORDINARY)("%s -> %s", (cmd, rule) => {
-    expect(alwaysAskCommand(cmd, "/home/tester/dev/project")?.rule ?? null).toBe(rule);
+    // MARKS r9 C3: probe xargs -a list.txt echo -> unreadable (file-fed-args) at cwd /home/tester/dev/project, /w and no cwd
+    const now = cmd === "xargs -a list.txt echo" ? "unreadable" : rule;
+    expect(alwaysAskCommand(cmd, "/home/tester/dev/project")?.rule ?? null).toBe(now);
   });
   it("a folder a value names is a folder the text does not fix", () => {
     expect(alwaysAskCommand("sudo -D \"$d\" rm -rf ./*", "/home/tester/dev/project")?.rule).toBe("unreadable");

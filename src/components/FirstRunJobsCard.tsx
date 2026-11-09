@@ -28,6 +28,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   connectApp,
+  connectAppStatusForLabel,
   connectLabelTaken,
   firstFreeConnectLabel,
   readConnectAppStatus,
@@ -35,8 +36,11 @@ import {
   type ConnectAppAccount,
 } from "@/lib/connect-app";
 import { ConnectLabelForm } from "./ConnectLabelForm";
+import { t } from "@/lib/i18n";
 import { opensPurchasePages } from "@/lib/native-shell";
-import { FIRST_RUN_COPY, firstRunAddress } from "@/lib/first-run-copy";
+import { FIRST_RUN_COPY, firstRunAddress, setUpJobsLabel } from "@/lib/first-run-copy";
+import { inTableOrder, jobTitle, setPendingLocal, writePendingJobs } from "@/lib/first-run-pending";
+import { usePendingJobs } from "./today/use-pending-jobs";
 import { enableFirstRunReview, installFirstRunCrew } from "@/lib/first-run-crew";
 import { engineRowTitle } from "@/lib/first-run-detect";
 import {
@@ -81,6 +85,9 @@ import {
   type FirstRunSearchRouting,
 } from "@/lib/first-run-jobs";
 import { FLUX_KEY_NOT_A_KEY, FLUX_KEY_REJECTED, fluxBridge, readFluxStatus, saveAndProveFluxKey } from "@/lib/flux-key-paste";
+import { afterPaint, startFirstRunTiming } from "@/lib/first-run-timing";
+import type { LocaleKey } from "@/locales";
+import { FirstRunWorking } from "./FirstRunWorking";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { api, useStore, type Bot } from "@/state/store";
 import type { SetupJobApp, SetupView } from "../../shared/setup";
@@ -103,6 +110,15 @@ import {
 } from "./FirstRunChrome";
 import { FirstRunFluxConnect } from "./FirstRunFluxCard";
 import { FLUX_SIGNUP_URL } from "./FluxRouterConnection";
+
+/** What the Chief says it is doing the moment a job is picked. */
+export const JOB_PRESS_WORDS = {
+  brief: "firstRun.press.brief",
+  day: "firstRun.press.day",
+  notes: "firstRun.press.notes",
+  research: "firstRun.press.research",
+  business: "firstRun.press.business",
+} as const satisfies Record<FirstRunJobId, LocaleKey>;
 
 const jobsCopy = FIRST_RUN_COPY.chat.jobs;
 const flowCopy = FIRST_RUN_COPY.flow["do-it"];
@@ -221,12 +237,34 @@ const UNKNOWN_ROWS: readonly JobRowView[] = jobsCopy.rows.map((row, index) => ({
  * pressable row: "ready now" on a machine nobody has looked at is the exact
  * small lie this release exists to delete.
  */
-export function FirstRunJobsCard({ settled }: { settled: boolean }) {
+export function FirstRunJobsCard({ settled, bot }: { settled: boolean; bot?: Bot | null }) {
   const { view } = useSetupView();
   const world = useFirstRunWorld(view);
   const [busy, setBusy] = useState("");
   const [failure, setFailure] = useState("");
   const [acted, setActed] = useState(false);
+  /**
+   * THE JOB THAT WAS PRESSED, FROM THE PRESS UNTIL THE NEXT CARD TAKES OVER.
+   *
+   * Picking "Brief me every morning" used to change nothing visible for as
+   * long as the answer took, and on Cloud that was seconds. Set in the click
+   * handler, so the row and the Chief working show in the same render as the
+   * press. It outlives the request on purpose: the do-it card arrives when
+   * the server settles this one, and the gap between the two is still the
+   * Chief working, not a pause.
+   */
+  const [picked, setPicked] = useState<FirstRunJobId | "">("");
+  /** The ticks. Brief, day and notes come ticked (FIRSTRUN-1019 1.12); every ticked job gets set up. */
+  const [pick, setPick] = useState<ReadonlySet<FirstRunJobId>>(() => new Set<FirstRunJobId>(["brief", "day", "notes"]));
+  const toggle = (id: FirstRunJobId) => setPick((before) => {
+    const next = new Set(before);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
+  useEffect(() => {
+    if (settled) setPicked("");
+  }, [settled]);
   /**
    * `acted` COVERS THE GAP BETWEEN THE PRESS AND THE SERVER, AND NOTHING MORE.
    *
@@ -254,16 +292,51 @@ export function FirstRunJobsCard({ settled }: { settled: boolean }) {
   const choose = async (id: FirstRunJobId, viaEscape: boolean) => {
     if (busy || done) return;
     setBusy(id);
+    setPicked(id);
     setFailure("");
+    const timing = startFirstRunTiming(`job ${id}`);
     try {
       if (viaEscape) takeEscapeHatch();
       else forgetEscapeHatch();
-      await answerSetupStep("chat", id);
+      // The picked row and the Chief working are painted before anything leaves.
+      await afterPaint();
+      await answerSetupStep("chat", id, timing);
       setActed(true);
     } catch (cause) {
       forgetEscapeHatch();
+      setPicked("");
       setFailure(failureText(cause, flowCopy.failure));
     } finally {
+      timing.done();
+      setBusy("");
+    }
+  };
+
+  /**
+   * "SET UP THESE n". The first ticked job, in table order, runs now and is answered exactly as before
+   * (`answerSetupStep("chat", id)`), so the `chat` note stays ONE job id for every shipped reader (guard 4). The rest are
+   * written to the queue first, so they survive a restart, and start by themselves one after another (ruling 4).
+   */
+  const commit = async () => {
+    if (busy || done) return;
+    const ticked = inTableOrder(pick);
+    if (ticked.length === 0) return;
+    const [first, ...rest] = ticked;
+    setBusy(first);
+    setPicked(first);
+    setFailure("");
+    const timing = startFirstRunTiming(`job ${first}`);
+    try {
+      forgetEscapeHatch();
+      await afterPaint();
+      setPendingLocal(await writePendingJobs(api, rest));
+      await answerSetupStep("chat", first, timing);
+      setActed(true);
+    } catch (cause) {
+      setPicked("");
+      setFailure(failureText(cause, flowCopy.failure));
+    } finally {
+      timing.done();
       setBusy("");
     }
   };
@@ -285,44 +358,79 @@ export function FirstRunJobsCard({ settled }: { settled: boolean }) {
       <div className="mt-2 text-[17px] font-semibold text-ink">{chiefQuestion(firstRunAddress(view?.ownerName))}</div>
       <FirstRunLine>{world ? chiefLead(world) : jobsCopy.lead}</FirstRunLine>
 
+      {world && chiefLead(world) === jobsCopy.leadNoBrain && <FirstRunLine quiet>{jobsCopy.waiting}</FirstRunLine>}
       <ul className="mt-3 grid gap-2">
-        {(rows ?? UNKNOWN_ROWS).map((row, index) => (
-          <li key={row.id}>
-            <button
-              type="button"
-              disabled={done || !rows || busy === row.id}
-              onClick={() => void choose(row.id, false)}
-              className={`flex w-full flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-left ${FIRST_RUN_FOCUS} ${
-                index === 0 ? "border-accent/60" : "border-hairline/40"
-              } bg-inset disabled:opacity-60`}
-            >
-              <span className="min-w-0">
-                <span className="block text-[14px] font-medium text-ink">
-                  {row.title}
-                  {row.recommended && (
-                    <span className="ml-2 rounded-full border border-accent/60 px-2 py-0.5 align-middle text-[11.5px] font-medium text-accent">
-                      {row.recommended}
+        {(rows ?? UNKNOWN_ROWS).map((row, index) => {
+          const on = pick.has(row.id);
+          return (
+            <li key={row.id}>
+              <label
+                data-state={picked === row.id ? "picked" : undefined}
+                className={`flex w-full cursor-pointer flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-left ${
+                  on ? "border-accent bg-accent/10" : index === 0 ? "border-accent/60 bg-inset" : "border-hairline/40 bg-inset"
+                } ${done ? "opacity-60" : ""}`}
+              >
+                <span className="flex min-w-0 items-start gap-3">
+                  <input
+                    type="checkbox"
+                    className={`mt-1 size-4 shrink-0 accent-accent ${FIRST_RUN_FOCUS}`}
+                    checked={on}
+                    disabled={done || !rows || Boolean(busy)}
+                    onChange={() => toggle(row.id)}
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-[14px] font-medium text-ink">
+                      {row.title}
+                      {row.recommended && (
+                        <span className="ml-2 rounded-full border border-accent/60 px-2 py-0.5 align-middle text-[11.5px] font-medium text-accent">
+                          {row.recommended}
+                        </span>
+                      )}
                     </span>
-                  )}
+                    <span className="block text-[12.5px] leading-relaxed text-ink-secondary">{row.sub}</span>
+                  </span>
                 </span>
-                <span className="block text-[12.5px] leading-relaxed text-ink-secondary">{row.sub}</span>
-              </span>
-              {row.tag && (
-                <span
-                  className={`shrink-0 text-[12.5px] ${
-                    row.tag.tone === "ready" ? "text-success" : row.tag.tone === "accent" ? "text-accent" : "text-ink-secondary"
-                  }`}
-                >
-                  {row.tag.text}
-                </span>
-              )}
-            </button>
-            {row.note && <p className="mt-1 px-3 text-[12.5px] text-ink-secondary">{row.note}</p>}
-          </li>
-        ))}
+                {row.tag && (
+                  <span
+                    className={`shrink-0 text-[12.5px] ${
+                      row.tag.tone === "ready" ? "text-success" : row.tag.tone === "accent" ? "text-accent" : "text-ink-secondary"
+                    }`}
+                  >
+                    {row.tag.text}
+                  </span>
+                )}
+              </label>
+              {row.note && <p className="mt-1 px-3 text-[12.5px] text-ink-secondary">{row.note}</p>}
+            </li>
+          );
+        })}
       </ul>
-
       {!done && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={pick.size === 0 || !rows || Boolean(busy)}
+            onClick={() => void commit()}
+            className={`${FIRST_RUN_PRIMARY} ${FIRST_RUN_FOCUS}`}
+          >
+            {setUpJobsLabel(pick.size)}
+          </button>
+          <button
+            type="button"
+            disabled={!rows || Boolean(busy)}
+            onClick={() => setPick(new Set<FirstRunJobId>(FIRST_RUN_JOB_IDS))}
+            className={`${FIRST_RUN_CHIP} ${FIRST_RUN_FOCUS}`}
+          >
+            {jobsCopy.tickAll}
+          </button>
+        </div>
+      )}
+      {done && acted && pick.size > 0 && (
+        <FirstRunLine quiet>{`${jobsCopy.settledPrefix} ${inTableOrder(pick).map(jobTitle).join(", ")}`}</FirstRunLine>
+      )}
+
+      {picked && !settled && <FirstRunWorking bot={bot} words={t(JOB_PRESS_WORDS[picked])} />}
+      {!done && !picked && (
         <button
           type="button"
           disabled={!rows || Boolean(busy)}
@@ -345,6 +453,12 @@ function Eyebrow({ children }: { children: ReactNode }) {
   return <div className="mt-3 text-[12px] font-semibold uppercase tracking-[0.14em] text-ink-secondary">{children}</div>;
 }
 
+/** Who runs the sign-in page for an app, for the unfinished line. Both
+ *  first-run apps are Google's (SETUP_JOB_APPS). */
+export function connectProvider(need: FirstRunJobNeed): string {
+  return need === "gmail" || need === "googlecalendar" ? "Google" : need;
+}
+
 export function FirstRunConnectView({
   screen,
   busy,
@@ -358,6 +472,11 @@ export function FirstRunConnectView({
   onCancelLabel = () => {},
   onSkipToInput,
   onElsewhere,
+  unfinished = "",
+  onRetry = () => {},
+  onOtherAccount = () => {},
+  parked = false,
+  onNotNow,
 }: {
   screen: FirstRunConnectScreen;
   busy: FirstRunJobNeed | "";
@@ -376,7 +495,18 @@ export function FirstRunConnectView({
   onCancelLabel?: () => void;
   onSkipToInput: () => void;
   onElsewhere: () => void;
+  /** UX-L6A part 2 (R1-34): the app whose sign-in came back unfinished
+   *  (window closed, Google refused, or the wait ran out), or "". */
+  unfinished?: FirstRunJobNeed | "";
+  onRetry?: (need: FirstRunJobNeed) => void;
+  onOtherAccount?: (need: FirstRunJobNeed) => void;
+  /** "Not now" was pressed: the job waits on this screen. */
+  parked?: boolean;
+  /** Absent: no "Not now" (a phone, or nothing but Flux to connect). */
+  onNotNow?: () => void;
 }) {
+  const apps = screen.rows.filter((row) => row.need !== "flux").map((row) => row.bold);
+  const firstApp = apps.length > 0;
   return (
     <FirstRunBubble>
       <FirstRunLine>{screen.lead}</FirstRunLine>
@@ -405,6 +535,19 @@ export function FirstRunConnectView({
                 onConfirm={(alias) => onConfirmLabel(row.need, alias)}
                 onCancel={onCancelLabel}
               />
+            ) : unfinished === row.need && desktop === true ? (
+              // R1-34: said on the row, with both ways forward. Never a
+              // failure announced while the sign-in might still be going:
+              // connectApp only hands back unfinished after its wait ends.
+              <span className="flex flex-wrap items-center gap-2" data-connect-unfinished={row.need}>
+                <span role="status" className="text-[12.5px] text-ink-secondary">{t("ux.l6a.connect.unfinished", { provider: connectProvider(row.need) })}</span>
+                <button type="button" disabled={Boolean(busy)} onClick={() => onRetry(row.need)} className={`${FIRST_RUN_CHIP} ${FIRST_RUN_FOCUS} shrink-0`}>
+                  {t("ux.l6a.connect.again")}
+                </button>
+                <button type="button" disabled={Boolean(busy)} onClick={() => onOtherAccount(row.need)} className={`${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
+                  {t("ux.l6a.connect.other")}
+                </button>
+              </span>
             ) : row.need === "flux" || desktop === true ? (
               <button
                 type="button"
@@ -422,7 +565,15 @@ export function FirstRunConnectView({
       </ul>
 
       <FirstRunFailure message={failure} />
+      <div role="status">
+        {parked && firstApp && <FirstRunLine quiet>{t("ux.l6a.connect.waiting", { app: new Intl.ListFormat(undefined, { style: "long", type: "disjunction" }).format(apps) })}</FirstRunLine>}
+      </div>
       <div className="mt-2 flex flex-wrap items-center gap-3">
+        {onNotNow && !parked && firstApp && (
+          <button type="button" disabled={Boolean(busy)} onClick={onNotNow} className={`${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
+            {t("ux.l6a.connect.notNow")}
+          </button>
+        )}
         {screen.skipToInput && (
           <button type="button" disabled={Boolean(busy)} onClick={onSkipToInput} className={`${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
             {screen.skipToInput}
@@ -815,7 +966,7 @@ export async function firstRunGo(
  * the answer. Every stage's words come out of the two modules; nothing is
  * decided here except where the person is.
  */
-export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean }) {
+function FirstRunDoItCardInner({ bot, settled }: { bot: Bot; settled: boolean }) {
   // NOTHING ON A RESULT SCREEN IS AN OPEN QUESTION. Every other card in this
   // flow hides its controls once the server says the step landed; this one's
   // only control is "take something else off my plate", which is the way back
@@ -834,6 +985,16 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
   const [shown, setShown] = useState(1);
   const [busyNeed, setBusyNeed] = useState<FirstRunJobNeed | "">("");
   const [labelling, setLabelling] = useState<FirstRunJobNeed | "">("");
+  /** UX-L6A part 2 (R1-34): a sign-in that came back unfinished, and its label. */
+  const [unfinished, setUnfinished] = useState<{ need: SetupJobApp; label: ConfirmedConnectLabel } | null>(null);
+  /** "Not now" on the connect screen: the job waits here. */
+  const [parked, setParked] = useState(false);
+  /** Bumped by every later connect action, so a slow account read from
+   *  "Use a different account" never reopens a form the owner moved past. */
+  const otherAccountRead = useRef(0);
+  /** The read id of a recheck still in flight, or 0. Its busy mark is
+   *  cleared when the screen is left, or the controls would stay disabled. */
+  const recheckInFlight = useRef(0);
   /** The accounts each app on the connect screen already has, so its label
    *  form fills in a label still free. */
   const [knownAccounts, setKnownAccounts] = useState<Partial<Record<FirstRunJobNeed, readonly ConnectAppAccount[]>>>({});
@@ -990,7 +1151,20 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
   /** Back to the Chief, with the job, the text and the parsed items cleared.
    *  None of the three was ever persisted; the choice was, so it is the one
    *  thing that has to be put back. */
+  /** Leaving the connect screen (or saying Not now) ends its sign-in states:
+   *  no open label form, no unfinished line, no pending account read. */
+  const leaveConnectStates = () => {
+    if (recheckInFlight.current !== 0 && recheckInFlight.current === otherAccountRead.current) setBusyNeed("");
+    recheckInFlight.current = 0;
+    otherAccountRead.current += 1;
+    setLabelling("");
+    setTaken(null);
+    setUnfinished(null);
+    setParked(false);
+  };
+
   const elsewhere = async () => {
+    leaveConnectStates();
     setTyped("");
     setItems([]);
     setStage(null);
@@ -1016,16 +1190,24 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
     if (desktop !== true) return;
     // An app's Connect opens its label form; the sign-in starts only from
     // the confirmed label (confirmLabel), the same rule as Connected apps.
+    setUnfinished(null);
+    setParked(false);
+    otherAccountRead.current += 1;
     setFailure("");
     setTaken(null);
     setLabelling((current) => (current === need ? "" : need));
   };
 
-  const confirmLabel = async (need: FirstRunJobNeed, alias: ConfirmedConnectLabel) => {
-    if (!job || !world || busyNeed || need === "flux" || desktop !== true) return;
+  const confirmLabel = async (need: FirstRunJobNeed, alias: ConfirmedConnectLabel, retry = false) => {
+    // `retry`: called from recheckUnfinished's read, whose own busy mark this
+    // render's `busyNeed` may still show.
+    if (!job || !world || (busyNeed && !retry) || need === "flux" || desktop !== true) return;
     setBusyNeed(need);
     setFailure("");
     setTaken(null);
+    setUnfinished(null);
+    setParked(false);
+    otherAccountRead.current += 1;
     // The row goes back to its button, which says to finish in the browser.
     setLabelling("");
     try {
@@ -1037,13 +1219,15 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
         cancelled: () => gone.current,
       });
       if (gone.current) return;
-      if (!result.connected) return;
-      // Connecting the LAST missing thing advances by itself. Making somebody
-      // press a second button to start the work they already asked for is a
-      // form.
-      const now: FirstRunJobWorld = { ...world, connected: [...world.connected, need], appsUnreadable: false };
-      setStage(afterConnect(job, now));
-      forgetSetupView();
+      // R1-34: the window was closed, Google refused, or the wait ran out.
+      // The row says so and offers both ways forward; the setup read wakes
+      // so a sign-in that finishes late is still seen.
+      if (!result.connected) {
+        setUnfinished({ need, label: alias });
+        forgetSetupView();
+        return;
+      }
+      appConnected(need);
     } catch (cause) {
       if (gone.current) return;
       if (connectLabelTaken(cause)) {
@@ -1057,6 +1241,60 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
     } finally {
       if (!gone.current) setBusyNeed("");
     }
+  };
+
+  /** One app is connected: connecting the LAST missing thing advances by
+   *  itself. Making somebody press a second button to start the work they
+   *  already asked for is a form. */
+  const appConnected = (need: SetupJobApp) => {
+    if (!job || !world) return;
+    const now: FirstRunJobWorld = { ...world, connected: [...world.connected, need], appsUnreadable: false };
+    setStage(afterConnect(job, now));
+    forgetSetupView();
+  };
+
+  /**
+   * R1-34: Try again and Use a different account, after an unfinished
+   * sign-in. Both look again at the account under the label the owner
+   * confirmed first, because the sign-in may have finished after the wait:
+   * active means the job goes on. Otherwise Try again reuses that confirmed
+   * label when its account failed or expired (the harness clears those), and
+   * anything still in flight, or Use a different account, opens the label
+   * form so the next sign-in starts only from a label the owner confirms.
+   * A read that fails says so and keeps the unfinished line. A newer connect
+   * action makes this read stale and it does nothing.
+   */
+  const recheckUnfinished = (mode: "again" | "other") => {
+    const held = unfinished;
+    if (!held || !job || !world || busyNeed || desktop !== true) return;
+    const { need, label } = held;
+    const read = ++otherAccountRead.current;
+    recheckInFlight.current = read;
+    setBusyNeed(need);
+    setFailure("");
+    void readConnectAppStatus(need, api).then((next) => {
+      if (recheckInFlight.current === read) recheckInFlight.current = 0;
+      if (gone.current || read !== otherAccountRead.current) return;
+      setBusyNeed("");
+      if (!next) {
+        setFailure(appsCopy.failure);
+        return;
+      }
+      setKnownAccounts((current) => ({ ...current, [need]: next.accounts ?? [] }));
+      const mine = connectAppStatusForLabel(next, label);
+      if (mine.connected) {
+        setUnfinished(null);
+        appConnected(need);
+        return;
+      }
+      if (mode === "again" && !mine.pending) {
+        void confirmLabel(need, label, true);
+        return;
+      }
+      setUnfinished(null);
+      setTaken(null);
+      setLabelling(need);
+    });
   };
 
   const saveKey = async () => {
@@ -1190,9 +1428,14 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
         takenLabel={labelling && taken?.need === labelling ? taken.label : undefined}
         onConnect={(need) => void connect(need)}
         onConfirmLabel={(need, alias) => void confirmLabel(need, alias)}
-        onCancelLabel={() => { setLabelling(""); setTaken(null); }}
-        onSkipToInput={() => setStage("input")}
+        onCancelLabel={() => { otherAccountRead.current += 1; setLabelling(""); setTaken(null); }}
+        onSkipToInput={() => { leaveConnectStates(); setStage("input"); }}
         onElsewhere={() => void elsewhere()}
+        unfinished={unfinished?.need ?? ""}
+        onRetry={() => recheckUnfinished("again")}
+        onOtherAccount={() => recheckUnfinished("other")}
+        parked={parked}
+        onNotNow={desktop === true ? () => { leaveConnectStates(); setParked(true); } : undefined}
       />
     );
   }
@@ -1292,5 +1535,28 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
       onSwitchOn={() => void switchOnReview()}
       onAgain={() => void elsewhere()}
     />
+  );
+}
+
+/**
+ * THE OTHER TICKED JOBS, SAID UNDER THE FIRST JOB'S RESULT (FIRSTRUN-1019 1.12, ruling 4). They start by themselves; this
+ * line is only the promise, and the hook is also what keeps the queue moving while the person stays in the thread.
+ */
+function NextOnYourList() {
+  const { ids, firstJobFinished } = usePendingJobs();
+  if (!firstJobFinished || ids.length === 0) return null;
+  return (
+    <FirstRunBubble>
+      <FirstRunLine quiet>{`${jobsCopy.nextPrefix} ${ids.map(jobTitle).join(", ")}.`}</FirstRunLine>
+    </FirstRunBubble>
+  );
+}
+
+export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean }) {
+  return (
+    <div className="w-full min-w-0">
+      <FirstRunDoItCardInner bot={bot} settled={settled} />
+      <NextOnYourList />
+    </div>
   );
 }

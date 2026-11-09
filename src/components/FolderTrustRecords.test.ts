@@ -110,7 +110,7 @@ describe("the engine's own trust file (N11 test 19)", () => {
 
   it("names the unreadable file and how to recover", () => {
     expect(text(html([result({ upstreamUnreadable: true })]))).toEqual([
-      `Fuigo's trust file at ${FILE} could not be read, so nothing is trusted here. Make it readable and valid TOML, or remove it, then send the message again.`,
+      `Fuigo's trust file at ${FILE} could not be read, so nothing is trusted here. Make sure Fuigo can read it and that its contents correctly use TOML, a settings file format, or remove the file. Then send the message again.`,
     ]);
   });
 

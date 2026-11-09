@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 // FUIGO-TRUST-V2: Fuigo 1.0.35 folder trust, the store and the driver. The real
 // Fuigo support runs against the fake ACP CLI's 1.0.35 protocol
 // (FAKE_ACP_TRUST_V=2), so these drive the real reply handler, the real spawn
@@ -354,7 +355,7 @@ describe("copy", () => {
   });
   it("the chosen chip names the owner's choice", () => {
     expect(folderTrustNotice(folderTrustChosenName(["AGENTS.md"]))).toEqual({ kind: "chosen", sources: "AGENTS.md" });
-    expect(folderTrustDisplayName(folderTrustChosenName(["AGENTS.md"]))).toBe("You chose to trust this folder: Fuigo brings in AGENTS.md as it applies that. Instructions apply in a new conversation in this folder");
+    expect(folderTrustDisplayName(folderTrustChosenName(["AGENTS.md"]))).toBe("You chose to trust this folder. Fuigo brings in AGENTS.md when applying your choice. Instructions apply in a new conversation in this folder");
   });
   it("(R8) the primer's folder line, on generation 2, claims neither way; generation 1's is untouched", () => {
     const stack = (line: string) => `before\n${line}\nafter`;
@@ -464,7 +465,7 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
     await done(turnId);
     const wire = readDump();
     expect(wire.argv).not.toContain("--trust");
-    expect(wire.initialize.clientCapabilities._meta["fuigo/folderTrust"]).toEqual({ interactive: true, v2: true });
+    expect(wire.initialize.clientCapabilities._meta["fuigo/folderTrust"]).toEqual({ interactive: true, v2: true, reopenNotice: true });
     expect(replies()).toEqual([TRUST_REPLY]);
   });
 
@@ -701,6 +702,16 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
     await done(turnId);
     expect(promptWritten("t-hold-stop")).toBe(false);
   });
+  it("(Fuigo 1.0.40 reopenNotice) the engine's one config_notice after a grant mid-turn shows nothing more: Murage's chip appears once", async () => {
+    const K = join(scratch, "K");
+    await create({ FAKE_ACP_TRUST_WORKSPACE: K, FAKE_ACP_TRUST_ON_PROMPT: "1" });
+    await done(await send("t-reopen", { folderTrust: gate({ trustKeys: [K], sources: ["AGENTS.md"] }) }));
+    expect(replies()).toEqual([TRUST_REPLY]);
+    expect(readDump().reopenNoticeSent).toBe(1);
+    expect(chips()).toEqual([folderTrustChosenName(["AGENTS.md"])]);
+    const titles = recorder.events.filter((e) => e.type === "item.started").map((e) => String((e as any).title ?? ""));
+    expect(titles.filter((title) => /Reopen this session/i.test(title))).toEqual([]);
+  });
   it("(card hold) a request after the prompt is written still takes the late path", async () => {
     await create({ FAKE_ACP_TRUST_PROMPT_FIRST: "1", FAKE_ACP_TRUST_ON_PROMPT: "1" });
     const turnId = await send("t-hold-late", { folderTrust: gate({ sources: ["AGENTS.md"] }) });
@@ -783,7 +794,9 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
         const order = nativeOrder(thread);
         expect(order.indexOf('"outcome":"reject"')).toBeGreaterThan(-1);
         expect(order.indexOf('"outcome":"reject"')).toBeLessThan(order.indexOf('"method":"session/prompt"'));
-        expect(order).toContain('"text":"agents: ');
+        // ql2 sink fold (was '"text":"agents: '): the reply's frame is on the wire trace, its words are not written
+        expect(order).toContain('"sessionUpdate":"agent_message_chunk"');
+        expect(order).not.toContain("agents: ");
       });
       // FUIGO-DESK-LINKED-OWNER-HOME: a fresh bot with pinned skills (a library team) has a
       // linked desk; 1.0.13 parity is the same plain reject, no card, the prompt goes.
@@ -804,7 +817,9 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
         const order = nativeOrder(thread);
         expect(order.indexOf('"outcome":"reject"')).toBeGreaterThan(-1);
         expect(order.indexOf('"outcome":"reject"')).toBeLessThan(order.indexOf('"method":"session/prompt"'));
-        expect(order).toContain('"text":"agents: ');
+        // ql2 sink fold (was '"text":"agents: '): the reply's frame is on the wire trace, its words are not written
+        expect(order).toContain('"sessionUpdate":"agent_message_chunk"');
+        expect(order).not.toContain("agents: ");
         // a linked desk where Fuigo names a kind beyond skills still cards
         await create({ FAKE_ACP_TRUST_KINDS: "skills,mcp", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: version }, { cli: ownCli() });
         const wider = await sendDesk(`${thread}-mcp`, { routeAsks: true, askLevel: true });
@@ -840,7 +855,9 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
       await done(turnId);
       noCard();
       expect(replies().filter((raw) => raw?.includes('"outcome":"trust"'))).toEqual([]);
-      expect(nativeOrder("d-warm")).toContain('"text":"agents: ');
+      // ql2 sink fold (was '"text":"agents: '): the reply's frame is on the wire trace, its words are not written
+      expect(nativeOrder("d-warm")).toContain('"sessionUpdate":"agent_message_chunk"');
+      expect(nativeOrder("d-warm")).not.toContain("agents: ");
     });
     it("no desk field (an owner-picked folder): the card as before", async () => {
       await create({ FAKE_ACP_TRUST_KINDS: "", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: "1.0.38" }, { cli: ownCli() });
@@ -1129,3 +1146,6 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
     expect(closed("post-turn-activity")).toBe(true);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

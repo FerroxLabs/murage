@@ -46,6 +46,9 @@ import { FirstRunFluxCard, FirstRunNoKeyCard } from "./FirstRunFluxCard";
 import { FirstRunHelloCard } from "./FirstRunHelloCard";
 import { FirstRunDoItCard, FirstRunJobsCard } from "./FirstRunJobsCard";
 import { FirstRunNextCard } from "./FirstRunNextCard";
+import { FirstRunNotifyCard } from "./FirstRunNotifyCard";
+import { FirstRunHireCard } from "./FirstRunHireCard";
+import { FirstRunMoveGrokCard } from "./FirstRunMoveGrokCard";
 import { SandboxedFrame } from "./SandboxedFrame";
 
 export function FirstRunCard({ bot, message }: { bot: Bot; message: Message }) {
@@ -100,7 +103,7 @@ function firstRunCardBody(bot: Bot, message: Message, variant: SetupCardVariant,
   void message;
   switch (variant) {
     case "welcome":
-      return <FirstRunHelloCard settled={settled} />;
+      return <FirstRunHelloCard settled={settled} bot={bot} />;
     case "found":
       return <FirstRunAgentsCard bot={bot} settled={settled} />;
     case "bare":
@@ -121,9 +124,15 @@ function firstRunCardBody(bot: Bot, message: Message, variant: SetupCardVariant,
     case "no-key":
       return <FirstRunNoKeyCard />;
     case "jobs":
-      return <FirstRunJobsCard settled={settled} />;
+      return <FirstRunJobsCard settled={settled} bot={bot} />;
     case "do-it":
       return <FirstRunDoItCard bot={bot} settled={settled} />;
+    case "notify":
+      return <FirstRunNotifyCard settled={settled} />;
+    case "hire":
+      return <FirstRunHireCard settled={settled} bot={bot} />;
+    case "move-grok":
+      return <FirstRunMoveGrokCard settled={settled} bot={bot} />;
     // ── PARKED, AND THEREFORE HISTORY. ───────────────────────────────────
     //
     // WHAT AN UPGRADING 0.1.57 INSTALL SEES, DECIDED. W16 re-cut six steps to

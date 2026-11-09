@@ -3,7 +3,7 @@ import { Check, Hand, ShieldCheck, ShieldOff, Zap } from "lucide-react";
 import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
 import { isDesktopOnlyMode, type PermissionMode } from "@/lib/permission-mode";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { levelName } from "@/lib/fold-words";
 import { LazyBoundary, retryableLazy } from "@/components/LazyBoundary";
@@ -37,7 +37,7 @@ export const engineCannotAsk = (driverKind: string | undefined): boolean => Bool
  *  (server/drivers/acp/openclaw.ts); at the other levels Murage sends no
  *  directive, so the owner's own OpenClaw command settings apply. */
 export const ownApprovalsNote = (engine: string) => t("permissionMenu.ownTools", { engine });
-const cannotAskNote = (engine: string) => t("permissionMenu.cannotAsk", { engine });
+export const cannotAskNote = (engine: string) => t("permissionMenu.cannotAsk", { engine });
 
 export const PermissionModeIcon = ({ mode, size, className }: { mode: PermissionMode; size: number; className: string }) =>
   mode === "unlimited" ? <Zap size={size} className={className} /> : mode === "full" ? <ShieldOff size={size} className={className} /> : mode === "auto" ? <ShieldCheck size={size} className={className} /> : <Hand size={size} className={className} />;
@@ -76,6 +76,9 @@ export function PermissionModeMenu({
 }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [tableOpen, setTableOpen] = useState(false);
+  const tableRef = useRef<HTMLDetailsElement>(null);
+  // A chunk that failed to load leaves the table open with only Retry and Close: Close folds the disclosure and puts focus back on its summary.
+  const closeTable = () => { if (tableRef.current) tableRef.current.open = false; setTableOpen(false); tableRef.current?.querySelector("summary")?.focus(); };
   return (
     <div
       role="menu"
@@ -126,9 +129,9 @@ export function PermissionModeMenu({
       </div>
       {desktop === false && <p className="px-4 pb-2 text-[12px] text-ink-secondary" data-level-lock>{t("ux.l1.level.lockLine")}</p>}
       <p role="status" className="px-4 text-[12.5px] text-ink empty:hidden">{notice}</p>
-      <details className="border-t border-hairline/20 px-4 py-2" data-level-table onToggle={(event) => setTableOpen(event.currentTarget.open)}>
+      <details ref={tableRef} className="border-t border-hairline/20 px-4 py-2" data-level-table onToggle={(event) => setTableOpen(event.currentTarget.open)}>
         <summary className="flex min-h-11 cursor-pointer items-center text-[13px] text-ink-secondary hover:text-ink">{t("ux.l1.level.tableToggle")}</summary>
-        {tableOpen && <LazyBoundary inline onRetry={LevelExamplesChunk.retry} onDismiss={() => setTableOpen(false)}><Suspense fallback={null}><LevelExamplesChunk.Component current={current} only={desktop === false ? current : undefined} className="max-h-72 overflow-y-auto pb-1" /></Suspense></LazyBoundary>}
+        {tableOpen && <LazyBoundary inline onRetry={LevelExamplesChunk.retry} onDismiss={closeTable}><Suspense fallback={null}><LevelExamplesChunk.Component current={current} only={desktop === false ? current : undefined} className="max-h-72 overflow-y-auto pb-1" /></Suspense></LazyBoundary>}
       </details>
       {footer}
     </div>

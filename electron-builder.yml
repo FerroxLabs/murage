@@ -25,6 +25,8 @@ directories:
 # electron-builder makes copied directories group-writable by default. The
 # Linux CUA trust boundary requires root-owned package ancestors to be 0755.
 afterPack: ./scripts/after-pack.mjs
+# Bind action commands after the target has generated its main desktop Exec.
+beforePack: ./scripts/linux-desktop-actions.mjs
 
 # The app is three self-contained pieces, none needing node_modules at
 # runtime: the Electron main/preload (plain .mjs/.cjs), the built UI
@@ -47,10 +49,12 @@ files:
   - shared/update-candidate.mjs
   - shared/backup-capture-failure.mjs
   - shared/backup-progress.mjs
+  - shared/backup-space.mjs
   - shared/backup-budget.mjs
   - shared/backup-max-bytes.mjs
   - shared/setup-backup-record.mjs
   - shared/upgrade-wait.mjs
+  - shared/murage-lockup.mjs
   - shared/upgrade-contract.mjs
   - shared/boot-proof.mjs
   - shared/spawned-proxies.mjs
@@ -62,6 +66,9 @@ files:
   - shared/guarded-http.mjs
   - shared/flux-desktop-signin-default.mjs
   - shared/windows-sddl.mjs
+  - shared/md-secret-label.mjs
+  - shared/notify-surfaces.mjs
+  - shared/outside-limits.mjs
   - installer/lib/systemd.mjs
   - installer/lib/private-files.mjs
   - installer/lib/service-account.mjs
@@ -111,6 +118,8 @@ extraResources:
     to: licenses/instrument-serif
   # xterm.js (MIT, @xterm/xterm, bundled in the renderer): the Cloud-home engine
   # sign-in terminal. Its licence text travels with the distribution.
+  - from: third_party/muse-code-sdk
+    to: licenses/muse-code-sdk
   - from: third_party/xterm
     to: licenses/xterm
   # WhatsApp channel: Baileys (MIT), its libsignal dependency (GPL-3.0, full
@@ -211,6 +220,8 @@ mac:
   extraResources:
     - from: dist-native/notification-authorization/${arch}/notification-authorization.node
       to: notification-authorization.node
+    - from: dist-native/presence-guard/darwin-${arch}/presence-guard.node
+      to: presence-guard.node
     - from: dist-native/notification-authorization/${arch}/build.json
       to: notification-authorization-build.json
     - from: dist-native/engine-exclusion/darwin-${arch}/engine-exclusion.node
@@ -315,6 +326,8 @@ win:
       to: fuigo-probe/launcher.exe
     - from: dist-native/fuigo-probe/win32-x64/manifest.json
       to: fuigo-probe/manifest.json
+    - from: dist-native/presence-guard/win32-x64/presence-guard.node
+      to: presence-guard.node
     - from: dist-native/engine-exclusion/win32-x64/engine-exclusion.node
       to: engine-exclusion.node
     - from: dist-native/cloudflared/win32-x64/cloudflared.exe
@@ -433,6 +446,38 @@ linux:
       Name: Murage
       Comment: Your own team of AI bots, in a chat app
       Keywords: AI;Agents;Chat;Productivity;
+      Actions: new-chief;needs-you;pause;
+    # electron-builder 26.15.3: desktopActions is a sibling of entry.
+    # beforePack generates Exec from the target's main entry (AppRun for
+    # AppImage, the installed absolute executable for deb), plus the task id.
+    desktopActions:
+      new-chief:
+        Name: New task for Chief
+        "Name[de]": "Neue Aufgabe für Chief"
+        "Name[es]": "Nueva tarea para Chief"
+        "Name[fr]": "Nouvelle tâche pour Chief"
+        "Name[hi]": "Chief के लिए नया काम"
+        "Name[ja]": "Chiefに新しいタスクを依頼"
+        "Name[pt_BR]": "Nova tarefa para Chief"
+        "Name[zh]": "给Chief分配新任务"
+      needs-you:
+        Name: Open Needs you
+        "Name[de]": "„Braucht dich“ öffnen"
+        "Name[es]": "Abrir «Te necesita»"
+        "Name[fr]": "Ouvrir « Besoin de toi »"
+        "Name[hi]": "“आपकी ज़रूरत है” खोलें"
+        "Name[ja]": "「対応待ち」を開く"
+        "Name[pt_BR]": "Abrir “Precisa de você”"
+        "Name[zh]": "打开“需要你处理”"
+      pause:
+        Name: Pause automations
+        "Name[de]": "Automatisierungen pausieren"
+        "Name[es]": "Pausar automatizaciones"
+        "Name[fr]": "Mettre les automatisations en pause"
+        "Name[hi]": "ऑटोमेशन रोकें"
+        "Name[ja]": "自動処理を一時停止"
+        "Name[pt_BR]": "Pausar automações"
+        "Name[zh]": "暂停自动化"
 
 deb:
   packageCategory: utils

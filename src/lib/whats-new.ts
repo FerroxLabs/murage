@@ -58,6 +58,7 @@ export const WHATS_NEW_BY_VERSION: Readonly<Record<string, WhatsNewEntry>> = {
   "1.0.15": { kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v1.0.15" },
   "1.0.16": { kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v1.0.16" },
   "1.0.17": { kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v1.0.17" },
+  "1.0.18": { kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v1.0.18" },
 };
 
 /** The page for `version`, or null when it has none. */
@@ -128,25 +129,86 @@ export async function recordWhatsNewSeen(desktop: boolean | undefined, request: 
   }
 }
 
+/** The three calls the desktop bridge gives the renderer for the What's new button on the update screen (electron/startup-ipc.mjs). */
+export interface StartupWhatsNewBridge {
+  pendingWhatsNew(): Promise<boolean>;
+  ackWhatsNew(): Promise<boolean>;
+  onWhatsNew(callback: () => void): () => void;
+}
+
+/**
+ * Take the request made on the update screen, once per page load of the renderer. Main keeps the request until `ackWhatsNew`, so this
+ * asks once on mount (a press before the listener existed) and listens (a press during the dwell after mount), shows What's new unless
+ * it is already up or the automatic open already showed it, and acks only AFTER showing: a renderer reload in between leaves the request
+ * pending for the next load. Repeated presses show it once. Returns the cleanup.
+ */
+export function watchStartupWhatsNew(bridge: StartupWhatsNewBridge | undefined, hooks: { alreadyShown: () => boolean; show: () => void | Promise<void> }): () => void {
+  if (!bridge || typeof bridge.onWhatsNew !== "function" || typeof bridge.pendingWhatsNew !== "function") return () => {};
+  let busy = false;
+  let alive = true;
+  let delivered = false; // once per page load: after one delivery a later press only acks
+  const take = async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      if (!delivered && !hooks.alreadyShown()) await hooks.show(); // resolves once the page is on screen
+      delivered = true;
+      await bridge.ackWhatsNew();
+    } catch {
+      // not acked: main keeps the request and offers it again on the next load
+    } finally {
+      busy = false;
+    }
+  };
+  const off = bridge.onWhatsNew(() => { void take(); });
+  void bridge.pendingWhatsNew().then((pending) => { if (pending === true && alive) void take(); }).catch(() => {});
+  return () => { alive = false; off(); };
+}
+
 /** Opens by itself once when the server says so; `reopen` is the You menu and
  *  Settings: it opens the page, or the release notes when there is no page, so
  *  the item is always there on the desktop; `close` always records the version
  *  as seen. */
 export function useWhatsNew(desktop: boolean | undefined, request: Request) {
   const [open, setOpen] = useState(false);
+  const openNow = useRef(false);
+  const autoOpened = useRef(false);
+  const startupShown = useRef(false);
+  openNow.current = open;
   const asked = useRef(false);
   useEffect(() => {
     if (desktop !== true || asked.current) return;
     // Asked once per page load. No cancel on cleanup: StrictMode's probe
     // unmount would otherwise swallow the only answer.
     asked.current = true;
-    void shouldOpenWhatsNew(desktop, request).then((show) => { if (show) setOpen(true); });
+    void shouldOpenWhatsNew(desktop, request).then((show) => { if (show && !startupShown.current) { autoOpened.current = true; openNow.current = true; setOpen(true); } });
   }, [desktop, request]);
   const reopen = useCallback(() => {
     const target = whatsNewTarget();
     if (target.kind === "page") { setOpen(true); return; }
     void import("./open-external").then((module) => module.openExternalPage(target.url, "Murage could not open the release notes.")).catch(() => {});
   }, []);
+  const showFromStartup = useCallback(() => {
+    const target = whatsNewTarget();
+    startupShown.current = true;
+    if (target.kind === "page") {
+      openNow.current = true;
+      setOpen(true);
+      // resolved after React has committed and the browser has painted a frame (a timer backs it up where no frame is drawn)
+      return new Promise<void>((resolve) => {
+        const done = () => resolve();
+        const timer = setTimeout(done, 120);
+        if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => requestAnimationFrame(() => { clearTimeout(timer); done(); }));
+      });
+    }
+    reopen();
+    return Promise.resolve();
+  }, [reopen]);
+  useEffect(() => {
+    if (desktop !== true) return;
+    const bridge = (typeof window === "undefined" ? undefined : (window as { muragebox?: { startup?: StartupWhatsNewBridge } }).muragebox?.startup);
+    return watchStartupWhatsNew(bridge, { alreadyShown: () => openNow.current || autoOpened.current, show: showFromStartup });
+  }, [desktop, showFromStartup]);
   const close = useCallback(() => {
     setOpen(false);
     void recordWhatsNewSeen(desktop, request);

@@ -12,6 +12,7 @@
 import { announceSetupView } from "@/lib/app-events";
 import { useEffect, useState, type ReactNode } from "react";
 
+import type { FirstRunTiming } from "@/lib/first-run-timing";
 import { api } from "@/state/store";
 import type { SetupStep, SetupView } from "../../shared/setup";
 
@@ -320,15 +321,26 @@ export const PARKED_CARD_STEP: SetupStep = "flow";
 
 /** Record what they said against a step. The server owns what that means
  *  for the checklist; this only reports it. */
-export async function answerSetupStep(step: SetupStep, answer: string): Promise<void> {
-  await api("/api/setup/answer", { method: "POST", body: JSON.stringify({ step, answer }) });
+export async function answerSetupStep(step: SetupStep, answer: string, timing?: FirstRunTiming): Promise<void> {
+  const send = () => api("/api/setup/answer", { method: "POST", body: JSON.stringify({ step, answer }), ...(timing ? { headers: timing.headers() } : {}) });
+  await (timing ? timing.time("answer", send) : send());
+  forgetSetupView();
+}
+
+/**
+ * Settle one of the three 1.0.19 cards by its own record (FIRSTRUN-1019 D4). Nothing but this settles them: a finished
+ * step never does. The answer is the setup view with the next card already appended.
+ */
+export async function settleSetupCard(key: "flux:notify" | "chat:hire" | "detect:move-grok"): Promise<void> {
+  await api("/api/setup/card", { method: "POST", body: JSON.stringify({ key, action: "settle" }) });
   forgetSetupView();
 }
 
 /** Passed over deliberately. Skipped is not done, and the Chief does not
  *  bring it up again unasked. */
-export async function skipSetupStep(step: SetupStep): Promise<void> {
-  await api("/api/setup/skip", { method: "POST", body: JSON.stringify({ step }) });
+export async function skipSetupStep(step: SetupStep, timing?: FirstRunTiming): Promise<void> {
+  const send = () => api("/api/setup/skip", { method: "POST", body: JSON.stringify({ step }), ...(timing ? { headers: timing.headers() } : {}) });
+  await (timing ? timing.time("skip", send) : send());
   forgetSetupView();
 }
 

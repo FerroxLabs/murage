@@ -43,6 +43,12 @@ export const CLOUD_SAFE_CHANNELS = Object.freeze([
   "desktop:open-external", // main re-validates: a credential-free web URL (https only from a Cloud-home window), opened in the default browser
   "desktop:unread-count", // a number; main applies it to the main window only
   "approval-notification:show", // an OS notification; main validates the payload
+  "cloud-attention:hello", // {session}: binds the window's delivery session; main derives the HOME from the Cloud window and accepts only the top frame on its origin
+  "cloud-attention:offer", // routing ids only (kind, thread, request, delivery, an opaque ref) + the session; main derives the HOME from the Cloud window itself
+  "cloud-attention:visible", // {threadId|null, focused}; the home is derived by main
+  "cloud-attention:present", // the already server-filtered words for one ref main asked for (bounded: title 256, body 1024, icon 64 KB); main checks session and gen
+  "cloud-attention:gone", // {session, ref, gen}: the window holds no payload for that ref
+  "cloud-attention:freed", // one-way ack {session, refs}: payloads the window dropped (unknown refs ignored)
 ]);
 
 /**
@@ -85,6 +91,8 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   "android-device:frame",
   "android-device:input",
   "android-device:status",
+  // app-readiness (main probes the main window; the ack comes back from its top frame only)
+  "app-readiness:alive",
   // assemblyai
   "assemblyai:set-key",
   "assemblyai:status",
@@ -216,6 +224,9 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   "perm:open-settings",
   "perm:request-mic",
   "perm:status",
+  // phone-key (1.0.20 bot calls): the Settings key box hands the Vapi key to main once; main stores it encrypted, nothing reads it back
+  "phone-key:remove",
+  "phone-key:save",
   // screen
   "screen:frame",
   "screen:preview-intent",
@@ -229,9 +240,27 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   "speech:pcm",
   "speech:start",
   "speech:stop",
+  // attention router (the local window only; a Cloud window uses the cloud-attention:* set above)
+  "attention:hello",
+  "attention:offer",
+  "attention:visible",
+  "attention:present",
+  "attention:gone",
+  "attention:freed",
+  // notify-surfaces
+  "notify-surfaces:capabilities",
+  "notify-surfaces:ensure-permission",
+  "notify-surfaces:get",
+  "notify-surfaces:reset",
+  "notify-surfaces:set",
   // startup-background
   "startup-background:status",
   "startup-background:update",
+  // start-up screens: the cached picture, and the What's new request (startup:whats-new, main to renderer, is a send and needs no class)
+  "startup-picture:save",
+  "startup-picture:session-tip",
+  "startup:ack-whats-new",
+  "startup:pending-whats-new",
   // update
   "update:check",
   "update:download",
@@ -245,7 +274,8 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
  * Channels main registers in a loop from a template string (backup-closed:${action}, backup-remote:${action}); the
  * preload calls them by their expanded names. All local-only.
  */
-export const LOCAL_ONLY_PREFIXES = Object.freeze(["backup-closed:", "backup-remote:", "local-engine-login:"]);
+// attention-window:* is the attention windows' own gate (electron/attention-ipc.mjs), registered there and never from a Cloud window.
+export const LOCAL_ONLY_PREFIXES = Object.freeze(["backup-closed:", "backup-remote:", "local-engine-login:", "attention-window:"]);
 
 const mainOnlyCloud = new Set(MAIN_ONLY_CLOUD_CHANNELS);
 

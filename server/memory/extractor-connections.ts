@@ -3,9 +3,11 @@ import type { ProviderConnectionsService } from "../provider-connections.ts";
 import type { ProviderInstance } from "../contracts.ts";
 import { fluxKey } from "../flux-config.ts";
 import { FLUX_OPENAI_BASE } from "../flux-routing.ts";
+import { fluxKeyMayCall } from "../flux-key-models.ts";
 import { isCliLearningInstance } from "../drivers/cli-memory-learning.ts";
 import { healthEngineKind } from "../health/engine-kind.ts";
-import { isNetworkFailure, requestMemoryExtraction, requestMemoryInference, requestMemoryGrounding, type TextOnlyExtractor } from "./extract.ts";
+import { isNetworkFailure, memoryExtractionMessages, requestMemoryExtraction, requestMemoryInference, requestMemoryGrounding, type MemoryExtractionDispatch, type TextOnlyExtractor } from "./extract.ts";
+import { learningFolderScope } from "./learning-folder.ts";
 import { ExtractionReplyError, FLUX_PINNED_LEARNING_MODEL } from "./extraction-outcomes.ts";
 
 export const FLUX_EXTRACTORS = [
@@ -21,7 +23,9 @@ const pinQuarantine=new Map<string,number>();
 let pinAnswered:string|null=null;
 export function clearPinQuarantineForTests(){pinQuarantine.clear();}
 function learningLine(line:string){try{console.info(`[memory] ${line}`);}catch{/* logging is best effort */}}
-const pinOpen=(key:string)=>(pinQuarantine.get(keyRevision(key))??0)<=clock();
+/** The pin is asked for only when the key's own Flux catalog lists it: a free-plan key (flux-fast and flux-auto only) and a key with
+ *  no catalog yet never send it (FLUX-FREE-MODEL 1.0.18), and a refused pin rests for six hours as before. */
+const pinOpen=(key:string)=>(pinQuarantine.get(keyRevision(key))??0)<=clock()&&fluxKeyMayCall(key,FLUX_PINNED_LEARNING_MODEL)==="yes";
 function quarantinePin(key:string,label:string){
   if(pinQuarantine.size>=PIN_MEMORY)pinQuarantine.delete(pinQuarantine.keys().next().value!);
   pinQuarantine.set(keyRevision(key),clock()+PIN_QUARANTINE_MS);
@@ -127,7 +131,7 @@ const limitLine=(label:string)=>`Learning waits while ${label} is at its limit.`
 const atLimit=(instance:ProviderInstance)=>(limitedUntil.get(instance)??0)>clock();
 const keyRevision=(key:string)=>createHash("sha256").update(key).digest("hex");
 export interface LearningConnection {extractor:TextOnlyExtractor|null;instanceId:string|null;source:"chosen"|"default"|"none";label:string;reason?:string;suggestion?:{instanceId:string;label:string};reviewOnly?:boolean}
-export function resolveLearningConnection(input:{selected:string|null;instances:ProviderInstance[];readInstances?:()=>ProviderInstance[];providerConnections?:Connections;readKey?:()=>string|null;defaultOn:boolean}):LearningConnection {
+export function resolveLearningConnection(input:{selected:string|null;instances:ProviderInstance[];readInstances?:()=>ProviderInstance[];providerConnections?:Connections;readKey?:()=>string|null;defaultOn:boolean;folder?:()=>string|undefined}):LearningConnection {
  const readKey=input.readKey??fluxKey,key=readKey(),items=memoryExtractorConnections(input.instances,key,input.providerConnections);
  const selected=input.selected??(key?"@murage/flux-fast":null),item=items.find(row=>row.instanceId===selected);
  const own=items.filter(row=>row.eligible&&!row.instanceId.startsWith("@murage/"));
@@ -162,10 +166,19 @@ export function resolveLearningConnection(input:{selected:string|null;instances:
   const initial=current();if(!initial||refusedInstances.has(initial))return none(initial?(isCliLearningInstance(initial)?engineAttention:attention):`${item.label}: This connection is unavailable.`);
   if(atLimit(initial))return none(limitLine(item.label));
   const call=async<T>(invoke:(instance:ProviderInstance)=>Promise<T>)=>{const instance=current();if(!instance||refusedInstances.has(instance)||atLimit(instance))throw Error("MEMORY_EXTRACTOR_UNAVAILABLE");try{return await invoke(instance);}catch(error){const failed=error as {status?:number;limit?:boolean};if([401,403].includes(Number(failed.status)))refusedInstances.add(instance);else if(isCliLearningInstance(instance)&&(failed.limit===true||Number(failed.status)===429))limitedUntil.set(instance,clock()+ENGINE_LIMIT_PAUSE_MS);throw error;}};
-  extractor=(text,max,signal,dispatch)=>call(instance=>instance.extractMemory!(text,max,signal,dispatch));
+  // A signed-in CLI or ACP engine runs learning as a hidden turn, and a turn cannot start without a bot folder (botFolderOrThrow, no
+  // default). The host names that folder here, once: a dispatch that carries its own keeps it. No folder resolved: nothing is supplied
+  // and the engine refuses, as before.
+  // A scope opened by a caller that knows the source bot wins, even when it holds no folder (never borrow another bot's); the host default is last.
+  const folderFor=(instance:ProviderInstance)=>{if(!isCliLearningInstance(instance))return undefined;const scoped=learningFolderScope();return scoped?scoped.cwd:input.folder?.();};
+  extractor=(text,max,signal,dispatch)=>call(instance=>{
+   const cwd=dispatch?.cwd===undefined?folderFor(instance):undefined;
+   const sent:MemoryExtractionDispatch|undefined=cwd===undefined?dispatch:{policyRevision:"learning",messages:memoryExtractionMessages(text),...dispatch,cwd};
+   return instance.extractMemory!(text,max,signal,sent);
+  });
   extractor.learningModel=()=>current()?.models?.default;
   extractor.healthEngine=healthEngineKind(initial.driverKind);
-  if(initial.groundMemory)extractor.ground=(value,maximum,signal,fence)=>call(instance=>{if(!instance.groundMemory)throw Error("MEMORY_EXTRACTOR_UNAVAILABLE");return instance.groundMemory(value,Math.min(64,maximum),signal,fence);});
+  if(initial.groundMemory)extractor.ground=(value,maximum,signal,fence)=>call(instance=>{if(!instance.groundMemory)throw Error("MEMORY_EXTRACTOR_UNAVAILABLE");const cwd=folderFor(instance),limit=Math.min(64,maximum);return cwd===undefined?instance.groundMemory(value,limit,signal,fence):instance.groundMemory(value,limit,signal,fence,cwd);});
  }
  if(!extractor)return none(`${item.label}: This connection is unavailable.`);
  extractor.learningConnection=selected;extractor.reviewOnly=!input.selected&&!input.defaultOn;

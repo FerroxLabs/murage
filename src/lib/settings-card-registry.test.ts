@@ -89,7 +89,7 @@ describe("the card registry", () => {
 describe("search lists cards and rows", () => {
   it("finds the browser and recorder in their regular Settings homes", () => {
     expect(searchSettingsCards("built-in browser", true)).toEqual(expect.arrayContaining([
-      expect.objectContaining({ card: expect.objectContaining({ id: "companion.browser", anchor: "browser-settings-heading" }), page: "Devices", advanced: false }),
+      expect.objectContaining({ card: expect.objectContaining({ id: "companion.browser", anchor: "browser-settings-heading" }), page: "Computer & browser", advanced: false }),
     ]));
     expect(searchSettingsCards("teach a skill", true)).toEqual(expect.arrayContaining([
       expect.objectContaining({ card: expect.objectContaining({ id: "skills.recorder", anchor: "skill-recorder-heading" }), page: "Skills", advanced: false }),
@@ -97,8 +97,14 @@ describe("search lists cards and rows", () => {
   });
   it("finds Show tool calls under Bots first for 'tool'", () => {
     const hits = searchSettingsCards("tool", true);
-    expect(hits[0]).toMatchObject({ label: "Show tool calls in the conversation", page: "Bots" });
-    expect(hits.map((hit) => hit.card.id)).toEqual(expect.arrayContaining(["webSearch.search"]));
+    expect(hits[0]).toMatchObject({ label: "Show tool calls in the conversation", page: "How every bot behaves" });
+    // The Search card used to match "tool" through its page name, Tools. The page is now "Search, images and dictation" (1.0.19),
+    // so "tool" lists exactly the tool calls card and the Connected apps card, and no longer the Search card.
+    expect(hits.map((hit) => hit.card.id)).toEqual(["botDefaults.tool-calls", "connections.mcp"]);
+  });
+  it("keeps the Search card discoverable on its renamed page", () => {
+    expect(searchSettingsCards("search", true)[0]).toMatchObject({ page: "Search, images and dictation", card: expect.objectContaining({ id: "webSearch.search" }) });
+    expect(searchSettingsCards("dictation", true).map((hit) => hit.card.id)).toEqual(expect.arrayContaining(["webSearch.search"]));
   });
 
   it("never lists a desktop card's row on a phone, a browser door, or before the surface answers", () => {

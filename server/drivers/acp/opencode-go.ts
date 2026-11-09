@@ -1,12 +1,16 @@
+import { OpenCodeDestinationResolver } from "../../opencode-destination.ts";
+import { typedOpenCodeModel } from "../../../shared/opencode-model-id.ts";
+import { declareTypedOpenCodeModel } from "./opencode-typed-model.ts";
 // The maintained OpenCode CLI through its ACP stdio interface. OpenCode is
 // the harness; Zen, Go, OpenRouter, and user-configured/local providers are
 // models discovered from that harness rather than separate Murage drivers.
 import { memoDeps, pathExists, readText } from "../isolation-cache.ts";
 import { currentScopeHome, engineConfigInvalid, registerScopeReconstructor, scopedCliHome, scopedCliHomeRoot, type ScopedCliHomeSpec } from "../scoped-cli-home.ts";
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { constants as fsConstants, accessSync, closeSync, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject, type LocalHost } from "../local-inject.ts";
 import { readNativeJsonConfig } from "../native-config-file.ts";
@@ -18,7 +22,8 @@ import { cloudTurnRender } from "../../cloud-home/turn-process.ts";
 import { cloudRouteUrl } from "../../cloud-home/engine-render.ts";
 import { fluxKey } from "../../flux-config.ts";
 import { DATA_DIR } from "../../config.ts";
-import { execCli } from "../../procs.ts";
+import { isEngineCheckFolder } from "../../engine-reply-check.ts";
+import { envSearchPath, execCli, resolveCli } from "../../procs.ts";
 import { FLUX_MODELS, FLUX_OPENAI_BASE, fluxModelId } from "../../flux-routing.ts";
 import { opencodeConfigOverlay } from "../../flux-memory-headers.ts";
 import { mergeFluxCatalog } from "../../flux-surface.ts";
@@ -42,7 +47,67 @@ const STATIC_MODELS: ModelCatalog = {
   ],
 };
 
-let lastSuccessfulCatalog: ModelCatalog | null = null;
+const lastSuccessfulCatalogs = new Map<string, ModelCatalog>();
+// Credentials and inline config can change the CLI's visible models too. Hash
+// the effective environment rather than retaining credentials in cache keys.
+function catalogKey(cli: string, environment: Record<string, string | undefined>): { key: string; cacheable: boolean } {
+  // OpenCode expands these references itself, including relative and home
+  // paths. Their dependencies are not tracked here: use fresh CLI results but
+  // never retain a catalog/probe across calls. Do not read referenced secrets.
+  let cacheable = !environment.OPENCODE_CONFIG_CONTENT?.includes("{file:");
+  const home = environment.HOME || environment.USERPROFILE || homedir();
+  const configDirs = new Set([opencodeConfigDir(environment), join(environment.XDG_CONFIG_HOME || join(home, ".config"), "opencode")]);
+  const files = [...storedAuthPaths(environment), ...[...configDirs].flatMap(dir =>
+    ["opencode.json", "opencode.jsonc", "config.json"].map(name => join(dir, name))),
+    ...(environment.OPENCODE_CONFIG ? [environment.OPENCODE_CONFIG] : [])];
+  const hash = createHash("sha256").update(JSON.stringify([cli, Object.entries(environment)
+    .filter(([, value]) => value !== undefined).sort(([a], [b]) => a.localeCompare(b))]));
+  // The same command/path may resolve to a newly installed engine or shim.
+  const launch = resolveCli(cli, [], envSearchPath(environment));
+  hash.update(JSON.stringify(launch));
+  let executable = launch.command;
+  if (process.platform !== "win32" && !executable.includes("/")) {
+    for (const dir of (envSearchPath(environment) ?? "/usr/bin:/bin").split(delimiter)) {
+      const candidate = resolve(dir || ".", executable);
+      try {
+        accessSync(candidate, fsConstants.X_OK);
+        if (statSync(candidate).isFile()) { executable = candidate; break; }
+      } catch { /* same PATH search as the probe's spawn */ }
+    }
+  }
+  for (const path of new Set([executable, ...(launch.script ? [launch.script] : []), ...launch.args.filter(isAbsolute)])) {
+    try {
+      const stat = statSync(path, { bigint: true });
+      hash.update(JSON.stringify([realpathSync(path), ...[stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].map(String)]));
+    } catch { hash.update("missing-executable"); }
+  }
+  // A login/config change in place does not change the environment. Read the
+  // small files anew; stat-only identity misses same-length rewrites.
+  for (const path of files) {
+    hash.update(JSON.stringify(path));
+    let fd: number | undefined;
+    try {
+      fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+      const stat = fstatSync(fd, { bigint: true });
+      if (!stat.isFile() || stat.size > 1024 * 1024) {
+        // Refuse cache reuse for unsupported inputs; never read a FIFO or an
+        // unbounded config into memory. The CLI still decides whether it works.
+        cacheable = false;
+        hash.update(JSON.stringify(["uncacheable", ...[stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeNs, stat.ctimeNs].map(String)]));
+        continue;
+      }
+      const bytes = Buffer.alloc(Number(stat.size) + 1);
+      const count = readSync(fd, bytes, 0, bytes.length, 0);
+      if (bytes.subarray(0, count).includes("{file:")) cacheable = false;
+      hash.update(JSON.stringify([count, createHash("sha256").update(bytes.subarray(0, count)).digest("hex")]));
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") hash.update("absent");
+      else { cacheable = false; hash.update("unreadable:" + code); }
+    } finally { if (fd !== undefined) closeSync(fd); }
+  }
+  return { key: hash.digest("hex"), cacheable };
+}
 const MODEL_PROBE_TTL_MS = 30_000;
 const modelProbeCache = new Map<string, { expiresAt: number; result: Promise<boolean> }>();
 
@@ -51,6 +116,14 @@ const catalogRevisions = new Map<string, number>();
 /** One `opencode models --refresh` per binary per window: opening the picker counts as a manual refresh too. */
 const CACHE_REFRESH_WINDOW_MS = 60_000;
 const cacheRefreshedAt = new Map<string, number>();
+const pendingRefreshes = new Map<string, Promise<void>>();
+// Environment changes (including rotated credentials) must not retain an
+// unbounded history of catalogs and probes for the life of the server.
+function remember<K, V>(cache: Map<K, V>, key: K, value: V): void {
+  cache.delete(key);
+  cache.set(key, value);
+  if (cache.size > 128) cache.delete(cache.keys().next().value!);
+}
 
 export type OpenCodeCatalogLoader = (
   environment: Record<string, string | undefined>,
@@ -186,37 +259,54 @@ export async function discoverOpenCodeModels(
   cli = "opencode",
   options: { refresh?: boolean } = {},
 ): Promise<ModelCatalog> {
+  let identity = catalogKey(cli, environment);
   if (options.refresh) await refreshOpenCodeModelCache(cli, environment);
+  else await pendingRefreshes.get(identity.key);
+  identity = catalogKey(cli, environment);
+  const { key, cacheable } = identity;
   try {
     const catalog = parseOpenCodeModelsOutput(await runOpenCodeModels(cli, environment, true));
     if (!catalog) throw new Error("OpenCode returned no usable models");
-    if (options.refresh && lastSuccessfulCatalog && !sameModelIds(lastSuccessfulCatalog, catalog)) {
-      catalogRevisions.set(cli, (catalogRevisions.get(cli) ?? 0) + 1);
+    const after = catalogKey(cli, environment);
+    if (after.key !== key) return { ...STATIC_MODELS, source: "static" };
+    const previous = cacheable ? lastSuccessfulCatalogs.get(key) : undefined;
+    if (options.refresh && previous && !sameModelIds(previous, catalog)) {
+      remember(catalogRevisions, cli, (catalogRevisions.get(cli) ?? 0) + 1);
     }
-    lastSuccessfulCatalog = catalog;
+    if (cacheable && after.cacheable) remember(lastSuccessfulCatalogs, key, catalog);
     return { ...catalog, source: "live" };
   } catch {
     // A failed probe is never live, even when an earlier list is reused.
-    return { ...(lastSuccessfulCatalog ?? STATIC_MODELS), source: "static" };
+    return { ...(cacheable && catalogKey(cli, environment).key === key ? lastSuccessfulCatalogs.get(key) ?? STATIC_MODELS : STATIC_MODELS), source: "static" };
   }
 }
 
 export function resetOpenCodeModelCache() {
-  lastSuccessfulCatalog = null;
+  lastSuccessfulCatalogs.clear();
   modelProbeCache.clear();
   catalogRevisions.clear();
   cacheRefreshedAt.clear();
+  pendingRefreshes.clear();
 }
 
 /** OpenCode lists models from its models.dev cache (or the snapshot built into it) and neither `opencode models` nor
  * `opencode acp` refetches that cache; `models --refresh` does. A failed refetch leaves the cache as it was. */
 function refreshOpenCodeModelCache(cli: string, environment: Record<string, string | undefined>): Promise<void> {
+  const { key, cacheable } = catalogKey(cli, environment);
+  const pending = pendingRefreshes.get(key);
+  if (pending) return pending;
   const now = Date.now();
-  if (now - (cacheRefreshedAt.get(cli) ?? -Infinity) < CACHE_REFRESH_WINDOW_MS) return Promise.resolve();
-  cacheRefreshedAt.set(cli, now);
-  return new Promise((resolve) => {
-    execCli(cli, ["models", "--refresh"], { timeout: 15_000, maxBuffer: 8 * 1024 * 1024, env: environment }, () => resolve());
-  });
+  if (cacheable && now - (cacheRefreshedAt.get(key) ?? -Infinity) < CACHE_REFRESH_WINDOW_MS) return Promise.resolve();
+  const refresh = new Promise<void>((resolve) => {
+    try {
+      execCli(cli, ["models", "--refresh"], { timeout: 15_000, maxBuffer: 8 * 1024 * 1024, env: environment }, (error) => {
+        if (!error && cacheable && catalogKey(cli, environment).key === key) remember(cacheRefreshedAt, key, Date.now());
+        resolve();
+      });
+    } catch { resolve(); }
+  }).finally(() => { if (pendingRefreshes.get(key) === refresh) pendingRefreshes.delete(key); });
+  pendingRefreshes.set(key, refresh);
+  return refresh;
 }
 
 function sameModelIds(left: ModelCatalog, right: ModelCatalog): boolean {
@@ -297,8 +387,11 @@ export function ensureOpenCodeInjectModel(
     },
     { strict: true },
   );
-  mkdirSync(opencodeConfigDir(env), { recursive: true });
-  writeFileAtomic(path, renderOpenCodeConfig(config, existing?.text ?? null));
+  const text = renderOpenCodeConfig(config, existing?.text ?? null);
+  if (text !== existing?.text) {
+    mkdirSync(opencodeConfigDir(env), { recursive: true });
+    writeFileAtomic(path, text);
+  }
   return native;
 }
 
@@ -374,7 +467,8 @@ export async function canListOpenCodeModels(
   cli: string,
   runModels: typeof runOpenCodeModels = runOpenCodeModels,
 ): Promise<boolean> {
-  const cached = modelProbeCache.get(cli);
+  const { key, cacheable } = catalogKey(cli, env);
+  const cached = cacheable ? modelProbeCache.get(key) : undefined;
   if (cached && cached.expiresAt > Date.now()) return cached.result;
 
   const entry = {
@@ -382,14 +476,14 @@ export async function canListOpenCodeModels(
     result: Promise.resolve(false),
   };
   entry.result = runModels(cli, env, false)
-    .then((stdout) => stdout
+    .then((stdout) => catalogKey(cli, env).key === key && stdout
       .split(/\r?\n/u)
       .some((line) => validModelSlug(line.trim())))
     .catch(() => false)
     .finally(() => {
       entry.expiresAt = Date.now() + MODEL_PROBE_TTL_MS;
     });
-  modelProbeCache.set(cli, entry);
+  if (cacheable) remember(modelProbeCache, key, entry);
   return entry.result;
 }
 
@@ -412,6 +506,9 @@ export function normalizeLegacyOpenCodeModel(
  * configuration. The workspaces root itself is not an owned working folder.
  * Adapted from OpenMausBot #2053 (658763e9), `openMausOwnsWorkingFolder`. */
 export function murageOwnsWorkingFolder(cwd: string): boolean {
+  // The set-up check's own folder (outside home, under the check base) is Murage's too: project config is off for it
+  // (ENGINE-CHECK-FOLDER-1018), same resolve plus realpath rule.
+  if (isEngineCheckFolder(cwd)) return true;
   // Both as written and with links resolved, on either side: OpenCode reads
   // config from the folder it really runs in, so a picked folder that links
   // into a workspace is owned too. Owned on any match (fails closed).
@@ -652,6 +749,7 @@ export function filterOpenCodeConfigFile(text: string, sourceDir: string): strin
 function openCodeConfigScopeSpec(owner: string, botId?: string): ScopedCliHomeSpec {
   return {
     kind: "opencode-config",
+    configDependencies: true,
     realHome: owner,
     botId,
     share: [],
@@ -733,7 +831,11 @@ export function openCodeOneShotFolder(): Promise<string> {
   return oneShotProject;
 }
 
-const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
+const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => {
+  const destinations = new OpenCodeDestinationResolver();
+  return ({
+  effectiveDestination: ctx => destinations.resolve(ctx),
+  disposeDestination: () => destinations.dispose(),
   driverKind: "opencodeGo",
   // OpenCode starts every ACP mount it is handed, even one its config disables
   // (isolateOpenCodeFromPersonalSetup, rig 1.15.11 and 1.18.35), with no readiness signal.
@@ -756,7 +858,7 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
     signInCommand: "opencode auth login",
     needsNode: true,
   },
-  spawnArgs: () => ["acp"],
+  spawnArgs: () => ["acp", "--print-logs"],
   // Set-up checks and learning steps stay out of the person's own OpenCode history.
   oneShotFolder: openCodeOneShotFolder,
   credentialEnv: ["OPENCODE_API_KEY"],
@@ -778,9 +880,11 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
    */
   resolveTurnModel: (model, env) => {
     if (!model) return model;
+    // Saved selections predate admission checks: never fall back from an invalid typed ID.
+    if (model.startsWith("typed::") && !typedOpenCodeModel(model)) throw new Error("Invalid typed OpenCode model");
     const tier = fluxModelId(model);
     if (tier) return opencodeFluxModelId(tier);
-    return ensureOpenCodeInjectModel(normalizeLegacyOpenCodeModel(model, env), env);
+    return declareTypedOpenCodeModel(env, model) ?? ensureOpenCodeInjectModel(normalizeLegacyOpenCodeModel(model, env), env);
   },
   /**
    * Flux Memory headers. OpenCode merges `OPENCODE_CONFIG_CONTENT` (inline
@@ -853,6 +957,7 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
   spawnFingerprint: (_env, config) => `opencode-catalog#${openCodeCatalogRevision(config.cli)}`,
   buildPromptText: (turn) => turn.system ? `${turn.system}\n\n${turn.text}` : turn.text,
 });
+};
 
 export function classifyOpenCodeError(error: unknown): ProviderErrorCode | undefined {
   const value = error && typeof error === "object" ? error as Record<string, unknown> : {};

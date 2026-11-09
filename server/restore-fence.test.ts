@@ -39,6 +39,7 @@ import {
   runnableContinuation, restoreHoldFor, sqlRowRestoreHeld, releaseHeldItem, releaseHeldSharedResults,
 } from "./restore-fence.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { initializeReplySchema } from "./tts/reply-schema.ts";
 
 const dbs: DatabaseSync[] = [];
 const roots: string[] = [];
@@ -277,7 +278,7 @@ function bootConsumers(): Located[] {
 function everyTableDb() {
   const db = new DatabaseSync(":memory:"); dbs.push(db);
   initializeMessageTables(db); initializeInbox(db); initializeArtifacts(db); initializeImageOperations(db); initializeImageLibrary(db); initializeThreadSnooze(db);
-  initializeProjectTables(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializeOwnerSends(db); initializeBotCalls(db);
+  initializeProjectTables(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializeOwnerSends(db); initializeBotCalls(db); initializeReplySchema(db);
   return db;
 }
 const tablesOf = (db: DatabaseSync) => (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as Array<{ name: string }>).map(row => row.name);

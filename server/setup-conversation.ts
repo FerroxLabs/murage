@@ -201,6 +201,18 @@ export const SETUP_CARD_COPY: Record<SetupCardVariant, { title: string; subtitle
       "Most people keep two or three. I can sort your inbox and draft the replies for you to approve, "
       + "or keep an eye on one thing and speak up when it changes.",
   },
+  notify: {
+    title: "How would you like to be notified?",
+    subtitle: "Pick how your team reaches you when a job finishes or needs a word.",
+  },
+  hire: {
+    title: "Hire your first teammates",
+    subtitle: "These three cover what most people ask for first, and each one starts on Ask.",
+  },
+  "move-grok": {
+    title: "Move from Grok Bot",
+    subtitle: "Bring your Bots here, with their skills and routines.",
+  },
   next: {
     title: "Done",
     subtitle: "That is you set up. Ask me for anything, or just tell me what is on today.",
@@ -337,10 +349,25 @@ export function conversationLive(view: SetupView, present: ReadonlySet<string>):
 export function setupConversationPlan(
   view: SetupView,
   present: ReadonlySet<string>,
+  /** Keys whose card carries `setup.settled === true`. The three 1.0.19 cards
+   *  settle by their own record, so the planner has to be told which are. */
+  settled: ReadonlySet<string> = new Set(),
 ): SetupConversationPlan {
   if (!conversationLive(view, present)) return NOTHING;
 
   const wanted: SetupCardPlan[] = [];
+
+  // ELIGIBLE COHORT for the three 1.0.19 cards (Astra r1 #8): the guided flow
+  // is live, `chat` and `flow` are neither done nor skipped, and the jobs card
+  // is not already in the thread. A finished legacy conversation, one that
+  // skipped `chat`, and an install upgraded mid first run (jobs card already
+  // there) never get notify, hire or move-grok inserted above what they have.
+  const chatStep = stepView(view, "chat");
+  const flowStep = stepView(view, "flow");
+  const newCardsOwed =
+    chatStep?.done !== true && chatStep?.skipped !== true
+    && flowStep?.done !== true && flowStep?.skipped !== true
+    && !present.has(setupCardKey("chat", "jobs"));
 
   // WHAT IS ALREADY HERE, SAID ONCE, AS SOON AS THE GREETING IS BEHIND US.
   //
@@ -374,6 +401,19 @@ export function setupConversationPlan(
     wanted.push(plan("detect", variantForCurrentStep("detect", view)));
   }
 
+  // MOVE FROM GROK BOT, only when Grok Bot data was found, once, right after
+  // the detect card (after hello on a blank machine, which has no detect
+  // card), and never once the Flux card is in the thread, so a finder answer
+  // that changes later never drops a card into the middle of the conversation.
+  if (
+    newCardsOwed
+    && (hello?.done === true || hello?.skipped === true)
+    && view.moveIn.grok > 0
+    && !present.has(setupCardKey("flux", "key"))
+  ) {
+    wanted.push(plan("detect", "move-grok"));
+  }
+
   // A step passed over says so once, in the person's own transcript. The flow
   // has already moved past `flux` by the time this is true, so it cannot ride
   // on `view.next`.
@@ -387,7 +427,19 @@ export function setupConversationPlan(
   // and its "every morning?" offer arrives on that job's own result, where
   // the person has just seen one.
 
-  if (view.next !== null) wanted.push(plan(view.next, variantForCurrentStep(view.next, view)));
+  const fluxStep = stepView(view, "flux");
+  const fluxPassed = fluxStep?.done === true || fluxStep?.skipped === true;
+  const notifyKey = setupCardKey("flux", "notify");
+  const hireKey = setupCardKey("chat", "hire");
+  // (b) once Flux is done or passed over, the notification chooser.
+  if (newCardsOwed && fluxPassed) wanted.push(plan("flux", "notify"));
+  // (c) once the chooser is settled, the hire card.
+  if (newCardsOwed && fluxPassed && settled.has(notifyKey)) wanted.push(plan("chat", "hire"));
+
+  // (d) the jobs card is withheld until the hire card is settled, but only for
+  // the cohort that owes it. Everyone else gets the flow as it was.
+  const withheld = newCardsOwed && view.next === "chat" && !settled.has(hireKey);
+  if (view.next !== null && !withheld) wanted.push(plan(view.next, variantForCurrentStep(view.next, view)));
 
   // The closing card carries the first backup: setup ends VERIFIED, so once
   // the job is done the card that turns backups on and shows the checked

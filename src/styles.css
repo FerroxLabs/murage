@@ -12,6 +12,9 @@
    agent profile) have no such ancestor and always keep their labels. */
 @custom-variant chip-fold (&:where([data-chat-header-chips="compact"] *));
 @custom-variant chip-trim (&:where([data-chat-header-chips="titled"] *, [data-chat-header-chips="compact"] *));
+/* The on-screen keyboard is up: what can wait gives its height to what is being typed in. A pinch zoom shortens the
+   visual viewport as well and so also sets data-keyboard; data-zoomed tells the two apart (lib/visual-viewport.ts). */
+@custom-variant keyboard-open (&:where(html[data-keyboard="open"]:not([data-zoomed]) *));
 
 /* ─────────────────────────────────────────────────────────────────────────
    THEMES
@@ -1228,8 +1231,9 @@ button:disabled.bg-danger {
 }
 
 /* E35 (src/lib/reply-width.ts): a reply with a table runs as wide as the
-   message column; its prose keeps the reading width. */
-.chat-wide .chat-md > :not(.chat-table) {
+   message column; its prose keeps the reading width. A list or quote that
+   holds the table runs wide with it. */
+.chat-wide .chat-md > :not(.chat-table):not(:has(.chat-table)) {
   max-width: var(--chat-bubble-max);
 }
 
@@ -1486,6 +1490,21 @@ body:has([data-testid="workspace-pane"]:not([hidden])):not(:has(.fixed.inset-0:n
   line-height: 16px;
 }
 
+/* THE WELCOME (src/components/FirstRunWelcome.tsx, MurageLockup.tsx): the screen fades in over 300 ms and Ember pops
+   up from behind the mark with one soft overshoot (0.1 to 0.6 s). Nothing loops. */
+@keyframes first-run-welcome-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes murage-lockup-pop {
+  from { transform: scale(0) translateY(20%); opacity: 0; }
+  30% { opacity: 1; }
+  to { transform: none; opacity: 1; }
+}
+.murage-lockup-ember span,
+.murage-lockup-ember svg { display: block; width: 100%; height: 100%; }
+.first-run-welcome-start:focus-visible { outline: 1px solid rgba(255, 107, 53, 0.55); outline-offset: 3px; }
+
 /* ─────────────────────────────────────────────────────────────────────────
    REDUCED MOTION: the one block. Every rule that honours
    prefers-reduced-motion lives here, at the end of the file, so it wins
@@ -1496,6 +1515,8 @@ body:has([data-testid="workspace-pane"]:not([hidden])):not(:has(.fixed.inset-0:n
    ───────────────────────────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   .whats-new-card { animation: none; }
+  .first-run-welcome,
+  .murage-lockup-ember { animation: none !important; }
   .announce-in { animation: none; }
   .animate-caret, .animate-msg-in, .animate-shimmer { animation: none; }
   .animate-status-pulse { animation: none; opacity: 0.6; }

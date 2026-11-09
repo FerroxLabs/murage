@@ -1,4 +1,9 @@
+import { settingsOpener } from "@/lib/settings-leave";
+import { LazyOverlay } from "@/components/LazyOverlay";
 import { EngineChatLinkHost } from "@/components/EngineChatLink";
+import { adjacentSidebarBot, sidebarBotOrder, sidebarCycleDirection } from "@/lib/sidebar-layout";
+import { loadSectionOrder } from "@/lib/sidebar-preferences";
+import { imeComposing } from "@/lib/composer-enter";
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { api, StoreProvider, useStore } from "@/state/store";
@@ -23,7 +28,11 @@ import { NoEngines } from "@/components/NoEngines";
 import { enginesOnlySwitchedOff } from "@/lib/engines-off";
 import { drawerCloseKey } from "@/lib/drawer-close";
 import { CommandPaletteHost } from "@/components/CommandPaletteHost";
+import { DictationStatusBar } from "@/components/DictationStatusBar";
 import { FirstRunPhases } from "@/components/FirstRunPhases";
+import { FirstRunWelcome } from "@/components/FirstRunWelcome";
+import { StartupPictureWriter } from "@/components/StartupPictureWriter";
+import { pictureHeld } from "@/lib/startup-picture-schedule";
 import { useSetupView } from "@/components/FirstRunChrome";
 import { firstRunOwnsMainView } from "@/lib/first-run";
 import { settleSendKeyForUpgrade } from "@/lib/send-key";
@@ -107,6 +116,18 @@ const GroupView = GroupViewLazy.Component;
 
 function Shell() {
   const { state, dispatch } = useStore();
+  // Sidebar publishes the layout it actually renders, including unsaved drags.
+  const sidebarLayout = useRef({ sectionOrder: loadSectionOrder(), showHidden: false });
+  const onSidebarLayout = useCallback((layout: typeof sidebarLayout.current) => {
+    sidebarLayout.current = layout;
+  }, []);
+  const settingsSession = useRef<HTMLElement | null>(null);
+  const settingsWasOpen = useRef(false);
+  const settingsIsOpen = state.appSettingsOpen || state.settingsOpen;
+  if (settingsIsOpen && !settingsWasOpen.current) {
+    settingsSession.current = typeof document === "undefined" ? null : settingsOpener(document.activeElement as HTMLElement | null);
+  }
+  settingsWasOpen.current = settingsIsOpen;
   // #open=<thread>&msg=<message> and the phone app's notificationOpened.
   useDeepLinks();
   usePushEnrol();
@@ -171,6 +192,8 @@ function Shell() {
   const healthOriginRef = useRef<HealthOrigin | undefined>(undefined);
   const group = state.groups.find((g) => g.id === state.selectedId);
   const bot = group ? undefined : (state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0]);
+  // The Settings window can show any bot from its Bots group without changing the chat behind it.
+  const settingsBot = (state.settingsBotId ? state.bots.find((b) => b.id === state.settingsBotId) : undefined) ?? bot;
   // UX 1.0.13 (L2A): the rail shows on every view, Routines included, so a door is always one click away.
   const { drawerOpen, setDrawerOpen, closeDrawer, returnDrawerFocus, control: drawerControl } = useBotListDrawer(true);
   // One read of each for the whole shell: the rail's door, Today and the phone tabs show the same numbers.
@@ -184,6 +207,7 @@ function Shell() {
     else if (door === "needs-you") dispatch({ type: "showNeedsYou" });
     else dispatch({ type: "showRoutines" });
   }, [dispatch]);
+  const phoneTab = state.activeView === "chat" ? null : doorForView(state.activeView);
   // A workspace panel (LocalVm/Browser) covers the call's own bot/room's
   // screen the same way another selection does, with nothing to return to
   // otherwise (callbar-rereview.md N4). CallOverlaySlot (CallControls.tsx)
@@ -261,8 +285,9 @@ function Shell() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
-      if (!mod || e.defaultPrevented || e.isComposing) return;
-      const bots = state.bots.filter((b) => !b.hidden);
+      if (!mod || e.defaultPrevented || imeComposing(e)) return;
+      const bots = sidebarBotOrder(state.bots, state.groups.filter((group) => !group.hidden), sidebarLayout.current.sectionOrder, sidebarLayout.current.showHidden);
+      const cycleDirection = sidebarCycleDirection(e);
       if (e.key === "n" && !e.shiftKey) {
         e.preventDefault();
         dispatch({ type: "newBot" });
@@ -280,9 +305,8 @@ function Shell() {
         // All chats; again (or Escape) goes back to the chat
         e.preventDefault();
         dispatch(state.activeView === "all-chats" ? { type: "closeAllChats" } : { type: "showAllChats" });
-      } else if (e.shiftKey && (e.key === "[" || e.key === "]")) {
-        const idx = bots.findIndex((b) => b.id === state.selectedId);
-        const next = bots[(idx + (e.key === "]" ? 1 : -1) + bots.length) % bots.length];
+      } else if (cycleDirection !== null) {
+        const next = adjacentSidebarBot(bots, state.selectedId, cycleDirection);
         if (next) {
           e.preventDefault();
           dispatch({ type: "select", id: next.id });
@@ -291,7 +315,7 @@ function Shell() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [state.bots, state.selectedId, state.activeView, dispatch]);
+  }, [state.bots, state.groups, state.selectedId, state.activeView, dispatch]);
 
   useEffect(() => {
     notificationBridge()?.setUnreadCount?.(unreadCount);
@@ -449,8 +473,7 @@ function Shell() {
       {state.signedOut && <SignedOutCard />}
       {/* UX 1.0.13 band slot: no internet on this device. Bots on the computer keep working; it says what waits. */}
       <OfflineBand connectivity={connectivity} desktop={desktop} />
-      {/* fixed-position popup, bottom-left — outside the layout flow */}
-      <UpdateBanner />
+      {/* The update pop-up is mounted in App, beside the terms gate. */}
       <UpdateStaleNotice />
       {/* The first run's phases, as a band ABOVE whatever is in the main view
           rather than on top of it or beside it. It owns its own visibility
@@ -460,6 +483,11 @@ function Shell() {
           browser door is not a fresh machine and must never be shown a
           first-run screen. */}
       {desktop === true && <FirstRunPhases />}
+      {/* The welcome (Ember pops in): the first paint of a brand-new install, above everything, desktop only. Its rule is
+          welcomeShouldShow (src/lib/first-run-welcome.ts). */}
+      {desktop === true && <FirstRunWelcome />}
+      {/* The cached start-up picture (FIRSTRUN-1019 slice B): the next start's tip and the Chief's own face, drawn off screen. Nothing on screen; held while the welcome is up. */}
+      {desktop === true && <StartupPictureWriter chiefBotId={setupView?.chiefBotId ?? null} suspended={pictureHeld(setupView ?? null)} />}
       <div className="relative flex min-h-0 flex-1">
       <BotListDrawerProvider value={drawerControl}>
       {/* The "Open bot list" button is not drawn here. Each main view's header
@@ -474,6 +502,7 @@ function Shell() {
         />
       )}
       <Sidebar
+        onLayoutChange={onSidebarLayout}
         needs={needs}
         health={health}
         open={drawerOpen}
@@ -488,26 +517,26 @@ function Shell() {
       {state.activeView === "today" && !todayLandingOnHold ? (
         <TodayView needs={needs} health={health} firstRun={setupOwnsView} chiefBotId={setupView?.chiefBotId ?? null} remote={desktop !== true} />
       ) : state.activeView === "needs-you" ? (
-        <NeedsYouPage tab={state.needsYouTab ?? "decisions"} onTabChange={(tab) => dispatch({ type: "setNeedsYouTab", tab })} onOpenChat={nav.openChat} health={health} />
+        <NeedsYouPage tab={state.needsYouTab ?? "decisions"} onTabChange={(tab) => dispatch({ type: "setNeedsYouTab", tab })} onLeave={() => dispatch({ type: "showToday" })} onOpenChat={nav.openChat} health={health} />
       ) : state.activeView === "health" ? (
         <HealthPage onOpenNeedsYou={() => nav.showNeedsYou()} onLeave={leaveHealth} />
       ) : state.activeView === "all-chats" ? (
-        <LazyBoundary onRetry={AllChatsPageLazy.retry}><Suspense fallback={<LazyFallback />}><AllChatsPage /></Suspense></LazyBoundary>
+        <LazyOverlay name="page-all-chats" kind="page" covers="while-loading" key="all-chats" onRetry={AllChatsPageLazy.retry} onDismiss={() => dispatch({ type: "closeAllChats" })}><AllChatsPage /></LazyOverlay>
       ) : state.activeView === "team-map" ? (
-        <LazyBoundary onRetry={TeamMapPageLazy.retry}><Suspense fallback={<LazyFallback />}><TeamMapPage /></Suspense></LazyBoundary>
+        <LazyOverlay name="page-team-map" kind="page" covers="while-loading" key="team-map" onRetry={TeamMapPageLazy.retry} onDismiss={() => dispatch({ type: "showToday" })}><TeamMapPage /></LazyOverlay>
       ) : state.activeView === "routines" ? (
-        <LazyBoundary onRetry={RoutinesPageLazy.retry}><Suspense fallback={<LazyFallback />}><RoutinesPage onBack={closeCalendar} onOpenRoom={openCalendarRoom} /></Suspense></LazyBoundary>
+        <LazyOverlay name="page-routines" kind="page" covers="while-loading" key="routines" onRetry={RoutinesPageLazy.retry} onDismiss={closeCalendar}><RoutinesPage onBack={closeCalendar} onOpenRoom={openCalendarRoom} /></LazyOverlay>
       ) : state.activeView === "skill-recorder" && skillRecorderAvailable(state.config, desktop, isCloudOrigin(), capabilities.host.platform) ? (
-        <LazyBoundary onRetry={SkillRecorderPageLazy.retry}><Suspense fallback={<LazyFallback />}><SkillRecorderPage /></Suspense></LazyBoundary>
+        <LazyOverlay name="page-skill-recorder" kind="page" covers="while-loading" key="skill-recorder" onRetry={SkillRecorderPageLazy.retry} onDismiss={() => dispatch({ type: "showToday" })}><SkillRecorderPage /></LazyOverlay>
       ) : browserWorkspaceBotId && bot && bot.id === browserWorkspaceBotId ? (
-        <LazyBoundary onRetry={BrowserWorkspaceLazy.retry}><Suspense fallback={<LazyFallback />}><BrowserWorkspace bot={bot} onClose={closeBrowserWorkspace} /></Suspense></LazyBoundary>
+        <LazyOverlay name="page-browser-workspace" kind="page" covers="while-loading" key="browser-workspace" onRetry={BrowserWorkspaceLazy.retry} onDismiss={closeBrowserWorkspace}><BrowserWorkspace bot={bot} onClose={closeBrowserWorkspace} /></LazyOverlay>
       ) : localVmWorkspaceBotId ? (
-        <LazyBoundary onRetry={LocalVmWorkspaceLazy.retry}><Suspense fallback={<LazyFallback />}><LocalVmWorkspace
+        <LazyOverlay name="page-local-vm-workspace" kind="page" covers="while-loading" key="local-vm-workspace" onRetry={LocalVmWorkspaceLazy.retry} onDismiss={() => setLocalVmWorkspaceBotId(null)}><LocalVmWorkspace
           primaryBotId={localVmWorkspaceBotId}
           overlayOpen={nativeViewOverlayOpen}
           onClose={() => setLocalVmWorkspaceBotId(null)}
           onOpenComputer={openComputerFromWorkspace}
-        /></Suspense></LazyBoundary>
+        /></LazyOverlay>
       ) : enginesOff ? (
         <div className="flex h-full min-w-0 flex-1 flex-col">
           <div role="status" className="flex flex-wrap items-center gap-3 border-b border-hairline/40 bg-inset px-4 py-2 text-[13px] text-ink">
@@ -541,43 +570,37 @@ function Shell() {
           </div>
         </main>
       )}
-      {state.settingsOpen && bot && (
-        <LazyBoundary onRetry={BotSettings.retry} onDismiss={() => dispatch({ type: "toggleSettings", open: false })}>
-          <Suspense fallback={<LazyFallback />}>
-            {LoadedBotSettings ? <LoadedBotSettings key={bot.id} bot={bot} /> : <BotSettingsDialog key={bot.id} bot={bot} />}
-          </Suspense>
-        </LazyBoundary>
+      {state.settingsOpen && settingsBot && (
+        <LazyOverlay name="bot-settings" kind="window" covers="always" opener={settingsSession.current} holdFocus={false} onRetry={BotSettings.retry} onDismiss={() => dispatch({ type: "toggleSettings", open: false })}>
+            {LoadedBotSettings ? <LoadedBotSettings key={settingsBot.id} bot={settingsBot} /> : <BotSettingsDialog key={settingsBot.id} bot={settingsBot} />}
+        </LazyOverlay>
       )}
       {state.computerOpen && bot && (
-        <LazyBoundary onRetry={Computer.retry} onDismiss={() => dispatch({ type: "toggleComputer", open: false })}>
-          <Suspense fallback={<LazyFallback />}>
+        <LazyOverlay name="computer" kind="window" covers="while-loading" onRetry={Computer.retry} onDismiss={() => dispatch({ type: "toggleComputer", open: false })}>
             <ComputerPanel
               key={bot.id}
               bot={bot}
               onOpenVmWorkspace={openLocalVmWorkspace}
               onExpandBrowser={openBrowserWorkspace}
             />
-          </Suspense>
-        </LazyBoundary>
+        </LazyOverlay>
       )}
       {state.inspectorOpen && bot && (
-        <LazyBoundary onRetry={Inspector.retry} onDismiss={() => dispatch({ type: "toggleInspector", open: false })}>
-          <Suspense fallback={<LazyFallback />}>
+        <LazyOverlay name="inspector" kind="window" covers="while-loading" onRetry={Inspector.retry} onDismiss={() => dispatch({ type: "toggleInspector", open: false })}>
             <InspectorPanel bot={bot} />
-          </Suspense>
-        </LazyBoundary>
+        </LazyOverlay>
       )}
       {state.appSettingsOpen && (
-        <LazyBoundary onRetry={Settings.retry} onDismiss={() => dispatch({ type: "toggleAppSettings", open: false })}>
-          <Suspense fallback={<LazyFallback />}>
+        <LazyOverlay name="settings" kind="window" covers="always" opener={settingsSession.current} holdFocus={false} onRetry={Settings.retry} onDismiss={() => dispatch({ type: "toggleAppSettings", open: false })}>
             <SettingsModal />
-          </Suspense>
-        </LazyBoundary>
+        </LazyOverlay>
       )}
-      {state.pluginsOpen && <LazyBoundary onRetry={PluginsPanelLazy.retry}><Suspense fallback={<LazyFallback />}><PluginsPanel /></Suspense></LazyBoundary>}
+      {state.pluginsOpen && <LazyOverlay name="plugins" kind="window" covers="always" onRetry={PluginsPanelLazy.retry} onDismiss={() => dispatch({ type: "togglePlugins", open: false })}><PluginsPanel /></LazyOverlay>}
       {/* mounted after the modals: same z-50 tier, so DOM order keeps the
           palette on top when one of them is open underneath */}
       <CommandPaletteHost onOpenChange={setPaletteOpen} />
+      {/* The stop control for composer dictation when no Composer can draw it (thread switch, another view, a layer on top). */}
+      <DictationStatusBar />
       {desktop === true && <NoLimitsTermsPrompt />}
       <EngineChatLinkHost />
       {/* Bot calls 1.0.9: the ring banner (call.ring hints re-read GET /api/calls/active) */}
@@ -600,10 +623,13 @@ function Shell() {
       <CoachMarks firstRun={Boolean(setupOwnsView && setupView)} />
       </BotListDrawerProvider>
       </div>
-      {/* UX 1.0.13 phoneTabs slot (L7): below md only. */}
-      <div className="md:hidden">
-        <PhoneTabs active={doorForView(state.activeView) ?? "chats"} needsCount={needs.count} onSelect={openDoor} />
-      </div>
+      {/* UX 1.0.13 phoneTabs slot (L7): below md only, on the four door pages. An open chat is a screen pushed
+          over Chats (its header's bot-list button is the way back), so the composer keeps the bottom of the screen. */}
+      {phoneTab && (
+        <div className="md:hidden">
+          <PhoneTabs active={phoneTab} needsCount={needs.count} onSelect={openDoor} />
+        </div>
+      )}
     </div>
   );
 }
@@ -645,6 +671,9 @@ export default function App() {
         <TermsGate>
           <Shell />
         </TermsGate>
+        {/* The update pop-up (above the sidebar footer once it mounts; a top-layer popover inside an open modal window). Beside the gate, not behind it: an update that downloads
+            while the terms screen is up still shows, and it sends nothing. It renders nothing without the updater bridge. */}
+        <UpdateBanner />
         {/* A CONFIRMED remote surface only. The desktop app is already an app;
             `undefined` renders nothing, the same neutral answer the welcome
             gate above takes. */}

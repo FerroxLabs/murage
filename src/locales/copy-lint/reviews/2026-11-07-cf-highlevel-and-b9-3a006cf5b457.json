@@ -1,0 +1,2801 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "1.0.18-lanes",
+  "date": "2026-11-07",
+  "base": "1effcd533225164422aba5c0e9aa372566519377",
+  "scope": "strings and lint files without a valid review",
+  "strings": {
+    "en:ux.d24.label": {
+      "text": "Spoken replies",
+      "en": "Spoken replies",
+      "verdict": "pass"
+    },
+    "en:ux.d24.help": {
+      "text": "Read finished replies aloud on this computer, in the conversation you have open. Off while you are on a call. Needs a hosted voice.",
+      "en": "Read finished replies aloud on this computer, in the conversation you have open. Off while you are on a call. Needs a hosted voice.",
+      "verdict": "fail",
+      "note": "Rule 1: “Hosted voice” is technical wording."
+    },
+    "en:ux.d24.disclosure": {
+      "text": "Speech uses a voice service. Avoid reading sensitive replies aloud.",
+      "en": "Speech uses a voice service. Avoid reading sensitive replies aloud.",
+      "verdict": "pass"
+    },
+    "en:ux.d24.budget": {
+      "text": "Spoken replies paused: voice budget reached.",
+      "en": "Spoken replies paused: voice budget reached.",
+      "verdict": "pass"
+    },
+    "en:ux.d24.failed": {
+      "text": "Couldn't speak that reply.",
+      "en": "Couldn't speak that reply.",
+      "verdict": "pass"
+    },
+    "en:ux.d24.hosted": {
+      "text": "Spoken replies need a hosted voice.",
+      "en": "Spoken replies need a hosted voice.",
+      "verdict": "fail",
+      "note": "Rule 1: “Hosted voice” is technical wording."
+    },
+    "en:settings.l1.card.connections.highlevel": {
+      "text": "HighLevel",
+      "en": "HighLevel",
+      "verdict": "pass"
+    },
+    "en:highlevel.title": {
+      "text": "HighLevel",
+      "en": "HighLevel",
+      "verdict": "pass"
+    },
+    "en:highlevel.intro": {
+      "text": "Let your bots look things up in your HighLevel CRM. They can read it and cannot change anything in it.",
+      "en": "Let your bots look things up in your HighLevel CRM. They can read it and cannot change anything in it.",
+      "verdict": "pass"
+    },
+    "en:highlevel.loading": {
+      "text": "Loading HighLevel…",
+      "en": "Loading HighLevel…",
+      "verdict": "pass"
+    },
+    "en:highlevel.loadError": {
+      "text": "HighLevel settings did not load. Try again.",
+      "en": "HighLevel settings did not load. Try again.",
+      "verdict": "pass"
+    },
+    "en:highlevel.noToken": {
+      "text": "No token saved yet.",
+      "en": "No token saved yet.",
+      "verdict": "pass"
+    },
+    "en:highlevel.tokenNoLocation": {
+      "text": "Token saved. Check a location to connect it.",
+      "en": "Token saved. Check a location to connect it.",
+      "verdict": "pass"
+    },
+    "en:highlevel.reconfirm": {
+      "text": "The token changed. Check the location again and confirm it.",
+      "en": "The token changed. Check the location again and confirm it.",
+      "verdict": "pass"
+    },
+    "en:highlevel.notReady": {
+      "text": "This location is not ready. Check it again and confirm it.",
+      "en": "This location is not ready. Check it again and confirm it.",
+      "verdict": "pass"
+    },
+    "en:highlevel.connected": {
+      "text": "Connected to {name}.",
+      "en": "Connected to {name}.",
+      "verdict": "pass"
+    },
+    "en:highlevel.tokenLabel": {
+      "text": "Private integration token",
+      "en": "Private integration token",
+      "verdict": "pass"
+    },
+    "en:highlevel.pasteToken": {
+      "text": "Paste your token",
+      "en": "Paste your token",
+      "verdict": "pass"
+    },
+    "en:highlevel.pasteReplacement": {
+      "text": "Paste a new token",
+      "en": "Paste a new token",
+      "verdict": "pass"
+    },
+    "en:highlevel.save": {
+      "text": "Save",
+      "en": "Save",
+      "verdict": "pass"
+    },
+    "en:highlevel.saving": {
+      "text": "Saving…",
+      "en": "Saving…",
+      "verdict": "pass"
+    },
+    "en:highlevel.removeToken": {
+      "text": "Remove token",
+      "en": "Remove token",
+      "verdict": "pass"
+    },
+    "en:highlevel.tokenHelp": {
+      "text": "Make one in HighLevel under Settings, Private Integrations. Murage keeps it with your other saved keys and never shows it here again.",
+      "en": "Make one in HighLevel under Settings, Private Integrations. Murage keeps it with your other saved keys and never shows it here again.",
+      "verdict": "pass"
+    },
+    "en:highlevel.tokenSavedNotice": {
+      "text": "Token saved.",
+      "en": "Token saved.",
+      "verdict": "pass"
+    },
+    "en:highlevel.tokenRemoved": {
+      "text": "Token removed. Your bots can no longer reach HighLevel.",
+      "en": "Token removed. Your bots can no longer reach HighLevel.",
+      "verdict": "pass"
+    },
+    "en:highlevel.tokenSaveError": {
+      "text": "The token was not saved. Try again.",
+      "en": "The token was not saved. Try again.",
+      "verdict": "pass"
+    },
+    "en:highlevel.tokenRemoveError": {
+      "text": "The token was not removed. Try again.",
+      "en": "The token was not removed. Try again.",
+      "verdict": "pass"
+    },
+    "en:highlevel.locationLabel": {
+      "text": "Location ID",
+      "en": "Location ID",
+      "verdict": "pass"
+    },
+    "en:highlevel.locationHelp": {
+      "text": "Find it in HighLevel under Settings, Business Profile.",
+      "en": "Find it in HighLevel under Settings, Business Profile.",
+      "verdict": "pass"
+    },
+    "en:highlevel.check": {
+      "text": "Check location",
+      "en": "Check location",
+      "verdict": "pass"
+    },
+    "en:highlevel.checking": {
+      "text": "Checking…",
+      "en": "Checking…",
+      "verdict": "pass"
+    },
+    "en:highlevel.checkError": {
+      "text": "That location could not be checked. Make sure the token and the location ID match.",
+      "en": "That location could not be checked. Make sure the token and the location ID match.",
+      "verdict": "pass"
+    },
+    "en:highlevel.found": {
+      "text": "Found {name}. Confirm to connect this location.",
+      "en": "Found {name}. Confirm to connect this location.",
+      "verdict": "pass"
+    },
+    "en:highlevel.confirm": {
+      "text": "Confirm",
+      "en": "Confirm",
+      "verdict": "pass"
+    },
+    "en:highlevel.confirmed": {
+      "text": "Location connected. Now choose what each bot may do.",
+      "en": "Location connected. Now choose what each bot may do.",
+      "verdict": "pass"
+    },
+    "en:highlevel.confirmError": {
+      "text": "The location was not connected. Check it again.",
+      "en": "The location was not connected. Check it again.",
+      "verdict": "pass"
+    },
+    "en:highlevel.disconnect": {
+      "text": "Disconnect",
+      "en": "Disconnect",
+      "verdict": "pass"
+    },
+    "en:highlevel.disconnected": {
+      "text": "Location disconnected. Your bots can no longer reach it.",
+      "en": "Location disconnected. Your bots can no longer reach it.",
+      "verdict": "pass"
+    },
+    "en:highlevel.disconnectError": {
+      "text": "The location was not disconnected. Try again.",
+      "en": "The location was not disconnected. Try again.",
+      "verdict": "pass"
+    },
+    "en:highlevel.botsTitle": {
+      "text": "Bot access",
+      "en": "Bot access",
+      "verdict": "pass"
+    },
+    "en:highlevel.botsHelp": {
+      "text": "Choose which bots may read this location.",
+      "en": "Choose which bots may read this location.",
+      "verdict": "pass"
+    },
+    "en:highlevel.canRead": {
+      "text": "Can read",
+      "en": "Can read",
+      "verdict": "pass"
+    },
+    "en:highlevel.canReadFor": {
+      "text": "{name} can read HighLevel",
+      "en": "{name} can read HighLevel",
+      "verdict": "pass"
+    },
+    "en:highlevel.accessSaved": {
+      "text": "Access saved.",
+      "en": "Access saved.",
+      "verdict": "pass"
+    },
+    "en:highlevel.accessError": {
+      "text": "Access was not saved. Try again.",
+      "en": "Access was not saved. Try again.",
+      "verdict": "pass"
+    },
+    "en:modelPicker.recommended": {
+      "text": "Recommended",
+      "en": "Recommended",
+      "verdict": "pass"
+    },
+    "en:setup.recommendedModel": {
+      "text": "Recommended for new choices: {model}. Your saved model stays as it is.",
+      "en": "Recommended for new choices: {model}. Your saved model stays as it is.",
+      "verdict": "pass"
+    },
+    "en:updateRecovery.BACKUP_UPGRADE_STAGED": {
+      "text": "Murage is still installing the update. If it stays stuck, quit Murage, open Activity Monitor, select the process named ShipIt for Murage, and choose Force Quit. Then open Murage again. Your backup is kept.",
+      "en": "Murage is still installing the update. If it stays stuck, quit Murage, open Activity Monitor, select the process named ShipIt for Murage, and choose Force Quit. Then open Murage again. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery instructions describe the update as stuck."
+    },
+    "en:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "Murage couldn't tell whether the update is still being installed, so nothing was changed by this check. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "en": "Murage couldn't tell whether the update is still being installed, so nothing was changed by this check. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery message leads with something Murage could not do."
+    },
+    "en:updateRecovery.landed-not-running": {
+      "text": "The updated app is on disk, but this copy is still running the older version. Choose Return to workspace to try opening the updated app once more, or quit and open the updated copy. Your backup is kept.",
+      "en": "The updated app is on disk, but this copy is still running the older version. Choose Return to workspace to try opening the updated app once more, or quit and open the updated copy. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "en:updateRecovery.return-unconfirmed": {
+      "text": "The update was set aside and your backup was kept. Choose Return to workspace to try opening your workspace again.",
+      "en": "The update was set aside and your backup was kept. Choose Return to workspace to try opening your workspace again.",
+      "verdict": "pass"
+    },
+    "en:updateRecovery.BACKUP_UPGRADE_ACTION_UNAVAILABLE": {
+      "text": "This update is paused. Choose Return to workspace or open diagnostics. Your backup is kept.",
+      "en": "This update is paused. Choose Return to workspace or open diagnostics. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "en:updateRecovery.return-revoked": {
+      "text": "Try Quit again, then open Murage. Your backup is kept.",
+      "en": "Try Quit again, then open Murage. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "en:updateRecovery.installer-wait": {
+      "text": "Murage is installing the update. Please wait. Your backup is kept.",
+      "en": "Murage is installing the update. Please wait. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "en:updates.installerTitle": {
+      "text": "Murage {version} is ready",
+      "en": "Murage {version} is ready",
+      "verdict": "pass"
+    },
+    "en:updates.installerSteps": {
+      "text": "Download Murage {version}, then drag it into Applications. Your chats and settings stay.",
+      "en": "Download Murage {version}, then drag it into Applications. Your chats and settings stay.",
+      "verdict": "pass"
+    },
+    "en:updates.downloadInstaller": {
+      "text": "Download Murage {version}",
+      "en": "Download Murage {version}",
+      "verdict": "pass"
+    },
+    "en:updateRecovery.cleanup-stopped": {
+      "text": "Murage could not finish closing its background work. Your backup is kept.",
+      "en": "Murage could not finish closing its background work. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery message describes an app failure."
+    },
+    "en:updateRecovery.settled-stopped": {
+      "text": "The update was set aside and your backup was kept.",
+      "en": "The update was set aside and your backup was kept.",
+      "verdict": "pass"
+    },
+    "en:updateRecovery.quit": {
+      "text": "Quit",
+      "en": "Quit",
+      "verdict": "pass"
+    },
+    "en:updateRecovery.update-wait": {
+      "text": "Please wait while Murage finishes this step. Your backup is kept.",
+      "en": "Please wait while Murage finishes this step. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "en:backup.waiting.space": {
+      "text": "Backups are waiting for space. Murage needs about {size} more on the drive with your backup folder. Remove some files or choose a different folder. The backup starts by itself when there's room.",
+      "en": "Backups are waiting for space. Murage needs about {size} more on the drive with your backup folder. Remove some files or choose a different folder. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "en:backup.waiting.data": {
+      "text": "Backups are waiting for space. Murage needs about {size} more on this computer's drive, where Murage keeps its data. Remove some files. The backup starts by itself when there's room.",
+      "en": "Backups are waiting for space. Murage needs about {size} more on this computer's drive, where Murage keeps its data. Remove some files. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "en:backup.waiting.dataUnknown": {
+      "text": "Backups are waiting for space on this computer's drive, where Murage keeps its data. Remove some files. The backup starts by itself when there's room.",
+      "en": "Backups are waiting for space on this computer's drive, where Murage keeps its data. Remove some files. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "en:backup.waiting.spaceUnknown": {
+      "text": "Backups are waiting for space on the drive with your backup folder. Remove some files or choose a different folder. The backup starts by itself when there's room.",
+      "en": "Backups are waiting for space on the drive with your backup folder. Remove some files or choose a different folder. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "en:backup.waiting.drive": {
+      "text": "Your backup drive isn't connected. Connect it and Murage backs up right away.",
+      "en": "Your backup drive isn't connected. Connect it and Murage backs up right away.",
+      "verdict": "pass"
+    },
+    "en:backup.waiting.busy": {
+      "text": "Backups are waiting because a file Murage needs was in use. Murage tries again by itself soon.",
+      "en": "Backups are waiting because a file Murage needs was in use. Murage tries again by itself soon.",
+      "verdict": "pass"
+    },
+    "en:backup.waiting.interrupted": {
+      "text": "The last backup was interrupted before it finished. Murage tries again by itself soon.",
+      "en": "The last backup was interrupted before it finished. Murage tries again by itself soon.",
+      "verdict": "fail",
+      "note": "Rule 3: The backup recovery message emphasizes an interrupted backup."
+    },
+    "de:settings.l1.card.connections.highlevel": {
+      "text": "HighLevel",
+      "en": "HighLevel",
+      "verdict": "pass"
+    },
+    "de:highlevel.title": {
+      "text": "HighLevel",
+      "en": "HighLevel",
+      "verdict": "pass"
+    },
+    "de:highlevel.intro": {
+      "text": "Lass deine Bots Dinge in deinem HighLevel-CRM nachschlagen. Deine Bots können es lesen und dort nichts ändern.",
+      "en": "Let your bots look things up in your HighLevel CRM. They can read it and cannot change anything in it.",
+      "verdict": "pass"
+    },
+    "de:highlevel.loading": {
+      "text": "HighLevel wird geladen…",
+      "en": "Loading HighLevel…",
+      "verdict": "pass"
+    },
+    "de:highlevel.loadError": {
+      "text": "Die HighLevel-Einstellungen wurden nicht geladen. Versuch es noch einmal.",
+      "en": "HighLevel settings did not load. Try again.",
+      "verdict": "pass"
+    },
+    "de:highlevel.noToken": {
+      "text": "Noch kein Token gespeichert.",
+      "en": "No token saved yet.",
+      "verdict": "pass"
+    },
+    "de:highlevel.tokenNoLocation": {
+      "text": "Token gespeichert. Prüfe einen Standort, um ihn zu verbinden.",
+      "en": "Token saved. Check a location to connect it.",
+      "verdict": "pass"
+    },
+    "de:highlevel.reconfirm": {
+      "text": "Der Token hat sich geändert. Prüfe den Standort noch einmal und bestätige ihn.",
+      "en": "The token changed. Check the location again and confirm it.",
+      "verdict": "pass"
+    },
+    "de:highlevel.notReady": {
+      "text": "Dieser Standort ist nicht bereit. Prüfe ihn noch einmal und bestätige ihn.",
+      "en": "This location is not ready. Check it again and confirm it.",
+      "verdict": "pass"
+    },
+    "de:highlevel.connected": {
+      "text": "Verbunden mit {name}.",
+      "en": "Connected to {name}.",
+      "verdict": "pass"
+    },
+    "de:highlevel.tokenLabel": {
+      "text": "Token der privaten Integration",
+      "en": "Private integration token",
+      "verdict": "pass"
+    },
+    "de:highlevel.pasteToken": {
+      "text": "Füge deinen Token ein",
+      "en": "Paste your token",
+      "verdict": "pass"
+    },
+    "de:highlevel.pasteReplacement": {
+      "text": "Füge einen neuen Token ein",
+      "en": "Paste a new token",
+      "verdict": "pass"
+    },
+    "de:highlevel.save": {
+      "text": "Speichern",
+      "en": "Save",
+      "verdict": "pass"
+    },
+    "de:highlevel.saving": {
+      "text": "Wird gespeichert…",
+      "en": "Saving…",
+      "verdict": "pass"
+    },
+    "de:highlevel.removeToken": {
+      "text": "Token entfernen",
+      "en": "Remove token",
+      "verdict": "pass"
+    },
+    "de:highlevel.tokenHelp": {
+      "text": "Erstelle einen in HighLevel unter Settings, Private Integrations. Murage bewahrt ihn bei deinen anderen gespeicherten Schlüsseln auf und zeigt ihn hier nie wieder an.",
+      "en": "Make one in HighLevel under Settings, Private Integrations. Murage keeps it with your other saved keys and never shows it here again.",
+      "verdict": "pass"
+    },
+    "de:highlevel.tokenSavedNotice": {
+      "text": "Token gespeichert.",
+      "en": "Token saved.",
+      "verdict": "pass"
+    },
+    "de:highlevel.tokenRemoved": {
+      "text": "Token entfernt. Deine Bots können HighLevel nicht mehr erreichen.",
+      "en": "Token removed. Your bots can no longer reach HighLevel.",
+      "verdict": "pass"
+    },
+    "de:highlevel.tokenSaveError": {
+      "text": "Der Token wurde nicht gespeichert. Versuch es noch einmal.",
+      "en": "The token was not saved. Try again.",
+      "verdict": "pass"
+    },
+    "de:highlevel.tokenRemoveError": {
+      "text": "Der Token wurde nicht entfernt. Versuch es noch einmal.",
+      "en": "The token was not removed. Try again.",
+      "verdict": "pass"
+    },
+    "de:highlevel.locationLabel": {
+      "text": "Standort-ID",
+      "en": "Location ID",
+      "verdict": "pass"
+    },
+    "de:highlevel.locationHelp": {
+      "text": "Du findest sie in HighLevel unter Settings, Business Profile.",
+      "en": "Find it in HighLevel under Settings, Business Profile.",
+      "verdict": "pass"
+    },
+    "de:highlevel.check": {
+      "text": "Standort prüfen",
+      "en": "Check location",
+      "verdict": "pass"
+    },
+    "de:highlevel.checking": {
+      "text": "Wird geprüft…",
+      "en": "Checking…",
+      "verdict": "pass"
+    },
+    "de:highlevel.checkError": {
+      "text": "Dieser Standort konnte nicht geprüft werden. Achte darauf, dass Token und Standort-ID zusammenpassen.",
+      "en": "That location could not be checked. Make sure the token and the location ID match.",
+      "verdict": "pass"
+    },
+    "de:highlevel.found": {
+      "text": "{name} gefunden. Bestätige, um diesen Standort zu verbinden.",
+      "en": "Found {name}. Confirm to connect this location.",
+      "verdict": "pass"
+    },
+    "de:highlevel.confirm": {
+      "text": "Bestätigen",
+      "en": "Confirm",
+      "verdict": "pass"
+    },
+    "de:highlevel.confirmed": {
+      "text": "Standort verbunden. Wähle jetzt, was jeder Bot darf.",
+      "en": "Location connected. Now choose what each bot may do.",
+      "verdict": "pass"
+    },
+    "de:highlevel.confirmError": {
+      "text": "Der Standort wurde nicht verbunden. Prüfe ihn noch einmal.",
+      "en": "The location was not connected. Check it again.",
+      "verdict": "pass"
+    },
+    "de:highlevel.disconnect": {
+      "text": "Trennen",
+      "en": "Disconnect",
+      "verdict": "pass"
+    },
+    "de:highlevel.disconnected": {
+      "text": "Standort getrennt. Deine Bots können ihn nicht mehr erreichen.",
+      "en": "Location disconnected. Your bots can no longer reach it.",
+      "verdict": "pass"
+    },
+    "de:highlevel.disconnectError": {
+      "text": "Der Standort wurde nicht getrennt. Versuch es noch einmal.",
+      "en": "The location was not disconnected. Try again.",
+      "verdict": "pass"
+    },
+    "de:highlevel.botsTitle": {
+      "text": "Bot-Zugriff",
+      "en": "Bot access",
+      "verdict": "pass"
+    },
+    "de:highlevel.botsHelp": {
+      "text": "Wähle, welche Bots diesen Standort lesen dürfen.",
+      "en": "Choose which bots may read this location.",
+      "verdict": "pass"
+    },
+    "de:highlevel.canRead": {
+      "text": "Darf lesen",
+      "en": "Can read",
+      "verdict": "pass"
+    },
+    "de:highlevel.canReadFor": {
+      "text": "{name} darf HighLevel lesen",
+      "en": "{name} can read HighLevel",
+      "verdict": "pass"
+    },
+    "de:highlevel.accessSaved": {
+      "text": "Zugriff gespeichert.",
+      "en": "Access saved.",
+      "verdict": "pass"
+    },
+    "de:highlevel.accessError": {
+      "text": "Der Zugriff wurde nicht gespeichert. Versuch es noch einmal.",
+      "en": "Access was not saved. Try again.",
+      "verdict": "pass"
+    },
+    "de:modelPicker.recommended": {
+      "text": "Empfohlen",
+      "en": "Recommended",
+      "verdict": "pass"
+    },
+    "de:setup.recommendedModel": {
+      "text": "Für eine neue Auswahl empfohlen: {model}. Dein gespeichertes Modell bleibt unverändert.",
+      "en": "Recommended for new choices: {model}. Your saved model stays as it is.",
+      "verdict": "pass"
+    },
+    "de:updateRecovery.BACKUP_UPGRADE_STAGED": {
+      "text": "Murage installiert das Update noch. Wenn es hängen bleibt, beende Murage, öffne die Aktivitätsanzeige, wähle den Prozess ShipIt für Murage und dann Sofort beenden. Öffne Murage danach erneut. Dein Backup bleibt erhalten.",
+      "en": "Murage is still installing the update. If it stays stuck, quit Murage, open Activity Monitor, select the process named ShipIt for Murage, and choose Force Quit. Then open Murage again. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery instructions describe the update as stuck."
+    },
+    "de:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "Murage konnte nicht feststellen, ob das Update noch installiert wird. Diese Prüfung hat daher nichts geändert. Beende Murage und öffne es erneut. Wenn diese Seite wieder erscheint, öffne den Diagnoseordner und kontaktiere den Support. Dein Backup bleibt erhalten.",
+      "en": "Murage couldn't tell whether the update is still being installed, so nothing was changed by this check. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery message leads with something Murage could not do."
+    },
+    "de:updateRecovery.landed-not-running": {
+      "text": "Die aktualisierte App liegt auf der Festplatte, aber diese Kopie verwendet noch die ältere Version. Wähle Zurück zum Arbeitsbereich, um die aktualisierte App noch einmal zu öffnen, oder beende Murage und öffne die aktualisierte Kopie. Dein Backup bleibt erhalten.",
+      "en": "The updated app is on disk, but this copy is still running the older version. Choose Return to workspace to try opening the updated app once more, or quit and open the updated copy. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "de:updateRecovery.return-unconfirmed": {
+      "text": "Das Update wurde beiseitegelegt und dein Backup bleibt erhalten. Wähle Zurück zum Arbeitsbereich, um deinen Arbeitsbereich erneut zu öffnen.",
+      "en": "The update was set aside and your backup was kept. Choose Return to workspace to try opening your workspace again.",
+      "verdict": "pass"
+    },
+    "de:updateRecovery.BACKUP_UPGRADE_ACTION_UNAVAILABLE": {
+      "text": "Dieses Update ist pausiert. Wähle Zurück zum Arbeitsbereich oder öffne die Diagnose. Dein Backup bleibt erhalten.",
+      "en": "This update is paused. Choose Return to workspace or open diagnostics. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "de:updateRecovery.return-revoked": {
+      "text": "Versuche erneut, Murage zu beenden, und öffne es danach wieder. Dein Backup bleibt erhalten.",
+      "en": "Try Quit again, then open Murage. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "de:updateRecovery.installer-wait": {
+      "text": "Murage installiert das Update. Bitte warte. Dein Backup bleibt erhalten.",
+      "en": "Murage is installing the update. Please wait. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "de:updates.installerTitle": {
+      "text": "Murage {version} ist bereit",
+      "en": "Murage {version} is ready",
+      "verdict": "pass"
+    },
+    "de:updates.installerSteps": {
+      "text": "Hol dir das Update in einem Schritt: Lade Murage {version} herunter und zieh es in den Ordner Programme. Deine Chats und Einstellungen bleiben erhalten.",
+      "en": "Download Murage {version}, then drag it into Applications. Your chats and settings stay.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation adds an unsupported claim that updating takes one step."
+    },
+    "de:updates.downloadInstaller": {
+      "text": "Murage {version} herunterladen",
+      "en": "Download Murage {version}",
+      "verdict": "pass"
+    },
+    "de:updateRecovery.cleanup-stopped": {
+      "text": "Murage konnte seine Hintergrundarbeit nicht vollständig beenden. Dein Backup bleibt erhalten.",
+      "en": "Murage could not finish closing its background work. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery message describes an app failure."
+    },
+    "de:updateRecovery.settled-stopped": {
+      "text": "Das Update wurde beiseitegelegt und dein Backup bleibt erhalten.",
+      "en": "The update was set aside and your backup was kept.",
+      "verdict": "pass"
+    },
+    "de:updateRecovery.quit": {
+      "text": "Beenden",
+      "en": "Quit",
+      "verdict": "pass"
+    },
+    "de:updateRecovery.update-wait": {
+      "text": "Bitte warte, während Murage diesen Schritt abschließt. Dein Backup bleibt erhalten.",
+      "en": "Please wait while Murage finishes this step. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "de:backup.waiting.space": {
+      "text": "Backups warten auf Speicherplatz. Murage benötigt etwa {size} mehr auf dem Laufwerk mit deinem Backup-Ordner. Entferne einige Dateien oder wähle einen anderen Ordner. Das Backup startet von selbst, sobald Platz vorhanden ist.",
+      "en": "Backups are waiting for space. Murage needs about {size} more on the drive with your backup folder. Remove some files or choose a different folder. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "de:backup.waiting.data": {
+      "text": "Backups warten auf Speicherplatz. Murage benötigt etwa {size} mehr auf dem Laufwerk dieses Computers, auf dem Murage seine Daten speichert. Entferne einige Dateien. Das Backup startet von selbst, sobald Platz vorhanden ist.",
+      "en": "Backups are waiting for space. Murage needs about {size} more on this computer's drive, where Murage keeps its data. Remove some files. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "de:backup.waiting.dataUnknown": {
+      "text": "Backups warten auf Speicherplatz auf dem Laufwerk dieses Computers, auf dem Murage seine Daten speichert. Entferne einige Dateien. Das Backup startet von selbst, sobald Platz vorhanden ist.",
+      "en": "Backups are waiting for space on this computer's drive, where Murage keeps its data. Remove some files. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "de:backup.waiting.spaceUnknown": {
+      "text": "Backups warten auf Speicherplatz auf dem Laufwerk mit deinem Backup-Ordner. Entferne einige Dateien oder wähle einen anderen Ordner. Das Backup startet von selbst, sobald Platz vorhanden ist.",
+      "en": "Backups are waiting for space on the drive with your backup folder. Remove some files or choose a different folder. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "de:backup.waiting.drive": {
+      "text": "Dein Backup-Laufwerk ist nicht verbunden. Verbinde es und Murage erstellt sofort ein Backup.",
+      "en": "Your backup drive isn't connected. Connect it and Murage backs up right away.",
+      "verdict": "pass"
+    },
+    "de:backup.waiting.busy": {
+      "text": "Backups warten, weil eine von Murage benötigte Datei verwendet wurde. Murage versucht es bald von selbst erneut.",
+      "en": "Backups are waiting because a file Murage needs was in use. Murage tries again by itself soon.",
+      "verdict": "pass"
+    },
+    "de:backup.waiting.interrupted": {
+      "text": "Das letzte Backup wurde vor dem Abschluss unterbrochen. Murage versucht es bald von selbst erneut.",
+      "en": "The last backup was interrupted before it finished. Murage tries again by itself soon.",
+      "verdict": "fail",
+      "note": "Rule 3: The backup recovery message emphasizes an interrupted backup."
+    },
+    "de:ux.d24.label": {
+      "text": "Gesprochene Antworten",
+      "en": "Spoken replies",
+      "verdict": "pass"
+    },
+    "de:ux.d24.help": {
+      "text": "Lies fertige Antworten auf diesem Computer im geöffneten Gespräch vor. Während eines Anrufs ausgeschaltet. Benötigt einen Sprachdienst.",
+      "en": "Read finished replies aloud on this computer, in the conversation you have open. Off while you are on a call. Needs a hosted voice.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation omits the requirement for an online voice."
+    },
+    "de:ux.d24.disclosure": {
+      "text": "Die Sprachausgabe nutzt einen Sprachdienst. Vermeide es, vertrauliche Antworten vorlesen zu lassen.",
+      "en": "Speech uses a voice service. Avoid reading sensitive replies aloud.",
+      "verdict": "pass"
+    },
+    "de:ux.d24.budget": {
+      "text": "Gesprochene Antworten pausiert: Sprachbudget erreicht.",
+      "en": "Spoken replies paused: voice budget reached.",
+      "verdict": "pass"
+    },
+    "de:ux.d24.failed": {
+      "text": "Diese Antwort konnte nicht vorgelesen werden.",
+      "en": "Couldn't speak that reply.",
+      "verdict": "pass"
+    },
+    "de:ux.d24.hosted": {
+      "text": "Gesprochene Antworten benötigen einen Sprachdienst.",
+      "en": "Spoken replies need a hosted voice.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation omits the requirement for an online voice."
+    },
+    "es:settings.l1.card.connections.highlevel": {
+      "text": "HighLevel",
+      "en": "HighLevel",
+      "verdict": "pass"
+    },
+    "es:highlevel.title": {
+      "text": "HighLevel",
+      "en": "HighLevel",
+      "verdict": "pass"
+    },
+    "es:highlevel.intro": {
+      "text": "Deja que tus bots consulten tu CRM de HighLevel. Pueden leerlo y no pueden cambiar nada en él.",
+      "en": "Let your bots look things up in your HighLevel CRM. They can read it and cannot change anything in it.",
+      "verdict": "pass"
+    },
+    "es:highlevel.loading": {
+      "text": "Cargando HighLevel…",
+      "en": "Loading HighLevel…",
+      "verdict": "pass"
+    },
+    "es:highlevel.loadError": {
+      "text": "No se cargaron los ajustes de HighLevel. Inténtalo de nuevo.",
+      "en": "HighLevel settings did not load. Try again.",
+      "verdict": "pass"
+    },
+    "es:highlevel.noToken": {
+      "text": "Todavía no hay ningún token guardado.",
+      "en": "No token saved yet.",
+      "verdict": "pass"
+    },
+    "es:highlevel.tokenNoLocation": {
+      "text": "Token guardado. Comprueba una ubicación para conectarla.",
+      "en": "Token saved. Check a location to connect it.",
+      "verdict": "pass"
+    },
+    "es:highlevel.reconfirm": {
+      "text": "El token cambió. Comprueba la ubicación de nuevo y confírmala.",
+      "en": "The token changed. Check the location again and confirm it.",
+      "verdict": "pass"
+    },
+    "es:highlevel.notReady": {
+      "text": "Esta ubicación no está lista. Compruébala de nuevo y confírmala.",
+      "en": "This location is not ready. Check it again and confirm it.",
+      "verdict": "pass"
+    },
+    "es:highlevel.connected": {
+      "text": "Conectado a {name}.",
+      "en": "Connected to {name}.",
+      "verdict": "pass"
+    },
+    "es:highlevel.tokenLabel": {
+      "text": "Token de integración privada",
+      "en": "Private integration token",
+      "verdict": "pass"
+    },
+    "es:highlevel.pasteToken": {
+      "text": "Pega tu token",
+      "en": "Paste your token",
+      "verdict": "pass"
+    },
+    "es:highlevel.pasteReplacement": {
+      "text": "Pega un token nuevo",
+      "en": "Paste a new token",
+      "verdict": "pass"
+    },
+    "es:highlevel.save": {
+      "text": "Guardar",
+      "en": "Save",
+      "verdict": "pass"
+    },
+    "es:highlevel.saving": {
+      "text": "Guardando…",
+      "en": "Saving…",
+      "verdict": "pass"
+    },
+    "es:highlevel.removeToken": {
+      "text": "Quitar token",
+      "en": "Remove token",
+      "verdict": "pass"
+    },
+    "es:highlevel.tokenHelp": {
+      "text": "Créalo en HighLevel en Settings, Private Integrations. Murage lo guarda con tus otras claves guardadas y nunca lo vuelve a mostrar aquí.",
+      "en": "Make one in HighLevel under Settings, Private Integrations. Murage keeps it with your other saved keys and never shows it here again.",
+      "verdict": "pass"
+    },
+    "es:highlevel.tokenSavedNotice": {
+      "text": "Token guardado.",
+      "en": "Token saved.",
+      "verdict": "pass"
+    },
+    "es:highlevel.tokenRemoved": {
+      "text": "Token quitado. Tus bots ya no pueden acceder a HighLevel.",
+      "en": "Token removed. Your bots can no longer reach HighLevel.",
+      "verdict": "pass"
+    },
+    "es:highlevel.tokenSaveError": {
+      "text": "No se guardó el token. Inténtalo de nuevo.",
+      "en": "The token was not saved. Try again.",
+      "verdict": "pass"
+    },
+    "es:highlevel.tokenRemoveError": {
+      "text": "No se quitó el token. Inténtalo de nuevo.",
+      "en": "The token was not removed. Try again.",
+      "verdict": "pass"
+    },
+    "es:highlevel.locationLabel": {
+      "text": "ID de ubicación",
+      "en": "Location ID",
+      "verdict": "pass"
+    },
+    "es:highlevel.locationHelp": {
+      "text": "Lo encontrarás en HighLevel en Settings, Business Profile.",
+      "en": "Find it in HighLevel under Settings, Business Profile.",
+      "verdict": "pass"
+    },
+    "es:highlevel.check": {
+      "text": "Comprobar ubicación",
+      "en": "Check location",
+      "verdict": "pass"
+    },
+    "es:highlevel.checking": {
+      "text": "Comprobando…",
+      "en": "Checking…",
+      "verdict": "pass"
+    },
+    "es:highlevel.checkError": {
+      "text": "No se pudo comprobar esa ubicación. Asegúrate de que el token y el ID de ubicación coincidan.",
+      "en": "That location could not be checked. Make sure the token and the location ID match.",
+      "verdict": "pass"
+    },
+    "es:highlevel.found": {
+      "text": "Se encontró {name}. Confirma para conectar esta ubicación.",
+      "en": "Found {name}. Confirm to connect this location.",
+      "verdict": "pass"
+    },
+    "es:highlevel.confirm": {
+      "text": "Confirmar",
+      "en": "Confirm",
+      "verdict": "pass"
+    },
+    "es:highlevel.confirmed": {
+      "text": "Ubicación conectada. Ahora elige qué puede hacer cada bot.",
+      "en": "Location connected. Now choose what each bot may do.",
+      "verdict": "pass"
+    },
+    "es:highlevel.confirmError": {
+      "text": "No se conectó la ubicación. Compruébala de nuevo.",
+      "en": "The location was not connected. Check it again.",
+      "verdict": "pass"
+    },
+    "es:highlevel.disconnect": {
+      "text": "Desconectar",
+      "en": "Disconnect",
+      "verdict": "pass"
+    },
+    "es:highlevel.disconnected": {
+      "text": "Ubicación desconectada. Tus bots ya no pueden acceder a ella.",
+      "en": "Location disconnected. Your bots can no longer reach it.",
+      "verdict": "pass"
+    },
+    "es:highlevel.disconnectError": {
+      "text": "No se desconectó la ubicación. Inténtalo de nuevo.",
+      "en": "The location was not disconnected. Try again.",
+      "verdict": "pass"
+    },
+    "es:highlevel.botsTitle": {
+      "text": "Acceso de los bots",
+      "en": "Bot access",
+      "verdict": "pass"
+    },
+    "es:highlevel.botsHelp": {
+      "text": "Elige qué bots pueden leer esta ubicación.",
+      "en": "Choose which bots may read this location.",
+      "verdict": "pass"
+    },
+    "es:highlevel.canRead": {
+      "text": "Puede leer",
+      "en": "Can read",
+      "verdict": "pass"
+    },
+    "es:highlevel.canReadFor": {
+      "text": "{name} puede leer HighLevel",
+      "en": "{name} can read HighLevel",
+      "verdict": "pass"
+    },
+    "es:highlevel.accessSaved": {
+      "text": "Acceso guardado.",
+      "en": "Access saved.",
+      "verdict": "pass"
+    },
+    "es:highlevel.accessError": {
+      "text": "No se guardó el acceso. Inténtalo de nuevo.",
+      "en": "Access was not saved. Try again.",
+      "verdict": "pass"
+    },
+    "es:modelPicker.recommended": {
+      "text": "Recomendado",
+      "en": "Recommended",
+      "verdict": "pass"
+    },
+    "es:setup.recommendedModel": {
+      "text": "Recomendado para nuevas elecciones: {model}. Tu modelo guardado no cambia.",
+      "en": "Recommended for new choices: {model}. Your saved model stays as it is.",
+      "verdict": "pass"
+    },
+    "es:updateRecovery.BACKUP_UPGRADE_STAGED": {
+      "text": "Murage sigue instalando la actualización. Si se queda atascada, cierra Murage, abre Monitor de Actividad, selecciona el proceso ShipIt de Murage y elige Forzar salida. Luego vuelve a abrir Murage. Tu copia de seguridad se conserva.",
+      "en": "Murage is still installing the update. If it stays stuck, quit Murage, open Activity Monitor, select the process named ShipIt for Murage, and choose Force Quit. Then open Murage again. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery instructions describe the update as stuck."
+    },
+    "es:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "Murage no pudo determinar si la actualización sigue instalándose, así que esta comprobación no cambió nada. Cierra Murage y vuelve a abrirlo. Si esta página vuelve a aparecer, abre la carpeta de diagnósticos y contacta con soporte. Tu copia de seguridad se conserva.",
+      "en": "Murage couldn't tell whether the update is still being installed, so nothing was changed by this check. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery message leads with something Murage could not do."
+    },
+    "es:updateRecovery.landed-not-running": {
+      "text": "La aplicación actualizada está en el disco, pero esta copia sigue ejecutando la versión anterior. Elige Volver al espacio de trabajo para intentar abrir la aplicación actualizada una vez más, o cierra y abre la copia actualizada. Tu copia de seguridad se conserva.",
+      "en": "The updated app is on disk, but this copy is still running the older version. Choose Return to workspace to try opening the updated app once more, or quit and open the updated copy. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "es:updateRecovery.return-unconfirmed": {
+      "text": "La actualización se dejó de lado y tu copia de seguridad se conservó. Elige Volver al espacio de trabajo para intentar abrirlo de nuevo.",
+      "en": "The update was set aside and your backup was kept. Choose Return to workspace to try opening your workspace again.",
+      "verdict": "pass"
+    },
+    "es:updateRecovery.BACKUP_UPGRADE_ACTION_UNAVAILABLE": {
+      "text": "Esta actualización está en pausa. Elige Volver al espacio de trabajo o abre los diagnósticos. Tu copia de seguridad se conserva.",
+      "en": "This update is paused. Choose Return to workspace or open diagnostics. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "es:updateRecovery.return-revoked": {
+      "text": "Intenta salir de nuevo y luego abre Murage. Tu copia de seguridad se conserva.",
+      "en": "Try Quit again, then open Murage. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "es:updateRecovery.installer-wait": {
+      "text": "Murage está instalando la actualización. Espera un momento. Tu copia de seguridad se conserva.",
+      "en": "Murage is installing the update. Please wait. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "es:updates.installerTitle": {
+      "text": "Murage {version} está listo",
+      "en": "Murage {version} is ready",
+      "verdict": "pass"
+    },
+    "es:updates.installerSteps": {
+      "text": "Consigue la actualización en un paso: descarga Murage {version} y arrástralo a Aplicaciones. Tus chats y ajustes se conservan.",
+      "en": "Download Murage {version}, then drag it into Applications. Your chats and settings stay.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation adds an unsupported claim that updating takes one step."
+    },
+    "es:updates.downloadInstaller": {
+      "text": "Descargar Murage {version}",
+      "en": "Download Murage {version}",
+      "verdict": "pass"
+    },
+    "es:updateRecovery.cleanup-stopped": {
+      "text": "Murage no pudo terminar de cerrar su trabajo en segundo plano. Tu copia de seguridad se conserva.",
+      "en": "Murage could not finish closing its background work. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery message describes an app failure."
+    },
+    "es:updateRecovery.settled-stopped": {
+      "text": "La actualización se dejó de lado y tu copia de seguridad se conservó.",
+      "en": "The update was set aside and your backup was kept.",
+      "verdict": "pass"
+    },
+    "es:updateRecovery.quit": {
+      "text": "Salir",
+      "en": "Quit",
+      "verdict": "pass"
+    },
+    "es:updateRecovery.update-wait": {
+      "text": "Espera mientras Murage termina este paso. Tu copia de seguridad se conserva.",
+      "en": "Please wait while Murage finishes this step. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "es:backup.waiting.space": {
+      "text": "Las copias esperan espacio. Murage necesita unos {size} más en la unidad de tu carpeta de copias. Elimina algunos archivos o elige otra carpeta. La copia empieza sola cuando haya espacio.",
+      "en": "Backups are waiting for space. Murage needs about {size} more on the drive with your backup folder. Remove some files or choose a different folder. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "es:backup.waiting.data": {
+      "text": "Las copias esperan espacio. Murage necesita unos {size} más en la unidad de este ordenador donde guarda sus datos. Elimina algunos archivos. La copia empieza sola cuando haya espacio.",
+      "en": "Backups are waiting for space. Murage needs about {size} more on this computer's drive, where Murage keeps its data. Remove some files. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "es:backup.waiting.dataUnknown": {
+      "text": "Las copias esperan espacio en la unidad de este ordenador donde Murage guarda sus datos. Elimina algunos archivos. La copia empieza sola cuando haya espacio.",
+      "en": "Backups are waiting for space on this computer's drive, where Murage keeps its data. Remove some files. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "es:backup.waiting.spaceUnknown": {
+      "text": "Las copias esperan espacio en la unidad de tu carpeta de copias. Elimina algunos archivos o elige otra carpeta. La copia empieza sola cuando haya espacio.",
+      "en": "Backups are waiting for space on the drive with your backup folder. Remove some files or choose a different folder. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "es:backup.waiting.drive": {
+      "text": "Tu unidad de copias no está conectada. Conéctala y Murage hará la copia enseguida.",
+      "en": "Your backup drive isn't connected. Connect it and Murage backs up right away.",
+      "verdict": "pass"
+    },
+    "es:backup.waiting.busy": {
+      "text": "Las copias esperan porque un archivo que Murage necesita estaba en uso. Murage lo intentará de nuevo pronto automáticamente.",
+      "en": "Backups are waiting because a file Murage needs was in use. Murage tries again by itself soon.",
+      "verdict": "pass"
+    },
+    "es:backup.waiting.interrupted": {
+      "text": "La última copia se interrumpió antes de terminar. Murage lo intentará de nuevo pronto automáticamente.",
+      "en": "The last backup was interrupted before it finished. Murage tries again by itself soon.",
+      "verdict": "fail",
+      "note": "Rule 3: The backup recovery message emphasizes an interrupted backup."
+    },
+    "es:ux.d24.label": {
+      "text": "Respuestas en voz alta",
+      "en": "Spoken replies",
+      "verdict": "pass"
+    },
+    "es:ux.d24.help": {
+      "text": "Lee las respuestas terminadas en este ordenador, en la conversación que tienes abierta. Se desactiva durante las llamadas. Requiere un servicio de voz.",
+      "en": "Read finished replies aloud on this computer, in the conversation you have open. Off while you are on a call. Needs a hosted voice.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation omits reading aloud and the requirement for an online voice."
+    },
+    "es:ux.d24.disclosure": {
+      "text": "La lectura usa un servicio de voz. Evita leer en voz alta respuestas sensibles.",
+      "en": "Speech uses a voice service. Avoid reading sensitive replies aloud.",
+      "verdict": "pass"
+    },
+    "es:ux.d24.budget": {
+      "text": "Respuestas en voz alta en pausa: se alcanzó el presupuesto de voz.",
+      "en": "Spoken replies paused: voice budget reached.",
+      "verdict": "pass"
+    },
+    "es:ux.d24.failed": {
+      "text": "No se pudo leer esa respuesta.",
+      "en": "Couldn't speak that reply.",
+      "verdict": "fail",
+      "note": "Rule 5: “Leer” alone does not specify that the failed action was reading aloud."
+    },
+    "es:ux.d24.hosted": {
+      "text": "Las respuestas en voz alta requieren un servicio de voz.",
+      "en": "Spoken replies need a hosted voice.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation omits the requirement for an online voice."
+    },
+    "fr:settings.l1.card.connections.highlevel": {
+      "text": "HighLevel",
+      "en": "HighLevel",
+      "verdict": "pass"
+    },
+    "fr:highlevel.title": {
+      "text": "HighLevel",
+      "en": "HighLevel",
+      "verdict": "pass"
+    },
+    "fr:highlevel.intro": {
+      "text": "Laisse tes bots consulter ton CRM HighLevel. Ils peuvent le lire et ne peuvent rien y modifier.",
+      "en": "Let your bots look things up in your HighLevel CRM. They can read it and cannot change anything in it.",
+      "verdict": "pass"
+    },
+    "fr:highlevel.loading": {
+      "text": "Chargement de HighLevel…",
+      "en": "Loading HighLevel…",
+      "verdict": "pass"
+    },
+    "fr:highlevel.loadError": {
+      "text": "Les réglages HighLevel ne se sont pas chargés. Réessaie.",
+      "en": "HighLevel settings did not load. Try again.",
+      "verdict": "pass"
+    },
+    "fr:highlevel.noToken": {
+      "text": "Aucun jeton enregistré pour l'instant.",
+      "en": "No token saved yet.",
+      "verdict": "pass"
+    },
+    "fr:highlevel.tokenNoLocation": {
+      "text": "Jeton enregistré. Vérifie un emplacement pour le connecter.",
+      "en": "Token saved. Check a location to connect it.",
+      "verdict": "pass"
+    },
+    "fr:highlevel.reconfirm": {
+      "text": "Le jeton a changé. Vérifie de nouveau l'emplacement et confirme-le.",
+      "en": "The token changed. Check the location again and confirm it.",
+      "verdict": "pass"
+    },
+    "fr:highlevel.notReady": {
+      "text": "Cet emplacement n'est pas prêt. Vérifie-le de nouveau et confirme-le.",
+      "en": "This location is not ready. Check it again and confirm it.",
+      "verdict": "pass"
+    },
+    "fr:highlevel.connected": {
+      "text": "Connecté à {name}.",
+      "en": "Connected to {name}.",
+      "verdict": "pass"
+    },
+    "fr:highlevel.tokenLabel": {
+      "text": "Jeton d'intégration privée",
+      "en": "Private integration token",
+      "verdict": "pass"
+    },
+    "fr:highlevel.pasteToken": {
+      "text": "Colle ton jeton",
+      "en": "Paste your token",
+      "verdict": "pass"
+    },
+    "fr:highlevel.pasteReplacement": {
+      "text": "Colle un nouveau jeton",
+      "en": "Paste a new token",
+      "verdict": "pass"
+    },
+    "fr:highlevel.save": {
+      "text": "Enregistrer",
+      "en": "Save",
+      "verdict": "pass"
+    },
+    "fr:highlevel.saving": {
+      "text": "Enregistrement…",
+      "en": "Saving…",
+      "verdict": "pass"
+    },
+    "fr:highlevel.removeToken": {
+      "text": "Supprimer le jeton",
+      "en": "Remove token",
+      "verdict": "pass"
+    },
+    "fr:highlevel.tokenHelp": {
+      "text": "Crée-en un dans HighLevel sous Settings, Private Integrations. Murage le garde avec tes autres clés enregistrées et ne l'affiche plus jamais ici.",
+      "en": "Make one in HighLevel under Settings, Private Integrations. Murage keeps it with your other saved keys and never shows it here again.",
+      "verdict": "pass"
+    },
+    "fr:highlevel.tokenSavedNotice": {
+      "text": "Jeton enregistré.",
+      "en": "Token saved.",
+      "verdict": "pass"
+    },
+    "fr:highlevel.tokenRemoved": {
+      "text": "Jeton supprimé. Tes bots ne peuvent plus accéder à HighLevel.",
+      "en": "Token removed. Your bots can no longer reach HighLevel.",
+      "verdict": "pass"
+    },
+    "fr:highlevel.tokenSaveError": {
+      "text": "Le jeton n'a pas été enregistré. Réessaie.",
+      "en": "The token was not saved. Try again.",
+      "verdict": "pass"
+    },
+    "fr:highlevel.tokenRemoveError": {
+      "text": "Le jeton n'a pas été supprimé. Réessaie.",
+      "en": "The token was not removed. Try again.",
+      "verdict": "pass"
+    },
+    "fr:highlevel.locationLabel": {
+      "text": "ID de l'emplacement",
+      "en": "Location ID",
+      "verdict": "pass"
+    },
+    "fr:highlevel.locationHelp": {
+      "text": "Tu le trouveras dans HighLevel sous Settings, Business Profile.",
+      "en": "Find it in HighLevel under Settings, Business Profile.",
+      "verdict": "pass"
+    },
+    "fr:highlevel.check": {
+      "text": "Vérifier l'emplacement",
+      "en": "Check location",
+      "verdict": "pass"
+    },
+    "fr:highlevel.checking": {
+      "text": "Vérification…",
+      "en": "Checking…",
+      "verdict": "pass"
+    },
+    "fr:highlevel.checkError": {
+      "text": "Impossible de vérifier cet emplacement. Assure-toi que le jeton et l'ID de l'emplacement correspondent.",
+      "en": "That location could not be checked. Make sure the token and the location ID match.",
+      "verdict": "pass"
+    },
+    "fr:highlevel.found": {
+      "text": "{name} trouvé. Confirme pour connecter cet emplacement.",
+      "en": "Found {name}. Confirm to connect this location.",
+      "verdict": "pass"
+    },
+    "fr:highlevel.confirm": {
+      "text": "Confirmer",
+      "en": "Confirm",
+      "verdict": "pass"
+    },
+    "fr:highlevel.confirmed": {
+      "text": "Emplacement connecté. Choisis maintenant ce que chaque bot peut faire.",
+      "en": "Location connected. Now choose what each bot may do.",
+      "verdict": "pass"
+    },
+    "fr:highlevel.confirmError": {
+      "text": "L'emplacement n'a pas été connecté. Vérifie-le de nouveau.",
+      "en": "The location was not connected. Check it again.",
+      "verdict": "pass"
+    },
+    "fr:highlevel.disconnect": {
+      "text": "Déconnecter",
+      "en": "Disconnect",
+      "verdict": "pass"
+    },
+    "fr:highlevel.disconnected": {
+      "text": "Emplacement déconnecté. Tes bots ne peuvent plus y accéder.",
+      "en": "Location disconnected. Your bots can no longer reach it.",
+      "verdict": "pass"
+    },
+    "fr:highlevel.disconnectError": {
+      "text": "L'emplacement n'a pas été déconnecté. Réessaie.",
+      "en": "The location was not disconnected. Try again.",
+      "verdict": "pass"
+    },
+    "fr:highlevel.botsTitle": {
+      "text": "Accès des bots",
+      "en": "Bot access",
+      "verdict": "pass"
+    },
+    "fr:highlevel.botsHelp": {
+      "text": "Choisis quels bots peuvent lire cet emplacement.",
+      "en": "Choose which bots may read this location.",
+      "verdict": "pass"
+    },
+    "fr:highlevel.canRead": {
+      "text": "Peut lire",
+      "en": "Can read",
+      "verdict": "pass"
+    },
+    "fr:highlevel.canReadFor": {
+      "text": "{name} peut lire HighLevel",
+      "en": "{name} can read HighLevel",
+      "verdict": "pass"
+    },
+    "fr:highlevel.accessSaved": {
+      "text": "Accès enregistré.",
+      "en": "Access saved.",
+      "verdict": "pass"
+    },
+    "fr:highlevel.accessError": {
+      "text": "L'accès n'a pas été enregistré. Réessaie.",
+      "en": "Access was not saved. Try again.",
+      "verdict": "pass"
+    },
+    "fr:modelPicker.recommended": {
+      "text": "Recommandé",
+      "en": "Recommended",
+      "verdict": "pass"
+    },
+    "fr:setup.recommendedModel": {
+      "text": "Recommandé pour un nouveau choix : {model}. Ton modèle enregistré reste inchangé.",
+      "en": "Recommended for new choices: {model}. Your saved model stays as it is.",
+      "verdict": "pass"
+    },
+    "fr:updateRecovery.BACKUP_UPGRADE_STAGED": {
+      "text": "Murage installe encore la mise à jour. Si elle reste bloquée, quitte Murage, ouvre Moniteur d’activité, sélectionne le processus ShipIt de Murage et choisis Forcer à quitter. Rouvre ensuite Murage. Ta sauvegarde est conservée.",
+      "en": "Murage is still installing the update. If it stays stuck, quit Murage, open Activity Monitor, select the process named ShipIt for Murage, and choose Force Quit. Then open Murage again. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery instructions describe the update as stuck."
+    },
+    "fr:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "Murage n’a pas pu déterminer si la mise à jour est encore en cours d’installation. Cette vérification n’a donc rien modifié. Quitte Murage et rouvre-le. Si cette page revient, ouvre le dossier de diagnostics et contacte l’assistance. Ta sauvegarde est conservée.",
+      "en": "Murage couldn't tell whether the update is still being installed, so nothing was changed by this check. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery message leads with something Murage could not do."
+    },
+    "fr:updateRecovery.landed-not-running": {
+      "text": "L’application mise à jour est sur le disque, mais cette copie utilise encore l’ancienne version. Choisis Retour à l’espace de travail pour essayer d’ouvrir encore une fois l’application mise à jour, ou quitte et ouvre la copie mise à jour. Ta sauvegarde est conservée.",
+      "en": "The updated app is on disk, but this copy is still running the older version. Choose Return to workspace to try opening the updated app once more, or quit and open the updated copy. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "fr:updateRecovery.return-unconfirmed": {
+      "text": "La mise à jour a été mise de côté et ta sauvegarde est conservée. Choisis Retour à l’espace de travail pour essayer de le rouvrir.",
+      "en": "The update was set aside and your backup was kept. Choose Return to workspace to try opening your workspace again.",
+      "verdict": "pass"
+    },
+    "fr:updateRecovery.BACKUP_UPGRADE_ACTION_UNAVAILABLE": {
+      "text": "Cette mise à jour est en pause. Choisis Retour à l’espace de travail ou ouvre les diagnostics. Ta sauvegarde est conservée.",
+      "en": "This update is paused. Choose Return to workspace or open diagnostics. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "fr:updateRecovery.return-revoked": {
+      "text": "Essaie de quitter à nouveau, puis ouvre Murage. Ta sauvegarde est conservée.",
+      "en": "Try Quit again, then open Murage. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "fr:updateRecovery.installer-wait": {
+      "text": "Murage installe la mise à jour. Patiente un instant. Ta sauvegarde est conservée.",
+      "en": "Murage is installing the update. Please wait. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "fr:updates.installerTitle": {
+      "text": "Murage {version} est prêt",
+      "en": "Murage {version} is ready",
+      "verdict": "pass"
+    },
+    "fr:updates.installerSteps": {
+      "text": "Obtiens la mise à jour en une étape : télécharge Murage {version}, puis fais-le glisser dans Applications. Tes discussions et réglages sont conservés.",
+      "en": "Download Murage {version}, then drag it into Applications. Your chats and settings stay.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation adds an unsupported claim that updating takes one step."
+    },
+    "fr:updates.downloadInstaller": {
+      "text": "Télécharger Murage {version}",
+      "en": "Download Murage {version}",
+      "verdict": "pass"
+    },
+    "fr:updateRecovery.cleanup-stopped": {
+      "text": "Murage n’a pas pu terminer l’arrêt de ses tâches en arrière-plan. Ta sauvegarde est conservée.",
+      "en": "Murage could not finish closing its background work. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery message describes an app failure."
+    },
+    "fr:updateRecovery.settled-stopped": {
+      "text": "La mise à jour a été mise de côté et ta sauvegarde est conservée.",
+      "en": "The update was set aside and your backup was kept.",
+      "verdict": "pass"
+    },
+    "fr:updateRecovery.quit": {
+      "text": "Quitter",
+      "en": "Quit",
+      "verdict": "pass"
+    },
+    "fr:updateRecovery.update-wait": {
+      "text": "Patiente pendant que Murage termine cette étape. Ta sauvegarde est conservée.",
+      "en": "Please wait while Murage finishes this step. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "fr:backup.waiting.space": {
+      "text": "Les sauvegardes attendent de la place. Murage a besoin d’environ {size} de plus sur le disque du dossier de sauvegarde. Supprime des fichiers ou choisis un autre dossier. La sauvegarde démarre seule dès qu’il y a de la place.",
+      "en": "Backups are waiting for space. Murage needs about {size} more on the drive with your backup folder. Remove some files or choose a different folder. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "fr:backup.waiting.data": {
+      "text": "Les sauvegardes attendent de la place. Murage a besoin d’environ {size} de plus sur le disque de cet ordinateur où il conserve ses données. Supprime des fichiers. La sauvegarde démarre seule dès qu’il y a de la place.",
+      "en": "Backups are waiting for space. Murage needs about {size} more on this computer's drive, where Murage keeps its data. Remove some files. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "fr:backup.waiting.dataUnknown": {
+      "text": "Les sauvegardes attendent de la place sur le disque de cet ordinateur où Murage conserve ses données. Supprime des fichiers. La sauvegarde démarre seule dès qu’il y a de la place.",
+      "en": "Backups are waiting for space on this computer's drive, where Murage keeps its data. Remove some files. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "fr:backup.waiting.spaceUnknown": {
+      "text": "Les sauvegardes attendent de la place sur le disque du dossier de sauvegarde. Supprime des fichiers ou choisis un autre dossier. La sauvegarde démarre seule dès qu’il y a de la place.",
+      "en": "Backups are waiting for space on the drive with your backup folder. Remove some files or choose a different folder. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "fr:backup.waiting.drive": {
+      "text": "Ton disque de sauvegarde n’est pas connecté. Connecte-le et Murage sauvegarde aussitôt.",
+      "en": "Your backup drive isn't connected. Connect it and Murage backs up right away.",
+      "verdict": "pass"
+    },
+    "fr:backup.waiting.busy": {
+      "text": "Les sauvegardes attendent car un fichier nécessaire à Murage était utilisé. Murage réessaiera bientôt automatiquement.",
+      "en": "Backups are waiting because a file Murage needs was in use. Murage tries again by itself soon.",
+      "verdict": "pass"
+    },
+    "fr:backup.waiting.interrupted": {
+      "text": "La dernière sauvegarde a été interrompue avant la fin. Murage réessaiera bientôt automatiquement.",
+      "en": "The last backup was interrupted before it finished. Murage tries again by itself soon.",
+      "verdict": "fail",
+      "note": "Rule 3: The backup recovery message emphasizes an interrupted backup."
+    },
+    "fr:ux.d24.label": {
+      "text": "Réponses à voix haute",
+      "en": "Spoken replies",
+      "verdict": "pass"
+    },
+    "fr:ux.d24.help": {
+      "text": "Lis les réponses terminées sur cet ordinateur, dans la conversation ouverte. Désactivé pendant un appel. Nécessite un service vocal.",
+      "en": "Read finished replies aloud on this computer, in the conversation you have open. Off while you are on a call. Needs a hosted voice.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation omits reading aloud and the requirement for an online voice."
+    },
+    "fr:ux.d24.disclosure": {
+      "text": "La lecture utilise un service vocal. Évite de lire les réponses sensibles à voix haute.",
+      "en": "Speech uses a voice service. Avoid reading sensitive replies aloud.",
+      "verdict": "pass"
+    },
+    "fr:ux.d24.budget": {
+      "text": "Réponses à voix haute en pause : budget vocal atteint.",
+      "en": "Spoken replies paused: voice budget reached.",
+      "verdict": "pass"
+    },
+    "fr:ux.d24.failed": {
+      "text": "Cette réponse n’a pas pu être lue.",
+      "en": "Couldn't speak that reply.",
+      "verdict": "fail",
+      "note": "Rule 5: “Lue” alone does not specify that the failed action was reading aloud."
+    },
+    "fr:ux.d24.hosted": {
+      "text": "Les réponses à voix haute nécessitent un service vocal.",
+      "en": "Spoken replies need a hosted voice.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation omits the requirement for an online voice."
+    },
+    "hi:settings.l1.card.connections.highlevel": {
+      "text": "HighLevel",
+      "en": "HighLevel",
+      "verdict": "pass"
+    },
+    "hi:highlevel.title": {
+      "text": "HighLevel",
+      "en": "HighLevel",
+      "verdict": "pass"
+    },
+    "hi:highlevel.intro": {
+      "text": "अपने बॉट्स को अपने HighLevel CRM में जानकारी देखने दें। वे इसे पढ़ सकते हैं और इसमें कुछ भी बदल नहीं सकते।",
+      "en": "Let your bots look things up in your HighLevel CRM. They can read it and cannot change anything in it.",
+      "verdict": "pass"
+    },
+    "hi:highlevel.loading": {
+      "text": "HighLevel लोड हो रहा है…",
+      "en": "Loading HighLevel…",
+      "verdict": "pass"
+    },
+    "hi:highlevel.loadError": {
+      "text": "HighLevel सेटिंग्स लोड नहीं हुईं। फिर से कोशिश करें।",
+      "en": "HighLevel settings did not load. Try again.",
+      "verdict": "pass"
+    },
+    "hi:highlevel.noToken": {
+      "text": "अभी तक कोई टोकन सेव नहीं है।",
+      "en": "No token saved yet.",
+      "verdict": "pass"
+    },
+    "hi:highlevel.tokenNoLocation": {
+      "text": "टोकन सेव हो गया। इसे जोड़ने के लिए कोई लोकेशन जाँचें।",
+      "en": "Token saved. Check a location to connect it.",
+      "verdict": "fail",
+      "note": "Rule 5: “इसे” refers to the token rather than the location being connected."
+    },
+    "hi:highlevel.reconfirm": {
+      "text": "टोकन बदल गया है। लोकेशन को फिर से जाँचें और पुष्टि करें।",
+      "en": "The token changed. Check the location again and confirm it.",
+      "verdict": "pass"
+    },
+    "hi:highlevel.notReady": {
+      "text": "यह लोकेशन तैयार नहीं है। इसे फिर से जाँचें और पुष्टि करें।",
+      "en": "This location is not ready. Check it again and confirm it.",
+      "verdict": "pass"
+    },
+    "hi:highlevel.connected": {
+      "text": "{name} से जुड़ा है।",
+      "en": "Connected to {name}.",
+      "verdict": "pass"
+    },
+    "hi:highlevel.tokenLabel": {
+      "text": "प्राइवेट इंटीग्रेशन टोकन",
+      "en": "Private integration token",
+      "verdict": "pass"
+    },
+    "hi:highlevel.pasteToken": {
+      "text": "अपना टोकन पेस्ट करें",
+      "en": "Paste your token",
+      "verdict": "pass"
+    },
+    "hi:highlevel.pasteReplacement": {
+      "text": "नया टोकन पेस्ट करें",
+      "en": "Paste a new token",
+      "verdict": "pass"
+    },
+    "hi:highlevel.save": {
+      "text": "सेव करें",
+      "en": "Save",
+      "verdict": "pass"
+    },
+    "hi:highlevel.saving": {
+      "text": "सेव हो रहा है…",
+      "en": "Saving…",
+      "verdict": "pass"
+    },
+    "hi:highlevel.removeToken": {
+      "text": "टोकन हटाएँ",
+      "en": "Remove token",
+      "verdict": "pass"
+    },
+    "hi:highlevel.tokenHelp": {
+      "text": "इसे HighLevel में Settings, Private Integrations में बनाएँ। Murage इसे आपकी बाकी सहेजी गई कुंजियों के साथ रखता है और यहाँ फिर कभी नहीं दिखाता।",
+      "en": "Make one in HighLevel under Settings, Private Integrations. Murage keeps it with your other saved keys and never shows it here again.",
+      "verdict": "pass"
+    },
+    "hi:highlevel.tokenSavedNotice": {
+      "text": "टोकन सेव हो गया।",
+      "en": "Token saved.",
+      "verdict": "pass"
+    },
+    "hi:highlevel.tokenRemoved": {
+      "text": "टोकन हटा दिया गया। आपके बॉट्स अब HighLevel तक नहीं पहुँच सकते।",
+      "en": "Token removed. Your bots can no longer reach HighLevel.",
+      "verdict": "pass"
+    },
+    "hi:highlevel.tokenSaveError": {
+      "text": "टोकन सेव नहीं हुआ। फिर से कोशिश करें।",
+      "en": "The token was not saved. Try again.",
+      "verdict": "pass"
+    },
+    "hi:highlevel.tokenRemoveError": {
+      "text": "टोकन हटाया नहीं गया। फिर से कोशिश करें।",
+      "en": "The token was not removed. Try again.",
+      "verdict": "pass"
+    },
+    "hi:highlevel.locationLabel": {
+      "text": "लोकेशन ID",
+      "en": "Location ID",
+      "verdict": "pass"
+    },
+    "hi:highlevel.locationHelp": {
+      "text": "यह HighLevel में Settings, Business Profile में मिलेगी।",
+      "en": "Find it in HighLevel under Settings, Business Profile.",
+      "verdict": "pass"
+    },
+    "hi:highlevel.check": {
+      "text": "लोकेशन जाँचें",
+      "en": "Check location",
+      "verdict": "pass"
+    },
+    "hi:highlevel.checking": {
+      "text": "जाँच हो रही है…",
+      "en": "Checking…",
+      "verdict": "pass"
+    },
+    "hi:highlevel.checkError": {
+      "text": "उस लोकेशन की जाँच नहीं हो सकी। पक्का करें कि टोकन और लोकेशन ID मेल खाते हों।",
+      "en": "That location could not be checked. Make sure the token and the location ID match.",
+      "verdict": "pass"
+    },
+    "hi:highlevel.found": {
+      "text": "{name} मिला। इस लोकेशन को जोड़ने के लिए पुष्टि करें।",
+      "en": "Found {name}. Confirm to connect this location.",
+      "verdict": "pass"
+    },
+    "hi:highlevel.confirm": {
+      "text": "पुष्टि करें",
+      "en": "Confirm",
+      "verdict": "pass"
+    },
+    "hi:highlevel.confirmed": {
+      "text": "लोकेशन जुड़ गई। अब चुनें कि हर बॉट क्या कर सकता है।",
+      "en": "Location connected. Now choose what each bot may do.",
+      "verdict": "pass"
+    },
+    "hi:highlevel.confirmError": {
+      "text": "लोकेशन नहीं जुड़ी। इसे फिर से जाँचें।",
+      "en": "The location was not connected. Check it again.",
+      "verdict": "pass"
+    },
+    "hi:highlevel.disconnect": {
+      "text": "डिस्कनेक्ट करें",
+      "en": "Disconnect",
+      "verdict": "pass"
+    },
+    "hi:highlevel.disconnected": {
+      "text": "लोकेशन डिस्कनेक्ट हो गई। आपके बॉट्स अब इस तक नहीं पहुँच सकते।",
+      "en": "Location disconnected. Your bots can no longer reach it.",
+      "verdict": "pass"
+    },
+    "hi:highlevel.disconnectError": {
+      "text": "लोकेशन डिस्कनेक्ट नहीं हुई। फिर से कोशिश करें।",
+      "en": "The location was not disconnected. Try again.",
+      "verdict": "pass"
+    },
+    "hi:highlevel.botsTitle": {
+      "text": "बॉट एक्सेस",
+      "en": "Bot access",
+      "verdict": "pass"
+    },
+    "hi:highlevel.botsHelp": {
+      "text": "चुनें कि कौन से बॉट्स इस लोकेशन को पढ़ सकते हैं।",
+      "en": "Choose which bots may read this location.",
+      "verdict": "pass"
+    },
+    "hi:highlevel.canRead": {
+      "text": "पढ़ सकता है",
+      "en": "Can read",
+      "verdict": "pass"
+    },
+    "hi:highlevel.canReadFor": {
+      "text": "{name} HighLevel पढ़ सकता है",
+      "en": "{name} can read HighLevel",
+      "verdict": "pass"
+    },
+    "hi:highlevel.accessSaved": {
+      "text": "एक्सेस सेव हो गया।",
+      "en": "Access saved.",
+      "verdict": "pass"
+    },
+    "hi:highlevel.accessError": {
+      "text": "एक्सेस सेव नहीं हुआ। फिर से कोशिश करें।",
+      "en": "Access was not saved. Try again.",
+      "verdict": "pass"
+    },
+    "hi:modelPicker.recommended": {
+      "text": "सुझाया गया",
+      "en": "Recommended",
+      "verdict": "pass"
+    },
+    "hi:setup.recommendedModel": {
+      "text": "नए चुनाव के लिए सुझाव: {model}। आपका सहेजा गया मॉडल नहीं बदलेगा।",
+      "en": "Recommended for new choices: {model}. Your saved model stays as it is.",
+      "verdict": "pass"
+    },
+    "hi:updateRecovery.BACKUP_UPGRADE_STAGED": {
+      "text": "Murage अभी अपडेट इंस्टॉल कर रहा है। अगर यह अटका रहे, तो Murage बंद करें, Activity Monitor खोलें, Murage का ShipIt नाम का प्रोसेस चुनें और Force Quit चुनें। फिर Murage दोबारा खोलें। आपका बैकअप रखा गया है।",
+      "en": "Murage is still installing the update. If it stays stuck, quit Murage, open Activity Monitor, select the process named ShipIt for Murage, and choose Force Quit. Then open Murage again. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery instructions describe the update as stuck."
+    },
+    "hi:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "Murage यह तय नहीं कर सका कि अपडेट अभी भी इंस्टॉल हो रहा है या नहीं, इसलिए इस जाँच ने कुछ नहीं बदला। Murage बंद करके दोबारा खोलें। अगर यह पेज फिर आए, तो डायग्नोस्टिक्स फ़ोल्डर खोलें और सहायता से संपर्क करें। आपका बैकअप रखा गया है।",
+      "en": "Murage couldn't tell whether the update is still being installed, so nothing was changed by this check. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery message leads with something Murage could not do."
+    },
+    "hi:updateRecovery.landed-not-running": {
+      "text": "अपडेट किया गया ऐप डिस्क पर है, लेकिन यह कॉपी अभी पुराना संस्करण चला रही है। अपडेट किया गया ऐप एक बार और खोलने के लिए कार्यक्षेत्र पर वापस जाएँ चुनें, या बंद करके अपडेट की गई कॉपी खोलें। आपका बैकअप रखा गया है।",
+      "en": "The updated app is on disk, but this copy is still running the older version. Choose Return to workspace to try opening the updated app once more, or quit and open the updated copy. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "hi:updateRecovery.return-unconfirmed": {
+      "text": "अपडेट अलग रख दिया गया है और आपका बैकअप रखा गया है। कार्यक्षेत्र दोबारा खोलने के लिए कार्यक्षेत्र पर वापस जाएँ चुनें।",
+      "en": "The update was set aside and your backup was kept. Choose Return to workspace to try opening your workspace again.",
+      "verdict": "pass"
+    },
+    "hi:updateRecovery.BACKUP_UPGRADE_ACTION_UNAVAILABLE": {
+      "text": "यह अपडेट रुका हुआ है। कार्यक्षेत्र पर वापस जाएँ चुनें या डायग्नोस्टिक्स खोलें। आपका बैकअप रखा गया है।",
+      "en": "This update is paused. Choose Return to workspace or open diagnostics. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "hi:updateRecovery.return-revoked": {
+      "text": "फिर से बंद करने की कोशिश करें, फिर Murage खोलें। आपका बैकअप रखा गया है।",
+      "en": "Try Quit again, then open Murage. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "hi:updateRecovery.installer-wait": {
+      "text": "Murage अपडेट इंस्टॉल कर रहा है। कृपया इंतज़ार करें। आपका बैकअप रखा गया है।",
+      "en": "Murage is installing the update. Please wait. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "hi:updates.installerTitle": {
+      "text": "Murage {version} तैयार है",
+      "en": "Murage {version} is ready",
+      "verdict": "pass"
+    },
+    "hi:updates.installerSteps": {
+      "text": "एक ही चरण में अपडेट पाएं: Murage {version} डाउनलोड करें, फिर उसे Applications में खींचें। आपकी चैट और सेटिंग्स बनी रहती हैं।",
+      "en": "Download Murage {version}, then drag it into Applications. Your chats and settings stay.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation adds an unsupported claim that updating takes one step."
+    },
+    "hi:updates.downloadInstaller": {
+      "text": "Murage {version} डाउनलोड करें",
+      "en": "Download Murage {version}",
+      "verdict": "pass"
+    },
+    "hi:updateRecovery.cleanup-stopped": {
+      "text": "Murage अपना बैकग्राउंड काम बंद नहीं कर सका। आपका बैकअप रखा गया है।",
+      "en": "Murage could not finish closing its background work. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery message describes an app failure."
+    },
+    "hi:updateRecovery.settled-stopped": {
+      "text": "अपडेट अलग रख दिया गया है और आपका बैकअप रखा गया है।",
+      "en": "The update was set aside and your backup was kept.",
+      "verdict": "pass"
+    },
+    "hi:updateRecovery.quit": {
+      "text": "बंद करें",
+      "en": "Quit",
+      "verdict": "pass"
+    },
+    "hi:updateRecovery.update-wait": {
+      "text": "कृपया Murage के इस चरण को पूरा करने तक इंतज़ार करें। आपका बैकअप रखा गया है।",
+      "en": "Please wait while Murage finishes this step. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "hi:backup.waiting.space": {
+      "text": "बैकअप जगह का इंतज़ार कर रहे हैं। बैकअप फ़ोल्डर वाली ड्राइव पर Murage को लगभग {size} और जगह चाहिए। कुछ फ़ाइलें हटाएँ या दूसरा फ़ोल्डर चुनें। जगह मिलने पर बैकअप अपने आप शुरू होगा।",
+      "en": "Backups are waiting for space. Murage needs about {size} more on the drive with your backup folder. Remove some files or choose a different folder. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "hi:backup.waiting.data": {
+      "text": "बैकअप जगह का इंतज़ार कर रहे हैं। इस कंप्यूटर की उस ड्राइव पर, जहाँ Murage अपना डेटा रखता है, लगभग {size} और जगह चाहिए। कुछ फ़ाइलें हटाएँ। जगह मिलने पर बैकअप अपने आप शुरू होगा।",
+      "en": "Backups are waiting for space. Murage needs about {size} more on this computer's drive, where Murage keeps its data. Remove some files. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "hi:backup.waiting.dataUnknown": {
+      "text": "बैकअप इस कंप्यूटर की उस ड्राइव पर जगह का इंतज़ार कर रहे हैं, जहाँ Murage अपना डेटा रखता है। कुछ फ़ाइलें हटाएँ। जगह मिलने पर बैकअप अपने आप शुरू होगा।",
+      "en": "Backups are waiting for space on this computer's drive, where Murage keeps its data. Remove some files. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "hi:backup.waiting.spaceUnknown": {
+      "text": "बैकअप फ़ोल्डर वाली ड्राइव पर जगह का इंतज़ार है। कुछ फ़ाइलें हटाएँ या दूसरा फ़ोल्डर चुनें। जगह मिलने पर बैकअप अपने आप शुरू होगा।",
+      "en": "Backups are waiting for space on the drive with your backup folder. Remove some files or choose a different folder. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "hi:backup.waiting.drive": {
+      "text": "आपकी बैकअप ड्राइव जुड़ी नहीं है। इसे जोड़ें और Murage तुरंत बैकअप लेगा।",
+      "en": "Your backup drive isn't connected. Connect it and Murage backs up right away.",
+      "verdict": "pass"
+    },
+    "hi:backup.waiting.busy": {
+      "text": "Murage को चाहिए एक फ़ाइल उपयोग में थी, इसलिए बैकअप इंतज़ार कर रहे हैं। Murage जल्द ही अपने आप फिर कोशिश करेगा।",
+      "en": "Backups are waiting because a file Murage needs was in use. Murage tries again by itself soon.",
+      "verdict": "fail",
+      "note": "Rule 7: “Murage को चाहिए एक फ़ाइल” has unnatural, incorrect word order."
+    },
+    "hi:backup.waiting.interrupted": {
+      "text": "पिछला बैकअप पूरा होने से पहले रुक गया। Murage जल्द ही अपने आप फिर कोशिश करेगा।",
+      "en": "The last backup was interrupted before it finished. Murage tries again by itself soon.",
+      "verdict": "fail",
+      "note": "Rule 3: The backup recovery message emphasizes an interrupted backup."
+    },
+    "hi:ux.d24.label": {
+      "text": "बोलकर दिए गए जवाब",
+      "en": "Spoken replies",
+      "verdict": "pass"
+    },
+    "hi:ux.d24.help": {
+      "text": "इस कंप्यूटर पर खुली बातचीत के पूरे हो चुके जवाब पढ़कर सुनाएँ। कॉल के दौरान बंद रहता है। वॉइस सेवा चाहिए।",
+      "en": "Read finished replies aloud on this computer, in the conversation you have open. Off while you are on a call. Needs a hosted voice.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation omits the requirement for an online voice."
+    },
+    "hi:ux.d24.disclosure": {
+      "text": "बोलने के लिए वॉइस सेवा का उपयोग होता है। संवेदनशील जवाब ज़ोर से पढ़ने से बचें।",
+      "en": "Speech uses a voice service. Avoid reading sensitive replies aloud.",
+      "verdict": "pass"
+    },
+    "hi:ux.d24.budget": {
+      "text": "बोलकर दिए गए जवाब रुके हैं: वॉइस बजट पूरा हो गया।",
+      "en": "Spoken replies paused: voice budget reached.",
+      "verdict": "pass"
+    },
+    "hi:ux.d24.failed": {
+      "text": "वह जवाब पढ़कर नहीं सुनाया जा सका।",
+      "en": "Couldn't speak that reply.",
+      "verdict": "pass"
+    },
+    "hi:ux.d24.hosted": {
+      "text": "जवाब पढ़कर सुनाने के लिए वॉइस सेवा चाहिए।",
+      "en": "Spoken replies need a hosted voice.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation omits the requirement for an online voice."
+    },
+    "ja:settings.l1.card.connections.highlevel": {
+      "text": "HighLevel",
+      "en": "HighLevel",
+      "verdict": "pass"
+    },
+    "ja:highlevel.title": {
+      "text": "HighLevel",
+      "en": "HighLevel",
+      "verdict": "pass"
+    },
+    "ja:highlevel.intro": {
+      "text": "ボットが HighLevel の CRM で情報を調べられるようにします。ボットは読み取りだけができ、内容を変更することはできません。",
+      "en": "Let your bots look things up in your HighLevel CRM. They can read it and cannot change anything in it.",
+      "verdict": "pass"
+    },
+    "ja:highlevel.loading": {
+      "text": "HighLevel を読み込んでいます…",
+      "en": "Loading HighLevel…",
+      "verdict": "pass"
+    },
+    "ja:highlevel.loadError": {
+      "text": "HighLevel の設定を読み込めませんでした。もう一度お試しください。",
+      "en": "HighLevel settings did not load. Try again.",
+      "verdict": "pass"
+    },
+    "ja:highlevel.noToken": {
+      "text": "トークンはまだ保存されていません。",
+      "en": "No token saved yet.",
+      "verdict": "pass"
+    },
+    "ja:highlevel.tokenNoLocation": {
+      "text": "トークンを保存しました。接続するロケーションを確認してください。",
+      "en": "Token saved. Check a location to connect it.",
+      "verdict": "pass"
+    },
+    "ja:highlevel.reconfirm": {
+      "text": "トークンが変更されました。ロケーションをもう一度確認して承認してください。",
+      "en": "The token changed. Check the location again and confirm it.",
+      "verdict": "pass"
+    },
+    "ja:highlevel.notReady": {
+      "text": "このロケーションは準備ができていません。もう一度確認して承認してください。",
+      "en": "This location is not ready. Check it again and confirm it.",
+      "verdict": "pass"
+    },
+    "ja:highlevel.connected": {
+      "text": "{name} に接続しています。",
+      "en": "Connected to {name}.",
+      "verdict": "pass"
+    },
+    "ja:highlevel.tokenLabel": {
+      "text": "プライベート連携トークン",
+      "en": "Private integration token",
+      "verdict": "pass"
+    },
+    "ja:highlevel.pasteToken": {
+      "text": "トークンを貼り付けてください",
+      "en": "Paste your token",
+      "verdict": "pass"
+    },
+    "ja:highlevel.pasteReplacement": {
+      "text": "新しいトークンを貼り付けてください",
+      "en": "Paste a new token",
+      "verdict": "pass"
+    },
+    "ja:highlevel.save": {
+      "text": "保存",
+      "en": "Save",
+      "verdict": "pass"
+    },
+    "ja:highlevel.saving": {
+      "text": "保存しています…",
+      "en": "Saving…",
+      "verdict": "pass"
+    },
+    "ja:highlevel.removeToken": {
+      "text": "トークンを削除",
+      "en": "Remove token",
+      "verdict": "pass"
+    },
+    "ja:highlevel.tokenHelp": {
+      "text": "HighLevel の Settings、Private Integrations で作成してください。Murage はトークンをほかの保存済みキーと一緒に保管し、ここに再び表示することはありません。",
+      "en": "Make one in HighLevel under Settings, Private Integrations. Murage keeps it with your other saved keys and never shows it here again.",
+      "verdict": "pass"
+    },
+    "ja:highlevel.tokenSavedNotice": {
+      "text": "トークンを保存しました。",
+      "en": "Token saved.",
+      "verdict": "pass"
+    },
+    "ja:highlevel.tokenRemoved": {
+      "text": "トークンを削除しました。ボットは HighLevel にアクセスできなくなりました。",
+      "en": "Token removed. Your bots can no longer reach HighLevel.",
+      "verdict": "pass"
+    },
+    "ja:highlevel.tokenSaveError": {
+      "text": "トークンを保存できませんでした。もう一度お試しください。",
+      "en": "The token was not saved. Try again.",
+      "verdict": "pass"
+    },
+    "ja:highlevel.tokenRemoveError": {
+      "text": "トークンを削除できませんでした。もう一度お試しください。",
+      "en": "The token was not removed. Try again.",
+      "verdict": "pass"
+    },
+    "ja:highlevel.locationLabel": {
+      "text": "ロケーション ID",
+      "en": "Location ID",
+      "verdict": "pass"
+    },
+    "ja:highlevel.locationHelp": {
+      "text": "HighLevel の Settings、Business Profile で確認できます。",
+      "en": "Find it in HighLevel under Settings, Business Profile.",
+      "verdict": "pass"
+    },
+    "ja:highlevel.check": {
+      "text": "ロケーションを確認",
+      "en": "Check location",
+      "verdict": "pass"
+    },
+    "ja:highlevel.checking": {
+      "text": "確認しています…",
+      "en": "Checking…",
+      "verdict": "pass"
+    },
+    "ja:highlevel.checkError": {
+      "text": "そのロケーションを確認できませんでした。トークンとロケーション ID が一致しているか確かめてください。",
+      "en": "That location could not be checked. Make sure the token and the location ID match.",
+      "verdict": "pass"
+    },
+    "ja:highlevel.found": {
+      "text": "{name} が見つかりました。承認するとこのロケーションに接続します。",
+      "en": "Found {name}. Confirm to connect this location.",
+      "verdict": "pass"
+    },
+    "ja:highlevel.confirm": {
+      "text": "承認",
+      "en": "Confirm",
+      "verdict": "pass"
+    },
+    "ja:highlevel.confirmed": {
+      "text": "ロケーションを接続しました。次に、各ボットができることを選んでください。",
+      "en": "Location connected. Now choose what each bot may do.",
+      "verdict": "pass"
+    },
+    "ja:highlevel.confirmError": {
+      "text": "ロケーションを接続できませんでした。もう一度確認してください。",
+      "en": "The location was not connected. Check it again.",
+      "verdict": "pass"
+    },
+    "ja:highlevel.disconnect": {
+      "text": "接続を解除",
+      "en": "Disconnect",
+      "verdict": "pass"
+    },
+    "ja:highlevel.disconnected": {
+      "text": "ロケーションの接続を解除しました。ボットはこのロケーションにアクセスできなくなりました。",
+      "en": "Location disconnected. Your bots can no longer reach it.",
+      "verdict": "pass"
+    },
+    "ja:highlevel.disconnectError": {
+      "text": "ロケーションの接続を解除できませんでした。もう一度お試しください。",
+      "en": "The location was not disconnected. Try again.",
+      "verdict": "pass"
+    },
+    "ja:highlevel.botsTitle": {
+      "text": "ボットのアクセス",
+      "en": "Bot access",
+      "verdict": "pass"
+    },
+    "ja:highlevel.botsHelp": {
+      "text": "このロケーションを読み取れるボットを選んでください。",
+      "en": "Choose which bots may read this location.",
+      "verdict": "pass"
+    },
+    "ja:highlevel.canRead": {
+      "text": "読み取り可",
+      "en": "Can read",
+      "verdict": "pass"
+    },
+    "ja:highlevel.canReadFor": {
+      "text": "{name} は HighLevel を読み取れます",
+      "en": "{name} can read HighLevel",
+      "verdict": "pass"
+    },
+    "ja:highlevel.accessSaved": {
+      "text": "アクセス設定を保存しました。",
+      "en": "Access saved.",
+      "verdict": "pass"
+    },
+    "ja:highlevel.accessError": {
+      "text": "アクセス設定を保存できませんでした。もう一度お試しください。",
+      "en": "Access was not saved. Try again.",
+      "verdict": "pass"
+    },
+    "ja:modelPicker.recommended": {
+      "text": "おすすめ",
+      "en": "Recommended",
+      "verdict": "pass"
+    },
+    "ja:setup.recommendedModel": {
+      "text": "新しく選ぶ場合のおすすめ：{model}。保存済みのモデルは変わりません。",
+      "en": "Recommended for new choices: {model}. Your saved model stays as it is.",
+      "verdict": "pass"
+    },
+    "ja:updateRecovery.BACKUP_UPGRADE_STAGED": {
+      "text": "Murage はまだアップデートをインストールしています。進まない場合は Murage を終了し、アクティビティモニタで Murage の ShipIt プロセスを選び、強制終了してください。その後 Murage をもう一度開いてください。バックアップは保持されます。",
+      "en": "Murage is still installing the update. If it stays stuck, quit Murage, open Activity Monitor, select the process named ShipIt for Murage, and choose Force Quit. Then open Murage again. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery instructions describe installation as unable to progress."
+    },
+    "ja:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "アップデートがまだインストール中か確認できなかったため、この確認では何も変更していません。Murage を終了してもう一度開いてください。このページが再び表示される場合は、診断フォルダを開いてサポートに連絡してください。バックアップは保持されます。",
+      "en": "Murage couldn't tell whether the update is still being installed, so nothing was changed by this check. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery message leads with an unsuccessful check."
+    },
+    "ja:updateRecovery.landed-not-running": {
+      "text": "更新済みのアプリはディスクにありますが、このコピーはまだ以前のバージョンを実行しています。「ワークスペースに戻る」を選んで更新済みアプリをもう一度開くか、終了して更新済みのコピーを開いてください。バックアップは保持されます。",
+      "en": "The updated app is on disk, but this copy is still running the older version. Choose Return to workspace to try opening the updated app once more, or quit and open the updated copy. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "ja:updateRecovery.return-unconfirmed": {
+      "text": "アップデートは見送られ、バックアップは保持されています。「ワークスペースに戻る」を選んでもう一度開いてください。",
+      "en": "The update was set aside and your backup was kept. Choose Return to workspace to try opening your workspace again.",
+      "verdict": "pass"
+    },
+    "ja:updateRecovery.BACKUP_UPGRADE_ACTION_UNAVAILABLE": {
+      "text": "このアップデートは一時停止しています。「ワークスペースに戻る」を選ぶか、診断を開いてください。バックアップは保持されます。",
+      "en": "This update is paused. Choose Return to workspace or open diagnostics. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "ja:updateRecovery.return-revoked": {
+      "text": "もう一度終了を試してから Murage を開いてください。バックアップは保持されます。",
+      "en": "Try Quit again, then open Murage. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "ja:updateRecovery.installer-wait": {
+      "text": "Murage はアップデートをインストールしています。お待ちください。バックアップは保持されます。",
+      "en": "Murage is installing the update. Please wait. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "ja:updates.installerTitle": {
+      "text": "Murage {version} の準備ができました",
+      "en": "Murage {version} is ready",
+      "verdict": "pass"
+    },
+    "ja:updates.installerSteps": {
+      "text": "ワンステップでアップデートできます。Murage {version} をダウンロードして、アプリケーションフォルダにドラッグしてください。チャットと設定はそのまま残ります。",
+      "en": "Download Murage {version}, then drag it into Applications. Your chats and settings stay.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation adds an unsupported claim that updating takes one step."
+    },
+    "ja:updates.downloadInstaller": {
+      "text": "Murage {version} をダウンロード",
+      "en": "Download Murage {version}",
+      "verdict": "pass"
+    },
+    "ja:updateRecovery.cleanup-stopped": {
+      "text": "Murage はバックグラウンド処理の終了を完了できませんでした。バックアップは保持されます。",
+      "en": "Murage could not finish closing its background work. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery message describes an app failure."
+    },
+    "ja:updateRecovery.settled-stopped": {
+      "text": "アップデートは見送られ、バックアップは保持されています。",
+      "en": "The update was set aside and your backup was kept.",
+      "verdict": "pass"
+    },
+    "ja:updateRecovery.quit": {
+      "text": "終了",
+      "en": "Quit",
+      "verdict": "pass"
+    },
+    "ja:updateRecovery.update-wait": {
+      "text": "Murage がこの手順を完了するまでお待ちください。バックアップは保持されています。",
+      "en": "Please wait while Murage finishes this step. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "ja:backup.waiting.space": {
+      "text": "バックアップは空き容量を待っています。バックアップフォルダーのドライブに、あと約{size}必要です。ファイルをいくつか削除するか、別のフォルダーを選んでください。容量が確保されると自動で開始します。",
+      "en": "Backups are waiting for space. Murage needs about {size} more on the drive with your backup folder. Remove some files or choose a different folder. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "ja:backup.waiting.data": {
+      "text": "バックアップは空き容量を待っています。Murageがデータを保存するこのコンピューターのドライブに、あと約{size}必要です。ファイルをいくつか削除してください。容量が確保されると自動で開始します。",
+      "en": "Backups are waiting for space. Murage needs about {size} more on this computer's drive, where Murage keeps its data. Remove some files. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "ja:backup.waiting.dataUnknown": {
+      "text": "バックアップは、Murageがデータを保存するこのコンピューターのドライブの空き容量を待っています。ファイルをいくつか削除してください。容量が確保されると自動で開始します。",
+      "en": "Backups are waiting for space on this computer's drive, where Murage keeps its data. Remove some files. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "ja:backup.waiting.spaceUnknown": {
+      "text": "バックアップはバックアップフォルダーのドライブの空き容量を待っています。ファイルをいくつか削除するか、別のフォルダーを選んでください。容量が確保されると自動で開始します。",
+      "en": "Backups are waiting for space on the drive with your backup folder. Remove some files or choose a different folder. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "ja:backup.waiting.drive": {
+      "text": "バックアップドライブが接続されていません。接続するとMurageがすぐにバックアップします。",
+      "en": "Your backup drive isn't connected. Connect it and Murage backs up right away.",
+      "verdict": "pass"
+    },
+    "ja:backup.waiting.busy": {
+      "text": "必要なファイルが使用中だったため、バックアップは待機しています。Murageはまもなく自動で再試行します。",
+      "en": "Backups are waiting because a file Murage needs was in use. Murage tries again by itself soon.",
+      "verdict": "pass"
+    },
+    "ja:backup.waiting.interrupted": {
+      "text": "前回のバックアップは完了前に中断されました。Murageはまもなく自動で再試行します。",
+      "en": "The last backup was interrupted before it finished. Murage tries again by itself soon.",
+      "verdict": "fail",
+      "note": "Rule 3: The backup recovery message emphasizes an interrupted backup."
+    },
+    "ja:ux.d24.label": {
+      "text": "回答の読み上げ",
+      "en": "Spoken replies",
+      "verdict": "pass"
+    },
+    "ja:ux.d24.help": {
+      "text": "このコンピューターで開いている会話の完成した回答を読み上げます。通話中は無効になります。音声サービスが必要です。",
+      "en": "Read finished replies aloud on this computer, in the conversation you have open. Off while you are on a call. Needs a hosted voice.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation omits the requirement for an online voice."
+    },
+    "ja:ux.d24.disclosure": {
+      "text": "読み上げには音声サービスを使用します。機密情報を含む回答の読み上げは避けてください。",
+      "en": "Speech uses a voice service. Avoid reading sensitive replies aloud.",
+      "verdict": "pass"
+    },
+    "ja:ux.d24.budget": {
+      "text": "読み上げを一時停止しました。音声の予算上限に達しました。",
+      "en": "Spoken replies paused: voice budget reached.",
+      "verdict": "pass"
+    },
+    "ja:ux.d24.failed": {
+      "text": "その回答を読み上げられませんでした。",
+      "en": "Couldn't speak that reply.",
+      "verdict": "pass"
+    },
+    "ja:ux.d24.hosted": {
+      "text": "回答の読み上げには音声サービスが必要です。",
+      "en": "Spoken replies need a hosted voice.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation omits the requirement for an online voice."
+    },
+    "pt-br:settings.l1.card.connections.highlevel": {
+      "text": "HighLevel",
+      "en": "HighLevel",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.title": {
+      "text": "HighLevel",
+      "en": "HighLevel",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.intro": {
+      "text": "Deixe seus bots consultarem seu CRM do HighLevel. Eles podem ler e não podem mudar nada nele.",
+      "en": "Let your bots look things up in your HighLevel CRM. They can read it and cannot change anything in it.",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.loading": {
+      "text": "Carregando o HighLevel…",
+      "en": "Loading HighLevel…",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.loadError": {
+      "text": "As configurações do HighLevel não carregaram. Tente de novo.",
+      "en": "HighLevel settings did not load. Try again.",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.noToken": {
+      "text": "Nenhum token salvo ainda.",
+      "en": "No token saved yet.",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.tokenNoLocation": {
+      "text": "Token salvo. Verifique um local para conectá-lo.",
+      "en": "Token saved. Check a location to connect it.",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.reconfirm": {
+      "text": "O token mudou. Verifique o local de novo e confirme.",
+      "en": "The token changed. Check the location again and confirm it.",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.notReady": {
+      "text": "Este local não está pronto. Verifique de novo e confirme.",
+      "en": "This location is not ready. Check it again and confirm it.",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.connected": {
+      "text": "Conectado a {name}.",
+      "en": "Connected to {name}.",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.tokenLabel": {
+      "text": "Token de integração privada",
+      "en": "Private integration token",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.pasteToken": {
+      "text": "Cole seu token",
+      "en": "Paste your token",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.pasteReplacement": {
+      "text": "Cole um novo token",
+      "en": "Paste a new token",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.save": {
+      "text": "Salvar",
+      "en": "Save",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.saving": {
+      "text": "Salvando…",
+      "en": "Saving…",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.removeToken": {
+      "text": "Remover token",
+      "en": "Remove token",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.tokenHelp": {
+      "text": "Crie um no HighLevel em Settings, Private Integrations. O Murage o guarda com suas outras chaves salvas e nunca mais o mostra aqui.",
+      "en": "Make one in HighLevel under Settings, Private Integrations. Murage keeps it with your other saved keys and never shows it here again.",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.tokenSavedNotice": {
+      "text": "Token salvo.",
+      "en": "Token saved.",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.tokenRemoved": {
+      "text": "Token removido. Seus bots não conseguem mais acessar o HighLevel.",
+      "en": "Token removed. Your bots can no longer reach HighLevel.",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.tokenSaveError": {
+      "text": "O token não foi salvo. Tente de novo.",
+      "en": "The token was not saved. Try again.",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.tokenRemoveError": {
+      "text": "O token não foi removido. Tente de novo.",
+      "en": "The token was not removed. Try again.",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.locationLabel": {
+      "text": "ID do local",
+      "en": "Location ID",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.locationHelp": {
+      "text": "Você encontra no HighLevel em Settings, Business Profile.",
+      "en": "Find it in HighLevel under Settings, Business Profile.",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.check": {
+      "text": "Verificar local",
+      "en": "Check location",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.checking": {
+      "text": "Verificando…",
+      "en": "Checking…",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.checkError": {
+      "text": "Não foi possível verificar esse local. Confira se o token e o ID do local combinam.",
+      "en": "That location could not be checked. Make sure the token and the location ID match.",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.found": {
+      "text": "{name} encontrado. Confirme para conectar este local.",
+      "en": "Found {name}. Confirm to connect this location.",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.confirm": {
+      "text": "Confirmar",
+      "en": "Confirm",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.confirmed": {
+      "text": "Local conectado. Agora escolha o que cada bot pode fazer.",
+      "en": "Location connected. Now choose what each bot may do.",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.confirmError": {
+      "text": "O local não foi conectado. Verifique de novo.",
+      "en": "The location was not connected. Check it again.",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.disconnect": {
+      "text": "Desconectar",
+      "en": "Disconnect",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.disconnected": {
+      "text": "Local desconectado. Seus bots não conseguem mais acessá-lo.",
+      "en": "Location disconnected. Your bots can no longer reach it.",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.disconnectError": {
+      "text": "O local não foi desconectado. Tente de novo.",
+      "en": "The location was not disconnected. Try again.",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.botsTitle": {
+      "text": "Acesso dos bots",
+      "en": "Bot access",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.botsHelp": {
+      "text": "Escolha quais bots podem ler este local.",
+      "en": "Choose which bots may read this location.",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.canRead": {
+      "text": "Pode ler",
+      "en": "Can read",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.canReadFor": {
+      "text": "{name} pode ler o HighLevel",
+      "en": "{name} can read HighLevel",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.accessSaved": {
+      "text": "Acesso salvo.",
+      "en": "Access saved.",
+      "verdict": "pass"
+    },
+    "pt-br:highlevel.accessError": {
+      "text": "O acesso não foi salvo. Tente de novo.",
+      "en": "Access was not saved. Try again.",
+      "verdict": "pass"
+    },
+    "pt-br:modelPicker.recommended": {
+      "text": "Recomendado",
+      "en": "Recommended",
+      "verdict": "pass"
+    },
+    "pt-br:setup.recommendedModel": {
+      "text": "Recomendado para novas escolhas: {model}. Seu modelo salvo não muda.",
+      "en": "Recommended for new choices: {model}. Your saved model stays as it is.",
+      "verdict": "pass"
+    },
+    "pt-br:updateRecovery.BACKUP_UPGRADE_STAGED": {
+      "text": "O Murage ainda está instalando a atualização. Se ela ficar travada, encerre o Murage, abra o Monitor de Atividade, selecione o processo ShipIt do Murage e escolha Forçar Encerrar. Depois abra o Murage novamente. Seu backup será mantido.",
+      "en": "Murage is still installing the update. If it stays stuck, quit Murage, open Activity Monitor, select the process named ShipIt for Murage, and choose Force Quit. Then open Murage again. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery instructions describe the update as stuck."
+    },
+    "pt-br:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "O Murage não conseguiu determinar se a atualização ainda está sendo instalada, então esta verificação não alterou nada. Encerre o Murage e abra novamente. Se esta página voltar, abra a pasta de diagnósticos e entre em contato com o suporte. Seu backup será mantido.",
+      "en": "Murage couldn't tell whether the update is still being installed, so nothing was changed by this check. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery message leads with something Murage could not do."
+    },
+    "pt-br:updateRecovery.landed-not-running": {
+      "text": "O aplicativo atualizado está no disco, mas esta cópia ainda está executando a versão anterior. Escolha Voltar ao espaço de trabalho para tentar abrir o aplicativo atualizado mais uma vez, ou encerre e abra a cópia atualizada. Seu backup será mantido.",
+      "en": "The updated app is on disk, but this copy is still running the older version. Choose Return to workspace to try opening the updated app once more, or quit and open the updated copy. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "pt-br:updateRecovery.return-unconfirmed": {
+      "text": "A atualização foi deixada de lado e seu backup foi mantido. Escolha Voltar ao espaço de trabalho para tentar abri-lo novamente.",
+      "en": "The update was set aside and your backup was kept. Choose Return to workspace to try opening your workspace again.",
+      "verdict": "pass"
+    },
+    "pt-br:updateRecovery.BACKUP_UPGRADE_ACTION_UNAVAILABLE": {
+      "text": "Esta atualização está pausada. Escolha Voltar ao espaço de trabalho ou abra os diagnósticos. Seu backup será mantido.",
+      "en": "This update is paused. Choose Return to workspace or open diagnostics. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "pt-br:updateRecovery.return-revoked": {
+      "text": "Tente encerrar novamente e depois abra o Murage. Seu backup será mantido.",
+      "en": "Try Quit again, then open Murage. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "pt-br:updateRecovery.installer-wait": {
+      "text": "O Murage está instalando a atualização. Aguarde. Seu backup será mantido.",
+      "en": "Murage is installing the update. Please wait. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "pt-br:updates.installerTitle": {
+      "text": "O Murage {version} está pronto",
+      "en": "Murage {version} is ready",
+      "verdict": "pass"
+    },
+    "pt-br:updates.installerSteps": {
+      "text": "Atualize em um passo: baixe o Murage {version} e arraste-o para Aplicativos. Suas conversas e configurações continuam.",
+      "en": "Download Murage {version}, then drag it into Applications. Your chats and settings stay.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation adds an unsupported claim that updating takes one step."
+    },
+    "pt-br:updates.downloadInstaller": {
+      "text": "Baixar Murage {version}",
+      "en": "Download Murage {version}",
+      "verdict": "pass"
+    },
+    "pt-br:updateRecovery.cleanup-stopped": {
+      "text": "O Murage não conseguiu terminar de encerrar o trabalho em segundo plano. Seu backup será mantido.",
+      "en": "Murage could not finish closing its background work. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery message describes an app failure."
+    },
+    "pt-br:updateRecovery.settled-stopped": {
+      "text": "A atualização foi deixada de lado e seu backup foi mantido.",
+      "en": "The update was set aside and your backup was kept.",
+      "verdict": "pass"
+    },
+    "pt-br:updateRecovery.quit": {
+      "text": "Sair",
+      "en": "Quit",
+      "verdict": "pass"
+    },
+    "pt-br:updateRecovery.update-wait": {
+      "text": "Aguarde enquanto o Murage conclui esta etapa. Seu backup está preservado.",
+      "en": "Please wait while Murage finishes this step. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "pt-br:backup.waiting.space": {
+      "text": "Os backups estão aguardando espaço. O Murage precisa de cerca de {size} a mais na unidade da pasta de backup. Remova alguns arquivos ou escolha outra pasta. O backup começa sozinho quando houver espaço.",
+      "en": "Backups are waiting for space. Murage needs about {size} more on the drive with your backup folder. Remove some files or choose a different folder. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "pt-br:backup.waiting.data": {
+      "text": "Os backups estão aguardando espaço. O Murage precisa de cerca de {size} a mais na unidade deste computador onde guarda seus dados. Remova alguns arquivos. O backup começa sozinho quando houver espaço.",
+      "en": "Backups are waiting for space. Murage needs about {size} more on this computer's drive, where Murage keeps its data. Remove some files. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "pt-br:backup.waiting.dataUnknown": {
+      "text": "Os backups estão aguardando espaço na unidade deste computador onde o Murage guarda seus dados. Remova alguns arquivos. O backup começa sozinho quando houver espaço.",
+      "en": "Backups are waiting for space on this computer's drive, where Murage keeps its data. Remove some files. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "pt-br:backup.waiting.spaceUnknown": {
+      "text": "Os backups estão aguardando espaço na unidade da pasta de backup. Remova alguns arquivos ou escolha outra pasta. O backup começa sozinho quando houver espaço.",
+      "en": "Backups are waiting for space on the drive with your backup folder. Remove some files or choose a different folder. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "pt-br:backup.waiting.drive": {
+      "text": "Sua unidade de backup não está conectada. Conecte-a e o Murage fará o backup imediatamente.",
+      "en": "Your backup drive isn't connected. Connect it and Murage backs up right away.",
+      "verdict": "pass"
+    },
+    "pt-br:backup.waiting.busy": {
+      "text": "Os backups estão aguardando porque um arquivo necessário estava em uso. O Murage tentará novamente em breve, automaticamente.",
+      "en": "Backups are waiting because a file Murage needs was in use. Murage tries again by itself soon.",
+      "verdict": "pass"
+    },
+    "pt-br:backup.waiting.interrupted": {
+      "text": "O último backup foi interrompido antes de terminar. O Murage tentará novamente em breve, automaticamente.",
+      "en": "The last backup was interrupted before it finished. Murage tries again by itself soon.",
+      "verdict": "fail",
+      "note": "Rule 3: The backup recovery message emphasizes an interrupted backup."
+    },
+    "pt-br:ux.d24.label": {
+      "text": "Respostas em voz alta",
+      "en": "Spoken replies",
+      "verdict": "pass"
+    },
+    "pt-br:ux.d24.help": {
+      "text": "Leia as respostas concluídas neste computador, na conversa aberta. Desativado durante chamadas. Requer um serviço de voz.",
+      "en": "Read finished replies aloud on this computer, in the conversation you have open. Off while you are on a call. Needs a hosted voice.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation omits reading aloud and the requirement for an online voice."
+    },
+    "pt-br:ux.d24.disclosure": {
+      "text": "A leitura usa um serviço de voz. Evite ler respostas sensíveis em voz alta.",
+      "en": "Speech uses a voice service. Avoid reading sensitive replies aloud.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.d24.budget": {
+      "text": "Respostas em voz alta pausadas: orçamento de voz atingido.",
+      "en": "Spoken replies paused: voice budget reached.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.d24.failed": {
+      "text": "Não foi possível ler essa resposta.",
+      "en": "Couldn't speak that reply.",
+      "verdict": "fail",
+      "note": "Rule 5: “Ler” alone does not specify that the failed action was reading aloud."
+    },
+    "pt-br:ux.d24.hosted": {
+      "text": "Respostas em voz alta precisam de um serviço de voz.",
+      "en": "Spoken replies need a hosted voice.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation omits the requirement for an online voice."
+    },
+    "zh:settings.l1.card.connections.highlevel": {
+      "text": "HighLevel",
+      "en": "HighLevel",
+      "verdict": "pass"
+    },
+    "zh:highlevel.title": {
+      "text": "HighLevel",
+      "en": "HighLevel",
+      "verdict": "pass"
+    },
+    "zh:highlevel.intro": {
+      "text": "让你的机器人在 HighLevel CRM 中查找信息。它们只能读取，不能更改其中的任何内容。",
+      "en": "Let your bots look things up in your HighLevel CRM. They can read it and cannot change anything in it.",
+      "verdict": "pass"
+    },
+    "zh:highlevel.loading": {
+      "text": "正在加载 HighLevel…",
+      "en": "Loading HighLevel…",
+      "verdict": "pass"
+    },
+    "zh:highlevel.loadError": {
+      "text": "HighLevel 设置未能加载，请重试。",
+      "en": "HighLevel settings did not load. Try again.",
+      "verdict": "pass"
+    },
+    "zh:highlevel.noToken": {
+      "text": "尚未保存令牌。",
+      "en": "No token saved yet.",
+      "verdict": "pass"
+    },
+    "zh:highlevel.tokenNoLocation": {
+      "text": "令牌已保存。请检查一个位置以完成连接。",
+      "en": "Token saved. Check a location to connect it.",
+      "verdict": "pass"
+    },
+    "zh:highlevel.reconfirm": {
+      "text": "令牌已更改。请重新检查该位置并确认。",
+      "en": "The token changed. Check the location again and confirm it.",
+      "verdict": "pass"
+    },
+    "zh:highlevel.notReady": {
+      "text": "此位置尚未就绪。请重新检查并确认。",
+      "en": "This location is not ready. Check it again and confirm it.",
+      "verdict": "pass"
+    },
+    "zh:highlevel.connected": {
+      "text": "已连接到 {name}。",
+      "en": "Connected to {name}.",
+      "verdict": "pass"
+    },
+    "zh:highlevel.tokenLabel": {
+      "text": "私有集成令牌",
+      "en": "Private integration token",
+      "verdict": "pass"
+    },
+    "zh:highlevel.pasteToken": {
+      "text": "粘贴你的令牌",
+      "en": "Paste your token",
+      "verdict": "pass"
+    },
+    "zh:highlevel.pasteReplacement": {
+      "text": "粘贴新的令牌",
+      "en": "Paste a new token",
+      "verdict": "pass"
+    },
+    "zh:highlevel.save": {
+      "text": "保存",
+      "en": "Save",
+      "verdict": "pass"
+    },
+    "zh:highlevel.saving": {
+      "text": "正在保存…",
+      "en": "Saving…",
+      "verdict": "pass"
+    },
+    "zh:highlevel.removeToken": {
+      "text": "移除令牌",
+      "en": "Remove token",
+      "verdict": "pass"
+    },
+    "zh:highlevel.tokenHelp": {
+      "text": "在 HighLevel 的 Settings、Private Integrations 中创建。Murage 会把它和你保存的其他密钥放在一起，之后不会再在这里显示。",
+      "en": "Make one in HighLevel under Settings, Private Integrations. Murage keeps it with your other saved keys and never shows it here again.",
+      "verdict": "pass"
+    },
+    "zh:highlevel.tokenSavedNotice": {
+      "text": "令牌已保存。",
+      "en": "Token saved.",
+      "verdict": "pass"
+    },
+    "zh:highlevel.tokenRemoved": {
+      "text": "令牌已移除。你的机器人无法再访问 HighLevel。",
+      "en": "Token removed. Your bots can no longer reach HighLevel.",
+      "verdict": "pass"
+    },
+    "zh:highlevel.tokenSaveError": {
+      "text": "令牌未能保存，请重试。",
+      "en": "The token was not saved. Try again.",
+      "verdict": "pass"
+    },
+    "zh:highlevel.tokenRemoveError": {
+      "text": "令牌未能移除，请重试。",
+      "en": "The token was not removed. Try again.",
+      "verdict": "pass"
+    },
+    "zh:highlevel.locationLabel": {
+      "text": "位置 ID",
+      "en": "Location ID",
+      "verdict": "pass"
+    },
+    "zh:highlevel.locationHelp": {
+      "text": "可在 HighLevel 的 Settings、Business Profile 中找到。",
+      "en": "Find it in HighLevel under Settings, Business Profile.",
+      "verdict": "pass"
+    },
+    "zh:highlevel.check": {
+      "text": "检查位置",
+      "en": "Check location",
+      "verdict": "pass"
+    },
+    "zh:highlevel.checking": {
+      "text": "正在检查…",
+      "en": "Checking…",
+      "verdict": "pass"
+    },
+    "zh:highlevel.checkError": {
+      "text": "无法检查该位置。请确认令牌和位置 ID 相匹配。",
+      "en": "That location could not be checked. Make sure the token and the location ID match.",
+      "verdict": "pass"
+    },
+    "zh:highlevel.found": {
+      "text": "已找到 {name}。确认后即可连接此位置。",
+      "en": "Found {name}. Confirm to connect this location.",
+      "verdict": "pass"
+    },
+    "zh:highlevel.confirm": {
+      "text": "确认",
+      "en": "Confirm",
+      "verdict": "pass"
+    },
+    "zh:highlevel.confirmed": {
+      "text": "位置已连接。现在选择每个机器人可以做什么。",
+      "en": "Location connected. Now choose what each bot may do.",
+      "verdict": "pass"
+    },
+    "zh:highlevel.confirmError": {
+      "text": "位置未能连接，请重新检查。",
+      "en": "The location was not connected. Check it again.",
+      "verdict": "pass"
+    },
+    "zh:highlevel.disconnect": {
+      "text": "断开连接",
+      "en": "Disconnect",
+      "verdict": "pass"
+    },
+    "zh:highlevel.disconnected": {
+      "text": "位置已断开。你的机器人无法再访问它。",
+      "en": "Location disconnected. Your bots can no longer reach it.",
+      "verdict": "pass"
+    },
+    "zh:highlevel.disconnectError": {
+      "text": "位置未能断开，请重试。",
+      "en": "The location was not disconnected. Try again.",
+      "verdict": "pass"
+    },
+    "zh:highlevel.botsTitle": {
+      "text": "机器人访问权限",
+      "en": "Bot access",
+      "verdict": "pass"
+    },
+    "zh:highlevel.botsHelp": {
+      "text": "选择哪些机器人可以读取此位置。",
+      "en": "Choose which bots may read this location.",
+      "verdict": "pass"
+    },
+    "zh:highlevel.canRead": {
+      "text": "可读取",
+      "en": "Can read",
+      "verdict": "pass"
+    },
+    "zh:highlevel.canReadFor": {
+      "text": "{name} 可以读取 HighLevel",
+      "en": "{name} can read HighLevel",
+      "verdict": "pass"
+    },
+    "zh:highlevel.accessSaved": {
+      "text": "访问权限已保存。",
+      "en": "Access saved.",
+      "verdict": "pass"
+    },
+    "zh:highlevel.accessError": {
+      "text": "访问权限未能保存，请重试。",
+      "en": "Access was not saved. Try again.",
+      "verdict": "pass"
+    },
+    "zh:modelPicker.recommended": {
+      "text": "推荐",
+      "en": "Recommended",
+      "verdict": "pass"
+    },
+    "zh:setup.recommendedModel": {
+      "text": "新选择推荐：{model}。已保存的模型保持不变。",
+      "en": "Recommended for new choices: {model}. Your saved model stays as it is.",
+      "verdict": "fail",
+      "note": "Rule 5: “新选择推荐” is an unnatural phrase in Chinese."
+    },
+    "zh:updateRecovery.BACKUP_UPGRADE_STAGED": {
+      "text": "Murage 仍在安装更新。如果一直没有进展，请退出 Murage，打开“活动监视器”，选择 Murage 的 ShipIt 进程，然后选择“强制退出”。之后重新打开 Murage。你的备份会保留。",
+      "en": "Murage is still installing the update. If it stays stuck, quit Murage, open Activity Monitor, select the process named ShipIt for Murage, and choose Force Quit. Then open Murage again. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery instructions describe installation as unable to progress."
+    },
+    "zh:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "Murage 无法判断更新是否仍在安装，因此这次检查没有更改任何内容。请退出 Murage 并重新打开。如果再次出现此页面，请打开诊断文件夹并联系支持。你的备份会保留。",
+      "en": "Murage couldn't tell whether the update is still being installed, so nothing was changed by this check. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery message leads with something Murage could not do."
+    },
+    "zh:updateRecovery.landed-not-running": {
+      "text": "更新后的应用已在磁盘上，但此副本仍在运行旧版本。选择“返回工作区”以再次尝试打开更新后的应用，或退出并打开更新后的副本。你的备份会保留。",
+      "en": "The updated app is on disk, but this copy is still running the older version. Choose Return to workspace to try opening the updated app once more, or quit and open the updated copy. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "zh:updateRecovery.return-unconfirmed": {
+      "text": "更新已搁置，备份已保留。选择“返回工作区”以尝试重新打开工作区。",
+      "en": "The update was set aside and your backup was kept. Choose Return to workspace to try opening your workspace again.",
+      "verdict": "pass"
+    },
+    "zh:updateRecovery.BACKUP_UPGRADE_ACTION_UNAVAILABLE": {
+      "text": "此更新已暂停。请选择“返回工作区”或打开诊断。你的备份会保留。",
+      "en": "This update is paused. Choose Return to workspace or open diagnostics. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "zh:updateRecovery.return-revoked": {
+      "text": "请再次尝试退出，然后打开 Murage。你的备份会保留。",
+      "en": "Try Quit again, then open Murage. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "zh:updateRecovery.installer-wait": {
+      "text": "Murage 正在安装更新。请稍候。你的备份会保留。",
+      "en": "Murage is installing the update. Please wait. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "zh:updates.installerTitle": {
+      "text": "Murage {version} 已就绪",
+      "en": "Murage {version} is ready",
+      "verdict": "pass"
+    },
+    "zh:updates.installerSteps": {
+      "text": "一步完成更新：下载 Murage {version}，然后把它拖到“应用程序”文件夹。你的聊天和设置都会保留。",
+      "en": "Download Murage {version}, then drag it into Applications. Your chats and settings stay.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation adds an unsupported claim that updating takes one step."
+    },
+    "zh:updates.downloadInstaller": {
+      "text": "下载 Murage {version}",
+      "en": "Download Murage {version}",
+      "verdict": "pass"
+    },
+    "zh:updateRecovery.cleanup-stopped": {
+      "text": "Murage 无法完成后台任务的关闭。你的备份会保留。",
+      "en": "Murage could not finish closing its background work. Your backup is kept.",
+      "verdict": "fail",
+      "note": "Rule 3: The recovery message describes an app failure."
+    },
+    "zh:updateRecovery.settled-stopped": {
+      "text": "更新已搁置，备份已保留。",
+      "en": "The update was set aside and your backup was kept.",
+      "verdict": "pass"
+    },
+    "zh:updateRecovery.quit": {
+      "text": "退出",
+      "en": "Quit",
+      "verdict": "pass"
+    },
+    "zh:updateRecovery.update-wait": {
+      "text": "请等待 Murage 完成此步骤。你的备份会保留。",
+      "en": "Please wait while Murage finishes this step. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "zh:backup.waiting.space": {
+      "text": "备份正在等待空间。备份文件夹所在的驱动器还需要约 {size} 空间。请删除一些文件或选择其他文件夹。有空间后，备份会自动开始。",
+      "en": "Backups are waiting for space. Murage needs about {size} more on the drive with your backup folder. Remove some files or choose a different folder. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "zh:backup.waiting.data": {
+      "text": "备份正在等待空间。Murage 存储数据的本机驱动器还需要约 {size} 空间。请删除一些文件。有空间后，备份会自动开始。",
+      "en": "Backups are waiting for space. Murage needs about {size} more on this computer's drive, where Murage keeps its data. Remove some files. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "zh:backup.waiting.dataUnknown": {
+      "text": "备份正在等待 Murage 存储数据的本机驱动器腾出空间。请删除一些文件。有空间后，备份会自动开始。",
+      "en": "Backups are waiting for space on this computer's drive, where Murage keeps its data. Remove some files. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "zh:backup.waiting.spaceUnknown": {
+      "text": "备份正在等待备份文件夹所在的驱动器腾出空间。请删除一些文件或选择其他文件夹。有空间后，备份会自动开始。",
+      "en": "Backups are waiting for space on the drive with your backup folder. Remove some files or choose a different folder. The backup starts by itself when there's room.",
+      "verdict": "pass"
+    },
+    "zh:backup.waiting.drive": {
+      "text": "备份驱动器未连接。连接后，Murage 会立即备份。",
+      "en": "Your backup drive isn't connected. Connect it and Murage backs up right away.",
+      "verdict": "pass"
+    },
+    "zh:backup.waiting.busy": {
+      "text": "Murage 所需的文件之前正在使用，备份正在等待。Murage 很快会自动重试。",
+      "en": "Backups are waiting because a file Murage needs was in use. Murage tries again by itself soon.",
+      "verdict": "pass"
+    },
+    "zh:backup.waiting.interrupted": {
+      "text": "上次备份在完成前中断。Murage 很快会自动重试。",
+      "en": "The last backup was interrupted before it finished. Murage tries again by itself soon.",
+      "verdict": "fail",
+      "note": "Rule 3: The backup recovery message emphasizes an interrupted backup."
+    },
+    "zh:ux.d24.label": {
+      "text": "朗读回复",
+      "en": "Spoken replies",
+      "verdict": "pass"
+    },
+    "zh:ux.d24.help": {
+      "text": "在此电脑上朗读当前打开的对话中已完成的回复。通话期间关闭。需要语音服务。",
+      "en": "Read finished replies aloud on this computer, in the conversation you have open. Off while you are on a call. Needs a hosted voice.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation omits the requirement for an online voice."
+    },
+    "zh:ux.d24.disclosure": {
+      "text": "朗读会使用语音服务。请避免朗读敏感回复。",
+      "en": "Speech uses a voice service. Avoid reading sensitive replies aloud.",
+      "verdict": "pass"
+    },
+    "zh:ux.d24.budget": {
+      "text": "回复朗读已暂停：已达到语音预算上限。",
+      "en": "Spoken replies paused: voice budget reached.",
+      "verdict": "pass"
+    },
+    "zh:ux.d24.failed": {
+      "text": "无法朗读该回复。",
+      "en": "Couldn't speak that reply.",
+      "verdict": "pass"
+    },
+    "zh:ux.d24.hosted": {
+      "text": "朗读回复需要语音服务。",
+      "en": "Spoken replies need a hosted voice.",
+      "verdict": "fail",
+      "note": "Rule 5: The translation omits the requirement for an online voice."
+    }
+  },
+  "files": {
+    "same-as-english.json": {
+      "text": "{\n  \"de:browserUnavailable.details\": \"45989de49fb7f66dfe17a8fc26f3a02c7abcd74f7e8e6cf9f39fa0e3775780df\",\n  \"de:chatHeader.findShortcut\": \"12aaa51aad3d0b795c86d67d0f5be15e691030ba3bb2e0a4b739dd9c921f4c16\",\n  \"de:chatLinks.github.commit\": \"82a9c46ffa4789945d9f2359d75891558ef6faa8dee09e4b25e4e0597704f5bd\",\n  \"de:chatLinks.github.issue\": \"48dc76dfa23ae03fea1372c5ed6c0e1bd62eaeca7bba6d804eb0afa87972f031\",\n  \"de:engines.cloud\": \"b977b950c1ae31e5aeb9ef778cc20a66fc034eb81e738e0206104b677962c465\",\n  \"de:err.plain.details\": \"45989de49fb7f66dfe17a8fc26f3a02c7abcd74f7e8e6cf9f39fa0e3775780df\",\n  \"de:filesWorkspace.filter.bot\": \"9e3fb291086b39e660660f2bf2810760ee764bd1ea596c4277494665c2eeca67\",\n  \"de:highlevel.title\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"de:imageLibrary.block.text\": \"71988c4d8e0803ba4519f0b2864c1331c14a1890bf8694e251379177bfedb5c3\",\n  \"de:imageLibrary.scope.workspace\": \"87bb59ba2f92f2a5a9f13e021fd58dd14ae5c065b1046146875e6e68d5ebc8b7\",\n  \"de:importGuard.whereNoLine\": \"63560a435427a4e5437381a252cff54d618f1da58dc57e1fd5362909da672ed6\",\n  \"de:learningScreen.recent.procedure.routine\": \"90c5c0b92def5bb0c771ee0423909bd06548627abf97716f6b501dad752ec36f\",\n  \"de:mcp.add.name\": \"dcd1d5223f73b3a965c07e3ff5dbee3eedcfedb806686a05b9b3868a2c3d6d50\",\n  \"de:mcp.row.details\": \"45989de49fb7f66dfe17a8fc26f3a02c7abcd74f7e8e6cf9f39fa0e3775780df\",\n  \"de:mcp.row.sourceLink\": \"90d326db726070816add45bb709d2a75db4731a4e9038b7014366f8603356247\",\n  \"de:memoryNeeds.filter\": \"638e249f4a15ebb84957da130701d138a6e06d88dceeaa2e6dcd91db70cc1381\",\n  \"de:memoryPeople.kindTeam\": \"5985039f106df054b43c3529139613bf7c2372937539f344c7c5ee47d00a0d63\",\n  \"de:nav.apps\": \"89dd748442c194857825848e1500abbbc5f52fb067ad27fb05dc9fb23eebba3b\",\n  \"de:notificationSettings.timeZonePlaceholder\": \"e8def32656206d2574e163cff4330221cbca79a584c6debd922546da0bb0ff74\",\n  \"de:procedureAdmissions.kindRoutine\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"de:project.team.label\": \"5985039f106df054b43c3529139613bf7c2372937539f344c7c5ee47d00a0d63\",\n  \"de:projects.board.aria\": \"4816cbfd74aa8297b9c9cdaae89e2f0d2ced6041e952dfcd114e01b4c82e9c6d\",\n  \"de:projects.board.bot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"de:projects.boardCard.details\": \"45989de49fb7f66dfe17a8fc26f3a02c7abcd74f7e8e6cf9f39fa0e3775780df\",\n  \"de:projects.common.tokens\": \"a039dfb9628b53ddaebcfe8ef0793e3fdf19867601295f00d192acef59050869\",\n  \"de:projects.new.budgetLegend\": \"8687555f210f4891dd76a3071530ccafc415e179b2866a9ab50ad620714673d7\",\n  \"de:projects.request.routine\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"de:projects.request.wake\": \"adc719587244723baf63cc93777b53f02f6cf19dd16ed3323daa34c80e9e126c\",\n  \"de:projects.tabs.board\": \"4816cbfd74aa8297b9c9cdaae89e2f0d2ced6041e952dfcd114e01b4c82e9c6d\",\n  \"de:projects.tabs.chat\": \"460b3a7da007b7af9d35bca54181dc91382263b2bf133ca214871ca1fed1fc1c\",\n  \"de:providerError.said.team\": \"f89a7d144a9ba182897efbbad0a6fc5e2d14d49419430e62dfbaf2f28951b081\",\n  \"de:settings.bot.browser.title\": \"d31de1a5c5c8ba2a210a167cf0d0dc2425c57ea7525f4b73a4b7ab934af79dfc\",\n  \"de:settings.bot.computer.cloud\": \"b977b950c1ae31e5aeb9ef778cc20a66fc034eb81e738e0206104b677962c465\",\n  \"de:settings.bot.computer.title\": \"76ed42d22129dc354362704eb4b54208041b68736f976932aada43bc0035f7c0\",\n  \"de:settings.bot.identity.name\": \"dcd1d5223f73b3a965c07e3ff5dbee3eedcfedb806686a05b9b3868a2c3d6d50\",\n  \"de:settings.group.app\": \"0d04bfeb7d64b71c74fc925cca93d683154e8cc7e6e5838faced498e34c9984d\",\n  \"de:settings.group.bots\": \"f17c0acbd8e50c780760bb7c6493264736305603acae6f076b1eecb0e26f5118\",\n  \"de:settings.l1.card.connections.highlevel\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"de:settings.l1.card.models.engines\": \"b9bf0c84842bfa7937024fad674df9af19acc232461e6f089fc21f1a96e916d7\",\n  \"de:settings.l4.engines.title\": \"b9bf0c84842bfa7937024fad674df9af19acc232461e6f089fc21f1a96e916d7\",\n  \"de:settings.l6.usage.colBot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"de:settings.l6.usage.colRoutine\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"de:settings.page.backups\": \"3334fee2c77fef827371cc6c0e618fad0717a345db95b74f74a0facf51eaa647\",\n  \"de:settings.page.botDefaults\": \"f17c0acbd8e50c780760bb7c6493264736305603acae6f076b1eecb0e26f5118\",\n  \"de:settings.page.webSearch\": \"ea93d6a262ecb87a9fa4d09edbd7654c046597936a8e235fc3949eb01775ff99\",\n  \"de:settings.section.backups\": \"3334fee2c77fef827371cc6c0e618fad0717a345db95b74f74a0facf51eaa647\",\n  \"de:settings.section.engines\": \"b9bf0c84842bfa7937024fad674df9af19acc232461e6f089fc21f1a96e916d7\",\n  \"de:settings.sidebar.standard\": \"ef6691545d2c5523efed00424407cb261aeb0037d165ca5792f7f8bac3381362\",\n  \"de:slik.scheduleLimitEngine\": \"8e75ebbdb21505d2f18439f43fe046abc67fc567515bb1d53b855a020a179092\",\n  \"de:task.link\": \"a6a32dbc5618ea39f6df5b0f9808e3588b19e00d5f6f96c69492e40386e5aeab\",\n  \"de:updates.title\": \"22e2bada8f1c65cd83f4ba976f0027c5dd7cb81d5d2199cd1b0130792841eef4\",\n  \"de:ux.l1.card.details\": \"45989de49fb7f66dfe17a8fc26f3a02c7abcd74f7e8e6cf9f39fa0e3775780df\",\n  \"de:ux.l1.settings.inFolder\": \"cdf2dc13bb0320de35bf4fcde5fb6611b998f979a01849abf7b855a9a5d0dda5\",\n  \"de:ux.l2a.door.chats\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"de:ux.l2a.health.area.backups\": \"3334fee2c77fef827371cc6c0e618fad0717a345db95b74f74a0facf51eaa647\",\n  \"de:ux.l2a.health.engines\": \"b9bf0c84842bfa7937024fad674df9af19acc232461e6f089fc21f1a96e916d7\",\n  \"de:ux.l4a.control.engines\": \"b9bf0c84842bfa7937024fad674df9af19acc232461e6f089fc21f1a96e916d7\",\n  \"de:ux.l4a.control.level\": \"1709305c9fa966d14f56f0da3c3614bbc10adcf53d72f90341bb96d24afcfca3\",\n  \"de:ux.l4a.feedback.chatWord\": \"460b3a7da007b7af9d35bca54181dc91382263b2bf133ca214871ca1fed1fc1c\",\n  \"de:ux.l4a.mod.mac\": \"1695b48bccfe51266dd35bb43ee32680b77986c98a3f69a9db1f0dbf0e158557\",\n  \"de:ux.l4a.screen.bot.skills.title\": \"4697d1e6b8706dfda010bb1c06a0e0fb6c3c03d0c7e301fce33af996313cc5af\",\n  \"de:ux.l4a.screen.bot.teams.title\": \"8a3397e9f55688ec83c46bf6e2ab69dbe747ffdc7f3d5c818e72b46fb921c882\",\n  \"de:ux.l4a.screen.chats.title\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"de:ux.l4a.screen.cloud.title\": \"b7ffc38fc386ea046ae7fdc44e115c5db2f26dfe767d3864877d635c74a68fa7\",\n  \"de:ux.l4a.screen.computer.title\": \"76ed42d22129dc354362704eb4b54208041b68736f976932aada43bc0035f7c0\",\n  \"de:ux.l4a.screen.routine.title\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"de:ux.l5b.level.label\": \"1709305c9fa966d14f56f0da3c3614bbc10adcf53d72f90341bb96d24afcfca3\",\n  \"de:ux.l6a.hire.nameLabel\": \"dcd1d5223f73b3a965c07e3ff5dbee3eedcfedb806686a05b9b3868a2c3d6d50\",\n  \"de:widget.details\": \"45989de49fb7f66dfe17a8fc26f3a02c7abcd74f7e8e6cf9f39fa0e3775780df\",\n  \"es:chatHeader.findShortcut\": \"12aaa51aad3d0b795c86d67d0f5be15e691030ba3bb2e0a4b739dd9c921f4c16\",\n  \"es:chatHeader.inspector\": \"da188e3b1cefc8a70813b78ef4ef13461693a08eb69b0327fbc897cf8981702f\",\n  \"es:chatLinks.github.commit\": \"82a9c46ffa4789945d9f2359d75891558ef6faa8dee09e4b25e4e0597704f5bd\",\n  \"es:chatLinks.github.issue\": \"48dc76dfa23ae03fea1372c5ed6c0e1bd62eaeca7bba6d804eb0afa87972f031\",\n  \"es:chatLinks.github.pull\": \"f3dba6629c69d91bd65527f178591b6ab2ac3843cfbf76943801e8dd45bcb7d6\",\n  \"es:engines.local\": \"8c31e6e7223097e2e4847773c47a4efab6aaf79deeecc92a7759891c74976dde\",\n  \"es:filesWorkspace.filter.bot\": \"9e3fb291086b39e660660f2bf2810760ee764bd1ea596c4277494665c2eeca67\",\n  \"es:highlevel.title\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"es:learningScreen.no\": \"1ea442a134b2a184bd5d40104401f2a37fbc09ccf3f4bc9da161c6099be3691d\",\n  \"es:memoryNotebook.general\": \"c910d474dcd724bff83ddedeb06bf1eceaf9fb3af7c76bb282be057f36e6dffa\",\n  \"es:memorySettings.general\": \"c910d474dcd724bff83ddedeb06bf1eceaf9fb3af7c76bb282be057f36e6dffa\",\n  \"es:notificationSettings.timeZonePlaceholder\": \"e8def32656206d2574e163cff4330221cbca79a584c6debd922546da0bb0ff74\",\n  \"es:projects.board.bot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"es:projects.budget.tokens\": \"b92bd9c11e8f4e9d1a9fa2e7acf5d789f427eea1d3d09f6f4de37fca77efa9a3\",\n  \"es:projects.common.tokens\": \"a039dfb9628b53ddaebcfe8ef0793e3fdf19867601295f00d192acef59050869\",\n  \"es:projects.face.tokens\": \"bc17ff48c05229eb1e7470573c5c85a0334cb3ea42c1672c50064261e387ead2\",\n  \"es:projects.sheet.no\": \"1ea442a134b2a184bd5d40104401f2a37fbc09ccf3f4bc9da161c6099be3691d\",\n  \"es:projects.tabs.chat\": \"460b3a7da007b7af9d35bca54181dc91382263b2bf133ca214871ca1fed1fc1c\",\n  \"es:projects.time.days\": \"3f2e9c59984c0b941ec09da664cdc7ce175b29200487805f6c9dd7f03f9097dd\",\n  \"es:projects.time.hours\": \"068deca46a360c34fb4de3abc11555221ddb4440f5f2a1f1dfaa602d9a56ebce\",\n  \"es:projects.time.hoursMin\": \"99422830232cdc3aeea013ffed15fc46da14d5271535388eac5b9ce40c1bdc63\",\n  \"es:projects.time.min\": \"913185ba21fbe409494debb11eaeaad2fea9ccc97bc227f813f3884faf0d317d\",\n  \"es:projects.work.budgetLine\": \"af16f559cd6fdedab2e760526b75427cc3a618363f58a2e11251d73257239bf1\",\n  \"es:projects.work.budgetLineTokens\": \"af041f18902a49a7cd34a41cc7fd52c386d64056422e68ecdd5880ff8778ac5b\",\n  \"es:settings.botsToggle\": \"fc1da572d3f0b2c7e2cdfa7f85a2c1f6b2aceb1969b9cac6ec4391422887a64b\",\n  \"es:settings.group.bots\": \"f17c0acbd8e50c780760bb7c6493264736305603acae6f076b1eecb0e26f5118\",\n  \"es:settings.l1.card.connections.highlevel\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"es:settings.l6.usage.colBot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"es:settings.l6.usage.plan.dh\": \"64a6ac2a25ab8f5577894d09a2f06d15e887cde3ccb65415a86a03258fe4b3a0\",\n  \"es:settings.l6.usage.plan.hm\": \"cf8484035b7fa8c13811a16b0f926ad7f56b4161501e105431231873eae43156\",\n  \"es:settings.l6.usage.plan.m\": \"e1bded87ee24b702d6c1baf5edf99fccfc0d2e1d5bca603aef4937fb6c282fe2\",\n  \"es:settings.page.botDefaults\": \"f17c0acbd8e50c780760bb7c6493264736305603acae6f076b1eecb0e26f5118\",\n  \"es:settings.page.general\": \"c910d474dcd724bff83ddedeb06bf1eceaf9fb3af7c76bb282be057f36e6dffa\",\n  \"es:settings.section.general\": \"c910d474dcd724bff83ddedeb06bf1eceaf9fb3af7c76bb282be057f36e6dffa\",\n  \"es:ux.l2a.door.chats\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"es:ux.l2a.health.botsMany\": \"38ccee81b2654ed9ecad68227e6229e27a486f59e5c6c717d0c66569fff9411f\",\n  \"es:ux.l2a.health.botsOne\": \"ba521a424af39db3760405fe7d15f30a2639067b0d8b8049be65cddbeba65140\",\n  \"es:ux.l4a.feedback.chatWord\": \"460b3a7da007b7af9d35bca54181dc91382263b2bf133ca214871ca1fed1fc1c\",\n  \"es:ux.l4a.mod.mac\": \"1695b48bccfe51266dd35bb43ee32680b77986c98a3f69a9db1f0dbf0e158557\",\n  \"es:ux.l4a.mod.other\": \"e2ee2909fe279f5cbcfc09de8e6daf6c238a3af213840182b679ac4997c50eab\",\n  \"es:ux.l4a.screen.chats.title\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"es:ux.l4a.screen.cloud.title\": \"b7ffc38fc386ea046ae7fdc44e115c5db2f26dfe767d3864877d635c74a68fa7\",\n  \"es:ux.l4a.screen.inspector.title\": \"da188e3b1cefc8a70813b78ef4ef13461693a08eb69b0327fbc897cf8981702f\",\n  \"es:ux.l5b.limit.minutes\": \"1829c58ba472520fd39e61f9e337a1b7da27e86299332dde5bfdea355c3895a8\",\n  \"fr:botImages.title\": \"be7e2f20129365c2899b2c11bfc465541e61b1858f45bf0248cf99b9271bc707\",\n  \"fr:chatHeader.findShortcut\": \"12aaa51aad3d0b795c86d67d0f5be15e691030ba3bb2e0a4b739dd9c921f4c16\",\n  \"fr:chatLinks.github.commit\": \"82a9c46ffa4789945d9f2359d75891558ef6faa8dee09e4b25e4e0597704f5bd\",\n  \"fr:chatLinks.github.pull\": \"f3dba6629c69d91bd65527f178591b6ab2ac3843cfbf76943801e8dd45bcb7d6\",\n  \"fr:engines.cloud\": \"b977b950c1ae31e5aeb9ef778cc20a66fc034eb81e738e0206104b677962c465\",\n  \"fr:engines.local\": \"8c31e6e7223097e2e4847773c47a4efab6aaf79deeecc92a7759891c74976dde\",\n  \"fr:filesWorkspace.filter.bot\": \"9e3fb291086b39e660660f2bf2810760ee764bd1ea596c4277494665c2eeca67\",\n  \"fr:filesWorkspace.filter.type\": \"cb489c29cf31825141051ec622c8d00b9088b98c7afd3af00d04110c3d938a56\",\n  \"fr:filesWorkspace.kind.image\": \"be7e2f20129365c2899b2c11bfc465541e61b1858f45bf0248cf99b9271bc707\",\n  \"fr:highlevel.title\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"fr:imageLibrary.pack.line\": \"504a046f7c812e7fa74353fb8d89bd2c605637de3e5c6cf1c77626ab1f0bedfc\",\n  \"fr:imageLibrary.pack.lineOne\": \"28665c32766cd030526b64d2d207b1e1b25b313e1c234a5eab9d59428a613577\",\n  \"fr:learningScreen.suggestions.heading\": \"2e4da343a56a177f43633f9437deb198ded9f9503085dcc5142f49f606200de7\",\n  \"fr:media.image.untitled\": \"1aa4cb0bcca76e92e30677e809bb3d4b5c066715ef4d558184e319496bcc5125\",\n  \"fr:memoryPeople.kindAudience\": \"545c02357695a6ffed97b01a94a46b9aeb4686f4480173da6d0faeae8eb85053\",\n  \"fr:memoryReview.sources\": \"caf85b0888d78f1f83771a07b25c3d30fa1210242f2fae6e5ae5d9a686602800\",\n  \"fr:memorySettings.audience.label\": \"545c02357695a6ffed97b01a94a46b9aeb4686f4480173da6d0faeae8eb85053\",\n  \"fr:memorySettings.page\": \"a456627ace382cd7eac7c2e266b2ae8b326f7f1bc8579b15af3c009ce2ba0923\",\n  \"fr:nav.routines\": \"61b7bb44e2b47b7c0ccaccff4872fdcf3e298345d0f003ea4bf54e8c84e2a889\",\n  \"fr:notificationSettings.timeZonePlaceholder\": \"e8def32656206d2574e163cff4330221cbca79a584c6debd922546da0bb0ff74\",\n  \"fr:notificationSettings.title\": \"788011833a5a0f22db90c91e8eb7bd8e9f5cd423354ff5ef8c338e7895f44ba9\",\n  \"fr:procedureAdmissions.audience\": \"545c02357695a6ffed97b01a94a46b9aeb4686f4480173da6d0faeae8eb85053\",\n  \"fr:procedureAdmissions.kindRoutine\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"fr:procedureAdmissions.testSetValue\": \"a290a24bc3c2d9e1e76977f15759e8aff8cc2d9bf23f49f26f8ffd8967ff0600\",\n  \"fr:projects.board.bot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"fr:projects.common.description\": \"526e0087cc3f254d9f86f6c7d8e23d954c4dfda2b312efc29194ae8a860106ba\",\n  \"fr:projects.goalView.brief\": \"ac40ae1e8d41291c59c7f09640725d31f88930b2074aad8adb17959d97bc1497\",\n  \"fr:projects.goalView.note\": \"d8da2c49df39d91df7ecd199b92da7bf264f026242ccc69b08daeadfe587c45b\",\n  \"fr:projects.kb.position\": \"75e8fcf0797349f5124b611bb8da0853bf3e0ce98464a073974afe3b762fae11\",\n  \"fr:projects.kb.positionLane\": \"986a5d4ee3ecb1ad69ae41aeb4be9fd35c332a3b6519ebf5c51853f3a84e057f\",\n  \"fr:projects.request.message\": \"2f77668a9dfbf8d5848b9eeb4a7145ca94c6ed9236e4a773f6dcafa5132b2f91\",\n  \"fr:projects.request.routine\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"fr:projects.since.messageOne\": \"011052fed01983b3279365be61a90ca8a0426b55b35c4095dae842101ffc9c4c\",\n  \"fr:projects.since.messageOther\": \"d7b79bfdb6b9e53598a786daa82879bc1a8c82494bcbc04cbab5083d35a0ca9d\",\n  \"fr:projects.time.hours\": \"068deca46a360c34fb4de3abc11555221ddb4440f5f2a1f1dfaa602d9a56ebce\",\n  \"fr:projects.time.hoursMin\": \"99422830232cdc3aeea013ffed15fc46da14d5271535388eac5b9ce40c1bdc63\",\n  \"fr:projects.time.min\": \"913185ba21fbe409494debb11eaeaad2fea9ccc97bc227f813f3884faf0d317d\",\n  \"fr:routines.editor.descriptionLabel\": \"526e0087cc3f254d9f86f6c7d8e23d954c4dfda2b312efc29194ae8a860106ba\",\n  \"fr:routines.editor.instructionsLabel\": \"934652dce41d62d3c9ff34b2c5e44e3addaedc67d6137328a9fe75a63c51dbac\",\n  \"fr:settings.bot.computer.cloud\": \"b977b950c1ae31e5aeb9ef778cc20a66fc034eb81e738e0206104b677962c465\",\n  \"fr:settings.bot.effort.title\": \"4387e5d3966fc436532792769763cd1ab7cccd6464d4c01c2b91261894e96b77\",\n  \"fr:settings.bot.identity.instructions\": \"934652dce41d62d3c9ff34b2c5e44e3addaedc67d6137328a9fe75a63c51dbac\",\n  \"fr:settings.bot.notifications.title\": \"788011833a5a0f22db90c91e8eb7bd8e9f5cd423354ff5ef8c338e7895f44ba9\",\n  \"fr:settings.botsToggle\": \"fc1da572d3f0b2c7e2cdfa7f85a2c1f6b2aceb1969b9cac6ec4391422887a64b\",\n  \"fr:settings.group.bots\": \"f17c0acbd8e50c780760bb7c6493264736305603acae6f076b1eecb0e26f5118\",\n  \"fr:settings.l1.card.connections.highlevel\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"fr:settings.l6.usage.colBot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"fr:settings.l6.usage.colRoutine\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"fr:settings.l6.usage.plan.hm\": \"cf8484035b7fa8c13811a16b0f926ad7f56b4161501e105431231873eae43156\",\n  \"fr:settings.l6.usage.plan.m\": \"e1bded87ee24b702d6c1baf5edf99fccfc0d2e1d5bca603aef4937fb6c282fe2\",\n  \"fr:settings.page.botDefaults\": \"f17c0acbd8e50c780760bb7c6493264736305603acae6f076b1eecb0e26f5118\",\n  \"fr:settings.section.images\": \"be7e2f20129365c2899b2c11bfc465541e61b1858f45bf0248cf99b9271bc707\",\n  \"fr:settings.sidebar.standard\": \"ef6691545d2c5523efed00424407cb261aeb0037d165ca5792f7f8bac3381362\",\n  \"fr:settings.voice.title\": \"30bf7b9b9540d4e11819ffbadf3ae6fe4c7ca94c8b433391e50e47e14a9d6cbf\",\n  \"fr:ux.l2a.door.chats\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"fr:ux.l2a.door.routines\": \"61b7bb44e2b47b7c0ccaccff4872fdcf3e298345d0f003ea4bf54e8c84e2a889\",\n  \"fr:ux.l2a.health.botsMany\": \"38ccee81b2654ed9ecad68227e6229e27a486f59e5c6c717d0c66569fff9411f\",\n  \"fr:ux.l2a.health.botsOne\": \"ba521a424af39db3760405fe7d15f30a2639067b0d8b8049be65cddbeba65140\",\n  \"fr:ux.l4a.mod.mac\": \"1695b48bccfe51266dd35bb43ee32680b77986c98a3f69a9db1f0dbf0e158557\",\n  \"fr:ux.l4a.mod.other\": \"e2ee2909fe279f5cbcfc09de8e6daf6c238a3af213840182b679ac4997c50eab\",\n  \"fr:ux.l4a.screen.bot.routines.title\": \"026bff195769a19c1d5bf32c0f46139e3bc20eb0d92030e66750b3ea1e704eb5\",\n  \"fr:ux.l4a.screen.bot.skills.title\": \"4697d1e6b8706dfda010bb1c06a0e0fb6c3c03d0c7e301fce33af996313cc5af\",\n  \"fr:ux.l4a.screen.chats.title\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"fr:ux.l4a.screen.clients-card.title\": \"65a7256542c30138e6f979959b13707ef238bbf5aaf8472dde584c05b0c07529\",\n  \"fr:ux.l4a.screen.cloud.title\": \"b7ffc38fc386ea046ae7fdc44e115c5db2f26dfe767d3864877d635c74a68fa7\",\n  \"fr:ux.l4a.screen.routine.title\": \"0b5baf309897ec7e2def5db089f1f4ec5b15d5912296577d655d00ca0fc40b59\",\n  \"fr:ux.l4a.screen.routines.title\": \"61b7bb44e2b47b7c0ccaccff4872fdcf3e298345d0f003ea4bf54e8c84e2a889\",\n  \"fr:ux.l5b.instructions.label\": \"934652dce41d62d3c9ff34b2c5e44e3addaedc67d6137328a9fe75a63c51dbac\",\n  \"fr:ux.l5b.limit.minutes\": \"1829c58ba472520fd39e61f9e337a1b7da27e86299332dde5bfdea355c3895a8\",\n  \"fr:ux.l5b.list.count\": \"55cf322eaf09a705044f499aad0ad813749259bac78845d049e6804340e288f1\",\n  \"fr:whatsapp.groups.mention\": \"d820d8de70e4347c8c8e6927b4fd17a22678ab8f51c5a8ba10d51b608d3af5ef\",\n  \"fr:widget.image\": \"1aa4cb0bcca76e92e30677e809bb3d4b5c066715ef4d558184e319496bcc5125\",\n  \"fr:workspacePane.imageLabel\": \"6feae89a36296ee3e2f5248fe468ab9213b81f47dbd054e945f622b24299d603\",\n  \"fr:workspacePane.source\": \"0e570ca6fabe24f94e52c1833f3ffd25567022beb826fa16891f3322051bc221\",\n  \"hi:chatHeader.findShortcut\": \"12aaa51aad3d0b795c86d67d0f5be15e691030ba3bb2e0a4b739dd9c921f4c16\",\n  \"hi:highlevel.title\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"hi:notificationSettings.timeZonePlaceholder\": \"e8def32656206d2574e163cff4330221cbca79a584c6debd922546da0bb0ff74\",\n  \"hi:publish.sites.add.placeholder\": \"1b05d2efefda710401553058eee0ef78f8faeb699fa06e8234944b24a62903c6\",\n  \"hi:settings.l1.card.connections.highlevel\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"hi:ux.l4a.mod.mac\": \"1695b48bccfe51266dd35bb43ee32680b77986c98a3f69a9db1f0dbf0e158557\",\n  \"hi:ux.l4a.mod.other\": \"e2ee2909fe279f5cbcfc09de8e6daf6c238a3af213840182b679ac4997c50eab\",\n  \"hi:ux.l4a.screen.cloud.title\": \"b7ffc38fc386ea046ae7fdc44e115c5db2f26dfe767d3864877d635c74a68fa7\",\n  \"ja:chatHeader.findShortcut\": \"12aaa51aad3d0b795c86d67d0f5be15e691030ba3bb2e0a4b739dd9c921f4c16\",\n  \"ja:chatLinks.github.issue\": \"48dc76dfa23ae03fea1372c5ed6c0e1bd62eaeca7bba6d804eb0afa87972f031\",\n  \"ja:highlevel.title\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"ja:notificationSettings.timeZonePlaceholder\": \"e8def32656206d2574e163cff4330221cbca79a584c6debd922546da0bb0ff74\",\n  \"ja:publish.sites.add.placeholder\": \"1b05d2efefda710401553058eee0ef78f8faeb699fa06e8234944b24a62903c6\",\n  \"ja:settings.l1.card.connections.highlevel\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"ja:ux.l4a.mod.other\": \"e2ee2909fe279f5cbcfc09de8e6daf6c238a3af213840182b679ac4997c50eab\",\n  \"ja:ux.l4a.screen.cloud.title\": \"b7ffc38fc386ea046ae7fdc44e115c5db2f26dfe767d3864877d635c74a68fa7\",\n  \"pt-br:chatHeader.findShortcut\": \"12aaa51aad3d0b795c86d67d0f5be15e691030ba3bb2e0a4b739dd9c921f4c16\",\n  \"pt-br:chatLinks.github.commit\": \"82a9c46ffa4789945d9f2359d75891558ef6faa8dee09e4b25e4e0597704f5bd\",\n  \"pt-br:chatLinks.github.issue\": \"48dc76dfa23ae03fea1372c5ed6c0e1bd62eaeca7bba6d804eb0afa87972f031\",\n  \"pt-br:chatLinks.github.pull\": \"f3dba6629c69d91bd65527f178591b6ab2ac3843cfbf76943801e8dd45bcb7d6\",\n  \"pt-br:engines.local\": \"8c31e6e7223097e2e4847773c47a4efab6aaf79deeecc92a7759891c74976dde\",\n  \"pt-br:filesWorkspace.filter.bot\": \"9e3fb291086b39e660660f2bf2810760ee764bd1ea596c4277494665c2eeca67\",\n  \"pt-br:highlevel.title\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"pt-br:mcp.row.sourceLink\": \"90d326db726070816add45bb709d2a75db4731a4e9038b7014366f8603356247\",\n  \"pt-br:nav.apps\": \"89dd748442c194857825848e1500abbbc5f52fb067ad27fb05dc9fb23eebba3b\",\n  \"pt-br:notificationSettings.timeZonePlaceholder\": \"e8def32656206d2574e163cff4330221cbca79a584c6debd922546da0bb0ff74\",\n  \"pt-br:projects.board.bot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"pt-br:projects.budget.tokens\": \"b92bd9c11e8f4e9d1a9fa2e7acf5d789f427eea1d3d09f6f4de37fca77efa9a3\",\n  \"pt-br:projects.common.tokens\": \"a039dfb9628b53ddaebcfe8ef0793e3fdf19867601295f00d192acef59050869\",\n  \"pt-br:projects.face.tokens\": \"bc17ff48c05229eb1e7470573c5c85a0334cb3ea42c1672c50064261e387ead2\",\n  \"pt-br:projects.request.wake\": \"adc719587244723baf63cc93777b53f02f6cf19dd16ed3323daa34c80e9e126c\",\n  \"pt-br:projects.tabs.chat\": \"460b3a7da007b7af9d35bca54181dc91382263b2bf133ca214871ca1fed1fc1c\",\n  \"pt-br:projects.time.days\": \"3f2e9c59984c0b941ec09da664cdc7ce175b29200487805f6c9dd7f03f9097dd\",\n  \"pt-br:projects.time.hours\": \"068deca46a360c34fb4de3abc11555221ddb4440f5f2a1f1dfaa602d9a56ebce\",\n  \"pt-br:projects.time.hoursMin\": \"99422830232cdc3aeea013ffed15fc46da14d5271535388eac5b9ce40c1bdc63\",\n  \"pt-br:projects.time.min\": \"913185ba21fbe409494debb11eaeaad2fea9ccc97bc227f813f3884faf0d317d\",\n  \"pt-br:projects.work.budgetLine\": \"af16f559cd6fdedab2e760526b75427cc3a618363f58a2e11251d73257239bf1\",\n  \"pt-br:projects.work.budgetLineTokens\": \"af041f18902a49a7cd34a41cc7fd52c386d64056422e68ecdd5880ff8778ac5b\",\n  \"pt-br:settings.bot.computer.cloud\": \"b977b950c1ae31e5aeb9ef778cc20a66fc034eb81e738e0206104b677962c465\",\n  \"pt-br:settings.botsToggle\": \"fc1da572d3f0b2c7e2cdfa7f85a2c1f6b2aceb1969b9cac6ec4391422887a64b\",\n  \"pt-br:settings.group.bots\": \"f17c0acbd8e50c780760bb7c6493264736305603acae6f076b1eecb0e26f5118\",\n  \"pt-br:settings.l1.card.connections.highlevel\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"pt-br:settings.l6.usage.colBot\": \"41e35ba1a1fd8b4cdc7f899b3b8f9442a7542f445170e8782e219732cc25c10f\",\n  \"pt-br:settings.l6.usage.plan.dh\": \"64a6ac2a25ab8f5577894d09a2f06d15e887cde3ccb65415a86a03258fe4b3a0\",\n  \"pt-br:settings.l6.usage.plan.hm\": \"cf8484035b7fa8c13811a16b0f926ad7f56b4161501e105431231873eae43156\",\n  \"pt-br:settings.l6.usage.plan.m\": \"e1bded87ee24b702d6c1baf5edf99fccfc0d2e1d5bca603aef4937fb6c282fe2\",\n  \"pt-br:settings.page.backups\": \"3334fee2c77fef827371cc6c0e618fad0717a345db95b74f74a0facf51eaa647\",\n  \"pt-br:settings.page.botDefaults\": \"f17c0acbd8e50c780760bb7c6493264736305603acae6f076b1eecb0e26f5118\",\n  \"pt-br:settings.section.backups\": \"3334fee2c77fef827371cc6c0e618fad0717a345db95b74f74a0facf51eaa647\",\n  \"pt-br:task.link\": \"a6a32dbc5618ea39f6df5b0f9808e3588b19e00d5f6f96c69492e40386e5aeab\",\n  \"pt-br:ux.l2a.door.chats\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"pt-br:ux.l2a.health.area.backups\": \"3334fee2c77fef827371cc6c0e618fad0717a345db95b74f74a0facf51eaa647\",\n  \"pt-br:ux.l2a.health.botsMany\": \"38ccee81b2654ed9ecad68227e6229e27a486f59e5c6c717d0c66569fff9411f\",\n  \"pt-br:ux.l2a.health.botsOne\": \"ba521a424af39db3760405fe7d15f30a2639067b0d8b8049be65cddbeba65140\",\n  \"pt-br:ux.l4a.feedback.chatWord\": \"460b3a7da007b7af9d35bca54181dc91382263b2bf133ca214871ca1fed1fc1c\",\n  \"pt-br:ux.l4a.mod.mac\": \"1695b48bccfe51266dd35bb43ee32680b77986c98a3f69a9db1f0dbf0e158557\",\n  \"pt-br:ux.l4a.mod.other\": \"e2ee2909fe279f5cbcfc09de8e6daf6c238a3af213840182b679ac4997c50eab\",\n  \"pt-br:ux.l4a.screen.bot.skills.title\": \"4697d1e6b8706dfda010bb1c06a0e0fb6c3c03d0c7e301fce33af996313cc5af\",\n  \"pt-br:ux.l4a.screen.chats.title\": \"ef5b4049bb367b05531fa2c2982dbc5b710c3dde724d9a2683747c1da9b61eac\",\n  \"pt-br:ux.l4a.screen.cloud.title\": \"b7ffc38fc386ea046ae7fdc44e115c5db2f26dfe767d3864877d635c74a68fa7\",\n  \"pt-br:ux.l5b.limit.minutes\": \"1829c58ba472520fd39e61f9e337a1b7da27e86299332dde5bfdea355c3895a8\",\n  \"zh:chatHeader.findShortcut\": \"12aaa51aad3d0b795c86d67d0f5be15e691030ba3bb2e0a4b739dd9c921f4c16\",\n  \"zh:highlevel.title\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"zh:notificationSettings.timeZonePlaceholder\": \"e8def32656206d2574e163cff4330221cbca79a584c6debd922546da0bb0ff74\",\n  \"zh:publish.sites.add.placeholder\": \"1b05d2efefda710401553058eee0ef78f8faeb699fa06e8234944b24a62903c6\",\n  \"zh:settings.l1.card.connections.highlevel\": \"abfc6272b5ad06927cfe2eebc1717892428919e15ed940abb0a5e14b2ac4189f\",\n  \"zh:ux.l4a.mod.other\": \"e2ee2909fe279f5cbcfc09de8e6daf6c238a3af213840182b679ac4997c50eab\",\n  \"zh:ux.l4a.screen.cloud.title\": \"b7ffc38fc386ea046ae7fdc44e115c5db2f26dfe767d3864877d635c74a68fa7\",\n  \"stepup/de:line.bot\": \"294e91606a271fbbd426f1b4d71ba091072a00b9059de14028fdccfc1da81d5b\",\n  \"stepup/de:line.name\": \"8b9507f57685b27800e1967ad3e8255b09369a6994186f70f4aac4210cda672e\",\n  \"stepup/es:line.bot\": \"294e91606a271fbbd426f1b4d71ba091072a00b9059de14028fdccfc1da81d5b\",\n  \"stepup/pt-br:line.bot\": \"294e91606a271fbbd426f1b4d71ba091072a00b9059de14028fdccfc1da81d5b\"\n}\n",
+      "verdict": "pass"
+    }
+  }
+}
