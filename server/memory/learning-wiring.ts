@@ -21,6 +21,7 @@ import { addLesson, setFeedbackLessonFormer, setKeptMomentUndoHook, setLearningL
 import { createLearningLocalLessonSink } from "./lessons-local.ts";
 import { OutcomeError, changeOutcome, setEditLessonSink, setOutcomeBotLookup, type LearningBotLike } from "./outcomes.ts";
 import type { MemoryRoster } from "./policy.ts";
+import { withBotLearningFolder } from "./learning-folder.ts";
 import { sweepOffPathLearning } from "./lessons.ts";
 
 export interface BotLearningWiring {
@@ -50,6 +51,14 @@ export interface BotLearningWiring {
 /** `gateFor` (memory/learning-send.ts): one gate per classification over what it holds (the owner message, the prior bot turn and its
  * activity rows); the words are dropped unsent if any was deleted, edited or forgotten after it was read (the observer's deferral, the
  * lease, an engine queue). Required: a classification never reaches the lease without its gate. */
+/** The classification launches an engine in the folder of the bot the message talks to, resolved at classification time the way detection
+ * resolves it (the prior turn's speaker in a room, else the thread's own bot): never another bot's folder (learning-folder.ts). */
+export function classifierInBotFolder(inner: FeedbackClassifier, resolveBot: (turn: ClassifierInput["turn"]) => string | null | undefined): FeedbackClassifier {
+  return { classify: (input, signal) => withBotLearningFolder(resolveBot(input.turn), () => inner.classify(input, signal)) };
+}
+function resolveFeedbackBot(roster: MemoryRoster, thread: string, turn: ClassifierInput["turn"]): string | null {
+  return turn?.botId ?? roster.bots.find(bot => bot.threadId === thread || bot.tasks?.some(task => task.threadId === thread))?.id ?? null;
+}
 export function leasedFeedbackClassifier(extractor: TextOnlyExtractor, gateFor: (input: ClassifierInput) => LearningGate): FeedbackClassifier {
   return {
     async classify(input, signal) {
@@ -220,9 +229,9 @@ export function wireBotLearning(wiring: BotLearningWiring): BotLearningHandle {
       const gateFor = (input: ClassifierInput): LearningGate =>
         feedbackClassifierGate(fenceAt, threadId, input, { messageById: wiring.messageById, branchMembership: wiring.branchMembership, stillCurrent: () => stillCurrent(threadId, message, null) });
       void detectFeedback(db, threadId, message, {
-        classifier: extractor ? leasedFeedbackClassifier(extractor, gateFor) : null,
+        classifier: extractor ? classifierInBotFolder(leasedFeedbackClassifier(extractor, gateFor), turn => resolveFeedbackBot(roster, threadId, turn)) : null,
         botLearning: id => { const bot = wiring.bot(id); return bot ? readBotLearning(bot) : null; },
-        resolveBotId: (thread, turn) => turn?.botId ?? roster.bots.find(bot => bot.threadId === thread || bot.tasks?.some(task => task.threadId === thread))?.id ?? null,
+        resolveBotId: (thread, turn) => resolveFeedbackBot(roster, thread, turn),
         readThread: wiring.readThread,
         botName: id => wiring.bot(id)?.name,
         // SEC-09, design 3.6: the same owner message must still be on the visible branch, word for word, when the model has answered.

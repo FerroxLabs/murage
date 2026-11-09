@@ -15,6 +15,10 @@ const FIXED: Record<string, Company> = {
   qwenAgent: co("alibaba", "Alibaba Cloud"),
   cursorAgent: co("cursor", "Cursor"),
   droidAgent: co("factory", "Factory"),
+  // Muse Code runs on Meta's own service (META_API_KEY, Meta's models only)
+  museCode: co("meta", "Meta"),
+  // Copilot CLI runs on the owner's own GitHub sign-in and plan: GitHub receives the data whatever model it picks.
+  copilotAgent: co("github", "GitHub"),
 };
 
 /** Model id prefix -> the model's maker. */

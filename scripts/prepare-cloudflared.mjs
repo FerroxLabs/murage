@@ -20,6 +20,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { fetchPinned } from "./download-retry.mjs";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 export const CLOUDFLARED_VERSION = "2026.10.3";
@@ -216,13 +217,21 @@ function extractionFailure(result) {
   return result.error?.message ?? String(result.stderr || result.stdout || `exit status ${result.status}`).trim();
 }
 
-async function releaseBytes(asset) {
-  const cacheDirectory = process.env.MURAGE_CLOUDFLARED_ARCHIVE_DIR;
-  const cached = cacheDirectory ? join(cacheDirectory, asset.name) : "";
-  if (cached && existsSync(cached)) return readFileSync(cached);
+export const cloudflaredAssetUrl = (asset) =>
+  `https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/${asset.name}`;
 
-  const url = `https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/${asset.name}`;
-  const response = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(120_000) });
+async function releaseBytes(asset) {
+  // Legacy local override, still verified: a wrong file falls through to the real download.
+  const archiveDirectory = process.env.MURAGE_CLOUDFLARED_ARCHIVE_DIR;
+  const local = archiveDirectory ? join(archiveDirectory, asset.name) : "";
+  if (local && existsSync(local)) {
+    const bytes = readFileSync(local);
+    if (sha256(bytes) === asset.sha256) return bytes;
+    console.warn(`${local} does not match the pinned sha256; ignoring it`);
+  }
+  // cache -> upstream -> Ferrox mirror, 5 tries each, sha256 verified, fail closed.
+  const url = cloudflaredAssetUrl(asset);
+  const response = await fetchPinned(url, { redirect: "follow" }, { sha256: asset.sha256, timeoutMs: 120_000 });
   if (!response.ok) throw new Error(`could not download ${asset.name}: HTTP ${response.status}`);
   return Buffer.from(await response.arrayBuffer());
 }

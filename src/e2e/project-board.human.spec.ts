@@ -256,7 +256,7 @@ for (const width of [390, 820, 1440]) {
     await view(page, width, "Activity"); const activity = page.getByRole("region", { name: "Activity", exact: true }); await expect(activity.getByRole("listitem")).toHaveCount(30); const sentences = [
       "Card 1 'Deliverable 1: a long descriptive title that must remain readable inside this card' was added",
       "Card 1 moved from In progress to Waiting", "Card 1 was reassigned", "Card 1 was taken over by you", "Card 1 failed", "Card 1 has a result",
-      "The brief changed (version 4)", "The goal is now Working", "A done criterion changed", "A decision needs you", "A decision was resolved",
+      "The brief changed (version 4)", "The goal is now Working", "A requirement for marking the task done changed", "A decision needs you", "A decision was resolved",
       "Usage reached the warning level", "Limit reached: new work is paused", "The usage limit was raised", "A teammate could not continue", "A routine ran",
       "Project settings changed", "Work folders changed", "The project was restored", "The project was closed", "The project was reopened", "The deadline was reached", "Project updated",
     ];

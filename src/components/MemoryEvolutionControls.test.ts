@@ -6,7 +6,7 @@ import type { MemoryEvolutionStatus } from "@/lib/memory-evolution-controls";
 const initial:MemoryEvolutionStatus={authorized:false,corpus:{id:"memory-recall-groups",version:"1",kind:"synthetic"},policy:{revision:"baseline"},job:null};
 it("labels the shipped synthetic recall scope without offering model or private-data selection",()=>{
   const html=renderToStaticMarkup(createElement(MemoryEvolutionControls,{status:initial,onRefresh:vi.fn()}));
-  expect(html).toContain('aria-label="Tested recall improvements"');expect(html).toContain("Enable tested recall improvements");expect(html).toContain("These checks cover recall selection");expect(html).not.toContain("memory-recall-groups");expect(html).not.toContain("API key");
+  expect(html).toContain('aria-label="Tested recall improvements"');expect(html).toContain("Enable tested recall improvements");expect(html).toContain("These checks test which memories Murage chooses to use");expect(html).not.toContain("memory-recall-groups");expect(html).not.toContain("API key");
 });
 it("started failures expose an explicit retry without an automatic success claim",()=>{
   const html=renderToStaticMarkup(createElement(MemoryEvolutionControls,{status:{...initial,authorized:true,job:{id:"job",status:"deferred",reason:"MEMORY_EVOLUTION_INTERRUPTED",started:true,decision:null,publishedRevision:null,heldout:null}},onRefresh:vi.fn()}));
@@ -14,9 +14,9 @@ it("started failures expose an explicit retry without an automatic success claim
 });
 it("last held-out scores are labelled synthetic without a monetary display",()=>{
   const html=renderToStaticMarkup(createElement(MemoryEvolutionControls,{status:{...initial,authorized:true,job:{id:"job",status:"complete",reason:"accepted",started:true,decision:"accepted",publishedRevision:"evaluated-one",heldout:{corpusDigest:"a".repeat(64),untouched:true,cases:4,baseline:0.5,candidate:0.75,regressions:0}}},onRefresh:vi.fn()}));
-  expect(html).toContain("Last held-out result");expect(html).toContain("0.500");expect(html).toContain("0.750");expect(html).toContain("Scores describe the synthetic examples");expect(html).not.toContain("Cost unavailable");expect(html).not.toContain("$0.00");
+  expect(html).toContain("Last result on examples kept separate for testing");expect(html).toContain("0.500");expect(html).toContain("0.750");expect(html).toContain("Scores describe the artificial examples");expect(html).not.toContain("Cost unavailable");expect(html).not.toContain("$0.00");
 });
 it("classification has separate authorization and does not label its result as recall",()=>{
   const html=renderToStaticMarkup(createElement(MemoryEvolutionControls,{kind:"classification",status:{...initial,corpus:{...initial.corpus,id:"memory-classification-groups"}},onRefresh:vi.fn()}));
-  expect(html).toContain("Tested classification improvements");expect(html).toContain("Enable tested classification improvements");expect(html).toContain("classification of synthetic source statements");expect(html).not.toContain("Enable tested recall improvements");
+  expect(html).toContain("Tested improvements to sorting memory statements into categories");expect(html).toContain("Enable tested sorting improvements");expect(html).toContain("how artificial source statements are sorted into categories");expect(html).not.toContain("Enable tested recall improvements");
 });

@@ -201,10 +201,14 @@ posixOnly("authorization decisions are logged", () => {
       const row = await waitForDecision((r) => r.decision === "auto-approved" && r.botId === bot.id);
       expect(row, "the auto-approval never reached the decision log").not.toBeNull();
       expect(row!.source).toBe("always-allow");
-      expect(row!.rule).toBe("shell:echo");
+      // Astra r1 H11 (was rule "shell:echo", summary "echo hi"): the rule's family and a fixed summary, no command text
+      expect(row!.rule).toBe("shell");
       expect(row!.tool).toBe("shell");
-      expect(row!.summary).toBe("echo hi");
-      expect(row!.botName).toBe("Granted");
+      expect(row!.summary).toBe("shell");
+      expect(JSON.stringify(row)).not.toContain("echo");
+      // ql2 sink fold (was botName "Granted"): the bot is named by its id, its typed name is not written
+      expect(row!.botId).toBeTruthy();
+      expect(JSON.stringify(row)).not.toContain("Granted");
       expect(row!.threadId).toBeTruthy();
       expect(row!.requestId).toBeTruthy();
     },
@@ -235,8 +239,12 @@ posixOnly("authorization decisions are logged", () => {
       expect(user, "the human's answer never reached the decision log").not.toBeNull();
       expect(user!.source).toBe("user");
       expect(user!.tool).toBe("shell");
-      expect(user!.summary).toBe("echo hi");
-      expect(user!.botName).toBe("Askme");
+      // Astra r1 H11 (was "echo hi"): the card-shown and answer rows hold no command text
+      expect(user!.summary).toBe("shell");
+      expect(JSON.stringify([shown, user])).not.toContain("echo");
+      // ql2 sink fold (was botName "Askme"): the bot is named by its id, its typed name is not written
+      expect(user!.botId).toBeTruthy();
+      expect(JSON.stringify([shown, user])).not.toContain("Askme");
     },
     90_000,
   );
@@ -264,7 +272,9 @@ posixOnly("authorization decisions are logged", () => {
       const row = await waitForDecision((r) => r.decision === "auto-approved" && r.botId === bot.id);
       expect(row, "the exact grant never answered the second ask").not.toBeNull();
       expect(row!.source).toBe("exact-command");
-      expect(row!.rule).toBe(exactKey);
+      // Astra r1 H11 (was the exact key, which holds the command and folder): the key's family
+      expect(row!.rule).toBe("exact");
+      expect(JSON.stringify(row)).not.toContain("echo");
     },
     120_000,
   );
@@ -318,7 +328,7 @@ posixOnly("authorization decisions are logged", () => {
       const row = await waitForDecision((r) => r.threadId === threadId && r.decision === "card-shown");
       expect(row, "the unattended block never reached the decision log").not.toBeNull();
       expect(row!.source).toBe("unattended-block");
-      expect(row!.rule).toBe("shell:echo");
+      expect(row!.rule).toBe("shell");
       expect(row!.unattended).toBe(true);
       expect(row!.botId).toBe(bot.id);
     },

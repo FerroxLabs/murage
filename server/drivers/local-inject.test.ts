@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { fixtureCredentialFingerprint } from "../testing/fixture-dump.ts";
 import { tmpdir } from "node:os";
@@ -353,7 +355,7 @@ describe("ensureGrokInjectSlug", () => {
     });
     const recorder = recordEvents(instance.adapter);
     try {
-      await instance.adapter.sendTurn({
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
         threadId: "t-omlx",
         text: "hi",
         model: "omlx::GLM-5.2-fp8",
@@ -672,7 +674,8 @@ describe("ensureKimiInjectAlias", () => {
     const home = mkdtempSync(join(tmpdir(), "murage-kimi-userprofile-"));
     scratchDirs.push(home);
     mkdirSync(join(home, ".kimi-code", "credentials"), { recursive: true });
-    writeFileSync(join(home, ".kimi-code", "credentials", "kimi-code.json"), "{}");
+    // L9 Kimi design, root/shape contract: a held hint needs a nonblank token.
+    writeFileSync(join(home, ".kimi-code", "credentials", "kimi-code.json"), JSON.stringify({ access_token: "userprofile-fixture-token" }));
     const instance = await KimiAgentDriver.create({
       instanceId: "kimi-userprofile",
       displayName: "Kimi",
@@ -734,7 +737,7 @@ describe("applyKimiLocalModelEnv", () => {
     });
     const recorder = recordEvents(instance.adapter);
     try {
-      await instance.adapter.sendTurn({
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
         threadId: "t-inject",
         text: "hi",
         model: "ollama::ornith:35b-bf16",
@@ -748,7 +751,7 @@ describe("applyKimiLocalModelEnv", () => {
         KIMI_MODEL_PROVIDER_TYPE: "openai",
       });
 
-      await instance.adapter.sendTurn({
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
         threadId: "t-cloud",
         text: "hi",
         model: "kimi-code/k3",
@@ -849,7 +852,7 @@ describe("applyDroidLocalAuthEnv", () => {
     });
     const recorder = recordEvents(instance.adapter);
     try {
-      await instance.adapter.sendTurn({
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
         threadId: "t-inject",
         text: "hi",
         model: "ollama::ornith:35b-bf16",
@@ -857,7 +860,7 @@ describe("applyDroidLocalAuthEnv", () => {
       await recorder.until((e) => e.type === "turn.completed");
       expect(JSON.parse(readFileSync(dump, "utf8")).env.FACTORY_API_KEY).toBe(fixtureCredentialFingerprint("murage-local"));
 
-      await instance.adapter.sendTurn({
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
         threadId: "t-cloud",
         text: "hi",
         model: "claude-opus-5",
@@ -1116,7 +1119,7 @@ describe("live Custom lists on every local CLI harness", () => {
     });
     try {
       const recorder = recordEvents(instance.adapter);
-      await instance.adapter.sendTurn({ threadId: "t-agy-local", text: "hi", model: "omlx::GLM-5.2-fp8" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-agy-local", text: "hi", model: "omlx::GLM-5.2-fp8" });
       await recorder.until((event) => event.type === "turn.completed");
       const error = recorder.events.find((event) => event.type === "runtime.error") as { message?: string } | undefined;
       expect(error?.message).toContain("can't run local models");
@@ -1246,3 +1249,6 @@ describe("codexLocalProviderArgs address guard", () => {
     });
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

@@ -14,6 +14,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const source = readFileSync(fileURLToPath(new URL("./CallView.tsx", import.meta.url)), "utf8");
@@ -168,13 +169,13 @@ describe("native call audio: the path, the hold and the lifecycle", () => {
 
   it("gates speech on outputReady and held", () => {
     // (a line held for the rest of the owner's sentence gates too: review I-1)
-    expect(source).toMatch(/const gated = \(\) => !outputReady\.current \|\| heldRef\.current( \|\| Boolean\(heldLine\.current\?\.holding\))?;/);
+    expect(source).toMatch(/const gated = \(\) => budgetStopped\.current \|\| !outputReady\.current \|\| heldRef\.current( \|\| Boolean\(heldLine\.current\?\.holding\))?;/);
     const say = slice("const say = useCallback(", "const sayThenListen = useCallback(");
     expect(say).toContain("if (gated()) return false;");
     const sayThenListen = slice("const sayThenListen = useCallback(", "const sayThenListenRef");
     expect(sayThenListen).toMatch(/if \(gated\(\)\) \{\s*deferredReplies\.current\.unshift\(text\);/);
     const tellReply = slice("const tellReply = useCallback(", "const tellNext = useRef(tellReply);");
-    expect(tellReply).toMatch(/if \(gated\(\)\) \{\s*deferredReplies\.current\.unshift\(text\);/);
+    expect(tellReply).toMatch(/if \(gated\(\)\) \{\s*deferredReplies\.current\.unshift\(reply\);/);
     const listen = slice("const listen = useCallback(", "// Whenever the bot starts to speak");
     expect(listen).toContain("if (heldRef.current) return;");
   });
@@ -310,7 +311,7 @@ describe("a held line and the owner's utterance start", () => {
   const onLine = slice("const handleLine = (line: MicLine) => {", "offEnd = mic.onEnd(");
 
   it("I-1: the call counts as busy while a line is held, so nothing is said over it", () => {
-    expect(source).toContain("const gated = () => !outputReady.current || heldRef.current || Boolean(heldLine.current?.holding);");
+    expect(source).toContain("const gated = () => budgetStopped.current || !outputReady.current || heldRef.current || Boolean(heldLine.current?.holding);");
   });
 
   it("I-1: the rest of a held line never answers a card, and no line answers a card whose prompt is owed", () => {
@@ -650,11 +651,51 @@ describe("the engine turn's timing stamp belongs to the engine's reply only", ()
   it("tellReply takes it, after the gate, before either way of speaking, and hands it to the short path", () => {
     const gate = tellReply.indexOf("if (gated())");
     const take = tellReply.indexOf("takeEngineTurn()");
-    const short = tellReply.indexOf("return sayThenListen(");
+    const short = tellReply.indexOf("playback = speaker.playCallReply(");
     expect(take).toBeGreaterThan(gate);
     expect(take).toBeLessThan(short);
-    expect(tellReply).toMatch(/sayThenListen\(text, undefined, /);
+    expect(tellReply).toMatch(/playCallReply\(identity, \{ botId: bot.id, voiceId: voiceRef.current, call: true, onBudget: stopForBudget, onPlaying \}/);
     expect(tellReply.match(/takeEngineTurn\(\)/g)).toHaveLength(1);
+  });
+
+  it("every call reply playback stops the call at the voice budget (the host turn's audio too)", () => {
+    // every reference to playCallReply in the parsed source must be a call we check, whatever its syntax:
+    // speaker.playCallReply(...), speaker["playCallReply"](...), (speaker.playCallReply)(...), with assertions
+    const file = ts.createSourceFile("CallView.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const wrapped = (node: ts.Node) => ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isNonNullExpression(node) || ts.isTypeAssertionExpression(node) || ts.isSatisfiesExpression(node);
+    const plays: ts.CallExpression[] = [];
+    const unchecked: string[] = [];
+    const walk = (node: ts.Node) => {
+      if ((ts.isIdentifier(node) || ts.isStringLiteralLike(node)) && node.text === "playCallReply") {
+        let access: ts.Node = node.parent;
+        if (!(ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access))) unchecked.push(access.getText(file));
+        else {
+          let callee: ts.Node = access;
+          while (wrapped(callee.parent)) callee = callee.parent;
+          const call = callee.parent;
+          if (ts.isCallExpression(call) && call.expression === callee) plays.push(call);
+          else unchecked.push(access.getText(file));
+        }
+      }
+      ts.forEachChild(node, walk);
+    };
+    walk(file);
+    expect(unchecked).toEqual([]);
+    expect(plays.length).toBe(3);
+    for (const play of plays) {
+      const options = play.arguments[1];
+      expect(options && ts.isObjectLiteralExpression(options), play.getText(file)).toBe(true);
+      const all = (options as ts.ObjectLiteralExpression).properties;
+      // nothing may override call or onBudget: only plain or shorthand properties with a literal name, each name
+      // once (no spread, method, accessor or computed key such as ["onBudget"])
+      const names = all.map((p) => (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) ? p.name.text : null);
+      expect(names.includes(null), play.getText(file)).toBe(false);
+      expect(new Set(names).size, play.getText(file)).toBe(names.length);
+      const value = (name: string) => { const p = all[names.indexOf(name)]; return p && ts.isPropertyAssignment(p) ? p.initializer.getText(file) : undefined; };
+      expect(value("call"), play.getText(file)).toBe("true");
+      expect(value("onBudget"), play.getText(file)).toBe("stopForBudget");
+    }
+    expect(source).toMatch(/speaker\.playCallReply\(event, \{ botId: bot\.id, voiceId: voiceRef\.current, call: true, onBudget: stopForBudget \}, controller\.signal, hostHeard\)/);
   });
 
   it("the host's failed turn keeps its own sent time, and a hang-up drops a pending stamp", () => {
@@ -742,7 +783,9 @@ describe("instant acknowledgement in the 1:1 call (speed plan task 15)", () => {
   });
 
   it("the cue is not the first clip: the turn's playingAt stays the stream's real clip", () => {
-    expect(hostReply).toContain("playingAt: () => (stream as ReturnType<typeof speaker.stream> | null)?.playingAt() ?? null");
+    // D24: or, with no stream, when the server audio for this turn began playing (never the cue)
+    expect(hostReply).toContain("playingAt: () => (stream as ReturnType<typeof speaker.stream> | null)?.playingAt() ?? hostHeard.playingAt");
+    expect(hostReply).toContain("controller.signal, hostHeard)");
     expect(hostReply).toMatch(/ackAt: [^,]*cueAt\(\)/);
   });
 });
@@ -853,4 +896,17 @@ describe("bot calls: no recognition during the opener (Astra r3 Medium)", () => 
     expect(openTurn).toMatch(/if \(openerPlaying\.current\) return;/);
     expect(source).toMatch(/await sayOpener\(\(\) => sayRef\.current\(text\), openerPlaying\);/);
   });
+});
+
+it("budget stops host fallback and closes once using only the closing speech route", () => {
+  const stop = slice("const stopForBudget = useCallback", "/** Speak. With an echo-cancelled");
+  expect(stop).toContain("if (budgetStopped.current ||");
+  expect(stop).toContain("budgetStopped.current = true;");
+  expect(stop).toContain("hostAbort.current?.abort()");
+  expect(stop).toContain("speaker.stop()");
+  expect(stop).toContain("budgetClosing: true");
+  expect(stop).toContain('endCall(bot.id, "budget")');
+  const host = slice("const hostReply = useCallback", '// "Still on it"');
+  expect(host.indexOf('event.reason === "budget"')).toBeLessThan(host.indexOf("if (failed && !handed && !spoken)"));
+  expect(host).toContain("if (budgetStopped.current) return;");
 });

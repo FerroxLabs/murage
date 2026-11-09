@@ -38,6 +38,11 @@ export interface CardClass {
   /** APPROVE-ALL (design 2): who started the turn that raised the card, as Full access reads it (fullAccessTurnOrigin),
    *  written once when the card opens. Only "owner" lets Approve all consider the card; absent never does. */
   origin?: "owner" | "owner-channel" | "routine" | "other";
+  /** APPROVALS-SIMPLE-1018 section 4: an always-ask card's reader rule, stamped at open only for `unreadable`.
+   *  "unreadable": the open-time hard read (server/unreadable-hard-read.ts and the stop line) came back clear, the one
+   *  reader hold Approve all may take. "unreadable-held": it hit; `ruleHeld` says what. Absent: never in bulk. */
+  rule?: "unreadable" | "unreadable-held";
+  ruleHeld?: "sensitive" | "destructive" | "hiding" | "stop";
   /** which standing-key fields the server put on the card */
   keys: CardKeyField[];
 }
@@ -124,6 +129,7 @@ export const REASON_FOLD: Readonly<Record<CardReason, "none" | "class">> = {
   "sensitive-guard": "none",
   "unread-call": "none",
   "prompt-guard": "none",
+  "outside-turn": "none",
   "question-tool": "none",
   "no-grant": "class",
   question: "none",

@@ -70,6 +70,8 @@ export interface InstanceConfig {
   accentColor?: string;
   environment?: Record<string, string>;
   enabled?: boolean;
+  /** Left out of every model list, picker and automatic choice; the engine itself (its CLI and sign-in) is untouched. */
+  hidden?: boolean;
   config?: unknown;
 }
 
@@ -115,7 +117,8 @@ export type ItemOrigin = "engine" | "murage";
 
 export type RuntimeEvent = RuntimeEventBase &
   (
-    | { type: "session.started"; sessionId: string | null; model?: string | null;
+    | { type: "turn.diagnostic"; category: "authentication" | "rate_limit" | "unavailable" | "tool_count"; quietMs: number }
+    | { type: "session.started"; replayPending?: boolean; sessionId: string | null; model?: string | null;
         /** The driver's session contract this session was made under (ProviderInstance.sessionContract). */
         sessionContract?: number }
     /** A sub agent or background task started, progressed or ended. `subtasks`
@@ -141,6 +144,8 @@ export type RuntimeEvent = RuntimeEventBase &
         cost?: number | null;
         /** Actual provider-reported cost, distinct from subscription estimates. */
         charge?: number | null;
+        /** CHARGE-UNKNOWN-1018: `charge` sums only the steps that reported one (another step reported none): a lower bound. */
+        chargePartial?: boolean;
         denials?: string[];
         /** THIS turn's token total, as the provider reports it at the end.
          * The one figure the harness accumulates — thread.token-usage.updated
@@ -168,7 +173,9 @@ export type RuntimeEvent = RuntimeEventBase &
          *  calls off, where the chip is hidden. */
         spoken?: string;
         /** Canonical tool kind and identity, separate from display text. */
-        toolKind?: string; toolIdentity?: { namespace?: string; name?: string; kind?: string } }
+        toolKind?: string; toolIdentity?: { namespace?: string; name?: string; kind?: string };
+        /** NOLIMITS 1.0.19 A3 (server-side): the call's key (Claude tool + sorted input, Codex item id), matched by its ask */
+        callKey?: string; lateFrame?: boolean }
     | { type: "item.started"; itemType: "reasoning"; title?: string; summary?: string; input?: unknown; toolKind?: string; toolIdentity?: { namespace?: string; name?: string; kind?: string } }
     | { type: "item.updated"; itemType: "tool" | "reasoning"; tokens?: number | null }
     /** `detail` is why the tool failed, as the engine reported it. It reaches
@@ -290,6 +297,13 @@ export type RuntimeEvent = RuntimeEventBase &
          * key file (Pi's gate resolves links itself); the rule it named. It
          * only ever adds a hold. Server-side only. */
         localHold?: string;
+        /** Additive (1.0.18, NOLIMITS v1 V5): Claude on a No limits owner turn held this ask 2 s for the engine's own
+         *  item.started of the same tool and input, and it never came. The server marks the turn before judging it. */
+        itemUnseen?: boolean;
+        /** NOLIMITS 1.0.19 A3 (server-side): the asked call's key (ACP toolCallId, Claude tool + sorted input, Codex item id);
+         *  `callKeyAmbiguous`: two started items of this turn share it, so the ask is judged on its marked turn */
+        callKey?: string;
+        callKeyAmbiguous?: boolean;
         /** Additive (1.0.4, F1): the driver runs this command's text under
          * PowerShell (`powershell.exe -Command`, Codex and ACP on Windows),
          * so the gates read it as PowerShell whatever it starts with. */
@@ -338,7 +352,7 @@ export type RuntimeEvent = RuntimeEventBase &
     | { type: "turn.served-model"; routed: string; requested: string }
     // `setup: true` marks a failure the user fixes by installing or
     // configuring something, not by retrying — the UI offers setup instead.
-    | { type: "runtime.error"; message: string; details?: string; setup?: boolean; authRequired?: boolean; /** the installed Claude Code is too old for the model */ claudeUpdate?: boolean; errorKind?: string; /** the engine's own upper-case error code (OpenCode's QUOTA_EXCEEDED), read from the RPC error, never from text */ engineCode?: string; /** a reset time the engine reported as data (epoch ms), for limit detection */ limitResetsAt?: number; /** A device-side setup failure the chat words from its code (a bot's engine folder); localFailureEngine names the engine. */ localFailure?: LocalSetupFailure; localFailureEngine?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic }
+    | { type: "runtime.error"; message: string; details?: string; setup?: boolean; authRequired?: boolean; /** the installed Claude Code is too old for the model */ claudeUpdate?: boolean; errorKind?: string; /** the engine's own upper-case error code (OpenCode's QUOTA_EXCEEDED), read from the RPC error, never from text */ engineCode?: string; /** Flux's refusal code (server/flux-refusal.ts), read from the raw error before its text is sanitised */ gatewayCode?: string; /** FLUX-BURN-COPY-1018: when Flux's hourly spend gate lifts (epoch ms), only from the retry_after its body carried */ gatewayResetsAt?: number; /** a reset time the engine reported as data (epoch ms), for limit detection */ limitResetsAt?: number; /** A device-side setup failure the chat words from its code (a bot's engine folder); localFailureEngine names the engine. */ localFailure?: LocalSetupFailure; localFailureEngine?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic }
   );
 
 export type RuntimeEventListener = (event: RuntimeEvent) => void;
@@ -434,6 +448,7 @@ export interface SendTurnInput {
   /** Server custody only; never serialized into bot settings or the renderer. */
   providerRoute?: import("./provider-routing.ts").ProviderTurnRoute;
   effort?: EffortLevel;
+  fuigoResume?: import("./drivers/acp/fuigo-policy.ts").FuigoResumeContext;
   resumeCursor?: unknown;
   /** Start without the previous native context, including a retained idle
    * process. Takes precedence over resumeCursor. Set whenever the harness
@@ -500,6 +515,10 @@ export interface SendTurnInput {
     /** The owner's own phone (calendar, reminders, ...) through the harness, only for a turn that holds a live phone authority (1.0.9).
      * Mounted under the server name "phoneJobs"; never the ADB "phone" server above. */
     phoneJobs?: { command: string; args: string[]; env: Record<string, string> };
+    /** Native HighLevel CRM (HL-S2, GAP-HIGHLEVEL-109): a stdio proxy (server/drivers/highlevel-proxy.ts) to the
+     * harness's /api/internal/highlevel/mcp with a per-turn internal token. Mounted under the server name "highlevel"
+     * only for a direct owner turn whose bot holds a native grant on a confirmed location. */
+    highlevel?: { command: string; args: string[]; env: Record<string, string> };
     /** The app's built-in browser: an MCP proxy (server/drivers/browser-proxy)
      * that forwards to the Electron-owned WebContentsView the Browser tab
      * shows. One tab per bot, in its own persistent session partition. */
@@ -803,6 +822,8 @@ export interface ProviderSnapshot {
   authenticated?: boolean;
   /** The sign-in check ran and did not answer (a timeout or a crash), so the engine is neither signed in nor signed out yet. */
   authUnverified?: true;
+  /** A local credential-shape answer, not evidence that a rejection is over. */
+  signInAnswerIsLocalHint?: true;
   version?: string | null;
   /** A line shown beside the detected version (OpenClaw below its Ask floor: ASK_STOP_OPENCLAW_OLD_NOTE). */
   versionNote?: string;
@@ -912,20 +933,20 @@ export interface ProviderInstance {
   readonly adapter: ProviderAdapter;
   snapshot(): Promise<ProviderSnapshot>;
   /** Cheap one-shot text call (upstream TextGeneration) — titles, summaries. */
-  generateText?(prompt: string, botId?: string): Promise<string>;
+  generateText?(prompt: string, botId?: string, cwd?: string): Promise<string>;
   /** One short real reply on a hidden session, tool-free and with no owner data, on request only (engine-reply-check.ts). */
-  checkReply?(signal: AbortSignal): Promise<string>;
+  checkReply?(signal: AbortSignal, cwd?: string): Promise<string>;
   /** One non-persisted owner proposal with tools and hooks disabled. */
   /** `botId` is the bot the call is made for: on a Cloud home the launcher refuses an engine run that names none. */
-  proposeProject?(prompt: string, signal: AbortSignal, model: string, botId?: string): Promise<string>;
+  proposeProject?(prompt: string, signal: AbortSignal, model: string, botId?: string, cwd?: string): Promise<string>;
   /** Explicitly qualified tool-free bounded memory extraction. Absence means
    * unavailable; never infer it from chat, MCP, or generic text generation. */
-  groundMemory?(input: import("./memory/extract.ts").MemoryGroundingInput, maximumOutputTokens: number, signal: AbortSignal, fence?: import("./memory/learning-send.ts").LearningGate): Promise<string>;
+  groundMemory?(input: import("./memory/extract.ts").MemoryGroundingInput, maximumOutputTokens: number, signal: AbortSignal, fence?: import("./memory/learning-send.ts").LearningGate, cwd?: string): Promise<string>;
   extractMemory?(text: string, maximumOutputTokens: number, signal: AbortSignal, dispatch?: import("./memory/extract.ts").MemoryExtractionDispatch): Promise<string>;
   /** Isolated, tool-free permission review on this same provider. Kept
    * separate from generateText so the UI never infers a security capability
    * from a generic helper that may expose prompts in argv or lack approvals. */
-  reviewPermission?(prompt: string, signal?: AbortSignal, botId?: string): Promise<string>;
+  reviewPermission?(prompt: string, signal?: AbortSignal, botId?: string, cwd?: string): Promise<string>;
   dispose(): Promise<void>;
 }
 

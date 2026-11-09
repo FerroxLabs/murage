@@ -1,3 +1,9 @@
+import { Suspense } from "react";
+import { LazyBoundary, retryableLazy } from "./LazyBoundary";
+const ChatPickerSearch = retryableLazy(() => import("./ChatPickerSearch").then(module => ({ default: module.ChatPickerSearch })));
+import { useChatPreviews } from "@/lib/chat-previews";
+import type { SearchHit } from "@/lib/search-hit";
+import { landOnSearchHit } from "@/lib/focus-message";
 import { t } from "@/lib/i18n";
 import { threadLinkLabel } from "../../shared/thread-link";
 import { unreadTaskLabel } from "@/lib/project-presentation";
@@ -46,7 +52,7 @@ import { QuestionBadge, SnoozeChoices } from "./ConversationSnooze";
 import { startConversationPrefetch } from "@/lib/conversation-cache-host";
 import { MESSAGE_PAGE_SIZE } from "@/lib/scrollback";
 import { modShortcut } from "@/lib/mod-shortcut";
-import { chatTitle } from "@/lib/all-chats";
+import { chatSnippet, chatTitle } from "@/lib/all-chats";
 
 /** Click-to-switch used to close this menu immediately, which unmounted the
  * row before a double-click (or right-click) could start a rename. Linger
@@ -244,10 +250,14 @@ export function ConversationTaskPicker({
   total,
   heading,
   onExpand,
+  onOpenHit,
+  archived = false,
   shortcuts = false,
 }: {
   /** The list's title ("Chats with Ember"). */
   heading?: string;
+  onOpenHit?: (hit: SearchHit) => void;
+  archived?: boolean;
   /** Open All chats filtered to this bot or channel. */
   onExpand?: () => void;
   /** Answer Mod+J and Mod+Shift+N: the one list of the conversation on screen. */
@@ -292,6 +302,10 @@ export function ConversationTaskPicker({
   onPrefetch?: (threadId: string) => () => void;
 }) {
   const [open, setOpen] = useState(initialOpen);
+  const previewScope = { ...deleteScope, archived };
+  const { rows: summaries, eligible: previewsEligible, partial: previewsPartial } = useChatPreviews(open, previewScope,
+    tasks.slice(0, 200).map(task => task.threadId).join(","),
+    tasks.slice(0, 200).map(task => `${task.threadId}:${task.lastActivityAt ?? task.createdAt}`).join(","));
   const [snoozing, setSnoozing] = useState<string | null>(null);
   // Unsnooze runs from a row, and rows are not components, so its pending and failure live here.
   const [unsnoozing, setUnsnoozing] = useState<string | null>(null);
@@ -674,6 +688,7 @@ export function ConversationTaskPicker({
               {badge && (
                 <span className="shrink-0 rounded border border-hairline/60 px-1 text-[10px] leading-[14px]">{badge}</span>
               )}
+              {(summaries[task.threadId]?.snippet || !previewsEligible) && <span dir="auto" className="min-w-0 flex-1 truncate">{previewsEligible ? chatSnippet(summaries[task.threadId]!) : t("chats.previews.checking")}</span>}
               <span className="min-w-0 truncate">
                 <time dateTime={new Date(at).toISOString()} title={moment}>{formatRelativeTaskWhen(at, nowAt, clock)}</time>
                 {waiting && <span className="font-medium text-warning">{` · ${TASK_WAITING_LABEL}`}</span>}
@@ -925,6 +940,9 @@ export function ConversationTaskPicker({
             role="group"
             aria-label={looking ? `${view.navigable.length} matching ${view.navigable.length === 1 ? "chat" : "chats"}` : "Chats"}
           >
+            {query.trim().length >= 3 && onOpenHit && (deleteScope?.botId || deleteScope?.groupId) &&
+              <LazyBoundary inline onRetry={ChatPickerSearch.retry}><Suspense fallback={<p role="status">Searching messages…</p>}><ChatPickerSearch.Component query={query} scope={previewScope} onOpen={hit => { closeMenu(); onOpenHit(hit); }} /></Suspense></LazyBoundary>}
+            {previewsPartial && <p role="status" className="px-3 py-2 text-[12px] text-ink-secondary">{t("chats.previews.partial")}</p>}
             {view.sections.length === 0 ? (
               <div className="px-3 py-6 text-center text-[13px] text-ink-secondary">
                 {looking ? `Nothing matches “${looking}”` : filter === "all" ? "No chats yet" : "No chats in this view"}
@@ -1086,6 +1104,8 @@ export function TaskPicker({ bot }: { bot: Bot }) {
       onRename={(threadId, title) => dispatch({ type: "renameTask", botId: bot.id, threadId, title })}
       onDelete={(threadId) => dispatch({ type: "deleteTask", botId: bot.id, threadId })}
       deleteScope={{ botId: bot.id }}
+      archived={bot.hidden}
+      onOpenHit={hit => { void landOnSearchHit(hit, state, dispatch).catch(error => dispatch({ type: "error", message: String(error) })); }}
       onPrefetch={(threadId) => startConversationPrefetch(api, { ownerId: bot.id, threadId, pageSize: MESSAGE_PAGE_SIZE })}
       onTogglePin={(threadId, pinned) => dispatch({ type: "pinTask", botId: bot.id, threadId, pinned })}
       onRemoveLink={(threadId) => dispatch({ type: "updateTask", botId: bot.id, threadId, patch: { link: null } })}
@@ -1129,6 +1149,8 @@ export function GroupTaskPicker({ group }: { group: Group }) {
       onRename={(threadId, title) => dispatch({ type: "renameGroupTask", groupId: group.id, threadId, title })}
       onDelete={(threadId) => dispatch({ type: "deleteGroupTask", groupId: group.id, threadId })}
       deleteScope={{ groupId: group.id }}
+      archived={group.hidden}
+      onOpenHit={hit => { void landOnSearchHit(hit, state, dispatch).catch(error => dispatch({ type: "error", message: String(error) })); }}
       heading={`Chats in ${group.name}`}
       onExpand={() => dispatch({ type: "showAllChats", groupId: group.id })}
       shortcuts

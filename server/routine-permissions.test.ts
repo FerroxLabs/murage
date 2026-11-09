@@ -80,7 +80,10 @@ describe("a routine run's verdict at each level", () => {
     expect(fullAccessCovers(full, "routine")).toBe(true);
     expect(fullAccessCovers(auto, "routine")).toBe(false);
     expect(autoVerdict(at("full"), "Bash", "rm -rf build", routine)).toMatchObject({ source: "full-access" });
-    expect(autoVerdict(at("unlimited"), "Bash", "rm -rf build", routine)).toMatchObject({ source: "no-limits" });
+    // MARKS r12 re-baseline (M-R7-level): a routine keeps the strict read, so with no fixed folder a relative write
+    // cards (unreadable, value-path); with the routine's folder known it runs at No limits as before
+    expect(autoVerdict(at("unlimited"), "Bash", "rm -rf build", { ...routine, commandCwd: "/w" })).toMatchObject({ source: "no-limits" });
+    expect(autoVerdict(at("unlimited"), "Bash", "rm -rf build", routine)).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
     expect(autoVerdict(at("auto"), "Bash", "rm -rf build", routine).source).toBe("destructive-guard");
     expect(autoVerdict(at("auto"), "Bash", "ls", routine).source).toBe("auto-mode");
     expect(autoVerdict(at("ask"), "Bash", "ls", routine).source).toBe("no-grant");

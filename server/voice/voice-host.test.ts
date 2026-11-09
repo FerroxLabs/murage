@@ -1,12 +1,31 @@
+import { fixtureHostRoute } from "../testing/protected-host.ts";
+import { readCallPresentation } from "../tts/call-presentation.ts";
+import { compileSpeechSource, REST_ON_SCREEN } from "../tts/speech-source.ts";
+import { runVoiceBrief, runVoiceHostTurn } from "../testing/protected-host.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PassThrough } from "node:stream";
 
-import { allowedSentence, CitationFilter, dropLeadingFiller, runVoiceBrief, runVoiceHostTurn, SentenceSplitter, voiceHostPrompt, type VoiceHostEvent, type VoiceHostState } from "./voice-host.ts";
+import { allowedSentence, CitationFilter, dropLeadingFiller, SentenceSplitter, voiceHostPrompt, runVoiceHostTurn as productionHostTurn, type VoiceHostEvent, type VoiceHostState } from "./voice-host.ts";
 import { clipHostTurn, handleVoiceHostRoute, HOST_TURN_CHARS, parseHistory, parseRoomHeard, voiceHostRoomState, voiceHostState, type VoiceHostRouteDeps, type VoiceHostRouteGroup } from "./voice-host-route.ts";
 import type { Message } from "../store.ts";
 import { resetUnavailable, type VoiceEndpoint } from "./voice-routes.ts";
 
 beforeEach(() => resetUnavailable());
+
+it("red-at-aa73cb96d: room names and presentation prefixes preserve whole cuts", () => {
+  const source = "Hello. `%4**1**`";
+  expect(parseRoomHeard([{ member: source, owner: source, reply: source }]))
+    .toEqual([{ member: REST_ON_SCREEN, owner: REST_ON_SCREEN, reply: REST_ON_SCREEN }]);
+  expect(parseHistory([{ role: "host", text: source, handDown: { id: "job", request: source } }]))
+    .toEqual([{ role: "host", text: REST_ON_SCREEN, handDown: { id: "job", request: REST_ON_SCREEN } }]);
+});
+
+it("control: room name and presentation caps retain benign prefixes", () => {
+  // Prefix-only truncation cannot join separated trigger characters: it removes
+  // only a tail. The final gate still covers the exact capped name/owner/reply.
+  const heard = parseRoomHeard([{ member: "a".repeat(50), owner: "b".repeat(450), reply: "c".repeat(450) }]);
+  expect(heard).toEqual([{ member: "a".repeat(40), owner: "b".repeat(400), reply: "c".repeat(400) }]);
+});
 
 const NOW = Date.parse("2026-09-23T09:00:00Z");
 const HOST: VoiceEndpoint = { via: "flux", label: "Flux Router", baseUrl: "http://stub.invalid/v1", key: "test-key", model: "claude-haiku-4-5" };
@@ -27,7 +46,7 @@ const STATE: VoiceHostState = {
 function sse(frames: unknown[], init: { status?: number; seen?: (body: any) => void } = {}): typeof fetch {
   return (async (_url: string, request: RequestInit) => {
     init.seen?.(JSON.parse(String(request.body)));
-    if (init.status && init.status !== 200) return new Response(JSON.stringify({ error: { message: "no" } }), { status: init.status });
+    if (init.status && init.status !== 200) return new Response(JSON.stringify({ error: { message: "no", ...(init.status === 402 ? { code: "premium_locked" } : {}) } }), { status: init.status });
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       start(controller) {
@@ -52,6 +71,42 @@ async function collect(generator: AsyncGenerator<VoiceHostEvent>): Promise<Voice
   for await (const event of generator) events.push(event);
   return events;
 }
+
+describe("D24B4 exact sentence release", () => {
+  const sinks = ["ordinary push", "ordinary flush", "lookup push", "lookup flush", "brief push", "brief flush"] as const;
+  async function release(sink: typeof sinks[number], body: string) {
+    const payload = body + (sink.endsWith("push") ? ". Next." : "");
+    // The earlier gate allows the source; the later transform creates the trigger.
+    expect(compileSpeechSource(payload, { pronounce: false })).toBe(payload);
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      if (sink.startsWith("lookup") && url.endsWith("/chat/completions"))
+        return sse([tool(0, "quick_lookup", '{"query":"a fact"}')])(url, init);
+      return sse([text(payload), ...(sink.startsWith("lookup") ? [lookupDone] : [])])(url, init);
+    }) as typeof fetch;
+    const options = { state: STATE, history: [], said: "a fact?", answer: "A ready answer.", host: HOST, lookup: LOOKUP, fetchImpl };
+    const events = await collect(sink.startsWith("brief") ? runVoiceBrief(options) : runVoiceHostTurn(options));
+    expect(events.at(-1)).toEqual({ type: "done" });
+    const sentences = events.filter((event): event is Extract<VoiceHostEvent, { type: "sentence" }> => event.type === "sentence").map(event => event.text);
+    if (sink.startsWith("lookup")) expect(sentences.shift()).toBe("Let me check.");
+    return sentences;
+  }
+  it.each(sinks)("red-at-73c06bcc3: %s cuts triggers created after the source gate", async sink => {
+    // Lookup's %4_1 has no %HH, entity, tag, or secret label; the source lexer
+    // preserves the underscore between digits, so compileSpeechSource leaves it
+    // unchanged. CitationFilter passes it through, then spokenText removes the
+    // underscore to create %41 after the source gate (push and flush alike).
+    // The other paths also drop the filler before reaching the sink.
+    const body = sink.startsWith("lookup") ? "Value %4_1 now" : "Hmm, value %4_1 now";
+    expect(await release(sink, body)).toEqual(sink.endsWith("push") ? [REST_ON_SCREEN, "Next."] : [REST_ON_SCREEN]);
+  });
+  it.each(sinks)("control: %s keeps benign transformed speech unchanged", async sink => {
+    // Lookup's plain prose has no trigger or markdown for the source gate to
+    // cut or rewrite; CitationFilter and spokenText leave it unchanged too.
+    // Its opener is already checked, so lookup does not drop leading filler.
+    const body = sink.startsWith("lookup") ? "Value is ready" : "Hmm, value is ready";
+    expect(await release(sink, body)).toEqual(sink.endsWith("push") ? ["Value is ready.", "Next."] : ["Value is ready"]);
+  });
+});
 
 describe("voice host", () => {
   it("streams text as it arrives and ends with done", async () => {
@@ -211,7 +266,7 @@ describe("voice host", () => {
       seen.push(url);
       if (url.endsWith("/chat/completions")) return sse([tool(0, "quick_lookup", '{"query":"AI news today"}')])(url, init);
       if (url.endsWith("/voice/lookup")) return new Response("{}", { status: 404 });
-      return new Response(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: "Google shipped a Gemini app for Windows." })}\n\n`, { status: 200 });
+      return new Response(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: "Google shipped a Gemini app for Windows." })}\n\ndata: {"type":"response.completed"}\n\n`, { status: 200 });
     }) as typeof fetch;
     const turn = () => collect(runVoiceHostTurn({ state: STATE, history: [], said: "news?", host: HOST, lookup: [LOOKUP, xaiLookup], fetchImpl }));
     expect(await turn()).toContainEqual({ type: "sentence", text: "Google shipped a Gemini app for Windows." });
@@ -241,9 +296,9 @@ describe("voice host", () => {
     // an error frame before any text, with HTTP 200 already sent
     const failed = await turn([{ object: "flux.voice.lookup.error", error: { code: "no_text_timeout", message: "lookup produced no answer in time" } }]);
     expect(failed).toContainEqual({ type: "hand_down", request: "gold price" });
-    // an error after a sentence was heard: keep what was said, never replay it elsewhere
+    // An error after raw text: discard unsealed speech, and do not replay it elsewhere.
     const partial = await turn([text("Gold is at 4,100 dollars. "), { object: "flux.voice.lookup.error", error: { code: "upstream_error" } }]);
-    expect(partial).toContainEqual({ type: "sentence", text: "Gold is at 4,100 dollars." });
+    expect(partial).not.toContainEqual({ type: "sentence", text: "Gold is at 4,100 dollars." });
     expect(partial.some((event) => event.type === "hand_down")).toBe(false);
     // and a finished lookup with its completion frame is spoken in full
     expect(await turn([text("Gold is at 4,100 dollars."), lookupDone])).toContainEqual({ type: "sentence", text: "Gold is at 4,100 dollars." });
@@ -352,11 +407,11 @@ describe("voice host", () => {
     expect(said).toEqual(["Anything else?"]);
   });
 
-  it("a length cap right after a voiced clause ends there: the clause stands, the unfinished rest is not said", async () => {
+  it("a length cap discards the whole unsealed reply including its first clause", async () => {
     const frames = [text("Sure, I can pull that together for you, "), text("and send"), { choices: [{ delta: {}, finish_reason: "length" }] }];
     const events = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "hello", host: HOST, lookup: LOOKUP, fetchImpl: sse(frames) }));
     const said = events.filter((e) => e.type === "sentence").map((e: any) => e.text);
-    expect(said).toEqual(["Sure, I can pull that together for you,"]);
+    expect(said).toEqual([]);
   });
 
   it("a clause-split lead-in still gets the check it promised", async () => {
@@ -507,11 +562,19 @@ describe("voice host: no filler sound opening a reply (Sean 11-04)", () => {
     expect(dropLeadingFiller("Okay, give me a moment.")).toBe("Okay, give me a moment.");
     expect(dropLeadingFiller("Um")).toBe("Um");
     expect(dropLeadingFiller("Hmm, iOS supports that.")).toBe("iOS supports that.");
+    expect(dropLeadingFiller("Hmm, macOS supports that.")).toBe("macOS supports that.");
+    expect(dropLeadingFiller("Hmm, eBay has it.")).toBe("eBay has it.");
+    expect(dropLeadingFiller("Hmm, okay.")).toBe("Okay.");
   });
 
   it("checks the first sentence actually said, and still says a doubled reply once", async () => {
     expect(await spoken(["It is almost done. ", "Hmm, revenue is up four percent."])).toEqual(["Revenue is up four percent."]);
     expect(await spoken(["Hmm, revenue is up four percent. ", "Hmm, revenue is up four percent."])).toEqual(["Revenue is up four percent."]);
+  });
+
+  it("a first clause said without its filler is said once when the reply comes again without it", async () => {
+    expect(await spoken(["Hmm, so I can pull that ", "together for you, ", "and send it ", "after lunch. ", "So I can pull that together for you, and send it after lunch."]))
+      .toEqual(["So I can pull that together for you,", "and send it after lunch."]);
   });
 });
 
@@ -536,6 +599,7 @@ describe("voice host route", () => {
     message({ role: "bot", kind: "activity", tool: { name: "Bash", summary: "counting rows" } }),
   ];
   const deps: VoiceHostRouteDeps = {
+    presentation: fixtureHostRoute(),
     bot: (id) => (id === "b1" ? bot : null),
     activePath: () => path,
     lastActivityAt: () => NOW - 3_600_000,
@@ -580,6 +644,126 @@ describe("voice host route", () => {
     };
     return { res, head: () => head, out: () => out };
   }
+
+  it("red-at-359c1e635: quick_lookup projects its query in the host and across every SSE byte", async () => {
+    // Round 4 protects the provider request, but both host and route leak the tool argument.
+    const query = "password: fixture-only-secret";
+    const projected = compileSpeechSource(query, { presentation: true, pronounce: false });
+    expect(projected).toBe(REST_ON_SCREEN);
+    const providerQueries: string[] = [];
+    const hostEvents: VoiceHostEvent[] = [];
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      if (url.endsWith("/chat/completions")) return sse([tool(0, "quick_lookup", JSON.stringify({ query }))])(url, init);
+      providerQueries.push(JSON.parse(String(init.body)).query);
+      return sse([text("The answer is ready."), lookupDone])(url, init);
+    }) as typeof fetch;
+    const r = fakeRes();
+    await handleVoiceHostRoute("POST", "/api/bots/b1/voice-host", { body: { text: "a fact?" } } as any, r.res, {
+      ...deps, presentation: fixtureHostRoute(),
+      run: async function* (options) {
+        for await (const event of productionHostTurn({ ...options, fetchImpl })) {
+          hostEvents.push(event);
+          yield event;
+        }
+      },
+    });
+    expect(r.out()).not.toContain("fixture-only-secret");
+    expect(r.out().split("\n\n").filter(Boolean).map(line => JSON.parse(line.slice(6))))
+      .toContainEqual({ type: "lookup", query: projected });
+    expect(hostEvents).toContainEqual({ type: "lookup", query: projected });
+    expect(providerQueries).toEqual([projected]);
+  });
+
+  // Include all current host events, route-owned audio, and future event shapes.
+  const outboundKinds = ["sentence", "lookup", "hand_down", "status", "error", "cancel", "done", "audio", "future"] as const;
+  async function outboundSession(value: string) {
+    const r = fakeRes();
+    // Adversarial enum fields are deliberately outside the production host's
+    // types; keep these synthetic payloads out of the container's harness log.
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+    const modelEvents = [
+      { type: "sentence", text: value, clause: true },
+      { type: "lookup", query: value },
+      { type: "hand_down", request: value },
+      { type: "status", message: value },
+      { type: "error", reason: value, message: value },
+      { type: "cancel" }, { type: "done" },
+      { type: "future", text: value },
+    ].map(event => ({ ...event, metadata: { [value]: [value, { text: value }], count: 7, enabled: true, empty: null } }));
+    await handleVoiceHostRoute("POST", "/api/bots/b1/voice-host", {
+      body: { text: value, approval: value, history: [{ role: "owner", text: value }],
+        heard: [{ member: value, owner: value, reply: value }], handDowns: [{ id: "fixture-job", request: value, at: NOW }] },
+    } as any, r.res, {
+      ...deps,
+      presentation: (...args) => ({ ...fixtureHostRoute()(...args),
+        handDown: () => value,
+        // Exercise the route-owned audio emission even in this adversarial all-events session.
+        finish: () => ({ type: "call.speech.ready", callId: value, replyId: value,
+          threadId: "t1", botId: "b1", messageId: "fixture-message", bootId: "fixture-boot" }),
+      }),
+      run: async function* () {
+        for (const event of modelEvents) yield event as unknown as VoiceHostEvent;
+      },
+    });
+    return { output: r.out(), events: r.out().split("\n\n").filter(Boolean).map(line => JSON.parse(line.slice(6))) };
+    } finally { log.mockRestore(); }
+  }
+
+  it("red-at-359c1e635: whole-output secret scan covers every event kind, nested value and dynamic key", async () => {
+    // Round 4 only projects hand_down.request; all other payloads and audio identities bypass it.
+    const { output, events } = await outboundSession("password: fixture-only-secret");
+    expect(events.map(event => event.type).sort()).toEqual([...outboundKinds].sort());
+    expect(output).not.toContain("fixture-only-secret");
+    for (const event of events) {
+      if (event.type === "hand_down") expect(event).toEqual({ type: "hand_down", request: REST_ON_SCREEN, id: REST_ON_SCREEN });
+      else if (event.type === "audio") expect(event).toEqual({ type: "audio", callSessionId: REST_ON_SCREEN, threadId: "t1", replyId: REST_ON_SCREEN });
+      else {
+        expect(event.metadata).toEqual({ [REST_ON_SCREEN]: [REST_ON_SCREEN, { text: REST_ON_SCREEN }], count: 7, enabled: true, empty: null });
+        for (const field of ["text", "query", "message", "reason"]) if (field in event) expect(event[field]).toBe(REST_ON_SCREEN);
+      }
+    }
+  });
+
+  it.each(outboundKinds)("control: %s preserves benign text and metadata unchanged", async kind => {
+    // Plain prose has no secret trigger; projection must preserve the wire payload.
+    const value = "Weather is clear";
+    const { events } = await outboundSession(value);
+    const event = events.find(event => event.type === kind);
+    const metadata = { [value]: [value, { text: value }], count: 7, enabled: true, empty: null };
+    const expected: Record<typeof outboundKinds[number], unknown> = {
+      sentence: { type: "sentence", text: value, clause: true, metadata },
+      lookup: { type: "lookup", query: value, metadata },
+      hand_down: { type: "hand_down", request: value, id: value },
+      status: { type: "status", message: value, metadata },
+      error: { type: "error", reason: value, message: value, metadata },
+      cancel: { type: "cancel", metadata }, done: { type: "done", metadata },
+      audio: { type: "audio", callSessionId: value, threadId: "t1", replyId: value },
+      future: { type: "future", text: value, metadata },
+    };
+    expect(event).toEqual(expected[kind]);
+  });
+
+  it("red-at-73c06bcc3: hand_down SSE carries only the projected request and stored identity", async () => {
+    const r = fakeRes();
+    const request = "password: fixture-only-secret";
+    const stored: string[] = [];
+    await handleVoiceHostRoute("POST", "/api/bots/b1/voice-host", { body: { text: "please help" } } as any, r.res, {
+      ...deps,
+      presentation: (...args) => {
+        const presentation = fixtureHostRoute()(...args);
+        return { ...presentation, handDown: value => { stored.push(value); return "fixture-hand-down"; } };
+      },
+      run: async function* () {
+        yield { type: "hand_down", request };
+        yield { type: "done" };
+      },
+    });
+    const events = r.out().split("\n\n").filter(Boolean).map(line => JSON.parse(line.slice(6)));
+    expect(events).toContainEqual({ type: "hand_down", request: REST_ON_SCREEN, id: "fixture-hand-down" });
+    expect(stored).toEqual([REST_ON_SCREEN]);
+    expect(r.out().includes("fixture-only-secret")).toBe(false);
+  });
 
   it("streams the host's events as server-sent events", async () => {
     const r = fakeRes();
@@ -644,18 +828,19 @@ describe("voice host route", () => {
     const answer = "## Today's AI news\n\n" + "- A launch story. ".repeat(200);
     const r = fakeRes();
     let told: any = null;
-    await handleVoiceHostRoute("POST", "/api/bots/b1/voice-host", { body: { text: answer, brief: true } } as any, r.res, {
+    await handleVoiceHostRoute("POST", "/api/bots/b1/voice-host", { body: { replyId: "fixture-reply", brief: true } } as any, r.res, {
       ...deps,
+      presentation: fixtureHostRoute(answer),
       run: async function* () {
         throw new Error("a brief is not a host turn");
       },
       brief: async function* (options) {
-        told = options;
+        told = { ...options, ...readCallPresentation(options.snapshot) };
         yield { type: "sentence", text: "Three big stories." };
         yield { type: "done" };
       },
     });
-    expect(told.answer).toBe(answer.trim());
+    expect(told.answer).toBe(compileSpeechSource(answer, { presentation: true, pronounce: false, maxUnits: 524288 }));
     expect(told.host).toBe(HOST);
     expect(r.out()).toContain("Three big stories.");
   });
@@ -708,7 +893,7 @@ describe("voice host: long replies (2026-09-30 call)", () => {
     expect(body.max_tokens).toBe(1_000);
   });
 
-  it("a reply cut off by the output cap ends on its last whole sentence, never a fragment", async () => {
+  it("a reply cut off by the output cap emits no speech", async () => {
     const events = await collect(
       runVoiceHostTurn({
         state: STATE,
@@ -718,7 +903,7 @@ describe("voice host: long replies (2026-09-30 call)", () => {
         fetchImpl: sse([text("You like to laugh. "), text("You also like films that make you think, and the real people them"), finish("length")]),
       }),
     );
-    expect(events).toEqual([{ type: "sentence", text: "You like to laugh." }, { type: "done" }]);
+    expect(events).toEqual([{ type: "error", reason: "upstream", message: "The fast reply was cut off." }]);
   });
 
   it("a reply that finished normally still says its last sentence, with or without a full stop", async () => {
@@ -732,11 +917,11 @@ describe("voice host: long replies (2026-09-30 call)", () => {
     expect(stopped.map((e) => (e.type === "sentence" ? e.text : e.type))).toEqual(["Hello.", "Good to hear you", "done"]);
   });
 
-  it("a brief cut off by the cap drops its fragment too", async () => {
+  it("a brief cut off by the cap emits no speech", async () => {
     const events = await collect(
       runVoiceBrief({ state: STATE, answer: "x", host: HOST, fetchImpl: sse([text("Two stories. "), text("The first is about"), finish("length")]) }),
     );
-    expect(events).toEqual([{ type: "sentence", text: "Two stories." }, { type: "done" }]);
+    expect(events).toEqual([{ type: "error", reason: "upstream", message: "The brief was cut off." }]);
   });
 
   it("tells the host to say only spoken words, no stage directions", () => {
@@ -758,7 +943,7 @@ describe("voice host: long replies (2026-09-30 call)", () => {
   it("a cut-off run-on sentence is dropped whole, not in pieces", async () => {
     const long = Array.from({ length: 30 }, (_, i) => `the point number ${i} runs on`).join(", ");
     const events = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "go on", host: HOST, fetchImpl: sse([text("Right. "), text(long), finish("length")]) }));
-    expect(events).toEqual([{ type: "sentence", text: "Right." }, { type: "done" }]);
+    expect(events).toEqual([{ type: "error", reason: "upstream", message: "The fast reply was cut off." }]);
   });
 
   /** A stream that sends `frames`, then hangs until the request is aborted. */
@@ -775,7 +960,7 @@ describe("voice host: long replies (2026-09-30 call)", () => {
     }) as typeof fetch;
   }
 
-  it("a reply that hangs mid-stream ends after 10 s of nothing, on its last whole sentence", async () => {
+  it("a reply that hangs mid-stream ends after 10 s without releasing partial speech", async () => {
     vi.useFakeTimers();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const events = collect(
@@ -793,9 +978,8 @@ describe("voice host: long replies (2026-09-30 call)", () => {
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1_100);
     expect(settled).toBe(true);
-    // no fragment, no half-arrived hand-down, and not an error the call
-    // would hand to the engine
-    expect(await events).toEqual([{ type: "sentence", text: "First point is clear." }, { type: "done" }]);
+    // No partial speech or half-arrived hand-down, and no extra engine fallback.
+    expect(await events).toEqual([{ type: "done" }]);
     warn.mockRestore();
   });
 
@@ -822,7 +1006,6 @@ describe("voice host: long replies (2026-09-30 call)", () => {
     );
     await vi.advanceTimersByTimeAsync(10_100);
     expect(await events).toEqual([
-      { type: "sentence", text: "Let me look into that." },
       { type: "hand_down", request: "tidy the downloads folder" },
       { type: "done" },
     ]);
@@ -843,7 +1026,6 @@ describe("voice host: long replies (2026-09-30 call)", () => {
     );
     await vi.advanceTimersByTimeAsync(10_100);
     expect(await events).toEqual([
-      { type: "sentence", text: "Let me look into that." },
       { type: "hand_down", request: "tidy the downloads folder" },
       { type: "done" },
     ]);
@@ -857,7 +1039,7 @@ describe("voice host: long replies (2026-09-30 call)", () => {
       runVoiceHostTurn({ state: STATE, history: [], said: "tidy the downloads folder", host: HOST, fetchImpl: hanging([text("Okay. "), tool(0, "hand_down", "")]) }),
     );
     await vi.advanceTimersByTimeAsync(10_100);
-    expect(await events).toEqual([{ type: "sentence", text: "Okay." }, { type: "done" }]);
+    expect(await events).toEqual([{ type: "done" }]);
     warn.mockRestore();
   });
 
@@ -868,7 +1050,7 @@ describe("voice host: long replies (2026-09-30 call)", () => {
       runVoiceHostTurn({ state: STATE, history: [], said: "stop that", host: HOST, fetchImpl: hanging([text("Stopping it. "), tool(0, "cancel_task", "")]) }),
     );
     await vi.advanceTimersByTimeAsync(10_100);
-    expect((await events).map((e) => e.type)).toEqual(["sentence", "cancel", "done"]);
+    expect((await events).map((e) => e.type)).toEqual(["cancel", "done"]);
     warn.mockRestore();
   });
 
@@ -893,6 +1075,7 @@ describe("voice host: long replies (2026-09-30 call)", () => {
       await vi.advanceTimersByTimeAsync(8_000);
       push(text(piece));
     }
+    push(finish("stop"));
     close();
     await vi.advanceTimersByTimeAsync(0);
     expect((await events).map((e) => (e.type === "sentence" ? e.text : e.type))).toEqual(["One.", "Two.", "Three.", "Four.", "done"]);
@@ -947,7 +1130,7 @@ describe("voice host: long replies (2026-09-30 call)", () => {
 });
 
 describe("voice host: a smaller prompt", () => {
-  it("reads the host's own long lines back clipped, keeping where the owner cut in", () => {
+  it("reads protected history prefixes without reattaching a disconnected tail", () => {
     const long = `${"A long spoken answer about films. ".repeat(40)}And the last bit… [the owner cut in here]`;
     const turns = parseHistory([
       { role: "owner", text: "Tell me about my taste in films" },
@@ -956,7 +1139,7 @@ describe("voice host: a smaller prompt", () => {
     expect(turns[0].text).toBe("Tell me about my taste in films");
     expect(turns[1].text.length).toBeLessThanOrEqual(HOST_TURN_CHARS);
     expect(turns[1].text.startsWith("A long spoken answer")).toBe(true);
-    expect(turns[1].text.endsWith("[the owner cut in here]")).toBe(true);
+    expect(turns[1].text).toBe(long.slice(0, HOST_TURN_CHARS).trimEnd());
     expect(clipHostTurn("short")).toBe("short");
   });
 
@@ -980,6 +1163,7 @@ describe("voice host warm-up", () => {
     const r = { head: null as any, res: null as any };
     const res: any = { writeHead: (s: number) => ((r.head = s), res), end: () => res, on: () => res };
     await handleVoiceHostRoute("POST", "/api/bots/b1/voice-host", { body: { warm: true } } as any, res, {
+      presentation: fixtureHostRoute(),
       bot: () => ({ id: "b1", name: "Sable", threadId: "t1" }),
       activePath: () => [],
       lastActivityAt: () => undefined,
@@ -1077,15 +1261,16 @@ describe("voice host: timing", () => {
   it("reports headers, first token, first piece and attempts", async () => {
     vi.useFakeTimers();
     const seen: any[] = [];
-    // frame times are ms after headers: token at 300 (500 overall), sentence done at 700 (900)
+    // Token at 500 overall; speech waits for completion at 1100 and EOF at 1101.
     const fetchImpl = timed(200, [
       [300, text("Here ")],
       [700, text("it is. ")],
+      [900, finish("stop")],
     ]);
     const events = collect(runVoiceHostTurn({ state: STATE, history: [], said: "hi", host: HOST, fetchImpl, onTiming: (t) => seen.push(t) }));
     await vi.advanceTimersByTimeAsync(1_500);
     await events;
-    expect(seen).toEqual([{ headersMs: 200, firstTokenMs: 500, firstPieceMs: 900, attempts: 1, firstPiece: "sentence", firstPieceChars: 11 }]);
+    expect(seen).toEqual([{ headersMs: 200, firstTokenMs: 500, firstPieceMs: 1101, attempts: 1, firstPiece: "sentence", firstPieceChars: 11 }]);
   });
 
   it("a first-token stall then a retry that answers 300 ms later is attempts 2", async () => {
@@ -1187,6 +1372,7 @@ describe("voice host route: a room call", () => {
     message({ role: "bot", kind: "text", text: "Numbers check out.", from: from(moss), at: NOW - 80_000 }),
   ];
   const deps = {
+    presentation: fixtureHostRoute(undefined, [{ role: "host", text: "On it.", handDown: { id: "h1", request: "@Sable check the deploy" } }]),
     bot: (id: string) => [sable, moss, ivy, zed].find((b) => b.id === id) ?? null,
     group: (id: string) => (id === "room1" ? room : null),
     activePath: () => path,
@@ -1269,10 +1455,10 @@ describe("voice host route: a room call", () => {
     const r = fakeRes();
     await handleVoiceHostRoute("POST", "/api/bots/sable/voice-host", { body: { text: "where are we?", groupId: "room1", roomHeard: [{ member: "Moss", owner: "numbers?", reply: "Fine." }] } } as any, r.res, {
       ...deps,
-      run: async function* (options) { seen = options; yield { type: "sentence", text: "Moss is on the numbers." }; yield { type: "done" }; },
+      run: async function* (options) { seen = { ...options, ...readCallPresentation(options.snapshot) }; yield { type: "sentence", text: "Moss is on the numbers." }; yield { type: "done" }; },
     });
     expect(r.status()).toBe(200);
-    expect(seen.state.room.heard).toEqual([{ member: "Moss", owner: "numbers?", reply: "Fine." }]);
+    expect(seen.state.room.heard).toEqual([]); // Posted derivatives have no complete-source provenance (design 4.7.2).
     expect(seen.state.botName).toBe("Sable");
   });
 
@@ -1298,7 +1484,7 @@ describe("voice host route: a room call", () => {
     await handleVoiceHostRoute("POST", "/api/bots/sable/voice-host", { body: { text: "done yet?", groupId: "room1", handDowns: [{ id: "h1", request: "@Sable check the deploy", at: NOW - 6_000, state: "accepted" }] } } as any, r.res, {
       ...deps,
       activePath: () => handed,
-      run: async function* (options) { seen = options; yield { type: "done" }; },
+      run: async function* (options) { seen = { ...options, ...readCallPresentation(options.snapshot) }; yield { type: "done" }; },
     });
     expect(seen.results.h1).not.toMatch(/busy|failed/i);
   });
@@ -1313,9 +1499,117 @@ describe("voice host route: a room call", () => {
     await handleVoiceHostRoute("POST", "/api/bots/sable/voice-host", { body: { text: "done yet?", groupId: "room1", handDowns: [{ id: "h1", request: "@Sable check the deploy", at: NOW - 6_000, state: "accepted" }] } } as any, r.res, {
       ...deps,
       activePath: () => handed,
-      run: async function* (options) { seen = options; yield { type: "done" }; },
+      run: async function* (options) { seen = { ...options, ...readCallPresentation(options.snapshot) }; yield { type: "done" }; },
     });
     expect(seen.results.h1).not.toContain("Moss here");
     expect(seen.results.h1).toMatch(/still running|not started/);
   });
+});
+
+
+describe("D24 complete host output protection", () => {
+  it.each(["ordinary", "brief"])("%s emits nothing before successful output seal", async (kind) => {
+    const emitted: VoiceHostEvent[] = [];
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const encoder = new TextEncoder();
+    const fetchImpl = vi.fn(async () => new Response(new ReadableStream<Uint8Array>({ start(c) { controller = c; } })));
+    const options = { state: STATE, history: [], said: "hello", answer: "a completed reply", host: HOST, fetchImpl };
+    const consume = (async () => {
+      for await (const event of kind === "brief" ? runVoiceBrief(options) : runVoiceHostTurn(options)) emitted.push(event);
+    })();
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+    controller.enqueue(encoder.encode(`data: ${JSON.stringify(text("Safe introduction. The code is password:"))}\n\n`));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(emitted).toEqual([]);
+    controller.enqueue(encoder.encode(`data: ${JSON.stringify(text(" hunter2."))}\n\n`));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(emitted).toEqual([]);
+    controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+    controller.close();
+    await consume;
+    expect(emitted.at(-1)).toEqual({ type: "done" });
+    expect(emitted.some((event) => event.type === "sentence")).toBe(true);
+    expect(JSON.stringify(emitted)).not.toContain("hunter2");
+  });
+
+  it.each(["ordinary", "brief"])("%s rejects EOF with playable prose but no completion", async (kind) => {
+    const fetchImpl = vi.fn(async () => new Response(`data: ${JSON.stringify(text("This must not be spoken."))}\n\n`));
+    const options = { state: STATE, history: [], said: "hello", answer: "a completed reply", host: HOST, fetchImpl };
+    const events = await collect(kind === "brief" ? runVoiceBrief(options) : runVoiceHostTurn(options));
+    expect(events.filter((event) => event.type === "sentence")).toEqual([]);
+    expect(events.at(-1)?.type).toBe("error");
+  });
+});
+
+
+describe("L-FR33-1 refusal metadata", () => {
+  it.each(["ordinary", "brief", "lookup"])("%s never logs or emits a refusal body", async (kind) => {
+    for (const body of [JSON.stringify({ error: { message: "password: hst0001" } }), "password: hst0001"]) {
+      for (const status of [400, 401, 402, 403, 429, 500]) {
+        const logs = [vi.spyOn(console, "warn"), vi.spyOn(console, "error"), vi.spyOn(console, "log"), vi.spyOn(console, "info")].map((spy) => spy.mockImplementation(() => {}));
+        try {
+          const fetchImpl = (async (url: string, init: RequestInit) => {
+            if (kind === "lookup" && url.endsWith("/chat/completions")) return sse([tool(0, "quick_lookup", '{"query":"a fact"}')])(url, init);
+            return new Response(body, { status });
+          }) as typeof fetch;
+          const options = { state: STATE, history: [], said: "hello", answer: "answer", host: HOST, lookup: LOOKUP, fetchImpl };
+          const events = await collect(kind === "brief" ? runVoiceBrief(options) : runVoiceHostTurn(options));
+          expect(JSON.stringify(events)).not.toMatch(/hst0001|password:/);
+          const messages = logs.flatMap((spy) => spy.mock.calls).flat().map(String);
+          expect(messages).toContain(`[voice-host] refusal provider=flux status=${status}`);
+          expect(messages.join(" ")).not.toMatch(/hst0001|password:/);
+        } finally { for (const spy of logs) spy.mockRestore(); resetUnavailable(); }
+      }
+    }
+  });
+});
+
+
+it.each(["ordinary", "brief"])("D24 %s refuses an already cancelled producer before model dispatch", async (kind) => {
+  const abort = new AbortController();
+  abort.abort();
+  const fetchImpl = vi.fn(sse([text("Must remain silent.")]));
+  const options = { state: STATE, history: [], said: "hello", answer: "answer", host: HOST, fetchImpl, signal: abort.signal };
+  expect(await collect(kind === "brief" ? runVoiceBrief(options) : runVoiceHostTurn(options))).toEqual([]);
+  expect(fetchImpl).not.toHaveBeenCalled();
+});
+
+it.each(["ordinary", "brief"])("D24 %s keeps source cuts across every split and one-character output chunks", async (kind) => {
+  for (const source of ["password: correct horse. battery staple.", 'Safe. <img alt="password">: hunter2', "Safe. «redacted 12 chars»!hunter2"]) {
+    const partitions = [...Array.from({ length: source.length + 1 }, (_, i) => [source.slice(0, i), source.slice(i)]), [...source]];
+    for (const pieces of partitions) {
+      const options = { state: STATE, history: [], said: "hello", answer: "answer", host: HOST, fetchImpl: sse(pieces.map(text)) };
+      const events = await collect(kind === "brief" ? runVoiceBrief(options) : runVoiceHostTurn(options));
+      expect(events.at(-1)).toEqual({ type: "done" });
+      expect(events.some((event) => event.type === "sentence")).toBe(true);
+      expect(JSON.stringify(events)).not.toMatch(/correct horse|battery staple|hunter2/);
+    }
+  }
+});
+
+
+it.each(["ordinary", "brief"])("L-FR33-1 %s body-read failure keeps exception text out of logs and events", async (kind) => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const fetchImpl = vi.fn(async () => new Response(new ReadableStream({ start(c) { c.error(new Error("password: hst0001")); } }), { status: 400 }));
+    const options = { state: STATE, history: [], said: "hello", answer: "answer", host: HOST, fetchImpl };
+    const events = await collect(kind === "brief" ? runVoiceBrief(options) : runVoiceHostTurn(options));
+    expect(events.at(-1)?.type).toBe("error");
+    expect(warn.mock.calls).toEqual([["[voice-host] refusal provider=flux status=400"]]);
+    expect(JSON.stringify(events)).not.toMatch(/hst0001|password:/);
+  } finally { warn.mockRestore(); }
+});
+
+it("L-FR33-1 lookup billing diagnostics accept numeric metadata only", async () => {
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    for (const cost_usd of ["password: hst0001", "0.020000"]) {
+      const fetchImpl = (async (url: string, init: RequestInit) => url.endsWith("/chat/completions")
+        ? sse([tool(0, "quick_lookup", '{"query":"a fact"}')])(url, init)
+        : sse([text("A benign answer."), { ...lookupDone, cost_usd }])(url, init)) as typeof fetch;
+      const events = await collect(runVoiceHostTurn({ state: STATE, history: [], said: "a fact", host: HOST, lookup: LOOKUP, fetchImpl }));
+      expect(events).toContainEqual({ type: "sentence", text: "A benign answer." });
+    }
+    expect(log.mock.calls).toEqual([["[voice] lookup via Flux: 2 searches, $0.020000, 1 sources"]]);
+  } finally { log.mockRestore(); }
 });
