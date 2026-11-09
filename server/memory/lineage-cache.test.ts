@@ -1,7 +1,9 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // The replay verdict cache is kept across writes a verdict does not rest on (a message, a receipt
 // with no outputs, a checkpoint version, a notebook poll) and is dropped at once by the ones it does
 // rest on (a forgotten record or source, a tombstone, a policy revision, a deletion epoch, a record's
 // state, a receipt that lists the reply). Work is counted in lineage rows read, which no machine changes.
+import { storeAnchorMessage } from "./testing/anchor-message.ts";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -34,6 +36,7 @@ function access() {
 /** A record from an owner message, a reply made with it, and the reply's verdict already cached. */
 async function seeded() {
   const text = "The alarm code is 4812.";
+  storeAnchorMessage(database(), "older", "m1", text, "user", 1);
   captureSource(database(), { id: "message:older:m1", threadId: "older", messageId: "m1", kind: "text", speaker: "owner", outcome: "recorded", text });
   const turn = access();
   const record = saveMemoryCandidate(text, [{ sourceId: "message:older:m1", revision: 1, startByte: 0, endByte: Buffer.byteLength(text) }], "k", turn);
@@ -288,3 +291,5 @@ it.each([[0], [1], [2], [3], [5]])("session level, at the capacity boundary (%i 
     expect(sessionLineageBad(LineageAllowance.tool(1_000_000_000), "chat", "d", "S-1", null)).toBe(true);
   } finally { setVerdictLimitForTest(null); }
 });
+
+useOutsideStoreFixture();

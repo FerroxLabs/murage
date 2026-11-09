@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "./testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -60,7 +62,7 @@ const driver = async () => {
   instance = await BoxAgentDriver.create({ instanceId: "box-shared", displayName: "Box", environment: { BOX_TOKEN: TOKEN }, enabled: true, config: { pollMs: 0 } });
   recorder = recordEvents(instance.adapter);
 };
-const send = (threadId: string) => instance!.adapter.sendTurn({ threadId, text: "go", integrations: { computer: { boxId: BOX } } } as never);
+const send = (threadId: string) => instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go", integrations: { computer: { boxId: BOX } } } as never);
 const completed = (turnId: string) => recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId) as unknown as Promise<{ ok: boolean; stopReason: string | null }>;
 
 beforeEach(() => {
@@ -166,7 +168,7 @@ describe("section 8: a Stop of one turn on a box another turn is using", () => {
     const secondRecorder = recordEvents(second.adapter);
     try {
       const a = await send("thread-a");
-      const b = await second.adapter.sendTurn({ threadId: "thread-b", text: "go", integrations: { computer: { boxId: BOX } } } as never);
+      const b = await second.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "thread-b", text: "go", integrations: { computer: { boxId: BOX } } } as never);
       const c = await send("thread-c");
       await instance!.adapter.interruptTurn("thread-a");
       await completed(a.turnId);
@@ -273,3 +275,6 @@ describe("section 8: a Stop of one turn on a box another turn is using", () => {
     expect(cloudComputerEntries()).toEqual([]);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

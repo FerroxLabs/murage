@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
+import type { LoadedLayerProps } from "./LazyOverlay";
 import { t } from "@/lib/i18n";
 import { type RefObject, useEffect, useState } from "react";
 import { api, useStore } from "@/state/store";
@@ -8,7 +9,7 @@ import { projectClient } from "@/lib/use-project";
 import type { ProjectRead } from "@/lib/project-client";
 import { BOARD_BUTTON, BOARD_INPUT, ProjectBoardDialog } from "./ProjectBoardDialog";
 import "./project-board.css";
-export default function NewProjectDialog({onClose,returnFocusRef}:{onClose:()=>void;returnFocusRef?:RefObject<HTMLElement|null>}) {
+export default function NewProjectDialog({ layerLifecycle,onClose,returnFocusRef}:{onClose:()=>void;returnFocusRef?:RefObject<HTMLElement|null>} & { layerLifecycle?: LoadedLayerProps }) {
   const {state,dispatch}=useStore();
   const [clientId]=useState(()=>crypto.randomUUID());
   const [form,setForm]=useState<NewProjectForm>({purpose:"",mode:"goal",members:[],leadBotId:"",goalTitle:"",goalDescription:"",criteria:[],deadline:"",folder:"",startNow:true});
@@ -38,12 +39,12 @@ export default function NewProjectDialog({onClose,returnFocusRef}:{onClose:()=>v
   if(created){
     const reason=created.project?startProjectReason(created.project.settings,state.config?.features??{}):t("projects.new.openToCheck");
     const goal=created.project?.goal;
-    return <ProjectBoardDialog title={t("projects.new.createdTitle")} onClose={onClose} returnFocusRef={returnFocusRef}><p>{t("projects.new.ready")}</p>{goal?.state==="planning"&&<p>{t("projects.new.goalStarted")}</p>}{goal?.state==="draft" && <>{created.startReason&&<p>{created.startReason}</p>}{reason?<p>{reason}</p>:<button className={BOARD_BUTTON} disabled={busy} onClick={async()=>{setBusy(true);const result=await projectClient.goal(created.id,goal.id,{expectedRevision:goal.revision,action:"start"});if(result.ok)open();else setError(result.reason);setBusy(false);}}>{t("projects.new.startGoal")}</button>}</>}{error&&<p role="alert">{error}</p>}<button className={BOARD_BUTTON} onClick={open}>{t("projects.new.openProject")}</button></ProjectBoardDialog>;
+    return <ProjectBoardDialog layerLifecycle={layerLifecycle} native={false} title={t("projects.new.createdTitle")} onClose={onClose} returnFocusRef={returnFocusRef}><p>{t("projects.new.ready")}</p>{goal?.state==="planning"&&<p>{t("projects.new.goalStarted")}</p>}{goal?.state==="draft" && <>{created.startReason&&<p>{created.startReason}</p>}{reason?<p>{reason}</p>:<button className={BOARD_BUTTON} disabled={busy} onClick={async()=>{setBusy(true);const result=await projectClient.goal(created.id,goal.id,{expectedRevision:goal.revision,action:"start"});if(result.ok)open();else setError(result.reason);setBusy(false);}}>{t("projects.new.startGoal")}</button>}</>}{error&&<p role="alert">{error}</p>}<button className={BOARD_BUTTON} onClick={open}>{t("projects.new.openProject")}</button></ProjectBoardDialog>;
   }
   const showForm=plain||!options?.chief;
   const startNow=form.mode==="goal"&&<label className="flex min-h-11 items-center gap-2"><input type="checkbox" checked={form.startNow===true} aria-describedby="start-now-hint" onChange={e=>field("startNow",e.target.checked)} />{t("projects.new.startNow")}</label>;
   const startNowHint=form.mode==="goal"&&<p id="start-now-hint">{t("projects.new.startNowHint")}</p>;
-  return <ProjectBoardDialog title={t("projects.new.title")} onClose={onClose} returnFocusRef={returnFocusRef} actions={(showForm||error)?<>{error&&<p role="alert" className="min-w-0 flex-1">{error}</p>}{showForm&&<button form="project-new-form" className={BOARD_BUTTON} disabled={busy||!options||!form.members.length}>{t("projects.new.create")}</button>}</>:undefined}>
+  return <ProjectBoardDialog layerLifecycle={layerLifecycle} native={false} title={t("projects.new.title")} onClose={onClose} returnFocusRef={returnFocusRef} actions={(showForm||error)?<>{error&&<p role="alert" className="min-w-0 flex-1">{error}</p>}{showForm&&<button form="project-new-form" className={BOARD_BUTTON} disabled={busy||!options||!form.members.length}>{t("projects.new.create")}</button>}</>:undefined}>
     <form id="project-new-form" className="space-y-4" onSubmit={e=>{e.preventDefault();void create();}}>
       <label className="block">{t("projects.new.purpose")}<textarea required maxLength={2000} rows={3} className={BOARD_INPUT} value={form.purpose} onChange={e=>field("purpose",e.target.value)} /></label>
       <label className="block">{t("projects.common.deadlineOptional")}<input type="date" className={BOARD_INPUT} value={form.deadline} onChange={e=>field("deadline",e.target.value)} /></label>

@@ -1,3 +1,4 @@
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Codex sub agents (collabAgentToolCall helper threads), against the fake
 // app-server: the parent's turn/completed is not the end of the turn while a
 // helper thread still runs.
@@ -13,6 +14,8 @@ import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { CodexDriver } from "./codex.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
+import { beginOutsideTurn, restartOutsideForTests, turnOutsideRead, wireOutsideStore } from "../email/external-marks.ts";
+import { fileOutsideStore } from "../outside-store.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-codex-app-server.ts");
 const ENV = ["FAKE_CODEX_BG_LOG", "FAKE_CODEX_BG_ASKS", "FAKE_CODEX_BG_HOLD", "FAKE_CODEX_BG_WAKE", "MURAGE_BACKGROUND_CAP_MIN_MS", "MURAGE_BACKGROUND_CAP_MS", "MURAGE_CODEX_WAKE_GRACE_MS"];
@@ -27,7 +30,7 @@ describe("CodexDriver sub agents (fake app-server)", () => {
     instance.adapter.onEvent((e) => {
       if (e.type === "request.opened" && e.threadId === threadId) void instance.adapter.respondToRequest(threadId, e.requestId!, { behavior: "allow" });
     });
-  const send = (threadId: string, text = "go __fixture_subagents__") => instance.adapter.sendTurn({ threadId, text });
+  const send = (threadId: string, text = "go __fixture_subagents__") => instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text });
 
   beforeEach(async () => {
     chmodSync(FAKE_CLI, 0o755);
@@ -67,6 +70,19 @@ describe("CodexDriver sub agents (fake app-server)", () => {
     expect(subs.filter((e) => e.subtask.status === "done").map((e) => e.subtask.id)).toEqual(["child-1", "child-2", "child-3"]);
     expect(subs.find((e) => e.subtask.id === "child-1" && e.subtask.toolCount > 0)).toBeTruthy();
     expect(recorder.events.map((e) => e.type).lastIndexOf("turn.subtask")).toBeLessThan(recorder.events.findIndex((e) => e.type === "turn.completed"));
+  });
+
+  it("NOLIMITS v1 V8-1: a helper thread's notification marks the parent turn `helper`", async () => {
+    const store = join(scratch, "outside-state.jsonl");
+    restartOutsideForTests();
+    expect(wireOutsideStore(fileOutsideStore(store))).toBe(true);
+    onTestFinished(() => restartOutsideForTests());
+    beginOutsideTurn("t-cx-v8", "codex-sub-test", undefined, false);
+    expect(turnOutsideRead("t-cx-v8")).toBeNull();
+    autoApprove("t-cx-v8");
+    const { turnId } = await send("t-cx-v8");
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    expect(turnOutsideRead("t-cx-v8")).toBe("helper");
   });
 
   it("delivers the parent's reply to its helpers inside the same turn", async () => {

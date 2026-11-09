@@ -19,6 +19,10 @@
 // Every file operation goes through `LinkIo`, so the decision table is tested with an in-memory file system.
 import { linkSync, lstatSync, mkdirSync, readFileSync, readlinkSync, renameSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 
+import { DATA_DIR } from "../config.ts";
+import { dataRoots } from "../data-roots.ts";
+import { prefixRebaseLinks } from "../link-removal.ts";
+
 export interface LinkStat {
   isFile(): boolean;
   isSymbolicLink(): boolean;
@@ -111,6 +115,12 @@ export function linkSharedEntry(real: string, scoped: string, io: LinkIo = nodeL
  */
 export function sharesFile(real: string, scoped: string, io: LinkIo = nodeLinkIo): boolean {
   try {
+    if (io.readlinkSync) prefixRebaseLinks.relink(scoped, {
+      site: 11, dataDir: DATA_DIR, previousRoots: dataRoots().previousRoots(), kind: "file",
+      create: (target, path) => io.symlinkSync(target, path),
+      io: { readlinkSync: path => io.readlinkSync!(path), lstatSync: path => io.lstatSync(path),
+        renameSync: (from, to) => io.renameSync(from, to), unlinkSync: path => io.unlinkSync(path) },
+    });
     let scopedStat: LinkStat | null = null;
     try { scopedStat = io.lstatSync(scoped); } catch { /* missing */ }
     let realStat: LinkStat | null = null;

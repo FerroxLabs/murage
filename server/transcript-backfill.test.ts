@@ -3,12 +3,15 @@
 // index, line index, turn_first and message_image thread by thread, in slices that
 // never hold the event loop for more than a bounded amount of work.
 import { DatabaseSync } from "node:sqlite";
+import v8 from "node:v8";
+import vm from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ioBudget } from "./io-budget.ts";
+import { SWEEP_SLICE_MS } from "./slice-budget.ts";
 import { initializeMessageTables } from "./message-tables.ts";
 import { branchOracle, threadKey } from "./branch-index.ts";
-import { BACKFILL_UPGRADE_RECHECK_MS, BACKFILL_UPGRADE_YIELD_MAX_MS, holdTranscriptBackfillUntil, readIndexState, runTranscriptBackfill, transcriptBackfillWaitingOn, turnFirstRowid } from "./transcript-backfill.ts";
+import { BACKFILL_UPGRADE_RECHECK_MS, BACKFILL_UPGRADE_YIELD_MAX_MS, holdTranscriptBackfillUntil, indexAttachmentNamesChunk, readIndexState, runTranscriptBackfill, transcriptBackfillWaitingOn, turnFirstRowid } from "./transcript-backfill.ts";
 
 const put = (db: DatabaseSync, thread: string, id: string, parentId: string | null, extra: object = {}) =>
   db.prepare("INSERT INTO messages(thread_id, id, at, role, kind, text, json) VALUES (?, ?, 1, 'bot', ?, 'x', ?)").run(
@@ -76,6 +79,23 @@ describe("open-card backfill is resumable", () => {
 });
 
 
+/** A test that builds a large fixture leaves tens of megabytes of garbage; V8 collects it at the first big allocation after the loop turns
+ * (100 to 500 ms on a slow box), and that pause would be charged to the backfill. Collect it here, before the loop is watched, so a gap
+ * measured below is the backfill's own. (gate prep r19: the pause, not any chunk, was the 500 ms gap at tick 1.) */
+const settleHeap = () => { v8.setFlagsFromString("--expose-gc"); (vm.runInNewContext("gc") as () => void)(); };
+/** The longest wait of the event loop while `run` goes: a setImmediate chain beside it, every gap between its turns. */
+async function loopGaps(run: () => Promise<void>): Promise<{ worst: number; ticks: number }> {
+  let ticks = 0, worst = 0, last = performance.now(), finished = false;
+  const watch = () => { const now = performance.now(); worst = Math.max(worst, now - last); last = now; ticks++; if (!finished) setImmediate(watch); };
+  setImmediate(watch);
+  try { await run(); } finally { finished = true; }
+  await new Promise((resolve) => setImmediate(resolve));
+  return { worst, ticks };
+}
+/** The longest loop gap the backfill may leave: its slice budget (SWEEP_SLICE_MS) with a tenfold margin for a loaded or slow box (measured on
+ * hz: median 2.5 ms, worst 7 ms; Windows gate box: worst 15 to 38 ms). */
+const GAP_BOUND_MS = SWEEP_SLICE_MS * 10;
+
 const rowid = (db: DatabaseSync, thread: string, id: string) => Number((db.prepare("SELECT rowid AS r FROM messages WHERE thread_id = ? AND id = ?").get(thread, id) as { r: number }).r);
 const always = { admit: () => ({ admitted: true as const, forced: false }) };
 
@@ -108,18 +128,126 @@ describe("the background pass prepares every thread", () => {
     db.exec("COMMIT");
     upgraded(db);
     initializeMessageTables(db);
-    let ticks = 0, worst = 0, last = performance.now(), finished = false;
-    const watch = () => { const now = performance.now(); worst = Math.max(worst, now - last); last = now; ticks++; if (!finished) setImmediate(watch); };
-    setImmediate(watch);
-    await runTranscriptBackfill(db, () => true, { gate: always });
-    finished = true;
-    await new Promise((resolve) => setImmediate(resolve));
-    // at least one turn of the loop per thread (a slice, then a yield), and none waited a quarter of a second
+    settleHeap();
+    const { worst, ticks } = await loopGaps(() => runTranscriptBackfill(db, () => true, { gate: always }));
+    // at least one turn of the loop per thread (a slice, then a yield), and none waited more than ten slice budgets
     expect(ticks).toBeGreaterThanOrEqual(100);
-    expect(worst).toBeLessThan(250);
+    expect(worst).toBeLessThan(GAP_BOUND_MS);
     expect(db.prepare("SELECT COUNT(*) AS n FROM thread_key WHERE state = 2").get()).toEqual({ n: 100 });
     expect(db.prepare("SELECT COUNT(*) AS n FROM msg_branch").get()).toEqual({ n: 90_000 });
   }, 120_000);
+
+  it("the attachment-name index is walked by time, not by a row count: rows with large JSON never hold the loop for more than the bound", async () => {
+    const db = new DatabaseSync(":memory:");
+    initializeMessageTables(db);
+    const pad = "lorem ipsum ".repeat(3_400); // words, not one unbroken run: a long run of one character is slow in the fill's own scans (a separate finding)
+    db.exec("BEGIN");
+    for (let i = 0; i < 1_500; i++) put(db, `big${i % 150}`, `m${i}`, i >= 150 ? `m${i - 150}` : null, { pad, attachments: [{ kind: "file", path: `/store/${String(i).padStart(8, "0")}-1111-2222-3333-444455556666.png` }] });
+    db.exec("COMMIT");
+    upgraded(db);
+    initializeMessageTables(db);
+    settleHeap();
+    const { worst } = await loopGaps(() => runTranscriptBackfill(db, () => true, { gate: always }));
+    // 1,000 rows of 40 KB were one chunk (40 MB of text scanned by the name pattern in one go); a chunk sized from the last one's time is not
+    expect(worst).toBeLessThan(GAP_BOUND_MS);
+    // nothing is skipped: every row's name is indexed and the pass is done
+    expect(readIndexState(db, "attachment_name")).toMatchObject({ done: 1 });
+    expect(db.prepare("SELECT COUNT(DISTINCT name) AS n FROM attachment_name").get()).toEqual({ n: 1_500 });
+  }, 120_000);
+
+  it("the first attachment-name chunk is small: the first slice may be cold", async () => {
+    const db = new DatabaseSync(":memory:");
+    initializeMessageTables(db);
+    db.exec("BEGIN");
+    for (let i = 0; i < 3_000; i++) put(db, `t${i % 100}`, `m${i}`, i >= 100 ? `m${i - 100}` : null, { text: "lorem ipsum ".repeat(170) });
+    db.exec("COMMIT");
+    upgraded(db);
+    initializeMessageTables(db);
+    const cursors: number[] = [];
+    await runTranscriptBackfill(db, () => true, { gate: always, ready: null, upgradeRunning: () => { cursors.push(readIndexState(db, "attachment_name").cursor); return false; } });
+    // the cursor each chunk began at: the first chunk is far below BACKFILL_CHUNK_ROWS, and the walk ends complete
+    expect(cursors[1]! - cursors[0]!).toBeLessThanOrEqual(64);
+    expect(readIndexState(db, "attachment_name")).toMatchObject({ done: 1 });
+  }, 120_000);
+
+  it("a run of cheap rows then expensive ones never makes one oversized attachment-name chunk: the chunk keeps its own deadline", async () => {
+    const db = new DatabaseSync(":memory:");
+    initializeMessageTables(db);
+    const pad = "lorem ipsum ".repeat(3_400);
+    db.exec("BEGIN");
+    // 1,960 cheap rows grow the sizer to its maximum (64+128+256+512+1000), then 1,000 rows of 40 KB follow in one predicted chunk
+    for (let i = 0; i < 1_960; i++) put(db, `c${i % 100}`, `m${i}`, i >= 100 ? `m${i - 100}` : null, { text: "hi" });
+    for (let i = 1_960; i < 2_960; i++) put(db, `c${i % 100}`, `m${i}`, `m${i - 100}`, { pad });
+    db.exec("COMMIT");
+    upgraded(db);
+    initializeMessageTables(db);
+    settleHeap();
+    const { worst } = await loopGaps(() => runTranscriptBackfill(db, () => true, { gate: always }));
+    expect(worst).toBeLessThan(GAP_BOUND_MS);
+    expect(readIndexState(db, "attachment_name")).toMatchObject({ done: 1 });
+  }, 120_000);
+
+  it("loopGaps stops its watcher even when the run throws", async () => {
+    const spy = vi.spyOn(globalThis, "setImmediate");
+    try {
+      await expect(loopGaps(async () => { throw new Error("boom"); })).rejects.toThrow("boom");
+      const after = spy.mock.calls.length;
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      // a watcher left running would go on scheduling itself for ever
+      expect(spy.mock.calls.length - after).toBeLessThanOrEqual(1);
+    } finally { spy.mockRestore(); }
+  });
+
+  it("an attachment-name chunk cut by its deadline loses no name: names on both sides of every cut, rowid gaps and an empty range (injected clock)", () => {
+    const db = new DatabaseSync(":memory:");
+    initializeMessageTables(db);
+    expect(indexAttachmentNamesChunk(db)).toBe(false); // no rows: done at once
+    expect(readIndexState(db, "attachment_name")).toMatchObject({ done: 1 });
+    const full = new DatabaseSync(":memory:");
+    initializeMessageTables(full);
+    full.exec("BEGIN");
+    const named: string[] = [];
+    for (let i = 1; i <= 120; i++) { const name = `${String(i).padStart(8, "0")}-1111-2222-3333-444455556666.png`; put(full, `a${i % 7}`, `m${i}`, null, { attachments: [{ kind: "file", path: `/store/${name}` }] }); named.push(name); }
+    full.exec("COMMIT");
+    full.exec("DELETE FROM messages WHERE rowid % 9 = 0"); // gaps in the rowids
+    const kept = named.filter((_, i) => (i + 1) % 9 !== 0);
+    upgraded(full);
+    initializeMessageTables(full);
+    let clock = 0, chunks = 0;
+    // every look at the clock costs 5 ms and a chunk has 12 ms: it is cut after about three rows, however many it was sized for
+    while (indexAttachmentNamesChunk(full, 1_000, 12, () => (clock += 5))) { chunks++; expect(chunks).toBeLessThan(500); }
+    expect(chunks).toBeGreaterThan(20);
+    expect((full.prepare("SELECT name FROM attachment_name ORDER BY name").all() as Array<{ name: string }>).map((r) => r.name)).toEqual([...kept].sort());
+    expect(readIndexState(full, "attachment_name")).toMatchObject({ done: 1 });
+  });
+
+  it("one long thread of large rows fills in time proportional to its rows (per-slice work never scales with the thread's history)", async () => {
+    const fillOne = async (n: number) => {
+      const db = new DatabaseSync(":memory:");
+      initializeMessageTables(db);
+      db.exec("BEGIN");
+      for (let i = 0; i < n; i++) put(db, "long", `m${i}`, i ? `m${i - 1}` : null, { text: "lorem ipsum ".repeat(170) });
+      db.exec("COMMIT");
+      upgraded(db);
+      initializeMessageTables(db);
+      settleHeap();
+      const began = performance.now();
+      const { worst } = await loopGaps(() => runTranscriptBackfill(db, () => true, { gate: always }));
+      const ms = performance.now() - began;
+      // nothing skipped: the thread is prepared and every row has its place in the branch index
+      expect(db.prepare("SELECT COUNT(*) AS n FROM thread_key WHERE state = 2").get()).toEqual({ n: 1 });
+      expect(db.prepare("SELECT COUNT(*) AS n FROM msg_branch").get()).toEqual({ n });
+      return { perRow: ms / n, ms, worst };
+    };
+    await fillOne(300); // warm the code paths so the compared runs are both warm
+    const small = await fillOne(300);
+    const big = await fillOne(3_000);
+    // 3,000 rows cost about ten times 300, not a hundred: a row is read once, not once per slice that does not get to it
+    expect(big.perRow).toBeLessThan(Math.max(small.perRow, 0.02) * 2);
+    expect(big.ms).toBeLessThan(4_000);
+    expect(big.worst).toBeLessThan(GAP_BOUND_MS);
+  }, 120_000);
+
 });
 
 /** A handle whose first `times` BEGIN IMMEDIATEs throw SQLITE_BUSY. */

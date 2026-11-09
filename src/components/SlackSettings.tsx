@@ -130,11 +130,11 @@ export function SlackSettings() {
     await api("/api/config", { method: "PATCH", body: JSON.stringify({ slack: identity }) }); dirty.current = false;
     await refresh(expected); if (mounted.current) setNotice("Workspace details saved. Pairing has not started.");
   });
-  return <section aria-labelledby="slack-settings-title" className="min-w-0 rounded-xl border border-hairline/40 bg-card p-4">
-    <h3 id="slack-settings-title" className="text-[15px] font-semibold text-ink">Slack</h3>
+  return <section aria-labelledby="slack-settings-name" className="min-w-0 rounded-xl border border-hairline/40 bg-card p-4">
+    <h3 id="slack-settings-name"className="text-[15px] font-semibold text-ink">Slack</h3>
     <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">Message your Chief from one approved Slack direct message. Keep Murage running to receive messages. Approvals stay in Murage.</p>
     <p role="status" className="mt-3 text-[12px] font-medium text-ink">{slackHealth(status, expired)}</p>
-    <InAdvanced><div id="slack-app-setup-heading" className="rounded-xl bg-card p-4 text-[12px] text-ink-secondary">
+    <InAdvanced slot="slack-setup"><div className="rounded-xl bg-card p-4 text-[12px] text-ink-secondary">
       <h4 className="text-[13px] font-medium text-ink">Private Slack app setup</h4>
       <p>Use a private app with Socket Mode enabled. The app-level token needs <code>connections:write</code>. The bot token needs <code>im:history</code> and <code>chat:write</code>, with the <code>message.im</code> event enabled. Add <code>files:write</code> too if you want voice notes sent here.</p>
       <a data-setting-control="slack-app-setup-heading" className="mt-2 inline-flex min-h-11 items-center text-accent-text underline hover:text-ink" href="https://api.slack.com/apps" target="_blank" rel="noreferrer">Open Slack app settings</a>
@@ -182,7 +182,7 @@ export function SlackSettings() {
     {(status?.pending ?? 0) > 0 && <p role="status" className="mt-3 text-[12px] text-ink-secondary">Slack work is pending. Review the task in Murage.</p>}
     {(status?.uncertain ?? 0) > 0 && <p role="alert" className="mt-2 text-[12px] text-warning">A reply delivery is uncertain. Check Slack before sending the message again.</p>}
     {(status?.rejected ?? 0) > 0 && <p role="alert" className="mt-2 text-[12px] text-warning">A reply was rejected. Review app access and the task in Murage.</p>}
-    {(status?.needsReview ?? 0) > 0 && <p role="alert" className="mt-2 text-[12px] text-warning">A saved task receipt needs review in Murage. It will not be rerun automatically.</p>}
+    {(status?.needsReview ?? 0) > 0 && <p role="alert" className="mt-2 text-[12px] text-warning">A saved task record needs review in Murage. The task will not be run again automatically.</p>}
     {status?.error && <p role="alert" className="mt-3 text-[12px] text-warning">{slackHelp(status.error)}</p>}
     {refreshError && <p role="alert" className="mt-2 text-[12px] text-warning">Status refresh failed. The last confirmed state is still shown. Check the connection, then use Refresh status.</p>}
     {error && <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p>}

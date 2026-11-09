@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Grok bot turns load Murage's own MCP servers and none of the owner's personal setup
@@ -248,3 +249,6 @@ describe("grok personal setup isolation", () => {
     expect(readFileSync(join(grok, "config.toml"), "utf8")).toContain("pgrok1");
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

@@ -135,8 +135,23 @@ export type HandleCache = Map<string, Handle>;
 /** Sets up to this size are stored under the digest of their members (the same union is one set). */
 const DEDUPE_MAX = 512;
 const MAX_HANDLES = 400_000, MAX_KEYS = 4_000_000, MAX_DEPTH = 12;
+let maxHandles = MAX_HANDLES;
+/** Tests (T12 handle capacity op): a smaller handle capacity; null is the real one. */
+export function setMaxHandlesForTest(max: number | null): void { maxHandles = max ?? MAX_HANDLES; }
 let keptKeys = 0;
-export function forgetRootSetHandles(cache: HandleCache): void { cache.clear(); keptKeys = 0; partialWalks.delete(cache); }
+export function forgetRootSetHandles(cache: HandleCache): void { cache.clear(); keptKeys = 0; partialWalks.delete(cache); handlesForgotten("forget"); }
+/** TURNSTART r14 S6: told whenever stored handles (and their partial walks) are dropped, so the VerdictStore moves memoEpoch without this module
+ * importing it. One hook; null removes it. */
+let handlesForgottenHook: ((why: string) => void) | null = null;
+export function onHandlesForgotten(hook: ((why: string) => void) | null): void { handlesForgottenHook = hook; }
+function handlesForgotten(why: string): void {
+  // MUTANT:handle-epoch-skip
+  handlesForgottenHook?.(why);
+}
+/** TURNSTART r14.1 X4 / flagfold F7: a guard asked BEFORE a handle's family grows (a backfill slice past its room: the handle is not kept). */
+let handleGrowthGuard: ((size: number, max: number) => boolean) | null = null;
+export function setHandleGrowthGuard(guard: ((size: number, max: number) => boolean) | null): void { handleGrowthGuard = guard; }
+const growthRefused = (cache: HandleCache, added: number): boolean => handleGrowthGuard !== null && (handleGrowthGuard(cache.size, maxHandles) || handleGrowthGuard(keptKeys + added, MAX_KEYS));
 
 function hasAt(family: Family | null, key: string, end: number): boolean {
   for (let f = family; f; f = f.parent) {
@@ -181,6 +196,7 @@ function mergeAbsorbed(a: ReadonlyMap<Family, number>, b: ReadonlyMap<Family, nu
 }
 /** A full set: its own family. */
 function rootHandle(cache: HandleCache, id: string, keys: readonly string[]): Handle | null {
+  if (growthRefused(cache, keys.length)) return null;
   const family = new Family(null, 0);
   for (const key of keys) {
     if (family.first.has(key)) return null;
@@ -193,6 +209,7 @@ function rootHandle(cache: HandleCache, id: string, keys: readonly string[]): Ha
 function childHandle(cache: HandleCache, id: string, parent: Handle, added: readonly string[]): Handle | null {
   const seen = new Set<string>();
   for (const key of added) if (seen.has(key) || hasAt(parent.family, key, parent.end)) return null; else seen.add(key);
+  if (growthRefused(cache, added.length + (parent.family.length !== parent.end && parent.family.depth >= MAX_DEPTH ? parent.end : 0))) return null;
   let family = parent.family;
   if (family.length !== parent.end) {
     if (family.depth >= MAX_DEPTH && !restsOnLazy(family)) {
@@ -208,7 +225,7 @@ function childHandle(cache: HandleCache, id: string, parent: Handle, added: read
   return remember(cache, { id, end: parent.end + added.length, family, parent, absorbed: parent.absorbed });
 }
 function remember(cache: HandleCache, handle: Handle): Handle {
-  if (cache.size >= MAX_HANDLES || keptKeys > MAX_KEYS) { cache.clear(); keptKeys = 0; }
+  if (cache.size >= maxHandles || keptKeys > MAX_KEYS) { cache.clear(); keptKeys = 0; handlesForgotten("capacity"); }
   cache.set(handle.id, handle);
   return handle;
 }
@@ -495,7 +512,7 @@ export function storeLayered(db: DatabaseSync, cache: HandleCache, set: LayeredR
       }
       return id;
     }
-    cache.delete(base.id);
+    cache.delete(base.id); handlesForgotten("layered");
   }
   const keys = [...set];
   work.members += keys.length;

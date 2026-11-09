@@ -4,7 +4,7 @@ export { preloadConnectedApps, pendingConnectedApps, isCredentialStoreUnreadable
 // 1,500+ apps (server/app-catalog.ts): first paint is the featured apps
 // from the copy on disk, typing searches the whole catalog, and "All apps"
 // is a windowed, paged list. Icons resolve logo → favicon → monogram.
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { ArrowLeft, Check, Loader2, RefreshCw, Search, TriangleAlert, X } from "lucide-react";
 import { api, useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
@@ -26,6 +26,7 @@ import {
 import { useDesktopSurface } from "@/lib/use-surface";
 import { t } from "@/lib/i18n";
 import { openExternalPage } from "@/lib/open-external";
+import { FLUX_DASHBOARD_BILLING_PAGE } from "../../shared/flux-links";
 import {
   appCountLabel,
   appsClaimFor,
@@ -38,9 +39,11 @@ import {
   type CatalogFallbackReason,
 } from "@/lib/app-catalog";
 import { VirtualRows } from "./VirtualRows";
-import { returnFocus } from "@/lib/return-focus";
+import { useLayerContainer } from "./LayerSlot";
+import { LayerSurface } from "./LayerSurface";
 import type { ConfirmedConnectLabel } from "@/lib/connect-app";
 import { ConnectLabelForm } from "./ConnectLabelForm";
+import { settingsTabKeys } from "./settings/pages/settings-tab-keys";
 
 type ToolkitCard = AppCard;
 
@@ -190,7 +193,7 @@ export type ConnectedAppsNotice =
   | { kind: "consent"; body: string; actions: Array<{ id: ConnectedAppsNoticeAction; label: string }> }
   | { kind: "line"; tone: "warning" | "muted"; text: string; action?: { id: ConnectedAppsNoticeAction; label: string } };
 
-export const FLUXROUTER_BILLING_URL = "https://fluxrouter.ai/dashboard/billing";
+export const FLUXROUTER_BILLING_URL = FLUX_DASHBOARD_BILLING_PAGE;
 const CLAIMED_NOTICE_MS = 24 * 60 * 60 * 1000;
 
 /** The cut-off date as people read it; null when absent or unparseable. */
@@ -573,14 +576,42 @@ function ServiceIcon({ card }: { card: ToolkitCard }) {
   );
 }
 
-export function PluginsPanel() {
+const CACHED_CATALOG_ERROR = "connectedApps.cachedCatalogError";
+
+/** Only modal callers attach to the layer. An embedded panel must leave Settings' layer alone. */
+function PluginsModal({ children, dialogRef, lockState, close }: {
+  children: ReactNode; dialogRef: RefObject<HTMLDivElement | null>; lockState: string; close: () => void;
+}) {
+  const layer = useLayerContainer(dialogRef, {
+    onEscape: close,
+    initialFocus: lockState === "locked" ? "[data-connected-apps-lock-primary]" : "input",
+  });
+  useEffect(() => {
+    if (lockState === "unknown" || !layer?.active) return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const active = document.activeElement;
+    const parked = !active || active === document.body || active === dialog || active === dialog.querySelector('[aria-label="Close connected apps"]');
+    if (!parked) return;
+    (dialog.querySelector<HTMLElement>("[data-connected-apps-lock-primary]")
+      ?? dialog.querySelector<HTMLElement>('input[aria-label="Search apps"]'))?.focus();
+  }, [lockState, layer, dialogRef]);
+  return <LayerSurface><div
+    className="overlay-inset fixed inset-x-0 top-0 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/55 p-4 backdrop-blur-[2px] sm:p-6"
+    onMouseDown={(event) => event.target === event.currentTarget && close()}
+  >{children}</div></LayerSurface>;
+}
+
+export function PluginsPanel({ embedded = false, readOnly = false }: { embedded?: boolean; readOnly?: boolean } = {}) {
   const { state, dispatch } = useStore();
-  const desktop = useDesktopSurface();
+  const detectedDesktop = useDesktopSurface();
+  const desktop = readOnly ? false : detectedDesktop;
+  const tabsId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   // Which half of the dialog is showing: the Composio marketplace, or the
   // person's own MCP commands. Two different things behind one door.
   // Settings > Connected apps can ask for the MCP half directly.
-  const [surface, setSurface] = useState<"apps" | "mcp">(() => (state.pluginsSurface === "mcp" && desktop === true ? "mcp" : "apps"));
+  const [surface, setSurface] = useState<"apps" | "mcp">(() => (!embedded && state.pluginsSurface === "mcp" && desktop === true ? "mcp" : "apps"));
   // Featured apps: the curated set plus the most used, from the copy on disk.
   // Nothing is carried over from an earlier open: the backend may have
   // changed since, and the server's held copy answers in milliseconds.
@@ -629,7 +660,7 @@ export function PluginsPanel() {
   statusRef.current = status;
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [tab, setTab] = useState<"marketplace" | "connected">("marketplace");
+  const [tab, setTab] = useState<"marketplace" | "connected">(readOnly ? "connected" : "marketplace");
 
   const pollTimers = useRef(new Map<string, ReturnType<typeof setInterval>>());
   const statusGenerations = useRef(new Map<string, number>());
@@ -764,7 +795,7 @@ export function PluginsPanel() {
   // exists. Decided from what GET /api/config already told the store, never
   // from a connector response: the locked panel sends no connector request
   // at all, and the config frame flips it open the moment a key is saved.
-  const lockState = connectedAppsLockState(state.config, { stale: stale || storeUnreadable });
+  const lockState = readOnly ? "unlocked" : connectedAppsLockState(state.config, { stale: stale || storeUnreadable });
   const locked = lockState === "locked";
 
   /** The lock's one button: Settings → Models, cursor in the Flux key field. */
@@ -779,6 +810,7 @@ export function PluginsPanel() {
    * credentials); the rest just open the right settings section. */
   const loadCatalogRef = useRef<((retry?: boolean) => Promise<void>) | null>(null);
   const runNoticeAction = useCallback((action: ConnectedAppsNoticeAction) => {
+    if (readOnly && action !== "retry") return;
     if (action === "reconnect") {
       // The one manual mint: another computer took over, and nothing here
       // retries by itself. Mint first, then end this computer's old token.
@@ -796,7 +828,10 @@ export function PluginsPanel() {
       return;
     }
     if (action === "billing") {
-      window.open(FLUXROUTER_BILLING_URL, "_blank", "noopener,noreferrer");
+      // the system browser on desktop, Cloud and phone (a blank tab opened first in a plain browser, no opener): the billing page
+      // goes through Flux sign-in (shared/flux-links.ts), and a raw window.open answered nothing on Cloud and phone.
+      void openExternalPage(FLUXROUTER_BILLING_URL, t("modelSignIn.error.browser"))
+        .catch(() => setError(t("modelSignIn.error.browser")));
       return;
     }
     if (action === "keep-legacy") {
@@ -822,7 +857,7 @@ export function PluginsPanel() {
     // lands on Connected apps. They used to open whichever section was open
     // last.
     dispatch({ type: "toggleAppSettings", open: true, section: action === "enable-flux" ? "models" : "connections" });
-  }, [dispatch, loadConnectionInventory]);
+  }, [dispatch, loadConnectionInventory, readOnly]);
 
   const catalogRetry = useRef<{ tries: number; timer?: ReturnType<typeof setTimeout> }>({ tries: 0 });
   // Only the newest catalog request may paint, and only while mounted.
@@ -844,6 +879,7 @@ export function PluginsPanel() {
       .then((r) => {
         if (!mounted.current || request !== catalogRequest.current) return;
         catalogAnswered.current = true;
+        setError((current) => current === CACHED_CATALOG_ERROR ? null : current);
         const answer = catalogAnswerFrom(r);
         setCards(r.cards ?? []);
         setCatalog(answer);
@@ -919,7 +955,11 @@ export function PluginsPanel() {
         setCards(r.cards ?? []);
         setCatalog({ ...catalogAnswerFrom(r), allApps: false });
       })
-      .catch(() => {});
+      .catch(() => {
+        // The checked request still runs; a late cache failure must not
+        // replace its result or an unrelated action error.
+        if (alive && !catalogAnswered.current) setError((current) => current || CACHED_CATALOG_ERROR);
+      });
     void loadCatalog();
     return () => {
       alive = false;
@@ -1017,69 +1057,6 @@ export function PluginsPanel() {
   useEffect(() => {
     if (browseAll && !allApps.items.length && !allApps.done) loadMoreApps();
   }, [browseAll, allApps.items.length, allApps.done, loadMoreApps]);
-
-  useEffect(() => {
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const dialog = dialogRef.current;
-    const focusable = () =>
-      Array.from(
-        dialog?.querySelectorAll<HTMLElement>(
-          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ) ?? [],
-      );
-
-    // Locked, the offer's button is the first thing the keyboard reaches;
-    // otherwise the search field, as before.
-    (dialog?.querySelector<HTMLElement>("[data-connected-apps-lock-primary]")
-      ?? dialog?.querySelector<HTMLElement>("input")
-      ?? focusable()[0]
-      ?? dialog)?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        dispatch({ type: "togglePlugins", open: false });
-        return;
-      }
-      if (event.key !== "Tab" || !dialog) return;
-      const items = focusable();
-      if (items.length === 0) {
-        event.preventDefault();
-        dialog.focus();
-        return;
-      }
-      const first = items[0];
-      const last = items.at(-1)!;
-      if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      returnFocus(opener);
-    };
-  }, [dispatch]);
-
-  // The dialog places focus once, on mount, and the apps surface may not be
-  // decided yet then (config answered late). Once it is, put focus where the
-  // mount would have — the lock's button, or the search field — unless the
-  // person has already moved it somewhere on purpose. Switching surfaces
-  // does not re-run this.
-  useEffect(() => {
-    if (lockState === "unknown") return;
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    const active = document.activeElement;
-    const parked = !active || active === document.body || active === dialog || active === dialog.querySelector('[aria-label="Close connected apps"]');
-    if (!parked) return;
-    (dialog.querySelector<HTMLElement>("[data-connected-apps-lock-primary]")
-      ?? dialog.querySelector<HTMLElement>('input[aria-label="Search apps"]'))?.focus();
-  }, [lockState]);
 
   const openConnectUrl = async (url: string) => {
     // If a popup blocker rejects the first asynchronous open, the visible
@@ -1337,20 +1314,17 @@ export function PluginsPanel() {
               );
   };
 
-  return (
-    <div
-      className="overlay-inset fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/55 p-4 backdrop-blur-[2px] sm:p-6"
-      onMouseDown={(event) => event.target === event.currentTarget && close()}
-    >
+  const content = (
       <div
         ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="plugins-title"
-        tabIndex={-1}
-        className={cn(BOX_FRAME, "animate-pop-in h-[min(780px,calc(var(--vvh,100dvh)-2rem))] w-full max-w-[1040px] rounded-[24px] border border-hairline/50 bg-panel shadow-2xl shadow-black/50")}
+        role={embedded ? undefined : "dialog"}
+        aria-modal={embedded ? undefined : true}
+        aria-labelledby={embedded ? undefined : "plugins-title"}
+        tabIndex={embedded ? undefined : -1}
+        data-plugins-embedded={embedded || undefined}
+        className={embedded ? "min-w-0" : cn(BOX_FRAME, "animate-pop-in h-[min(780px,calc(var(--vvh,100dvh)-2rem))] w-full max-w-[1040px] rounded-[24px] border border-hairline/50 bg-panel shadow-2xl shadow-black/50")}
       >
-        <BoxHead className="items-start gap-4 px-6 pb-3 pt-6 sm:px-8 sm:pt-7">
+        {!embedded && <BoxHead className="items-start gap-4 px-6 pb-3 pt-6 sm:px-8 sm:pt-7">
           <div>
             <h2 id="plugins-title" className="text-[22px] font-semibold tracking-[-0.01em] text-ink">Connected apps</h2>
             <p className="mt-1 text-[13px] text-ink-secondary">{desktop === true ? t("ux.lcopyb.connected.subtitleDesktop", { apps: appsClaimFor(catalog?.total, APPS_CLAIM) }) : t("ux.lcopyb.connected.subtitleRemote")}</p>
@@ -1374,16 +1348,26 @@ export function PluginsPanel() {
               <X size={21} />
             </button>
           </div>
-        </BoxHead>
+        </BoxHead>}
 
-        <div className="shrink-0 border-b border-hairline/40 px-6 sm:px-8">
+        {embedded && <button type="button" data-setting-control="connections-heading"
+          disabled={refreshing || lockState !== "unlocked"} onClick={() => void loadConnectionInventory(true)}
+          className="min-h-11 rounded-lg px-3 text-[13px] text-ink hover:bg-raised disabled:opacity-50">
+          {t("imageSettings.refresh")}
+        </button>}
+
+        {!embedded && <div className="shrink-0 border-b border-hairline/40 px-6 sm:px-8">
           <div className="flex gap-6" role="tablist" aria-label={t("ux.lcopyb.connected.tabsLabel")}>
             {(desktop === true ? ["apps", "mcp"] as const : ["apps"] as const).map((item) => (
               <button
                 key={item}
                 type="button"
                 role="tab"
+                id={`${tabsId}-surface-${item}`}
+                aria-controls={`${tabsId}-surface-panel-${item}`}
+                tabIndex={surface === item ? 0 : -1}
                 aria-selected={surface === item}
+                onKeyDown={settingsTabKeys}
                 onClick={() => setSurface(item)}
                 className={cn(
                   "border-b-2 px-0.5 pb-3 pt-1 text-[13.5px] font-medium transition-colors",
@@ -1394,8 +1378,10 @@ export function PluginsPanel() {
               </button>
             ))}
           </div>
-        </div>
+        </div>}
 
+        {!embedded && desktop === true && <div hidden role="tabpanel" id={`${tabsId}-surface-panel-${surface === "apps" ? "mcp" : "apps"}`} aria-labelledby={`${tabsId}-surface-${surface === "apps" ? "mcp" : "apps"}`} />}
+        <div role={embedded ? undefined : "tabpanel"} id={`${tabsId}-surface-panel-${surface}`} aria-labelledby={embedded ? undefined : `${tabsId}-surface-${surface}`} className={embedded ? undefined : "flex min-h-0 flex-1 flex-col"}>
         {surface !== "mcp" && showOwnKeyRetiredLine(state.config, { anyConnected: state.config?.composio?.broker === "flux" && Object.values(status).some((entry) => entry.connected) }) && <OwnKeyRetiredLine />}
         {desktop === true && surface === "mcp" ? (
           <Suspense fallback={<div className="flex flex-1 items-center justify-center gap-2 py-24 text-[13px] text-ink-secondary"><Loader2 size={14} className="animate-spin" /> {t("mcp.panel.loading")}</div>}>
@@ -1406,7 +1392,7 @@ export function PluginsPanel() {
             <Loader2 size={14} className="animate-spin" /> {t("connectedApps.lock.loading")}
           </div>
         ) : locked ? (
-          <ConnectedAppsLock onAddFluxKey={addFluxKey} retired={state.config?.composio?.migration?.state === "legacy-retired"} />
+          readOnly ? <p className="py-4 text-[13px] text-ink-secondary">{t("ux.lcopyb.connected.subtitleRemote")}</p> : <ConnectedAppsLock onAddFluxKey={addFluxKey} retired={state.config?.composio?.migration?.state === "legacy-retired"} />
         ) : <>
 
         {stale && (
@@ -1421,10 +1407,14 @@ export function PluginsPanel() {
           </div>
         )}
 
-        <div className="flex shrink-0 flex-col gap-3 px-6 pb-4 pt-5 sm:flex-row sm:items-center sm:justify-between sm:px-8">
-          <div className="flex w-fit rounded-xl bg-raised/70 p-1" role="tablist" aria-label="Connected apps view">
+        <div className={embedded ? "flex min-w-0 flex-col gap-3 pb-4 pt-5" : "flex shrink-0 flex-col gap-3 px-6 pb-4 pt-5 sm:flex-row sm:items-center sm:justify-between sm:px-8"}>
+          <div className="flex w-fit max-w-full flex-wrap rounded-xl bg-raised/70 p-1" role="tablist" aria-label="Connected apps view">
             <button
               role="tab"
+              id={`${tabsId}-marketplace`}
+              aria-controls={`${tabsId}-panel-marketplace`}
+              tabIndex={tab === "marketplace" ? 0 : -1}
+              onKeyDown={settingsTabKeys}
               aria-selected={tab === "marketplace"}
               onClick={() => setTab("marketplace")}
               className={cn(
@@ -1436,6 +1426,10 @@ export function PluginsPanel() {
             </button>
             <button
               role="tab"
+              id={`${tabsId}-connected`}
+              aria-controls={`${tabsId}-panel-connected`}
+              tabIndex={tab === "connected" ? 0 : -1}
+              onKeyDown={settingsTabKeys}
               aria-selected={tab === "connected"}
               onClick={() => setTab("connected")}
               className={cn(
@@ -1489,7 +1483,7 @@ export function PluginsPanel() {
                   {notice.actions.map((action) => (
                     <button
                       key={action.id}
-                      disabled={claiming && action.id === "claim"}
+                      disabled={readOnly || (claiming && action.id === "claim")}
                       className="font-medium underline underline-offset-2 disabled:opacity-60"
                       onClick={() => runNoticeAction(action.id)}
                     >
@@ -1512,7 +1506,7 @@ export function PluginsPanel() {
               {notice.action && (
                 <>
                   {" "}
-                  <button className="font-medium underline underline-offset-2" onClick={() => runNoticeAction(notice.action!.id)}>
+                  <button disabled={readOnly && notice.action.id !== "retry"} className="font-medium underline underline-offset-2 disabled:opacity-50" onClick={() => runNoticeAction(notice.action!.id)}>
                     {notice.action.label}
                   </button>
                 </>
@@ -1539,9 +1533,10 @@ export function PluginsPanel() {
             )}
           </div>
         )}
-        {error && <div role="alert" className="mx-6 mt-2 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger sm:mx-8">{error}</div>}
+        {error && <div role="alert" className="mx-6 mt-2 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger sm:mx-8">{error === CACHED_CATALOG_ERROR ? t(CACHED_CATALOG_ERROR) : error}</div>}
 
-        <BoxBody ref={scrollRef} className="px-6 pb-7 pt-5 sm:px-8">
+        <div hidden role="tabpanel" id={`${tabsId}-panel-${tab === "marketplace" ? "connected" : "marketplace"}`} aria-labelledby={`${tabsId}-${tab === "marketplace" ? "connected" : "marketplace"}`} />
+        <BoxBody ref={scrollRef} role="tabpanel" id={`${tabsId}-panel-${tab}`} aria-labelledby={`${tabsId}-${tab}`} className={embedded ? "max-h-[36rem] px-1 pb-4 pt-5" : "px-6 pb-7 pt-5 sm:px-8"}>
           {cards === null && tab === "marketplace" ? (
             <div className="flex items-center justify-center gap-2 py-24 text-[13px] text-ink-secondary">
               <Loader2 size={14} className="animate-spin" /> Loading catalog…
@@ -1640,7 +1635,8 @@ export function PluginsPanel() {
         </BoxBody>
 
         </>}
+        </div>
       </div>
-    </div>
   );
+  return embedded ? content : <PluginsModal dialogRef={dialogRef} lockState={lockState} close={close}>{content}</PluginsModal>;
 }

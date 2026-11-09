@@ -2,17 +2,23 @@
 // app, and while idle/checking. Two frames, one content (UpdateCardBody):
 // - the centred card, opened from the round button beside the account menu (UpdateIndicator);
 // - the pop-up: comes up by itself when a download starts, stays through to the restart, and never takes focus or sits over
-//   the composer. A download always shows here, so the card never holds the app while one runs.
+//   the composer. A download always shows here, so the card never holds the app while one runs. It sits above the sidebar
+//   footer, under menus; while a modal window is open (What's New after an update: canary 1.0.16 on a Mac had the pop-up
+//   behind it) it moves inside that window as a top-layer popover, so it shows above it and its buttons work.
 // All of it is the same state machine as the button: everything reads useUpdaterState, and only "is the card open" and how the
 // pop-up stands are shared (lib/update-card.ts). The install path (hand-off, deferred backup) is untouched.
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useFocusTrap } from "@/lib/focus-trap";
+import { LayerSurface } from "./LayerSurface";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ArrowDownToLine, Loader2, PackageOpen, RefreshCw, Sparkles, X } from "lucide-react";
 import { useUpdaterState, type UpdaterState } from "@/lib/updater";
-import { closeUpdateCard, closeUpdatePopup, updatePopupPlace, useUpdateCardOpen, useUpdatePopup, type UpdatePopupPlace } from "@/lib/update-card";
+import { createPortal } from "react-dom";
+import { closeUpdateCard, closeUpdatePopup, installerOffer, popupFocusReturn, updatePopupPlace, useUpdateCardOpen, useUpdatePopup, useUpdatePopupAnchor, type UpdatePopupPlace } from "@/lib/update-card";
+import { watchModalWindow } from "@/lib/modal-window";
+import { focusableWithin } from "@/lib/focus-trap";
 import { useUndoToast } from "@/lib/undo";
-import { t } from "@/lib/i18n";
+import { localeVersion, subscribeLocale, t } from "@/lib/i18n";
 import { releaseHighlights } from "@/lib/release-highlights";
-import { wrapTabTarget } from "@/lib/focus-wrap";
 import { cn } from "@/lib/cn";
 import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 
@@ -36,10 +42,11 @@ function friendlyError(message?: string): string {
 }
 
 export function UpdateBanner() {
+  // Mounted beside the terms gate, outside Shell, so it follows a language change itself.
+  useSyncExternalStore(subscribeLocale, localeVersion, localeVersion);
   const s = useUpdaterState();
   const cardOpen = useUpdateCardOpen();
   const popupUp = useUpdatePopup(s);
-  const cardRef = useRef<HTMLDivElement>(null);
   const status = s?.status;
   // Closing is just closing: the round button stays while there is anything to do.
   const dismiss = () => {
@@ -51,59 +58,72 @@ export function UpdateBanner() {
   useEffect(() => {
     if (cardOpen && status === "downloading") closeUpdateCard();
   }, [cardOpen, status]);
-  // Focus goes into the card when it opens and back to the control that opened it (the round button) when it closes.
-  useEffect(() => {
-    if (!cardOpen) return;
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    cardRef.current?.focus();
-    return () => {
-      const back = opener?.isConnected ? opener : document.querySelector<HTMLElement>('[data-testid="update-indicator"]');
-      back?.focus();
-    };
-  }, [cardOpen]);
-  // Escape and Tab belong to the card while it is open (handlers on the card, not the document).
-  const onCardKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape" && status !== "installing") {
-      event.stopPropagation();
-      dismiss();
-    } else if (event.key === "Tab") {
-      const items = [...event.currentTarget.querySelectorAll<HTMLElement>("button:not([disabled]), [href], input, [tabindex]:not([tabindex='-1'])")];
-      const target = wrapTabTarget(items.length, items.indexOf(document.activeElement as HTMLElement), event.shiftKey);
-      if (target !== null) {
-        event.preventDefault();
-        items[target]?.focus();
-      }
-    }
-  };
-
   if (!s || s.status === "idle" || s.status === "checking") return null;
-  if (cardShows) {
-    const busy = s.status === "installing";
-    return (
-      <div className="overlay-inset fixed inset-0 z-50 flex items-center justify-center p-4" data-testid="update-card-layer">
-        <div className="absolute inset-0 bg-black/40" onMouseDown={() => { if (!busy) dismiss(); }} />
-        <div ref={cardRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={updateTitle(s)} onKeyDown={onCardKeyDown} data-testid="update-card" className={cn(BOX_FRAME, "animate-panel-in relative max-h-[calc(var(--vvh,100dvh)-2rem)] w-[340px] max-w-full rounded-xl border border-hairline/40 bg-panel pb-4 shadow-2xl shadow-black/50 focus:outline-none")}>
-          <UpdateCardBody s={s} onDismiss={dismiss} />
-        </div>
-      </div>
-    );
-  }
+  if (cardShows) return <UpdateCardLayer s={s} dismiss={dismiss} />;
   return popupUp ? <UpdatePopup s={s} onDismiss={dismiss} /> : null;
 }
+/** Mount with the visible card so the action opener belongs to this activation. */
+function UpdateCardLayer({ s, dismiss }: { s: UpdaterState; dismiss: () => void }) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const busy = s.status === "installing";
+  const layer = useFocusTrap(cardRef, true, { name: "update-card", kind: "dialog", initialFocus: null, fallbackFocus: '[data-testid="update-indicator"]', onEscape: () => { if (!busy) dismiss(); } });
+  return <LayerSurface handle={layer}>
+    <div className="overlay-inset fixed inset-0 flex items-center justify-center p-4" data-testid="update-card-layer">
+      <div className="absolute inset-0 bg-black/40" onMouseDown={() => { if (!busy) dismiss(); }} />
+      <div ref={cardRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={updateTitle(s)} data-testid="update-card" className={cn(BOX_FRAME, "animate-panel-in relative max-h-[calc(var(--vvh,100dvh)-2rem)] w-[340px] max-w-full rounded-xl border border-hairline/40 bg-panel pb-4 shadow-2xl shadow-black/50 focus:outline-none")}>
+        <UpdateCardBody s={s} onDismiss={dismiss} />
+      </div>
+    </div>
+  </LayerSurface>;
+}
 
-/** Bottom-left, no scrim, no focus. Sits under dialogs (z-50) and under the Undo toast, and moves up when one is showing. */
+/** The open modal window the pop-up lives in (the one opened last), kept current as windows open and close. The same watch as
+ * the "?" help tab (lib/modal-window.ts). */
+function useModalHost(): HTMLElement | null {
+  const [host, setHost] = useState<HTMLElement | null>(null);
+  useLayoutEffect(() => watchModalWindow(setHost), []);
+  return host;
+}
+
+/** Bottom-left, no scrim, no focus. With no modal window open it is a fixed box under menus and overlays (z-40), as before.
+ * While a modal window is open (What's New included) it lives inside that window as a manual popover, so it is drawn in the top
+ * layer above it and is not inert there. Moves up for the Undo toast. */
 function UpdatePopup({ s, onDismiss }: { s: UpdaterState; onDismiss: () => void }) {
   const toast = useUndoToast();
   const frame = useRef<HTMLElement>(null);
-  // It never reaches for focus, but a keyboard that came in and closed it must not be dropped on the page.
+  const host = useModalHost();
+  const footer = useUpdatePopupAnchor();
+  // A new home is a new element: show it again, after any window that just opened, so it is the top of the top layer.
+  useLayoutEffect(() => {
+    if (!host) return;
+    try { frame.current?.showPopover(); } catch { /* already shown, or no popover support: it stays a fixed box */ }
+  }, [host]);
+  // Where focus was before a keyboard came in, so closing can hand it back there.
+  const origin = useRef<HTMLElement | null>(null);
+  // It never reaches for focus, but a keyboard that came in and closed it must not be dropped on the page (or on an inert one).
   const close = () => {
-    const held = frame.current?.contains(document.activeElement) ?? false;
+    const popup = frame.current;
+    const held = popup?.contains(document.activeElement) ?? false;
     onDismiss();
-    if (held) document.querySelector<HTMLElement>('[data-testid="update-indicator"], [data-testid="update-button"]')?.focus();
+    if (!held) return;
+    const choices = popupFocusReturn<HTMLElement>({
+      host,
+      origin: origin.current,
+      inHost: (element) => host?.contains(element) ?? false,
+      inPopup: (element) => popup?.contains(element) ?? false,
+      hostControls: () => (host ? (focusableWithin(host) as HTMLElement[]) : []),
+      button: () => document.querySelector<HTMLElement>('[data-testid="update-indicator"], [data-testid="update-button"]'),
+    });
+    // The first that really takes focus: one that turned disabled or hidden meanwhile does not, so the next is tried.
+    for (const back of choices) {
+      if (back === host && !host.hasAttribute("tabindex")) host.tabIndex = -1;
+      back.focus();
+      if (document.activeElement === back) break;
+    }
   };
   const [place, setPlace] = useState<UpdatePopupPlace>({ left: 16, width: 300, bottom: 16 });
   useLayoutEffect(() => {
-    const anchor = document.querySelector<HTMLElement>("[data-update-popup-anchor]");
+    const anchor = footer ?? document.querySelector<HTMLElement>("[data-update-popup-anchor]");
     const measure = () => {
       const rect = anchor?.getBoundingClientRect();
       // Off to the left means the drawer is shut.
@@ -119,23 +139,31 @@ function UpdatePopup({ s, onDismiss }: { s: UpdaterState; onDismiss: () => void 
       footerResize?.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [toast]);
-  return (
+  }, [toast, footer]);
+  const popup = (
     <section
       ref={frame}
+      popover={host ? "manual" : undefined}
       aria-label={t("updates.title")}
+      onFocus={(event) => {
+        const from = event.relatedTarget;
+        if (from instanceof HTMLElement && !event.currentTarget.contains(from)) origin.current = from;
+      }}
       onKeyDown={(event) => {
         if (event.key !== "Escape") return;
+        // Inside a dialog, Escape here closes the pop-up only, not the dialog under it.
+        event.preventDefault();
         event.stopPropagation();
         close();
       }}
       data-testid="update-popup"
       style={place}
-      className={cn(BOX_FRAME, "animate-panel-in fixed z-40 max-h-[calc(var(--vvh,100dvh)-1.5rem)] rounded-xl border border-hairline/40 bg-panel pb-3.5 shadow-2xl shadow-black/50")}
+      className={cn(BOX_FRAME, "animate-panel-in fixed inset-auto z-40 m-0 w-auto max-h-[calc(var(--vvh,100dvh)-1.5rem)] rounded-xl border border-hairline/40 bg-panel px-0 pt-0 pb-3.5 text-ink shadow-2xl shadow-black/50")}
     >
       <UpdateCardBody s={s} popup onDismiss={close} />
     </section>
   );
+  return host ? createPortal(popup, host) : popup;
 }
 
 function updateTitle(s: UpdaterState): string {
@@ -143,7 +171,8 @@ function updateTitle(s: UpdaterState): string {
   const deferred = s.status === "deferred";
   const handoff = s.installMode === "handoff";
   const verificationRefused = s.status === "error" && s.action === "download-from-murage";
-  return verificationRefused ? t("updates.title") : deferred ? "Update waiting for backup" : s.status === "available"
+  const installer = installerOffer(s);
+  return installer ? t("updates.installerTitle", { version: installer.version }) : verificationRefused ? t("updates.title") : deferred ? "Update waiting for backup" : s.status === "available"
     ? `Murage ${s.version} is available`
     : s.status === "downloading"
       ? `Downloading ${s.version ?? "update"}…`
@@ -167,6 +196,12 @@ function UpdateCardBody({ s, popup = false, onDismiss }: { s: UpdaterState; popu
   // arrives. Latch the pressed button as busy on the same frame so it greys
   // out immediately; the incoming status clears the latch.
   const [pending, setPending] = useState<"download" | "install" | "check" | null>(null);
+  // the download page did not open: the banner says so and the buttons stay pressable
+  const [openFailed, setOpenFailed] = useState(false);
+  const openPage = (url: string) => {
+    setOpenFailed(false);
+    Promise.resolve(window.muragebox?.openExternal?.(url)).catch(() => setOpenFailed(true));
+  };
   const status = s.status;
   useEffect(() => setPending(null), [status]);
   const highlights = releaseHighlights(s.releaseNotesText);
@@ -182,9 +217,10 @@ function UpdateCardBody({ s, popup = false, onDismiss }: { s: UpdaterState; popu
   const handoff = s.installMode === "handoff";
   const verificationRefused = s.status === "error" && s.action === "download-from-murage";
 
+  const installer = installerOffer(s);
   const title = updateTitle(s);
   const subtitle =
-    verificationRefused ? t("updates.verificationRefused") : deferred ? "This update is waiting for the pre-upgrade backup flow. Review Settings → Backups if it needs attention." : s.status === "available"
+    installer ? t("updates.installerSteps", { version: installer.version }) : verificationRefused ? t("updates.verificationRefused") : deferred ? "This update is waiting for the pre-upgrade backup flow. Review Settings → Backups if it needs attention." : s.status === "available"
       ? "A newer version is ready to download."
       : s.status === "downloading"
         ? // no percent yet means the transfer hasn't reported in — don't imply 0
@@ -264,6 +300,7 @@ function UpdateCardBody({ s, popup = false, onDismiss }: { s: UpdaterState; popu
           />
         </div>
       )}
+      {openFailed && <div role="alert" className="mt-2.5 text-[12px] text-danger">{t("modelSignIn.error.browser")}</div>}
       </BoxBody>
 
       {installing && (
@@ -323,11 +360,12 @@ function UpdateCardBody({ s, popup = false, onDismiss }: { s: UpdaterState; popu
               )}
             </button>
           )}
-          {s.status === "error" && (
+          {installer && <button onClick={() => openPage(installer.url)} className={primaryAction}><ArrowDownToLine size={13} /> {t("updates.downloadInstaller", { version: installer.version })}</button>}
+          {s.status === "error" && !installer && (
             <button
               onClick={() => {
                 if (verificationRefused) {
-                  void window.muragebox?.openExternal?.("https://murage.ai/download");
+                  openPage("https://murage.ai/download");
                   return;
                 }
                 setPending("check");

@@ -16,6 +16,7 @@ import { closeSync, copyFileSync, fsyncSync, openSync, readFileSync, statSync } 
 import { join } from "node:path";
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
+import type { GateEntry, StopGate } from "./drivers/stop-gate.ts";
 
 export const BOX_AGENT_API = "https://ascii.dev/api/box/v1";
 /** The ledger's name in the data folder, and the name an unreadable one is set aside under (data-dir-inventory.ts: both excluded). */
@@ -366,21 +367,30 @@ export interface CloudSend {
   events: () => Promise<unknown[]>;
   /** the POST of the prompt, raw (an HTTP answer of any status), or a throw when no answer came */
   post: () => Promise<{ status: number; body: any }>;
+  /** STOP-NONACP: the turn's gate entry. Given, every await before the POST reads the gate (`gate.step`), so a Stop or a dispose that lands
+   * while one is pending refuses the send with GateStopped before anything is recorded or sent; the POST's own await never throws on a
+   * mark (the prompt is on the box and must be recorded first). Absent: exactly the behaviour without a gate. */
+  stop?: { gate: StopGate; entry: GateEntry };
 }
 /** C3: the whole send under the box lock. Resolves with the box's answer, the prompt id (a non-empty string or null, section 7.2 E1) and
  * the events listed before it (to be marked seen); the prompt is L2 and watched when this resolves. Throws a refusal (nothing sent) or the
  * send's failure (L0 or L4 by L1R). */
 export function sendCloudPrompt(send: CloudSend): Promise<{ promptId: string | null; body: any; before: unknown[] }> {
+  const stop = send.stop;
+  /** An await before the POST: with a gate entry it reads the gate once p settled (a mark throws GateStopped, nothing is recorded yet). */
+  const stepped = <T>(p: Promise<T>): Promise<T> => (stop ? stop.gate.step(stop.entry, p) : p);
   return withBoxLock(send.boxId, async () => {
+    // a mark that landed while this send waited for the box lock: nothing of the box is touched
+    if (stop) await stop.gate.step(stop.entry, Promise.resolve());
     load();                                                     // the record is read before `stuck` is trusted
-    if (stuck || !(await clearUnknownLocked(send.boxId, send.token))) throw new Error(CLOUD_COMPUTER_UNKNOWN_REFUSAL);
+    if (stuck || !(await stepped(clearUnknownLocked(send.boxId, send.token)))) throw new Error(CLOUD_COMPUTER_UNKNOWN_REFUSAL);
     const onBox = entries().filter((e) => e.boxId === send.boxId);
     if (onBox.some(blocking)) {
       if (onBox.some(live)) throw new Error(CLOUD_COMPUTER_BUSY_REFUSAL);
-      if (!(await clearBoxLocked(send.boxId, send.token))) throw new Error(CLOUD_COMPUTER_FENCED_REFUSAL);
+      if (!(await stepped(clearBoxLocked(send.boxId, send.token)))) throw new Error(CLOUD_COMPUTER_FENCED_REFUSAL);
     }
-    let before: unknown[];
-    try { before = await send.events(); } catch { throw new Error(CLOUD_COMPUTER_SNAPSHOT_REFUSAL); }
+    const snapshot = async (): Promise<unknown[]> => { try { return await send.events(); } catch { throw new Error(CLOUD_COMPUTER_SNAPSHOT_REFUSAL); } };
+    const before: unknown[] = await stepped(snapshot());
     // L0 -> L1 before the fence and the POST; a record that cannot be written refuses the send (save throws)
     const current = load();
     save({ entries: [...current.entries.filter((e) => e.turnId !== send.turnId), { turnId: send.turnId, boxId: send.boxId, threadId: send.threadId, promptId: null, owner: PROCESS_OWNER, state: "sending", at: now(), account: accountOf(send.token) }] });
@@ -394,7 +404,9 @@ export function sendCloudPrompt(send: CloudSend): Promise<{ promptId: string | n
     try { send.beforeSubmit?.(); }
     catch (error) { change(send.turnId, () => null); unsent(); throw error; }
     let answer: { status: number; body: any };
-    try { answer = await send.post(); }
+    // the POST's own await is a cleanup step: it never throws on a mark. The prompt is on the box and the record below must name it; the
+    // driver's step right after this send reads the mark and stops the prompt (a throw here would fence a prompt that was accepted).
+    try { answer = await (stop ? stop.gate.cleanupStep(stop.entry, send.post()) : send.post()); }
     catch (error) {
       // no answer: the box may have it (L4, no id: the no-id rule clears it before the next prompt)
       change(send.turnId, (e) => ({ ...e, state: "fenced" }));

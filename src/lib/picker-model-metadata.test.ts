@@ -1,18 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import type { PublicProviderConnection, ProviderModel } from "../../shared/provider-connections.ts";
-import { lookupModelMetadata } from "./model-metadata.ts";
+import { lookupModelMetadata, preloadModelMetadata } from "./model-metadata.ts";
 import {
   type PickerEngine,
   type PickerModel,
   PRICE_UNKNOWN,
-  isFluxRouterRow,
   isPriceUnknown,
   modelPriceLabel,
-  orderedPickerModels,
   pickerKey,
   pickerModels,
 } from "./provider-model-picker.ts";
+import { isFluxRouterRow, orderedPickerModels } from "./provider-model-picker-dialog.ts";
+
+// The snapshot is its own chunk since 1.0.18 (BUNDLE-HEADROOM-1018); these tests read it.
+beforeAll(() => preloadModelMetadata());
 
 function engine(options: PickerEngine["models"]["options"], overrides: Partial<PickerEngine> = {}): PickerEngine {
   return {

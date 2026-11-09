@@ -81,7 +81,12 @@ export function pruneProjectActivity(db: DatabaseSync, now: number): void {
   if (!projectTableExists(db, "project_activity")) return;
   // An unfinished close resumes from its own rows; the markers before it no
   // longer decide anything, so they age out like every other row.
-  db.prepare(`DELETE FROM project_activity WHERE at < ? AND NOT (kind='close'
+  // RESIDUALS-1018-B (Astra r2 Low): a routine_run row whose request has not finished stays, because it carries the routine
+  // for that request's Usage share (a paused request has no deadline) and is dropped only once the request is terminal.
+  db.prepare(`DELETE FROM project_activity WHERE at < ? AND NOT (kind='routine_run' AND request_id IS NOT NULL
+    AND EXISTS (SELECT 1 FROM room_requests rr WHERE rr.id=project_activity.request_id
+      AND rr.state NOT IN ('done','failed','cancelled','expired')))
+    AND NOT (kind='close'
     AND json_type(detail,'$.closeSeq')='integer'
     AND EXISTS (SELECT 1 FROM (${LIVE_PROJECT_CLOSES_SQL}) live
       WHERE live.group_id=project_activity.group_id AND live.close_seq=json_extract(project_activity.detail,'$.closeSeq')))`)

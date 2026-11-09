@@ -3,6 +3,7 @@
   "icon": "Sparkles",
   "pages": [
     "index",
+    "today",
     "bots-and-tasks",
     "new-bot-and-team",
     "chat-and-teams",
@@ -19,11 +20,14 @@
     "engine-commands",
     "attachments-and-search",
     "voice-and-memory",
+    "usage-and-limits",
     "whats-new-and-tray",
     "browser-extension",
     "memory-and-learning",
     "messaging-apps",
+    "phone-calls",
     "settings-guide",
+    "every-setting",
     "if-something-isnt-possible"
   ]
 }

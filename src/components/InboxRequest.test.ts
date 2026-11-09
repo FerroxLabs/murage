@@ -82,6 +82,14 @@ describe("answering in place", () => {
     expect(markup).not.toContain("rm -rf build");
   });
 
+  it("APPROVALS-SIMPLE-1018: opened from Show details, a low-rated card shows its exact command", () => {
+    const markup = renderToStaticMarkup(createElement(InboxRequestAnswer, { threadId: "t1", card: { ...approval, lowRisk: true }, botName: "Ember", onSettled: () => {}, details: true }));
+    expect(markup).toContain('data-testid="inbox-request-details"');
+    expect(markup).toContain("rm -rf build");
+    expect(markup).not.toContain("Open the request to see exactly what Ember would run.");
+    expect(markup).not.toContain("data-review-first");
+  });
+
   it("shows the digest-bound details inline before Allow, when the card may need fresh authentication", () => {
     const markup = render({ ...approval, summary: "remove the build folder", held: "outside its folder" });
     expect(markup).toContain("Allow once");

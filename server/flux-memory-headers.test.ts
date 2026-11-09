@@ -171,6 +171,9 @@ describe("never sent", () => {
 
   it("knows a Flux host", () => {
     expect(isFluxUrl("https://api.fluxrouter.ai/v1")).toBe(true);
+    expect(isFluxUrl("https://api.fluxrouter.ai./v1")).toBe(true);
+    expect(isFluxUrl("https://edge.fluxrouter.ai./v1")).toBe(true);
+    expect(isFluxUrl("https://api.fluxrouter.ai.evil.example./v1")).toBe(false);
     expect(isFluxUrl("https://api.fluxrouter.ai.evil.example/v1")).toBe(false);
     expect(isFluxUrl("https://openrouter.ai/api/v1")).toBe(false);
     expect(isFluxUrl(undefined)).toBe(false);

@@ -11,6 +11,10 @@
 //  - After a deletion the module copies the log with PASSIVE, then makes one tiny write (a "nudge": the same schema
 //    version written again, one page-1 frame). That commit restarts the log, and the check below proves the old bytes are gone.
 //  - Nothing is refused or held. A nudge that meets a lock simply means "not done yet, try again".
+//  - ONE exception runs a checkpoint on the server thread (IO-IDLE-DRAIN-1018 r3.6c, MurageMain ruling 1): the revoke drain proves its
+//    own copy (memory/revoke-budget.ts logCopied, resetCopiedLog, readyLog). It runs PASSIVE only on a tail of at most its own copy debt
+//    plus one drain commit at the ceiling (whoever wrote those frames), and resets a log it has seen completely copied with a TRUNCATE
+//    under busy_timeout 0 (restored in a finally): it never waits on a reader or a writer, and holds the writer lock only for the reset.
 //
 // The worker's connection also keeps the file open until the server connection has closed, so the server's close is never
 // the last one (a last close would copy the whole log on the way out and hold shutdown).
@@ -301,8 +305,9 @@ export async function settleWal(options: SettleOptions = {}): Promise<boolean> {
   const left = () => (options.deadlineAt === undefined ? Infinity : options.deadlineAt - Date.now());
   try {
     const m = active;
-    // No checkpointer, no checkpoint: the server thread never runs one itself, so a slow disk cannot stall it. The scrub
-    // stays owed and the restarted checkpointer carries it out.
+    // No checkpointer, no checkpoint: this module never runs one on the server thread (the revoke drain's bounded own copy,
+    // header, is the one exception and is not a scrub), so a slow disk cannot stall it. The scrub stays owed and the restarted
+    // checkpointer carries it out.
     if (!m || !m.ready || m.failed) return false;
     const result = await within(checkpointPassive(), left(), UNAVAILABLE);
     if (result.log < 0 || result.busy !== 0 || result.log !== result.checkpointed) return false;
@@ -314,7 +319,7 @@ export async function settleWal(options: SettleOptions = {}): Promise<boolean> {
 
 /** After a deletion has committed: gets the deleted text out of messages.db's log within `ms`. True once it is provably gone;
  * false when a reader, a lock, a failed read of the log or the deadline held it up. The scrub is then owed: it is kept
- * independently of any worker and retried through the restarted checkpointer (never a checkpoint on the server thread),
+ * independently of any worker and retried through the restarted checkpointer (never a checkpoint of this module's on the server thread),
  * and the start-up TRUNCATE settles it after a crash. */
 export async function scrubWalAfterDelete(ms = 5000): Promise<boolean> {
   if (!ports || !portsFile) return false;

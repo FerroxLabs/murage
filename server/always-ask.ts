@@ -37,14 +37,16 @@
 // `unison`, a cloud CLI's delete-sync) removes from its destination whatever
 // the source lacks: the destination is read as `rm -rf` reads its paths.
 
+import { wipeVerb } from "./shell/wipe-vocab.ts";
+import { HardFinding, ownerDeny, denyTarget, modeledOptions, Doubt, doubt, withoutDoubts, type DoubtReason } from "./shell/marks.ts";
 import { isPlain, lex, literalText, renderWord, Unreadable, type Part, type Quote, type Word } from "./shell/lex.ts";
 import { looksLikePowerShell, nestedProgram, POWERSHELLS, PWSH_READ_ONLY, walkCmd, walkNestedInput, walkPwsh } from "./shell/pwsh.ts";
 import {
-  candidatesOf, deviceInWord, deviceReadPosition, fork, HOME, HOME_PARENT, homeSpelled, interpreterKey, isAnchored, isDeviceWrite, newContext, normalizePath, REMOTE_ELEVATED, resolveFrom,
-  UNKNOWN_MARK, unmarked, walkScript, type Candidate, type SimpleCommand, type Visitor, type WalkContext,
+  canonPath, candidatesOf, deviceInWord, deviceReadPosition, fork, HOME, HOME_PARENT, homeSpelled, interpreterKey, isAnchored, isDeviceWrite, newContext, normalizePath, procTraversal, protectedClimb, REMOTE_ELEVATED, resolveFrom,
+  UNKNOWN_MARK, LITERAL_MARK, unmarked, invalidCwd, walkScript, shellCScript, type Candidate, type SimpleCommand, type Visitor, type WalkContext,
 } from "./shell/walk.ts";
-import { closeSync, openSync, readSync, realpathSync, statSync } from "node:fs";
-import { posix as posixPath } from "node:path";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync, statSync } from "node:fs";
+import { posix as posixPath, win32 as winPath } from "node:path";
 import { parse, type Redirect } from "./shell/parse.ts";
 
 export type AlwaysAskRule = "delete-root" | "delete-home" | "delete-system-folder" | "disk-erase" | "fork-bomb" | "unreadable" | "unknown-target" | "protected-path";
@@ -53,7 +55,11 @@ export type AlwaysAskRule = "delete-root" | "delete-home" | "delete-system-folde
 export type ProtectedClass = "root" | "home" | "system" | "volume";
 
 export interface AlwaysAskHit {
+  classification?: "deny" | "ask";
+  reason?: string;
+  mandatory?: true;
   rule: AlwaysAskRule;
+  doubt?: DoubtReason;
   /** Plain words for the card: what this would do. */
   what: string;
   /** `protected-path` only: the class of the path, and the program pointed at it */
@@ -65,6 +71,8 @@ export interface AlwaysAskHit {
    * the rest of the text was read whole. It asks at Ask and Auto; Full access
    * and No limits, on a turn they cover, run it (server/auto-approve.ts). */
   unseenScript?: true;
+  /** `unseenScript` only (MARKS r11): the script files the walk resolved, for the owner-turn waiver's deny check */
+  unseenPaths?: readonly string[];
   /** `unreadable` only (1.0.9, NOLIMITS-NODE-109-CUT R10): the text runs an
    * unseen script Full access and No limits would run, but for this reader
    * limit; the card names the fix. */
@@ -73,6 +81,10 @@ export interface AlwaysAskHit {
    * only where that is proven, so a new `unreadable` hit stays unmarked until someone marks it. No verdict reads it in
    * 1.0.13: every such hit keeps its card, and the mark is what a later whole-text check tests. The `what` is not read. */
   readerFailed?: true;
+  /** NOLIMITS-MEANS-IT 2.1.1 (1.0.20): the reader could not follow this text and found nothing in it. The owner No limits
+   * lane waives such a hit on a clean turn when the plain wipe check (outside-scan.ts) also finds nothing. Never set by
+   * `unreadableHit()` itself, so a new `unreadable` hit stays unmarked until someone marks it. */
+  couldNotRead?: true;
 }
 
 const WHAT: Record<AlwaysAskRule, string> = {
@@ -120,13 +132,23 @@ const UNSEEN_FIX: Record<UnseenWhy, string> = {
   "windows-link": "On Windows, Full access and No limits run a script unasked when it is an ordinary file, not a Git Bash link or socket file.",
 };
 
-const hit = (rule: AlwaysAskRule): AlwaysAskHit => ({ rule, what: WHAT[rule] });
+const hit = (rule: AlwaysAskRule): AlwaysAskHit => ({ ...(ownerDeny() ? { classification: rule === "unreadable" ? "ask" as const : "deny" as const, reason: rule } : {}), rule, what: WHAT[rule] });
 
 /** The card for text downloaded from the internet and run elevated
  * (UPSEC 10.5): it asks as an unreadable command does, in its own words. */
 const REMOTE_ELEVATED_WHAT = "This runs text downloaded from the internet with administrator rights, and Murage cannot see that text in advance.";
 
 /** The hit for a command the reader was not given whole (a cut card). */
+/** MARKS r11: the first unseen script file a deny rule names by its own path (a system folder, a climb, the home or root
+ * folder), as a protected-path hit, or null. */
+export function protectedScriptHit(paths: readonly string[]): AlwaysAskHit | null {
+  for (const path of paths) {
+    const found = protectedClass(path);
+    if (found) return { ...(ownerDeny() ? { classification: "deny" as const, reason: "protected-path" } : {}), rule: "protected-path", what: PROTECTED_WHAT[found], protectedClass: found, program: "script" };
+  }
+  return null;
+}
+
 export function unreadableHit(): AlwaysAskHit {
   return { ...hit("unreadable"), readerFailed: true };
 }
@@ -135,13 +157,30 @@ export function unreadableHit(): AlwaysAskHit {
  * something it could not follow. server/shell/walk.ts throws the two catastrophe details. */
 const DELETE_OPTION_VALUE = "a delete option from a value";
 const FOUND_FAILURES = [DELETE_OPTION_VALUE, "runs a catastrophe", "names a catastrophe"];
+/** 2.1.1: what the reader found also in these (walk.ts "names a disk", "deletes and looks up the home folder", "runs
+ * downloaded text"): no `couldNotRead`. Kept apart from FOUND_FAILURES so the 1.0.13 `readerFailed` mark is unchanged. */
+const FOUND_NOT_WAIVED = [...FOUND_FAILURES, "names a disk", "deletes and looks up the home folder", "runs downloaded text"];
 
+export const COULD_NOT_READ_FINDINGS: ReadonlySet<string> = new Set(["ambiguous-interpreter", "startup-file-unplaced-write", "unresolved-value-target"]);
 /** Preserve security-bearing exceptions even when they share the unreadable rule. */
 function readerFailure(error: Unreadable): AlwaysAskHit {
-  if (error.message.endsWith(REMOTE_ELEVATED)) return { rule: "unreadable", what: REMOTE_ELEVATED_WHAT };
-  // a finding thrown is a finding, and a depth stop was never read past: neither carries the mark
-  if (FOUND_FAILURES.some((detail) => error.message.endsWith(detail)) || error.reason === "depth" || error.reason === "nesting") return hit("unreadable");
-  return unreadableHit();
+  // D4 as corrected (coordinator 11-08, NOLIMITS-MEANS-IT r3 2.1.1) and FIX A ruling 2: these are could-not-read hits, no guessed path.
+  // Full access cards them; the owner's clean No limits turn waives them (marksHitWaivable); plainWipe and every deny still win.
+  if (error instanceof HardFinding && COULD_NOT_READ_FINDINGS.has(error.findingReason)) return { ...hit("unreadable"), classification: "ask", reason: error.findingReason, couldNotRead: true, readerFailed: true,
+    what: error.findingReason === "ambiguous-interpreter" ? "An interpreter option may consume the script name, so Murage asks before running it."
+      : error.findingReason === "unresolved-value-target" ? "Murage could not follow where this command writes, so it asks before running it."
+      : "A file this command writes may be a startup file the next shell reads, so Murage asks before running it." };
+  if (error instanceof HardFinding) return { classification: error.classification, reason: error.findingReason, rule: error.rule, what: error.findingReason === "ambiguous-interpreter" ? "An interpreter option may consume the script name, so Murage asks before running it." : WHAT[error.rule], ...(error.classification === "ask" ? { mandatory: true as const } : {}) };
+  if (error instanceof Doubt) return { ...unreadableHit(), doubt: error.doubt };
+  if (error.message.endsWith(REMOTE_ELEVATED)) return { ...hit("unreadable"), what: REMOTE_ELEVATED_WHAT };
+  // A finding remains a finding. An incomplete closed-list read is never waived.
+  if (FOUND_FAILURES.some((detail) => error.message.endsWith(detail))) return { ...hit("unreadable"), ...(ownerDeny() ? { classification: "deny" as const, reason: "named-catastrophe" } : {}) };
+  if (error.reason === "depth" || error.reason === "nesting") return { ...unreadableHit(), doubt: "tokenizer" };
+  if (FOUND_NOT_WAIVED.some((detail) => error.message.endsWith(detail))) return unreadableHit();
+  // MurageMain ruling (S10 relay 4, 11-06): the waiver covers what the reader could not follow in a text it read, never a text
+  // past the reader's length limit. That one keeps its card at every level, No limits included.
+  if (error.reason === "length") return unreadableHit();
+  return { ...unreadableHit(), doubt: error.reason === "folder" || error.reason === "expansion" ? "value-path" : "tokenizer" };
 }
 
 /** Top-level folders the system runs from (macOS, Linux). A delete of one of
@@ -180,7 +219,7 @@ function classifyPath(raw: string): AlwaysAskRule | null {
   if (p === "~" || /^~[A-Za-z0-9._-]+$/.test(p)) return "delete-home";
   const lower = p.toLowerCase();
   if (/^\/(users|home)\/[^/]+$/.test(lower) || (HOME && HOME !== "/" && lower === HOME)) return "delete-home";
-  if (SYSTEM_FOLDERS.has(lower) || (HOME_PARENT && HOME_PARENT !== "/" && lower === HOME_PARENT)) return "delete-system-folder";
+  if (SYSTEM_FOLDERS.has(lower) || (ownerDeny() && lower === "/libexec") || (HOME_PARENT && HOME_PARENT !== "/" && lower === HOME_PARENT)) return "delete-system-folder";
   return null;
 }
 
@@ -196,13 +235,41 @@ const MORE_SYSTEM = new Set(["/nix", "/snap", "/cores"]);
 /** The protected class a path names, or null: the drive root, a home folder
  * (`~`, `/Users/x`, `/home/x`, `/var/root`), a folder the system runs from
  * (macOS `/private/etc` is `/etc`), or one whole mounted volume
- * (`/Volumes/x`, `/mnt/x`, `/media/u/x`). Anything deeper is ordinary. */
-export function protectedClass(raw: string): ProtectedClass | null {
+ * (`/Volumes/x`, `/mnt/x`, `/media/u/x`), including their descendants. */
+/** FULL-DENY-1018 (MurageMain ruling 11-08): the ordinary character-device sinks, matched exactly (never a /dev/ prefix). Shared by the
+ * strict reader and its Legacy twin; /dev/disk*, /dev/sd*, /dev/mem and every other /dev path stay protected. */
+const ORDINARY_DEVICE_SINK = /^\/dev\/(?:null|zero|random|urandom|tty|stdin|stdout|stderr|fd\/\d+)$/;
+/** System descendants are protected; home and volume descendants have their own classes. */
+function systemDescendant(canonical: string): boolean {
+  if (ORDINARY_DEVICE_SINK.test(canonical)) return false;
+  // MurageMain ruling 11-08 (S4.unlimited on Mac): the macOS temp folders are ordinary, as Linux /tmp is. /private/tmp and
+  // /private/var/folders, and the /var/folders spelling of the second (/var is a link to /private/var), hold bot folders and
+  // scratch work. Everything else under /private and /var stays protected. No "the bot's own cwd" exemption: a bot folder set to /etc is not ordinary.
+  if (canonical.startsWith("/private/tmp/") || canonical.startsWith("/private/var/folders/") || canonical.startsWith("/var/folders/")) return false;
+  // Home and volume descendants remain ordinary even below a system parent.
+  if (/^\/(?:home|users)\/[^/]+\//.test(canonical)
+    || /^[a-z]:\/users\/[^/]+\//.test(canonical)
+    || /^\/(?:volumes|mnt|media)\/[^/]+\//.test(canonical)
+    || /^\/run\/media\/[^/]+\//.test(canonical)
+    || (HOME && HOME !== "/" && canonical.startsWith(HOME.toLowerCase() + "/"))
+    || canonical.startsWith("/root/") || canonical.startsWith("/var/root/")) return false;
+  return [...SYSTEM_FOLDERS, "/libexec", ...MORE_SYSTEM].some(root => canonical.startsWith(root + "/"))
+    || /^[a-z]:\/(?:windows|program files(?: \(x86\))?|programdata)\//.test(canonical);
+}
+export function protectedClass(raw: string, descendants = true): ProtectedClass | null {
+  if (!ownerDeny()) return protectedClassLegacy(raw, descendants);
+  if (procTraversal(homeSpelled(raw)) || protectedClimb(raw)) return "system"; // M-FIX3-class; FULL-DENY-1018: a deny rule holds at every level
+  // FULL-DENY-1018: `~/../../etc/x` leaves the home folder for a system folder; the climb is read from the real home
+  const spelledHome = homeSpelled(raw);
+  const canonical = normalizePath(/^~(?=\/)/.test(spelledHome) && spelledHome.includes("/..") && HOME ? HOME + spelledHome.slice(1) : spelledHome).toLowerCase();
+  if (/^\/(?:var\/)?root(?:\/\*)?$/.test(canonical)) return "home";
   switch (classifyPath(raw)) {
     case "delete-root": return "root";
     case "delete-home": return "home";
     case "delete-system-folder": return "system";
   }
+  if (canonical === "/var/root") return "home";
+  if (descendants && systemDescendant(canonical)) return "system";
   const spelled = homeSpelled(raw);
   if (!spelled.startsWith("/")) return null;
   let p = normalizePath(spelled);
@@ -223,6 +290,11 @@ export function protectedClass(raw: string): ProtectedClass | null {
 }
 
 
+/** A protected-path hit kept for the end of the read. The typed fields belong to the owner's No limits read only (MARKS R1). */
+function protectedDeferred(found: ProtectedClass, program: string): AlwaysAskHit {
+  return { ...(ownerDeny() ? { classification: "deny" as const, reason: "protected-path" } : {}), rule: "protected-path", what: PROTECTED_WHAT[found], protectedClass: found, program };
+}
+
 /** A glob anchored at one of these reaches into every top-level, home or
  * device folder: the drive root, the folders that hold the home folders,
  * `/dev`. */
@@ -240,18 +312,21 @@ function catastrophicAnchor(anchor: string): boolean {
 function classifyCandidate(candidate: Candidate, ctx: WalkContext): AlwaysAskRule | null {
   // a relative path from a folder the text does not fix (it differs by
   // branch, or came from a value): the reader cannot tell which folder
-  if (ctx.cwdConflict && !isAnchored(homeSpelled(unmarked(candidate.path)))) return valueTarget("folder", "the folder this runs from is not fixed by the text", FOLDER_TARGET);
+  if (ctx.cwdConflict && !isAnchored(homeSpelled(unmarked(candidate.path)))) {
+    if (ownerDeny() && invalidCwd(ctx)) denyTarget("unresolved-cwd"); // N4: the engine's own folder is invalid
+    return valueTarget("folder", "the folder this runs from is not fixed by the text", FOLDER_TARGET);
+  }
   const cwd = ctx.cwd;
   switch (candidate.kind) {
     case "literal": return classifyPath(resolveFrom(cwd, candidate.path));
     case "glob": return classifyPath(resolveFrom(cwd, candidate.path)) ?? (catastrophicAnchor(candidate.anchor) ? "unknown-target" : null);
-    // an item of a list file on disk: the same trust as a script on disk
-    case "fromFile": return null;
+    // an item from an unread list cannot be proved to name an allowed path
+    case "fromFile": doubt("file-fed-args"); return null; // M-PR-6: always-ask.ts, not walk.ts
     case "value": {
       // Splitting/globbing can mark a resolved assignment as a value.
       // Its known literal landing still takes the catastrophe rule.
       if (!candidate.path.includes(UNKNOWN_MARK)) return classifyPath(resolveFrom(cwd, candidate.path));
-      if (candidate.lead) {
+      if (candidate.kind === "value" && candidate.lead) {
         const rest = candidate.path.slice(1).replace(/\\/g, "/");
         return rest !== "" && /^(\/(\*|\.)?)+$/.test(rest) ? "unknown-target" : null;
       }
@@ -594,7 +669,7 @@ const DISK_WRITERS = new Set(["mke2fs", "newfs", "wipefs", "diskutil", "format",
 /** Commands that delete, move, overwrite or change who may use a file: the
  * Unix ones and PowerShell's (cmd's `rd`, `del` and `move` too). */
 const RISKY = new Set([
-  "rm", "rmdir", "unlink", "mv", "cp", "ln", "install", "rsync", "truncate", "chmod", "chown", "chgrp", "chflags", "setfacl", "tee", "dd", "shred",
+  "rm", "rmdir", "mkdir", "touch", "unlink", "mv", "cp", "ln", "install", "rsync", "truncate", "chmod", "chown", "chgrp", "chflags", "setfacl", "tee", "dd", "shred",
   "rd", "del", "erase", "move", "copy", "xcopy", "robocopy", "icacls", "takeown", "attrib", "ren",
   "remove-item", "ri", "move-item", "mi", "copy-item", "cpi", "rename-item", "rni", "set-content", "sc", "add-content", "ac", "clear-content", "clc", "out-file", "set-acl",
 ]);
@@ -625,11 +700,16 @@ function diskHit(name: string, texts: Array<string | undefined>): boolean {
 /** Devices ask wherever they are spelled: a device path in any candidate of
  * any operand, unless the command is a device reader and the operand sits
  * where it reads. */
-function deviceHit(cmd: SimpleCommand): boolean {
+function deviceHit(cmd: SimpleCommand, ctx: WalkContext): boolean {
   const texts = cmd.operands.map(flagText);
   for (const [index, list] of cmd.operands.entries()) {
     for (const candidate of list) {
-      if (candidate.kind === "fromFile" || deviceInWord(candidate.path) === undefined) continue;
+      if (RISKY.has(cmd.name) && !deviceReadPosition(cmd.name, texts, index) && candidate.kind === "value") doubt("value-path"); // M-R1-uncertain
+      if (candidate.kind === "fromFile") continue;
+      if (!deviceReadPosition(cmd.name, texts, index) && candidate.kind === "literal" && !readOnlyListed(cmd) // M-R9-tilde: a lister or printer names, never writes
+        && (/^(?:\/|~|[a-z]:)/i.test(candidate.path) || (RISKY.has(cmd.name) || cmd.name === "touch") && !candidate.path.startsWith("-"))
+        && canonPath(candidate.path, ctx, ownerDeny() && (interpreterKey(cmd.name) !== undefined || /^(?:source|\.|bash|sh|zsh|dash|ksh)$/.test(cmd.name)) ? "read" : "write").value) doubt("value-path");
+      if (deviceInWord(candidate.path) === undefined) continue;
       if (!deviceReadPosition(cmd.name, texts, index)) return true;
     }
   }
@@ -639,8 +719,24 @@ function deviceHit(cmd: SimpleCommand): boolean {
 /** Where output goes (policy A): a device is a disk write, a stream under
  * `/dev/` is not a file, and a value asks. */
 function outputTarget(target: Word, candidates: Candidate[], ctx: WalkContext): AlwaysAskHit | null {
+  // Only the exact null sink is ordinary; aliases and other devices stay protected.
+  if (ownerDeny() && literalText(target) === "/dev/null") return null;
+  // FULL-DENY-1018: a redirect into a system folder, or through a /proc or device climb, is a protected write at every level
+  if (!deferred && ownerDeny()) {
+    const found = protectedCandidates(candidates, ctx);
+    if (found) deferred = protectedDeferred(found, "redirect");
+  } else if (!deferred) {
+    const savedDescendants = protectDescendantsLegacy;
+    protectDescendantsLegacy = true;
+    try {
+      // a device stream (`> /dev/pts/1`, `> /dev/shm/x`) stays ordinary; a climb into /dev or /proc does not (10.3 DEVICE_STREAMS)
+      const found = protectedCandidates(candidates.filter((candidate) => !(candidate.kind === "literal" && /^\/dev\//.test(candidate.path) && !candidate.path.includes(".."))), ctx);
+      if (found) deferred = protectedDeferred(found, "redirect");
+    } finally { protectDescendantsLegacy = savedDescendants; }
+  }
+  for (const candidate of candidates) if (candidate.kind === "literal" && canonPath(candidate.path, ctx, "write").value) doubt("value-path");
   if (candidates.some((candidate) => candidate.kind !== "fromFile" && isDeviceWrite(candidate.path))) return hit("disk-erase");
-  if (candidates.every((candidate) => candidate.kind === "literal" && candidate.text.startsWith("/dev/"))) return null;
+  if (!ownerDeny() && candidates.every((candidate) => candidate.kind === "literal" && candidate.text.startsWith("/dev/"))) return null;
   if (candidates.some((candidate) => candidate.kind === "value")) valueTargetIn(true, "expansion", "where output goes has a value", REDIRECT_TOOL, targetExpression(target));
   if (ctx.indirect === "trap") throw new Unreadable("indirect", "output written in a trap body");
   return null;
@@ -667,7 +763,8 @@ const FIND_ACTIONS = new Set(["-delete", "-exec", "-execdir", "-ok", "-okdir", "
  * bind is the walker's business, as before. */
 const BINDINGS = new Set(["export", "local", "declare", "typeset", "readonly", ":"]);
 /** Output that goes nowhere a file lives. */
-const QUIET_OUTPUT = /^(\/dev\/(null|stdout|stderr|fd\/[12])|&?[0-9-])$/;
+const QUIET_OUTPUT = /^&?[0-9-]$/;
+const QUIET_OUTPUT_LEGACY = /^(\/dev\/(null|stdout|stderr|fd\/[12])|&?[0-9-])$/;
 /** Options whose value is a command line of its own (`lftp -c`). */
 const COMMAND_OPTIONS = new Set(["-c", "-e", "--command", "--execute", "--eval"]);
 /** Programs that mount a host folder, and how: `short` the letter of the
@@ -771,6 +868,13 @@ function readOnlyListed(cmd: Pick<SimpleCommand, "program" | "args" | "redirects
   const searcher = SEARCHERS.has(name);
   const windowsRead = program.dialect === "windows" && !!cmd.wholeRead && PWSH_READ_ONLY.has(name);
   if (!READ_ONLY.has(name) && !searcher && !windowsRead && name !== "find") return false;
+  if (ownerDeny() && READ_ONLY.has(name) && name !== "cd") {
+    // These readers cannot write or execute through an option. Unknown read
+    // operands and tilde expansion do not turn them into write targets.
+    const inertOptions = new Set(["echo", "cat", "ls", "pwd", "stat", "wc", "head", "tail"]);
+    const args = cmd.args.map(word => literalText(word) ?? (inertOptions.has(name) ? "operand" : undefined));
+    if (args.some(arg => arg === undefined) || !modeledOptions(name, args as string[])) return false;
+  }
   if (name === "find" || name === "rg") {
     // a word that opens with a value could be any of the options: it asks
     for (const word of cmd.args) {
@@ -788,7 +892,7 @@ function readOnlyListed(cmd: Pick<SimpleCommand, "program" | "args" | "redirects
   for (const redirect of cmd.redirects) {
     if (!OUTPUT_REDIRECTS.has(redirect.op) && redirect.op !== ">&") continue;
     const target = redirect.target ? literalText(redirect.target) : undefined;
-    if (target === undefined || !QUIET_OUTPUT.test(target)) return false;
+    if (target === undefined || !(ownerDeny() ? target === "/dev/null" || QUIET_OUTPUT.test(target) : QUIET_OUTPUT_LEGACY.test(target))) return false;
   }
   return true;
 }
@@ -796,26 +900,48 @@ function readOnlyListed(cmd: Pick<SimpleCommand, "program" | "args" | "redirects
 /** The protected class one literal names, whole or after a leading
  * `--name=`, `-name=` or `NAME=`, from the folder the text fixes. A
  * relative path from a folder the text does not fix is not this rule's. */
-function protectedLiteral(path: string, ctx: WalkContext, assignments = true): ProtectedClass | null {
+function protectedLiteral(path: string, ctx: WalkContext, assignments = true, position: "read" | "write" = "write", descendants = true): ProtectedClass | null {
+  if (!ownerDeny()) return protectedLiteralLegacy(path, ctx, assignments);
   const plain = unmarked(path);
   const prefix = (assignments ? /^(--?[A-Za-z0-9][\w.-]*=|[A-Za-z_][A-Za-z0-9_]*=)/ : /^--?[A-Za-z0-9][\w.-]*=/).exec(plain)?.[0];
   // `env PATH=/bin cmd`: an environment setting for the child, not an argument
   if (!assignments && /^[A-Za-z_][A-Za-z0-9_]*=/.test(plain)) return null;
   for (const one of prefix ? [path, path.slice(path.indexOf("=") + 1)] : [path]) {
-    if (one === "") continue;
-    if (!isAnchored(homeSpelled(unmarked(one))) && (ctx.cwdConflict || !ctx.cwd)) continue;
-    const found = protectedClass(resolveFrom(ctx.cwd, one));
+    // a lone backslash is find's escaped terminator (`-exec ... \;`), not the root of a Windows drive
+    if (one === "" || one === "\\" || /^-[^/~=]*$/.test(one)) continue;
+    if (!isAnchored(homeSpelled(unmarked(one))) && invalidCwd(ctx) && position === "write" && /[\\/]/.test(one)) denyTarget("unresolved-cwd"); // N4
+    if (!isAnchored(homeSpelled(unmarked(one))) && !ctx.cwd) continue;
+    const found = protectedClass(one, descendants) ?? protectedClass(resolveFrom(ctx.cwd, one), descendants);
     if (found) return found;
+    if (!one.includes(LITERAL_MARK) && /^(?:\/|\.\.?\/|~|[a-z]:[\\/])/i.test(unmarked(one))) {
+      const resolved = canonPath(unmarked(one), ctx, position);
+      const actual = protectedClass(resolved.path, descendants);
+      if (actual) return actual;
+    }
   }
   return null;
 }
 
-/** The worst protected class among an operand's literal and glob candidates;
- * a value is today's business, not this rule's. */
-function protectedCandidates(candidates: Candidate[], ctx: WalkContext, assignments = true): ProtectedClass | null {
+/** N1: the fixed part of a value-held target, the unknown part read as empty, is a protected place. */
+function emptyReadProtected(candidate: Candidate, ctx: WalkContext): boolean {
+  if (!candidate.path.includes(UNKNOWN_MARK)) return false;
+  if (candidate.kind === "value" && candidate.lead) {
+    const rest = candidate.path.slice(1).replace(/\\/g, "/");
+    return rest !== "" && /^(\/(\*|\.)?)+$/.test(rest);
+  }
+  const fixed = candidate.path.replaceAll(UNKNOWN_MARK, "");
+  return fixed !== "" && protectedLiteral(fixed, ctx, false) !== null;
+}
+
+/** A candidate needs fixed evidence before path classification. */
+function protectedCandidates(candidates: Candidate[], ctx: WalkContext, assignments = true, position: "read" | "write" = "write", descendants = true, values = true): ProtectedClass | null {
+  if (!ownerDeny()) return protectedCandidatesLegacy(candidates, ctx, assignments);
   for (const candidate of candidates) {
+    // N1: a value with a fixed protected part (the unknown part read as empty) is the typed deny; any other value is not
+    // this rule's: the delete rules and the doubts read it
+    if (candidate.kind === "value") { if (values && position === "write" && emptyReadProtected(candidate, ctx)) denyTarget(); continue; }
     if (candidate.kind !== "literal" && candidate.kind !== "glob") continue;
-    const found = protectedLiteral(candidate.path, ctx, assignments);
+    const found = protectedLiteral(candidate.path, ctx, assignments, position, descendants);
     if (found) return found;
   }
   return null;
@@ -824,6 +950,7 @@ function protectedCandidates(candidates: Candidate[], ctx: WalkContext, assignme
 /** A command line given as an option's value, tokenised as the reader
  * lexes a script (whitespace when it cannot). */
 function protectedInLine(text: string, ctx: WalkContext): ProtectedClass | null {
+  if (!ownerDeny()) return protectedInLineLegacy(text, ctx);
   let words: Word[] | undefined;
   try {
     words = lex(text).flatMap((token) => (token.kind === "word" ? [token.word] : []));
@@ -831,13 +958,17 @@ function protectedInLine(text: string, ctx: WalkContext): ProtectedClass | null 
     if (!(error instanceof Unreadable)) throw error;
   }
   if (words) {
+    let heldValue = false;
+    let first: ProtectedClass | null = null;
     for (const word of words) {
       let candidates: Candidate[];
       try { candidates = candidatesOf(word, ctx); } catch (error) { if (error instanceof Unreadable) continue; throw error; }
-      const found = protectedCandidates(candidates, ctx);
-      if (found) return found;
+      if (candidates.some((candidate) => candidate.kind === "value")) heldValue = true;
+      first ??= protectedCandidates(candidates, ctx);
     }
-    return null;
+    // N5: code that names a protected path and holds a value it may be written through: the typed deny
+    if (first && heldValue) denyTarget();
+    return first;
   }
   for (const token of text.split(/\s+/)) {
     const found = token ? protectedLiteral(token, ctx) : null;
@@ -907,14 +1038,217 @@ function mountValue(texts: Array<string | undefined>, index: number, spec: Mount
   return undefined;
 }
 
-/** Option A+: a program that is not exactly on the read-only list, whose
- * literal arguments name a protected path, asks. A value glued to its
- * option counts as the separate form does, a command line given to `-c` and
- * a mount's host side are read too (the wrappers' own arguments are the
- * `wrapperArgs` hook's). Values, substitutions and an unknown folder are
- * left as they were. */
+/** A shell's `-c` form the walker reads (walk.ts shellScript): `shellCScript` accepts the options, and the script and every word after it
+ * are plain text, so the walk binds `$0` and the positionals itself. */
+function shellCRead(args: Word[], shell: string): boolean {
+  try { return shellCScript(args, shell) !== undefined && args.every((word) => literalText(word) !== undefined); } catch (error) { if (error instanceof Unreadable) return false; throw error; }
+}
+
+/** Every executable command outside the closed read-only list uses the same path policy. */
 function protectedPathOf(cmd: SimpleCommand, ctx: WalkContext): ProtectedClass | null {
+  if (!ownerDeny()) return protectedPathOfLegacy(cmd, ctx);
   if (BINDINGS.has(cmd.name) || readOnlyListed(cmd)) return null;
+  // N6 (MARKS-DENY-VS-NOLIMITS-RULING): a shell given `-c SCRIPT` and plain words is read by the walker itself, with `$0` and the words
+  // after the script bound as its positionals (walk.ts shellScript). Each command of the script is judged in its own position (an
+  // `echo $0` or `ls "$HOME"` reads, an `rm "$1"` deletes), so the shell's own operands are not a program's write targets. A script the
+  // walker cannot read (a value for a word, an option it does not follow) is not skipped here.
+  if (/^(?:bash|sh|zsh|dash|ksh|mksh|ash)$/.test(cmd.name) && shellCRead(cmd.args, cmd.name)) return null;
+  // N6: the operands of a read-only program are read positions even when its output is redirected (the redirect rule reads where
+  // that goes); in a read position only a protected folder itself counts, never a file inside a system folder
+  const readerOnly = readOnlyListed({ ...cmd, redirects: [] });
+  // a delete verb's value targets are the delete rules' (rmHit, N2); the other writers' are N1's
+  const wipe = wipeVerb(cmd.name, cmd.args.map(renderWord), mirrorTargets(cmd) !== undefined);
+  const position = interpreterKey(cmd.name) !== undefined || /^(?:source|\.|bash|sh|zsh|dash|ksh)$/.test(cmd.name) ? "read" : "write";
+  const texts = cmd.operands.map(flagText);
+  // A bare argument may be a subcommand or data. Known filesystem writers
+  // still require cwd evidence even when their target has no slash.
+  if (invalidCwd(ctx) && (isRisky(cmd.name, texts) || /^(?:touch|mkdir|rmdir)$/.test(cmd.name))) denyTarget("unresolved-cwd");
+  const mounts = MOUNT_TOOLS[cmd.name];
+  const textTool = Object.hasOwn(TEXT_TOOLS, cmd.name) ? TEXT_TOOLS[cmd.name]! : undefined;
+  const textValues = textTool ? textToolValues(texts, textTool) : cmd.name === "jq" ? jqFilter(texts) : undefined;
+  for (const [index, list] of cmd.operands.entries()) {
+    if (textValues?.has(index)) continue;
+    // N6: a source the reader identifies for sure (`dd if=`, a copy's sources, a reader's operands) is read, never written
+    if (cmd.name === "dd" && (texts[index] ?? "").startsWith("if=")) continue;
+    const exactOnly = readerOnly || deviceReadPosition(cmd.name, texts, index);
+    const found = protectedCandidates(list, ctx, true, position, !exactOnly, !wipe);
+    if (found) return found;
+    const text = texts[index];
+    if (text === undefined) continue;
+    const attached = attachedPath(text) ?? /^-[A-Za-z]+(?=[/~])(.+)$/.exec(text)?.[1];
+    if (attached !== undefined) { const found = protectedLiteral(attached, ctx); if (found) return found; }
+    const mount = mounts ? mountValue(texts, index, mounts) : undefined;
+    const source = mount?.value === undefined ? undefined : mountSource(mount.value, mount.csv);
+    if (source) { const found = protectedLiteral(source, ctx); if (found) return found; }
+    // Executable text exposes paths independently of the API or write spelling.
+    if (interpreterKey(cmd.name) !== undefined) {
+      for (const match of text.matchAll(/(?:^|[\s'"(=<>])((?:\/|~\/)[^\s'";)},]+|~)(?=$|[\s'";)},])/g)) {
+        const found = protectedLiteral(match[1]!, ctx);
+        if (found) return found;
+      }
+    } else if (/^(?:g?sed|g?awk|nawk|mawk)$/.test(cmd.name)) {
+      // N6: a sed `r`/`R` or an awk getline reads its file; only the file a `w`/`W` command or an awk redirect writes counts
+      const writes = cmd.name.endsWith("sed") ? text.matchAll(/(?:^|[;{}\n!]|-[A-Za-z]*e|=|[\/|#,0-9$])\s*[wW]\s*([^\s;}'"]+)/g) : text.matchAll(/>>?\s*"([^"]+)"|>>?\s*'([^']+)'/g);
+      for (const match of writes) {
+        const found = protectedLiteral(match[1] ?? match[2]!, ctx);
+        if (found) return found;
+      }
+    }
+    // sed's and awk's `-e`/`-f` hold a program, not a command line: their write targets were read above
+    const line = /^(?:g?sed|g?awk|nawk|mawk)$/.test(cmd.name) ? undefined : commandLine(texts, index);
+    if (line !== undefined) { const found = protectedInLine(line, ctx); if (found) return found; }
+  }
+  return null;
+}
+
+/** A wrapper's own arguments (`env -C /`, `flock ~`, `xargs -a /etc`), glued
+ * values included: whatever the wrapper runs, a protected one asks. */
+function protectedWrapperArgs(words: Word[], ctx: WalkContext): ProtectedClass | null {
+  if (!ownerDeny()) return protectedWrapperArgsLegacy(words, ctx);
+  for (const word of words) {
+    let candidates: Candidate[];
+    try { candidates = candidatesOf(word, ctx); }
+    catch (error) {
+      if (error instanceof HardFinding || !(error instanceof Unreadable)) throw error;
+      continue;
+    }
+    const found = protectedCandidates(candidates, ctx, false);
+    if (found) return found;
+    const text = literalText(word);
+    const attached = text !== undefined ? attachedPath(text) : undefined;
+    const glued = attached !== undefined ? protectedLiteral(attached, ctx, false) : null;
+    if (glued) return glued;
+  }
+  return null;
+}
+
+/** MARKS R1: NLH0's own reading, kept verbatim for every read that is not the owner's clean No limits turn (ownerDeny()). */
+function systemDescendantLegacy(canonical: string): boolean {
+  // FULL-DENY-1018: the standard streams and null device, and /usr/local (the owner's own install prefix), are no system folder write
+  if (ORDINARY_DEVICE_SINK.test(canonical) || canonical.startsWith("/usr/local/")) return false;
+  return /^\/(?:etc|sys|boot|usr|bin|sbin|lib|lib32|lib64|libexec|system|library|applications|nix|snap|cores|proc|dev)\//.test(canonical)
+    || /^\/private\/(?:etc|var\/db|var\/root)\//.test(canonical) || /^\/var\/(?:spool|db|root)\//.test(canonical)
+    || /^[a-z]:\/(?:windows|program files(?: \(x86\))?|programdata)\//.test(canonical);
+}
+
+function protectedClassLegacy(raw: string, descendants = true): ProtectedClass | null {
+  if (procTraversal(homeSpelled(raw)) || protectedClimb(raw)) return "system"; // M-FIX3-class; FULL-DENY-1018: a deny rule holds at every level
+  // FULL-DENY-1018: `~/../../etc/x` leaves the home folder for a system folder; the climb is read from the real home
+  const spelledHome = homeSpelled(raw);
+  const canonical = normalizePath(/^~(?=\/)/.test(spelledHome) && spelledHome.includes("/..") && HOME ? HOME + spelledHome.slice(1) : spelledHome).toLowerCase();
+  if (descendants && systemDescendantLegacy(canonical)) return "system"; // M-FIX2-protected; FULL-DENY-1018: a deny rule holds at every level
+  switch (classifyPath(raw)) {
+    case "delete-root": return "root";
+    case "delete-home": return "home";
+    case "delete-system-folder": return "system";
+  }
+  const spelled = homeSpelled(raw);
+  if (!spelled.startsWith("/")) return null;
+  let p = normalizePath(spelled);
+  for (;;) {
+    const next = p.replace(/\/\*$/, "").replace(/\/\.$/, "").replace(/(.)\/$/, "$1");
+    if (next === p) break;
+    p = next;
+  }
+  p = p.toLowerCase();
+  if (p.startsWith("/private/")) {
+    const inner = p.slice("/private".length);
+    if (classifyPath(inner) === "delete-system-folder" || MORE_SYSTEM.has(inner) || MOUNT_PARENTS.has(inner)) return "system";
+  }
+  if (p === "/var/root") return "home";
+  if (MORE_SYSTEM.has(p) || MOUNT_PARENTS.has(p)) return "system";
+  if (/^\/(volumes|mnt|media)\/[^/]+$/.test(p) || /^\/(media|run\/media)\/[^/]+\/[^/]+$/.test(p) || /^\/run\/media\/[^/]+$/.test(p)) return "volume";
+  return null;
+}
+
+function protectedLiteralLegacy(path: string, ctx: WalkContext, assignments = true): ProtectedClass | null {
+  const plain = unmarked(path);
+  const prefix = (assignments ? /^(--?[A-Za-z0-9][\w.-]*=|[A-Za-z_][A-Za-z0-9_]*=)/ : /^--?[A-Za-z0-9][\w.-]*=/).exec(plain)?.[0];
+  // `env PATH=/bin cmd`: an environment setting for the child, not an argument
+  if (!assignments && /^[A-Za-z_][A-Za-z0-9_]*=/.test(plain)) return null;
+  for (const one of prefix ? [path, path.slice(path.indexOf("=") + 1)] : [path]) {
+    if (one === "") continue;
+    if (!isAnchored(homeSpelled(unmarked(one))) && (ctx.cwdConflict || !ctx.cwd)) continue;
+    const found = protectedClassLegacy(one, protectDescendantsLegacy) ?? protectedClassLegacy(resolveFrom(ctx.cwd, one), protectDescendantsLegacy);
+    if (found) return found;
+  }
+  return null;
+}
+
+function protectedCandidatesLegacy(candidates: Candidate[], ctx: WalkContext, assignments = true): ProtectedClass | null {
+  for (const candidate of candidates) {
+    if (candidate.kind !== "literal" && candidate.kind !== "glob") continue;
+    const found = protectedLiteralLegacy(candidate.path, ctx, assignments);
+    if (found) return found;
+  }
+  return null;
+}
+
+function protectedInLineLegacy(text: string, ctx: WalkContext): ProtectedClass | null {
+  let words: Word[] | undefined;
+  try {
+    words = lex(text).flatMap((token) => (token.kind === "word" ? [token.word] : []));
+  } catch (error) {
+    if (!(error instanceof Unreadable)) throw error;
+  }
+  if (words) {
+    for (const word of words) {
+      let candidates: Candidate[];
+      try { candidates = candidatesOf(word, ctx); } catch (error) { if (error instanceof Unreadable) continue; throw error; }
+      const found = protectedCandidatesLegacy(candidates, ctx);
+      if (found) return found;
+    }
+    return null;
+  }
+  for (const token of text.split(/\s+/)) {
+    const found = token ? protectedLiteralLegacy(token, ctx) : null;
+    if (found) return found;
+  }
+  return null;
+}
+
+let protectDescendantsLegacy = false;
+
+function protectedPathOfLegacy(cmd: SimpleCommand, ctx: WalkContext): ProtectedClass | null {
+  if (BINDINGS.has(cmd.name) || readOnlyListed(cmd)) return null;
+  const saved = protectDescendantsLegacy;
+  protectDescendantsLegacy = RISKY.has(cmd.name.toLowerCase()) || (cmd.name === "find" && cmd.operands.map(flagText).some((text) => text === "-delete" || text === "-fprint" || text === "-fprint0" || text === "-fprintf" || text === "-fls")) || (/^g?sed$/.test(cmd.name) && cmd.operands.map(flagText).some((text) => /^(-[A-Za-z]*i|--in-place)/.test(text ?? ""))); // FULL-DENY-1018: find and sed -i too
+  try { return protectedPathOfWithLegacy(cmd, ctx); } finally { protectDescendantsLegacy = saved; }
+}
+
+const LN_BARELegacy = /^(?:-[bdfFhiLnPrsTvw]+|--(?:symbolic|force|no-dereference|verbose|interactive|relative|logical|physical|backup|no-target-directory|directory)|--backup=[a-z]+)$/;
+
+function symlinkTargetLegacy(name: string, texts: Array<string | undefined>, index: number): boolean {
+  if (name !== "ln") return false;
+  const text = texts[index];
+  if (text === undefined || text.startsWith("-")) return false;
+  if (texts.some((one) => one === undefined)) return false; // a word the reader cannot spell could be an option or the link
+  const words = texts as string[];
+  if (!words.some((one) => /^(?:-[A-Za-z]*s[A-Za-z]*|--symbolic)$/.test(one))) return false;
+  // MARKS r13 (Astra H1): a valued option (`-S .bak`, `--suffix .bak`, `-t DIR`) or `--` moves which word is the link, so no word is exempt
+  if (words.some((one) => one.startsWith("-") && !LN_BARELegacy.test(one))) return false; // M-R13-ln-bare
+  const lastOperand = words.reduce((last, one, at) => (one.startsWith("-") ? last : at), -1);
+  return index !== lastOperand;
+}
+
+function archiveDestinationLegacy(name: string, texts: Array<string | undefined>, index: number): string | undefined {
+  const text = texts[index];
+  if (text === undefined) return undefined;
+  const prev = texts[index - 1];
+  if (name === "tar" || name === "gtar" || name === "bsdtar") {
+    if (prev === "-C" || prev === "--directory") return text;
+    if (text.startsWith("--directory=")) return text.slice("--directory=".length);
+    if (/^-C./.test(text)) return text.slice(2);
+  }
+  if (name === "unzip") {
+    if (prev === "-d") return text;
+    if (/^-d./.test(text)) return text.slice(2);
+  }
+  if (name === "zip" && !text.startsWith("-") && texts.slice(0, index).every((one) => one === undefined || one.startsWith("-"))) return text;
+  return undefined;
+}
+
+function protectedPathOfWithLegacy(cmd: SimpleCommand, ctx: WalkContext): ProtectedClass | null {
   const texts = cmd.operands.map(flagText);
   const interpreter = interpreterKey(cmd.name) !== undefined;
   const mounts = MOUNT_TOOLS[cmd.name];
@@ -924,40 +1258,97 @@ function protectedPathOf(cmd: SimpleCommand, ctx: WalkContext): ProtectedClass |
   const textValues = textTool ? textToolValues(texts, textTool) : cmd.name === "jq" ? jqFilter(texts) : undefined;
   for (const [index, list] of cmd.operands.entries()) {
     if (textValues?.has(index)) continue;
-    const found = protectedCandidates(list, ctx);
+    // M-R10-monotonic: `dd if=/dev/zero of=./disk.img` only reads /dev/zero; the input operand is no write target
+    if (cmd.name === "dd" && (texts[index] ?? "").startsWith("if=")) continue;
+    // FULL-DENY-1018: a source operand is read, so a system folder file there (`cp /etc/hosts ./h`) is no write into it
+    // MARKS r13 (Astra M5, R4): a symlink's TARGET is only the text of the link: no folder class applies to it, `/etc` itself included
+    if (symlinkTargetLegacy(cmd.name, texts, index)) continue; // M-FD-ln
+    const savedDescendants = protectDescendantsLegacy;
+    if (deviceReadPosition(cmd.name, texts, index)) protectDescendantsLegacy = false;
+    try {
+    const found = protectedCandidatesLegacy(list, ctx);
     if (found) return found;
     const text = texts[index];
     if (text === undefined) continue;
     const attached = attachedPath(text);
-    const glued = attached !== undefined ? protectedLiteral(attached, ctx) : null;
+    const glued = attached !== undefined ? protectedLiteralLegacy(attached, ctx) : null;
     if (glued) return glued;
+    // FULL-DENY-1018: where an archiver extracts or writes is a write target of the program
+    {
+      const savedDest = protectDescendantsLegacy;
+      protectDescendantsLegacy = true;
+      try {
+        const dest = archiveDestinationLegacy(cmd.name, texts, index);
+        if (dest !== undefined) { const f = protectedLiteralLegacy(dest, ctx); if (f) return f; }
+      } finally { protectDescendantsLegacy = savedDest; }
+    }
+    // FULL-DENY-1018: the file a sed `w` command or an awk redirect writes is a write target of the program
+    if (/^(?:g?sed|g?awk|nawk|mawk)$/.test(cmd.name)) {
+      const wrote = cmd.name.endsWith("sed") ? text.matchAll(/(?:^|[;{}\n]|-[A-Za-z]*e|=|[\/|#,])\s*[wW]\s*([^\s;}'"]+)/g) : text.matchAll(/>>?\s*"([^"]+)"/g);
+      const savedWrites = protectDescendantsLegacy;
+      protectDescendantsLegacy = true;
+      try { for (const one of wrote) { const f = protectedLiteralLegacy(one[1]!, ctx); if (f) return f; } } finally { protectDescendantsLegacy = savedWrites; }
+    }
     // `lftp -c 'local mirror --delete x ~'`: the line is read word by word
     // (an interpreter's code is the opaque scanner's)
     if (!interpreter) {
       const line = commandLine(texts, index);
-      const inLine = line !== undefined ? protectedInLine(line, ctx) : null;
+      const inLine = line !== undefined ? protectedInLineLegacy(line, ctx) : null;
       if (inLine) return inLine;
     }
     const mount = mounts ? mountValue(texts, index, mounts) : undefined;
     const source = mount?.value === undefined ? undefined : mountSource(mount.value, mount.csv);
-    const mounted = source ? protectedLiteral(source, ctx) : null;
+    // FULL-DENY-1018: a read-write mount of a system folder is a write target; a read-only mount (`:ro`) is a read
+    const savedMount = protectDescendantsLegacy;
+    protectDescendantsLegacy = mount?.value !== undefined && !/(?::|,)(?:ro|readonly)(?:$|[,:])/.test(mount.value);
+    let mounted: ProtectedClass | null = null;
+    try { mounted = source ? protectedLiteralLegacy(source, ctx) : null; } finally { protectDescendantsLegacy = savedMount; }
     if (mounted) return mounted;
+    } finally { protectDescendantsLegacy = savedDescendants; }
   }
   return null;
 }
 
-/** A wrapper's own arguments (`env -C /`, `flock ~`, `xargs -a /etc`), glued
- * values included: whatever the wrapper runs, a protected one asks. */
-function protectedWrapperArgs(words: Word[], ctx: WalkContext): ProtectedClass | null {
+function protectedWrapperArgsLegacy(words: Word[], ctx: WalkContext): ProtectedClass | null {
   for (const word of words) {
     let candidates: Candidate[];
     try { candidates = candidatesOf(word, ctx); } catch (error) { if (error instanceof Unreadable) continue; throw error; }
-    const found = protectedCandidates(candidates, ctx, false);
+    const found = protectedCandidatesLegacy(candidates, ctx, false);
     if (found) return found;
     const text = literalText(word);
     const attached = text !== undefined ? attachedPath(text) : undefined;
-    const glued = attached !== undefined ? protectedLiteral(attached, ctx, false) : null;
+    const glued = attached !== undefined ? protectedLiteralLegacy(attached, ctx, false) : null;
     if (glued) return glued;
+  }
+  return null;
+}
+
+function catastropheFirstLegacy(error: Unreadable, text: string, again: (part: string) => AlwaysAskHit | null): AlwaysAskHit | null {
+  if (!(error instanceof Doubt)) return null;
+  const named = (part: string): AlwaysAskHit | null => {
+    try {
+      const found = withoutDoubts(() => again(part));
+      // FULL-DENY-1018: the protected-path card is the doubt-free read's own (Full access returns it; the owner's No limits turn gets it
+      // after the relief), so it does not replace the strict read's doubt here
+      return found && found.rule !== "unreadable" && found.rule !== "protected-path" ? found : null; // M-FIX4-first
+    } catch {
+      return null;
+    }
+  };
+  const whole = named(text);
+  if (whole) return whole;
+  // a value or opaque word earlier in the text stops the whole read; each statement is read on its own, so a named
+  // catastrophe later in the text keeps its own card (additive only: a part can add a card, never remove one)
+  // earlier statements that set, unset or read a variable travel with each later part, so a value the text bound
+  // (`D=x; rm -rf "${D:-/usr}"`, `read HOME; rm -rf "$HOME"`) is not lost by the split (M-FIX4-first-values)
+  let bound = "";
+  for (const part of text.split(/;|&&|\|\||\n/)) {
+    if (!part.trim()) continue;
+    if (part !== text) {
+      const found = named(bound + part);
+      if (found) return found;
+    }
+    if (/^\s*(?:(?:export|read|declare|local|typeset|readonly|unset|set)\b|[A-Za-z_]\w*\+?=)/.test(part)) bound += part + "; ";
   }
   return null;
 }
@@ -1005,7 +1396,13 @@ function valueTarget(reason: "expansion" | "folder", detail: string, target: str
   return null;
 }
 
-function valueTargetIn(covered: boolean, reason: "expansion" | "folder", detail: string, tool: string, target: string): void {
+/** N2 (`wipe`): a delete, disk or mirror verb whose target is wholly a value is the typed deny. Any other value-held target
+ * is as it was: recorded by the routine carve-out, else the reader's own failure (a doubt in the strict read). */
+function valueTargetIn(covered: boolean, reason: "expansion" | "folder", detail: string, tool: string, target: string, wipe = false): void {
+  if (wipe && ownerDeny()) denyTarget("unresolved-target");
+  // a write whose target is a value but no delete verb: the reader could not follow it (a could-not-read: Full access cards it, the
+  // owner's clean No limits turn waives it; MARKS FIX A ruling (ii)). A folder a value set stays the reader's own failure.
+  if (ownerDeny() && (carved === null || !covered) && reason === "expansion") throw new HardFinding("ask", "unreadable", "unresolved-value-target");
   if (carved === null || !covered) throw new Unreadable(reason, detail);
   if (!carved.some((entry) => entry.tool === tool && entry.target === target)) carved.push({ tool, target });
 }
@@ -1059,6 +1456,12 @@ function partExpression(part: Part): string {
 
 /** The rules, run on every simple command the walker finds. */
 const visitor: Visitor<AlwaysAskHit> = {
+  protectedCommand(cmd, ctx) {
+    if (!ownerDeny()) return null;
+    const found = protectedPathOf(cmd, ctx);
+    if (found) deferred = protectedDeferred(found, cmd.name);
+    return null;
+  },
   command(cmd: SimpleCommand, ctx: WalkContext): AlwaysAskHit | null {
     const { name, args, operands } = cmd;
     const texts = operands.map(flagText);
@@ -1094,8 +1497,16 @@ const visitor: Visitor<AlwaysAskHit> = {
       if (cmd.stdin) nested.stdin = cmd.stdin; else delete nested.stdin;
       return pwsh ? walkPwsh(text, nested, visitor) : walkCmd(text, nested, visitor);
     }
-    // a device spelled anywhere outside a reader's read position
-    if (deviceHit(cmd)) return hit("disk-erase");
+    // a device spelled anywhere outside a reader's read position; a protected literal
+    // asks as unreadable only after the catastrophe rules below have had their say (M-FIX4-order)
+    let pendingDoubt: Unreadable | undefined;
+    try {
+      if (deviceHit(cmd, ctx)) return hit("disk-erase");
+    } catch (error) {
+      // MARKS FIX A (ruling section 3): a held unknown-target deny waits behind a named catastrophe as a doubt does
+      if (!(error instanceof Doubt) && !(error instanceof HardFinding && error.rule === "unknown-target")) throw error;
+      pendingDoubt = error; // M-FIX4-order
+    }
     if (diskHit(name, texts)) return hit("disk-erase");
     // the operands name a catastrophe: that is the card
     // the routine carve-out covers the targets of rm, find -delete and the
@@ -1104,6 +1515,7 @@ const visitor: Visitor<AlwaysAskHit> = {
     const tool = carveTool(name);
     const rule = name === "rm" || (ctx.findAction && FIND_FILE_DELETES.has(name)) ? inCarveScope(tool, () => rmHit(cmd, ctx)) : name === "find" ? inCarveScope(tool, () => findHit(cmd, ctx)) : windowsDeleteHit(cmd, ctx) ?? inCarveScope(tool, () => mirrorHit(cmd, ctx));
     if (rule) return hit(rule);
+    if (pendingDoubt) throw pendingDoubt; // M-FIX4-rethrow
     // otherwise a risky command has to be fixed by the text, whole: its
     // operands, its name, and the place it runs from
     // a deleting mirror (`rclone sync`, `unison`, `aws s3 sync --delete`)
@@ -1111,8 +1523,8 @@ const visitor: Visitor<AlwaysAskHit> = {
     if (isRisky(name, texts) || mirrorTargets(cmd) !== undefined) {
       for (const [index, list] of operands.entries()) {
         for (const candidate of list) {
-          // `fromFile` (a list on disk) is ordinary here, as a script on disk is
-          if (candidate.kind === "value") valueTargetIn(carvable === "all" || carvable?.has(candidate) === true, "expansion", `a value in ${name}'s arguments`, tool, targetExpression(args[index]));
+          if (candidate.kind === "fromFile") doubt("file-fed-args");
+          if (candidate.kind === "value") valueTargetIn(carvable === "all" || carvable?.has(candidate) === true, "expansion", `a value in ${name}'s arguments`, tool, targetExpression(args[index]), wipeVerb(name, args.map(renderWord), mirrorTargets(cmd) !== undefined) && (name !== "dd" || renderWord(args[index]!).startsWith("of=")));
           if (candidate.kind === "glob" && catastrophicAnchor(candidate.anchor)) return hit("unknown-target");
         }
       }
@@ -1124,7 +1536,7 @@ const visitor: Visitor<AlwaysAskHit> = {
     // own verdict on the whole text, and this card stands only where the
     // text would otherwise have been ordinary
     const found = deferred ? null : protectedPathOf(cmd, ctx);
-    if (found) deferred = { rule: "protected-path", what: PROTECTED_WHAT[found], protectedClass: found, program: name };
+    if (found) deferred = protectedDeferred(found, name);
     return null;
   },
   redirect(redirect: Redirect, target, candidates, ctx): AlwaysAskHit | null {
@@ -1146,7 +1558,7 @@ const visitor: Visitor<AlwaysAskHit> = {
   wrapperArgs(words: Word[], ctx: WalkContext): AlwaysAskHit | null {
     // kept, as a command's own hit is: every later rule keeps its verdict
     const found = deferred ? null : protectedWrapperArgs(words, ctx);
-    if (found) deferred = { rule: "protected-path", what: PROTECTED_WHAT[found], protectedClass: found, program: "wrapper" };
+    if (found) deferred = protectedDeferred(found, "wrapper");
     return null;
   },
   forkBomb(): AlwaysAskHit {
@@ -1163,7 +1575,7 @@ const visitor: Visitor<AlwaysAskHit> = {
     if (carved === null) return false;
     const at = findValuesPassable(words);
     if (at < 0) return false;
-    valueTargetIn(true, "expansion", "a value in find's arguments", carveTool("find"), targetExpression(words[at]));
+    valueTargetIn(true, "expansion", "a value in find's arguments", carveTool("find"), targetExpression(words[at]), true);
     return true;
   },
 };
@@ -1264,9 +1676,84 @@ export function alwaysAskCommand(text: string | undefined, cwd?: string, mode: "
       : found;
   } catch (error) {
     if (!(error instanceof Unreadable)) throw error;
-    if (mode !== "command") return null;
-    return readerFailure(error);
+    if (mode !== "command") {
+      if (!ownerDeny()) return null;
+      if (!(error instanceof HardFinding)) return catastropheFirst(error, text, part => readWhole(part, cwd, shell, windowsBash, home, options));
+    }
+    return catastropheFirst(error, text, part => readWhole(part, cwd, shell, windowsBash, home, options)) ?? readerFailure(error);
   }
+}
+
+/** The statements catastropheFirst reads one at a time. A heredoc's body and its terminator travel with the statement that opens it:
+ * they are text for that command's stdin, and read as statements of their own a line of prose ("Never run rm -rf / on a server.")
+ * would be an unknown program given `/` (MARKS-r14 rule 8, N6; G3 `cat <<EOF > cleanup-notes.md`). */
+function statementsOf(text: string): string[] {
+  const lines = text.split("\n");
+  const parts: string[] = [];
+  for (let at = 0; at < lines.length; at++) {
+    const pieces = lines[at]!.split(/;|&&|\|\|/);
+    const open = /<<-?\s*(['"]?)([A-Za-z_][\w-]*)\1/.exec(lines[at]!);
+    if (open) {
+      const body: string[] = [];
+      let end = at + 1;
+      for (; end < lines.length; end++) { body.push(lines[end]!); if (lines[end]!.trim() === open[2]) break; }
+      const holder = Math.max(0, pieces.findIndex((piece) => /<<-?\s*['"]?[A-Za-z_]/.test(piece)));
+      pieces[holder] = [pieces[holder]!, ...body].join("\n");
+      at = end;
+    }
+    parts.push(...pieces);
+  }
+  return parts;
+}
+
+/** Functions the text defines travel with each later statement, as its variable bindings do: a call `f /` read alone is a program
+ * named `f` given `/`, where read with its definition it is whatever the body does (MARKS-r14 rule 8: inner commands are judged
+ * on their own; G3 `f(){ ls "$1"; }; f /; rm -rf build`). */
+function functionDefinitions(text: string): string {
+  const name = "[A-Za-z_][\\w.-]*";
+  const definition = new RegExp(`(?:^|[;&|\\n]\\s*)((?:function\\s+${name}\\s*(?:\\(\\s*\\))?|${name}\\s*\\(\\s*\\))\\s*\\{[^{}]*\\})`, "g");
+  return [...text.matchAll(definition)].map((match) => `${match[1]!}; `).join("");
+}
+
+/** MARKS r7 (M-FIX4-first): a doubt never hides a named catastrophe. The doubt-free read can only name one; it never
+ * admits, and any failure in it leaves the doubt's own card. */
+function catastropheFirst(error: Unreadable, text: string, again: (part: string) => AlwaysAskHit | null): AlwaysAskHit | null {
+  if (!ownerDeny()) return catastropheFirstLegacy(error, text, again);
+  // MARKS FIX A (ruling section 3): delete-home wins over unknown-target; the held unknown-target deny is rethrown by the caller
+  // a could-not-read finding (D4, FIX A ruling 2) holds behind a named catastrophe as an unknown-target deny does
+  const holdable = (failure: unknown): boolean => failure instanceof HardFinding && (failure.rule === "unknown-target" || COULD_NOT_READ_FINDINGS.has(failure.findingReason));
+  if (!(error instanceof Doubt) && !holdable(error)) return null;
+  // the first unknown-target deny is held while the rest of the text is read for a named catastrophe (ruling section 3); the
+  // held deny is the answer when none is found. It keeps the closed-list doubt it stood behind, as that was the reader's word
+  let held: AlwaysAskHit | null = null;
+  const hold = (finding: AlwaysAskHit): null => { held ??= error instanceof Doubt ? { ...finding, doubt: error.doubt } : finding; return null; };
+  const named = (part: string): AlwaysAskHit | null => {
+    try {
+      const found = withoutDoubts(() => again(part));
+      if (found && found.classification === "deny" && found.rule === "unknown-target") return hold(found);
+      // A hard finding survives either reader mode.
+      return found && (found.classification === "deny" || found.mandatory) ? found : null; // M-FIX4-first
+    } catch (failure) {
+      if (holdable(failure)) return hold(readerFailure(failure as HardFinding));
+      return failure instanceof HardFinding ? readerFailure(failure) : null;
+    }
+  };
+  const whole = named(text);
+  if (whole) return whole;
+  // a value or opaque word earlier in the text stops the whole read; each statement is read on its own, so a named
+  // catastrophe later in the text keeps its own card (additive only: a part can add a card, never remove one)
+  // earlier statements that set, unset or read a variable travel with each later part, so a value the text bound
+  // (`D=x; rm -rf "${D:-/usr}"`, `read HOME; rm -rf "$HOME"`) is not lost by the split (M-FIX4-first-values)
+  let bound = functionDefinitions(text);
+  for (const part of statementsOf(text)) {
+    if (!part.trim()) continue;
+    if (part !== text) {
+      const found = named(bound + part);
+      if (found) return found;
+    }
+    if (/^\s*(?:(?:export|read|declare|local|typeset|readonly|unset|set)\b|[A-Za-z_]\w*\+?=)/.test(part)) bound += part + "; ";
+  }
+  return held;
 }
 
 /** Text the cmd reader must see too: cmd given text to run (`/c`, `/k`,
@@ -1278,33 +1765,43 @@ function read(text: string, cwd: string | undefined, shell?: "pwsh", windowsBash
   deferred = null;
   unseen = { text, paths: [] };
   try {
-    return (shell === "pwsh" ? walkPwsh(text, { ...newContext(cwd || undefined), windowsBash, pwshStamped: true }, visitor) : readRules(text, cwd)) ?? deferred;
+    const found = shell === "pwsh" ? walkPwsh(text, { ...newContext(ownerDeny() ? cwd : cwd || undefined, ownerDeny() ? activeSessionFiles?.runtimePaths : undefined), windowsBash, pwshStamped: true }, visitor) : readRules(text, cwd);
+    return ownerDeny() ? (found?.classification === "deny" ? found : deferred ?? found) : found ?? deferred;
   } catch (error) {
-    if (deferred && error instanceof Unreadable) return deferred;
+    if (deferred && error instanceof Unreadable) {
+      // a named catastrophe in the text keeps its own name over the protected-path card (M-FIX4-first-name)
+      const kept = deferred;
+      const named = catastropheFirst(error, text, part => read(part, cwd, shell, windowsBash));
+      if (!ownerDeny()) {
+        if (named && named.rule !== "protected-path") return named;
+        // FULL-DENY-1018: a strict read keeps its closed-list doubt; the doubt-free read returns the protected-path card
+        if (error instanceof Doubt) throw error;
+        return kept;
+      }
+      if (named?.classification === "deny" && named.rule !== "protected-path") return named;
+      // A later reader failure cannot replace a recorded denial.
+      return kept;
+    }
     throw error;
   } finally {
     deferred = null;
   }
 }
 
-/** The always-ask read for a scheduled or manual routine run (the owner's
- * routine carve-out). It is `alwaysAskCommand` in command mode, except that
- * a write or delete target held in a value (rm, an output redirect,
- * find -delete, a deleting mirror) does not make the command unreadable:
- * the read goes on, and when nothing else asks, `valueTarget` names each
- * tool and target expression passed over so the run can record them. Every other rule, a literal
- * catastrophe, a protected path, and every other unreadable text still ask. */
+/** Routine reads require the same fixed target evidence as other reads. */
 export function alwaysAskRoutineCommand(text: string | undefined, cwd?: string, shell?: "pwsh", home?: string, options: UnseenOptions = {}): { hit: AlwaysAskHit | null; valueTarget?: CarvedTarget[] } {
   if (!text) return { hit: null };
   carved = [];
   carveScope = null;
   try {
-    const found = readWhole(text, cwd, shell, undefined, home, options);
+    const found = ownerDeny() ? readWhole(text, cwd, shell, undefined, home, options) : withoutDoubts(() => readWhole(text, cwd, shell, undefined, home, options));
     if (found) return { hit: found };
     return carved.length > 0 ? { hit: null, valueTarget: carved } : { hit: null };
   } catch (error) {
     if (!(error instanceof Unreadable)) throw error;
-    return { hit: error.message.endsWith(REMOTE_ELEVATED) ? { rule: "unreadable", what: REMOTE_ELEVATED_WHAT } : hit("unreadable") };
+    const named = catastropheFirst(error, text, part => readWhole(part, cwd, shell, undefined, home, options));
+    if (named) return { hit: named }; // M-FIX4-first
+    return { hit: ownerDeny() ? readerFailure(error) : error.message.endsWith(REMOTE_ELEVATED) ? { rule: "unreadable", what: REMOTE_ELEVATED_WHAT } : hit("unreadable") };
   } finally {
     carved = null;
     carveScope = null;
@@ -1317,18 +1814,58 @@ export function alwaysAskRoutineCommand(text: string | undefined, cwd?: string, 
 /** `home` (1.0.9): the HOME the requesting engine's shell was handed, from
  * its own environment record (server/engine-env.ts promptFactsOf); without
  * it, a `~` keeps the text outside the allowed shape. */
+let activeSessionFiles: UnseenOptions | undefined;
+
+/** NL-WIN-1018 D4: the one PowerShell text the owner's own clean No limits turn reads as the Git Bash text it is: exactly two bare
+ *  words, `bash` or `sh` (no `.exe`, no path to the shell) and one script word with a `/` in it, forward slashes only, no `..`, no
+ *  drive, no leading `/` or `~`, none of `$` backtick ( @ ; & | < > : or a backslash. Anything else keeps the PowerShell ask. */
+const SCRIPT_SEGMENT = "[A-Za-z0-9_][A-Za-z0-9_.-]*";
+const PWSH_BASH_SCRIPT = new RegExp(`^[ \\t]*(?:bash|sh)[ \\t]+((?:\\./${SCRIPT_SEGMENT}(?:/${SCRIPT_SEGMENT})*|${SCRIPT_SEGMENT}(?:/${SCRIPT_SEGMENT})+)\\.sh)[ \\t]*$`);
+
+/** NL-WIN-1018 D4: the script word is the file it spells. A link, junction or reparse point anywhere on the path moves the
+ *  file's real path off the folder's real path plus the word (compared case-insensitively on Windows). */
+function plainPlacedScript(word: string, cwd: string | undefined, options: UnseenOptions): boolean {
+  if (!cwd) return false;
+  const fs = options.fs ?? DISK;
+  const win = gitBash(cwd, options);
+  const key = (path: string): string => { const flat = path.replace(/\\/g, "/").replace(/\/+$/, ""); return win ? flat.toLowerCase() : flat; };
+  const rel = word.replace(/^\.\//, "");
+  try {
+    const joined = win ? `${cwd.replace(/\\/g, "/")}/${rel}` : posixPath.join(cwd, rel);
+    return key(fs.realpath(joined)) === key(`${fs.realpath(cwd)}/${rel}`);
+  } catch { return false; }
+}
+
 function readWhole(text: string, cwd: string | undefined, shell?: "pwsh", windowsBash?: string[], home?: string, options: UnseenOptions = {}): AlwaysAskHit | null {
   try {
-    const found = read(text, cwd, shell, windowsBash);
-    if (found || !unseen || unseen.paths.length === 0) return found;
+    activeSessionFiles = options;
+    // D4: owner mode (ownerDeny is the flag ownerMarks sets), and WIN-PWSH-1018: the Full access turn auto-approve.ts admits, for
+    // the exact shape above, read as the POSIX text it is; the unseen-script checks below judge it as they judge the Bash tool's
+    const bashShape = shell === "pwsh" && (ownerDeny() && options.pwshOwnerBash === true || options.pwshFullBash === true) ? PWSH_BASH_SCRIPT.exec(text)?.[1] : undefined;
+    // WIN-PWSH-1018 H1: PowerShell resolves a bare `bash` by its own rules; the shape runs only if that is Git Bash
+    if (bashShape !== undefined && !pwshBashIsGitBash(/^[ \t]*(bash|sh)/.exec(text)![1]!, options)) return unreadableHit();
+    const dialect = bashShape !== undefined ? undefined : shell;
+    const found = read(text, cwd, dialect, bashShape !== undefined ? undefined : windowsBash);
+    if (found) return found;
+    // the 1.0.5 `bash -c` payload relief: the same resolution decides it
+    if (shell === "pwsh" && bashShape === undefined && windowsBash?.length && !pwshBashIsGitBash("bash", options)) return unreadableHit();
+    // D4: the shape admits only through the unseen-script path below (a script the session already knows, or one the walk did not
+    // record, never skips the placement and link checks or the owner waiver)
+    if (bashShape !== undefined && (!unseen || unseen.paths.length === 0)) return unreadableHit();
+    if (!unseen || unseen.paths.length === 0) return found;
+    const protectedScript = ownerDeny() ? protectedScriptHit(unseen.paths) : null;
+    if (protectedScript) return protectedScript;
     // a `bash -c` payload PowerShell hands on (Codex and ACP engines on
     // Windows) keeps the 1.0.5 ask; Git Bash's own text is read below
-    if (windowsBash) return unreadableHit();
-    const admits = unseenShapeAdmits(text, unseen.paths, cwd, shell, home, options);
-    if (admits === true) return { ...unreadableHit(), unseenScript: true };
-    return admits === null ? unreadableHit() : { ...unreadableHit(), unseenWhy: admits };
+    if (windowsBash && bashShape === undefined) return unreadableHit();
+    const admits = unseenShapeAdmits(text, unseen.paths, cwd, dialect, home, options);
+    if (admits === true && bashShape !== undefined && !plainPlacedScript(bashShape, cwd, options)) return unreadableHit();
+    if (admits === true) return { ...unreadableHit(), unseenScript: true, unseenPaths: [...unseen.paths] };
+    if (admits === null) return unreadableHit();
+    return { ...unreadableHit(), unseenWhy: admits };
   } finally {
     unseen = null;
+    activeSessionFiles = undefined;
   }
 }
 
@@ -1339,6 +1876,8 @@ function readWhole(text: string, cwd: string | undefined, shell?: "pwsh", window
 const SHAPE_SHELLS = new Set(["bash", "sh"]);
 const SHAPE_INTERPRETERS = new Set(["python", "python3", "node", "ruby", "php", "perl"]);
 const SHAPE_SOURCES = new Set(["source", "."]);
+/** 1.0.18 (APPROVALS-SIMPLE 5a): -I isolated, -E no PYTHON* env, -s no user site, -B no .pyc, -u unbuffered, -q quiet. */
+const PY_RUN_OPTIONS = /^-[IEsBuq]+$/;
 const SHAPE_PRINTS = new Set(["pwd", "ls", "true", "deactivate", "which", "echo"]);
 /** 1.0.9: the filters a script's output may be piped through
  * (`node tool.mjs | head -c 3000`), each read by `stdinFilter`: only the
@@ -1446,11 +1985,113 @@ export interface UnseenFs {
   head?(path: string, bytes: number): Uint8Array;
 }
 export interface UnseenOptions {
+  /** Fixed paths supplied by the executing engine, never permission metadata. */
+  runtimePaths?: Readonly<Record<string, string>>;
   fs?: UnseenFs;
+  sessionEdits?: ReadonlySet<string>;
+  sessionFile?: (path: string) => { text: string } | "unavailable";
   /** The shell the text runs in: a POSIX shell, or Git Bash on Windows.
    * Unset, Windows when the server runs there or the folder has a drive. */
   platform?: "posix" | "win32";
+  /** NL-WIN-1018 D4: set by auto-approve.ts alone, on the owner's own clean No limits turn with no cut, truncated or missing input, no
+   *  scope, no routine level and a valid folder. Without it the pwsh `bash ./x.sh` shape keeps the PowerShell ask. */
+  pwshOwnerBash?: boolean;
+  /** WIN-PWSH-1018: set by auto-approve.ts alone, below No limits, at the level and origin Full access covers for the owner, with
+   *  the same input hygiene as D4. The same pwsh `bash ./x.sh` shape is then read as the Claude Bash tool's own text is (parity):
+   *  the unseen-script placement, head-bytes and deny-rule checks still decide it. Without it the shape keeps the PowerShell ask. */
+  pwshFullBash?: boolean;
+  /** WIN-PWSH-1018 H1: what a bare `bash` or `sh` resolves to (pwshBashIsGitBash); without it the pwsh `bash`
+   *  admissions (D4, Full access, the 1.0.5 `bash -c` relief) hold. */
+  bashResolve?: {
+    path?: string; pathExt?: string;
+    /** The engine's Git Bash (the Claude driver's discovery, CLAUDE_CODE_GIT_BASH_PATH honoured); none, everything holds. */
+    gitBash?: string;
+    /** Disk stubs for tests: a directory listing, lstat, the native realpath, and stat with bigint dev and ino. */
+    list?: (dir: string) => string[] | null;
+    lstat?: (path: string) => { isFile(): boolean; isSymbolicLink(): boolean };
+    realpath?: (path: string) => string;
+    stat?: (path: string) => { dev: bigint; ino: bigint };
+  };
 }
+/** WIN-PWSH-1018 H1 (redesign): what a bare `bash` or `sh` is under `powershell -NoProfile -Command`, from the engine's handed PATH and
+ *  PATHEXT, and whether it is the engine's own Git Bash. Walk the PATH directories in order; in each, `<word>.ps1` and then
+ *  `<word><each PATHEXT ext>`, then the bare `<word>` last (the way PowerShell's command search does, and nothing repaired: a PATH entry with a quote or
+ *  edge whitespace, a PATHEXT entry that is empty or holds whitespace, a relative entry, an unreadable directory all hold).
+ *  The FIRST name that exists decides, and it is never skipped: it must be a `.exe` that lstat shows as a regular file (not a
+ *  directory, symlink or junction), and is the same file as the Git Bash the engine discovered: exactly equal native realpaths, and
+ *  equal dev and ino when stat gives a nonzero ino on both (`gitBash`, the one the Claude driver's discovery finds); for `sh`, the sh.exe in that same Git install
+ *  (`bin` or `usr\bin`; a reference whose realpath throws is skipped for the other one). No discovered Git Bash, no hit at all, or any other throw
+ *  (a directory, lstat, realpath) is false (held); only the stat probe falls back to the exact realpath. Only the exact bare words. */
+export function pwshBashIsGitBash(word: string, options: UnseenOptions): boolean {
+  if (word !== "bash" && word !== "sh") return false;
+  const r = options.bashResolve;
+  if (!r || !r.path || !r.pathExt || !r.gitBash) return false;
+  try {
+    const exts = r.pathExt.split(";");
+    if (exts.some(e => e === "" || e !== e.trim() || /\s/.test(e))) return false;
+    const list = r.list ?? ((dir: string) => readdirSync(dir));
+    const lstat = r.lstat ?? ((path: string) => lstatSync(path));
+    const real = r.realpath ?? ((path: string) => realpathSync.native(path));
+    const identity = r.stat ?? ((path: string) => statSync(path, { bigint: true }));
+    // the same file, strictly: the native realpaths (`a`, `b`) must be EXACTLY equal, case included, and, when stat gives a nonzero
+    // ino on both, dev and ino equal too. A hard link elsewhere has the same ino and a different realpath (the Git wrapper finds its
+    // install from the name it was opened by), so identity alone never admits. ino 0n or a stat that throws leaves the exact
+    // realpath equality to decide; anything else holds.
+    const same = (a: string, b: string): boolean => {
+      if (a !== b) return false;
+      let sa: { dev: bigint; ino: bigint };
+      let sb: { dev: bigint; ino: bigint };
+      try { sa = identity(a); sb = identity(b); } catch { return true; }
+      if (sa.ino === 0n || sb.ino === 0n) return true;
+      return sa.dev === sb.dev && sa.ino === sb.ino;
+    };
+    for (const dir of r.path.split(";")) {
+      if (dir === "") continue;
+      if (dir !== dir.trim() || dir.includes('"') || !/^[a-z]:[\\/]/i.test(dir)) return false;
+      const names = list(dir);
+      if (!names) return false;
+      // PowerShell's own order per directory: `<word>.ps1`, `<word><each PATHEXT ext>`, then the bare `<word>` last; the first
+      // name that exists decides and is never skipped (an extensionless file is not Git Bash, so it holds)
+      const hit = [".ps1", ...exts, ""].map(e => (word + e).toLowerCase()).map(want => names.find(n => n.toLowerCase() === want)).find(n => n !== undefined);
+      if (hit === undefined) continue;
+      if (!/\.exe$/i.test(hit)) return false;
+      const full = winPath.join(dir, hit);
+      const st = lstat(full);
+      if (!st.isFile() || st.isSymbolicLink()) return false;
+      const found = real(full);
+      if (word === "bash") return same(found, real(r.gitBash));
+      const gitDir = winPath.dirname(r.gitBash);
+      const root = /[\\/]usr[\\/]bin$/i.test(gitDir) ? winPath.dirname(winPath.dirname(gitDir)) : /[\\/]bin$/i.test(gitDir) ? winPath.dirname(gitDir) : undefined;
+      if (root === undefined) return false;
+      for (const sh of [winPath.join(root, "bin", "sh.exe"), winPath.join(root, "usr", "bin", "sh.exe")]) {
+        try { if (same(found, real(sh))) return true; } catch { /* the other place may not exist */ }
+      }
+      return false;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+/** Bounded, regular-file-only read. Bytes are inspected, never executed. */
+function readSessionFile(path: string): { text: string } | "unavailable" {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > 131_072) return "unavailable";
+    const bytes = Buffer.alloc(131_073);
+    let used = 0;
+    while (used < bytes.length) {
+      const count = readSync(fd, bytes, used, bytes.length - used, used);
+      if (count === 0) break;
+      used += count;
+    }
+    return used > 131_072 ? "unavailable" : { text: new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, used)) };
+  } catch { return "unavailable"; }
+  finally { if (fd !== undefined) closeSync(fd); }
+}
+
 const DISK: UnseenFs = {
   realpath: (path) => realpathSync.native(path),
   stat: (path) => statSync(path),
@@ -1748,11 +2389,16 @@ function shapeScript(words: string[]): string | null {
   if (SHAPE_PRINTS.has(name)) return words.slice(1).some((word) => !word.startsWith(HOME_MARK) && deviceOrProcess(word)) ? null : "";
   if (SHAPE_FILTERS.has(name)) return stdinFilter(words) ? "" : null;
   if (!SHAPE_SOURCES.has(name) && !SHAPE_SHELLS.has(name) && !SHAPE_INTERPRETERS.has(name)) return null;
-  if (!shapePath(path)) return null;
+  // 1.0.18 (APPROVALS-SIMPLE 5a): Python's run-tightening options before the script (`python3 -I x.py`, `-IB`); each
+  // only isolates or quiets the run, none takes code, a module or a path. Whole option words only.
+  let at = 1;
+  if (name === "python" || name === "python3") while (at < words.length - 1 && PY_RUN_OPTIONS.test(words[at]!)) at += 1;
+  const script = words[at];
+  if (!shapePath(script)) return null;
   // php reads its own options after the script too (`php app.php -r code`,
   // `-d auto_prepend_file=x`): any option-shaped word there is outside the shape
   if (name === "php" && words.slice(2).some((word) => word.startsWith("-"))) return null;
-  return path;
+  return script!;
 }
 
 /** Each script path is spelled once (no other word shares its file name),
@@ -1780,8 +2426,22 @@ function unseenShapeAdmits(text: string, paths: string[], cwd: string | undefine
   if (!shaped || shaped.commands.length === 0) return null;
   const { commands, piped } = shaped;
   const win = gitBash(cwd, options);
-  const core = coreShape(commands, paths);
-  if (!core && !venvShape(commands, paths, piped)) return null;
+  // M-R9-alias: the walk resolves a link to the file it points at (`node alias.mjs` -> tool.mjs); the shape is about the
+  // word the text spells, so a path no word names is matched back to the word that resolves to it (b18 ran this at Full access)
+  const spelledPaths = paths.map((path) => {
+    const words = commands.flat();
+    if (words.some((word) => baseName(word) === baseName(path))) return path;
+    for (const word of words) {
+      if (!shapePath(word)) continue;
+      try {
+        const at = posixPath.resolve(cwd ?? "/", word);
+        if ((options.fs ?? DISK).realpath(at) === path) return at;
+      } catch { /* not on disk */ }
+    }
+    return path;
+  });
+  const core = coreShape(commands, spelledPaths);
+  if (!core && !venvShape(commands, spelledPaths, piped)) return null;
   // section 12 W5: the venv shape (R9) is not extended to Windows
   if (!core && win) return "windows";
   const joined = joinWhy(text, commands);
@@ -1842,7 +2502,9 @@ function venvTool(words: string[]): boolean {
 }
 
 function readRules(text: string, cwd: string | undefined): AlwaysAskHit | null {
-  const ctx = newContext(cwd || undefined);
+  const ctx = newContext(ownerDeny() ? cwd : cwd || undefined, ownerDeny() ? activeSessionFiles?.runtimePaths : undefined);
+  ctx.sessionEdits = activeSessionFiles?.sessionEdits;
+  ctx.sessionFile = activeSessionFiles?.sessionFile ?? readSessionFile;
   // `robocopy` is Windows' own: a line it opens is read as a POSIX shell,
   // PowerShell and cmd would each read it (`C:\Users\x` is a path to the
   // last two), and the first hit wins
