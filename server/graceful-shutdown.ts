@@ -1,3 +1,4 @@
+import { beginOutsideShutdown } from "./email/external-marks.ts";
 import { writeFileSync } from "node:fs";
 import { basename, isAbsolute } from "node:path";
 
@@ -8,8 +9,11 @@ export const SERVER_SHUTDOWN_TIMEOUT_MS = 6_000;
 
 export interface GracefulShutdownOptions {
   cleanup: ReadonlyArray<() => void | Promise<void>>;
+  finalCleanup?: () => void;
   exit: (code: number) => void;
   timeoutMs?: number;
+  /** Runs synchronously at shutdown entry, before any cleanup job starts (a stop latch: ALL.eld250, the keep-all repair). A throw is ignored. */
+  onStart?: () => void;
 }
 
 /** Build one idempotent shutdown callback for process signals. Cleanup jobs
@@ -18,21 +22,29 @@ export interface GracefulShutdownOptions {
  * server stop does not leave a turn bearer usable until its absolute TTL. */
 export function createGracefulShutdown({
   cleanup,
+  finalCleanup,
   exit,
   timeoutMs = SERVER_SHUTDOWN_TIMEOUT_MS,
+  onStart,
 }: GracefulShutdownOptions): () => void {
   let started = false;
   return () => {
     if (started) return;
     started = true;
+    beginOutsideShutdown();
+    try { onStart?.(); } catch { /* a latch never stops the shutdown */ }
 
+    let expired = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, timeoutMs);
+      timer = setTimeout(() => { expired = true; resolve(); }, timeoutMs);
       timer.unref?.();
     });
     const settled = Promise.allSettled(cleanup.map((job) => Promise.resolve().then(job)))
-      .then(() => undefined);
+      .then((results) => {
+        // A final record is allowed only after every producer has closed, before the deadline.
+        if (!expired && results.every((result) => result.status === "fulfilled")) finalCleanup?.();
+      });
 
     void Promise.race([settled, deadline]).finally(() => {
       if (timer) clearTimeout(timer);

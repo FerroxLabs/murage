@@ -53,6 +53,7 @@ import { useOlderTasks } from "@/lib/use-ensure-task";
 import { useBotSettingsDraft, useBotSettingsNavigation } from "./bot-settings-drafts";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 import { notebookCanSave, notebookSaveBody } from "./notebook-save";
+import { SettingsAskLine } from "./SettingsAskLine";
 
 // Bot settings > Teams loads on first open (SPEC-X 13.1): the owner's
 // sharing routes are desktop only, and none of it belongs in first paint.
@@ -66,7 +67,7 @@ export function SettingsSection({ id, active, children }: { id: BotSettingsSecti
   const shown = active === undefined || active === id;
   const [seen, setSeen] = useState(shown);
   if (shown && !seen) setSeen(true);
-  return <section hidden={!shown} data-settings-section={id} className="space-y-4">{seen ? children : null}</section>;
+  return <section hidden={!shown} data-settings-section={id} className="space-y-4">{seen ? <>{children}<SettingsAskLine /></> : null}</section>;
 }
 
 function Field({
@@ -792,6 +793,9 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           {desktop === true && (
           <div id="bot-setting-computer" data-setting="bot.access.computer" className="rounded-xl bg-card p-4">
             <div className="text-[15px] font-medium text-ink">{t("settings.bot.computer.title")}</div>
+            {(!bot.computer || bot.computer === "local") && state.botComputerNotices?.[bot.id] && (
+              <p role="status" className="mt-2 text-[13px] text-ink-secondary">{state.botComputerNotices[bot.id]}</p>
+            )}
             <div className="mt-0.5 text-[13px] text-ink-secondary">
               {bot.computer ? t("settings.bot.computer.note") : t("settings.bot.computer.noteAuto")}
             </div>
@@ -1024,6 +1028,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
       botName={bot.name}
       level={fullAccessWarning?.level ?? "full"}
       scope="bot"
+      openClaw={engine?.driverKind === "openclawAgent"}
       onThisComputer={false}
       onCancel={() => setFullAccessWarning(null)}
       onConfirm={() => {
@@ -1040,6 +1045,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
       botName={bot.name}
       level="unlimited"
       terms
+      openClaw={engine?.driverKind === "openclawAgent"}
       onThisComputer={false}
       onCancel={() => setReviewingTerms(false)}
       onConfirm={() => { setReviewingTerms(false); void acceptTerms(); }}

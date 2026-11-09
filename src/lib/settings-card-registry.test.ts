@@ -8,7 +8,8 @@ import { describe, expect, it } from "vitest";
 
 import { en } from "@/locales";
 import { cardForAnchor, cardsForSurface, settingsCardProblems } from "./settings-cards";
-import { ANCHORS_OWED, SETTINGS_CARDS, cardLabel } from "./settings-card-registry";
+import { ANCHORS_OWED, MERGED_CARD_ANCHORS, SETTINGS_CARDS, cardLabel, resolveSettingsCard } from "./settings-card-registry";
+import { isAdvancedOnlyCard } from "./settings-simple-cards";
 import { SECTION_ALIASES, SECTION_PAGES, resolveSettingsSection } from "./settings-pages";
 import { searchSettingsCards } from "./settings-search";
 import { SETTINGS_SECTIONS } from "./settings-sections";
@@ -25,6 +26,29 @@ function sources(dir: string, out: string[] = []): string[] {
 const SOURCE = sources(COMPONENTS).join("\n");
 
 describe("the card registry", () => {
+  it.each([
+    ["about.updates", "updates-heading", "about.version", false],
+    ["about.previous-version", "previous-version-heading", "about.version", false],
+    ["about.announcements", "announcements-heading", "about.news", true],
+  ] as const)("resolves %s and its old anchor to the retained row and owning card", (id, anchor, owner, advanced) => {
+    for (const target of [id, anchor]) {
+      const card = resolveSettingsCard(target)!;
+      expect(card).toMatchObject({ id: owner, section: "about", anchor });
+      expect(isAdvancedOnlyCard(card.section, card.id)).toBe(advanced);
+    }
+    expect(SETTINGS_CARDS.some((card) => card.id === id)).toBe(false);
+  });
+
+  it("keeps Messaging card ids and search anchors on Apps", () => {
+    const cards = SETTINGS_CARDS.filter((card) => card.id.startsWith("channels."));
+    expect(cards).toHaveLength(8);
+    for (const card of cards) {
+      expect(card.section).toBe("connections");
+      expect(resolveSettingsCard(card.id)).toEqual(card);
+    }
+    expect(searchSettingsCards("telegram", true)[0].card).toMatchObject({ id: "channels.telegram", section: "connections", anchor: "telegram-settings-title" });
+  });
+
   it("passes the I0 invariants and gives every page at least one card", () => {
     expect(settingsCardProblems(SETTINGS_CARDS)).toEqual([]);
     for (const page of SECTION_PAGES) expect(SETTINGS_CARDS.some((card) => card.section === page.id), page.id).toBe(true);
@@ -50,7 +74,7 @@ describe("the card registry", () => {
 
   it("renders every anchor, or owes it to the lane that owns the page", () => {
     for (const card of SETTINGS_CARDS) {
-      const rendered = SOURCE.includes(`id="${card.anchor}"`) || SOURCE.includes(`id: "${card.anchor}"`);
+      const rendered = SOURCE.includes(`id="${card.anchor}"`) || SOURCE.includes(`id: "${card.anchor}"`) || SOURCE.includes(`anchor: "${card.anchor}"`);
       if (ANCHORS_OWED[card.anchor]) expect(rendered, `${card.anchor} is rendered now: drop it from ANCHORS_OWED`).toBe(false);
       else expect(rendered, `${card.anchor} (${card.id}) is not rendered anywhere`).toBe(true);
     }
@@ -68,7 +92,7 @@ describe("the card registry", () => {
       if (expression !== undefined) expect(expression, "a guarded mark is a ternary on one item").toMatch(/^\s*(?:"[\w-]+"|[^?]+\?\s*"[\w-]+"\s*:\s*(?:undefined|"[\w-]+"))\s*$/);
       for (const anchor of named) counts.set(anchor, (counts.get(anchor) ?? 0) + 1);
     }
-    const anchors = new Set(SETTINGS_CARDS.map((card) => card.anchor));
+    const anchors = new Set([...SETTINGS_CARDS.map((card) => card.anchor), ...Object.keys(MERGED_CARD_ANCHORS)]);
     for (const anchor of counts.keys()) expect(anchors.has(anchor), `${anchor} is marked but is not a registered card`).toBe(true);
     for (const card of SETTINGS_CARDS) {
       if (ANCHORS_OWED[card.anchor]) continue;
@@ -89,7 +113,7 @@ describe("the card registry", () => {
 describe("search lists cards and rows", () => {
   it("finds the browser and recorder in their regular Settings homes", () => {
     expect(searchSettingsCards("built-in browser", true)).toEqual(expect.arrayContaining([
-      expect.objectContaining({ card: expect.objectContaining({ id: "companion.browser", anchor: "browser-settings-heading" }), page: "Devices", advanced: false }),
+      expect.objectContaining({ card: expect.objectContaining({ id: "companion.browser", anchor: "browser-settings-heading" }), page: "Computer & browser", advanced: false }),
     ]));
     expect(searchSettingsCards("teach a skill", true)).toEqual(expect.arrayContaining([
       expect.objectContaining({ card: expect.objectContaining({ id: "skills.recorder", anchor: "skill-recorder-heading" }), page: "Skills", advanced: false }),
@@ -97,8 +121,14 @@ describe("search lists cards and rows", () => {
   });
   it("finds Show tool calls under Bots first for 'tool'", () => {
     const hits = searchSettingsCards("tool", true);
-    expect(hits[0]).toMatchObject({ label: "Show tool calls in the conversation", page: "Bots" });
-    expect(hits.map((hit) => hit.card.id)).toEqual(expect.arrayContaining(["webSearch.search"]));
+    expect(hits[0]).toMatchObject({ label: "Show tool calls in the conversation", page: "How every bot behaves" });
+    // The Search card used to match "tool" through its page name, Tools. The page is now "Search, images and dictation" (1.0.19),
+    // so "tool" lists exactly the tool calls card and the Connected apps card, and no longer the Search card.
+    expect(hits.map((hit) => hit.card.id)).toEqual(["botDefaults.tool-calls", "connections.mcp"]);
+  });
+  it("keeps the Search card discoverable on its renamed page", () => {
+    expect(searchSettingsCards("search", true)[0]).toMatchObject({ page: "Search, images and dictation", card: expect.objectContaining({ id: "webSearch.search" }) });
+    expect(searchSettingsCards("dictation", true).map((hit) => hit.card.id)).toEqual(expect.arrayContaining(["webSearch.search"]));
   });
 
   it("never lists a desktop card's row on a phone, a browser door, or before the surface answers", () => {

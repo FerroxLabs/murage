@@ -8,7 +8,7 @@
       }
     },
     "server/always-ask.ts": {
-      "reason": "recognizer: rule table and foreign-executor recognition classify proposed command text; unreadable commands keep asking; starts nothing (1.0.9 nolimits-node: five signature/guard lines re-fingerprinted, they only gained home/options parameters and a null return; optional-parameter form kept so no `shell:` text reads as a spawn option; no launch)",
+      "reason": "recognizer: rule table and foreign-executor recognition classify proposed command text; unreadable commands keep asking; starts nothing (1.0.9 nolimits-node: five signature/guard lines re-fingerprinted, they only gained home/options parameters and a null return; optional-parameter form kept so no `shell:` text reads as a spawn option; no launch) (1.0.18 int reds: 740934c9e MARKS R1 re-fingerprinted the read line, which only gained the owner clean No limits cwd and runtimePaths arguments; no launch)",
       "lines": {
         "f798c6c601f85705": "if (matches.length !== 1) throw new Unreadable(\"pwsh\", matches.length ? `-${given} is ambi",
         "34c511b1f6deaab9": "if (text === \"--%\") throw new Unreadable(\"pwsh\", \"--% stops parsing\");",
@@ -16,16 +16,16 @@
         "44dbaba2e814a529": "if (!value) throw new Unreadable(\"pwsh\", `${text} without a value`);",
         "87f5b759d65e9bb4": "export function alwaysAskCommand(text: string | undefined, cwd?: string, mode: \"command\" |",
         "856694841b5b0975": "function read(text: string, cwd: string | undefined, shell?: \"pwsh\", windowsBash?: string[",
-        "b53874c568c298c8": "return (shell === \"pwsh\" ? walkPwsh(text, { ...newContext(cwd || undefined), windowsBash, p",
         "9928c0bbc7789cbc": "export function alwaysAskRoutineCommand(text: string | undefined, cwd?: string, shell?: \"p",
         "90d273ca2fc0b2b5": "function readWhole(text: string, cwd: string | undefined, shell?: \"pwsh\", windowsBash?: st",
         "53b17291b37d0e87": "function unseenShapeAdmits(text: string, paths: string[], cwd: string | undefined, shell?:",
         "497b7b04b60c1a26": "if (shell === \"pwsh\" || looksLikePowerShell(text) !== null || /^\\s*robocopy(\\.exe)?(?=\\s|$",
-        "dc0d467803f91f89": "case \"pwsh\": return walkPwsh(text, ctx, visitor);"
+        "dc0d467803f91f89": "case \"pwsh\": return walkPwsh(text, ctx, visitor);",
+        "781dda1c72235ff0": "const found = shell === \"pwsh\" ? walkPwsh(text, { ...newContext(ownerDeny() ? cwd : cwd || unde"
       }
     },
     "server/auto-approve.ts": {
-      "reason": "recognizer: the command-tool names ('powershell', 'pwsh') and the PowerShell dialect of a remembered approval key; classifies a proposed command, starts nothing",
+      "reason": "recognizer: the command-tool names ('powershell', 'pwsh') and the PowerShell dialect of a remembered approval key; classifies a proposed command, starts nothing (1.0.18 int reds: 7af2a4dfa and ec3c8eb8b NOLIMITS-MEANS-IT/MARKS r11 added the pwsh key-guard dialect flag and the OutsideShell type for outsideTurnCard; types and comparisons only, no launch)",
       "lines": {
         "9ed9cfeb637eb026": "type KeyWhy = \"path\" | \"value\" | \"field\" | \"mcp\" | \"summary\" | \"unmodeled\" | \"pwsh\" | \"local-hold\";",
         "8c31ac12b45b7d5f": "const commandData: CommandDataRead | \"plain\" | \"unmodeled\" | \"summary\" | undefined = covered && pinShell !== \"pwsh\"",
@@ -42,13 +42,15 @@
         "cf3fd17ebff44577": "const pinShell = isPowerShellTool(tool) || (isCommandTool(tool) && context?.call?.commandS",
         "b7899b27a0da7d3f": "const cmd = !isCommandTool(tool) && context?.exactCommand === undefined ? \"none\" : isPower",
         "a97a271e3bccca0b": "const dequoted = (pinShell === \"pwsh\" && !windowsBash?.length || !commandGlobText.trim()) ",
-        "7a740b380a441e1e": "const reads = (pinShell === \"pwsh\" ? windowsBash ?? [] : [isCommandTool(tool) ? summary : "
+        "7a740b380a441e1e": "const reads = (pinShell === \"pwsh\" ? windowsBash ?? [] : [isCommandTool(tool) ? summary : ",
+        "dd418132b926e346": "type OutsideShell = \"pwsh\" | undefined;",
+        "55823e68eb2ea605": "const keyGuard = sensitive ?? (destructive ? keyHit() : null) ?? gateHitSpelled([keyText, rawDe"
       }
     },
     "server/claude-accounts.ts": {
       "reason": "label: tells the sign-in screen which shell the pasted sign-in command is written for; starts nothing",
       "lines": {
-        "4d973dd536a0e033": "return {configDir,managed:!!configDir,isDefault:instanceId===\"claude\",signInCommand:claude"
+        "d1ca29f5931e72c8": "return {configDir,managed:!!configDir,isDefault:instanceId===\"claude\",signInCommand:unavai"
       }
     },
     "server/contracts.ts": {
@@ -81,11 +83,11 @@
       }
     },
     "server/drivers/pi.ts": {
-      "reason": "recognizer: the pi engine's tool name 'powershell' and its display name; starts nothing (the engine's own shell is the engine's business)",
+      "reason": "recognizer: the pi engine's tool name 'powershell' and its display name; starts nothing (the engine's own shell is the engine's business) (1.0.18 int reds: f62f91afa MARKS merge B re-fingerprinted the check line, which only gained the bot-folder cwd argument; it runs the fixed bounded env check and starts no PowerShell)",
       "lines": {
         "31c6d7b6132bed33": "const display = tool === \"bash\" ? \"Bash\" : tool === \"powershell\" ? \"PowerShell\" : tool ===",
         "148716009b9dbaa0": "if (tool === \"bash\" || tool === \"powershell\") {",
-        "5881c57513811be3": "if (gate && !questions && (gate.tool === \"Bash\" || gate.tool === \"PowerShell\")) void execE"
+        "bf49df606ff24221": "if (gate && !questions && (gate.tool === \"Bash\" || gate.tool === \"PowerShell\")) void execEnvNow"
       }
     },
     "server/index.ts": {
@@ -212,6 +214,27 @@
       "lines": {
         "43dcf0abd9a7b67f": "if (ctx.windowsBash && (windowsRunner === \"interpreter\" || windowsRunner === \"launch",
         "c2b2989bcf2825a7": "if (ctx.windowsForeign && (powershellRunner(name) === \"interpreter\" || interpreterKey(name) !== undefined)) throw new Unreadable(\"pwsh\", `${name} reached throug"
+      }
+    },
+    "server/drivers/muse-code.ts": {
+      "reason": "label: marks a Muse Code shell ask on Windows as written for PowerShell (commandShell 'pwsh') so the approval readers judge it in that dialect; Muse runs its own shell, this line starts nothing",
+      "lines": {
+        "ccbd3a95be838c7e": "...(shell !== undefined && process.platform === \"win32\" ? { commandShell: \"pwsh\" } : {}),"
+      }
+    },
+    "server/outside-scan.ts": {
+      "reason": "recognizer: 61261505a and aad56adb6 (NOLIMITS 1.0.18 H6 allowlist) classify an interpreter word as the pwsh script family (a .ps1 operand or any script) when judging whether a proposed command reaches outside the folder; reads command text, starts nothing",
+      "lines": {
+        "a40933253f2dd602": "type ScriptFamily = \"deno\" | \"pwsh\" | \"other\";",
+        "10fb22be080752f8": "if (family === \"pwsh\") return word.endsWith(\".ps1\");",
+        "2b8e851ee82b37f1": "const family: ScriptFamily = part === \"deno\" || part === \"bun\" ? \"deno\" : part === \"pwsh\" || pa",
+        "e3b25f7c2d916dae": "if (family === \"pwsh\") return true;"
+      }
+    },
+    "server/runtime-event-out.ts": {
+      "reason": "recognizer: d9b5e9db8 (NOLIMITS 1.0.18 logger lane 2) lists the shell tool names ('powershell', 'pwsh') that mark an ask as a shell ask so its command text is logged as a fixed label; classifies a tool name, starts nothing",
+      "lines": {
+        "b0cc1990ceecf054": "\"bash\", \"shell\", \"execute\", \"powershell\", \"pwsh\", \"run_terminal_cmd\", \"run_terminal_command\", \""
       }
     }
   },

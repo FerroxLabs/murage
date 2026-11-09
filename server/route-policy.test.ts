@@ -163,6 +163,19 @@ describe("route policy (strict)", () => {
     expect(routeAdmits(routeClass("POST", "/api/terms/accept"), { ...nobody, companion: true })).toBe(true);
   });
 
+  it("learning usage needs owner proof and leaves memory writes desktop-only", () => {
+    const path = "/api/memory/learning-usage";
+    const nobody = { desktop: false, companion: false, door: false, bot: false };
+    expect(ROUTE_POLICY.filter(entry => matches(entry, "GET", path))).toHaveLength(1);
+    expect(routeClass("GET", path)).toBe("companion");
+    for (const who of [nobody, { ...nobody, door: true }, { ...nobody, bot: true }]) expect(routeAdmits(routeClass("GET", path), who)).toBe(false);
+    for (const who of [{ ...nobody, desktop: true }, { ...nobody, companion: true }]) expect(routeAdmits(routeClass("GET", path), who)).toBe(true);
+    for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD"]) expect(routeClass(method, path)).toBe("desktop");
+    expect(routeClass("GET", "/api/memory/status")).toBe("desktop");
+    expect(routeClass("POST", "/api/memory/action")).toBe("desktop");
+    expect(routeClass("GET", `${path}/extra`)).toBe("desktop");
+  });
+
   it("refuses with the sentence only a caller that proved who it is", () => {
     const nobody = { desktop: false, companion: false, door: false, bot: false };
     expect(routeAdmits("desktop", nobody)).toBe(false);
@@ -437,4 +450,43 @@ describe("the restore-hold routes are listed by name as desktop-only", () => {
       ["POST", "/api/calls/00000000-0000-4000-8000-000000000000/seen"]];
     for (const [method, route] of moment) expect(cloudRouteDecision(method, route, "browser", {}), route).toBe("allow");
   });
+});
+
+describe('F12 BF-22 exact Cloud media write authorization matrix', () => {
+  for (const route of ['/api/media/resolve', '/api/media/reference']) {
+    it.each([
+      ['owner-desktop', 'allow'], ['owner-phone', 'allow'], ['owner-browser', 'allow'],
+      ['browser', 'deny'], ['remembered-owner', 'deny'], ['service', 'deny'], ['anonymous', 'deny'],
+    ] as const)(route + ' admits %s as %s with or without step up', (caller, expected) => {
+      expect(routePolicy('POST', route)).toMatchObject({ class: 'desktop', cloudWrite: 'ordinary' });
+      for (const steppedUp of [false, true]) expect(cloudRouteDecision('POST', route, caller, {}, steppedUp)).toBe(expected);
+    });
+    it.each(['companion', 'door', 'bot', 'unproven'] as const)(route + ' refuses local %s proof', caller => {
+      const proof = { desktop: false, companion: false, door: false, bot: false, ...(caller === 'unproven' ? {} : { [caller]: true }) };
+      expect(routeAdmits(routeClass('POST', route), proof)).toBe(false);
+    });
+  }
+});
+
+it("D24 call reply subscription has an explicit conversation policy", () => {
+  expect(routePolicy("POST", "/api/tts/call/reply")).toMatchObject({ class: "conversation", cloudWrite: "ordinary" });
+  expect(cloudRouteDecision("POST", "/api/tts/call/reply", "owner-phone", {})).toBe("allow");
+  expect(cloudRouteDecision("POST", "/api/tts/call/reply", "owner-desktop", {})).toBe("allow");
+});
+
+it("D24 call heard report has an explicit conversation policy", () => {
+  expect(routePolicy("POST", "/api/tts/call/heard")).toMatchObject({ class: "conversation", cloudWrite: "ordinary" });
+  expect(cloudRouteDecision("POST", "/api/tts/call/heard", "owner-phone", {})).toBe("allow");
+  expect(cloudRouteDecision("POST", "/api/tts/call/heard", "owner-desktop", {})).toBe("allow");
+});
+
+it("H-G1-3 desktop reply speech has explicit Cloud denies on all other doors", () => {
+  for (const suffix of ["", "/session", "/cancel", "/target"]) {
+    const path = `/api/tts/reply${suffix}`;
+    expect(routePolicy("POST", path)).toMatchObject({ class: "desktop", cloudWrite: "ordinary" });
+    expect(cloudRouteDecision("POST", path, "owner-desktop", {})).toBe("allow");
+    for (const scope of ["owner-phone", "owner-browser", "remembered-owner", "browser", "service", "anonymous"] as const) {
+      for (const stepped of [false, true]) expect(cloudRouteDecision("POST", path, scope, {}, stepped)).toBe("deny");
+    }
+  }
 });

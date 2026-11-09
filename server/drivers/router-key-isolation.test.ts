@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Opus gate 0.1.62-A, upstream #2053/#2107: the shared router key must never
 // reach an instance that brings its own endpoint or key variable. Murage keeps
@@ -85,7 +87,7 @@ describe("shared router key stays on the workspace endpoint", () => {
     recorder = recordEvents(instance.adapter);
     // With no key of its own an instance may refuse the turn outright ("no
     // key yet"): that is the right outcome, and nothing was sent.
-    const started = await instance.adapter.sendTurn({ threadId: `t-${id}`, text: "hi", model: "gate-a-model" }).then(() => true, () => false);
+    const started = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-${id}`, text: "hi", model: "gate-a-model" }).then(() => true, () => false);
     if (started) await recorder.until((e) => e.type === "turn.completed");
     return calls;
   };
@@ -115,3 +117,6 @@ describe("shared router key stays on the workspace endpoint", () => {
     expect(seen.map((call) => call.auth)).not.toContain(`Bearer ${XAI_KEY}`);
   }, 20_000);
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

@@ -205,7 +205,9 @@ describe("rotation (P1-2 and Windows)", () => {
   });
 
   it("a rotation Windows refuses (EBUSY, EPERM) is retried, then tolerated: the event is written and the next one rotates", () => {
-    eventLogLimits().threadBytes = 4 * 1024;
+    // ql2 sink fold (was 4 KiB): a logged tool row is ids and ok only (~200 bytes, the result is not written), so the cap that
+    // makes 12 rows rotate is smaller
+    eventLogLimits().threadBytes = 1024;
     log.setEventLogBudgetReady(true);
     const t = "win-rotate";
     const bus = new EventBus();

@@ -364,3 +364,222 @@ describe("the Mac helper's recognition error path", () => {
     expect(handler).toMatch(/"recovered": true[\s\S]*failRecognition\(error\)/);
   });
 });
+
+describe("composer dictation session tokens (DICTATION-LIFECYCLE-1018 2.1)", () => {
+  const lines = (proc, ...objs) => appendFileSync(argAfter(proc, "-o"), objs.map((o) => `${JSON.stringify(o)}\n`).join(""));
+  const stopFile = (proc) => argAfter(proc, "--stop-file");
+
+  it("echoes the token on transcripts and on the natural end, and tokenless sessions stay untagged", () => {
+    const { win, sent } = fakeWindow();
+    launchSpeechSession(win, [], { token: "T1" });
+    const proc = spawned.at(-1);
+    lines(proc, { partial: true, text: "hello" }, { partial: false, text: "hello there" });
+    proc.emit("close", 0);
+    expect(sent).toEqual([
+      ["speech:transcript", { partial: true, text: "hello", session: "T1" }],
+      ["speech:transcript", { partial: false, text: "hello there", session: "T1" }],
+      ["speech:end", { code: 0, reason: "completed", session: "T1" }],
+    ]);
+  });
+
+  it("echoes the token on a bare helper exit", () => {
+    const { win, sent } = fakeWindow();
+    launchSpeechSession(win, [], { token: "T1" });
+    spawned.at(-1).emit("close", 1);
+    expect(sent).toEqual([["speech:end", { code: 1, reason: "helper-exited", session: "T1" }]]);
+  });
+
+  it("echoes the token on a helper that fails to launch (the open waiter errors)", () => {
+    const { win, sent } = fakeWindow();
+    launchSpeechSession(win, [], { token: "T1" });
+    spawned.at(-1).emit("error", new Error("spawn failed"));
+    expect(sent).toEqual([["speech:end", { code: 1, reason: "helper-start-failed", session: "T1" }]]);
+  });
+
+  it("echoes the token on pre-launch ends (unsupported platform, helper-stop-pending)", async () => {
+    const { win, sent } = fakeWindow();
+    await startSpeech(win, { session: "T9" });
+    expect(sent).toEqual([["speech:end", { code: 2, reason: "unsupported-platform", session: "T9" }]]);
+
+    sent.length = 0;
+    launchSpeechSession(win, [], { token: "A" });
+    const proc = spawned.at(-1);
+    rmSync(path.dirname(stopFile(proc)), { recursive: true, force: true });
+    await startSpeech(win, { session: "B" });
+    expect(sent).toContainEqual(["speech:end", { code: 1, reason: "helper-stop-pending", session: "B" }]);
+    mkdirSync(path.dirname(stopFile(proc)), { recursive: true });
+    const retry = stopSpeech("A");
+    await flush();
+    proc.emit("close", 0);
+    await retry;
+  });
+
+  it("ignores a token that is not a string of 1 to 64 characters", async () => {
+    const { win, sent } = fakeWindow();
+    await startSpeech(win, { session: "x".repeat(65) });
+    await startSpeech(win, { session: 7 });
+    expect(sent).toEqual([
+      ["speech:end", { code: 2, reason: "unsupported-platform" }],
+      ["speech:end", { code: 2, reason: "unsupported-platform" }],
+    ]);
+  });
+
+  it("finish writes the marker only for the session that owns the token", () => {
+    const { win } = fakeWindow();
+    launchSpeechSession(win, [], { token: "T1" });
+    const proc = spawned.at(-1);
+    finishSpeech("other");
+    finishSpeech();
+    expect(existsSync(argAfter(proc, "--finish-file"))).toBe(false);
+    finishSpeech("T1");
+    expect(readFileSync(argAfter(proc, "--finish-file"), "utf8")).toBe("finish");
+  });
+
+  it("a tokenless finish (push-to-talk) still finishes a tokenless session", () => {
+    const { win } = fakeWindow();
+    launchSpeechSession(win);
+    const proc = spawned.at(-1);
+    finishSpeech("T1");
+    expect(existsSync(argAfter(proc, "--finish-file"))).toBe(false);
+    finishSpeech();
+    expect(readFileSync(argAfter(proc, "--finish-file"), "utf8")).toBe("finish");
+  });
+
+  it("a tokened stop never stops a tokenless call helper and resolves at once", async () => {
+    const { win, sent } = fakeWindow();
+    launchSpeechSession(win);
+    const proc = spawned.at(-1);
+    await expect(stopSpeech("T1")).resolves.toBeUndefined();
+    expect(existsSync(stopFile(proc))).toBe(false);
+    expect(sent).toEqual([]);
+  });
+
+  it("a tokened stop cancels only a pending start with the same token", async () => {
+    const owner = fakeWindow();
+    launchSpeechSession(owner.win, [], { token: "A" });
+    const proc = spawned.at(-1);
+    // A call start waits behind composer helper A. A composer stop for another
+    // token does not cancel it.
+    const call = fakeWindow();
+    const callStart = startSpeech(call.win, {});
+    const stopB = stopSpeech("B");
+    await flush();
+    proc.emit("close", 0);
+    await stopB;
+    await callStart;
+    // The call start was not cancelled: it ran on to the platform gate.
+    expect(call.sent).toEqual([["speech:end", { code: 2, reason: "unsupported-platform" }]]);
+
+    // A tokened start waiting on a helper is cancelled by a stop with its own token.
+    launchSpeechSession(owner.win, [], { token: "A2" });
+    const proc2 = spawned.at(-1);
+    const mine = fakeWindow();
+    const starting = startSpeech(mine.win, { session: "B2" });
+    const stopping = stopSpeech("B2");
+    await flush();
+    proc2.emit("close", 0);
+    await starting;
+    await stopping;
+    expect(mine.sent).toEqual([]);
+  });
+
+  it("a tokenless stop does not cancel a pending composer start, but still stops the composer helper", async () => {
+    const owner = fakeWindow();
+    launchSpeechSession(owner.win, [], { token: "A" });
+    const proc = spawned.at(-1);
+    const mine = fakeWindow();
+    const starting = startSpeech(mine.win, { session: "B" });
+    const stopping = stopSpeech();
+    await flush();
+    expect(existsSync(stopFile(proc))).toBe(true);
+    proc.emit("close", 0);
+    await starting;
+    await stopping;
+    expect(mine.sent).toEqual([["speech:end", { code: 2, reason: "unsupported-platform", session: "B" }]]);
+  });
+
+  it("Stop again with token B after helper-stop-pending stops the surviving helper A", async () => {
+    const { win, sent } = fakeWindow();
+    launchSpeechSession(win, [], { token: "A" });
+    const proc = spawned.at(-1);
+    rmSync(path.dirname(stopFile(proc)), { recursive: true, force: true });
+    await startSpeech(win, { session: "B" });
+    expect(spawned).toHaveLength(1);
+    expect(sent).toContainEqual(["speech:end", { code: 1, reason: "helper-stop-pending", session: "B" }]);
+
+    mkdirSync(path.dirname(stopFile(proc)), { recursive: true });
+    const again = stopSpeech("B");
+    await flush();
+    expect(readFileSync(stopFile(proc), "utf8")).toBe("stop");
+    proc.emit("close", 0);
+    await expect(again).resolves.toBeUndefined();
+    await expect(stopSpeech("B")).resolves.toBeUndefined();
+  });
+
+  it("tells the old window superseded when a call start stops its helper, and stop-failed when that stop fails", async () => {
+    const owner = fakeWindow();
+    launchSpeechSession(owner.win, [], { token: "A" });
+    const proc = spawned.at(-1);
+    const call = fakeWindow();
+    const starting = startSpeech(call.win, {});
+    await flush();
+    expect(owner.sent).toEqual([]);
+    proc.emit("close", 0);
+    await starting;
+    expect(owner.sent).toEqual([["speech:end", { code: 0, reason: "superseded", session: "A" }]]);
+
+    const second = fakeWindow();
+    launchSpeechSession(second.win, [], { token: "C" });
+    const proc2 = spawned.at(-1);
+    rmSync(path.dirname(stopFile(proc2)), { recursive: true, force: true });
+    await startSpeech(call.win, {});
+    expect(second.sent).toEqual([["speech:end", { code: 1, reason: "stop-failed", session: "C" }]]);
+    mkdirSync(path.dirname(stopFile(proc2)), { recursive: true });
+    const retry = stopSpeech("C");
+    await flush();
+    proc2.emit("close", 0);
+    await retry;
+    // The composer's own stop never produces a notice.
+    expect(second.sent).toHaveLength(1);
+  });
+
+  it("an older composer start that is still waiting is told superseded when another caller starts", async () => {
+    const owner = fakeWindow();
+    launchSpeechSession(owner.win, [], { token: "A" });
+    const proc = spawned.at(-1);
+    const mine = fakeWindow();
+    const first = startSpeech(mine.win, { session: "B" });
+    const call = fakeWindow();
+    const second = startSpeech(call.win, {});
+    await flush();
+    proc.emit("close", 0);
+    await first;
+    await second;
+    expect(mine.sent).toEqual([["speech:end", { code: 0, reason: "superseded", session: "B" }]]);
+  });
+
+  it("refuses a composer start with speech-busy while a call helper is owned, touching nothing", async () => {
+    const call = fakeWindow();
+    launchSpeechSession(call.win);
+    const proc = spawned.at(-1);
+    const mine = fakeWindow();
+    await startSpeech(mine.win, { session: "B" });
+    expect(mine.sent).toEqual([["speech:end", { code: 1, reason: "speech-busy", session: "B" }]]);
+    expect(existsSync(stopFile(proc))).toBe(false);
+    expect(call.sent).toEqual([]);
+  });
+
+  it("a call start pending on composer helper A, then a composer start B: B is busy and the call start still proceeds", async () => {
+    const owner = fakeWindow();
+    launchSpeechSession(owner.win, [], { token: "A" });
+    const proc = spawned.at(-1);
+    const call = fakeWindow();
+    const callStart = startSpeech(call.win, {});
+    const mine = fakeWindow();
+    await startSpeech(mine.win, { session: "B" });
+    expect(mine.sent).toEqual([["speech:end", { code: 1, reason: "speech-busy", session: "B" }]]);
+    proc.emit("close", 0);
+    await callStart;
+    expect(call.sent).toEqual([["speech:end", { code: 2, reason: "unsupported-platform" }]]);
+  });
+});

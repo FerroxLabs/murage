@@ -1,3 +1,4 @@
+import { ProviderBudgetReached, speechFetch, type SpeechPolicy } from "./speech-policy.ts";
 // ElevenLabs, the one voice.
 //
 // Everything about talking to the service lives in this file: verifying a
@@ -211,15 +212,18 @@ export async function synthesize(text: string, voiceId: string, key: string): Pr
 }
 
 /** ElevenLabs' /stream endpoint sends the audio as it is made. */
-export async function synthesizeClip(text: string, voiceId: string, key: string, streamed: boolean): Promise<Clip> {
+export async function synthesizeClip(text: string, voiceId: string, key: string, streamed: boolean, policy: SpeechPolicy = {}): Promise<Clip> {
+  policy.signal?.throwIfAborted();
+  const call = speechFetch(fetch, policy);
   const route = streamed ? "/stream" : "";
-  const res = await fetch(`${API}/text-to-speech/${encodeURIComponent(voiceId)}${route}?output_format=${FORMAT}`, {
+  const res = await call(`${API}/text-to-speech/${encodeURIComponent(voiceId)}${route}?output_format=${FORMAT}`, {
     method: "POST",
     headers: { "xi-api-key": key, "content-type": "application/json", accept: "audio/mpeg" },
     body: JSON.stringify({ text, model_id: MODEL }),
     redirect: "error",
     signal: AbortSignal.timeout(60_000),
   });
+  if (res.status === 402 && policy.attempts === 1) { await res.body?.cancel().catch(() => {}); throw new ProviderBudgetReached(); }
   if (res.status === 429) throw new RateLimitedError(message(429, "speaking", await safeJson(res)), retryAfterMs(res.headers.get("retry-after")));
   if (!res.ok) throw new Error(message(res.status, "speaking", await safeJson(res)));
   return clipFrom(res, "audio/mpeg", streamed);

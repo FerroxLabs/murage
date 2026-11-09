@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { build } from "esbuild";
+import { fetchPinned } from "./download-retry.mjs";
 import { resolveCuaMacArches } from "./cua-mac-arches.mjs";
 import { safeWipe } from "../server/testing/safe-wipe.mjs";
 
@@ -80,7 +81,7 @@ async function officialBinary() {
   await mkdir(cache, { recursive: true });
   const url = `https://github.com/trycua/cua/releases/download/cua-driver-rs-v${release.version}/${release.file}`;
   console.log(`Downloading CUA Driver ${release.version} from the official release…`);
-  const response = await fetch(url, { headers: { "user-agent": "Murage-packager" } });
+  const response = await fetchPinned(url, { headers: { "user-agent": "Murage-packager" } }, { timeoutMs: 180_000, sha256: release.sha256 });
   if (!response.ok) throw new Error(`CUA Driver download failed: HTTP ${response.status}`);
   const bytes = Buffer.from(await response.arrayBuffer());
   const digest = createHash("sha256").update(bytes).digest("hex");

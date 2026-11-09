@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// How a desktop signs an engine in (1.0.14, handoffs/designs/ENGINE-SIGNIN-SIMPLE-1014.md): one fixed row per driver, and
+// How a desktop signs an engine in (1.0.14, design ENGINE-SIGNIN-SIMPLE-1014.md): one fixed row per driver, and
 // the exact argv and environment that row runs with. Pure: the route in server/index.ts hands in the live facts. Argv is
 // never free text and nothing here comes from a renderer or a bot.
 //
@@ -18,7 +18,7 @@ export const SIGNIN_BASE_ENV = Object.freeze(["PATH", "HOME", "USERPROFILE", "Sy
 /** Rev 4 C5: the only names a row may add. Each says where an engine keeps its sign-in, and nothing else. A row with any
  * other name is refused here, so SSL_CERT_FILE, BASH_ENV, a proxy or a blocked name can never come back through a row. */
 export const SIGNIN_ACCOUNT_ROOT_KEYS = Object.freeze(["CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_HOME", "KIMI_CODE_HOME", "CURSOR_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
-  "OPENCODE_CONFIG_DIR", "CLINE_DIR", "CLINE_DATA_DIR", "FACTORY_HOME_OVERRIDE", "HERMES_HOME", "FUIGO_HOME"]);
+  "OPENCODE_CONFIG_DIR", "CLINE_DIR", "CLINE_DATA_DIR", "FACTORY_HOME_OVERRIDE", "HERMES_HOME", "FUIGO_HOME", "COPILOT_HOME"]);
 const ACCOUNT_ROOT_KEY_SET = new Set<string>(SIGNIN_ACCOUNT_ROOT_KEYS);
 /** What the engine's own browser opener needs, and nothing else (amends G5). Read from the desktop session only, never from
  * instance environment, so an instance cannot point a sign-in at another display or shell. Mac needs no name past the base list. */
@@ -54,7 +54,12 @@ export const ENGINE_SIGNIN_TABLE: Readonly<Record<string, EngineSigninRow>> = Ob
   kimiAgent: { kind: "headless", args: ["login", "--region", "global"], accountKeys: ["KIMI_CODE_HOME"], root: { key: "KIMI_CODE_HOME", fallback: [".kimi-code"] }, measured: "2.4.1 detached: device code only, the CLI opens the page itself" },
   cursorAgent: { kind: "headless", args: ["login"], accountKeys: ["CURSOR_CONFIG_DIR", "XDG_CONFIG_HOME"], root: { key: "CURSOR_CONFIG_DIR", fallback: [".cursor"] }, measured: "2026.10.22 detached: opener called, process stayed alive" },
   opencodeGo: terminal(["auth", "login"], ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "OPENCODE_CONFIG_DIR"], { key: "XDG_DATA_HOME", fallback: [".local", "share", "opencode"], suffix: ["opencode"] }, "a picker, not headless"),
+  // Not measured in a container: `copilot login` is GitHub's device flow, which shows a one-time code to type.
+  copilotAgent: terminal(["login"], ["COPILOT_HOME"], { key: "COPILOT_HOME", fallback: [".copilot"] }, "device flow: shows a one-time code"),
   clineAgent: terminal(["auth"], ["CLINE_DIR", "CLINE_DATA_DIR"], { key: "CLINE_DIR", fallback: [".cline"] }, "refuses without a TTY"),
+  // Not measured yet (GAP-MUSE-PROBES.md probe 6): `muse login` comes from upstream and OpenClaw, and a terminal works
+  // whether or not it needs a TTY. Muse keeps its sign-in under $XDG_CONFIG_HOME/muse or ~/.config/muse.
+  museCode: terminal(["login"], ["XDG_CONFIG_HOME"], { key: "XDG_CONFIG_HOME", fallback: [".config", "muse"], suffix: ["muse"] }, "not measured (probe 6); a terminal until a container proves it headless"),
   droidAgent: terminal([], ["FACTORY_HOME_OVERRIDE"], { key: "FACTORY_HOME_OVERRIDE", fallback: [".factory"], suffix: [".factory"] }, "1.1.0 pipes: draws a picker and prints no link"),
   openclawAgent: terminal(["onboard"], [], { fallback: [".openclaw"] }, "2026.10.5 pipes: refuses, needs a TTY"),
   hermesAgent: terminal(["setup"], ["HERMES_HOME"], { key: "HERMES_HOME", fallback: [".hermes"] }, "0.22.5 pipes: refuses, no TTY, prints no link"),

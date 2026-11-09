@@ -1,0 +1,516 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "cf-copy-final",
+  "date": "2026-11-07",
+  "base": "85eafa0d5",
+  "scope": "strings and lint files without a valid review",
+  "strings": {
+    "en:ux.d24.help": {
+      "text": "Read finished replies aloud on this computer, in the conversation you have open. Off while you are on a call. Needs an online voice service.",
+      "en": "Read finished replies aloud on this computer, in the conversation you have open. Off while you are on a call. Needs an online voice service.",
+      "verdict": "pass"
+    },
+    "en:ux.d24.hosted": {
+      "text": "Spoken replies need an online voice service.",
+      "en": "Spoken replies need an online voice service.",
+      "verdict": "pass"
+    },
+    "en:engines.copilot.preview": {
+      "text": "GitHub Copilot runs through your own Copilot CLI, GitHub's app for typed commands, with your GitHub sign-in and Copilot plan. GitHub calls the way Murage connects to it a public preview.",
+      "en": "GitHub Copilot runs through your own Copilot CLI, GitHub's app for typed commands, with your GitHub sign-in and Copilot plan. GitHub calls the way Murage connects to it a public preview.",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.hint": {
+      "text": "What each AI service account last reported about its plan limits.",
+      "en": "What each AI service account last reported about its plan limits.",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.plan.windowPlan": {
+      "text": "Plan usage period",
+      "en": "Plan usage period",
+      "verdict": "pass"
+    },
+    "en:media.local.desktopOnly": {
+      "text": "Pictures from the bot's folder are not available here.",
+      "en": "Pictures from the bot's folder are not available here.",
+      "verdict": "pass"
+    },
+    "en:updateRecovery.BACKUP_UPGRADE_STAGED": {
+      "text": "Murage is still installing the update. If this takes more than a few minutes, quit Murage, open Activity Monitor, select the process named ShipIt for Murage, and choose Force Quit. Then open Murage again. Your backup is kept.",
+      "en": "Murage is still installing the update. If this takes more than a few minutes, quit Murage, open Activity Monitor, select the process named ShipIt for Murage, and choose Force Quit. Then open Murage again. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "en:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "This check kept everything as it was while Murage confirms the update. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "en": "This check kept everything as it was while Murage confirms the update. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "en:updateRecovery.cleanup-stopped": {
+      "text": "Murage is still finishing some background work. Your backup is kept.",
+      "en": "Murage is still finishing some background work. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "en:backup.waiting.interrupted": {
+      "text": "Murage starts a new backup by itself soon, so your latest changes get backed up.",
+      "en": "Murage starts a new backup by itself soon, so your latest changes get backed up.",
+      "verdict": "pass"
+    },
+    "de:engines.copilot.preview": {
+      "text": "GitHub Copilot läuft über deine eigene Copilot CLI, die App von GitHub für eingetippte Befehle, mit deiner GitHub-Anmeldung und deinem Copilot-Plan. GitHub nennt die Art, wie Murage sich damit verbindet, eine öffentliche Vorschau.",
+      "en": "GitHub Copilot runs through your own Copilot CLI, GitHub's app for typed commands, with your GitHub sign-in and Copilot plan. GitHub calls the way Murage connects to it a public preview.",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.hint": {
+      "text": "Was jedes Konto bei einem KI-Dienst zuletzt über die Grenzen seines Tarifs gemeldet hat.",
+      "en": "What each AI service account last reported about its plan limits.",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.notMeasured": {
+      "text": "Prozentsatz nicht gemeldet",
+      "en": "Percent not reported",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.cloud": {
+      "text": "Tarifnutzung wird auf Cloud noch nicht gemeldet.",
+      "en": "Plan usage is not reported on Cloud yet.",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.plan.windowPlan": {
+      "text": "Nutzungszeitraum des Tarifs",
+      "en": "Plan usage period",
+      "verdict": "pass"
+    },
+    "de:media.local.desktopOnly": {
+      "text": "Bilder aus dem Bot-Ordner sind hier nicht verfügbar.",
+      "en": "Pictures from the bot's folder are not available here.",
+      "verdict": "pass"
+    },
+    "de:updateRecovery.BACKUP_UPGRADE_STAGED": {
+      "text": "Murage installiert das Update noch. Wenn das länger als ein paar Minuten dauert, beende Murage, öffne die Aktivitätsanzeige, wähle den Prozess ShipIt für Murage und dann Sofort beenden. Öffne Murage danach erneut. Dein Backup bleibt erhalten.",
+      "en": "Murage is still installing the update. If this takes more than a few minutes, quit Murage, open Activity Monitor, select the process named ShipIt for Murage, and choose Force Quit. Then open Murage again. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "de:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "Diese Prüfung hat alles so gelassen, wie es war, während Murage das Update bestätigt. Beende Murage und öffne es erneut. Wenn diese Seite wieder erscheint, öffne den Diagnoseordner und kontaktiere den Support. Dein Backup bleibt erhalten.",
+      "en": "This check kept everything as it was while Murage confirms the update. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "de:updates.installerSteps": {
+      "text": "Lade Murage {version} herunter und zieh es dann in den Ordner Programme. Deine Chats und Einstellungen bleiben erhalten.",
+      "en": "Download Murage {version}, then drag it into Applications. Your chats and settings stay.",
+      "verdict": "pass"
+    },
+    "de:updateRecovery.cleanup-stopped": {
+      "text": "Murage schließt noch einige Hintergrundaufgaben ab. Dein Backup bleibt erhalten.",
+      "en": "Murage is still finishing some background work. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "de:backup.waiting.interrupted": {
+      "text": "Murage startet bald von selbst ein neues Backup, damit deine neuesten Änderungen gesichert werden.",
+      "en": "Murage starts a new backup by itself soon, so your latest changes get backed up.",
+      "verdict": "pass"
+    },
+    "de:ux.d24.help": {
+      "text": "Lies fertige Antworten auf diesem Computer im geöffneten Gespräch vor. Während eines Anrufs ausgeschaltet. Benötigt einen Online-Sprachdienst.",
+      "en": "Read finished replies aloud on this computer, in the conversation you have open. Off while you are on a call. Needs an online voice service.",
+      "verdict": "pass"
+    },
+    "de:ux.d24.hosted": {
+      "text": "Gesprochene Antworten benötigen einen Online-Sprachdienst.",
+      "en": "Spoken replies need an online voice service.",
+      "verdict": "pass"
+    },
+    "es:engines.copilot.preview": {
+      "text": "GitHub Copilot funciona con tu propia Copilot CLI, la app de GitHub para escribir comandos, con tu sesión de GitHub y tu plan de Copilot. GitHub llama a la forma en que Murage se conecta a ella una vista previa pública.",
+      "en": "GitHub Copilot runs through your own Copilot CLI, GitHub's app for typed commands, with your GitHub sign-in and Copilot plan. GitHub calls the way Murage connects to it a public preview.",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.hint": {
+      "text": "Lo que cada cuenta de un servicio de IA informó por última vez sobre los límites de su plan.",
+      "en": "What each AI service account last reported about its plan limits.",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.cloud": {
+      "text": "El uso del plan aún no se informa en Cloud.",
+      "en": "Plan usage is not reported on Cloud yet.",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.plan.windowPlan": {
+      "text": "Periodo de uso del plan",
+      "en": "Plan usage period",
+      "verdict": "pass"
+    },
+    "es:media.local.desktopOnly": {
+      "text": "Las imágenes de la carpeta del bot no están disponibles aquí.",
+      "en": "Pictures from the bot's folder are not available here.",
+      "verdict": "pass"
+    },
+    "es:updateRecovery.BACKUP_UPGRADE_STAGED": {
+      "text": "Murage sigue instalando la actualización. Si tarda más de unos minutos, cierra Murage, abre Monitor de Actividad, selecciona el proceso ShipIt de Murage y elige Forzar salida. Luego vuelve a abrir Murage. Tu copia de seguridad se conserva.",
+      "en": "Murage is still installing the update. If this takes more than a few minutes, quit Murage, open Activity Monitor, select the process named ShipIt for Murage, and choose Force Quit. Then open Murage again. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "es:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "Esta comprobación dejó todo como estaba mientras Murage confirma la actualización. Cierra Murage y vuelve a abrirlo. Si esta página vuelve a aparecer, abre la carpeta de diagnósticos y contacta con soporte. Tu copia de seguridad se conserva.",
+      "en": "This check kept everything as it was while Murage confirms the update. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "es:updates.installerSteps": {
+      "text": "Descarga Murage {version} y luego arrástralo a Aplicaciones. Tus chats y ajustes se conservan.",
+      "en": "Download Murage {version}, then drag it into Applications. Your chats and settings stay.",
+      "verdict": "pass"
+    },
+    "es:updateRecovery.cleanup-stopped": {
+      "text": "Murage todavía está terminando algunas tareas en segundo plano. Tu copia de seguridad se conserva.",
+      "en": "Murage is still finishing some background work. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "es:backup.waiting.interrupted": {
+      "text": "Murage empezará pronto una nueva copia de seguridad por sí solo, para que tus últimos cambios queden respaldados.",
+      "en": "Murage starts a new backup by itself soon, so your latest changes get backed up.",
+      "verdict": "pass"
+    },
+    "es:ux.d24.help": {
+      "text": "Lee en voz alta las respuestas terminadas en este ordenador, en la conversación que tienes abierta. Se desactiva durante las llamadas. Requiere un servicio de voz en línea.",
+      "en": "Read finished replies aloud on this computer, in the conversation you have open. Off while you are on a call. Needs an online voice service.",
+      "verdict": "pass"
+    },
+    "es:ux.d24.failed": {
+      "text": "No se pudo leer esa respuesta en voz alta.",
+      "en": "Couldn't speak that reply.",
+      "verdict": "pass"
+    },
+    "es:ux.d24.hosted": {
+      "text": "Las respuestas en voz alta requieren un servicio de voz en línea.",
+      "en": "Spoken replies need an online voice service.",
+      "verdict": "pass"
+    },
+    "fr:engines.copilot.preview": {
+      "text": "GitHub Copilot passe par ta propre Copilot CLI, l’app de GitHub pour saisir des commandes, avec ta connexion GitHub et ton forfait Copilot. GitHub présente la façon dont Murage s’y connecte comme un aperçu public.",
+      "en": "GitHub Copilot runs through your own Copilot CLI, GitHub's app for typed commands, with your GitHub sign-in and Copilot plan. GitHub calls the way Murage connects to it a public preview.",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.hint": {
+      "text": "Ce que chaque compte auprès d’un service d’IA a signalé en dernier sur les limites de son forfait.",
+      "en": "What each AI service account last reported about its plan limits.",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.plan.windowPlan": {
+      "text": "Période d’utilisation du forfait",
+      "en": "Plan usage period",
+      "verdict": "pass"
+    },
+    "fr:media.local.desktopOnly": {
+      "text": "Les images du dossier du bot ne sont pas disponibles ici.",
+      "en": "Pictures from the bot's folder are not available here.",
+      "verdict": "pass"
+    },
+    "fr:updateRecovery.BACKUP_UPGRADE_STAGED": {
+      "text": "Murage installe encore la mise à jour. Si cela prend plus de quelques minutes, quitte Murage, ouvre Moniteur d’activité, sélectionne le processus ShipIt de Murage et choisis Forcer à quitter. Rouvre ensuite Murage. Ta sauvegarde est conservée.",
+      "en": "Murage is still installing the update. If this takes more than a few minutes, quit Murage, open Activity Monitor, select the process named ShipIt for Murage, and choose Force Quit. Then open Murage again. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "fr:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "Cette vérification a tout laissé tel quel pendant que Murage confirme la mise à jour. Quitte Murage et rouvre-le. Si cette page revient, ouvre le dossier de diagnostics et contacte l’assistance. Ta sauvegarde est conservée.",
+      "en": "This check kept everything as it was while Murage confirms the update. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "fr:updates.installerSteps": {
+      "text": "Télécharge Murage {version}, puis fais-le glisser dans Applications. Tes discussions et réglages sont conservés.",
+      "en": "Download Murage {version}, then drag it into Applications. Your chats and settings stay.",
+      "verdict": "pass"
+    },
+    "fr:updateRecovery.cleanup-stopped": {
+      "text": "Murage termine encore quelques tâches en arrière-plan. Ta sauvegarde est conservée.",
+      "en": "Murage is still finishing some background work. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "fr:backup.waiting.interrupted": {
+      "text": "Murage lancera bientôt une nouvelle sauvegarde de lui-même, pour que tes dernières modifications soient sauvegardées.",
+      "en": "Murage starts a new backup by itself soon, so your latest changes get backed up.",
+      "verdict": "pass"
+    },
+    "fr:ux.d24.help": {
+      "text": "Lis les réponses terminées à voix haute sur cet ordinateur, dans la conversation ouverte. Désactivé pendant un appel. Nécessite un service vocal en ligne.",
+      "en": "Read finished replies aloud on this computer, in the conversation you have open. Off while you are on a call. Needs an online voice service.",
+      "verdict": "pass"
+    },
+    "fr:ux.d24.failed": {
+      "text": "Cette réponse n’a pas pu être lue à voix haute.",
+      "en": "Couldn't speak that reply.",
+      "verdict": "pass"
+    },
+    "fr:ux.d24.hosted": {
+      "text": "Les réponses à voix haute nécessitent un service vocal en ligne.",
+      "en": "Spoken replies need an online voice service.",
+      "verdict": "pass"
+    },
+    "hi:engines.copilot.preview": {
+      "text": "GitHub Copilot आपकी अपनी Copilot CLI से चलता है, जो कमांड टाइप करने के लिए GitHub का ऐप है, और इसमें आपका GitHub साइन-इन और Copilot प्लान इस्तेमाल होता है। Murage जिस तरह इससे जुड़ता है, उसे GitHub पब्लिक प्रीव्यू कहता है।",
+      "en": "GitHub Copilot runs through your own Copilot CLI, GitHub's app for typed commands, with your GitHub sign-in and Copilot plan. GitHub calls the way Murage connects to it a public preview.",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.hint": {
+      "text": "हर AI सेवा के खाते ने अपने प्लान की सीमाओं के बारे में आखिरी बार क्या बताया।",
+      "en": "What each AI service account last reported about its plan limits.",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.plan.windowPlan": {
+      "text": "प्लान के उपयोग की अवधि",
+      "en": "Plan usage period",
+      "verdict": "pass"
+    },
+    "hi:highlevel.tokenNoLocation": {
+      "text": "टोकन सेव हो गया। किसी लोकेशन को जोड़ने के लिए उसकी जाँच करें।",
+      "en": "Token saved. Check a location to connect it.",
+      "verdict": "pass"
+    },
+    "hi:media.local.desktopOnly": {
+      "text": "बॉट के फ़ोल्डर की तस्वीरें यहाँ उपलब्ध नहीं हैं।",
+      "en": "Pictures from the bot's folder are not available here.",
+      "verdict": "pass"
+    },
+    "hi:settings.fluxSpendLimits": {
+      "text": "यहाँ खर्च की सीमाएँ Flux पर लागू होती हैं। जब कोई बॉट आपके अपने साइन-इन या कुंजी का उपयोग करता है, तो वह प्रदाता आपसे शुल्क लेता है और उसकी अपनी सीमाएँ लागू होती हैं।",
+      "en": "Spend limits here cover Flux. When a bot uses your own sign-in or key, that provider bills you and its own limits apply.",
+      "verdict": "pass"
+    },
+    "hi:updateRecovery.BACKUP_UPGRADE_STAGED": {
+      "text": "Murage अभी अपडेट इंस्टॉल कर रहा है। अगर इसमें कुछ मिनट से ज़्यादा लगें, तो Murage बंद करें, Activity Monitor खोलें, Murage का ShipIt नाम का प्रोसेस चुनें और Force Quit चुनें। फिर Murage दोबारा खोलें। आपका बैकअप रखा गया है।",
+      "en": "Murage is still installing the update. If this takes more than a few minutes, quit Murage, open Activity Monitor, select the process named ShipIt for Murage, and choose Force Quit. Then open Murage again. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "hi:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "जब तक Murage अपडेट की पुष्टि करता है, इस जाँच ने सब कुछ पहले जैसा रखा है। Murage बंद करके दोबारा खोलें। अगर यह पेज फिर आए, तो डायग्नोस्टिक्स फ़ोल्डर खोलें और सहायता से संपर्क करें। आपका बैकअप रखा गया है।",
+      "en": "This check kept everything as it was while Murage confirms the update. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "hi:updates.installerSteps": {
+      "text": "Murage {version} डाउनलोड करें, फिर उसे Applications में खींचें। आपकी चैट और सेटिंग्स बनी रहती हैं।",
+      "en": "Download Murage {version}, then drag it into Applications. Your chats and settings stay.",
+      "verdict": "pass"
+    },
+    "hi:updateRecovery.cleanup-stopped": {
+      "text": "Murage अभी कुछ बैकग्राउंड काम पूरा कर रहा है। आपका बैकअप रखा गया है।",
+      "en": "Murage is still finishing some background work. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "hi:backup.waiting.busy": {
+      "text": "Murage को जिस फ़ाइल की ज़रूरत है, वह उपयोग में थी, इसलिए बैकअप इंतज़ार कर रहे हैं। Murage जल्द ही अपने आप फिर कोशिश करेगा।",
+      "en": "Backups are waiting because a file Murage needs was in use. Murage tries again by itself soon.",
+      "verdict": "pass"
+    },
+    "hi:backup.waiting.interrupted": {
+      "text": "Murage जल्द ही अपने आप नया बैकअप शुरू करेगा, ताकि आपके नए बदलावों का भी बैकअप हो जाए।",
+      "en": "Murage starts a new backup by itself soon, so your latest changes get backed up.",
+      "verdict": "pass"
+    },
+    "hi:ux.d24.help": {
+      "text": "इस कंप्यूटर पर खुली बातचीत के पूरे हो चुके जवाब पढ़कर सुनाएँ। कॉल के दौरान बंद रहता है। ऑनलाइन वॉइस सेवा चाहिए।",
+      "en": "Read finished replies aloud on this computer, in the conversation you have open. Off while you are on a call. Needs an online voice service.",
+      "verdict": "pass"
+    },
+    "hi:ux.d24.hosted": {
+      "text": "जवाब पढ़कर सुनाने के लिए ऑनलाइन वॉइस सेवा चाहिए।",
+      "en": "Spoken replies need an online voice service.",
+      "verdict": "pass"
+    },
+    "ja:engines.copilot.preview": {
+      "text": "GitHub Copilot は、あなた自身の Copilot CLI（コマンドを入力して使う GitHub のアプリ）で、あなたの GitHub サインインと Copilot プランを使って動きます。Murage がこれに接続する方法を、GitHub はパブリックプレビューとしています。",
+      "en": "GitHub Copilot runs through your own Copilot CLI, GitHub's app for typed commands, with your GitHub sign-in and Copilot plan. GitHub calls the way Murage connects to it a public preview.",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.hint": {
+      "text": "各AIサービスのアカウントがプランの上限について最後に報告した内容です。",
+      "en": "What each AI service account last reported about its plan limits.",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.plan.windowPlan": {
+      "text": "プランの利用期間",
+      "en": "Plan usage period",
+      "verdict": "pass"
+    },
+    "ja:media.local.desktopOnly": {
+      "text": "ここではボットのフォルダー内の画像を利用できません。",
+      "en": "Pictures from the bot's folder are not available here.",
+      "verdict": "pass"
+    },
+    "ja:call.budgetStop": {
+      "text": "このFluxキーの予算上限に達したため、通話が終了しました。予算がリセットまたは変更されると、通話が再開します。",
+      "en": "The call ended because this Flux key has reached its budget. It starts again when the budget resets or changes.",
+      "verdict": "pass"
+    },
+    "ja:updateRecovery.BACKUP_UPGRADE_STAGED": {
+      "text": "Murage はまだアップデートをインストールしています。数分以上かかる場合は Murage を終了し、アクティビティモニタで Murage の ShipIt プロセスを選び、強制終了してください。その後 Murage をもう一度開いてください。バックアップは保持されます。",
+      "en": "Murage is still installing the update. If this takes more than a few minutes, quit Murage, open Activity Monitor, select the process named ShipIt for Murage, and choose Force Quit. Then open Murage again. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "ja:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "Murage がアップデートを確認する間、この確認ではすべてをそのままの状態に保ちました。Murage を終了してもう一度開いてください。このページが再び表示される場合は、診断フォルダを開いてサポートに連絡してください。バックアップは保持されます。",
+      "en": "This check kept everything as it was while Murage confirms the update. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "ja:updates.installerSteps": {
+      "text": "Murage {version} をダウンロードして、アプリケーションフォルダにドラッグしてください。チャットと設定はそのまま残ります。",
+      "en": "Download Murage {version}, then drag it into Applications. Your chats and settings stay.",
+      "verdict": "pass"
+    },
+    "ja:updateRecovery.cleanup-stopped": {
+      "text": "Murage はまだバックグラウンド処理の一部を仕上げています。バックアップは保持されます。",
+      "en": "Murage is still finishing some background work. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "ja:backup.waiting.interrupted": {
+      "text": "Murage はまもなく新しいバックアップを自動で開始し、最新の変更もバックアップします。",
+      "en": "Murage starts a new backup by itself soon, so your latest changes get backed up.",
+      "verdict": "pass"
+    },
+    "ja:ux.d24.help": {
+      "text": "このコンピューターで開いている会話の完成した回答を読み上げます。通話中は無効になります。オンラインの音声サービスが必要です。",
+      "en": "Read finished replies aloud on this computer, in the conversation you have open. Off while you are on a call. Needs an online voice service.",
+      "verdict": "pass"
+    },
+    "ja:ux.d24.hosted": {
+      "text": "回答の読み上げにはオンラインの音声サービスが必要です。",
+      "en": "Spoken replies need an online voice service.",
+      "verdict": "pass"
+    },
+    "pt-br:engines.hideHint": {
+      "text": "Tire este motor de todas as listas de modelos. O app e o login dele continuam como estão, e você pode mostrá-lo de novo abaixo.",
+      "en": "Leave this engine out of every model list. Its app and sign-in stay as they are, and you can unhide it below.",
+      "verdict": "fail",
+      "note": "Rule 1: “Motor” is technical jargon for an AI service."
+    },
+    "pt-br:engines.copilot.preview": {
+      "text": "O GitHub Copilot roda pela sua própria Copilot CLI, o app do GitHub para digitar comandos, com o seu login do GitHub e o seu plano do Copilot. O GitHub chama a forma como o Murage se conecta a ela de prévia pública.",
+      "en": "GitHub Copilot runs through your own Copilot CLI, GitHub's app for typed commands, with your GitHub sign-in and Copilot plan. GitHub calls the way Murage connects to it a public preview.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.hint": {
+      "text": "O que cada conta de um serviço de IA informou por último sobre os limites do plano.",
+      "en": "What each AI service account last reported about its plan limits.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.plan.windowPlan": {
+      "text": "Período de uso do plano",
+      "en": "Plan usage period",
+      "verdict": "pass"
+    },
+    "pt-br:media.local.desktopOnly": {
+      "text": "As imagens da pasta do bot não estão disponíveis aqui.",
+      "en": "Pictures from the bot's folder are not available here.",
+      "verdict": "pass"
+    },
+    "pt-br:updateRecovery.BACKUP_UPGRADE_STAGED": {
+      "text": "O Murage ainda está instalando a atualização. Se isso levar mais de alguns minutos, encerre o Murage, abra o Monitor de Atividade, selecione o processo ShipIt do Murage e escolha Forçar Encerrar. Depois abra o Murage novamente. Seu backup será mantido.",
+      "en": "Murage is still installing the update. If this takes more than a few minutes, quit Murage, open Activity Monitor, select the process named ShipIt for Murage, and choose Force Quit. Then open Murage again. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "pt-br:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "Esta verificação manteve tudo como estava enquanto o Murage confirma a atualização. Encerre o Murage e abra novamente. Se esta página voltar, abra a pasta de diagnósticos e entre em contato com o suporte. Seu backup será mantido.",
+      "en": "This check kept everything as it was while Murage confirms the update. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "pt-br:updates.installerSteps": {
+      "text": "Baixe o Murage {version} e depois arraste-o para Aplicativos. Suas conversas e configurações são mantidas.",
+      "en": "Download Murage {version}, then drag it into Applications. Your chats and settings stay.",
+      "verdict": "pass"
+    },
+    "pt-br:updateRecovery.cleanup-stopped": {
+      "text": "O Murage ainda está concluindo algumas tarefas em segundo plano. Seu backup será mantido.",
+      "en": "Murage is still finishing some background work. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "pt-br:backup.waiting.interrupted": {
+      "text": "O Murage vai iniciar um novo backup sozinho em breve, para que suas alterações mais recentes também tenham backup.",
+      "en": "Murage starts a new backup by itself soon, so your latest changes get backed up.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.d24.help": {
+      "text": "Leia as respostas concluídas em voz alta neste computador, na conversa aberta. Desativado durante chamadas. Requer um serviço de voz online.",
+      "en": "Read finished replies aloud on this computer, in the conversation you have open. Off while you are on a call. Needs an online voice service.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.d24.failed": {
+      "text": "Não foi possível ler essa resposta em voz alta.",
+      "en": "Couldn't speak that reply.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.d24.hosted": {
+      "text": "Respostas em voz alta precisam de um serviço de voz online.",
+      "en": "Spoken replies need an online voice service.",
+      "verdict": "pass"
+    },
+    "zh:engines.copilot.preview": {
+      "text": "GitHub Copilot 通过你自己的 Copilot CLI（GitHub 用于输入命令的应用）运行，使用你的 GitHub 登录和 Copilot 套餐。GitHub 将 Murage 连接它的方式称为公开预览。",
+      "en": "GitHub Copilot runs through your own Copilot CLI, GitHub's app for typed commands, with your GitHub sign-in and Copilot plan. GitHub calls the way Murage connects to it a public preview.",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.hint": {
+      "text": "每个 AI 服务账户最近一次报告的套餐限额情况。",
+      "en": "What each AI service account last reported about its plan limits.",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.plan.windowPlan": {
+      "text": "套餐使用周期",
+      "en": "Plan usage period",
+      "verdict": "pass"
+    },
+    "zh:media.local.desktopOnly": {
+      "text": "此处无法使用机器人文件夹中的图片。",
+      "en": "Pictures from the bot's folder are not available here.",
+      "verdict": "pass"
+    },
+    "zh:call.budgetStop": {
+      "text": "此 Flux 密钥已达到预算上限，因此通话已结束。预算重置或更改后，通话会重新开始。",
+      "en": "The call ended because this Flux key has reached its budget. It starts again when the budget resets or changes.",
+      "verdict": "pass"
+    },
+    "zh:setup.recommendedModel": {
+      "text": "选择新模型时推荐使用：{model}。已保存的模型保持不变。",
+      "en": "Recommended for new choices: {model}. Your saved model stays as it is.",
+      "verdict": "pass"
+    },
+    "zh:updateRecovery.BACKUP_UPGRADE_STAGED": {
+      "text": "Murage 仍在安装更新。如果超过几分钟，请退出 Murage，打开“活动监视器”，选择 Murage 的 ShipIt 进程，然后选择“强制退出”。之后重新打开 Murage。你的备份会保留。",
+      "en": "Murage is still installing the update. If this takes more than a few minutes, quit Murage, open Activity Monitor, select the process named ShipIt for Murage, and choose Force Quit. Then open Murage again. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "zh:updateRecovery.BACKUP_UPGRADE_REVIEW_REQUIRED": {
+      "text": "在 Murage 确认更新期间，本次检查让一切保持原样。请退出 Murage 并重新打开。如果再次出现此页面，请打开诊断文件夹并联系支持。你的备份会保留。",
+      "en": "This check kept everything as it was while Murage confirms the update. Quit Murage and open it again. If this page comes back, open the diagnostics folder and contact support. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "zh:updates.installerSteps": {
+      "text": "下载 Murage {version}，然后把它拖到“应用程序”文件夹。你的聊天和设置都会保留。",
+      "en": "Download Murage {version}, then drag it into Applications. Your chats and settings stay.",
+      "verdict": "pass"
+    },
+    "zh:updateRecovery.cleanup-stopped": {
+      "text": "Murage 仍在完成一些后台任务。你的备份会保留。",
+      "en": "Murage is still finishing some background work. Your backup is kept.",
+      "verdict": "pass"
+    },
+    "zh:backup.waiting.interrupted": {
+      "text": "Murage 很快会自动开始新的备份，让你最近的更改也得到备份。",
+      "en": "Murage starts a new backup by itself soon, so your latest changes get backed up.",
+      "verdict": "pass"
+    },
+    "zh:ux.d24.help": {
+      "text": "在此电脑上朗读当前打开的对话中已完成的回复。通话期间关闭。需要在线语音服务。",
+      "en": "Read finished replies aloud on this computer, in the conversation you have open. Off while you are on a call. Needs an online voice service.",
+      "verdict": "pass"
+    },
+    "zh:ux.d24.hosted": {
+      "text": "朗读回复需要在线语音服务。",
+      "en": "Spoken replies need an online voice service.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

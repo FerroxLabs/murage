@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -6,6 +7,7 @@
 // since forgotten, because no receipt was read at all. The direct replay now
 // follows the same content rule as a room: the withheld line for the owner's
 // turn, left out for a turn that is not the owner's.
+import { storeAnchorMessage } from "./memory/testing/anchor-message.ts";
 import { mkdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { beforeEach, expect, it } from "vitest";
@@ -28,6 +30,7 @@ beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_
 
 it("a direct reply made with memory the owner then forgot is withheld from the replay while memory is off", () => {
   const text = "The vault code is 7788.";
+  storeAnchorMessage(database(), "dax-older", "m0", text, "user", 1);
   captureSource(database(), { id: "message:dax-older:m0", threadId: "dax-older", messageId: "m0", kind: "text", speaker: "owner", outcome: "recorded", text });
   const registry = new InternalCapabilities(); registry.begin("dax", "dax-direct", "g");
   const access = memoryAccess(registry, registry.resolve(`Bearer ${registry.mint({ botId: "dax", threadId: "dax-direct", generation: "g", depth: 0, kind: "memory", skillAuthoring: false })}`)!, () => roster);
@@ -45,10 +48,13 @@ it("a direct reply made with memory the owner then forgot is withheld from the r
   // and the direct turn replays through it when memory is not active
   const index = readFileSync(fileURLToPath(new URL("./index.ts", import.meta.url)), "utf8");
   // (memory active is the only case that skips the floor; a further condition may only narrow that skip, e.g. memory's last resort)
-  expect(index).toMatch(/replayFloor = memoryState\(\)\.mode === "active"(?: && [^?\n]+)? \? undefined/);
-  const replayDeclaration = index.split("\n").find(line => line.includes("replayableMessages = (opts?.projectCardRun"));
-  expect(replayDeclaration).toContain("(replayFloor?.messages ?? activeMessages)");
-  expect(replayDeclaration).toContain("opts?.projectCardRun ? [] : (replayFloor?.messages ?? activeMessages)");
+  // 1.0.18 TURNSTART r14: the loop is turnReplayInputs (memory/turn-replay-inputs.ts); the turn passes the floor only when memory is not active
+  expect(index).toMatch(/floor: memoryState\(\)\.mode === "active"(?: && [^?\n]+)? \? null\n\s+: \(rows\) => roomTranscriptWithoutMemory\(/);
+  expect(index).toContain("projectCardRun: Boolean(opts?.projectCardRun)");
+  const loop = readFileSync(fileURLToPath(new URL("./memory/turn-replay-inputs.ts", import.meta.url)), "utf8");
+  expect(loop).toContain("replayFloor = floor ? floor(activeMessages) : undefined;");
+  const replayDeclaration = loop.split("\n").find(line => line.includes("replayableMessages = (projectCardRun"));
+  expect(replayDeclaration).toContain("projectCardRun ? [] : (replayFloor?.messages ?? activeMessages)");
   // Astra r1 #5: an owner line answering the withheld reply quotes the withheld line
   expect(index).toContain("const quoteTargets: MessageLookup = replayFloor ? new Map(replayFloor.messages.map((message) => [message.id, message])) : messagesById;");
   const answer = { id: "m-thanks", role: "user", kind: "text", text: "thanks", replyToId: "m-reply", at: 3 } as Message;
@@ -57,3 +63,5 @@ it("a direct reply made with memory the owner then forgot is withheld from the r
   expect(quoted).not.toContain("7788");
   expect(quoted).toContain("Reply withheld");
 });
+
+useOutsideStoreFixture();

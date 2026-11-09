@@ -12,6 +12,7 @@
 // composer imports PendingApprovalQueue lazily). The words, titles and grant
 // rules the chat card and the call screens need live in
 // src/lib/pending-approval.ts and are re-exported here.
+import { LayerSurface } from "@/components/LayerSurface";
 import { memo, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useStore, useStoreIfAny, type Bot, type GrantHolders } from "@/state/store";
 import { cn } from "@/lib/cn";
@@ -26,6 +27,7 @@ import { computerHere } from "@/lib/computer-surface";
 import { inNativeShell } from "@/lib/native-shell";
 import { allowNeedsComputer, approvalSurface, useComputerOnlyRefusal } from "@/lib/approval-surface";
 import { ComputerOnlyNotice } from "@/components/ComputerOnlyNotice";
+import { OutsideEngineNote } from "@/components/engine/OutsideEngineNote";
 import { useDecisionFeedback, type DecisionHooks } from "@/lib/approval-feedback";
 import { ApprovalBusyLabel, ApprovalConfirmLine, PRESSED, approvalButton } from "@/components/ApprovalFeedback";
 import { type QueueStatus } from "@/lib/approval-queue";
@@ -135,6 +137,7 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
         </p>
       )}
       {held && <CollapsibleText text={held} className="mt-1 text-[12.5px] text-warning" />}
+      <OutsideEngineNote card={pending.message.card} bot={bot} />
       {!held && needsRoutineReview(pending) && <p className="mt-2 text-[12px] text-warning">This older routine request needs a fresh review. Cancel it and ask the bot to propose it again.</p>}
       {!bar && (
         <>
@@ -220,7 +223,6 @@ export function ApprovalDetailsSheet({
   // A modal sheet holds the keyboard: Tab and Shift+Tab cycle inside it,
   // Escape closes it, and the bar behind it (its own Run) is inert until it
   // closes. Closing hands focus back to Details (the opener does that).
-  useFocusTrap(dialog, true, { initialFocus: "[data-sheet-close]", onEscape: onClose, skipReturnFocus: true });
   useEffect(() => {
     const node = backdrop.current;
     if (!node) return;
@@ -232,8 +234,8 @@ export function ApprovalDetailsSheet({
   // card has one, and the held note in full (never only behind a why-line).
   const { why } = approvalReason(pending);
   const title = t("ux.l1.card.sheetTitle", { bot: bot || t("ux.l1.outcome.botFallback") });
-  return (
-    <div ref={backdrop} className="msg-sheet-backdrop fixed inset-0 z-40 flex items-end bg-black/30" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+  const layer = useFocusTrap(dialog, true, { name: "approval-sheet", kind: "dialog", initialFocus: "[data-sheet-close]", onEscape: onClose, skipReturnFocus: true });
+  return <LayerSurface handle={layer}><div ref={backdrop} className="msg-sheet-backdrop fixed inset-0 flex items-end bg-black/30" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div ref={dialog} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} data-approval-sheet className={cn(BOX_FRAME, "msg-sheet max-h-[calc(var(--vvh,100dvh)-2rem)] w-full rounded-t-2xl border-t border-hairline/60 bg-card focus:outline-none")}>
         <BoxHead className="flex items-center gap-2 px-4 pt-3">
           <h2 className="min-w-0 flex-1 text-[16px] font-semibold text-ink">{title}</h2>
@@ -259,8 +261,7 @@ export function ApprovalDetailsSheet({
         </BoxBody>
         <BoxFoot className="flex flex-wrap items-center justify-end gap-2 px-4 pb-[max(env(safe-area-inset-bottom),12px)] pt-2">{foot}</BoxFoot>
       </div>
-    </div>
-  );
+    </div></LayerSurface>;
 }
 
 export function PendingApprovalActions({
@@ -298,6 +299,7 @@ export function PendingApprovalActions({
   // Rule 81c: each recipient is its own choice, unticked until the owner ticks it
   const [stopKeys, setStopKeys] = useState<string[]>([]);
   const [foldOpen, setFoldOpen] = useState(false);
+  const caretRef = useRef<HTMLButtonElement>(null), foldLinkRef = useRef<HTMLButtonElement>(null);
   // APPROVAL-ONE-CARD: the phone's Details sheet; closing it hands focus back to Details
   const [sheetOpen, setSheetOpen] = useState(false);
   const detailsButton = useRef<HTMLButtonElement>(null);
@@ -404,7 +406,7 @@ export function PendingApprovalActions({
     </button>
   );
   const foldChunk = (variant: "menu" | "sheet", onClose: () => void, autoFocus = true) => (
-    <LazyBoundary inline onRetry={GrantFoldChunk.retry} onDismiss={onClose}>
+    <LazyBoundary inline onRetry={GrantFoldChunk.retry} onDismiss={() => { onClose(); requestAnimationFrame(() => (caretRef.current ?? foldLinkRef.current)?.focus()); }}>
       <Suspense fallback={null}>
         <GrantFoldChunk.Component
           id={foldId}
@@ -453,6 +455,7 @@ export function PendingApprovalActions({
           {runButton(undefined, hasFold && !phoneSheet && !bar)}
           {hasFold && !phoneSheet && !bar && (
             <button
+              ref={caretRef}
               type="button"
               data-fold-caret
               aria-haspopup="true"
@@ -468,7 +471,7 @@ export function PendingApprovalActions({
         </span>
       )}
       {hasFold && phoneSheet && !bar && (
-        <button type="button" data-fold-link onClick={() => setFoldOpen(true)} className={cn(base, "w-full justify-end rounded-md px-1 text-[13px] text-accent underline-offset-2 hover:underline")}>
+        <button ref={foldLinkRef} type="button" data-fold-link onClick={() => setFoldOpen(true)} className={cn(base, "w-full justify-end rounded-md px-1 text-[13px] text-accent underline-offset-2 hover:underline")}>
           {t("ux.l1.card.foldLink", { verb: verbLabel })}
         </button>
       )}

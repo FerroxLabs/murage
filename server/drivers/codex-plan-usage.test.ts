@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Plan usage over the Codex app-server Murage already runs (GAP-PLAN-LIMITS rev 1.2, section 5.1,
 // PL-02, PL-04, PL-05): against the scripted fake app-server. Reads go only to a live, retained
 // process; account frames never reach the native tee or the turn; nothing is spawned for a meter.
@@ -35,7 +37,7 @@ describe("Codex plan usage (fake app-server)", () => {
     recorder = recordEvents(instance.adapter);
   };
   const run = async (threadId: string, extra: Partial<SendTurnInput> = {}) => {
-    const sent = await instance!.adapter.sendTurn({ threadId, text: "hello", warmIdentity: { botId: "b1", audience: "owner" }, ...extra });
+    const sent = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "hello", warmIdentity: { botId: "b1", audience: "owner" }, ...extra });
     return recorder!.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId) as Promise<any>;
   };
   const reads = () => readFileSync(callLog, "utf8").split("\n").filter((l) => l.endsWith(" account/rateLimits/read")).length;
@@ -125,3 +127,6 @@ describe("Codex plan usage (fake app-server)", () => {
     expect(planUsageService.observation(subject()).windows).toEqual([]);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

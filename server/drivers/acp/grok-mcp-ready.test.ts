@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -207,3 +208,6 @@ describe("a cold turn starts on MCP readiness, of every kind", () => {
     expect(done).toMatchObject({ ok: true, mcpReadiness: "unknown" });
   }, 60_000);
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

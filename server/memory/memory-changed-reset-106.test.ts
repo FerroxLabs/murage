@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -186,9 +188,9 @@ it("the change reaches the warm engine: the after-pin frame differs and the adap
   };
   const live = decorateMemoryInstance({ instanceId: "claude", adapter, dispose: async () => {} } as unknown as ProviderInstance);
   const emit = (event: Partial<RuntimeEvent>) => { for (const listener of listeners) listener({ eventId: "e", provider: "claude", threadId: w.threadId, createdAt: new Date().toISOString(), ...event } as RuntimeEvent); };
-  await live.adapter.sendTurn({ threadId: w.threadId, text: "first", memoryContext: beforePin });
+  await live.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: w.threadId, text: "first", memoryContext: beforePin });
   session = "native-1"; emit({ type: "session.started", sessionId: "native-1" });
-  await live.adapter.sendTurn({ threadId: w.threadId, text: "second", memoryContext: afterPin, resumeCursor: "native-1" });
+  await live.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: w.threadId, text: "second", memoryContext: afterPin, resumeCursor: "native-1" });
   expect(sent[1]!.text).toContain("pinned by the owner");
   expect(sent[1]!.text.endsWith("second")).toBe(true);
   expect(sent[1]!.resumeCursor).toBe("native-1");
@@ -376,3 +378,6 @@ it.each(Object.keys(readerActions))("readers: %s leaves an owner room, a channel
   act();
   expect(snapshot()).toEqual(before);
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

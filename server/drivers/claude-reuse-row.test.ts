@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // The fake reuse gate row (ENGINE-PERSIST design section 6). A stdio server slow enough
 // to be in the init baseline forks one child and never waits for it. Real process
 // listing, real settle probe: after one cold turn the next five must find the engine.
@@ -29,7 +31,7 @@ describe.skipIf(process.platform === "win32")("reuse gate row (fake CLI, real ps
     warmIdentity: { botId: "b1", audience: "owner" as const },
   } satisfies Partial<SendTurnInput>;
   const run = async (threadId: string, text: string, more: Partial<SendTurnInput> = {}) => {
-    const sent = await instance.adapter.sendTurn({ threadId, text, ...(sessions.has(threadId) ? { resumeCursor: sessions.get(threadId) } : {}), ...extra, ...more });
+    const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text, ...(sessions.has(threadId) ? { resumeCursor: sessions.get(threadId) } : {}), ...extra, ...more });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
     const started = [...recorder.events].reverse().find((e) => e.type === "session.started" && e.threadId === threadId) as { sessionId?: string } | undefined;
     if (started?.sessionId) sessions.set(threadId, started.sessionId);
@@ -99,3 +101,6 @@ describe.skipIf(process.platform === "win32")("reuse gate row (fake CLI, real ps
     expect(after.repeatTurns - before.repeatTurns).toBe(1);
   }, 20_000);
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

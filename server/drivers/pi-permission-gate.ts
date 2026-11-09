@@ -836,7 +836,7 @@ export const GATE_UNASKED: ReadonlyArray<readonly [string, readonly string[]]> =
     "project_propose", "propose_outcome", "propose_routine", "propose_routine_action", "request_bot_access", "request_credential", "ask_user", "show_widget", "update_widget",
     "request_browser_connection", "project_done", "add_mcp_server",
     "create_bot", "update_bot", "archive_bot", "restore_bot", "move_bot", "set_team_lead",
-    "send_voice_note", "generate_image", "email_send", "email_reply", "email_trust_offer", "save_prompt_block", "save_reference_pack",
+    "send_voice_note", "generate_image", "email_send", "email_reply", "email_trust_offer", "venue_post", "save_prompt_block", "save_reference_pack",
   ]],
   ["own:dweb", ["dweb_status", "dweb_repo_status", "dweb_opencode_models"]],
   // the gate imports nothing of Murage's, so the names are spelled here (a test pins them to PHONE_TOOL_NAMES through OWN_UNASKED)
@@ -845,6 +845,13 @@ export const GATE_UNASKED: ReadonlyArray<readonly [string, readonly string[]]> =
     "phone_reminders_read", "phone_reminders_add", "phone_reminders_complete",
     "phone_contacts_search", "phone_contacts_get", "phone_location_get",
     "phone_alarm_set", "phone_timer_set", "phone_text_compose", "phone_call_dial",
+  ]],
+  // native HighLevel, read only (a test pins them to HIGHLEVEL_READ_TOOL_NAMES and HIGHLEVEL_HELPER_NAMES through OWN_UNASKED)
+  ["own:highlevel", [
+    "HIGHLEVEL_SEARCH_CONTACTS", "HIGHLEVEL_GET_CONTACT", "HIGHLEVEL_LIST_NOTES", "HIGHLEVEL_LIST_TASKS",
+    "HIGHLEVEL_LIST_PIPELINES", "HIGHLEVEL_SEARCH_OPPORTUNITIES", "HIGHLEVEL_GET_OPPORTUNITY", "HIGHLEVEL_SEARCH_CONVERSATIONS",
+    "HIGHLEVEL_READ_CONVERSATION", "HIGHLEVEL_LIST_CALENDARS", "HIGHLEVEL_LIST_EVENTS", "HIGHLEVEL_GET_LOCATION",
+    "HIGHLEVEL_LIST_CONNECTIONS", "HIGHLEVEL_ACTION_STATUS",
   ]],
 ];
 function unaskedPair(mountId: string | undefined, tool: string): boolean {

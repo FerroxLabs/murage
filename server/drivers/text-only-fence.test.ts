@@ -1,3 +1,4 @@
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -29,7 +30,7 @@ const { httpTextOnlyTurn } = await import("./http-text-only.ts");
 const { claudeTextOnlyTurn, headlessTextOnlyTurn } = await import("./headless-text-only.ts");
 
 const SCHEMA = { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } }, additionalProperties: false };
-const turn = (fence: () => AdmissionFenceAnswer, over: Partial<TextOnlyTurnInput> = {}): TextOnlyTurnInput => ({
+const turn = (fence: () => AdmissionFenceAnswer, over: Partial<TextOnlyTurnInput> = {}): TextOnlyTurnInput => ({ cwd: fixtureBotFolder(),
   system: fixedPrompt("SYS"), text: "USER", model: "model-x", outputSchema: SCHEMA, signal: new AbortController().signal,
   maxOutputTokens: 1500, maxOutputBytes: 12 * 1024, context: { botId: "b", runId: "r", family: "lived", attempt: 1 },
   ...over, transport: { ...over.transport, fence, gate: fenceGate(fence) },

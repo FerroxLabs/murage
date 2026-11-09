@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -6,6 +7,7 @@
 // used was forgotten, deleted or changed. Other rooms keep the per-reader
 // replay filter, and that filter no longer marks receipts revoked for
 // everyone because of what one reader could see.
+import { storeAnchorMessage } from "./memory/testing/anchor-message.ts";
 import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -146,6 +148,7 @@ it("withholds a reply that recalled an earlier reply which is itself no longer v
   // captured and recalled into the room reply.
   const original = daxMemory("the original private fact", "src-original");
   disclose("b-direct", "dax-direct", [{ id: original, version: version(original) }], [], ["m-dax-direct"]);
+  storeAnchorMessage(database(), "dax-direct", "m-dax-direct", "a paraphrase of it", "bot", 1);
   captureSource(database(), { id: "message:dax-direct:m-dax-direct", threadId: "dax-direct", messageId: "m-dax-direct", kind: "text", speaker: "dax", outcome: "recorded", text: "a paraphrase of it" });
   const paraphrase = active(saveMemoryCandidate("a paraphrase of it", [{ sourceId: "message:dax-direct:m-dax-direct", revision: 1, startByte: 0, endByte: Buffer.byteLength("a paraphrase of it") }], "k-para", access("dax", "dax-direct")));
   disclose("b-dax", "closing-chat", [{ id: paraphrase, version: version(paraphrase) }], [], ["m-dax"]);
@@ -289,3 +292,5 @@ it("keeps a reply whose record descends from a record corrected earlier in the s
   disclose("b-dax", "closing-chat", [{ id: c, version: version(c) }], [], ["m-dax"]);
   expect([...roomReplayWithheld(LineageAllowance.tool(), "closing-chat", transcript)]).toEqual([]);
 });
+
+useOutsideStoreFixture();

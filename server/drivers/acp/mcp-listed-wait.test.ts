@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -134,3 +135,6 @@ it("a shorter wait from the environment is kept: 100 ms waits 100 ms", async () 
   const turn = await run(GeminiAgentDriver, "short", {});
   expect(turn.prompt.at - turn.sent).toBeLessThan(2_500);
 }, 60_000);
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

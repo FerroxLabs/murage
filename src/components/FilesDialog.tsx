@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { useNativeDialogLayer } from "@/lib/native-dialog-layer";
 import { api, useStore } from "@/state/store";
 import { fromAnswer } from "@/state/answer-tag";
 import { requestPage } from "@/state/page-intent";
@@ -13,7 +14,8 @@ import { BOX_DIALOG } from "./ui/BoxShell";
 export function FilesDialog({ onClose, ...initial }: FilesOpenDetail & { onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null), gate = useRef(false);
   const { state, dispatch } = useStore(), [error, setError] = useState<string>();
-  useEffect(() => { dialog.current?.showModal(); }, []);
+  const layer = useNativeDialogLayer(dialog, { name: "files-native" });
+  useLayoutEffect(() => { layer.show(); }, []);
   const source = async (artifact: Artifact) => {
     if (gate.current) return; gate.current = true; setError(undefined);
     try {

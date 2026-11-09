@@ -6,6 +6,7 @@ import { pipeline } from "node:stream/promises";
 import { Transform } from "node:stream";
 import { fileURLToPath } from "node:url";
 import yauzl from "yauzl";
+import { fetchPinned } from "./download-retry.mjs";
 import { WINDOWS_BACKUP_ARCHIVE, WINDOWS_BACKUP_RAW_SHA256 } from "../shared/windows-backup-tools.mjs";
 import { RESTIC_PINS } from "../shared/backup-restic-pin.mjs";
 
@@ -72,7 +73,7 @@ export async function stageWindowsBackupTools({ root = fileURLToPath(new URL("..
   try {
     const input = archive ?? join(scratch, "age.zip");
     if (!archive) {
-      const response = await fetch(WINDOWS_BACKUP_ARCHIVE.url, { signal: AbortSignal.timeout(60000) });
+      const response = await fetchPinned(WINDOWS_BACKUP_ARCHIVE.url, {}, { sha256: WINDOWS_BACKUP_ARCHIVE.sha256 });
       if (!response.ok || !response.body) throw Error("WINDOWS_BACKUP_DOWNLOAD_FAILED");
       const chunks = []; let bytes = 0;
       for await (const chunk of response.body) { bytes += chunk.length; if (bytes > maxBytes) throw Error("WINDOWS_BACKUP_DOWNLOAD_LIMIT"); chunks.push(chunk); }

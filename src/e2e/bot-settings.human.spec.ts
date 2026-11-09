@@ -19,9 +19,10 @@ const botId = "settings-proof-bot";
 // Never chose an approval level: like every new bot, its record has no
 // autoApprove or fullAccess field at all (the harness omits unset fields).
 const levelBotId = "level-proof-bot";
+const archivedBotId = "archived-proof-bot";
 test.beforeAll(async () => {
   const { launchVerificationServer } = await import(new URL("../../scripts/control-murage.ts", import.meta.url).href) as { launchVerificationServer: Launcher };
-  fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `import {writeFileSync} from 'node:fs';import {join} from 'node:path';const at=Date.now();writeFileSync(join(process.env.MURAGE_DATA_DIR,'bots.json'),JSON.stringify([{id:'${botId}',threadId:'settings-proof-task',name:'Settings proof bot',title:'Research helper',description:'Use supplied evidence.',color:'green',notifications:false,unread:false,createdAt:at,modelSelection:{instanceId:'verification',model:'sonnet'},resumeCursors:{},tasks:[{threadId:'settings-proof-task',title:'Research task',createdAt:at,resumeCursors:{}}],chiefOfStaff:false,autoApprove:false,composio:false,computer:'off',browser:false,installedPackage:{id:'fixture-profile',name:'Fixture profile',release:'1.0.0',requiredApps:[],sourceRole:'leader',sourceTeam:'Studio'}},{id:'${levelBotId}',threadId:'level-proof-task',name:'Level proof bot',title:'',description:'',color:'blue',notifications:false,unread:false,createdAt:at,modelSelection:{instanceId:'verification',model:'sonnet'},resumeCursors:{},tasks:[{threadId:'level-proof-task',title:'Level task',createdAt:at,resumeCursors:{}}],composio:false,computer:'off',browser:false}]));`, env: { MURAGE_COMPANION_TOKEN: doorToken } });
+  fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `import {writeFileSync} from 'node:fs';import {join} from 'node:path';const at=Date.now();writeFileSync(join(process.env.MURAGE_DATA_DIR,'bots.json'),JSON.stringify([{id:'${botId}',threadId:'settings-proof-task',name:'Settings proof bot',title:'Research helper',description:'Use supplied evidence.',color:'green',notifications:false,unread:false,createdAt:at,modelSelection:{instanceId:'verification',model:'sonnet'},resumeCursors:{},tasks:[{threadId:'settings-proof-task',title:'Research task',createdAt:at,resumeCursors:{}}],chiefOfStaff:false,autoApprove:false,composio:false,computer:'off',browser:false,installedPackage:{id:'fixture-profile',name:'Fixture profile',release:'1.0.0',requiredApps:[],sourceRole:'leader',sourceTeam:'Studio'}},{id:'${levelBotId}',threadId:'level-proof-task',name:'Level proof bot',title:'',description:'',color:'blue',notifications:false,unread:false,createdAt:at,modelSelection:{instanceId:'verification',model:'sonnet'},resumeCursors:{},tasks:[{threadId:'level-proof-task',title:'Level task',createdAt:at,resumeCursors:{}}],composio:false,computer:'off',browser:false},...[['${archivedBotId}','Archived proof bot',true],['spare-proof-bot','Spare proof bot',false],['second-spare-proof-bot','Second spare proof bot',false]].map(([id,name,hidden])=>({id,threadId:id+'-task',name,hidden,title:'',description:'',color:'blue',notifications:false,unread:false,createdAt:at,modelSelection:{instanceId:'verification',model:'sonnet'},resumeCursors:{},tasks:[{threadId:id+'-task',title:'Spare task',createdAt:at,resumeCursors:{}}],composio:false,computer:'off',browser:false}))]));`, env: { MURAGE_COMPANION_TOKEN: doorToken } });
   try {
     const proof = await (await fetch(fixture.info.url + "/api/desktop-secret")).json() as { secret: string };
     owner = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
@@ -29,7 +30,7 @@ test.beforeAll(async () => {
     vite = await createServer({ configFile: false, root, envFile: false, cacheDir: join(fixture.info.dataDir, "settings-vite-cache"), resolve: { alias: { "@": join(root, "src") } },
       server: { host: "127.0.0.1", watch: null, hmr: false, proxy: { "/api": { target: fixture.info.url } } }, plugins: [react(), tailwindcss(), {
         name: "bot-settings-fixture", resolveId(id) { if (id === "/__bot-settings.js") return "\0bot-settings-fixture"; },
-        load(id) { if (id !== "\0bot-settings-fixture") return; return `import React from 'react';import {createRoot} from 'react-dom/client';import {StoreProvider,useStore} from '/src/state/store.tsx';import {DesktopCapabilitiesProvider} from '/src/components/DesktopCapabilities.tsx';import {BotSettingsDialog} from '/src/components/BotSettingsDialog.tsx';import {ComputerPanel} from '/src/components/ComputerPanel.tsx';import '/src/styles.css';function Surface(){const {state,dispatch}=useStore();const [open,setOpen]=React.useState(false);const shown=new URLSearchParams(location.search).get('bot')||'${botId}';const bot=state.bots.find(bot=>bot.id===shown);return React.createElement(React.Fragment,null,React.createElement('button',{disabled:!bot,onClick:()=>setOpen(true)},'Open bot settings'),React.createElement('button',{disabled:!bot,onClick:()=>dispatch({type:'toggleComputer',open:true})},'Open computer'),bot&&(open||state.settingsOpen)&&React.createElement(BotSettingsDialog,{bot,onClose:()=>{setOpen(false);dispatch({type:'toggleSettings',open:false});}}),bot&&state.computerOpen&&React.createElement(ComputerPanel,{bot}));}createRoot(document.getElementById('root')).render(React.createElement(StoreProvider,null,React.createElement(DesktopCapabilitiesProvider,null,React.createElement(Surface))));`; },
+        load(id) { if (id !== "\0bot-settings-fixture") return; return `import React from 'react';import {createRoot} from 'react-dom/client';import {StoreProvider,useStore} from '/src/state/store.tsx';import {DesktopCapabilitiesProvider} from '/src/components/DesktopCapabilities.tsx';import {BotSettingsDialog} from '/src/components/BotSettingsDialog.tsx';import {LazyOverlay} from '/src/components/LazyOverlay.tsx';import {ComputerPanel} from '/src/components/ComputerPanel.tsx';import '/src/styles.css';function Surface(){const {state,dispatch}=useStore();const [open,setOpen]=React.useState(false);const shown=new URLSearchParams(location.search).get('bot')||'${botId}';const bot=state.bots.find(bot=>bot.id===shown);return React.createElement(React.Fragment,null,React.createElement('button',{disabled:!bot,onClick:()=>setOpen(true)},'Open bot settings'),React.createElement('button',{disabled:!bot,onClick:()=>dispatch({type:'toggleComputer',open:true})},'Open computer'),bot&&(open||state.settingsOpen)&&React.createElement(LazyOverlay,{name:'bot-settings',kind:'window',covers:'always',holdFocus:false,onDismiss:()=>{setOpen(false);dispatch({type:'toggleSettings',open:false});}},React.createElement(BotSettingsDialog,{bot,onClose:()=>{setOpen(false);dispatch({type:'toggleSettings',open:false});}})),bot&&state.computerOpen&&React.createElement(ComputerPanel,{bot}));}createRoot(document.getElementById('root')).render(React.createElement(StoreProvider,null,React.createElement(DesktopCapabilitiesProvider,null,React.createElement(Surface))));`; },
         configureServer(server) { server.middlewares.use((req, res, next) => { if (req.url?.split("?")[0] !== "/__bot-settings") return next(); res.setHeader("content-type", "text/html"); res.end('<meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div><script type="module" src="/__bot-settings.js"></script>'); }); },
       }] });
     await vite.listen(0); const address = vite.httpServer!.address(); if (!address || typeof address === "string") throw Error("Settings fixture did not bind"); origin = `http://127.0.0.1:${address.port}`;
@@ -45,7 +46,7 @@ test("Computer gear opens the same bot settings exclusively and allows reopening
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`${origin}/__bot-settings`);
     const computer = page.locator('aside').filter({ has: page.getByTitle('Bot settings', { exact: true }) });
-    const settings = page.getByRole('dialog', { name: 'Bot settings', exact: true });
+    const settings = page.getByRole('dialog', { name: 'Bot settings: Settings proof bot', exact: true });
     for (const close of width < 640 ? ['button', 'escape'] : ['button', 'escape', 'backdrop']) {
       await page.getByRole('button', { name: 'Open computer', exact: true }).click();
       await expect(computer).toBeVisible();
@@ -66,10 +67,63 @@ test("Computer gear opens the same bot settings exclusively and allows reopening
   }
 });
 
+for (const width of [390, 1440]) test(`the Bots group stays closed at ${width}px: the open bot's row and a count, archived bots left out`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 900 });
+  await page.goto(`${origin}/__bot-settings`);
+  await page.getByRole("button", { name: "Open bot settings", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Bot settings: Settings proof bot", exact: true });
+  await expect(dialog).toBeVisible();
+  const nav = dialog.getByRole("navigation", { name: "Settings sections", exact: true }), rows = nav.locator("[data-settings-bot]");
+  const toggle = nav.getByRole("button", { name: "4 bots", exact: true });
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(rows).toHaveText(["Settings proof bot"]);
+  await expect(rows.first()).toHaveAttribute("aria-current", "page");
+  // By keyboard: it opens and closes in place and keeps focus, and the arrow keys reach the rows.
+  await toggle.focus();
+  await page.keyboard.press("Enter");
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(toggle).toBeFocused();
+  await expect(rows).toHaveText(["Settings proof bot", "Level proof bot", "Spare proof bot", "Second spare proof bot"]);
+  await page.keyboard.press("ArrowDown");
+  await expect(rows.first()).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(toggle).toBeFocused();
+  await page.keyboard.press("Space");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(toggle).toBeFocused();
+  await expect(rows).toHaveCount(1);
+});
+
+for (const width of [390, 1440]) test(`an archived bot opened directly keeps its row at ${width}px`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 900 });
+  const loaded = page.waitForResponse(response => response.url().includes("/api/bots?view=sidebar"));
+  await page.goto(`${origin}/__bot-settings?bot=${archivedBotId}`);
+  await loaded;
+  const opener = page.getByRole("button", { name: "Open bot settings", exact: true });
+  // A phone never holds an archived bot (store.tsx, the scoped client), so there is no page of it to open. The same
+  // phone does open an ordinary bot, which shows the first answer is not just a page still loading.
+  if (testInfo.project.name === "mobile" && width === 390) {
+    await page.waitForTimeout(1_000);
+    await expect(opener).toBeDisabled();
+    await page.goto(`${origin}/__bot-settings?bot=${levelBotId}`);
+    await expect(opener).toBeEnabled();
+    return;
+  }
+  await opener.click();
+  const dialog = page.getByRole("dialog", { name: "Bot settings: Archived proof bot", exact: true });
+  await expect(dialog).toBeVisible();
+  const nav = dialog.getByRole("navigation", { name: "Settings sections", exact: true }), rows = nav.locator("[data-settings-bot]");
+  await expect(rows).toHaveText(["Archived proof bot"]);
+  await expect(rows.first()).toHaveAttribute("aria-current", "page");
+  await nav.getByRole("button", { name: "5 bots", exact: true }).click();
+  await expect(rows).toHaveCount(5);
+  await expect(rows.filter({ hasText: "Archived proof bot" })).toHaveAttribute("aria-current", "page");
+});
+
 test("Appearance is open at the top of Identity & instructions, and an image avatar opens larger", async ({ page }, testInfo) => {
   await page.goto(`${origin}/__bot-settings`);
   await page.getByRole("button", { name: "Open bot settings", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Bot settings", exact: true });
+  const dialog = page.getByRole("dialog", { name: "Bot settings: Settings proof bot", exact: true });
   await expect(dialog).toBeVisible();
   // the panel opens on what the bot is FOR; Appearance is no longer on Overview
   await expect(dialog.getByText("What is this bot for?", { exact: true })).toBeVisible();
@@ -129,7 +183,7 @@ for (const skin of ["light", "dark"]) for (const width of [390, 1440]) test(`sec
   // A phone opens the profile from the header's "..." menu, and focus comes back to that button.
   const opener = await phoneLayout(page) ? headerMoreButton(page) : page.getByRole("button", { name: "Open Settings proof bot's profile", exact: true }).first();
   await openBotProfile(page, "Settings proof bot");
-  const dialog = page.getByRole("dialog", { name: "Bot settings", exact: true }); await expect(dialog).toBeVisible();
+  const dialog = page.getByRole("dialog", { name: "Bot settings: Settings proof bot", exact: true }); await expect(dialog).toBeVisible();
   await expect(dialog.getByText("Imported role: Team leader", { exact: true })).toBeVisible();
   await expect(dialog.getByText("Imported team: Studio", { exact: true })).toBeVisible();
   await expect(dialog.getByText("The imported role is not active. Use the role control below to assign a role explicitly.", { exact: true })).toBeVisible();
@@ -189,7 +243,7 @@ for (const skin of ["light", "dark"]) for (const width of [390, 1440]) test(`sec
   await expect(dialog.getByRole("textbox", { name: /^Instructions/ })).toHaveValue("Use supplied evidence.");
   await page.screenshot({ path: testInfo.outputPath(`settings-identity-${width}-${skin}.png`), fullPage: true });
   await dialog.getByRole("button", { name: "Close bot settings", exact: true }).focus(); await page.keyboard.press("Tab");
-  expect(await page.evaluate(() => Boolean(document.activeElement?.closest('dialog[open]')))).toBe(true);
+  expect(await dialog.evaluate(node => node.contains(document.activeElement))).toBe(true);
   await page.keyboard.press("Escape"); await expect(dialog).toHaveCount(0); await expect(opener).toBeFocused();
   expect(authority((await storedBots()).find(bot => bot.id === botId)!)).toEqual(before);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -205,7 +259,7 @@ test("a refused Full access snaps back to the saved level and says why; away fro
     : route.continue());
   await page.goto(`${origin}/__bot-settings?bot=${levelBotId}`);
   await page.getByRole("button", { name: "Open bot settings", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Bot settings", exact: true });
+  const dialog = page.getByRole("dialog", { name: "Bot settings: Level proof bot", exact: true });
   await dialog.getByRole("searchbox", { name: "Search settings" }).fill("permissions");
   const full = dialog.getByRole("radio", { name: "Full access", exact: true });
   await full.click();
@@ -228,10 +282,35 @@ test("a refused Full access snaps back to the saved level and says why; away fro
     await phone.route("**/api/desktop-secret", route => route.fulfill({ status: 404, contentType: "application/json", body: "{}" }));
     await phone.goto(`${origin}/__bot-settings?bot=${levelBotId}`);
     await phone.getByRole("button", { name: "Open bot settings", exact: true }).click();
-    const remote = phone.getByRole("dialog", { name: "Bot settings", exact: true });
+    const remote = phone.getByRole("dialog", { name: "Bot settings: Level proof bot", exact: true });
     await remote.getByRole("searchbox", { name: "Search settings" }).fill("permissions");
     await expect(remote.getByRole("radio", { name: "Full access", exact: true })).toBeDisabled();
     await expect(remote.getByRole("radio", { name: "Auto", exact: true })).toBeEnabled();
     await expect(remote.getByText(FULL_ACCESS_DESKTOP_ONLY, { exact: true })).toBeVisible();
   } finally { await context.close(); }
+});
+
+// The full app: only it follows a row to another bot (App.tsx mounts the window for state.settingsBotId).
+for (const width of [390, 1440]) test(`another bot's row asks first when there are unsaved edits, then goes, at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 900 });
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); });
+  await page.goto(origin);
+  await openBotProfile(page, "Settings proof bot");
+  const dialog = page.getByRole("dialog", { name: "Bot settings: Settings proof bot", exact: true });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("searchbox", { name: "Search settings" }).fill("working folder");
+  const folder = dialog.getByRole("textbox", { name: "Working folder path", exact: true });
+  await folder.fill("/tmp/unsaved-proof");
+  const nav = dialog.getByRole("navigation", { name: "Settings sections", exact: true }), rows = nav.locator("[data-settings-bot]");
+  // 1.0.19: Each bot lists up to five bots, the open one always among them (no toggle to open first)
+  await expect(rows.filter({ hasText: "Level proof bot" })).toBeVisible();
+  page.once("dialog", confirm => confirm.dismiss());
+  await rows.filter({ hasText: "Level proof bot" }).click();
+  await expect(dialog).toBeVisible();
+  await expect(folder).toHaveValue("/tmp/unsaved-proof");
+  page.once("dialog", confirm => confirm.accept());
+  await rows.filter({ hasText: "Level proof bot" }).click();
+  const other = page.getByRole("dialog", { name: "Bot settings: Level proof bot", exact: true });
+  await expect(other).toBeVisible();
+  await expect(other.locator('[data-settings-bot][aria-current="page"]')).toHaveText("Level proof bot");
 });

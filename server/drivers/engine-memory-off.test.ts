@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -52,7 +54,7 @@ afterEach(async () => {
 async function oneTurn(turn: Partial<SendTurnInput> & { model: string }): Promise<void> {
   const completed = () => recorder!.events.filter((event) => event.type === "turn.completed").length;
   const before = completed();
-  await instance!.adapter.sendTurn({ text: "hi", threadId: `t-mem-${++seq}`, ...turn });
+  await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), text: "hi", threadId: `t-mem-${++seq}`, ...turn });
   await vi.waitFor(() => expect(completed()).toBeGreaterThan(before), { timeout: 10_000, interval: 25 });
 }
 
@@ -134,3 +136,6 @@ describe("ACP engines", () => {
     });
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

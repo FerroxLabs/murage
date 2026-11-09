@@ -27,6 +27,7 @@ import { renderLearnedBlock } from "./lessons.ts";
 import { advanceRevocationJob, INLINE_REVOCATION, memoryRevocationIdle, memoryRevocationStats, pipStanceParses, resetMemoryRevocationStats, resetPipStanceParses, runRevocationJobsNow, stopMemoryRevocation, wakeMemoryRevocation } from "./memory-revocation.ts";
 import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
 import { readableMemoryRecord } from "./readable.ts";
+import { REVOKE_PACE, REVOKE_PACE_COMMIT, REVOKE_WRITE_BUDGET, resetRevokeWriteBudget } from "./revoke-budget.ts";
 import { contentRevoked, LineageAllowance, recordOutputRoots, type Disclosure } from "./replay-lineage.ts";
 import { setMemoryMode } from "./repository.ts";
 import { applyForgetTombstones, applyMemoryTombstones, mergeDestinationMemoryDeletions } from "./restore.ts";
@@ -47,6 +48,13 @@ beforeEach(() => {
   resetMemoryRevocationStats(); resetPipStanceParses();
 });
 afterEach(() => { stopMemoryRevocation(); Object.assign(INLINE_REVOCATION, inline); vi.restoreAllMocks(); });
+// The drains here are about WHAT a forget ends and how many rows a slice reads, not about pacing: the per-minute write budget (revoke-budget.test.ts) and the idle
+// pace with its capped drain commit (IO-IDLE-DRAIN-1018 r3.5/r3.6, 0.8 MB a minute: io-budget-revoke-pace.test.ts and io-budget-revoke-bounds.test.ts) are
+// limiters with their own proofs, so both are off here exactly as revoke-bounded.test.ts has them (T5 revokes 2000 receipts and T6 fills two evidence files through the runner,
+// which would otherwise wait out real minutes behind the pace).
+const BUDGET0 = REVOKE_WRITE_BUDGET.bytesPerMinute, PACE0 = REVOKE_PACE.bytesPerMinute, ROWS0 = REVOKE_PACE_COMMIT.rows;
+beforeEach(() => { REVOKE_WRITE_BUDGET.bytesPerMinute = Number.POSITIVE_INFINITY; REVOKE_PACE.bytesPerMinute = Number.POSITIVE_INFINITY; REVOKE_PACE_COMMIT.rows = 1_000_000; resetRevokeWriteBudget(); });
+afterEach(() => { REVOKE_WRITE_BUDGET.bytesPerMinute = BUDGET0; REVOKE_PACE.bytesPerMinute = PACE0; REVOKE_PACE_COMMIT.rows = ROWS0; resetRevokeWriteBudget(); });
 /** The job may not run inside the window: no inline step, no runner. */
 const stopJobs = () => { INLINE_REVOCATION.rows = 1; INLINE_REVOCATION.ms = 0; stopMemoryRevocation(); };
 /** The rows of the job budget one slice gets in drainSlices: a fixed row budget and no deadline, so every count below is the same

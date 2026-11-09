@@ -1,0 +1,81 @@
+{
+  "source": "SMOOTHNESS-GATE-105.md section 3 (2026-10-24): whole-system budgets over Sean's day-shaped scenarios on his real data, fake engines (Murage's own time only). The limit is the same on every run, loaded or not (MurageMain, 2026-11-06). A loaded latency row shows the old 1.5 factor beside it as information only.",
+  "rows": [
+    { "id": "S0.boot", "scenario": "boot", "what": "cold boot to /api/health p90", "path": "scenarios.boot.healthy.p90", "op": "<=", "value": 20000, "unit": "ms", "latency": true },
+    { "id": "S0.exits", "scenario": "boot", "what": "server exits during the run", "path": "all.serverExits", "op": "==", "value": 0 },
+
+    { "id": "S1.started", "scenario": "routineBurst", "what": "routines started of 8", "path": "scenarios.routineBurst.started", "op": ">=", "value": 8 },
+    { "id": "S1.lateness", "scenario": "routineBurst", "what": "start lateness from slot p90", "path": "scenarios.routineBurst.lateness.p90", "op": "<=", "value": 60000, "unit": "ms", "latency": true, "engineTime": true },
+    { "id": "S1.deferred", "scenario": "routineBurst", "what": "runs deferred for connected apps", "path": "scenarios.routineBurst.deferred", "op": "==", "value": 0 },
+    { "id": "S1.startupNotes", "scenario": "routineBurst", "what": "runs told their apps were missing", "path": "scenarios.routineBurst.startupNotes", "op": "==", "value": 0, "fakeOnly": true, "note": "Read from the fake engines' prompt dumps. Real engines have none, so a real leg shows it as not applicable, never as 0." },
+    { "id": "S1.failedRuns", "scenario": "routineBurst", "what": "runs that ended failed", "path": "scenarios.routineBurst.failedRuns", "op": "==", "value": 0 },
+    { "id": "S1.cards", "scenario": "routineBurst", "what": "approval cards", "path": "scenarios.routineBurst.cards", "op": "==", "value": 0 },
+
+    { "id": "S2.results", "scenario": "delegation", "what": "worker results seen by the manager of 2", "path": "scenarios.delegation.sawResult", "op": ">=", "value": 2, "note": "A missing delegation-receipts.json reads as none in the runner. That cannot pass this row: server/delegations.ts:394 writes the file on a real hand-off, and this row needs 2 results." },
+    { "id": "S2.chain", "scenario": "delegation", "what": "hand-off to result back, max", "path": "scenarios.delegation.chainMs.max", "op": "<=", "value": 60000, "unit": "ms", "latency": true, "engineTime": true },
+    { "id": "S2.withheld", "scenario": "delegation", "what": "withheld or checking mirrors", "path": "scenarios.delegation.withheld", "op": "==", "value": 0 },
+    { "id": "S2.fence", "scenario": "delegation", "what": "send fence refusals", "path": "scenarios.delegation.fenceRefused", "op": "==", "value": 0 },
+    { "id": "S2.context", "scenario": "delegation", "what": "Context changed cards", "path": "scenarios.delegation.contextChanged", "op": "==", "value": 0 },
+
+    { "id": "S3.replies", "scenario": "room", "what": "messages answered by all 3 members of 4", "path": "scenarios.room.fullyAnswered", "op": ">=", "value": 4 },
+    { "id": "S3.first", "scenario": "room", "what": "first member reply p90", "path": "scenarios.room.firstReply.p90", "op": "<=", "value": 5000, "unit": "ms", "latency": true, "engineTime": true },
+    { "id": "S3.last", "scenario": "room", "what": "last member reply p90", "path": "scenarios.room.lastReply.p90", "op": "<=", "value": 15000, "unit": "ms", "latency": true, "engineTime": true },
+    { "id": "S3.withheld", "scenario": "room", "what": "withheld mirrors", "path": "scenarios.room.withheld", "op": "==", "value": 0 },
+    { "id": "S3.context", "scenario": "room", "what": "Context changed cards", "path": "scenarios.room.contextChanged", "op": "==", "value": 0 },
+    { "id": "S3.cards", "scenario": "room", "what": "approval cards", "path": "scenarios.room.cards", "op": "==", "value": 0 },
+
+    { "id": "S4.ask", "scenario": "trust", "what": "Ask: cards for 10 dev commands", "path": "scenarios.trust.levels.ask.cards", "op": "==", "value": 10 },
+    { "id": "S4.full", "scenario": "trust", "what": "Full access: cards for 10 dev commands", "path": "scenarios.trust.levels.full.cards", "op": "==", "value": 0 },
+    { "id": "S4.unlimited", "scenario": "trust", "what": "No limits: cards for 10 dev commands", "path": "scenarios.trust.levels.unlimited.cards", "op": "==", "value": 0 },
+    { "id": "S4.wipeLine", "scenario": "trust", "what": "No limits: card for the wipe-the-computer line (rm -rf /)", "path": "scenarios.trust.levels.unlimited.wipeCards", "op": "==", "value": 1, "fakeOnly": true },
+    { "id": "S4.stopLine", "scenario": "trust", "what": "No limits: cards for the stop-line command (shutdown), lifted at No limits", "path": "scenarios.trust.levels.unlimited.stopLineCards", "op": "==", "value": 0, "fakeOnly": true },
+    { "id": "S4.completed", "scenario": "trust", "what": "turns that did not complete", "path": "scenarios.trust.failed", "op": "==", "value": 0 },
+    { "id": "S10.auto.claude", "scenario": "autoEveryday", "what": "Auto: cards for 8 everyday tasks on claude", "path": "scenarios.autoEveryday.engines.claude.cards", "op": "==", "value": 0, "realOnly": true },
+    { "id": "S10.auto.codex", "scenario": "autoEveryday", "what": "Auto: cards for 8 everyday tasks on codex", "path": "scenarios.autoEveryday.engines.codex.cards", "op": "==", "value": 0, "realOnly": true },
+    { "id": "S10.auto.fuigo", "scenario": "autoEveryday", "what": "Auto: cards for 8 everyday tasks on fuigo", "path": "scenarios.autoEveryday.engines.fuigo.cards", "op": "==", "value": 0, "realOnly": true },
+    { "id": "S10.askShell", "scenario": "autoEveryday", "what": "Ask: Fuigo shell turns that raised a card, of 10", "path": "scenarios.autoEveryday.ask.withCard", "op": "==", "value": 10, "realOnly": true },
+    { "id": "S10.failed", "scenario": "autoEveryday", "what": "turns that did not complete", "path": "scenarios.autoEveryday.failed", "op": "==", "value": 0, "realOnly": true },
+
+    { "id": "S5.firstText", "scenario": "longThread", "what": "Murage time to first text p90", "path": "scenarios.longThread.firstText.p90", "op": "<=", "value": 3000, "unit": "ms", "latency": true, "engineTime": true },
+    { "id": "S5.wall", "scenario": "longThread", "what": "turn wall p90", "path": "scenarios.longThread.wall.p90", "op": "<=", "value": 8000, "unit": "ms", "latency": true, "engineTime": true },
+    { "id": "S5.resumed", "scenario": "longThread", "what": "turns 2..5 that resumed the session", "path": "scenarios.longThread.resumed", "op": ">=", "value": 4, "realEmptyDir": "longThread" },
+    { "id": "S5.resets", "scenario": "longThread", "what": "session resets", "path": "scenarios.longThread.resets", "op": "<=", "value": 1, "realEmptyDir": "longThread" },
+    { "id": "S5.context", "scenario": "longThread", "what": "Context changed cards", "path": "scenarios.longThread.contextChanged", "op": "==", "value": 0, "realEmptyDir": "longThread" },
+    { "id": "S5.failed", "scenario": "longThread", "what": "turns that did not complete", "path": "scenarios.longThread.failed", "op": "==", "value": 0, "realEmptyDir": "longThread" },
+
+    { "id": "S6.held", "scenario": "deletion", "what": "held turns completed of 3", "path": "scenarios.deletion.heldCompleted", "op": ">=", "value": 3 },
+    { "id": "S6.context", "scenario": "deletion", "what": "Context changed cards", "path": "scenarios.deletion.contextChanged", "op": "==", "value": 0 },
+    { "id": "S6.rePreparing", "scenario": "deletion", "what": "re-prepared turns", "path": "scenarios.deletion.rePreparing", "op": "<=", "value": 1 },
+    { "id": "S6.deleteThread", "scenario": "deletion", "what": "old conversation DELETE", "path": "scenarios.deletion.deleteThreadMs", "op": "<=", "value": 10000, "unit": "ms", "latency": true, "realEmptyDir": "deleteThread" },
+    { "id": "S6.deleteBot", "scenario": "deletion", "what": "bot DELETE", "path": "scenarios.deletion.deleteBotMs", "op": "<=", "value": 10000, "unit": "ms", "latency": true },
+    { "id": "S6.workingRefused", "scenario": "deletion", "what": "a working conversation's DELETE refused (1 = yes)", "path": "scenarios.deletion.workingRefused", "op": "==", "value": 1 },
+
+    { "id": "S7.failed", "scenario": "engineSwitch", "what": "turns that did not complete of 6", "path": "scenarios.engineSwitch.failed", "op": "==", "value": 0 },
+    { "id": "S7.firstText", "scenario": "engineSwitch", "what": "first text after a switch, max", "path": "scenarios.engineSwitch.firstTextAfterSwitch.max", "op": "<=", "value": 5000, "unit": "ms", "latency": true, "engineTime": true },
+    { "id": "S7.errors", "scenario": "engineSwitch", "what": "error rows", "path": "scenarios.engineSwitch.errorRows", "op": "==", "value": 0 },
+    { "id": "S7.busy", "scenario": "engineSwitch", "what": "bot left busy at the end (1 = yes)", "path": "scenarios.engineSwitch.busyAtEnd", "op": "==", "value": 0 },
+    { "id": "S7.cardShown", "scenario": "engineSwitch", "what": "Ask: approval card shown after the engine asked, max", "path": "scenarios.engineSwitch.cardVisible.max", "op": "<=", "value": 2000, "unit": "ms", "latency": true, "optional": true, "noneWhenZero": "scenarios.engineSwitch.approvalCards" },
+    { "id": "S7.cardClosed", "scenario": "engineSwitch", "what": "Ask: approval card closed after the owner's Allow, max", "path": "scenarios.engineSwitch.cardResolve.max", "op": "<=", "value": 2000, "unit": "ms", "latency": true, "optional": true, "noneWhenZero": "scenarios.engineSwitch.approvalCards" },
+    { "id": "S7.cardAnswers", "scenario": "engineSwitch", "what": "Allow answers the server refused", "path": "scenarios.engineSwitch.cardAnswerFailed", "op": "==", "value": 0 },
+
+    { "id": "S8.settle", "scenario": "stop", "what": "Stop to settled, max", "path": "scenarios.stop.settle.max", "op": "<=", "value": 10000, "unit": "ms", "latency": true },
+    { "id": "S8.settled", "scenario": "stop", "what": "stops that settled of 3", "path": "scenarios.stop.settled", "op": ">=", "value": 3 },
+    { "id": "S8.errors", "scenario": "stop", "what": "error rows", "path": "scenarios.stop.errorRows", "op": "==", "value": 0 },
+    { "id": "S8.next", "scenario": "stop", "what": "turns after a stop that completed of 3", "path": "scenarios.stop.nextCompleted", "op": ">=", "value": 3 },
+
+    { "id": "S9.io", "scenario": "idle", "what": "io-budget lines in 3 idle minutes", "path": "scenarios.idle.ioBudget", "op": "<=", "value": 0, "oldWayPath": "scenarios.idle.ioBudgetOldWay", "reportOnly": true, "gatesIn": "gates in 1.0.19 (IO-AMP, Sean 11-08)", "osBytesSensitive": true },
+    { "id": "S9.cpu", "scenario": "idle", "what": "server CPU p90 (Linux cgroup, Windows)", "macWhat": "whole machine, info only (macOS)", "macReportOnly": true, "path": "scenarios.idle.cpu.p90", "op": "<=", "value": 0.25, "unit": "cores", "boxLoadSensitive": true },
+    { "id": "S9.cpuTree", "scenario": "idle", "what": "Murage process tree CPU p90 (server, workers, Electron, engine children)", "path": "scenarios.idle.cpuTree.p90", "op": "<=", "value": 0.25, "unit": "cores", "macOnly": true, "note": "the JUDGED CPU row on macOS (Sean 11-08): S9.cpu there is the whole machine and is info only; Linux and Windows keep S9.cpu judged. The bound does not move. A leg whose tree was not measured (loud box, untrusted sample) is not measured and not green. The row reads the Murage process tree from per-process top; the attribution block beside it splits the box into murage, apple and other. A child born and gone inside one 1 s sample is seen only by S9.cpu. An orphaned Murage descendant (its parent already exited, so no lineage can be proven) on an Apple path falls back to apple." },
+    { "id": "S9.rss", "scenario": "idle", "what": "server RSS max", "path": "scenarios.idle.rssMb.max", "op": "<=", "value": 2500, "unit": "MB" },
+
+    { "id": "ALL.io", "scenario": "all", "what": "real writing io-budget lines (cpu and traffic lines not counted)", "path": "all.ioWrite.lines", "op": "<=", "value": 8, "reportOnly": true, "gatesIn": "gates in 1.0.19 (IO-AMP, Sean 11-08)", "osBytesSensitive": true },
+    { "id": "ALL.ioMB", "scenario": "all", "what": "MB written in the minutes the io budget judged busy", "path": "all.ioWrite.mb", "op": "<=", "value": 80, "reportOnly": true, "gatesIn": "gates in 1.0.19 (IO-AMP, Sean 11-08)", "osBytesSensitive": true },
+    { "id": "ALL.ioPeak", "scenario": "all", "what": "largest single io-budget writing line, MB/min", "path": "all.ioWrite.peak", "op": "<=", "value": 60, "reportOnly": true, "gatesIn": "gates in 1.0.19 (IO-AMP, Sean 11-08)", "osBytesSensitive": true },
+    { "id": "ALL.eld", "scenario": "all", "what": "event-loop stall max", "path": "all.eld.max", "op": "<=", "value": 1000, "unit": "ms", "latency": true },
+    { "id": "ALL.eld250", "scenario": "all", "what": "seconds with a stall over 250 ms", "path": "all.eld.secondsOver250", "op": "<=", "value": 5 },
+    { "id": "ALL.home", "scenario": "all", "what": "engine home not read", "path": "all.homeNotRead", "op": "<=", "value": 2 },
+    { "id": "ALL.stale", "scenario": "all", "what": "stale memory leases", "path": "all.staleLease", "op": "<=", "value": 5 },
+    { "id": "ALL.context", "scenario": "all", "what": "Context changed cards anywhere", "path": "all.contextCard", "op": "==", "value": 0 },
+    { "id": "ALL.rss", "scenario": "all", "what": "server RSS max", "path": "all.rssMb.max", "op": "<=", "value": 4000, "unit": "MB" }
+  ]
+}

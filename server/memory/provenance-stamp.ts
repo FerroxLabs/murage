@@ -24,6 +24,9 @@ const BUMP = "UPDATE provenance_epoch SET n=n+1";
 const SCHEMA = `
 CREATE TEMP TABLE IF NOT EXISTS provenance_epoch(id INTEGER PRIMARY KEY CHECK(id=1), n INTEGER NOT NULL);
 INSERT OR IGNORE INTO temp.provenance_epoch VALUES(1,0);
+CREATE TEMP TRIGGER IF NOT EXISTS prov_deny_i AFTER INSERT ON main.memory_deny BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_deny_u AFTER UPDATE ON main.memory_deny BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS prov_deny_d AFTER DELETE ON main.memory_deny BEGIN ${BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS prov_records_i AFTER INSERT ON main.memory_records BEGIN ${BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS prov_records_u AFTER UPDATE ON main.memory_records BEGIN ${BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS prov_records_d AFTER DELETE ON main.memory_records BEGIN ${BUMP}; END;
