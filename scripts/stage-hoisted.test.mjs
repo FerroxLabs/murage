@@ -48,7 +48,7 @@ it("nests a conflicting version under its requirer and keeps node resolution cor
   stager.stage("a", root); stager.stage("b", root);
   expect(JSON.parse(readFileSync(join(dist, "node_modules/zod/package.json"), "utf8")).version).toBe("3.25.0");
   expect(JSON.parse(readFileSync(join(dist, "node_modules/b/node_modules/zod/package.json"), "utf8")).version).toBe("4.4.3");
-  expect(checkStagedTree(dist, { semver }).problems).toEqual([]);
+  expect(checkStagedTree(dist, { semver, overrides: {} }).problems).toEqual([]);
   expect(stager.records().filter(r => r.name === "zod").map(r => r.version).sort()).toEqual(["3.25.0", "4.4.3"]);
 });
 

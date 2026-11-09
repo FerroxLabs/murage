@@ -1,3 +1,4 @@
+import { fixtureBotFolder } from "./testing/bot-folder-fixture.ts";
 // The drivers spawn their CLI detached so that stopping a turn also stops
 // whatever the CLI started (its MCP servers). That guarantee is the whole
 // contract of killCliTree, so it is what gets tested: a grandchild must not
@@ -22,7 +23,7 @@ function alive(pid: number): boolean {
 
 describe("killCliTree", () => {
   it("owns stdin pipe errors before a CLI can be force-stopped", async () => {
-    const child = spawnCli(process.execPath, ["-e", IDLE], { stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawnCli(process.execPath, ["-e", IDLE], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] });
     try {
       expect(child.stdin.listenerCount("error")).toBeGreaterThan(0);
     } finally {
@@ -43,7 +44,7 @@ describe("killCliTree", () => {
         `const c = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(IDLE)}], { stdio: "ignore" });` +
           `console.log(c.pid); ${IDLE}`,
       ],
-      { stdio: ["pipe", "pipe", "pipe"] },
+      { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] },
     );
     let grandchild = 0;
     try {
@@ -88,8 +89,8 @@ describe("killCliTree", () => {
       const helper=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(helperSource)}],{stdio:['ignore','pipe','ignore']});
       helper.stdout.once('data',pid=>{console.log(String(pid).trim()); ${stubbornRoot ? "" : "process.exit(0);"}});
       setInterval(()=>{},1000);
-    `], { stdio: ["pipe", "pipe", "pipe"] });
-    const canary = spawnCli(process.execPath, ["-e", "console.log(process.pid);setInterval(()=>{},1000)"], { stdio: ["pipe", "pipe", "pipe"] });
+    `], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] });
+    const canary = spawnCli(process.execPath, ["-e", "console.log(process.pid);setInterval(()=>{},1000)"], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] });
     const rootClose = once(parent, "close");
     const teardown = new ChildTeardown(parent);
     let helper = 0;
@@ -147,7 +148,7 @@ describe("killCliTree", () => {
   });
 
   it.skipIf(process.platform === "win32")("retains a denied stop and permits an explicit retry", async () => {
-    const child = spawnCli(process.execPath, ["-e", "process.on('SIGTERM',()=>{});console.log(process.pid);setInterval(()=>{},1000)"], { stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawnCli(process.execPath, ["-e", "process.on('SIGTERM',()=>{});console.log(process.pid);setInterval(()=>{},1000)"], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] });
     try {
       await once(child.stdout, "data");
       const nativeKill = process.kill.bind(process);

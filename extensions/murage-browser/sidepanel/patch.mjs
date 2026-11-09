@@ -14,6 +14,7 @@ function patchElement(live, next) {
   if (live.disabled !== next.disabled) live.disabled = next.disabled;
   if (live.hidden !== next.hidden) live.hidden = next.hidden;
   live.onclick = next.onclick;
+  live.onerror = next.onerror;
   patchChildren(live, [...next.childNodes]);
 }
 

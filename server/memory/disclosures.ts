@@ -1,3 +1,5 @@
+import { sourceDenied } from "./deny.ts";
+import { verdictStore } from "./verdict-store.ts";
 import { database, onDatabaseClose, transaction } from "../database.ts";
 import type { MemoryBundle } from "../../shared/memory.ts";
 import { accessIncludesRoom, assertMemoryAccess, inMemoryAccessPass, lineageReaderScopes, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from "./policy.ts";
@@ -65,7 +67,7 @@ function revoked(allowance: LineageAllowance, row: Disclosure, access: MemoryAcc
   return revokedReason(allowance, row, access, seen) !== null;
 }
 
-type Seen = { records: Set<string>; sources: Set<string>; added?: string[]; addedSources?: string[] };
+type Seen = { records: Set<string>; sources: Set<string>; added?: string[]; addedSources?: string[]; rootThreads?: Set<string>; threadDependenciesIncomplete?: boolean };
 
 /** Why a receipt no longer holds, as ids and states only (no content), or
  * null when it still holds. Each branch is the same test revoked() made. */
@@ -89,6 +91,7 @@ function revokedReason(allowance: LineageAllowance, row: Disclosure, access: Mem
       allowance.spendNodes(String(row.thread_id), 1);
       const current = database().prepare("SELECT scope_id,state,revision FROM memory_sources WHERE id=?").get(source.id);
       if (!current) return `${step} missing`;
+      if (sourceDenied(database(), source.id)) return `${step} denied`;
       if (current.state!=="active") return `${step} state=${String(current.state)}`;
       if (current.revision!==source.revision) return `${step} now@${String(current.revision)}`;
       if (database().prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(source.id,source.revision)) return `${step} tombstoned`;
@@ -121,8 +124,10 @@ type Hold = {
    * SCOPED-REVOKES R4) is answered by it, since everything that hydrated under fewer scopes hydrates under more; a narrower reader is not */
   scopeIds: readonly string[];
 };
-const sessionHolds = new Map<string, Hold>();
-const SESSION_HOLDS_MAX = 512;
+// the holds live in the VerdictStore (TURNSTART r14 S1'): read recorded, every removal counted, admitted records' holds pinned
+let SESSION_HOLDS_MAX = 512;
+/** Tests (T12 hold ops): a smaller hold capacity; null is the real one. */
+export function setSessionHoldsMaxForTest(max: number | null): void { SESSION_HOLDS_MAX = max ?? 512; }
 const HOLD_KEYS_MAX = 20000;
 const sessionHoldKey = (threadId: string, driverInstance: string, nativeSession: string, access: MemoryAccess) =>
   JSON.stringify([threadId, driverInstance, nativeSession, access.botId, access.humanPrincipal, memoryAccessNotOwnerAudience(access), access.policyRevision, access.deletionEpoch]);
@@ -143,15 +148,15 @@ function continuationMemoryRevokedWork(allowance: LineageAllowance, threadId: st
     if (verdict.state !== "shown") { if (why && !why.reason) why.reason = verdict.state === "checking" ? "checking" : `writetime-${verdict.reason}`; return true; }
   }
   const parts = authorityParts(), key = sessionHoldKey(threadId, driverInstance, nativeSession, access);
-  let hold = sessionHolds.get(key);
-  if (hold && !hold.scopeIds.every(scope => access.scopeIds.includes(scope))) { sessionHolds.delete(key); hold = undefined; }
-  if (parts && hold && hold.stamp === parts.stamp) { sessionHolds.delete(key); sessionHolds.set(key, hold); return false; }
+  let hold = verdictStore.getHold(key) as Hold | undefined;
+  if (hold && !hold.scopeIds.every(scope => access.scopeIds.includes(scope))) { verdictStore.loseHold(key, "scope"); hold = undefined; }
+  if (parts && hold && hold.stamp === parts.stamp) { verdictStore.touchHold(key); return false; }
   let resume: Hold | undefined;
   if (parts && hold && hold.hard === parts.hard) {
     const touched = softChangedSince(hold.seq);
-    if (touched && ![...touched].some(id => hold.sourceIds.has(id))) resume = hold;
+    if (touched && ![...touched].some(id => hold.sourceIds.has(id) || hold.seen.threadDependenciesIncomplete && id.startsWith("thread:"))) resume = hold;
   }
-  sessionHolds.delete(key);
+  verdictStore.loseHold(key, "consumed");
   // One pass: the reader's audience is worked out once, not once per cited record.
   const progress: { upTo: number; seen: Seen; resumed: boolean } = { upTo: resume?.upTo ?? 0, seen: resume?.seen ?? { records: new Set<string>(), sources: new Set<string>() }, resumed: resume !== undefined };
   progress.seen.added = []; progress.seen.addedSources = [];
@@ -167,23 +172,37 @@ function continuationMemoryRevokedWork(allowance: LineageAllowance, threadId: st
     const now = authorityParts();
     if (now && now.stamp === parts.stamp && progress.seen.records.size + progress.seen.sources.size <= HOLD_KEYS_MAX) {
       const sourceIds = resume ? resume.sourceIds : new Set<string>();
-      for (const step of progress.seen.addedSources ?? []) sourceIds.add(step.slice("source ".length, step.lastIndexOf("@")));
+      const newSources = new Set((progress.seen.addedSources ?? []).map(step => step.slice("source ".length, step.lastIndexOf("@"))));
       const added = progress.seen.added ?? [];
       if (added.length) {
         const pairs = added.map(record => { const at = record.lastIndexOf("@"); return [record.slice(0, at), Number(record.slice(at + 1))]; });
         for (const [id] of pairs) sourceIds.add(`record:${id}`);
-        for (const row of database().prepare("SELECT DISTINCT source_id FROM memory_evidence WHERE (record_id,record_version) IN (SELECT value->>0,value->>1 FROM json_each(?))").all(JSON.stringify(pairs))) sourceIds.add(String(row.source_id));
+        // A derived record can depend on an ancestor's scope without direct evidence here.
+        // Do not reuse a soft thread-change proof unless that ancestry is known.
+        if (database().prepare("SELECT 1 FROM memory_derivations WHERE (child_id,child_version) IN (SELECT value->>0,value->>1 FROM json_each(?)) LIMIT 1").get(JSON.stringify(pairs))) progress.seen.threadDependenciesIncomplete = true;
+        // Drive from the bounded citations. Starting at conversation scopes lets the planner walk all history.
+        for (const row of database().prepare("SELECT DISTINCT s.owner_key FROM json_each(?) p CROSS JOIN memory_records r ON r.id=p.value->>0 AND r.version=p.value->>1 CROSS JOIN memory_scopes s ON s.id=r.scope_id WHERE s.kind='conversation'").all(JSON.stringify(pairs))) sourceIds.add(`thread:${String(row.owner_key)}`);
+        for (const row of database().prepare("SELECT DISTINCT source_id FROM memory_evidence WHERE (record_id,record_version) IN (SELECT value->>0,value->>1 FROM json_each(?))").all(JSON.stringify(pairs))) newSources.add(String(row.source_id));
       }
+      for (const id of newSources) sourceIds.add(id);
+      sourceIds.add(`thread:${threadId}`);
+      // Every source actually judged for these receipts, plus the session's replay roots.
+      for (const row of database().prepare("SELECT thread_id,kind FROM memory_sources WHERE id IN (SELECT value FROM json_each(?))").all(JSON.stringify([...newSources]))) {
+        sourceIds.add(`thread:${String(row.thread_id)}`);
+        if (row.kind === "bring-in") progress.seen.threadDependenciesIncomplete = true;
+      }
+      for (const thread of progress.seen.rootThreads ?? []) sourceIds.add(`thread:${thread}`);
       progress.seen.added = []; progress.seen.addedSources = [];
-      if (sessionHolds.size >= SESSION_HOLDS_MAX) sessionHolds.delete(sessionHolds.keys().next().value!);
       if (!closeHooked) { closeHooked = true; onDatabaseClose(resetSessionHolds); }
-      sessionHolds.set(key, { stamp: parts.stamp, hard: parts.hard, seq: parts.seq, upTo: progress.upTo, seen: progress.seen, sourceIds, scopeIds: access.scopeIds });
+      // past SESSION_HOLDS_MAX the oldest unpinned hold goes, a counted loss of its thread (TURNSTART r14 S1', H1)
+      // a type argument, not an angle-bracket assertion: the crash children run this file under node --experimental-strip-types
+      verdictStore.setHold<Hold>(key, { stamp: parts.stamp, hard: parts.hard, seq: parts.seq, upTo: progress.upTo, seen: progress.seen, sourceIds, scopeIds: access.scopeIds }, SESSION_HOLDS_MAX);
     }
   }
   return revoked;
 }
 /** Test hook: forget which sessions passed. */
-export function resetSessionHolds(): void { sessionHolds.clear(); }
+export function resetSessionHolds(): void { verdictStore.resetSessionHolds(); }
 // A hold rests on what one connection saw: closing or replacing the connection forgets every hold (stamps also carry the connection id).
 let closeHooked = false;
 
@@ -258,6 +277,7 @@ function fullContinuationCheck(allowance: LineageAllowance, threadId: string, dr
   // a session shown memory before that lineage began, after a later revoke.
   const held = sessionOutputRoots(allowance, threadId, driverInstance, nativeSession);
   if (held.over) { if (why) why.reason = held.unproven ? "lineage-warming" : "root-ceiling"; return true; }
+  for (const root of held.roots) (progress.seen.rootThreads ??= new Set()).add(root.slice(0, root.indexOf("\u0000")));
   const rootsWhy: { reason?: string } = {};
   if (outputRootsBad(allowance, held, rootsWhy)) { if (why) why.reason = rootsWhy.reason === "checking" ? "checking" : allowance.hit ? "lineage-warming" : "session-roots"; return true; }
   if (preLineageSessionRevoked(rows.length || !progress.resumed ? rows : [{}], threadId, driverInstance, nativeSession)) { if (why) why.reason = "pre-lineage"; return true; }

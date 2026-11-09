@@ -1,10 +1,12 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Antigravity driver contract tests, run against the scripted fake `agy` CLI
 // in server/testing/fake-agy-cli.ts: normalize the print-mode stream-json turn
 // into canonical events, and report availability from `agy --version`.
 //
 // The fake CLI is a shebang script Windows cannot exec directly;
 // spawnCli resolves it to `node <script>`, so these run everywhere.
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +34,7 @@ import {
 } from "./antigravity.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { TURN_ASK_RULES } from "../../shared/ask-wording.ts";
+import { ASK_STOP_REASON } from "./ask-stop.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-agy-cli.ts");
 
@@ -124,13 +127,28 @@ describe("Antigravity decodeConfig", () => {
 // a stand-in and every spawnCli job argument is recorded; the real spawnCli still runs (off Windows a job changes nothing).
 // Each call names a fresh job, as engineJob does: on Windows spawnCli really creates the named job, and a second launch while a
 // first (warm) one still holds the same name is refused with EEXIST by design (procs.ts createPipJob).
-const jobProbe = vi.hoisted(() => ({ issued: [] as Array<{ name: string }>, jobs: [] as unknown[] }));
+const jobProbe = vi.hoisted(() => ({ issued: [] as Array<{ name: string }>, jobs: [] as unknown[], badCli: null as string | null, hostPower: false }));
 vi.mock("../procs.ts", async (original) => {
   const actual = await original<typeof import("../procs.ts")>();
   return {
     ...actual,
     engineJob: () => { const job = { name: `Local\\murage-pip-eng-probe-${process.pid}-${jobProbe.issued.length}` }; jobProbe.issued.push(job); return job; },
-    spawnCli: (...args: Parameters<typeof actual.spawnCli>) => { jobProbe.jobs.push(args[3]); return actual.spawnCli(...args); },
+    spawnCli: (...args: Parameters<typeof actual.spawnCli>) => { jobProbe.jobs.push(args[3]); return actual.spawnCli(...(jobProbe.badCli ? ([jobProbe.badCli, ...args.slice(1)] as typeof args) : args)); },
+    // USAGE-1 (ruling U): a row can make the turn child read as a host-power refusal
+    hostPowerRefused: (child: Parameters<typeof actual.hostPowerRefused>[0]) => jobProbe.hostPower || actual.hostPowerRefused(child),
+  };
+});
+
+// STOP-NONACP: openAntigravityRelay is the await a Stop must be read after; the gate holds it open so the Stop lands inside it.
+const relayGate = vi.hoisted(() => ({ hold: null as Promise<void> | null }));
+vi.mock("./antigravity-relay.ts", async (original) => {
+  const actual = await original<typeof import("./antigravity-relay.ts")>();
+  return {
+    ...actual,
+    openAntigravityRelay: async (...args: Parameters<typeof actual.openAntigravityRelay>) => {
+      if (relayGate.hold) await relayGate.hold;
+      return actual.openAntigravityRelay(...args);
+    },
   };
 });
 
@@ -163,14 +181,14 @@ describe("Antigravity turns (fake CLI)", () => {
 
   it("reports exactly one usage total for each of two turns",async()=>{
     await create();
-    for(let n=0;n<2;n++){const sent=await instance.adapter.sendTurn({threadId:"usage-two",text:"hi",model:"gemini-3.1-pro-high"});await recorder.until(e=>e.type==="turn.completed"&&e.turnId===sent.turnId);}
+    for(let n=0;n<2;n++){const sent=await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),threadId:"usage-two",text:"hi",model:"gemini-3.1-pro-high"});await recorder.until(e=>e.type==="turn.completed"&&e.turnId===sent.turnId);}
     const completed=recorder.events.filter(e=>e.type==="turn.completed");expect(completed).toHaveLength(2);
     for(const event of completed)expect(event).toMatchObject({ok:true,usage:{input:105,output:20}});
   });
 
   it("normalizes a full print-mode turn into the canonical event sequence", async () => {
     await create();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-happy", text: "hi", model: "gemini-3.1-pro-high" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-happy", text: "hi", model: "gemini-3.1-pro-high" });
     await recorder.until((e) => e.type === "turn.completed");
     expect(jobProbe.issued.length).toBeGreaterThan(0);
     expect(jobProbe.jobs).toContainEqual(jobProbe.issued.at(-1)); // the turn CLI was started in the engine job
@@ -219,7 +237,7 @@ describe("Antigravity turns (fake CLI)", () => {
     });
     recorder = recordEvents(instance.adapter);
     try {
-      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-stop", text: "hold" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stop", text: "hold" });
       await expect.poll(() => existsSync(readyFile), { timeout: 2_000 }).toBe(true);
       await instance.adapter.interruptTurn("t-stop");
       const done = await recorder.until((e) => e.type === "turn.completed");
@@ -245,7 +263,7 @@ describe("Antigravity turns (fake CLI)", () => {
       });
       recorder = recordEvents(instance.adapter);
       try {
-        const { turnId } = await instance.adapter.sendTurn({ threadId: "t-close", text: "hold" });
+        const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-close", text: "hold" });
         await expect.poll(() => existsSync(readyFile), { timeout: 2_000 }).toBe(true);
         if (stopFirst) await instance.adapter.interruptTurn("t-close");
         await instance.dispose();
@@ -276,7 +294,7 @@ describe("Antigravity turns (fake CLI)", () => {
     });
     recorder = recordEvents(instance.adapter);
     try {
-      await instance.adapter.sendTurn({ threadId: "t-crash", text: "go" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-crash", text: "go" });
       const done = await recorder.until((e) => e.type === "turn.completed");
       expect(done).toMatchObject({ type: "turn.completed", ok: false, stopReason: "exit_before_result" });
       const errors = recorder.events.filter((e) => e.type === "runtime.error").map((e) => (e as any).message as string);
@@ -302,7 +320,7 @@ describe("Antigravity turns (fake CLI)", () => {
         if (fullAuto) { recorder.stop(); await instance.dispose(); }
         await create(fullAuto);
         for (const [turn, enforced] of [false, true, false].entries()) {
-          const sent = await instance.adapter.sendTurn({
+          const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
             threadId: `t-enforce-${fullAuto}-${turn}`, text: "hi",
             ...(enforced ? { routeAsks: true as const } : {}),
           });
@@ -322,7 +340,7 @@ describe("Antigravity turns (fake CLI)", () => {
     process.env.FAKE_AGY_DUMP = dump;
     await create();
     try {
-      await instance.adapter.sendTurn({ threadId: `t-stop-line-${stopLine}`, text: "go", ...(stopLine ? { stopLine: true as const } : {}) });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-stop-line-${stopLine}`, text: "go", ...(stopLine ? { stopLine: true as const } : {}) });
       await recorder.until((event) => event.type === "turn.completed");
       const seen = JSON.parse(readFileSync(dump, "utf8"));
       expect(seen.argv).toContain("--dangerously-skip-permissions");
@@ -338,12 +356,12 @@ describe("Antigravity turns (fake CLI)", () => {
     process.env.FAKE_AGY_DUMP = dump;
     await create();
     try {
-      await instance.adapter.sendTurn({ threadId: "t-route-asks", text: "go", routeAsks: true, askLevel: true });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-route-asks", text: "go", routeAsks: true, askLevel: true });
       await recorder.until((event) => event.type === "turn.completed" && event.threadId === "t-route-asks");
       const ask = JSON.parse(readFileSync(dump, "utf8"));
       expect(ask.argv).toContain("accept-edits");
       expect(ask.argv).not.toContain("--dangerously-skip-permissions");
-      await instance.adapter.sendTurn({ threadId: "t-route-auto", text: "go", routeAsks: true });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-route-auto", text: "go", routeAsks: true });
       await recorder.until((event) => event.type === "turn.completed" && event.threadId === "t-route-auto");
       const auto = JSON.parse(readFileSync(dump, "utf8"));
       expect(auto.argv).toContain("--dangerously-skip-permissions");
@@ -360,7 +378,7 @@ describe("Antigravity turns (fake CLI)", () => {
     await create();
     const system = `room instructions\n${"context-0123456789".repeat(8_000)}`;
     try {
-      await instance.adapter.sendTurn({
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
         threadId: "t-long-prompt",
         text: "review the video",
         system,
@@ -386,7 +404,7 @@ describe("Antigravity turns (fake CLI)", () => {
     await create();
     const timers = vi.spyOn(globalThis, "setTimeout");
     try {
-      await instance.adapter.sendTurn({ threadId: "t-no-cap", text: "go" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-no-cap", text: "go" });
       await recorder.until((event) => event.type === "turn.completed");
       const seen = JSON.parse(readFileSync(dump, "utf8"));
       const at = seen.argv.indexOf("--print-timeout");
@@ -407,7 +425,7 @@ describe("Antigravity turns (fake CLI)", () => {
     process.env.FAKE_AGY_EXTRA_STEPS = "1";
     try {
       await create();
-      await instance.adapter.sendTurn({ threadId: "t-live", text: "go" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-live", text: "go" });
       await recorder.until((event) => event.type === "turn.completed");
       // planner, the response step, then two growths of it; repeats add nothing
       expect(recorder.events.filter((e) => e.type === "item.updated")).toHaveLength(4);
@@ -421,7 +439,7 @@ describe("Antigravity turns (fake CLI)", () => {
     process.env.FAKE_AGY_POST_RESULT_STEP = "1";
     try {
       await create();
-      await instance.adapter.sendTurn({ threadId: "t-after", text: "go" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-after", text: "go" });
       await recorder.until((event) => event.type === "turn.completed");
       await new Promise((resolve) => setTimeout(resolve, 300));
       const done = recorder.events.findIndex((event) => event.type === "turn.completed");
@@ -440,13 +458,340 @@ describe("Antigravity turns (fake CLI)", () => {
       config: { cli: FAKE_CLI, fullAuto: true },
     });
     recorder = recordEvents(instance.adapter);
-    const sent = instance.adapter.sendTurn({ threadId: "t-early", text: "go" });
+    const sent = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-early", text: "go" });
     await new Promise((resolve) => setTimeout(resolve, 100));
     await instance.adapter.interruptTurn("t-early");
     const { turnId } = await sent;
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ turnId, ok: true, stopReason: "cancelled" });
     expect(recorder.events.some((e) => e.type === "turn.started")).toBe(false);
+  });
+
+  describe("STOP-NONACP: a Stop while the relay opens", () => {
+    const withRelayHeld = async (kind: "Stop" | "Stop All" | "dispose" | "none", threadId: string) => {
+      const home = mkdtempSync(join(tmpdir(), "murage-agy-relay-stop-"));
+      const readyFile = join(home, "dump.json");              // the fake agy dumps its argv on every run; only a turn run carries the skip-permissions flag
+      instance = await AntigravityDriver.create({
+        instanceId: "agy-relay-stop",
+        displayName: undefined,
+        environment: { HOME: home, FAKE_AGY_DUMP: readyFile },
+        enabled: true,
+        config: { cli: FAKE_CLI, fullAuto: true },
+      });
+      recorder = recordEvents(instance.adapter);
+      let release!: () => void;
+      relayGate.hold = new Promise<void>((resolve) => { release = resolve; });
+      try {
+        // a relay turn: Full access under the stop line
+        const sending = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go", stopLine: true });
+        await new Promise((resolve) => setTimeout(resolve, 200));          // past the version read, inside the relay open
+        if (kind === "Stop") await instance.adapter.interruptTurn(threadId);
+        else if (kind === "Stop All") await instance.adapter.stopAll!();
+        const disposing = kind === "dispose" ? instance.dispose() : null;
+        release();
+        const { turnId } = await sending;
+        await disposing;
+        return { turnId, readyFile, home };
+      } finally { relayGate.hold = null; release(); }
+    };
+
+    it.each(["Stop", "Stop All"] as const)("%s: settles cancelled, spawns no agy and writes nothing to it", async (kind) => {
+      const { turnId, readyFile, home } = await withRelayHeld(kind, `t-relay-${kind === "Stop" ? "stop" : "stopall"}`);
+      try {
+        const done = await recorder.until((e) => e.type === "turn.completed");
+        expect(done).toMatchObject({ turnId, ok: true, stopReason: "cancelled" });
+        expect(recorder.events.filter((e) => e.turnId === turnId).map((e) => e.type)).toEqual(["turn.completed"]);   // one receipt: a pre-prompt Stop emits no turn.started on either branch (antigravity.test.ts:449 pin)
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        expect(existsSync(readyFile) && JSON.parse(readFileSync(readyFile, "utf8")).argv.includes("--dangerously-skip-permissions")).toBe(false);   // no turn was spawned
+        expect(recorder.events.some((e) => e.type === "item.updated" || e.type === "content.delta")).toBe(false);
+        expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+        expect(instance.adapter.hasSession(`t-relay-${kind === "Stop" ? "stop" : "stopall"}`)).toBe(false);
+      } finally { removeTempDirSync(home); }
+    }, 15_000);
+
+    // CLOSE-STOP-1014: the dispose is read again after the relay open (listeners are cleared by the dispose, so only the spawn is observable)
+    it("a dispose while the relay opens spawns no agy and writes nothing to it", async () => {
+      const { readyFile, home } = await withRelayHeld("dispose", "t-relay-dispose");
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        expect(existsSync(readyFile) && JSON.parse(readFileSync(readyFile, "utf8")).argv.includes("--dangerously-skip-permissions")).toBe(false);
+        expect(instance.adapter.hasSession("t-relay-dispose")).toBe(false);
+      } finally { removeTempDirSync(home); }
+    }, 15_000);
+
+    it("control: with no Stop the same relay turn spawns agy and runs to its end", async () => {
+      const { turnId, readyFile, home } = await withRelayHeld("none", "t-relay-control");
+      try {
+        const done = await recorder.until((e) => e.type === "turn.completed");
+        // (the fake agy's relay turn ends on its own: it runs a tool without the check; the point is that the turn was spawned)
+        expect(done).toMatchObject({ turnId, ok: true });
+        expect(JSON.parse(readFileSync(readyFile, "utf8")).argv).toContain("--dangerously-skip-permissions");
+      } finally { removeTempDirSync(home); }
+    }, 15_000);
+  });
+
+  // STOP-NONACP s4 (design r3 + r3.1 + Astra r4 items 5 and 6): an asked Stop ends a turn that has not spawned as the stopped pair,
+  // a dispose nobody asked ends it as the engine closing, and both are read after every await (version, relay open). Antigravity's
+  // ruled pre-prompt shape stands: one turn.completed and no turn.started. Each row asserts what was delivered BEFORE dispose resolved.
+  describe("STOP-NONACP s4: gate rows", () => {
+    type Seen = { type: string; ok?: unknown; stopReason?: unknown; message?: unknown; disposeDone: boolean };
+    const gateInstance = async (name: string, environment: Record<string, string>) => {
+      const home = mkdtempSync(join(tmpdir(), `murage-agy-${name}-`));
+      instance = await AntigravityDriver.create({
+        instanceId: `agy-${name}`,
+        displayName: undefined,
+        environment: { HOME: home, ...environment },
+        enabled: true,
+        config: { cli: FAKE_CLI, fullAuto: true },
+      });
+      recorder = recordEvents(instance.adapter);
+      // snapshots taken inside emit, so "before dispose resolved" is read at the event, not after the fact
+      const state = { disposeDone: false };
+      const seen: Seen[] = [];
+      instance.adapter.onEvent((event: any) => {
+        if (event.type === "runtime.error" || event.type === "turn.completed" || event.type === "turn.started") {
+          seen.push({ type: event.type, ok: event.ok, stopReason: event.stopReason, message: event.message, disposeDone: state.disposeDone });
+        }
+      });
+      return { home, seen, state };
+    };
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    const shape = (seen: Seen[]) => seen.map((s) => (s.type === "turn.completed" ? `${s.type}:${s.ok}:${s.stopReason}` : s.type));
+
+    it("A1 dispose while the relay opens spawns no agy and ends engine-closing before dispose resolves (M8e)", async () => {
+      const dump = join(tmpdir(), `murage-agy-a1-${process.pid}-${Date.now()}.json`);
+      const { home, seen, state } = await gateInstance("a1", { FAKE_AGY_DUMP: dump });
+      let release!: () => void;
+      relayGate.hold = new Promise<void>((resolve) => { release = resolve; });
+      const spawnsBefore = jobProbe.jobs.length;
+      try {
+        const sending = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-a1", text: "go", stopLine: true });
+        await sleep(200);                                       // past the version read, inside the relay open
+        const disposing = instance.dispose().then(() => { state.disposeDone = true; });
+        release();
+        await sending;
+        await disposing;
+        expect(shape(seen)).toEqual(["runtime.error", "turn.completed:false:exit_before_result"]);   // engine-closing, no turn.started, never "disposed"
+        expect(String(seen[0]!.message)).toMatch(/closed/);
+        expect(seen.every((s) => s.disposeDone === false)).toBe(true);
+        expect(jobProbe.jobs.length).toBe(spawnsBefore);        // no agy spawned
+        expect(existsSync(dump) && JSON.parse(readFileSync(dump, "utf8")).argv.includes("--dangerously-skip-permissions")).toBe(false);
+        expect(instance.adapter.hasSession("t-a1")).toBe(false);
+      } finally { relayGate.hold = null; release(); removeTempDirSync(home); rmSync(dump, { force: true }); }
+    }, 15_000);
+
+    it.each(["Stop", "Stop All"] as const)("A2 %s during versionForTurn then an unsupported CLI: the pair, no error card (M8f)", async (kind) => {
+      const { home, seen } = await gateInstance("a2", { FAKE_AGY_VERSION_DELAY_MS: "800", FAKE_AGY_VERSION: "1.1.14" });
+      try {
+        const sending = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-a2", text: "go" });
+        await sleep(150);
+        if (kind === "Stop") await instance.adapter.interruptTurn("t-a2"); else await instance.adapter.stopAll!();
+        const { turnId } = await sending;
+        await recorder.until((e) => e.type === "turn.completed");
+        expect(shape(seen)).toEqual(["turn.completed:true:cancelled"]);      // the pair, not unsupported_cli, no runtime.error card
+        expect(recorder.events.filter((e) => e.turnId === turnId && e.type === "turn.completed")).toEqual([expect.objectContaining({ ok: true, stopReason: "cancelled" })]);
+      } finally { removeTempDirSync(home); }
+    }, 15_000);
+
+    it("A2b dispose during versionForTurn then an unsupported CLI: engine-closing before dispose resolves, no version card", async () => {
+      const { home, seen, state } = await gateInstance("a2b", { FAKE_AGY_VERSION_DELAY_MS: "800", FAKE_AGY_VERSION: "1.1.14" });
+      try {
+        const sending = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-a2b", text: "go" });
+        await sleep(150);
+        const disposing = instance.dispose().then(() => { state.disposeDone = true; });
+        await sending;
+        await disposing;
+        expect(shape(seen)).toEqual(["runtime.error", "turn.completed:false:exit_before_result"]);
+        expect(String(seen[0]!.message)).toMatch(/closed/);
+        expect(String(seen[0]!.message)).not.toMatch(/agy update/);
+        expect(seen.every((s) => s.disposeDone === false)).toBe(true);
+      } finally { removeTempDirSync(home); }
+    }, 15_000);
+
+    it("control: with no stop an unsupported CLI still shows its version card and one receipt", async () => {
+      const { home, seen } = await gateInstance("a2c", { FAKE_AGY_VERSION: "1.1.14" });
+      try {
+        await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-a2c", text: "go" });
+        await recorder.until((e) => e.type === "turn.completed");
+        expect(shape(seen)).toEqual(["runtime.error", "turn.completed:false:unsupported_cli"]);
+        expect(String(seen[0]!.message)).toMatch(/1\.1\.15\+.*agy update/);
+      } finally { removeTempDirSync(home); }
+    }, 15_000);
+
+    it.each(["Stop", "Stop All"] as const)("A3 %s before spawn: the pair, spawn count 0", async (kind) => {
+      const { home, seen } = await gateInstance("a3", { FAKE_AGY_VERSION_DELAY_MS: "800" });
+      const spawnsBefore = jobProbe.jobs.length;
+      try {
+        const sending = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-a3", text: "go" });
+        await sleep(150);
+        if (kind === "Stop") await instance.adapter.interruptTurn("t-a3"); else await instance.adapter.stopAll!();
+        await sending;
+        await recorder.until((e) => e.type === "turn.completed");
+        await sleep(300);
+        expect(shape(seen)).toEqual(["turn.completed:true:cancelled"]);
+        expect(jobProbe.jobs.length).toBe(spawnsBefore);
+        expect(instance.adapter.hasSession("t-a3")).toBe(false);
+      } finally { removeTempDirSync(home); }
+    }, 15_000);
+
+    it("A4 live child dispose: the closing ending is delivered before dispose resolves, once", async () => {
+      const home0 = mkdtempSync(join(tmpdir(), "murage-agy-a4-ready-"));
+      const readyFile = join(home0, "ready");
+      const { home, seen, state } = await gateInstance("a4", { FAKE_AGY_DELAY_MS: "10000", FAKE_AGY_READY_FILE: readyFile });
+      const spawnsBefore = jobProbe.jobs.length;
+      try {
+        const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-a4", text: "hold" });
+        await expect.poll(() => existsSync(readyFile), { timeout: 2_000 }).toBe(true);
+        expect(jobProbe.jobs.length).toBe(spawnsBefore + 1);
+        const disposing = instance.dispose().then(() => { state.disposeDone = true; });
+        await disposing;
+        expect(shape(seen)).toEqual(["turn.started", "runtime.error", "turn.completed:false:exit_before_result"]);
+        expect(seen.filter((s) => s.type !== "turn.started").every((s) => s.disposeDone === false)).toBe(true);
+        expect(String(seen[1]!.message)).toMatch(/closed/);
+        expect(recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId)).toHaveLength(1);
+      } finally { removeTempDirSync(home); removeTempDirSync(home0); }
+    }, 20_000);
+
+    // USAGE-1 antigravity (MurageMain ruling B, 11-08): the usage agy last reported rides the Stop and dispose endings; a result that arrives brings the one usage.
+    // The fake writes the per-step usage (input 100 + cache 5, output 20), then waits with no result (FAKE_AGY_HOLD_AFTER_USAGE).
+    it("USAGE-1 antigravity an asked Stop after the step usage: the cancelled ending carries the last reported usage, once", async () => {
+      const { home, seen } = await gateInstance("u1s", { FAKE_AGY_HOLD_AFTER_USAGE: "1" });
+      try {
+        const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-u1s", text: "go" });
+        await recorder.until((e) => e.type === "thread.token-usage.updated" && e.turnId === turnId);
+        await instance.adapter.interruptTurn("t-u1s");
+        await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+        expect(shape(seen)).toEqual(["turn.started", "turn.completed:true:cancelled"]);
+        const done = recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId);
+        expect(done).toHaveLength(1);
+        expect(done[0]).toMatchObject({ ok: true, stopReason: "cancelled", usage: { input: 105, output: 20 } });
+      } finally { removeTempDirSync(home); }
+    }, 15_000);
+
+    it("USAGE-1 antigravity dispose after the step usage: the engine-closing ending carries the last reported usage before dispose resolves", async () => {
+      const { home, seen, state } = await gateInstance("u1d", { FAKE_AGY_HOLD_AFTER_USAGE: "1" });
+      const endings: Array<{ usage: unknown; stopReason: unknown; disposeDone: boolean }> = [];
+      instance.adapter.onEvent((event: any) => { if (event.type === "turn.completed") endings.push({ usage: event.usage, stopReason: event.stopReason, disposeDone: state.disposeDone }); });
+      try {
+        const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-u1d", text: "go" });
+        await recorder.until((e) => e.type === "thread.token-usage.updated" && e.turnId === turnId);
+        await instance.dispose().then(() => { state.disposeDone = true; });
+        expect(shape(seen)).toEqual(["turn.started", "runtime.error", "turn.completed:false:exit_before_result"]);
+        expect(endings).toEqual([{ usage: { input: 105, output: 20 }, stopReason: "exit_before_result", disposeDone: false }]);
+      } finally { removeTempDirSync(home); }
+    }, 15_000);
+
+    it("USAGE-1 antigravity no double count: a result that arrives brings the one usage, its own", async () => {
+      const { home } = await gateInstance("u1r", { FAKE_AGY_RESULT_OUTPUT: "77" });
+      try {
+        const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-u1r", text: "go" });
+        await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+        const done = recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId);
+        expect(done).toHaveLength(1);
+        expect((done[0] as any).usage).toEqual({ input: 105, output: 77 }); // the result's total, not the step's {105, 20}, never both
+      } finally { removeTempDirSync(home); }
+    }, 15_000);
+
+    // USAGE-1 antigravity (MurageMain ruling U, 11-08): every ending after the turn ran carries the usage agy already reported, once:
+    // the Ask-stop halt, a child that crashed on its own, and the gate's settleOutstanding after a drain timeout. A spawn error and a
+    // host-power refusal carry none. (a) to (d) below.
+    const onlyEnding = (turnId: string) => {
+      const done = recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId);
+      expect(done).toHaveLength(1);
+      return done[0] as any;
+    };
+
+    it("USAGE-1 antigravity (a) Ask-stop halt after a step usage: the ask-stop ending carries the last reported usage, once", async () => {
+      const { home } = await gateInstance("u1a", { FAKE_AGY_USAGE_FIRST: "1", FAKE_AGY_HOLD_AFTER_USAGE: "1" });
+      try {
+        const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-u1a", text: "go", routeAsks: true, askLevel: true });
+        await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+        await sleep(300); // a second ending, or a late result, would show here
+        const done = onlyEnding(turnId);
+        expect(done).toMatchObject({ ok: true, stopReason: ASK_STOP_REASON, usage: { input: 105, output: 20 } });
+        expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
+      } finally { removeTempDirSync(home); }
+    }, 15_000);
+
+    it("USAGE-1 antigravity (b) self-crash after a step usage (the child exits on its own, nobody asked, no dispose): the ending carries the usage, once", async () => {
+      const { home } = await gateInstance("u1c", { FAKE_AGY_CRASH_AFTER_USAGE: "1" });
+      try {
+        const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-u1c", text: "go" });
+        await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+        const done = onlyEnding(turnId);
+        expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result", usage: { input: 105, output: 20 } });
+        const errors = recorder.events.filter((e) => e.type === "runtime.error").map((e) => String((e as any).message));
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toMatch(/closed \(exit code 3\) before it finished its reply/);
+      } finally { removeTempDirSync(home); }
+    }, 15_000);
+
+    it("USAGE-1 antigravity (c) a spawn error and a host-power refusal end with NO usage, even after a step usage was reported", async () => {
+      // spawn error: the CLI path cannot be started
+      const bad = await gateInstance("u1e", {});
+      try {
+        jobProbe.badCli = join(bad.home, "no-such-agy");
+        const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-u1e", text: "go" });
+        await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+        const done = onlyEnding(turnId);
+        expect(done).toMatchObject({ ok: false, stopReason: "spawn_error" });
+        expect(done.usage).toBeUndefined();
+      } finally { jobProbe.badCli = null; removeTempDirSync(bad.home); }
+      recorder.stop(); await instance.dispose();
+      // host-power refusal: the child reported a usage, then ended on its own and read as the wrapper's refusal
+      const { home } = await gateInstance("u1h", { FAKE_AGY_CRASH_AFTER_USAGE: "1" });
+      try {
+        jobProbe.hostPower = true;
+        const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-u1h", text: "go" });
+        await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+        expect(recorder.events.some((e) => e.type === "thread.token-usage.updated" && e.turnId === turnId)).toBe(true); // a usage was reported
+        const done = onlyEnding(turnId);
+        expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
+        expect(done.usage).toBeUndefined();
+      } finally { jobProbe.hostPower = false; removeTempDirSync(home); }
+    }, 20_000);
+
+    it("USAGE-1 antigravity (d) a dispose whose child ignores the stop signals: the drain times out at 300 ms and the settleOutstanding ending carries the usage, once", async () => {
+      const closeMs = process.env.MURAGE_PROVIDER_CLOSE_MS;
+      process.env.MURAGE_PROVIDER_CLOSE_MS = "300";
+      const { home, state } = await gateInstance("u1w", { FAKE_AGY_HOLD_AFTER_USAGE: "1", FAKE_AGY_IGNORE_SIGTERM: "1" });
+      const endings: Array<{ usage: unknown; stopReason: unknown; disposeDone: boolean; at: number }> = [];
+      instance.adapter.onEvent((event: any) => { if (event.type === "turn.completed") endings.push({ usage: event.usage, stopReason: event.stopReason, disposeDone: state.disposeDone, at: Date.now() }); });
+      try {
+        const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-u1w", text: "go" });
+        await recorder.until((e) => e.type === "thread.token-usage.updated" && e.turnId === turnId);
+        const t0 = Date.now();
+        await instance.dispose().then(() => { state.disposeDone = true; });
+        expect(endings).toHaveLength(1);
+        expect(endings[0]).toMatchObject({ usage: { input: 105, output: 20 }, stopReason: "exit_before_result", disposeDone: false });
+        expect(endings[0]!.at - t0).toBeLessThan(2_500); // the bound, not the child: the child ignores SIGTERM for 3 s (CLI_TERM_GRACE_MS) before SIGKILL
+        await sleep(300);
+        expect(endings).toHaveLength(1);
+        expect(onlyEnding(turnId)).toMatchObject({ usage: { input: 105, output: 20 } });
+      } finally {
+        if (closeMs === undefined) delete process.env.MURAGE_PROVIDER_CLOSE_MS; else process.env.MURAGE_PROVIDER_CLOSE_MS = closeMs;
+        removeTempDirSync(home);
+      }
+    }, 20_000);
+
+    it("control: a plain turn starts, runs to its result and ends once", async () => {
+      const { home, seen } = await gateInstance("ctl", {});
+      try {
+        const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-ctl", text: "hi" });
+        await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+        expect(shape(seen)).toEqual(["turn.started", "turn.completed:true:SUCCESS"]);
+      } finally { removeTempDirSync(home); }
+    }, 15_000);
+
+    it("control: dispose with no turn resolves with nothing emitted, and a second dispose is harmless", async () => {
+      const { home, seen } = await gateInstance("idle", {});
+      try {
+        await instance.dispose();
+        await instance.dispose();
+        expect(seen).toEqual([]);
+        await expect(instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-idle", text: "late" })).rejects.toThrow(/disposed/);
+      } finally { removeTempDirSync(home); }
+    }, 15_000);
   });
 
   it("strips ambient routing switches from the agy child env", async () => {
@@ -467,7 +812,7 @@ describe("Antigravity turns (fake CLI)", () => {
     process.env.FAKE_AGY_DUMP = dump;
     try {
       await create();
-      await instance.adapter.sendTurn({ threadId: "t-routing", text: "hi" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-routing", text: "hi" });
       await recorder.until((event) => event.type === "turn.completed");
 
       const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -489,7 +834,7 @@ describe("Antigravity turns (fake CLI)", () => {
   it("explains how to update an agy version that cannot receive prompts safely", async () => {
     process.env.FAKE_AGY_VERSION = "1.1.14";
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-old-agy", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-old-agy", text: "hi" });
     await recorder.until((event) => event.type === "turn.completed");
     expect(recorder.events).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -602,7 +947,7 @@ describe("Antigravity snapshot", () => {
       await instance.snapshot();
       for (const name of names) expect(JSON.parse(readFileSync(dump, "utf8")).env[name]).toBeUndefined();
 
-      await instance.generateText?.("summarize safely");
+      await instance.generateText?.("summarize safely", undefined, fixtureBotFolder());
       for (const name of names) expect(JSON.parse(readFileSync(dump, "utf8")).env[name]).toBeUndefined();
     } finally {
       await instance.dispose();
@@ -627,7 +972,7 @@ describe("Antigravity snapshot", () => {
     });
     const prompt = `summarize\n${"helper-context-0123456789".repeat(6_000)}`;
     try {
-      await expect(instance.generateText?.(prompt)).resolves.toBe("done from fake agy");
+      await expect(instance.generateText?.(prompt, undefined, fixtureBotFolder())).resolves.toBe("done from fake agy");
       const seen = JSON.parse(readFileSync(dump, "utf8"));
       expect(seen.prompt).toBe(prompt);
       expect(seen.argv).toContain("--input-format");
@@ -778,7 +1123,7 @@ describe("Antigravity Murage MCP config", () => {
     });
     const recorder = recordEvents(instance.adapter);
     try {
-      await instance.adapter.sendTurn({ threadId: "t-custom-off", text: "no tools", integrations: customIntegrations() });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-custom-off", text: "no tools", integrations: customIntegrations() });
       await recorder.until((event) => event.type === "turn.completed");
       const atSpawn = JSON.parse(readFileSync(dump, "utf8"));
       expect(JSON.stringify(atSpawn)).not.toContain("turn-tok");
@@ -804,7 +1149,7 @@ describe("Antigravity Murage MCP config", () => {
     });
     const recorder = recordEvents(instance.adapter);
     try {
-      await instance.adapter.sendTurn({
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
         threadId: "t-mcp-safe",
         text: "do not expose tools",
         integrations: { ...boxIntegrations, ...agentsIntegrations("must-not-leak") },
@@ -822,3 +1167,6 @@ describe("Antigravity Murage MCP config", () => {
     }
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

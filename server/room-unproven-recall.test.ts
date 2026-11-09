@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -156,3 +157,5 @@ it("a pin whose reply an unproven reader stops seeing before dispatch refuses th
   revokeFinch();
   expect(() => assertMemoryBundle(bundle, reader)).toThrow("MEMORY_CONTEXT_REVOKED");
 });
+
+useOutsideStoreFixture();

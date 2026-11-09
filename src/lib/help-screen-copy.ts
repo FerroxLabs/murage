@@ -1,13 +1,17 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The help panel's words for each screen. They are help only, so they stay out
-// of the first paint: this module is reached only through screen-envelope.ts,
-// which only the help chunk loads (HelpHost.lazy.test.ts). Loading it adds them
-// to the English pack, so hx() and t() answer them like any other key, and a
-// language pack that carries them still wins. Keys never overlap the pack
-// (locale-copy.test.ts).
-import { en } from "@/locales";
+// English Help: every catalogue under src/locales/en-help, gathered in one
+// read-only table. These words are help only, so they stay out of the first
+// paint: this module is reached only through the help copy store
+// (src/lib/help-copy-store.ts), which only the help chunk loads
+// (src/first-paint.test.ts, HelpHost.lazy.test.ts). Nothing here is merged
+// into the English pack or any other pack: a Help key is read from this table
+// in English and from that language's Help pack otherwise. Every file in
+// en-help/ is listed here (help-copy-store.test.ts fails on one left out).
 import screens from "@/locales/en-help/screens.json";
 
-Object.assign(en, screens);
+/** A key of the Help partition (type only, erased at build). */
+export type HelpKey = keyof typeof screens;
+
+export const enHelp: Readonly<Record<string, string>> = Object.freeze({ ...screens });

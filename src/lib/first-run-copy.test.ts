@@ -583,7 +583,8 @@ describe("first run copy: the sentence builders", () => {
     expect(joinNames(["  "])).toBe("");
     expect(joinNames(["Codex"])).toBe("Codex");
     expect(joinNames(["Claude Code", "Codex"])).toBe("Claude Code and Codex");
-    expect(joinNames(["Claude Code", "Codex", "Fuigo"])).toBe("Claude Code, Codex and Fuigo");
+    expect(joinNames(["Claude Code", "Codex", "Fuigo"])).toBe("Fuigo, Claude Code and Codex");
+    expect(joinNames(["Codex", "Flux Router", "Claude Code", "Fuigo"])).toBe("Flux Router, Fuigo, Codex and Claude Code");
   });
 
   it("says a time out loud rather than in 24 hour clock", () => {

@@ -11,7 +11,7 @@ export type EngineReplyResult = "ready" | "signin" | "limit" | "refused";
 export interface EngineReplyCheck { result: EngineReplyResult; line?: string }
 export interface ReplyCheckEngine {
   instanceId: string; displayName?: string;
-  checkReply?(signal: AbortSignal): Promise<string>;
+  checkReply?(signal: AbortSignal, cwd?: string): Promise<string>;
   generateText?(prompt: string, botId?: string): Promise<string>;
 }
 
@@ -51,9 +51,9 @@ export function replyCheckFailure(error: unknown, name: string): EngineReplyChec
 
 const running = new Map<string, Promise<EngineReplyCheck>>();
 
-async function reply(engine: ReplyCheckEngine, name: string, timeoutMs: number): Promise<string> {
+async function reply(engine: ReplyCheckEngine, name: string, timeoutMs: number, cwd?: string): Promise<string> {
   const signal = AbortSignal.timeout(timeoutMs);
-  if (engine.checkReply) return engine.checkReply(signal);
+  if (engine.checkReply) return engine.checkReply(signal, cwd);
   const generateText = engine.generateText?.bind(engine);
   if (!generateText) throw new Error(`${name} has no quick check. Send it a message in a chat to try it.`);
   return Promise.race([generateText(ENGINE_REPLY_PROMPT), new Promise<never>((_, reject) => {
@@ -62,13 +62,13 @@ async function reply(engine: ReplyCheckEngine, name: string, timeoutMs: number):
 }
 
 /** One short real reply through this engine. Never throws: every outcome is an answer for the card. */
-export function checkEngineReply(engine: ReplyCheckEngine, timeoutMs = CHECK_TIMEOUT_MS): Promise<EngineReplyCheck> {
+export function checkEngineReply(engine: ReplyCheckEngine, timeoutMs = CHECK_TIMEOUT_MS, cwd?: string): Promise<EngineReplyCheck> {
   const joined = running.get(engine.instanceId);
   if (joined) return joined;
   const name = engine.displayName || "This engine";
   const check = (async (): Promise<EngineReplyCheck> => {
     try {
-      const text = await reply(engine, name, timeoutMs);
+      const text = await reply(engine, name, timeoutMs, cwd);
       return text.trim() ? { result: "ready" } : { result: "refused", line: `${name} did not answer. Try again.` };
     } catch (error) { return replyCheckFailure(error, name); }
   })().finally(() => { running.delete(engine.instanceId); });

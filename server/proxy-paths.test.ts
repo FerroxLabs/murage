@@ -24,3 +24,10 @@ it("resolves a worker path with no backslash or drive assumption (the same join 
   expect(SPAWNED_PROXIES.engineHistoryWorker.startsWith(SERVER_ROOT)).toBe(true);
   expect(SPAWNED_PROXIES.engineHistoryWorker).not.toMatch(/\.\.[\\/]/);
 });
+
+it("packages and resolves the panel avatar child through the shared launch inventory", () => {
+  expect(SPAWNED_PROXIES.panelAvatarEncoder).toBe(join(SERVER_ROOT, "browser-extension-panel-avatar-encoder.ts"));
+  expect(existsSync(SPAWNED_PROXIES.panelAvatarEncoder)).toBe(true);
+  expect(readFileSync(join(repo, "scripts/bundle-server.mjs"), "utf8")).toContain('"browser-extension-panel-avatar-encoder.ts"');
+  expect(readFileSync(join(repo, "scripts/after-pack.mjs"), "utf8")).toContain('path.join(server, "browser-extension-panel-avatar-encoder.js")');
+});

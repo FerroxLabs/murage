@@ -8,10 +8,12 @@
 // the server; from three characters the existing message search runs too,
 // one row per chat, and opening a match lands on the message.
 //
-// Privacy: the list is built from chat records (titles, times, marks), never
-// from transcript lines; the message search asks for the chats view, where a
+// Privacy: rows join chat records with owner-only summary previews; the message search asks for the chats view, where a
 // forgotten line is never a hit (server/message-db.ts excludeForgotten).
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChatThreadMatches } from "./ChatThreadMatches";
+import { useChatResource, type HitsPage } from "@/lib/chat-previews";
+import { chatsEligible, useChatsGen, type ChatsGen } from "@/lib/chats-gen";
+import { useEffect, useCallback, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ChevronRight, Loader2, Pin, Search, X } from "lucide-react";
 import { t } from "@/lib/i18n";
 import { api, useStore, type Bot, type Group } from "@/state/store";
@@ -23,13 +25,20 @@ import type { SearchHit } from "@/lib/search-hit";
 import { useRelativeNow } from "@/lib/relative-now";
 import { escapeIsFree } from "@/lib/escape-layer";
 import { formatListTime } from "@/lib/task-list";
+import { chatsSectionsShown, chatsWaitingThreads } from "@/lib/chats-sections";
+import { AllChatsSections } from "./AllChatsSections";
 import {
+  incompleteChatCount,
   CHAT_SEARCH_MIN,
   NO_CHATS,
   activeFilterCount,
   appendChatPage,
   chatTime,
   chatTitle,
+  chatSnippet,
+  chatDateRange,
+  chatDateInput,
+  chatDateValue,
   chatsRequestPath,
   chatsSearchPath,
   foldChatHits,
@@ -53,72 +62,36 @@ export function AllChatsPage() {
   useEffect(() => {
     setFilters({ ...(scope?.botId ? { botId: scope.botId } : {}), ...(scope?.groupId ? { groupId: scope.groupId } : {}) });
   }, [scope?.botId, scope?.groupId]);
+  const [archiveCounts, setArchiveCounts] = useState<Record<string, number>>({});
+  // Archived is a global request; folded and open limits share its count.
+  const archiveScope = "archived";
+  const rememberArchiveCount = useCallback((count: number) => setArchiveCounts(old => old[archiveScope] === count ? old : { ...old, [archiveScope]: count }), []);
   const [query, setQuery] = useState("");
-  const [held, setHeld] = useState<HeldChats>(NO_CHATS);
-  const [loading, setLoading] = useState<"first" | "more" | null>("first");
-  const [failed, setFailed] = useState<string | null>(null);
-  const [hits, setHits] = useState<SearchHit[] | null>(null);
-  const [hitsPartial, setHitsPartial] = useState(false);
-  const [hitsFailed, setHitsFailed] = useState<string | null>(null);
-  const generation = useRef(0);
-  // Only one page is rendered. Back navigation stores cursors, never transcripts.
+  const q = query.trim();
+  const path = chatsRequestPath(filters, null, q);
+  const list = useChatResource<ChatPage>(path, undefined, q ? DEBOUNCE_MS : 0);
+  const searchPath = chatsSearchPath(q, filters);
+  const search = useChatResource<HitsPage>(q.length >= CHAT_SEARCH_MIN ? searchPath : null, undefined, DEBOUNCE_MS);
   const [cursors, setCursors] = useState<Array<string | null>>([null]);
   const [pageIndex, setPageIndex] = useState(0);
-  const q = query.trim();
-
-  // The list: the first page whenever the filters or the title search change (debounced while typing).
-  useEffect(() => {
-    const mine = ++generation.current;
-    // a new scope never shows the last scope's rows or its cursor, even when this request fails
-    setHeld(NO_CHATS);
-    setCursors([null]);
-    setPageIndex(0);
-    setLoading("first");
-    setFailed(null);
-    const timer = setTimeout(() => {
-      api(chatsRequestPath(filters, null, q))
-        .then((page: ChatPage) => { if (generation.current === mine) { setHeld(appendChatPage(NO_CHATS, page, true)); setLoading(null); } })
-        .catch((error: unknown) => { if (generation.current === mine) { setFailed(error instanceof Error ? error.message : String(error)); setLoading(null); } });
-    }, q ? DEBOUNCE_MS : 0);
-    return () => { clearTimeout(timer); generation.current++; };
-  }, [filters, q]);
-
-  // One page request at a time: the loading state (shown on the Show newer/older buttons, which it disables) is the guard.
-  const loadPage = useCallback((before: string | null, index: number) => {
-    if (loading !== null) return;
-    const mine = generation.current;
-    setLoading("more");
-    setFailed(null);
-    api(chatsRequestPath(filters, before, q))
-      .then((page: ChatPage) => { if (generation.current === mine) {
-        setHeld(appendChatPage(NO_CHATS, page, true));
-        setCursors(previous => [...previous.slice(0, index), before]);
-        setPageIndex(index); setLoading(null);
-      } })
-      .catch((error: unknown) => { if (generation.current === mine) { setFailed(error instanceof Error ? error.message : String(error)); setLoading(null); } });
-  }, [filters, q, loading]);
+  useEffect(() => { setCursors([null]); setPageIndex(0); }, [path, list.listGen?.epoch, list.listGen?.rev, list.replacement]);
+  const held = useMemo(() => list.data ? appendChatPage(NO_CHATS, list.data, true) : NO_CHATS, [list.data]);
+  const loading = list.loading ? list.data ? "more" : "first" : null;
+  const failed = list.error ? String(list.error) : null;
+  const hits = search.eligible ? search.data?.hits ?? null : null;
+  const hitsNext = search.data?.next;
+  const hitsPartial = search.data?.partial === true;
+  const loadingHits = search.loading;
+  const hitsFailed = search.error ? String(search.error) : null;
+  const loadPage = (before: string | null, index: number) => {
+    list.more(chatsRequestPath(filters, before, q), undefined, () => {
+      setCursors(previous => [...previous.slice(0, index), before]); setPageIndex(index);
+    });
+  };
   const loadMore = () => { if (held.next) loadPage(held.next, pageIndex + 1); };
-
-  // Message matches, from three characters: the existing search, chats view.
-  useEffect(() => {
-    setHits(null);
-    setHitsFailed(null);
-    setHitsPartial(false);
-    if (q.length < CHAT_SEARCH_MIN) return;
-    let alive = true;
-    const timer = setTimeout(() => {
-      api(chatsSearchPath(q, filters))
-        .then((answer: { hits: SearchHit[]; partial?: boolean }) => { if (alive) { setHits(answer.hits); setHitsPartial(answer.partial === true); } })
-        .catch((error: unknown) => { if (alive) setHitsFailed(error instanceof Error ? error.message : String(error)); });
-    }, DEBOUNCE_MS);
-    return () => { alive = false; clearTimeout(timer); };
-  }, [q, filters]);
-
-  // Record filters have already been applied on the server, before the hit limit.
-  const hitRows = useMemo(
-    () => (hits ? foldChatHits(hits, {}, () => ({})) : null),
-    [hits],
-  );
+  const loadMoreHits = () => { if (hitsNext) search.more(chatsSearchPath(q, filters, 40, hitsNext), (old, page) => ({ ...page, hits: [...old.hits, ...page.hits.filter(hit => !old.hits.some(row => row.threadId === hit.threadId))] })); };
+  const waitingThreads = useMemo(() => chatsWaitingThreads(state.bots), [state.bots]);
+  const hitRows = hits ? foldChatHits(hits, {}, () => ({})) : null;
 
   const close = () => dispatch({ type: "closeAllChats" });
   const openRow = (row: ChatRow) => {
@@ -139,6 +112,9 @@ export function AllChatsPage() {
 
   return (
     <AllChatsView
+      archivedCount={archiveCounts[archiveScope]}
+      onArchivedCount={rememberArchiveCount}
+      waitingThreads={waitingThreads}
       bots={state.bots}
       groups={state.groups}
       filters={filters}
@@ -146,14 +122,18 @@ export function AllChatsPage() {
       query={query}
       onQuery={setQuery}
       held={held}
+      listGen={list.listGen}
       loading={loading}
       failed={failed}
       hitRows={q.length >= CHAT_SEARCH_MIN ? hitRows : null}
       searchingMessages={q.length >= CHAT_SEARCH_MIN && hits === null && !hitsFailed}
       hitsPartial={hitsPartial}
+      onMoreHits={hitsNext ? loadMoreHits : undefined}
+      loadingHits={loadingHits}
       hitsFailed={hitsFailed}
       onOpenRow={openRow}
       onOpenHit={openHit}
+      onRetry={list.refresh}
       onLoadMore={loadMore}
       onPrevious={pageIndex > 0 ? () => loadPage(cursors[pageIndex - 1] ?? null, pageIndex - 1) : undefined}
       pageIndex={pageIndex}
@@ -168,19 +148,34 @@ export interface AllChatsViewProps extends Owners {
   query: string;
   onQuery: (next: string) => void;
   held: HeldChats;
+  listGen?: ChatsGen | null;
   loading: "first" | "more" | null;
   failed: string | null;
   /** message matches, one row per chat; null when no message search is running */
   hitRows: ChatHitRow[] | null;
   searchingMessages: boolean;
   hitsPartial: boolean;
+  onMoreHits?: () => void;
+  loadingHits?: boolean;
   hitsFailed: string | null;
   onOpenRow: (row: ChatRow) => void;
   onOpenHit: (hit: SearchHit) => void;
+  onRetry?: () => void;
   onLoadMore: () => void;
   onPrevious?: () => void;
   pageIndex?: number;
   onClose: () => void;
+  /** GET a chats page (the Archived section's count and rows); tests pass a fake. */
+  fetchPage?: (path: string) => Promise<ChatPage>;
+  /** Kept above conditional section mounting. */
+  archivedCount?: number;
+  onArchivedCount?: (count: number) => void;
+  /** Tests: supplied rows need their own generation; otherwise only count is retained. */
+  archived?: { total: number; rows: ChatRow[]; gen?: ChatsGen };
+  /** Threads waiting on the owner, worked out once from the store (chatsWaitingThreads), so a render never walks a bot's chat history. */
+  waitingThreads?: ReadonlySet<string>;
+  /** tests: owner rows and older folds open at start, by key ("bots:ember", "older:channels") */
+  sectionsOpen?: readonly string[];
   /** Clock overrides for tests. */
   now?: number;
   timeZone?: string;
@@ -207,6 +202,8 @@ export function AllChatsClose({ onClose }: { onClose: () => void }) {
 }
 
 export function AllChatsView(props: AllChatsViewProps) {
+  const proof = useChatsGen();
+  const eligible = chatsEligible(props.listGen, proof);
   const { bots, groups, filters, onFilters, query, onQuery, held, loading, failed, hitRows, onClose } = props;
   const relativeNow = useRelativeNow();
   const now = props.now ?? relativeNow;
@@ -250,7 +247,7 @@ export function AllChatsView(props: AllChatsViewProps) {
     ? <BotAvatar bot={bot} state="idle" size={28} animated={false} />
     : <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-md bg-raised text-[12px] text-ink-secondary">#</span>;
 
-  const renderRow = (row: ChatRow, inFold = false) => {
+  const renderRow = (row: ChatRow, inFold = false, previewEligible = eligible) => {
     const owner = ownerOf(row);
     const title = chatTitle(row.title, Boolean(row.routine));
     const at = chatTime(row);
@@ -275,6 +272,7 @@ export function AllChatsView(props: AllChatsViewProps) {
               {row.routine && !inFold && <span className="shrink-0 rounded border border-hairline/60 px-1 text-[11px] leading-[16px] text-ink-secondary">Routine</span>}
               {row.archived && <span className="shrink-0 rounded border border-hairline/60 px-1 text-[11px] leading-[16px] text-ink-secondary">Archived</span>}
             </span>
+            {(row.snippet || !previewEligible) && <span dir="auto" className="mt-0.5 block truncate text-[12.5px] text-ink-secondary">{previewEligible ? chatSnippet(row) : t("chats.previews.checking")}</span>}
           </span>
           <time dateTime={new Date(at).toISOString()} className="col-start-2 text-[12px] tabular-nums text-ink-secondary sm:col-start-3 sm:row-start-1 sm:pt-0.5 sm:text-right">
             {formatListTime(at, now, clock)}
@@ -318,14 +316,17 @@ export function AllChatsView(props: AllChatsViewProps) {
     </section>
   );
 
-  const renderHit = ({ hit, count }: ChatHitRow) => {
+  const renderHit = ({ hit, count, countComplete }: ChatHitRow) => {
     const owner = ownerOf(hit);
     const before = hit.snippet.slice(0, hit.matchStart);
     const match = hit.snippet.slice(hit.matchStart, hit.matchStart + hit.matchLength);
     const after = hit.snippet.slice(hit.matchStart + hit.matchLength);
     return (
       <li key={hit.threadId}>
-        <button type="button" data-chat-hit={hit.threadId} onClick={() => props.onOpenHit(hit)}
+        <button type="button" data-chat-hit={hit.threadId} aria-expanded={(count > 1 || !countComplete) ? expanded.has(`hit:${hit.threadId}`) : undefined} onClick={() => {
+          if (count <= 1 && countComplete) { props.onOpenHit(hit); return; }
+          setExpanded(previous => { const next = new Set(previous); const key = `hit:${hit.threadId}`; if (next.has(key)) next.delete(key); else next.add(key); return next; });
+        }}
           className={cn("grid w-full grid-cols-[28px_1fr] items-start gap-x-3 gap-y-0.5 rounded-lg px-3 py-2 text-left hover:bg-raised/60 sm:grid-cols-[28px_1fr_auto]", focusRing)}>
           {avatar(owner.bot)}
           <span className="min-w-0">
@@ -336,11 +337,12 @@ export function AllChatsView(props: AllChatsViewProps) {
             </span>
             <span dir="auto" className="mt-0.5 line-clamp-2 border-l-2 border-hairline/60 pl-2 text-[12.5px] leading-snug text-ink-secondary">
               {before}<mark className="rounded-sm bg-accent/25 px-0.5 text-ink">{match}</mark>{after}
-              {count > 1 && <span>{` · ${count} matches`}</span>}
+              {!countComplete ? <span>{` · ${incompleteChatCount(count)}`}</span> : count > 1 && <span>{` · ${count} matches`}</span>}
             </span>
           </span>
           <time dateTime={new Date(hit.at).toISOString()} className="col-start-2 text-[12px] tabular-nums text-ink-secondary sm:col-start-3 sm:row-start-1 sm:text-right">{formatListTime(hit.at, now, clock)}</time>
         </button>
+        {expanded.has(`hit:${hit.threadId}`) && <ChatThreadMatches query={q} threadId={hit.threadId} filters={filters} onOpen={props.onOpenHit} />}
       </li>
     );
   };
@@ -385,6 +387,16 @@ export function AllChatsView(props: AllChatsViewProps) {
             {channels.length > 0 && <optgroup label="Channels">{channels.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</optgroup>}
           </select>
         </label>
+        <label className="flex items-center gap-1 text-[12.5px] text-ink-secondary">
+          Date
+          <select aria-label="Date" value={filters.date ?? ""} onChange={event => set(chatDateRange((event.target.value || undefined) as ChatFilters["date"], now))} className={cn("min-h-8 rounded-lg border border-hairline/50 bg-panel px-2 text-ink", focusRing)}>
+            <option value="">Any</option><option value="today">Today</option><option value="week">Past week</option><option value="month">Past month</option><option value="custom">Custom range</option>
+          </select>
+        </label>
+        {filters.date === "custom" && <>
+          <input type="date" aria-label="From date" value={chatDateValue(filters.dateFrom)} onChange={event => set({ dateFrom: chatDateInput(event.target.value) })} className="min-h-8 rounded bg-panel px-2 text-ink" />
+          <input type="date" aria-label="Through date" value={chatDateValue(filters.dateTo, true)} onChange={event => set({ dateTo: chatDateInput(event.target.value, true) })} className="min-h-8 rounded bg-panel px-2 text-ink" />
+        </>}
         <button type="button" aria-pressed={Boolean(filters.pinned)} onClick={() => toggle("pinned")} className={chip(Boolean(filters.pinned))}>Pinned</button>
         <button type="button" aria-pressed={Boolean(filters.unread)} onClick={() => toggle("unread")} className={chip(Boolean(filters.unread))}>Unread</button>
         <button type="button" aria-pressed={Boolean(filters.archived)} onClick={() => toggle("archived")} className={chip(Boolean(filters.archived))}>Archived</button>
@@ -404,18 +416,37 @@ export function AllChatsView(props: AllChatsViewProps) {
             {props.hitsPartial && hitRows && <p className="px-3 pb-1 text-[12px] text-ink-secondary">Showing matches from your most recent messages. Search is still getting ready for older ones.</p>}
             {hitRows && hitRows.length === 0 && <p className="px-3 py-2 text-[13px] text-ink-secondary">No messages match “{q}”.</p>}
             {hitRows && hitRows.length > 0 && <ul>{hitRows.map(renderHit)}</ul>}
+            {props.onMoreHits && <button type="button" disabled={props.loadingHits} onClick={props.onMoreHits} className={cn("m-3 rounded-lg px-3 py-2 text-[13px] hover:bg-raised", focusRing)}>{props.loadingHits ? "Loading matches…" : "More results"}</button>}
           </section>
         ) : null}
 
         {q && <h3 className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide text-ink-secondary">Chat titles</h3>}
         {loading === "first" && <p role="status" className="flex items-center gap-2 px-3 py-4 text-[13px] text-ink-secondary"><Loader2 size={13} aria-hidden="true" className="animate-spin" />{q ? "Looking through your chat titles…" : "Loading your chats…"}</p>}
-        {failed && <p role="alert" className="px-3 py-3 text-[13px] text-danger">Could not load your chats. <button type="button" className="underline hover:no-underline" onClick={() => onFilters({ ...filters })}>Try again</button></p>}
+        {failed && <p role="alert" className="px-3 py-3 text-[13px] text-danger">Could not load your chats. <button type="button" className="underline hover:no-underline" onClick={() => props.onRetry ? props.onRetry() : onFilters({ ...filters })}>Try again</button></p>}
         {loading !== "first" && !failed && shown === 0 && (
           <p className="px-3 py-6 text-center text-[13px] text-ink-secondary">
             {q ? `No chat titles match “${q}”. Try a shorter word, or clear the filters.` : filterCount > 0 ? "No chats match these filters." : "No chats yet. Start one with any bot."}
           </p>
         )}
-        {loading !== "first" && sections.map(renderSection)}
+        {held.partial && <p role="status" className="px-3 py-2 text-[12px] text-ink-secondary">{t("chats.previews.partial")}</p>}
+        {loading !== "first" && (chatsSectionsShown(held.total, q, filterCount, props.pageIndex) ? (
+          <AllChatsSections
+            rows={[...held.pinned, ...held.chats]}
+            now={now}
+            waiting={(row) => (props.waitingThreads?.has(row.threadId) ? 1 : 0)}
+            ownerName={(row) => (row.place ? row.place.name : ownerOf(row).name)}
+            avatar={(row) => avatar(ownerOf(row).bot)}
+            time={(at) => formatListTime(at, now, clock)}
+            renderChat={(row, allowed) => renderRow(row, true, allowed)}
+            listGen={props.listGen}
+            onOpenRow={props.onOpenRow}
+            fetchPage={props.fetchPage ?? api}
+            archivedCount={props.archivedCount}
+            onArchivedCount={props.onArchivedCount}
+            archived={props.archived}
+            expanded={props.sectionsOpen}
+          />
+        ) : sections.map(renderSection))}
         {held.next && loading !== "first" && (
           <div className="px-3 pt-2">
             <button type="button" disabled={loading === "more"} onClick={props.onLoadMore} className={cn("w-full rounded-lg px-3 py-2 text-left text-[13px] text-ink hover:bg-raised/60 disabled:opacity-60", focusRing)}>

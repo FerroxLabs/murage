@@ -178,7 +178,8 @@ it("the actual main createWindow and activate wiring retargets the process updat
     APP_ICON: "fixture", skinChrome: () => ({ color: "#000000" }), windowChromeOptions: () => ({}),
     process: { platform: "darwin", env: {} }, path, __dirname: "/unused-fixture",
     startBrowserSurface: vi.fn(), installWindowStatePersistence: vi.fn(), applyUnreadBadge: vi.fn(),
-    app: { isPackaged: true }, serverReady: true, SERVER_PORT: 18888, desktopShutdownStarted: false, desktopRecoveryMode: false,
+    createMacInstallerFallback:()=>({peekPendingOffer:()=>null}),returnAuthority:{generation:0,userQuitRequested:false},backupScheduleHost:null,
+    app: { isPackaged: true, getPath:()=>"/unused-fixture" }, serverReady: true, SERVER_PORT: 18888, desktopShutdownStarted: false, desktopRecoveryMode: false,
     backgroundLifecycle: null, loginLaunch: false, background: null,
     cloudHome: null, // Cloud flag off: createWindow passes --murage-cloud=1 only when installCloudHome returned a controller
     // createWindow now closes the startup splash (4931ea16d); the fixture has none to close.

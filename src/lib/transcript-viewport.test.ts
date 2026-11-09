@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { canScroll, jumpToLatestVisible, keyBreaksFollow } from "./transcript-viewport";
+import { canScroll, jumpToLatestVisible, keyBreaksFollow, shortTranscriptReveal } from "./transcript-viewport";
+
+describe("an upward gesture over a transcript too short to scroll", () => {
+  const short = { scrollHeight: 400, clientHeight: 400 };
+  it("shows the held rows first, then asks the server for an older page", () => {
+    expect(shortTranscriptReveal(short, 180, true)).toBe("showEarlier");
+    expect(shortTranscriptReveal(short, 0, true)).toBe("loadOlder");
+  });
+  it("does nothing when the pane scrolls or there is nothing earlier", () => {
+    expect(shortTranscriptReveal({ scrollHeight: 900, clientHeight: 400 }, 180, true)).toBeNull();
+    expect(shortTranscriptReveal(short, 0, false)).toBeNull();
+    expect(shortTranscriptReveal(null, 5, true)).toBeNull();
+  });
+});
 
 describe("canScroll", () => {
   it("is false for a transcript that fits and true when there is more to see", () => {

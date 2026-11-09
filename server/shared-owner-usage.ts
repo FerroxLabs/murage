@@ -4,8 +4,8 @@ import { createProjectRunMatcher } from "./project-run-events.ts";
 
 /** An owner turn in a work thread (no request row), settled once by its own turn (V7). */
 export interface SharedOwnerRun { generation: string; botId: string; teamId: string; messageId: string; engine: string; model?: string; startedAt: number; waitingSince?: number; ownerWaitMs: number; asks: Set<string> }
-export interface SharedOwnerEvent { type: string; threadId: string; turnId?: string; requestId?: string; ok?: boolean; usage?: unknown; cost?: number | null; charge?: number | null }
-export type SharedOwnerOutcome = { ok: boolean; turnId?: string; usage?: unknown; cost?: number | null; charge?: number | null };
+export interface SharedOwnerEvent { type: string; threadId: string; turnId?: string; requestId?: string; ok?: boolean; usage?: unknown; cost?: number | null; charge?: number | null; /** CHARGE-UNKNOWN-1018: the charge is a lower bound */ chargePartial?: boolean }
+export type SharedOwnerOutcome = { ok: boolean; turnId?: string; usage?: unknown; cost?: number | null; charge?: number | null; chargePartial?: boolean };
 
 /** A late or duplicate completion of an earlier turn never settles, or ends, the thread's current owner turn (Astra r3 #3). */
 export function createSharedOwnerUsage<E extends SharedOwnerEvent>(settle: (threadId: string, run: SharedOwnerRun, outcome: SharedOwnerOutcome) => void) {
@@ -17,7 +17,7 @@ export function createSharedOwnerUsage<E extends SharedOwnerEvent>(settle: (thre
     const { matcher: _matcher, providerTurnId: _providerTurnId, ...owned } = run;
     settle(threadId, owned, outcome);
   };
-  const outcomeOf = (event: E): SharedOwnerOutcome => ({ ok: event.ok === true, turnId: event.turnId, usage: event.usage, cost: event.cost, charge: event.charge });
+  const outcomeOf = (event: E): SharedOwnerOutcome => ({ ok: event.ok === true, turnId: event.turnId, usage: event.usage, cost: event.cost, charge: event.charge, ...(event.chargePartial === true ? { chargePartial: true } : {}) });
   return {
     has: (threadId: string) => runs.has(threadId),
     begin(threadId: string, run: SharedOwnerRun): void {

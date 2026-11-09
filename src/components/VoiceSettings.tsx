@@ -10,6 +10,9 @@ import { api, useStore, type Bot, type ConfigStatus } from "@/state/store";
 import { useDesktopCapabilities } from "@/components/DesktopCapabilities";
 import { speaker } from "@/lib/tts";
 import { useSpeech } from "@/lib/tts/useSpeech";
+import { replyController, useReplySpeech } from "@/lib/tts/reply-speech";
+import { knownComputer } from "@/lib/surface";
+import { t } from "@/lib/i18n";
 import { cn } from "@/lib/cn";
 import { cleanupEnabled, setCleanupEnabled } from "@/lib/dictation-cleanup";
 import { Switch } from "./SettingsPrimitives";
@@ -30,6 +33,7 @@ export function VoiceSettings({
 }) {
   const { state, dispatch } = useStore();
   const tts = state.config?.tts;
+  const spokenReplies = useReplySpeech();
 
   const [cleanUp, setCleanUp] = useState(() => cleanupEnabled());
   const [key, setKey] = useState("");
@@ -211,6 +215,7 @@ export function VoiceSettings({
 
   return (
     <div className="rounded-xl bg-card p-4">
+      <p className="text-[13px] text-ink-secondary">{t("settings.fluxSpendLimits")}</p>
       <div className="text-[15px] font-medium text-ink">Voice</div>
       <div className="mt-0.5 text-[13px] text-ink-secondary">
         Give this bot a voice for calls and spoken replies. Each bot has its own voice;
@@ -362,19 +367,14 @@ export function VoiceSettings({
         </div>
       )}
 
-      <div className="mt-4 flex items-center justify-between gap-4 border-t border-hairline/40 pt-4">
+      {knownComputer() === true && <div className="mt-4 flex items-center justify-between gap-4 border-t border-hairline/40 pt-4">
         <div>
-          <div className="text-[13px] font-medium text-ink">Read replies aloud</div>
-          <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
-            Speak this bot's answers as they arrive, even from another chat.
-          </div>
+          <div className="text-[13px] font-medium text-ink">{t("ux.d24.label")}</div>
+          <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">{t("ux.d24.help")}</div>
+          <div className="mt-1 text-[11.5px] leading-relaxed text-ink-secondary">{t("ux.d24.disclosure")}</div>
         </div>
-        <Switch
-          checked={Boolean(bot.speakReplies)}
-          aria-label="Read this bot's replies aloud"
-          onClick={() => onPatch({ speakReplies: !bot.speakReplies })}
-        />
-      </div>
+        <Switch checked={spokenReplies.enabled} aria-label={t("ux.d24.label")} onClick={() => replyController.setEnabled(!spokenReplies.enabled)} />
+      </div>}
 
       <div className="mt-4 flex items-center justify-between gap-4 border-t border-hairline/40 pt-4">
         <div>
