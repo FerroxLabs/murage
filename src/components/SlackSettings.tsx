@@ -130,11 +130,11 @@ export function SlackSettings() {
     await api("/api/config", { method: "PATCH", body: JSON.stringify({ slack: identity }) }); dirty.current = false;
     await refresh(expected); if (mounted.current) setNotice("Workspace details saved. Pairing has not started.");
   });
-  return <section aria-labelledby="slack-settings-title" className="min-w-0 rounded-xl border border-hairline/40 bg-card p-4">
-    <h3 id="slack-settings-title" className="text-[15px] font-semibold text-ink">Slack</h3>
+  return <section aria-labelledby="slack-settings-name" className="min-w-0 rounded-xl border border-hairline/40 bg-card p-4">
+    <h3 id="slack-settings-name"className="text-[15px] font-semibold text-ink">Slack</h3>
     <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">Message your Chief from one approved Slack direct message. Keep Murage running to receive messages. Approvals stay in Murage.</p>
     <p role="status" className="mt-3 text-[12px] font-medium text-ink">{slackHealth(status, expired)}</p>
-    <InAdvanced><div id="slack-app-setup-heading" className="rounded-xl bg-card p-4 text-[12px] text-ink-secondary">
+    <InAdvanced slot="slack-setup"><div className="rounded-xl bg-card p-4 text-[12px] text-ink-secondary">
       <h4 className="text-[13px] font-medium text-ink">Private Slack app setup</h4>
       <p>Use a private app with Socket Mode enabled. The app-level token needs <code>connections:write</code>. The bot token needs <code>im:history</code> and <code>chat:write</code>, with the <code>message.im</code> event enabled. Add <code>files:write</code> too if you want voice notes sent here.</p>
       <a data-setting-control="slack-app-setup-heading" className="mt-2 inline-flex min-h-11 items-center text-accent-text underline hover:text-ink" href="https://api.slack.com/apps" target="_blank" rel="noreferrer">Open Slack app settings</a>
