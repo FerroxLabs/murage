@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // A resumed turn awaits recall after its continuation check. Thread B's branch
 // change can retire a source thread A's session was shown on an earlier turn in
 // that window; B revokes only B's receipts, so the receipt-state probe misses it.
@@ -195,10 +196,18 @@ it("a room member turn resets the engine session before its bundle and never res
   expect(resend).toBeGreaterThan(0);
   expect(callers.filter(at => at > resend && at < source.indexOf("\n}\n", resend))).toHaveLength(1);
   // the failover's thread is a task of the bot it fails over (failOverThread resolves it before the resend)
-  expect(source).toContain("function failOverThread(turn: { botId: string; threadId: string; selection: ModelSelection; sourceMessageId: string; phoneHeld?: boolean }, to: ModelSelection, resetsAt: number | null, now: number): FailoverRow | null {\n  const task = store.taskByThread(turn.botId, turn.threadId);\n  if (!task) return null;");
+  // (U22 G20 #8: the backup gate may refuse first and return its refusal; it never reaches the resend either)
+  const failOver = source.indexOf("function failOverThread(turn: { botId: string; threadId: string; selection: ModelSelection; sourceMessageId: string; phoneHeld?: boolean }, to: ModelSelection, resetsAt: number | null, now: number): FailoverRow | { refused: BackupRefusal } | null {");
+  expect(failOver).toBeGreaterThan(0);
+  const failOverEnd = source.indexOf("\n}\n", failOver);
+  const taskCheck = source.indexOf("\n  const task = store.taskByThread(turn.botId, turn.threadId);\n  if (!task) return null;", failOver);
+  const resendCall = source.indexOf("\n  resendFailover(row);", failOver);
+  expect(taskCheck).toBeGreaterThan(failOver);
+  expect(resendCall).toBeGreaterThan(taskCheck);
+  expect(resendCall).toBeLessThan(failOverEnd);
   // QW Q1: acceptBotSend admits through admitDirectSend, which holds the one steer (an ask_user answer shares it)
   const accept = source.indexOf("async function acceptBotSend(");
-  const admit = source.indexOf("return admitDirectSend({ bot, threadId, row, text, replyTo, sendId, origin, unprovenSend, ownerActs: ownerActsFact, ...(phoneCarry ? { phoneCarry } : {}), ...(row.queueOnly ? { queueOnly: true } : {}) });", accept);
+  const admit = source.indexOf("return admitDirectSend({ bot, threadId, row, text, replyTo, sendId, origin, unprovenSend, ownerActs: ownerActsFact, ...(phoneCarry ? { phoneCarry } : {}), ...(row.queueOnly ? { queueOnly: true } : {})", accept); // VENUE-POST appends its postTo pick after this
   const admitter = source.indexOf("function admitDirectSend(");
   const steer = source.indexOf("steerWithQuoteLineage(", admitter);
   expect(accept).toBeGreaterThan(0);
@@ -209,3 +218,5 @@ it("a room member turn resets the engine session before its bundle and never res
   expect(steer).toBeLessThan(source.indexOf("\n}\n", admitter));
   expect(source).toContain("const threadId=requireDirectThreadTarget(store.tasks(botId).map(task=>task.threadId),requested);");
 });
+
+useOutsideStoreFixture();

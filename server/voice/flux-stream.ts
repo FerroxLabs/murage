@@ -1,3 +1,5 @@
+import { classifyFluxRefusal } from "../../shared/flux-refusal.ts";
+import { markBudgetReached, isBudgetReached } from "./voice-routes.ts";
 // The harness's side of Flux streaming transcription (spec C.3). Opens
 // wss://…/v1/audio/transcriptions/stream with the workspace's Flux key as a
 // Bearer header. The key goes in that header and nowhere else.
@@ -52,9 +54,10 @@ function isSecureOrLoopback(url: string): boolean {
   }
 }
 
-export function failureForClose(code: number): TranscriptionFailure {
+export function failureForClose(code: number, reason: unknown = null): TranscriptionFailure {
   if (code === 4401) return "auth";
-  if (code === 4402) return "premium";
+  const refusal = classifyFluxRefusal(code, reason);
+  if (refusal !== "other") return refusal;
   if (code === 4403 || code === 4404) return "unavailable";
   if (code === 4429) return "rate_limit";
   if (code === 4400 || code === 4413) return "format";
@@ -63,11 +66,15 @@ export function failureForClose(code: number): TranscriptionFailure {
 
 export async function openFluxStream(opts: { key: string; query: URLSearchParams; env?: NodeJS.ProcessEnv; handshakeMs?: number; signal?: AbortSignal }): Promise<FluxStream> {
   if (opts.signal?.aborted) throw new FluxStreamRefused(4502, fatal("capability_unavailable", "the call ended"), "aborted");
+  const budget = (status: number, body: unknown) => {
+    if (classifyFluxRefusal(status, body) === "budget") markBudgetReached({ via: "flux", label: "Flux", baseUrl: fluxStreamBase(opts.env).replace(/^ws/, "http"), key: opts.key, model: "flux-voice-stream" });
+  };
   const url = streamUrl(fluxStreamBase(opts.env), opts.query);
   // the Bearer key must never travel in cleartext to a remote host
   if (!isSecureOrLoopback(url)) {
     throw new FluxStreamRefused(4502, fatal("capability_unavailable", "Flux streaming base must be wss://"), "the Flux streaming base must be wss:// (cleartext ws:// is allowed only to a loopback host)");
   }
+  if (isBudgetReached({ via: "flux", label: "Flux", baseUrl: fluxStreamBase(opts.env), key: opts.key, model: "flux-voice-stream" })) throw new FluxStreamRefused(4402, fatal("key_budget_reached", "This Flux key has reached its budget"), "budget");
   const ws = new WebSocket(url, [SUBPROTOCOL], {
     headers: withFluxCallHeaders("voice-stream", { authorization: `Bearer ${opts.key}` }),
     handshakeTimeout: opts.handshakeMs ?? HANDSHAKE_TIMEOUT_MS,
@@ -83,12 +90,13 @@ export async function openFluxStream(opts: { key: string; query: URLSearchParams
     const raw = String(data);
     const message = parseServerMessage(raw);
     if (!message) return; // never forwarded unparsed
-    if (message.type === "error" && message.error.fatal) lastError = message.error;
+    if (message.type === "error" && (message.error.fatal || classifyFluxRefusal(0, message.error) === "budget")) { lastError = message.error; budget(0, message.error); }
     if (!listeners.size) held.push([raw, message]);
     else for (const fn of [...listeners]) fn(raw, message);
+    if (message.type === "error" && classifyFluxRefusal(0, message.error) === "budget") ws.close(1000);
   });
   const closed = new Promise<{ code: number; reason: string; error: StreamError | null }>((resolve) => {
-    ws.on("close", (code, reason) => resolve({ code, reason: String(reason).slice(0, 120), error: lastError }));
+    ws.on("close", (code, reason) => { budget(code, lastError ?? String(reason)); resolve({ code, reason: String(reason).slice(0, 120), error: lastError }); });
   });
   await new Promise<void>((resolve, reject) => {
     const onAbort = () => {
@@ -103,8 +111,20 @@ export async function openFluxStream(opts: { key: string; query: URLSearchParams
     ws.once("unexpected-response", (_req, res) => {
       opts.signal?.removeEventListener("abort", onAbort);
       const code = res.statusCode === 503 ? 4503 : 4000 + (res.statusCode ?? 500);
-      reject(new FluxStreamRefused(code, fatal(code === 4503 ? "service_unavailable" : "capability_unavailable", `Flux answered ${res.statusCode}`), `http ${res.statusCode}`));
-      ws.terminate();
+      let body = "";
+      let finished = false;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        budget(res.statusCode ?? 500, body);
+        const refusal = classifyFluxRefusal(res.statusCode ?? 500, body);
+        reject(new FluxStreamRefused(code, fatal(refusal === "budget" ? "key_budget_reached" : refusal === "premium" ? "premium_locked" : code === 4503 ? "service_unavailable" : "capability_unavailable", `Flux answered ${res.statusCode}`), `http ${res.statusCode}`));
+        ws.terminate();
+      };
+      res.on("data", chunk => { body += String(chunk); if (body.length > 65536) { body = body.slice(0, 65536); finish(); res.destroy(); } });
+      res.once("end", finish);
+      res.once("error", finish);
+      res.setTimeout(opts.handshakeMs ?? HANDSHAKE_TIMEOUT_MS, () => { finish(); res.destroy(); });
     });
     ws.once("close", () => {
       opts.signal?.removeEventListener("abort", onAbort);

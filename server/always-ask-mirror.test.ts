@@ -10,6 +10,7 @@ process.env.HOME = "/home/tester";
 process.env.USERPROFILE = "/home/tester";
 vi.resetModules();
 const { alwaysAskCommand } = await import("./always-ask.ts");
+const { expectProtectedPath } = await import("./testing/marks-doubt-free.ts");
 
 type Row = [cmd: string, rule: string | null];
 
@@ -141,9 +142,31 @@ const ORDINARY: Row[] = [
   ["pnpm exec rimraf coverage", null],
 ];
 
+// MARKS r9 C1: FIX4 cards a destination path with no known project cwd (value-path) on No limits.
+// probe rsync -a --delete dist/ ./public/ -> null with cwd /w; unreadable (value-path) with no cwd.
+// The row runs at cwd /w; the (no cwd) twin asserts the card.
+const R9_NOCWD: Record<string, string> = {
+  "rsync -a --delete dist/ ./public/": "unreadable",
+  "rsync -a --delete build/ ~/project/site/": "unreadable",
+  "rsync -a --delete src/ /tmp/mirror/": "unreadable",
+  "rsync -a --delete-after ./out/ deploy@host:/var/www/": "unreadable",
+};
+// MARKS r9 C1: the cwd does not clear this Windows path. probe robocopy C:\src C:\Users\sean\project /MIR -> unreadable (value-path) at cwd /w and no cwd.
+const R9_NOW: Record<string, string> = {
+  "robocopy C:\\src C:\\Users\\sean\\project /MIR": "unreadable",
+};
+
 describe("always-ask: a mirror that deletes is a recursive delete of its destination", () => {
   for (const [cmd, rule] of [...CATASTROPHIC, ...EXPANDED, ...ORDINARY]) {
     it(cmd, () => {
+      const cwd = cmd in R9_NOCWD || cmd in R9_NOW ? "/w" : undefined;
+      // MARKS r12 re-baseline (MurageMain 11-07 item 1): the doubt-free read names it; strict read and every level still card
+      if ((R9_NOW[cmd] ?? rule) === "protected-path") return expectProtectedPath(cmd, cwd);
+      expect(alwaysAskCommand(cmd, cwd)?.rule ?? null).toBe(R9_NOW[cmd] ?? rule);
+    });
+  }
+  for (const [cmd, rule] of Object.entries(R9_NOCWD)) {
+    it(`${cmd} (no cwd)`, () => {
       expect(alwaysAskCommand(cmd)?.rule ?? null).toBe(rule);
     });
   }

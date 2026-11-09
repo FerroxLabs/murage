@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative as relativePath } from "node:path";
+import { rootsFor, WorkspaceTreeError } from "./data-roots.ts";
 import { z } from "zod";
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { writeFileAtomic } from "./atomic.ts";
@@ -54,13 +55,33 @@ function allowedPath(path: string, ids: readonly string[]): boolean {
   return parts[0] === "workspaces" && ((parts.length === 3 && parts[2] === "SOUL.md") ||
     (parts.length >= 5 && parts[2] === "skills" && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(parts[3])));
 }
-function checkedPath(root: string, relative: string) {
+/** C10 (S5-DATADIR-PATHS r4.1): one commit or recovery keeps ONE workspaces snapshot. A journal path under `workspaces/`
+ * is walked from that root's canonical T (a linked root works), never through the lexical root link. Sync calls only. */
+let active: { root: string; workspaces: string } | undefined;
+function withWorkspacesSnapshot<T>(dataDir: string, root: string, create: boolean, run: () => T): T {
+  let workspaces: string;
+  try { const snapshot = rootsFor(dataDir).rootFor("workspaces", { create }); workspaces = snapshot.canonical; }
+  catch (error) { if (error instanceof WorkspaceTreeError) fail("PACKAGE_IMPORT_RECOVERY_REQUIRED"); throw error; }
+  const previous = active; active = { root, workspaces };
+  try { return run(); } finally { active = previous; }
+}
+function split(root: string, relative: string): { base: string; parts: string[] } {
   const parts = relative.split("/");
+  if (active && root === active.root && parts[0] === "workspaces") return { base: active.workspaces, parts: parts.slice(1) };
+  return { base: root, parts };
+}
+function checkedPath(root: string, relative: string) {
+  const { base, parts } = split(root, relative);
   for (let index = 1; index < parts.length; index++) {
-    const stat = entry(join(root, ...parts.slice(0, index)));
+    const stat = entry(join(base, ...parts.slice(0, index)));
     if (stat && (!stat.isDirectory() || stat.isSymbolicLink())) fail("UNSAFE_PACKAGE_IMPORT_PATH");
   }
-  return join(root, ...parts);
+  return join(base, ...parts);
+}
+/** Segment containment (BUILD-FIX 3): inside or equal, never a string-length test. */
+function sameOrInside(outer: string, inner: string): boolean {
+  const rel = relativePath(outer, inner);
+  return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith("../") && !rel.startsWith("..\\"));
 }
 function read(path: string): Buffer | null {
   const stat = entry(path);
@@ -72,8 +93,9 @@ function replace(root: string, path: string, bytes: Buffer, id: string) {
   const target = checkedPath(root, path), parent = dirname(target);
   // Sync each newly created directory's parent, as file fsync alone cannot
   // make a newly installed workspace directory durable.
-  let current = root;
-  for (const part of path.split("/").slice(0, -1)) {
+  const { base, parts } = split(root, path);
+  let current = base;
+  for (const part of parts.slice(0, -1)) {
     const next = join(current, part);
     if (!entry(next)) { mkdirSync(next, { mode: 0o700 }); syncDirectory(current); }
     current = next;
@@ -112,6 +134,12 @@ function cleanup(root: string, tx: string) {
 /** Synchronous durability boundary. The caller may publish its new in-memory
  * store only after this returns. Existing journal => explicit recovery first. */
 export function commitPackageImportFiles(dataDir: string, replacements: ReadonlyMap<string, Buffer>, expectedHashes: ReadonlyMap<string, string | null>, options: PackageImportTransactionOptions): { id: string; status: "committed" } {
+  options.assertOwned();
+  const { root, tx } = rootPaths(dataDir);
+  if (entry(tx)) fail("PACKAGE_IMPORT_RECOVERY_REQUIRED");
+  return withWorkspacesSnapshot(dataDir, root, true, () => commitPackageImportFilesOnce(dataDir, replacements, expectedHashes, options));
+}
+function commitPackageImportFilesOnce(dataDir: string, replacements: ReadonlyMap<string, Buffer>, expectedHashes: ReadonlyMap<string, string | null>, options: PackageImportTransactionOptions): { id: string; status: "committed" } {
   options.assertOwned();
   const { root, tx, identity } = rootPaths(dataDir);
   if (entry(tx)) fail("PACKAGE_IMPORT_RECOVERY_REQUIRED");
@@ -167,6 +195,14 @@ export function commitPackageImportFiles(dataDir: string, replacements: Readonly
 
 export function recoverPackageImportTransaction(dataDir: string, options: RecoveryOptions): { status: "none" | "rolled-back" | "committed"; id?: string } {
   options.assertOwned();
+  if (!entry(dataDir)) return { status: "none" };
+  const { root, tx } = rootPaths(dataDir);
+  if (!entry(tx)) return { status: "none" };
+  // C10: a journal under a root that is not ok stays as it is: nothing written or rolled back until the root is ok
+  return withWorkspacesSnapshot(dataDir, root, false, () => recoverPackageImportTransactionOnce(dataDir, options));
+}
+function recoverPackageImportTransactionOnce(dataDir: string, options: RecoveryOptions): { status: "none" | "rolled-back" | "committed"; id?: string } {
+  options.assertOwned();
   // No journal exists on first use. Preserve unsafe existing roots for refusal.
   if (!entry(dataDir)) return { status: "none" };
   const { root, tx, identity } = rootPaths(dataDir);
@@ -204,8 +240,9 @@ export function recoverPackageImportTransaction(dataDir: string, options: Recove
     const paths = journal.entries.filter(item => item.path.startsWith(`${base}/${id}/`)).map(item => dirname(item.path));
     for (const relative of paths.sort((a, b) => b.length - a.length)) {
       let current = checkedPath(root, relative);
-      const boundary = join(root, base, id);
-      while (current.length >= boundary.length) {
+      // the rollback boundary derives from the same snapshot, stopping at the canonical bot dir (BUILD-FIX 3)
+      const boundary = dirname(checkedPath(root, `${base}/${id}/x`));
+      while (sameOrInside(boundary, current)) {
         try { rmdirSync(current); syncDirectory(dirname(current)); }
         catch (error) { if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error; }
         if (current === boundary) break;

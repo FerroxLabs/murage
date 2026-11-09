@@ -8,7 +8,7 @@ import { publishOwnerEditedScopedSkill, rollbackScopedSkillRevision } from "./sk
 import { isWorkspaceOwner } from "./human-principals.ts";
 import { readProcedureBundle } from "./procedure-bundles.ts";
 import { backgroundMemoryAudience } from "./memory/policy.ts";
-import { procedureCandidateHash, validateProcedureEvaluationReceipt, type ProcedureEvaluationReceipt, type ProcedureReviewHost, type ProcedureReviewSnapshot, type ProcedureReviewTarget } from "./memory/procedure-review.ts";
+import { assertProcedurePublicationCurrent, procedureCandidateHash, validateProcedureEvaluationReceipt, type ProcedureEvaluationReceipt, type ProcedureReviewHost, type ProcedureReviewSnapshot, type ProcedureReviewTarget } from "./memory/procedure-review.ts";
 import { routineInstructionRevision, type Routine, type RoutineInstructionPromotion, type RoutineManager } from "./routines.ts";
 import type { Store } from "./store.ts";
 
@@ -228,6 +228,7 @@ export function createProcedureReviewHost(options: ProcedureHostOptions) {
     },
     publish(snapshot, input) {
       assertMemoryGate(database(), "publish-procedure"); // the callers gate first; this is the last look before a file changes
+      assertProcedurePublicationCurrent(snapshot, host);
       const receipt = validateProcedureEvaluationReceipt(snapshot, input);
       if (receipt.decision !== "accepted" || !host.canPublish(snapshot)) throw new Error("PROCEDURE_PUBLICATION_REVOKED");
       const context = audience(snapshot.target.ownerId, snapshot.target.threadId)!;
@@ -247,6 +248,7 @@ export function createProcedureReviewHost(options: ProcedureHostOptions) {
     publishEvaluated:(snapshot,receipt)=>host.publish!(snapshot,receipt),
     publishEdited:(snapshot,text,receiptId)=>{
       assertMemoryGate(database(), "publish-procedure");
+      assertProcedurePublicationCurrent(snapshot, host);
       const target=snapshot.target;
       if(!host.canPublish(snapshot))throw Error("PROCEDURE_AUDIENCE_REVOKED");
       if(target.kind==="skill"){const context=audience(target.ownerId,target.threadId);if(!context)throw Error("PROCEDURE_TARGET_STALE");publishOwnerEditedScopedSkill(snapshot,text,receiptId,{audienceKey:context.audienceKey,allowedScopeIds:context.scopeIds});return;}

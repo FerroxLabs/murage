@@ -16,16 +16,17 @@ import { CALL_ENDPOINT_LONG_MS, CALL_ENDPOINT_MS, groupBusyStep } from "@/lib/ca
 import { dictationDisabledNote, isDictationDisabled } from "@/lib/dictation-notes";
 import { OwnerLine } from "@/lib/group-call";
 import { newSendId } from "@/lib/send-id";
+import { holdCallSession, onCallSpeechReply, type CallSpeechReply } from "@/lib/bot-call-session";
 import { blockStamp, groupTurnTiming, RoomReplyVoice, type ReplyVoice } from "@/lib/group-call-stream";
 import { cueMemberFor, routeSpokenGroupMessage } from "@/lib/group-call";
-import { HOST_OFF_FOR_CALL, hostTurn, plainFailure, warmHost, type CallHandDown } from "@/lib/voice-host";
-import { cancelWaitingHandDowns, expireFloorLine, FLOOR_MAX_MS, handDownMessage, interruptHandDowns, OwnerFloor, RoomHostMemory, roomHostMember, spokenToMember } from "@/lib/room-host";
+import { HOST_OFF_FOR_CALL, hostTurn, isBudgetFailure, plainFailure, warmHost, type CallHandDown } from "@/lib/voice-host";
+import { cancelWaitingHandDowns, expireFloorLine, FLOOR_MAX_MS, handDownMessage, interruptHandDowns, OwnerFloor, RoomHostMemory, roomHostMember, spokenToMember, type RoomRecord } from "@/lib/room-host";
 import { ACK_KEYS, AckGate, cueMayPlay, phaseAfterCue, roomOtherSpeech, type AckKey } from "@/lib/call-ack";
 import { languageCode, t } from "@/lib/i18n";
 import { CueCache } from "@/lib/tts/cue-cache";
 import { unheardMessages } from "@/lib/scrollback";
 import { normalizeState } from "@/lib/mascot";
-import { speaker } from "@/lib/tts";
+import { speaker, type CallReplyHeard } from "@/lib/tts";
 import { useSpeech } from "@/lib/tts/useSpeech";
 import { usePushToTalk } from "@/lib/push-to-talk";
 import { olderOpenCards, useStore, useStreaming, type Bot, type Group, type Message, type OptionCardData } from "@/state/store";
@@ -42,7 +43,7 @@ import { followingRequest, nextSelection, queueCommand, reachesPastOneRequest, r
 import { holdForPlainWords, usePlainApprovalSettled } from "@/lib/plain-approval";
 
 /** Pre-synthesized acknowledgement clips, kept across calls (see call-ack.ts). */
-const cueCache = new CueCache((text, o) => speaker.fetchClip(text, o));
+const cueCache = new CueCache((text, o) => speaker.fetchClip(text, { ...o, call: true }));
 
 const YES = /^(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it|allow|approve|approved|fine|please do)\b/i;
 const NO = /^(no|nope|don'?t|do not|stop|deny|denied|cancel|never|skip it)\b/i;
@@ -168,6 +169,7 @@ export function GroupCall({
   const askedQuestion = useRef<{ requestId: string; member?: Bot } | null>(null);
   const phaseRef = useRef<Phase>(initialPhase);
   const alive = useRef(true);
+  const budgetStopped = useRef(false);
   const sayGeneration = useRef(0);
   const queueGeneration = useRef(0);
   const queue = useRef<Promise<void>>(Promise.resolve());
@@ -185,12 +187,12 @@ export function GroupCall({
   const ownerLine = useRef<OwnerLine | null>(null);
   if (!ownerLine.current) ownerLine.current = new OwnerLine((said) => sendSpokenRef.current(said));
   // The member's reply spoken as it is written (src/lib/group-call-stream.ts).
-  const openVoiceRef = useRef<(member?: Bot) => ReplyVoice>(() => ({ push() {}, end() {} }));
+  const playReplyRef = useRef<(member: Bot, reply: CallSpeechReply) => void>(() => {});
   const roomVoice = useRef<RoomReplyVoice<Bot> | null>(null);
   /** Stamps for the `[call-diag] group turn timing` line: when the owner's
    *  line was sent, and when the member now writing first wrote text. */
   const turnStamps = useRef<{ sentAt: number; block: { memberId: string; at: number } | null } | null>(null);
-  if (!roomVoice.current) roomVoice.current = new RoomReplyVoice<Bot>((member) => openVoiceRef.current(member));
+  if (!roomVoice.current) roomVoice.current = new RoomReplyVoice<Bot>((member, reply) => playReplyRef.current(member, reply));
 
   const move = useCallback((next: Phase) => {
     phaseRef.current = next;
@@ -201,8 +203,30 @@ export function GroupCall({
     void window.muragebox?.speechStop();
   }, []);
 
+  const stopForBudget = useCallback(() => {
+    if (budgetStopped.current || !alive.current || currentCall() !== group.id) return;
+    budgetStopped.current = true;
+    dispatch({ type: "interruptGroup", groupId: group.id });
+    hostDisabled.current = true;
+    ackGate.current?.cancel();
+    hostAbort.current?.abort();
+    queueGeneration.current += 1;
+    sayGeneration.current += 1;
+    queuedJobs.current.clear();
+    listenWhenDrained.current = false;
+    ownerLine.current!.drop();
+    floor.current.release();
+    hush();
+    speaker.stop();
+    move("speaking");
+    endCall(group.id, "budget");
+    // If the closing line cannot be spoken, the same words show in the app's banner (the store's, so it outlives the call view that
+    // endCall just closed), and the person still reads why the call ended.
+    void speaker.speak(t("call.budgetStop"), { budgetClosing: true }).catch(() => dispatch({ type: "error", message: t("call.budgetStop") }));
+  }, [dispatch, group.id, hush, move]);
+
   const listen = useCallback(() => {
-    if (!alive.current || currentCall() !== group.id) return;
+    if (budgetStopped.current || !alive.current || currentCall() !== group.id) return;
     move("listening");
     setSpeakingMemberId(null);
     setHeard("");
@@ -228,19 +252,19 @@ export function GroupCall({
 
   const say = useCallback(
     async (text: string, member?: Bot) => {
-      if (!alive.current || currentCall() !== group.id) return false;
+      if (budgetStopped.current || !alive.current || currentCall() !== group.id) return false;
       const mine = ++sayGeneration.current;
       move("speaking");
       setSpeakingMemberId(member?.id ?? null);
       hush();
-      await speaker.speak(text, { botId: member?.id, voiceId: member?.voice });
+      await speaker.speak(text, { botId: member?.id, voiceId: member?.voice, call: true, onBudget: stopForBudget });
       return alive.current && currentCall() === group.id && sayGeneration.current === mine;
     },
-    [group.id, hush, move],
+    [group.id, hush, move, stopForBudget],
   );
 
   const enqueueJob = useCallback(
-    (run: () => Promise<unknown>, answerAfter = false) => {
+    (run: () => Promise<unknown>, answerAfter = false, discarded?: () => void) => {
       const generation = queueGeneration.current;
       const jobId = ++nextJobId.current;
       queuedJobs.current.add(jobId);
@@ -248,9 +272,10 @@ export function GroupCall({
       queue.current = queue.current
         .catch(() => {})
         .then(async () => {
-          if (generation !== queueGeneration.current) return;
+          // `discarded`: the job will never run (an interrupt or hang-up cleared the queue first)
+          if (generation !== queueGeneration.current) return void discarded?.();
           await floor.current.wait();
-          if (generation !== queueGeneration.current) return;
+          if (generation !== queueGeneration.current) return void discarded?.();
           await run();
         })
         .finally(() => {
@@ -285,12 +310,12 @@ export function GroupCall({
       const firstClipAt = Date.now();
       let firstChars = 0;
       enqueueJob(async () => {
-        if (!alive.current || currentCall() !== group.id) return;
+        if (budgetStopped.current || !alive.current || currentCall() !== group.id) return;
         sayGeneration.current += 1;
         move("speaking");
         setSpeakingMemberId(member?.id ?? null);
         hush();
-        live = speaker.stream({ botId: member?.id, voiceId: member?.voice });
+        live = speaker.stream({ botId: member?.id, voiceId: member?.voice, call: true, onBudget: stopForBudget });
         for (const sentence of buffered.splice(0)) live.push(sentence);
         if (finished) live.end();
         await live.done;
@@ -311,10 +336,29 @@ export function GroupCall({
         },
       };
     },
-    [enqueueJob, group.id, hush, move],
+    [enqueueJob, group.id, hush, move, stopForBudget],
   );
 
-  openVoiceRef.current = openVoice;
+  playReplyRef.current = (member, reply) => {
+    enqueueJob(async () => {
+      if (!alive.current || currentCall() !== group.id || reply.threadId !== threadRef.current) return;
+      move("speaking"); setSpeakingMemberId(member.id); hush();
+      await speaker.playCallReply(reply, { botId: member.id, messageId: reply.messageId, call: true, onBudget: stopForBudget });
+    });
+  };
+  useEffect(() => {
+    holdCallSession(group.id, threadRef.current);
+    return onCallSpeechReply(reply => {
+      if (!alive.current || currentCall() !== group.id) return;
+      if (!reply) {
+        queueGeneration.current += 1; queue.current = Promise.resolve(); queuedJobs.current.clear(); speaker.stop();
+        return;
+      }
+      if (reply.threadId !== threadRef.current) return;
+      const member = membersRef.current.find(candidate => candidate.id === reply.botId);
+      roomVoice.current!.ready(member, reply);
+    });
+  }, [group.id]);
 
   const interruptSpeech = useCallback(() => {
     const wasBusy = busyRef.current;
@@ -400,7 +444,7 @@ export function GroupCall({
     };
     if (cached) play(cached);
     else
-      void speaker.fetchClip(t(key), { botId: member.id, voiceId }).then((clip) => {
+      void speaker.fetchClip(t(key), { botId: member.id, voiceId, call: true, onBudget: stopForBudget }).then((clip) => {
         cueCache.put({ botId: member.id, voiceId, locale: languageCode(), key }, clip);
         play(clip);
       }, () => undefined);
@@ -409,7 +453,7 @@ export function GroupCall({
   /** The owner's line to the room engines, as before the voice host. */
   const sendToRoom = useCallback(
     (text: string) => {
-      if (!alive.current || currentCall() !== group.id) return;
+      if (budgetStopped.current || !alive.current || currentCall() !== group.id) return;
       allowBargeIn.current = false;
       move(busyRef.current ? "working" : "sending");
       hush();
@@ -434,7 +478,7 @@ export function GroupCall({
    *  words to the room engines as before. */
   const hostReply = useCallback(
     async (routedText: string, member: Bot, ownerWords: string) => {
-      if (!alive.current || currentCall() !== group.id) return;
+      if (budgetStopped.current || !alive.current || currentCall() !== group.id) return;
       allowBargeIn.current = false;
       move("sending");
       hush();
@@ -452,7 +496,15 @@ export function GroupCall({
       const memory = hostMemory.current;
       const owner = spokenToMember(routedText, member);
       const live = () => alive.current && currentCall() === group.id && ackTurn.current === turnId;
-      const turn = { voice: null as ReplyVoice | null, spoken: "", handed: null as { id: string; request: string; sendId: string } | null, failed: false };
+      // heard: what the owner heard of the server audio when it did not play to the end (null: all of it, or not yet);
+      // recorded: the exchange memory.record kept, which heardReply corrects
+      const turn = { voice: null as ReplyVoice | null, spoken: "", handed: null as { id: string; request: string; sendId: string } | null, failed: false, heard: null as string | null, recorded: null as RoomRecord | null };
+      // once per turn: the room remembers what the owner heard, not the reply as sent (record and playback in either order)
+      const settleHeard = (text: string) => {
+        if (turn.heard !== null) return;
+        turn.heard = text;
+        if (turn.recorded) memory.heardReply(member.id, turn.recorded, text);
+      };
       await hostTurn(
         member.id,
         {
@@ -465,15 +517,21 @@ export function GroupCall({
         },
         (event) => {
           if (!live()) return;
+          if (budgetStopped.current) return;
+          if (event.type === "error" && event.reason === "budget") { gate.cancel(); stopForBudget(); return; }
           if (event.type === "sentence") {
             replyStarted.current = true;
             gate.realPiece();
-            if (!turn.voice) {
-              if (turnStamps.current) turnStamps.current.block = { memberId: member.id, at: Date.now() };
-              turn.voice = openVoice(member, true);
-            }
             turn.spoken += `${event.text} `;
-            turn.voice.push(event.text);
+          } else if (event.type === "audio" && event.threadId === threadRef.current) {
+            enqueueJob(async () => {
+              if (!live() || controller.signal.aborted) return settleHeard("");
+              move("speaking"); setSpeakingMemberId(member.id); hush();
+              const heard: CallReplyHeard = { heard: [], playingAt: null, ended: 0, cut: false };
+              if (await speaker.playCallReply(event, { botId: member.id, call: true, onBudget: stopForBudget }, controller.signal, heard)) return;
+              // cut off or failed part-way
+              settleHeard(heard.heard.join(" "));
+            }, false, () => settleHeard(""));
           } else if (event.type === "lookup") {
             gate.slow("lookup");
           } else if (event.type === "hand_down" && !turn.handed) {
@@ -482,7 +540,7 @@ export function GroupCall({
             // decides it. No owner words behind it, nothing is sent.
             const message = handDownMessage(ownerWords, event.request);
             if (!message) return;
-            const handed = { id: crypto.randomUUID(), request: message.text, sendId: newSendId() };
+            const handed = { id: event.id, request: message.text, sendId: newSendId() };
             turn.handed = handed;
             handDownWork.current = { seen: false, done: false };
             const record: CallHandDown = { ...handed, at: Date.now(), state: "sending" };
@@ -499,7 +557,9 @@ export function GroupCall({
                 memory.updateHandDown(member.id, handed.id, { state: "accepted", queued: receipt.queued, ...(receipt.requestId ? { requestId: receipt.requestId } : {}) });
               },
               onError: (error: unknown) => {
-                const reason = plainFailure(error instanceof Error ? error.message : String(error));
+                const details = error instanceof Error ? error.message : String(error);
+                if (isBudgetFailure((error as { providerError?: unknown })?.providerError)) { stopForBudget(); return true; }
+                const reason = plainFailure(details);
                 memory.updateHandDown(member.id, handed.id, { state: "refused", reason });
                 if (alive.current && currentCall() === group.id) enqueueSpeech(`I couldn't start that. ${reason}`, member, true);
                 return true;
@@ -520,7 +580,7 @@ export function GroupCall({
       );
       if (hostAbort.current === controller) hostAbort.current = null;
       gate.cancel();
-      if (!live()) return;
+      if (budgetStopped.current || !live()) return;
       if (turn.failed && !turn.handed && !turn.spoken.trim()) return void sendToRoom(routedText);
       if (turn.handed && !turn.spoken.trim()) {
         turn.voice = openVoice(member, true);
@@ -529,19 +589,21 @@ export function GroupCall({
       }
       turn.voice?.end();
       if (turn.failed && !turn.handed) enqueueSpeech("Sorry, I lost my train of thought.", member, true);
-      memory.record(member, owner, { role: "host", text: turn.spoken.trim(), ...(turn.handed ? { handDown: turn.handed } : {}) });
+      const recorded = memory.record(member, owner, { role: "host", text: turn.spoken.trim(), ...(turn.handed ? { handDown: turn.handed } : {}) });
+      turn.recorded = recorded;
+      if (turn.heard !== null) memory.heardReply(member.id, recorded, turn.heard);
       // the member's engine is on it: the owner may talk to the room meanwhile
       if (turn.handed && !handDownWork.current.done) allowBargeIn.current = true;
       if (!turn.voice) scheduleListen(true);
     },
-    [cueRoom, dispatch, enqueueSpeech, group.id, hush, move, openVoice, scheduleListen, sendToRoom],
+    [cueRoom, dispatch, enqueueJob, enqueueSpeech, group.id, hush, move, openVoice, scheduleListen, sendToRoom, stopForBudget],
   );
 
   /** Send what the owner said, whole: to one member's voice, or to the room. */
   const sendSpoken = useCallback(
     (said: string) => {
       try {
-        if (!alive.current || currentCall() !== group.id) return;
+        if (budgetStopped.current || !alive.current || currentCall() !== group.id) return;
         const routed = routeSpokenGroupMessage(said, membersRef.current);
         if (defaultResponderRef.current.kind === "mentions" && !routed.addressed) {
           listen();
@@ -732,7 +794,8 @@ export function GroupCall({
       sendSpokenRef.current(whole);
     });
     const offEnd = bridge.onSpeechEnd(({ code, reason }) => {
-      if (!alive.current || currentCall() !== group.id) return;
+      if (reason === "budget") { stopForBudget(); return; }
+      if (budgetStopped.current || !alive.current || currentCall() !== group.id) return;
       if (code === 2) {
         setNote("Calls need macOS dictation, which isn't available here yet.");
         return;
@@ -776,7 +839,7 @@ export function GroupCall({
     const member = members.find((candidate) => candidate.id === group.busyBotId);
     const stamps = turnStamps.current;
     if (stamps) blockStamp(stamps, member?.id, writing, Date.now());
-    roomVoice.current!.update(member, writing);
+    // Raw writing is display and timing data only. Speech waits for a sealed server identity.
   }, [group.busyBotId, group.threadId, members, writing]);
 
   useEffect(() => {
@@ -788,6 +851,10 @@ export function GroupCall({
     // callbar-rereview2.md G1). The call is already collapsed to the bar
     // for exactly this case.
     if (group.threadId !== threadRef.current) return;
+    if (started.current && unheardMessages(messages, spokenIds.current).some(message => message.kind === "activity" && message.tool?.ok === false && isBudgetFailure(message.tool.providerError))) {
+      stopForBudget();
+      return;
+    }
     let resumeAfterRoutine = false;
     if (askedApproval.current && approval?.requestId !== askedApproval.current.requestId) {
       resumeAfterRoutine = askedApproval.current.routine && askedApproval.current.submitted;
@@ -871,11 +938,7 @@ export function GroupCall({
     const replies = fresh.filter(
       (message) => message.role === "bot" && message.kind === "text" && !message.widget && message.text?.trim(),
     );
-    for (const reply of replies) {
-      const member = members.find((candidate) => candidate.id === reply.from?.botId);
-      // What streamed in has been said already; only the rest goes now.
-      roomVoice.current!.settle(member, reply.text!);
-    }
+    // Engine replies arrive for audio through the authenticated call channel.
     if (!replies.length) {
       const chip = [...fresh].reverse().find((message) => message.kind === "activity" && message.tool?.spoken);
       if (chip?.tool?.spoken) {

@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Isolation-all round 7: a bot's engine isolation FAILS CLOSED. When the bot's own engine folder cannot be established
@@ -221,7 +223,7 @@ describe("Antigravity: a scope that cannot be built rejects the turn, never runs
     const instance = await AntigravityDriver.create({ instanceId: "agy-iso7", displayName: "Antigravity", enabled: true,
       environment: { HOME: home }, config: { cli: FAKE_AGY, fullAuto: true } });
     try {
-      const error = await instance.adapter.sendTurn({ threadId: "agy-iso7", text: "hi" }).then(() => null, (e: unknown) => e);
+      const error = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "agy-iso7", text: "hi" }).then(() => null, (e: unknown) => e);
       expect(error).toBeInstanceOf(ScopeUnavailableError);
       // a structured code, rendered in the owner's language by the chat; the English line is only for logs
       expect(error).toMatchObject({ code: "unavailable", engine: "Antigravity", busy: false });
@@ -231,3 +233,6 @@ describe("Antigravity: a scope that cannot be built rejects the turn, never runs
     }
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "7g-r17-flux-burn",
+  "date": "2026-11-07",
+  "base": "78fcb48bd",
+  "scope": "FLUX-BURN-COPY-1018 es hourly card, MurageSite REPLACE (Spain Spanish pair with the monthly sibling)",
+  "strings": {
+    "es:gatewayBusy.hourly.title": {
+      "text": "Has llegado a tu límite por hora de Flux. Tu mensaje se conserva.",
+      "en": "You've reached your Flux hourly limit. Your message is kept.",
+      "verdict": "pass",
+      "note": "Matches the file exactly, faithfully conveys the English in natural Spain Spanish, and follows the siblings’ informal voice, retention wording and house rules."
+    },
+    "es:gatewayBusy.hourly.until": {
+      "text": "Has llegado a tu límite por hora de Flux. Se restablece hacia las {time}. Tu mensaje se conserva.",
+      "en": "You've reached your Flux hourly limit. It resets at about {time}. Your message is kept.",
+      "verdict": "pass",
+      "note": "Matches the file exactly, naturally places {time} after «hacia las» to convey the approximate reset time, and follows the English, sibling voice, retention wording and house rules."
+    }
+  },
+  "files": {}
+}

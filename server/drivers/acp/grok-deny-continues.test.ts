@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // GROK-812MIN-STOPPED (10-29): a Grok card that went unanswered for 15 minutes was denied with a bare reject_once,
@@ -47,7 +49,7 @@ async function grokTurn(threadId: string, rule: "1" | "always") {
       FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized", FAKE_ACP_MODE: "permission", FAKE_ACP_DUMP: dump,
       FAKE_ACP_PERMISSION_COMMAND: "printf 'tick' >> notes/log.md", FAKE_ACP_BARE_REJECT_CANCELS: rule } });
   recorder = recordEvents(instance.adapter);
-  const { turnId } = await instance.adapter.sendTurn({ threadId, text: "edit the picture" });
+  const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "edit the picture" });
   const opened = await recorder.until((e) => e.type === "request.opened", 15_000) as { requestId: string };
   const decision = () => (JSON.parse(readFileSync(dump, "utf8")) as { decision?: { outcome?: unknown; _meta?: { followup_message?: string } } }).decision;
   return { adapter: instance.adapter, turnId, requestId: opened.requestId, decision };
@@ -97,3 +99,6 @@ describe("a Grok deny never ends the turn as the owner's Stop", () => {
     expect(done.deniedBy).toBeUndefined();
   }, 30_000);
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

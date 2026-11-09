@@ -1,3 +1,4 @@
+import { probeFolder } from "./probe-folder.ts";
 // BYO Linux VPS computer. The agent process stays local; Docker's own SSH
 // transport reaches the user's daemon and the official Cua MCP server stays
 // inside one managed container per bot.
@@ -236,6 +237,7 @@ export function defaultRunner(args: string[], options: VpsCommandOptions = {}): 
     // spawnCli gives docker its own process group, so a failed command can
     // stop docker AND the ssh it launched, not only docker (upstream #1772).
     const child = spawnCli("docker", args, {
+      cwd: probeFolder(),
       shell: false,
       env: ownServerChildEnv({ ...process.env, PATH: augmentedPath() }),
       stdio: ["pipe", "pipe", "pipe"],

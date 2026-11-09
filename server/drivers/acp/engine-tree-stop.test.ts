@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -127,7 +129,7 @@ describe.skipIf(process.platform === "win32")("ACP Stop ends the whole tree behi
     agents: { command: "sleep", args: ["300"], env: { MURAGE_COMMS_TOKEN: `turn-${randomUUID()}` } },
   });
   const turn = async (input: Omit<SendTurnInput, "threadId">) => {
-    const { turnId } = await instance!.adapter.sendTurn({ threadId: "t-tree", ...input });
+    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-tree", ...input });
     return (await recorder.until((event) => event.type === "turn.completed" && event.turnId === turnId)) as Extract<RuntimeEvent, { type: "turn.completed" }>;
   };
   /** Every probe so far asked about an engine CLI, and none about a launcher. */
@@ -141,7 +143,7 @@ describe.skipIf(process.platform === "win32")("ACP Stop ends the whole tree behi
   };
   /** Stop mid-turn, then: the launcher, the CLI and every MCP child it ran are gone. */
   const stopMidTurnEndsTree = async (input: Omit<SendTurnInput, "threadId" | "text">) => {
-    const { turnId } = await instance!.adapter.sendTurn({ threadId: "t-tree", ...input, text: "go __fixture_cancel_ack__" });
+    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-tree", ...input, text: "go __fixture_cancel_ack__" });
     await recorder.until((event) => event.type === "content.delta" && event.turnId === turnId);
     const tree = [...launched().entries()].flat().concat(mcpChildren());
     expect(tree.some((pid) => alive(pid))).toBe(true);
@@ -209,3 +211,6 @@ describe.skipIf(process.platform === "win32")("ACP Stop ends the whole tree behi
     for (const [launcherPid, cliPid] of launched()) expect(launcherPid).not.toBe(cliPid);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

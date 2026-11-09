@@ -1,9 +1,11 @@
+import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
+import { resetDataRootsForTest } from "./data-roots.ts";
 import { closeDatabase, database } from "./database.ts";
 import { Store } from "./store.ts";
 import { teamIdFor } from "./team-identities.ts";
@@ -27,7 +29,7 @@ import { roomRequest } from "./room-requests.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); resetDataRootsForTest(); });
 function fixture() {
   const store = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
   const make = (name: string, section: string) => { const bot = store.createBot(); store.patchBot(bot.id, { name, section }); return bot; };
@@ -373,3 +375,5 @@ it("a shared lead's plan is never matched against a home-sourced card's title", 
   const hidden = plan("CANARY_TITLE_h1");
   expect(JSON.stringify(hidden)).not.toContain("already has");
 });
+
+useOutsideStoreFixture();

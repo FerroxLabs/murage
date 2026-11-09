@@ -15,6 +15,12 @@ export function sessionKeyOf(threadId: string, instanceId: string, cursor: strin
   return { threadId, driverInstance: instanceId, nativeSession: n === 1 ? cursor : `${cursor}#${n}` };
 }
 
+/** A turn footprint's resume cursor: the instance, the memory key's id formed by sessionKeyOf above (the incarnation-keyed id), and the stored
+ * incarnation (0 when none is stored). The turn, the warmer and its test seam all form the cursor here. */
+export function resumeCursorOf(threadId: string, instanceId: string, cursor: string, incarnation?: number): { instanceId: string; nativeSession: string; incarnation: number } {
+  return { instanceId, nativeSession: sessionKeyOf(threadId, instanceId, cursor, incarnation).nativeSession, incarnation: incarnation ?? 0 };
+}
+
 /** Takes the next incarnation of a native id now (the ensureSessionNo shape): max plus one; for an id never allocated, 2 when a session row
  * from before 1.0.3 holds the raw id (it counts as n = 1), else 1. Run it in the transaction that writes the fresh session's row. */
 export function allocateIncarnation(tx: DatabaseSync, threadId: string, instanceId: string, nativeId: string): number {

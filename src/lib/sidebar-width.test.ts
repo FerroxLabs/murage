@@ -48,4 +48,12 @@ describe("sidebar width", () => {
     expect(source).toMatch(/role="separator"[\s\S]{0,200}aria-label="Resize sidebar"[\s\S]{0,400}tabIndex=\{0\}/);
     expect(source).toMatch(/onKeyDown=\{\(event\) => \{\s*if \(event\.key !== "ArrowLeft" && event\.key !== "ArrowRight"\) return;/);
   });
+  it("a cancelled drag puts the announced width back, and arrow keys mid-drag step from the dragged width", () => {
+    const source = readFileSync(new URL("../components/Sidebar.tsx", import.meta.url), "utf8");
+    const cancel = source.slice(source.indexOf("onPointerCancel="), source.indexOf("onDoubleClick="));
+    expect(cancel).toContain("keepWidth(sidebarWidth);");
+    expect(cancel).toContain('event.currentTarget.setAttribute("aria-valuenow", String(shownWidth));');
+    const keys = source.slice(source.indexOf('if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;'));
+    expect(keys.slice(0, 400)).toContain("(resizing && widthRef.current !== null ? widthRef.current : shownWidth) + (");
+  });
 });

@@ -190,7 +190,7 @@ describe("StreamMic", () => {
   it("goes to batch for the call on a plan refusal, adopting only a turn in flight", async () => {
     const { uplink, mic } = await setup();
     const adopt = vi.spyOn(mic as never as { adoptUtterance: () => void }, "adoptUtterance");
-    uplink().drop(4402);
+    uplink().drop(4402, { code: "premium_locked", retry_after_ms: null });
     expect(mic.transport()).toBe("batch");
     expect(adopt).not.toHaveBeenCalled();
   });
@@ -1613,4 +1613,27 @@ describe("StreamMic and the dropped-turn rules", () => {
     source.push(0.2, 10);
     expect(lines[0]).toMatchObject({ text: "…", partial: true });
   });
+});
+
+for (const code of ["key_budget_reached", "budget_exceeded"]) it(`budget close ${code} ends without reconnect or batch`, async () => {
+  const fetcher = vi.fn();
+  vi.stubGlobal("fetch", fetcher);
+  const { mic, source, uplink, uplinks, ends } = await setup();
+  source.push(0.1, 5);
+  uplink().drop(4402, { code, retry_after_ms: null });
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(ends).toEqual([{ code: 1, reason: "budget" }]);
+  expect(uplinks).toHaveLength(1);
+  expect(fetcher).not.toHaveBeenCalled();
+  expect(source.opened).toBe(false);
+  mic.close();
+  vi.unstubAllGlobals();
+});
+it("an in-band budget frame stops before the socket close", async () => {
+  const { mic, uplink, ends, uplinks } = await setup();
+  uplink().emit({ type: "error", error: { code: "key_budget_reached", type: "api_error", message: "spent", fatal: true, close_code: 4402, retry_after_ms: null } });
+  expect(ends).toEqual([{ code: 1, reason: "budget" }]);
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(uplinks).toHaveLength(1);
+  mic.close();
 });

@@ -182,7 +182,7 @@ describe("the room's voice host is stopped with the call (group-voice-host-plan.
     expect(source).toMatch(/return \(\) => \{\s*alive\.current = false;[\s\S]*?hostAbort\.current\?\.abort\(\);[\s\S]*?floor\.current\.release\(\);/);
   });
   it("every room speech job waits for the owner's line", () => {
-    expect(source).toMatch(/if \(generation !== queueGeneration\.current\) return;\s*await floor\.current\.wait\(\);\s*if \(generation !== queueGeneration\.current\) return;\s*await run\(\);/);
+    expect(source).toMatch(/if \(generation !== queueGeneration\.current\) return void discarded\?\.\(\);\s*await floor\.current\.wait\(\);\s*if \(generation !== queueGeneration\.current\) return void discarded\?\.\(\);\s*await run\(\);/);
   });
   it("the voice host setting is read per turn, not once at mount", () => {
     expect(source).not.toMatch(/const hostOn = useRef\(Boolean\(state\.config/);
@@ -258,5 +258,62 @@ describe("a spoken yes in a room call goes through fresh authentication (SEC-006
     expect(spoken).toMatch(/onError: \(error: string, code\?: FreshAuthCode\)/);
     expect(spoken).toMatch(/freshAuthSpoken\(code\)/);
     expect(spoken).toMatch(/pending\.submitted = false/);
+  });
+});
+
+it("a budget stop prevents room fallback and drains queued speech before the closing line", () => {
+  const start = source.indexOf("const stopForBudget = useCallback");
+  const stop = source.slice(start, source.indexOf("const listen = useCallback", start));
+  expect(stop).toContain("budgetStopped.current = true;");
+  expect(stop).toContain("queueGeneration.current += 1;");
+  expect(stop).toContain("hostAbort.current?.abort()");
+  expect(stop).toContain("speaker.stop()");
+  expect(stop).toContain("budgetClosing: true");
+  expect(stop).toContain('endCall(group.id, "budget")');
+  expect(source).toContain('event.reason === "budget"');
+  expect(source).toContain("if (budgetStopped.current || !live()) return;");
+});
+
+describe("room host audio settles what was heard even when its job never runs (D24-CALLHOST-RED)", () => {
+  // the real enqueueJob from GroupCallView.tsx, run with plain refs
+  async function queueWith() {
+    const ts = (await import("typescript")).default;
+    const start = source.indexOf("const enqueueJob = useCallback(");
+    const end = source.indexOf("const enqueueSpeech = useCallback(", start);
+    const code = ts.transpileModule(source.slice(start, end) + "return enqueueJob;", { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+    const ref = <T,>(current: T) => ({ current });
+    let open!: () => void;
+    const floorOpen = new Promise<void>((resolve) => { open = resolve; });
+    const context = { useCallback: (fn: unknown) => fn, queueGeneration: ref(0), nextJobId: ref(0), queuedJobs: ref(new Set<number>()), listenWhenDrained: ref(false), queue: ref(Promise.resolve() as Promise<unknown>), floor: ref({ wait: () => floorOpen }), setSpeakingMemberId: () => {}, scheduleListen: () => {} };
+    const enqueueJob = new Function(...Object.keys(context), code)(...Object.values(context)) as (run: () => Promise<unknown>, answerAfter?: boolean, discarded?: () => void) => void;
+    return { enqueueJob, context, open };
+  }
+  it("an interrupt while the job waits for the floor settles it as discarded, and it never runs", async () => {
+    const { enqueueJob, context, open } = await queueWith();
+    const ran: string[] = [];
+    enqueueJob(async () => { ran.push("run"); }, false, () => ran.push("discarded"));
+    await Promise.resolve();
+    context.queueGeneration.current += 1;
+    open();
+    await context.queue.current;
+    expect(ran).toEqual(["discarded"]);
+  });
+  it("an interrupt before the job's turn settles it as discarded too; a job left alone runs and is not discarded", async () => {
+    const first = await queueWith();
+    const ran: string[] = [];
+    first.enqueueJob(async () => { ran.push("kept"); }, false, () => ran.push("kept discarded"));
+    first.open();
+    await first.context.queue.current;
+    const second = await queueWith();
+    second.enqueueJob(async () => { ran.push("run"); }, false, () => ran.push("discarded"));
+    second.context.queueGeneration.current += 1;
+    second.open();
+    await second.context.queue.current;
+    expect(ran).toEqual(["kept", "discarded"]);
+  });
+  it("the room host audio job passes its discard settlement, and the turn records before reconciling", () => {
+    expect(source).toMatch(/\}, false, \(\) => settleHeard\(""\)\);/);
+    expect(source).toMatch(/if \(!live\(\) \|\| controller\.signal\.aborted\) return settleHeard\(""\);/);
+    expect(source).toMatch(/turn\.recorded = recorded;\n\s+if \(turn\.heard !== null\) memory\.heardReply\(member\.id, recorded, turn\.heard\);/);
   });
 });

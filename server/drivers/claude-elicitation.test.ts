@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // MCP elicitation on the Claude engine (MCP-ELICITATION-109). Claude Code
 // forwards a tool server's `elicitation/create` to the host as control_request
 // `elicitation` and waits for the host's control_response with no bound of its
@@ -80,7 +82,7 @@ describe("Claude engine: MCP elicitation becomes the owner's question card", () 
   it("shows a form elicitation as a question card, and the owner's accept goes back with typed content", async () => {
     process.env.FAKE_CLAUDE_ELICIT = JSON.stringify([PRICE_CONFIRM]);
     await start();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-accept", text: "make the image" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-accept", text: "make the image" });
     const card = await opened(turnId);
     expect(card).toMatchObject({ requestType: "question", tool: "elicitation" });
     // Murage's mount name leads the card, never the server's own display_name
@@ -97,7 +99,7 @@ describe("Claude engine: MCP elicitation becomes the owner's question card", () 
   it("a skip goes back as decline", async () => {
     process.env.FAKE_CLAUDE_ELICIT = JSON.stringify([PRICE_CONFIRM]);
     await start();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-decline", text: "make the image" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-decline", text: "make the image" });
     const card = await opened(turnId);
     expect(await instance.adapter.respondToRequest("t-decline", card.requestId!, { behavior: "deny" })).toBe("rejected");
     expect(await resolved(card.requestId!)).toMatchObject({ behavior: "deny", source: "user" });
@@ -108,7 +110,7 @@ describe("Claude engine: MCP elicitation becomes the owner's question card", () 
   it("answers that do not fit the card are not delivered; the card stays open", async () => {
     process.env.FAKE_CLAUDE_ELICIT = JSON.stringify([PRICE_CONFIRM]);
     await start();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-badanswer", text: "make the image" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-badanswer", text: "make the image" });
     const card = await opened(turnId);
     expect(await instance.adapter.respondToRequest("t-badanswer", card.requestId!, { behavior: "answer", answers: [{ id: "confirm", selected: ["Maybe"] }] })).toBe("unavailable");
     expect(replies()).toEqual([]);
@@ -123,7 +125,7 @@ describe("Claude engine: MCP elicitation becomes the owner's question card", () 
       original(callback, delay === 30 * 60_000 ? 300 : delay, ...args)) as typeof setTimeout);
     onTestFinished(() => shortNote.mockRestore());
     await start();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-timeout", text: "make the image", unattendedAskNote: true });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-timeout", text: "make the image", unattendedAskNote: true });
     const card = await opened(turnId);
     expect(await resolved(card.requestId!)).toMatchObject({ behavior: "deny", source: "timeout" });
     await completed(turnId);
@@ -135,7 +137,7 @@ describe("Claude engine: MCP elicitation becomes the owner's question card", () 
   it("a URL elicitation never opens anything; only the owner's tap accepts it, with no content", async () => {
     process.env.FAKE_CLAUDE_ELICIT = JSON.stringify([{ subtype: "elicitation", mcp_server_name: "billing", message: "Approve the payment", mode: "url", url: "https://pay.example.com/approve/123", elicitation_id: "el-2" }]);
     await start();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-url", text: "pay" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-url", text: "pay" });
     const card = await opened(turnId);
     expect(card.questions?.[0]?.question).toContain("https://pay.example.com/approve/123");
     expect(card.choices).toEqual([ELICITATION_URL_OPENED]);
@@ -148,7 +150,7 @@ describe("Claude engine: MCP elicitation becomes the owner's question card", () 
     process.env.FAKE_CLAUDE_ELICIT = JSON.stringify([{ subtype: "hook_callback", callback_id: "x" }]);
     await start();
     const started = Date.now();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-unknown", text: "hi" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-unknown", text: "hi" });
     expect((await completed(turnId)).ok).toBe(true);
     expect(Date.now() - started).toBeLessThan(15_000);
     expect(replies().map((reply) => reply.response)).toEqual([{ subtype: "error", request_id: "cli-ctl-1", error: 'Murage does not handle control request "hook_callback"' }]);
@@ -158,7 +160,7 @@ describe("Claude engine: MCP elicitation becomes the owner's question card", () 
   it("a form Murage cannot show is cancelled with one line, never left waiting", async () => {
     process.env.FAKE_CLAUDE_ELICIT = JSON.stringify([{ ...PRICE_CONFIRM, requested_schema: { type: "object", properties: {} } }]);
     await start();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-unshowable", text: "hi" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-unshowable", text: "hi" });
     await completed(turnId);
     expect(replies().map((reply) => reply.response)).toEqual([{ subtype: "success", request_id: "cli-ctl-1", response: { action: "cancel" } }]);
     expect(recorder.events.some((e) => e.type === "runtime.error" && /could not show/.test((e as { message: string }).message))).toBe(true);
@@ -168,7 +170,7 @@ describe("Claude engine: MCP elicitation becomes the owner's question card", () 
     process.env.FAKE_CLAUDE_ELICIT = JSON.stringify([PRICE_CONFIRM]);
     process.env.FAKE_CLAUDE_ELICIT_WITHDRAW = "1";
     await start();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-withdraw", text: "make the image" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-withdraw", text: "make the image" });
     const card = await opened(turnId);
     expect(await resolved(card.requestId!)).toMatchObject({ behavior: "deny", source: "system" });
     await completed(turnId);
@@ -179,7 +181,7 @@ describe("Claude engine: MCP elicitation becomes the owner's question card", () 
     process.env.FAKE_CLAUDE_ELICIT = JSON.stringify([PRICE_CONFIRM]);
     process.env.FAKE_CLAUDE_SIGTERM_DELAY_MS = "500";
     await start();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-stop", text: "make the image" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stop", text: "make the image" });
     const card = await opened(turnId);
     await instance.adapter.interruptTurn("t-stop", turnId);
     expect(await resolved(card.requestId!)).toMatchObject({ behavior: "deny", source: "system" });
@@ -187,3 +189,6 @@ describe("Claude engine: MCP elicitation becomes the owner's question card", () 
     expect(replies().map((reply) => reply.response)).toEqual([{ subtype: "success", request_id: "cli-ctl-1", response: { action: "cancel" } }]);
   }, 60_000);
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

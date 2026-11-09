@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -75,7 +77,7 @@ describe.skipIf(process.platform === "win32")("an ACP driver's checked engine fi
     expect(snapshot).toMatchObject({ state: "available" });
     expect(starts()).toContain("--version");
 
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-launch-exe", text: "hello" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-launch-exe", text: "hello" });
     const done = (await recorder.until((event) => event.type === "turn.completed" && event.turnId === turnId)) as Extract<RuntimeEvent, { type: "turn.completed" }>;
     expect(done).toMatchObject({ ok: true });
     expect(starts()).toContain("agent stdio");
@@ -91,3 +93,6 @@ describe.skipIf(process.platform === "win32")("an ACP driver's checked engine fi
     expect(starts()).toEqual([]);
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

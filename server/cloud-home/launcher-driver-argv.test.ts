@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The Cloud launcher must accept every argv the shipped drivers hand it for a normal turn. Each case
@@ -62,10 +63,12 @@ async function onCloudHome(drive: () => Promise<void>, engine?: string): Promise
     finally { vi.stubEnv("MURAGE_CLOUD_ROLE", engine ? "" : "home"); }
   });
   // The version probe runs the fake as a plain exec (a home sends it through the launcher, which this harness does not run).
+  // Codex qualification must see the bundled Cloud version, not the fake
+  // CLI's legacy desktop version. The real launcher answers this same probe.
   const realExec = procs.execCli;
   const execSpy = vi.spyOn(procs, "execCli").mockImplementation((cli, args, opts, cb) => {
     vi.stubEnv("MURAGE_CLOUD_ROLE", "");
-    try { realExec(cli, args, { ...opts, env: { ...process.env, ...(probeVersion ? { FAKE_ACP_VERSION: probeVersion } : {}) } }, cb); }
+    try { realExec(cli, args, { ...opts, env: { ...process.env, ...(cli === FAKE_CODEX ? { FAKE_CODEX_VERSION: "codex-cli 0.162.1" } : {}), ...(probeVersion ? { FAKE_ACP_VERSION: probeVersion } : {}) } }, cb); }
     finally { vi.stubEnv("MURAGE_CLOUD_ROLE", engine ? "" : "home"); }
   });
   vi.stubEnv("MURAGE_CLOUD_ROLE", engine ? "" : "home");
@@ -163,3 +166,6 @@ describe("the Cloud launcher accepts the argv the shipped drivers send", () => {
     });
   }
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

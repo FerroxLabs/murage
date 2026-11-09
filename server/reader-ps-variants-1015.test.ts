@@ -15,9 +15,11 @@ process.env.USERPROFILE = "/home/tester";
 vi.resetModules();
 const { approvalKey, autoVerdict } = await import("./auto-approve.ts");
 const { alwaysAskCommand } = await import("./always-ask.ts");
+const { expectReaderOrdinary } = await import("./testing/marks-doubt-free.ts");
 
 type Context = Parameters<typeof autoVerdict>[3];
-const OWNER = { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null } as const;
+// 1.0.20: a clean lane turn; PowerShell keeps today's verdicts there (ruling 3)
+const OWNER = { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null } as const;
 const read = (cmd: string) => alwaysAskCommand(cmd, undefined, "command", "pwsh");
 
 const ENDS = ["\n", "\r\n", "\r"] as const;
@@ -34,7 +36,7 @@ function levels(cmd: string): Array<[string, Parameters<typeof autoVerdict>[0], 
 }
 
 function expectUncarded(cmd: string): void {
-  expect(read(cmd), JSON.stringify(cmd)).toBeNull();
+  expectReaderOrdinary(cmd, undefined, "pwsh", JSON.stringify(cmd)); // MARKS r12 re-baseline: the doubt-free read is clean; the strict read adds at most a closed-list doubt (non-owner No limits turns)
   for (const [level, bot, context] of levels(cmd)) {
     expect(autoVerdict(bot, "PowerShell", cmd, context).source, `${level} ${JSON.stringify(cmd)}`).not.toBe("always-ask");
   }
