@@ -554,3 +554,61 @@ test('C2: the app can answer a hand-over with its own Continue, and nothing else
   const b = (await f.status()).bindings[0];
   assert.equal(b.state, 'active'); assert.equal(b.generation, before + 1);
 });
+
+// ---- EXT-RESTART-AND-ALLOW r6, runtime R1 -----------------------------------------------------------------------------------------
+test('R1: the resumed event carries resumedAt, the generation ownerResume made, even when an unshare lands before the emit', async () => {
+  const f = fixture(); await f.init(); await f.navigate();
+  await f.runtime.handlePanel({ action: 'pause', bindingId: 'bot_a' });
+  const g = (await f.status()).bindings[0].generation;
+  // Hold the first badge write (inside ownerResume's indicator await); later writes answer at once.
+  let release; let armed = true; const setBadgeText = f.api.action.setBadgeText;
+  f.api.action.setBadgeText = value => { if (armed) { armed = false; return new Promise(r => { release = () => r(setBadgeText(value)); }); } return setBadgeText(value); };
+  const events = f.events.length;
+  const resuming = f.runtime.handlePanel({ action: 'resume', bindingId: 'bot_a' });
+  for (let i = 0; i < 50 && !release; i++) await settle();
+  assert.ok(release, 'ownerResume reached its indicator await');
+  await f.runtime.handlePanel({ action: 'unshare', bindingId: 'bot_a', tabId: 1 });
+  release();
+  const returned = await resuming;
+  const resumed = f.events.slice(events).find(e => e.event === 'resumed');
+  assert.ok(resumed, 'a resumed event was sent');
+  assert.equal(resumed.generation, g + 2, 'the event is stamped at emit, after the unshare');
+  assert.equal(resumed.data.resumedAt, g + 1, 'resumedAt is the generation the Resume made');
+  assert.equal(returned.resumedAt, undefined, 'the returned summary is unchanged');
+});
+
+const avatarData = 'data:image/webp;base64,AAAA';
+const avatarId = 'aaaaaaaaaaaaaaaa';
+test('E1/E2/E3/E4/E6: avatar only changes memory, validates and clears independently of panel', async () => {
+  const f = fixture(); await f.init();
+  const before = await f.command('status'); const writes = f.setCalls.length;
+  const sent = f.sent.length;
+  assert.deepEqual((await f.command('avatar', { avatarId, data: avatarData })).result, { avatarId });
+  assert.equal(f.setCalls.length, writes); assert.ok(f.sent.length > sent);
+  const after = await f.command('status');
+  assert.deepEqual({ ...after.result, avatarId: before.result.avatarId }, before.result);
+  assert.equal(after.result.avatarId, avatarId);
+  assert.deepEqual(await f.runtime.handlePanel({action:'avatar',bindingId:'bot_a'}),{botAvatarId:avatarId,botAvatar:avatarData});
+  for (const params of [{avatarId:'bad',data:avatarData},{avatarId,data:'data:image/svg+xml;base64,AAAA'},{avatarId,data:'https://example.com/a.png'},{avatarId,data:'A'.repeat(16385)}]) {
+    assert.equal((await f.command('avatar',params)).error.code,'invalid_params');
+    assert.equal((await f.command('status')).result.avatarId,avatarId);
+  }
+  assert.equal((await f.command('avatar',{avatarId:''},2)).error.code,'stale_generation');
+  // A save for another reason must strip both avatar fields.
+  await f.bind();
+  assert.equal(JSON.stringify(persisted(f)).includes('botAvatar'),false);
+  const withoutPicture=fixture();await withoutPicture.init();await withoutPicture.bind();
+  assert.equal(JSON.stringify(persisted(f)),JSON.stringify(persisted(withoutPicture)), 'serialized storage shape and bytes are independent of the picture');
+  // initialize on the original fake API reproduces a worker restart over its saved state.
+  const restarted = createBrowserExtensionRuntime(f.api); await restarted.initialize();
+  const restored = await restarted.handlePanel({action:'status'});
+  assert.equal(JSON.stringify(restored).includes(avatarData),false);
+  await restarted.connection(true);
+  const restoredSummary=await restarted.handleRequest({version:1,type:'command',id:`${'b'.repeat(32)}_1`,bindingId:'bot_a',generation:1,operation:'status',params:{}});
+  assert.equal(restoredSummary.result.avatarId,'');
+  assert.equal((await f.command('avatar',{avatarId:''})).result.avatarId,'');
+  await f.bind(); await f.command('status',{panel:{botAvatarId:avatarId,botAvatar:avatarData}});
+  assert.equal((await f.command('status')).result.avatarId,'');
+});
+
+test('E7: hello advertises panel_avatar_v1',async()=>{const f=fixture();await f.runtime.initialize();assert.ok((await f.runtime.connection(true)).capabilities.includes('panel_avatar_v1'));});

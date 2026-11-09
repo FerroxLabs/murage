@@ -7,7 +7,7 @@ import os from 'node:os';
 import { realpathSync } from 'node:fs';
 import { removeTempDir } from "./testing/cleanup.ts";
 // A short real root keeps sockets inside macOS sockaddr_un's bound on every runner.
-const SHORT_ROOT = process.platform === 'win32' ? os.tmpdir() : realpathSync('/tmp');
+const SHORT_ROOT = process.platform === 'win32' ? os.tmpdir() : realpathSync(process.env.MURAGE_TEST_TMPDIR ?? '/tmp');
 import { fork, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { dataDirLeasePaths } from '../electron/data-dir-lease.mjs';
@@ -241,6 +241,10 @@ describe('Astra 13: a connection that used all its request ids is rotated', () =
     };
     const first = await connect();
     for (let i = 1; i <= 3; i++) {
+      if (i === 3) {
+        await expect(broker.request('profile', { ...command, operation: 'avatar', id: 'cosmetic', params: { avatarId: '' } })).rejects.toThrow('broker_busy');
+        expect(broker.profiles()).toHaveLength(1);
+      }
       const pending = broker.request('profile', { ...command, id: `r${i}` });
       await expect.poll(() => first.messages.length).toBe(i);
       first.input.write(encodeFrame({ version: 1, type: 'response', id: (first.messages[i - 1] as typeof command).id, bindingId: 'binding', generation: 1, result: { i } }));
@@ -276,4 +280,11 @@ describe("Vultr live bug 1: one oversize or too-deep response never destroys the
     const nodes = Array.from({ length: 3000 }, (_, i) => ({ nodeId: String(i), role: { type: 'role', value: 'text' }, name: { type: 'x', value: 'n' }, childIds: [String(i + 1)], backendDOMNodeId: i, props: [{ a: 1 }, { b: 2 }] }));
     expect(() => parseBrowserExtensionMessage({ version: 1, type: 'response', id: 'r', bindingId: 'b', generation: 1, result: { nodes } })).not.toThrow();
   });
+});
+
+it('T19c: avatar cannot take the last pending slot, a bind can',async()=>{
+ const f=await fixture();const jobs=Array.from({length:31},(_,i)=>f.broker.request('profile',{...command,id:'pending'+i}).catch(()=>undefined));
+ await expect(f.broker.request('profile',{...command,id:'avatar',operation:'avatar',params:{avatarId:''}})).rejects.toThrow('broker_busy');
+ const bind=f.broker.request('profile',{...command,id:'last-bind',operation:'bind'}).catch(()=>undefined);
+ await expect.poll(()=>f.messages.length).toBe(32);expect(f.broker.profiles()).toHaveLength(1);f.host.stop();await Promise.all([...jobs,bind]);
 });

@@ -15,6 +15,7 @@ import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { applyProviderRoute, type ProviderTurnRoute } from "../provider-routing.ts";
 import { ensureGrokInjectSlug } from "../drivers/acp/grok.ts";
+import type { MemoryUsageReport } from "./extract.ts";
 import type { LearningGate } from "./learning-send.ts";
 import type { FixedPrompt } from "./fixed-prompt.ts";
 export { fixedPrompt, type FixedPrompt } from "./fixed-prompt.ts";
@@ -51,6 +52,7 @@ export interface IsolationReport {
 }
 
 export interface TextOnlyTurnInput {
+  cwd?: string;
   system: FixedPrompt; text: string; model: string; providerRoute?: ProviderTurnRoute;
   outputSchema: JsonSchema; signal: AbortSignal; maxOutputTokens: number; maxOutputBytes: number;
   context: { botId: string; runId: string; family: string; attempt: number };
@@ -547,13 +549,16 @@ export function parseHeadlessMessages(stdout: Buffer | string): ParsedRun {
       run.resultCount++;
       if (run.resultSeq === null) run.resultSeq = seq;
       const u = (line.usage ?? {}) as Record<string, unknown>;
+      const usage = { inputTokens: num(u.input_tokens) ?? num(u.inputTokens), outputTokens: num(u.output_tokens) ?? num(u.outputTokens) };
+      // Keep the latest meaningful receipt even when result lines share a stdout chunk.
+      const keptUsage = usage.inputTokens !== undefined || usage.outputTokens !== undefined ? usage : run.result?.usage ?? usage;
       run.result = {
         subtype: typeof line.subtype === "string" ? line.subtype : "",
         isError: line.is_error === true,
         isErrorValid: typeof line.is_error === "boolean",
         stopReason: typeof line.stop_reason === "string" ? line.stop_reason : undefined,
         errors: Array.isArray(line.errors) ? line.errors.map(String) : [],
-        usage: { inputTokens: num(u.input_tokens) ?? num(u.inputTokens), outputTokens: num(u.output_tokens) ?? num(u.outputTokens) },
+        usage: keptUsage,
         structuredOutput: line.structured_output,
         text: typeof line.result === "string" ? line.result : undefined,
       };
@@ -668,6 +673,16 @@ export interface GateObservation {
   engine?: PipEngine;
   /** The request carried `--json-schema` (Claude only): the CLI then lists and calls its synthetic StructuredOutput answer tool. */
   structuredTool?: boolean;
+  /** Fuigo or Grok ran without `--json-schema` (a Flux route, headless-text-only.ts): the schema rode in the prompt, so the result text is
+   *  the answer. It is parsed here and held to the same validator; nothing else changes. */
+  schemaInPrompt?: boolean;
+}
+
+/** The result text of a run told to reply with JSON only: the object itself, or one wrapped in a single ```json fence. Anything else is no answer. */
+export function parseJsonAnswer(text: string): unknown {
+  const t = text.trim();
+  const fenced = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n?```$/i.exec(t);
+  try { return JSON.parse(fenced ? fenced[1] : t); } catch { return undefined; }
 }
 
 /** Claude run that asked for a schema: the one synthetic answer tool is admitted, nothing else. */
@@ -720,6 +735,7 @@ export function gateRun(o: GateObservation): Verdict {
   let structured: unknown = r.structuredOutput;
   if (structured === undefined && so && p.structuredCalls.length === 1) structured = p.structuredCalls[0].input;
   if (structured === undefined && o.engine === "claude" && r.text !== undefined) { try { structured = JSON.parse(r.text); } catch { structured = undefined; } }
+  if (structured === undefined && o.schemaInPrompt === true && o.engine !== "claude" && r.text !== undefined) structured = parseJsonAnswer(r.text);
   if (structured === undefined || structured === null || typeof structured !== "object") return { state: "refused", reason: "bad-output", detail: "no-structured-output", counted: true };
   const bad = validateAgainstSchema(structured, o.outputSchema);
   if (bad) return { state: "refused", reason: "bad-output", detail: `schema:${bad}`, counted: true };
@@ -745,3 +761,27 @@ export function httpIsolationReport(o: { finishReason: string | null; exited: bo
 /** Settlement accounting (A.3): reported usage wins; the byte estimate (3.5 bytes per token) otherwise. */
 export function settleOutputTokens(reported: number | undefined, bytes: number): number { return reported ?? Math.ceil(bytes / 3.5); }
 export const isReportedOverLimit = (reported: number | undefined, maxOutputTokens: number): boolean => reported !== undefined && reported > maxOutputTokens;
+
+/** Flux's zero or absent usage is unknown: retain the held reservation, once per released run. */
+export function fluxUsageReport(report: MemoryUsageReport): MemoryUsageReport {
+  if ((report.prompt_tokens === 0 && report.completion_tokens === 0)
+    || (report.prompt_tokens === undefined && report.completion_tokens === undefined)) {
+    return { ...report, prompt_tokens: undefined, completion_tokens: undefined, estimatedRuns: 1, extraUnseen: 1 };
+  }
+  return report;
+}
+
+/** Ledger-only estimate. Trace usage and over-limit decisions keep the engine's report. */
+export function headlessUsageReport(usage:ParsedResult["usage"],resultSeen:boolean,requestBytes:number,replyBytes:number,answerBytes:number):MemoryUsageReport {
+  const tokenless=resultSeen&&((usage?.inputTokens===undefined&&usage?.outputTokens===undefined)||(usage?.inputTokens===0&&usage?.outputTokens===0&&answerBytes>0));
+  return tokenless
+    ? {prompt_tokens:Math.ceil(requestBytes/3.5),completion_tokens:Math.ceil(replyBytes/3.5),replyBytes,engineRun:true,estimatedRuns:1}
+    : {prompt_tokens:usage?.inputTokens,completion_tokens:usage?.outputTokens,replyBytes,engineRun:true};
+}
+/** Presence, including an empty text answer, matters. Match the structured-output fallback accepted by gateRun. */
+export function headlessAnswerBytes(parsed:ParsedRun,engine:PipEngine):number {
+  const structured=parsed.result?.structuredOutput!==undefined?parsed.result.structuredOutput:(engine==="claude"?parsed.structuredCalls[0]?.input:undefined);
+  if(structured!==undefined)return Buffer.byteLength(JSON.stringify(structured));
+  if(parsed.result?.text!==undefined)return Buffer.byteLength(parsed.result.text);
+  return 0;
+}

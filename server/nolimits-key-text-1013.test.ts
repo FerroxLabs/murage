@@ -184,7 +184,7 @@ describe("the engine's own hold, re-read (3.5)", () => {
 });
 
 describe("PowerShell keeps today's read (3.6)", () => {
-  const ps = (text: string) => autoVerdict(NO_LIMITS as never, "PowerShell", text, { exactCommand: { command: text, cwd: CWD } as AutoContext["exactCommand"], commandText: text, call: { engine: "claude", toolCall: { name: "PowerShell", input: { command: text } } } as GrantCall });
+  const ps = (text: string, own: object = {}) => autoVerdict(NO_LIMITS as never, "PowerShell", text, { ...own, exactCommand: { command: text, cwd: CWD } as AutoContext["exactCommand"], commandText: text, call: { engine: "claude", toolCall: { name: "PowerShell", input: { command: text } } } as GrantCall });
   it("no shell text exception applies", () => {
     for (const text of ["Write-Output .env", "echo .env", "Get-Content .vscode\\tasks.json", "git commit -m \"a .env note\""]) expect(ps(text).source, text).toBe("sensitive-guard");
   });
@@ -199,7 +199,9 @@ describe("PowerShell keeps today's read (3.6)", () => {
     expect(ps("gci env:").source).toBe("sensitive-guard");
     expect(ps("Get-Content C:/Users/ada/AppData/Roaming/npm/etc/./npmrc").source).toBe("sensitive-guard");
     expect(ps("Get-Content C:/Users/ada/AppData/Roaming/npm/./etc/npmrc").source).toBe("sensitive-guard");
-    expect(ps("Get-Content C:.profile").source).toBe("sensitive-guard");
+    // MARKS r9 R2: probe Get-Content C:.profile at No limits -> always-ask unreadable held (b18: sensitive-guard); still a card
+    // MARKS r11: back to b18 (M-R10 monotonic relief): the gate row holds it by name (r13: this probe is the owner's own clean turn, so it carries the owner-started proof; the other lines here are unchanged)
+    expect(ps("Get-Content C:.profile", { fullAccessOrigin: "owner", ownerStarted: true, outsideRead: null }).source).toBe("sensitive-guard");
     for (const path of ["etc//npmrc", "etc/../etc/npmrc", "../npm/etc/npmrc"]) expect(ps(`Get-Content C:/Users/ada/AppData/Roaming/npm/${path}`).source, path).toBe("sensitive-guard");
   });
 });

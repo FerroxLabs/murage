@@ -1,9 +1,48 @@
-/** Safe structured facts about a provider rejection. No request/response text. */
+import { classifyFluxRefusal } from "./flux-refusal.ts";
+import { FLUX_BILLING_PAGE } from "./flux-links.ts";
+/** Structured facts about a provider rejection. The only provider text is `providerSaid`, cleaned on the server. */
 export interface ProviderErrorInfo {
   kind: "credits" | "spend-cap" | "payment" | "authentication" | "permission" | "rate-limit" | "unavailable";
   provider?: "flux-router";
   httpStatus: number;
+  fluxBudget?: true;
+  /** The driver kind of the engine that ran the turn, stamped by the server (ERRORS-NAME-THE-SERVICE). */
+  engine?: string;
+  /** The saved AI service the turn went through, stamped by the server: its preset, and whether it is a plan sign-in. */
+  connection?: { preset: string; signIn?: boolean };
+  /** What the provider itself said (ERRORS-NAME-THE-SERVICE scope B): one line, at most PROVIDER_SAID_MAX characters, with
+   * keys, bearer strings, emails and link paths removed on the server (server/provider-said.ts). Shown as data, never as a
+   * link or markup, under "What <service> said". */
+  providerSaid?: string;
+  /** The team id the provider named for the key (xAI), when it named one. */
+  providerTeam?: string;
 }
+
+/** The longest provider sentence kept on a provider error. */
+export const PROVIDER_SAID_MAX = 300;
+
+/** Provider sentences Murage has a plain line for. Each is keyed to the service that writes it, so another provider's text
+ * that happens to read the same never picks it. */
+export type ProviderSaidNote = "xai-spend-limit";
+const XAI_SPEND_LIMIT = /used all available credits or reached its monthly spending limit/i;
+// The xAI API key routes only. Grok Build (grokAgent) and the Grok plan sign-in run on the grok.com plan, never the key
+// (server/drivers/acp/grok.ts strips every API key from its env), so xAI's team wording does not describe them.
+const XAI_SERVICE = new Set(["grok", "xai"]);
+
+/** The plain line for what the provider said, when Murage knows it. xAI answers 402 with "Your team ... has either used all
+ * available credits or reached its monthly spending limit": a team that still has credit has hit its spending limit, which
+ * the owner raises in xAI billing. It stays a payment kind (not spend-cap): xAI's limit is the owner's own setting and
+ * billing is where it is raised. */
+export function providerSaidNote(info: Pick<ProviderErrorInfo, "kind" | "providerSaid" | "engine" | "connection"> | undefined): ProviderSaidNote | undefined {
+  if (!info || typeof info.providerSaid !== "string") return undefined;
+  if (info.kind !== "payment" && info.kind !== "credits" && info.kind !== "spend-cap") return undefined;
+  const xai = (typeof info.connection?.preset === "string" && XAI_SERVICE.has(info.connection.preset))
+    || (info.connection === undefined && typeof info.engine === "string" && XAI_SERVICE.has(info.engine));
+  return xai && XAI_SPEND_LIMIT.test(info.providerSaid) ? "xai-spend-limit" : undefined;
+}
+
+/** xAI's billing page, where a team's credit and spending limit are set. */
+export const XAI_BILLING_PAGE = "https://console.x.ai/";
 
 /** A support address at the provider's own domain, which a capped account's
  * rejection carries where a billing URL would otherwise be. Anchored at both
@@ -37,7 +76,7 @@ function fluxRouterSource(message: string): boolean {
 const SPEND_CAP = /account_monthly_budget_exhausted|monthly spend ceiling/i;
 
 /** Only actual structured HTTP status establishes the error category. */
-export function classifyProviderError(error: unknown): ProviderErrorInfo | undefined {
+export function classifyProviderError(error: unknown, flux = false): ProviderErrorInfo | undefined {
   if (!error || typeof error !== "object") return undefined;
   const data = (error as { data?: unknown }).data;
   if (!data || typeof data !== "object" || Array.isArray(data)) return undefined;
@@ -48,6 +87,11 @@ export function classifyProviderError(error: unknown): ProviderErrorInfo | undef
       : status === 402 ? "payment" : status === 401 ? "authentication" : status === 403 ? "permission"
       : status === 429 ? "rate-limit" : status === 503 ? "unavailable" : undefined;
   if (!kind || typeof status !== "number") return undefined;
+  const envelope = data as { body?: unknown; code?: unknown; error?: unknown };
+  const refusal = envelope.body ?? (envelope.code || envelope.error ? data : detail);
+  if (flux && classifyFluxRefusal(status, refusal) === "budget") {
+    return { kind, httpStatus: status, provider: "flux-router", fluxBudget: true };
+  }
   return { kind, httpStatus: status, ...(kind !== "payment" && fluxRouterSource(message) ? { provider: "flux-router" as const } : {}) };
 }
 
@@ -96,6 +140,10 @@ export const LOCAL_SETUP_FAILURES = [
   // Windows: Murage's native helper (murage-browser-host.exe) that makes Claude's owner-only folders is missing or could not run
   // (antivirus quarantine is the usual cause). Fail-closed: the turn does not start. Worded from the code (runtimeError.local.windows-helper.*).
   "windows-helper",
+  // S5-DATADIR-PATHS r4.1 section 6: a stored folder from an earlier data-folder location that could not be matched (data-dir-moved),
+  // and a linked workspaces or Claude accounts folder that now points somewhere else (data-root-changed). Worded from the code.
+  "data-dir-moved", "data-root-changed", "data-root-changed-providers",
+  "skill-link-foreign", "skill-link-staging", "pinned-procedures",
 ] as const;
 export type LocalSetupFailure = (typeof LOCAL_SETUP_FAILURES)[number];
 /** The failures worded from their code in the owner's language with the engine named (runtimeError.local.<code>.*). */
@@ -105,7 +153,9 @@ export const ENGINE_FOLDER_FAILURES = [
 export type EngineFolderFailure = (typeof ENGINE_FOLDER_FAILURES)[number];
 export const isEngineFolderFailure = (value: unknown): value is EngineFolderFailure => (ENGINE_FOLDER_FAILURES as readonly unknown[]).includes(value);
 /** The failures whose card body is worded from the code (runtimeError.local.<code>.message), not the recorded English line. */
-export const isWordedLocalFailure = (value: unknown): value is EngineFolderFailure | "windows-helper" => isEngineFolderFailure(value) || value === "windows-helper";
+export const DATA_FOLDER_FAILURES = ["data-dir-moved", "data-root-changed", "data-root-changed-providers"] as const satisfies readonly LocalSetupFailure[];
+export const SKILL_LINK_FAILURES = ["skill-link-foreign", "skill-link-staging", "pinned-procedures"] as const satisfies readonly LocalSetupFailure[];
+export const isWordedLocalFailure = (value: unknown): value is (typeof SKILL_LINK_FAILURES)[number] | EngineFolderFailure | "windows-helper" | (typeof DATA_FOLDER_FAILURES)[number] => (SKILL_LINK_FAILURES as readonly unknown[]).includes(value) || isEngineFolderFailure(value) || value === "windows-helper" || (DATA_FOLDER_FAILURES as readonly unknown[]).includes(value);
 
 /** The browser engine's own failure copy (server/browser-engine.ts), as
  * earlier builds recorded it when a browser check failed the whole turn.
@@ -140,7 +190,7 @@ export function providerErrorPresentation(info: ProviderErrorInfo): { title: str
       title: `${provider} needs credits`,
       summary: "Your AI service says the account has run out of credit, so this reply could not finish.",
       resolution: "If you have already added credits, try again once the new balance shows. You can also pick another AI in Models & engines.",
-      ...(info.provider === "flux-router" ? { billingUrl: "https://fluxrouter.ai/home/billing" } : {}),
+      ...(info.provider === "flux-router" ? { billingUrl: FLUX_BILLING_PAGE } : {}),
     };
     case "authentication": return { title: `${provider} did not accept the sign-in`, summary: "Your AI service did not accept the sign-in or key used for this request.", resolution: "Check this AI's sign-in or key in Models & engines, then try again." };
     case "permission": return { title: `${provider} denied access`, summary: "Your AI service refused this request. You may still be signed in.", resolution: "Check that your account can use the model you picked, or pick another AI in Models & engines." };

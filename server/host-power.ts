@@ -1,3 +1,4 @@
+import { botFolderOrThrow } from "./bot-folder.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -545,6 +546,7 @@ export const BWRAP_SECCOMP_FD = 3;
 /** Plan a wrapped launch on Linux or macOS (the caller checked the marker, the cloud launch and the docker server tool). A refusal
  *  is a pid-less EPOWER child; nothing is spawned. */
 export function planHostPower(command: string, args: string[], env: NodeJS.ProcessEnv | undefined, cwd: string | undefined): HostPowerPlan {
+  cwd = botFolderOrThrow({ cwd });
   const platform = hostPowerPlatform();
   if (platform === "darwin") {
     const file = hostPowerDeps.sandboxExec;
@@ -581,7 +583,7 @@ export function planHostPower(command: string, args: string[], env: NodeJS.Proce
   const busPaths = [...new Set([...coveredBusPaths(process.env), ...coveredBusPaths(lookup)])];
   // A NUL inside a value would split it into extra bwrap options on the --args pipe.
   for (const [name, value] of Object.entries(turnEnv)) if (name.includes("\0") || value.includes("\0")) return { kind: "refuse", reason: "the turn environment holds a NUL byte" };
-  const options = bwrapOptions({ euid, egid: hostPowerDeps.getegid(), helperDir, stub: stubPath, busPaths, bpfFd: BWRAP_SECCOMP_FD, cwd: cwd ?? process.cwd(), env: turnEnv });
+  const options = bwrapOptions({ euid, egid: hostPowerDeps.getegid(), helperDir, stub: stubPath, busPaths, bpfFd: BWRAP_SECCOMP_FD, cwd, env: turnEnv });
   const argv = bwrapArgv(command, args);
   if (options.some((option) => option.includes("\0"))) return { kind: "refuse", reason: "a bwrap option holds a NUL byte" };
   if (argvBytes([bwrap, ...argv]) + argvBytes(options) > BWRAP_ARGV_LIMIT_BYTES) return { kind: "refuse", reason: "the bwrap arguments would exceed 1 MiB" };

@@ -41,33 +41,55 @@ export function BotFollowModelRow({ bot }: { bot: Bot }) {
   );
 }
 
-/** Bot model section: the engine that takes over when this bot's engine hits its limit. */
+type BackupSelection = NonNullable<Bot["limitBackup"]>["selection"];
+
+/** The models a backup engine offers. A saved model it no longer lists stays
+ *  shown (and selected) first, so opening the row never changes the backup. */
+export function backupModelOptions(instance: { models: { options: ReadonlyArray<{ id: string; label: string }> } } | undefined, saved: string | undefined): Array<{ id: string; label: string }> {
+  const offered = (instance?.models.options ?? []).map(({ id, label }) => ({ id, label }));
+  return saved && !offered.some((model) => model.id === saved) ? [{ id: saved, label: saved }, ...offered] : offered;
+}
+
+/** Bot model section: the engine, and its model, that takes over when this bot's engine hits its limit. */
 export function LimitBackupRow({ bot }: { bot: Bot }) {
   const { state } = useStore();
   const [error, setError] = useState("");
   const current = bot.limitBackup;
   const choices = state.instances.filter((instance) => instance.enabled !== false && instance.instanceId !== bot.modelSelection.instanceId
     && (instance.models.default || instance.models.options[0]?.id));
-  const save = async (instanceId: string, routines: boolean) => {
+  const instanceOf = (instanceId: string) => state.instances.find((candidate) => candidate.instanceId === instanceId);
+  const save = async (selection: BackupSelection | null, routines: boolean) => {
     setError("");
     try {
-      if (!instanceId) { await api(`/api/bots/${bot.id}/limit-backup`, { method: "DELETE" }); return; }
-      const instance = state.instances.find((candidate) => candidate.instanceId === instanceId);
-      const model = instance?.models.default || instance?.models.options[0]?.id || "";
-      await api(`/api/bots/${bot.id}/limit-backup`, { method: "PUT", body: JSON.stringify({ selection: { instanceId, model }, routines }) });
+      if (!selection) { await api(`/api/bots/${bot.id}/limit-backup`, { method: "DELETE" }); return; }
+      await api(`/api/bots/${bot.id}/limit-backup`, { method: "PUT", body: JSON.stringify({ selection, routines }) });
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   };
+  const pickEngine = (instanceId: string) => {
+    if (!instanceId) return save(null, false);
+    const instance = instanceOf(instanceId);
+    return save({ instanceId, model: instance?.models.default || instance?.models.options[0]?.id || "" }, current?.routines === true);
+  };
+  const backupName = current ? instanceOf(current.selection.instanceId)?.displayName ?? current.selection.instanceId : "";
+  // A backup on a provider account (connectionId) runs that account's models, not the engine's own list, so the
+  // engine list is not offered for it: choosing from it could save a model the account does not have (Astra r1 Medium).
+  const models = current && !current.selection.connectionId ? backupModelOptions(instanceOf(current.selection.instanceId), current.selection.model) : [];
   return (
     <div data-limit-backup className="rounded-xl bg-card p-4">
       <div className="text-[15px] font-medium text-ink">{t("slik.backupTitle")}</div>
       <div className="mt-0.5 text-[13px] text-ink-secondary">{t("slik.backupDetail")}</div>
-      <select aria-label={t("slik.backupTitle")} value={current?.selection.instanceId ?? ""} onChange={(event) => void save(event.target.value, current?.routines === true)} className="mt-3 w-full rounded-md bg-inset px-2 py-1.5 text-sm text-ink">
+      <select aria-label={t("slik.backupTitle")} value={current?.selection.instanceId ?? ""} onChange={(event) => void pickEngine(event.target.value)} className="mt-3 w-full rounded-md bg-inset px-2 py-1.5 text-sm text-ink">
         <option value="">{t("slik.backupNone")}</option>
         {choices.map((instance) => <option key={instance.instanceId} value={instance.instanceId}>{instance.displayName}</option>)}
       </select>
+      {current && models.length > 0 && (
+        <select aria-label={t("slik.backupModel", { name: backupName })} value={current.selection.model} onChange={(event) => void save({ ...current.selection, model: event.target.value }, current.routines)} className="mt-2 w-full rounded-md bg-inset px-2 py-1.5 text-sm text-ink">
+          {models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
+        </select>
+      )}
       {current && (
         <label className="mt-3 flex items-start gap-2 text-[13px] text-ink">
-          <input type="checkbox" checked={current.routines} onChange={(event) => void save(current.selection.instanceId, event.target.checked)} className="mt-0.5" />
+          <input type="checkbox" checked={current.routines} onChange={(event) => void save(current.selection, event.target.checked)} className="mt-0.5" />
           <span>{t("slik.backupRoutines")}<span className="block text-ink-secondary">{t("slik.backupRoutinesHint")}</span></span>
         </label>
       )}

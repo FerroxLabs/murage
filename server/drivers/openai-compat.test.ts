@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { recordEvents } from "../testing/events.ts";
 import { OpenAICompatDriver } from "./openai-compat.ts";
@@ -124,7 +126,7 @@ describe("OpenAICompatDriver", () => {
     expect((await inst.snapshot()).state).toBe("available");
 
     const recorder = recordEvents(inst.adapter);
-    await inst.adapter.sendTurn({ threadId: "thread", text: "hello", model: "ollama::companion:latest" });
+    await inst.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "thread", text: "hello", model: "ollama::companion:latest" });
     const completed = await recorder.until((event) => event.type === "turn.completed");
     expect(completed).toMatchObject({ ok: true });
     expect(chats).toHaveLength(1);
@@ -198,7 +200,7 @@ describe("OpenAICompatDriver", () => {
     });
     const recorder = recordEvents(inst.adapter);
 
-    await inst.adapter.sendTurn({ threadId: "thread", text: "private prompt", model: "vendor/model" });
+    await inst.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "thread", text: "private prompt", model: "vendor/model" });
     const completed = await recorder.until((event) => event.type === "turn.completed");
 
     expect(completed).toMatchObject({ ok: true, usage: { input: 12, output: 3 } });
@@ -231,7 +233,7 @@ describe("OpenAICompatDriver", () => {
     });
     const recorder = recordEvents(inst.adapter);
 
-    await inst.adapter.sendTurn({ threadId: "reasoning-thread", text: "question", model: "vendor/model" });
+    await inst.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "reasoning-thread", text: "question", model: "vendor/model" });
     await recorder.until((event) => event.type === "turn.completed");
 
     expect(recorder.events).toEqual(expect.arrayContaining([
@@ -295,7 +297,7 @@ describe("OpenAICompatDriver", () => {
     });
     const recorder = recordEvents(inst.adapter);
 
-    await inst.adapter.sendTurn({ threadId: "thread-rf", text: "prompt", model: "vendor/model" });
+    await inst.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "thread-rf", text: "prompt", model: "vendor/model" });
     const item = await recorder.until((e) => e.type === "item.completed");
     const completed = await recorder.until((e) => e.type === "turn.completed");
 
@@ -339,7 +341,7 @@ describe("OpenAICompatDriver", () => {
     });
     const recorder = recordEvents(inst.adapter);
 
-    await inst.adapter.sendTurn({ threadId: "thread-inband", text: "prompt", model: "vendor/model" });
+    await inst.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "thread-inband", text: "prompt", model: "vendor/model" });
     const completed = await recorder.until((event) => event.type === "turn.completed");
 
     expect(completed).toMatchObject({ ok: false, stopReason: "provider_error" });
@@ -412,7 +414,7 @@ describe("OpenAICompatDriver", () => {
     });
     const recorder = recordEvents(inst.adapter);
 
-    await inst.adapter.sendTurn({
+    await inst.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "thread-p",
       text: "prompt",
       model: "deepseek/deepseek-v4-flash-0731",
@@ -452,7 +454,7 @@ describe("OpenAICompatDriver", () => {
     });
     const recorder = recordEvents(inst.adapter);
 
-    await inst.adapter.sendTurn({ threadId: "thread-g", text: "prompt", model: "vendor/model" });
+    await inst.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "thread-g", text: "prompt", model: "vendor/model" });
     await recorder.until((e) => e.type === "turn.completed");
 
     // Strict OpenAI-compatible endpoints (Groq et al.) reject unknown
@@ -492,7 +494,7 @@ describe("OpenAICompatDriver", () => {
     });
     const recorder = recordEvents(inst.adapter);
 
-    await inst.adapter.sendTurn({ threadId: "thread-l", text: "prompt", model: "vendor/model" });
+    await inst.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "thread-l", text: "prompt", model: "vendor/model" });
     await recorder.until((e) => e.type === "turn.completed");
 
     expect(sentBody).not.toBeNull();
@@ -528,7 +530,7 @@ describe("OpenAICompatDriver", () => {
     });
     const recorder = recordEvents(inst.adapter);
 
-    await inst.adapter.sendTurn({ threadId: "thread-s", text: "prompt", model: "vendor/model" });
+    await inst.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "thread-s", text: "prompt", model: "vendor/model" });
     await recorder.until((e) => e.type === "turn.completed");
 
     expect(sentBody?.provider).toEqual({ order: ["fireworks"], allow_fallbacks: false });
@@ -574,7 +576,7 @@ describe("OpenAICompatDriver", () => {
       const inst = await createDriver("test-idle-renew");
       const recorder = recordEvents(inst.adapter);
       try {
-        await inst.adapter.sendTurn({ threadId: "thread-idle-renew", text: "prompt", model: "vendor/model" });
+        await inst.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "thread-idle-renew", text: "prompt", model: "vendor/model" });
         controller().enqueue(chunk("start "));
         await vi.advanceTimersByTimeAsync(100_000);
         controller().enqueue(chunk("middle "));
@@ -606,7 +608,7 @@ describe("OpenAICompatDriver", () => {
       const inst = await createDriver("test-idle-stall");
       const recorder = recordEvents(inst.adapter);
       try {
-        await inst.adapter.sendTurn({ threadId: "thread-idle-stall", text: "prompt", model: "vendor/model" });
+        await inst.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "thread-idle-stall", text: "prompt", model: "vendor/model" });
         controller().enqueue(chunk("part 1 "));
         await vi.advanceTimersByTimeAsync(30 * 60_000);
         expect(recorder.events.some((event) => event.type === "turn.completed")).toBe(false);
@@ -641,7 +643,7 @@ describe("OpenAICompatDriver", () => {
     const inst = await OpenAICompatDriver.create({ instanceId: "test-dispatcher", displayName: "Dispatcher", enabled: true, config: { url: "https://example.test/v1", apiKeyEnv: "TEST_KEY" }, environment: { TEST_KEY: "secret" } });
     const recorder = recordEvents(inst.adapter);
     try {
-      await inst.adapter.sendTurn({ threadId: "thread-dispatcher", text: "prompt", model: "vendor/model" });
+      await inst.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "thread-dispatcher", text: "prompt", model: "vendor/model" });
       await recorder.until((event) => event.type === "turn.completed");
       expect(dispatcher).toBeDefined();
       expect(dispatcher).toBe(providerDispatcher());
@@ -674,7 +676,7 @@ describe("OpenAICompatDriver", () => {
     });
     const recorder = recordEvents(inst.adapter);
 
-    await inst.adapter.sendTurn({ threadId: "thread-np", text: "prompt", model: "vendor/model" });
+    await inst.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "thread-np", text: "prompt", model: "vendor/model" });
     await recorder.until((e) => e.type === "turn.completed");
 
     expect(sentBody).not.toBeNull();
@@ -714,7 +716,7 @@ describe("OpenAICompatDriver", () => {
     });
     const recorder = recordEvents(inst.adapter);
 
-    await inst.adapter.sendTurn({ threadId: "thread-usage", text: "prompt", model: "local/model" });
+    await inst.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "thread-usage", text: "prompt", model: "local/model" });
     await recorder.until((e) => e.type === "turn.completed");
     await expect(inst.generateText?.("name this")).resolves.toBe("a title");
 
@@ -769,3 +771,6 @@ describe("OpenAICompatDriver key issuer guard", () => {
     }
   });
 });
+
+// Adapter turns in this suite use an isolated durable store.
+useOutsideStoreFixture();

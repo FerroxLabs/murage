@@ -554,3 +554,20 @@ describe("Health page frames (1.0.9 Sentinel)", () => {
     expect(frameSubject({ kind: "notify", notification: { kind: "done", threadId: "t-1", botId: "b" } })).toEqual({ scope: "thread", threadId: "t-1" });
   });
 });
+
+it("D24 speech readiness and invalidation carry the same thread visibility as the transcript", () => {
+  for (const kind of ["speech.ready", "speech.invalidate"]) {
+    expect(KNOWN_FRAME_KINDS).toContain(kind);
+    expect(frameSubject({ kind, threadId: "private-thread", messageId: "message" })).toEqual({ scope: "thread", threadId: "private-thread" });
+  }
+});
+
+it("D24 session closure is connection-only and malformed speech events never broadcast", () => {
+  for (const frame of [{ kind: "speech.sessionClosed", sessionId: "s" }, { kind: "speech.ready" }, { kind: "speech.invalidate" }]) {
+    const subject = frameSubject(frame);
+    expect(subject).toEqual({ scope: "connection" });
+    expect(frameAudience(subject, false)).toBe(false);
+    expect(frameAudience(subject, true)).toBe(false);
+  }
+  for (const kind of ["speech.ready", "speech.invalidate"]) expect(frameSubject({ kind, threadId: "t" })).toEqual({ scope: "thread", threadId: "t" });
+});

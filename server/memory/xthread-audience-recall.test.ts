@@ -1,3 +1,4 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -322,3 +323,5 @@ describe("T7: a search in flight when a flip commits", () => {
     expect(ids(theirs.result.hits)).not.toContain(w.x.id);
   });
 });
+
+useOutsideStoreFixture();

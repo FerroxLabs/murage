@@ -10,13 +10,15 @@
 // hand work down, the call screen sends that request through the ordinary
 // message route, so the engine turn, the steer queue, the approvals and the
 // transcript are exactly the ones a typed message gets.
+import { CONTEXT_UNAVAILABLE, presentationPrefix } from "../tts/call-presentation.ts";
+import { compileSpeechSource, MAX_SOURCE_BYTES } from "../tts/speech-source.ts";
+import type { CallSpeechCoordinator } from "../tts/call-coordinator.ts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { houseRulesPrompt } from "../house-rules.ts";
 import type { Message } from "../store.ts";
 import { handDownResult, handDownStatus, parseHandDowns, type HandDownReceipt } from "./hand-downs.ts";
 import {
-  BRIEF_MAX_CHARS,
   type HostTiming,
   runVoiceBrief,
   runVoiceHostTurn,
@@ -74,6 +76,7 @@ export interface VoiceHostRouteGroup {
 
 export interface VoiceHostRouteDeps {
   bot(id: string): VoiceHostRouteBot | null;
+  presentation(req: IncomingMessage, threadId: string, botId: string, replyId?: string): ReturnType<CallSpeechCoordinator["openPresentation"]>;
   /** A channel the caller may hold a room call in; null when it does not
    *  exist or this caller may not call it (index.ts: desktop only). */
   group?(id: string): VoiceHostRouteGroup | null;
@@ -159,7 +162,9 @@ const ROOM_NAME_CHARS = 40;
 
 /** A member name as the prompt reads it: one line, bounded. */
 function roomName(raw: unknown): string {
-  return typeof raw === "string" ? raw.replace(/\s+/g, " ").trim().slice(0, ROOM_NAME_CHARS).trim() : "";
+  // D24 B.2 RULE: name normalization and capping precede the final release gate.
+  return typeof raw === "string" ? compileSpeechSource(raw, { presentation: true, pronounce: false, maxUnits: MAX_SOURCE_BYTES * 2,
+    releaseTransform: text => text.replace(/\s+/g, " ").trim().slice(0, ROOM_NAME_CHARS).trim() }) : "";
 }
 
 /** What was said to other members' voices on this call. Exported for tests. */
@@ -167,9 +172,9 @@ export function parseRoomHeard(raw: unknown): VoiceHostRoom["heard"] {
   if (!Array.isArray(raw)) return [];
   const out: VoiceHostRoom["heard"] = [];
   for (const entry of raw) {
-    const member = roomName(entry?.member);
-    const owner = typeof entry?.owner === "string" ? entry.owner.trim().slice(0, 400) : "";
-    const reply = typeof entry?.reply === "string" ? clipHostTurn(entry.reply.trim(), 400) : "";
+    const member = roomName(typeof entry?.member === "string" ? compileSpeechSource(entry.member, { presentation: true, maxUnits: MAX_SOURCE_BYTES * 2 }) : "");
+    const owner = typeof entry?.owner === "string" ? presentationPrefix(compileSpeechSource(entry.owner, { presentation: true, maxUnits: MAX_SOURCE_BYTES * 2 }), 400) : "";
+    const reply = typeof entry?.reply === "string" ? presentationPrefix(compileSpeechSource(entry.reply, { presentation: true, maxUnits: MAX_SOURCE_BYTES * 2 }), 400) : "";
     if (member && (owner || reply)) out.push({ member, owner, reply });
   }
   return out.slice(-ROOM_HEARD);
@@ -239,13 +244,47 @@ export function parseHistory(raw: unknown): VoiceHostTurn[] {
   const turns: VoiceHostTurn[] = [];
   for (const entry of raw.slice(-12)) {
     const role = entry?.role === "host" ? "host" : entry?.role === "owner" ? "owner" : null;
-    const text = typeof entry?.text === "string" ? entry.text.trim().slice(0, SAID_MAX_CHARS) : "";
+    const text = typeof entry?.text === "string" ? presentationPrefix(compileSpeechSource(entry.text, { presentation: true, maxUnits: MAX_SOURCE_BYTES * 2 }), SAID_MAX_CHARS) : "";
     const id = typeof entry?.handDown?.id === "string" && /^[\w-]{1,64}$/.test(entry.handDown.id) ? entry.handDown.id : "";
-    const request = typeof entry?.handDown?.request === "string" ? entry.handDown.request.trim().slice(0, 2_000) : "";
+    const request = typeof entry?.handDown?.request === "string" ? presentationPrefix(compileSpeechSource(entry.handDown.request, { presentation: true, maxUnits: MAX_SOURCE_BYTES * 2 }), 2_000) : "";
     const handDown = role === "host" && id && request ? { id, request } : undefined;
-    if (role && (text || handDown)) turns.push({ role, text: role === "host" ? clipHostTurn(text) : text, ...(handDown ? { handDown } : {}) });
+    if (role && (text || handDown)) turns.push({ role, text: role === "host" ? presentationPrefix(text, HOST_TURN_CHARS) : text, ...(handDown ? { handDown } : {}) });
   }
   return turns;
+}
+
+const project = (text: string) => compileSpeechSource(text, { presentation: true, maxUnits: MAX_SOURCE_BYTES * 2, pronounce: false });
+
+/** The sole SSE serialization boundary, including future fields and event kinds. */
+function projectEvent(value: unknown): unknown {
+  if (typeof value === "string") return project(value);
+  if (Array.isArray(value)) return value.map(projectEvent);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, field]) => [project(key), projectEvent(field)]));
+  }
+  return value;
+}
+
+/** Own the raw response here; route code receives no unprojected stream writer. */
+function voiceHostResponse(res: ServerResponse) {
+  return {
+    json(status: number, body: unknown) {
+      res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify(body));
+      return true;
+    },
+    start(cancelled: () => void) {
+      res.on("close", cancelled);
+      res.writeHead(200, {
+        "content-type": "text/event-stream", "cache-control": "no-store",
+        connection: "keep-alive", "x-accel-buffering": "no",
+      });
+    },
+    emit(event: unknown) { res.write(`data: ${JSON.stringify(projectEvent(event))}\n\n`); },
+    detach(cancelled: () => void) { res.off("close", cancelled); },
+    end() { res.end(); },
+    get headersSent() { return res.headersSent; },
+  };
 }
 
 /** Returns true when it handled the request. */
@@ -253,16 +292,13 @@ export async function handleVoiceHostRoute(
   method: string,
   path: string,
   req: IncomingMessage,
-  res: ServerResponse,
+  response: ServerResponse,
   deps: VoiceHostRouteDeps,
 ): Promise<boolean> {
   const match = path.match(VOICE_HOST_PATH);
   if (!match || method !== "POST") return false;
-  const sendJson = (status: number, body: unknown) => {
-    res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
-    res.end(JSON.stringify(body));
-    return true;
-  };
+  const res = voiceHostResponse(response);
+  const sendJson = res.json;
   const body = await deps.readBody(req).catch(() => null);
   if (!body || typeof body !== "object" || Array.isArray(body)) return sendJson(400, { error: "body must be a JSON object" });
   if (body.warm === true) {
@@ -274,8 +310,8 @@ export async function handleVoiceHostRoute(
   // not something the owner said
   const brief = body.brief === true;
   const said = typeof body.text === "string" ? body.text.trim() : "";
-  if (!said) return sendJson(400, { error: "text required" });
-  if (said.length > (brief ? BRIEF_MAX_CHARS : SAID_MAX_CHARS)) return sendJson(413, { error: "that is too long for one spoken turn" });
+  if (!brief && !said) return sendJson(400, { error: "text required" });
+  if (!brief && said.length > SAID_MAX_CHARS) return sendJson(413, { error: "that is too long for one spoken turn" });
   const bot = deps.bot(match[1]);
   if (!bot) return sendJson(404, { error: "no such bot" });
   const groupId = typeof body.groupId === "string" && /^[\w-]+$/.test(body.groupId) ? body.groupId : null;
@@ -290,58 +326,86 @@ export async function handleVoiceHostRoute(
     : threadId === bot.threadId || (bot.tasks ?? []).some((t) => t.threadId === threadId);
   if (!owns) return sendJson(409, { error: group ? "that task does not belong to this channel" : "that task does not belong to this bot" });
 
-  // requests handed down on this call are in the host's context as tool
-  // calls; listing them again as the owner's words made them look unanswered
-  const handedDown = parseHandDowns(body.handDowns).map((h) => h.request);
-  const approval = typeof body.approval === "string" ? body.approval : undefined;
+  let presentation: ReturnType<CallSpeechCoordinator["openPresentation"]>;
+  try {
+    if (brief && (typeof body.replyId !== "string" || !/^[\w-]{1,128}$/.test(body.replyId))) return sendJson(400, { error: "reply identity required" });
+    presentation = deps.presentation(req, threadId, bot.id, brief ? body.replyId as string : undefined);
+  } catch { return sendJson(409, { error: "call presentation unavailable" }); }
+  try {
+  const projectedBot = (value: VoiceHostRouteBot): VoiceHostRouteBot => ({ ...value, name: project(value.name), description: value.description === undefined ? undefined : project(value.description), persona: value.persona === undefined ? undefined : project(value.persona), tasks: value.tasks?.map(task => ({ ...task, title: project(task.title) })) });
+  const projectedPath = (id: string, since?: number): Message[] => deps.activePath(id, since).map(message => ({
+    ...message,
+    ...(message.text === undefined ? {} : { text: message.role === "user" ? project(message.text) : presentation.resolve(message.id) ?? CONTEXT_UNAVAILABLE }),
+    ...(message.from ? { from: { ...message.from, name: project(message.from.name) } } : {}),
+    ...(message.tool ? { tool: { ...message.tool, name: /^error:/i.test(message.tool.name) ? "error: " + CONTEXT_UNAVAILABLE : CONTEXT_UNAVAILABLE,
+      spoken: message.tool.spoken ? CONTEXT_UNAVAILABLE : undefined, summary: message.tool.summary ? CONTEXT_UNAVAILABLE : undefined, errorDetails: message.tool.errorDetails ? CONTEXT_UNAVAILABLE : undefined } } : {}),
+  }));
+  const protectedDeps = { ...deps, activePath: projectedPath, bot: (id: string) => { const value = deps.bot(id); return value ? projectedBot(value) : null; },
+    needsYou: (id: string) => deps.needsYou(id).map(item => ({ ...item, title: CONTEXT_UNAVAILABLE, summary: CONTEXT_UNAVAILABLE })) };
+  const knownHandDowns = new Map(presentation.history.flatMap(turn => turn.handDown ? [[turn.handDown.id, turn.handDown.request] as const] : []));
+  const handDowns = parseHandDowns(body.handDowns).filter(h => knownHandDowns.has(h.id)).map(h => ({ ...h, request: knownHandDowns.get(h.id)! }));
+  const handedDown = handDowns.map(h => h.request);
+  const approval = body.approval === undefined ? undefined : CONTEXT_UNAVAILABLE;
   const now = (deps.now ?? Date.now)();
   const state = group
-    ? voiceHostRoomState(bot, group, threadId, deps, now, { approval, handedDown, heard: parseRoomHeard(body.roomHeard) })
-    : voiceHostState(bot, threadId, deps, now, approval, handedDown);
+    ? voiceHostRoomState(projectedBot(bot), { ...group, name: project(group.name), tasks: group.tasks?.map(task => ({ ...task, title: project(task.title) })) }, threadId, protectedDeps, now, { approval, handedDown, heard: [] })
+    : voiceHostState(projectedBot(bot), threadId, protectedDeps, now, approval, handedDown);
   const controller = new AbortController();
   // `close` fires on the response when the client goes away mid-stream
-  res.on("close", () => controller.abort());
-  res.writeHead(200, {
-    "content-type": "text/event-stream",
-    "cache-control": "no-store",
-    connection: "keep-alive",
-    "x-accel-buffering": "no",
-  });
+  const cancelled = () => { controller.abort(); presentation.cancel(); };
+  presentation.signal.addEventListener("abort", () => controller.abort(), { once: true });
+  res.start(cancelled);
   const { host, lookup } = deps.endpoints();
   // What became of each piece of work handed down on this call, read from
   // the thread (hand-downs.ts): the host's context carries it as a tool
   // result, and work still running cannot be handed down again.
-  const history = parseHistory(body.history);
+  const history = presentation.history;
   // In a room the thread holds every member's rows: a hand-down's outcome is
   // read from the owner's lines and this member's own rows only.
   // a hand-down's own line is no older than the hand-down (less the ten seconds its text match allows)
-  const handDowns = parseHandDowns(body.handDowns);
   const fullThread = deps.activePath(threadId, handDowns.length ? Math.min(...handDowns.map((h) => h.at)) - 10_000 : undefined);
   const thread = group ? fullThread.filter((m) => m.role === "user" || m.from?.botId === bot.id) : fullThread;
   const busy = group ? group.busyBotId === bot.id && group.threadId === threadId : Boolean(bot.busy) && bot.threadId === threadId;
   const results: Record<string, string> = {};
+  let answerResultId: string | undefined;
   const running: string[] = [];
   for (const handDown of handDowns) {
     const receipt = handDown.requestId && group ? deps.requestReceipt?.(group.id, handDown.requestId) : undefined;
-    const status = handDownStatus(handDown, thread, busy, receipt);
-    results[handDown.id] = handDownResult(status);
-    if (status.kind === "running" || status.kind === "starting") running.push(handDown.request);
+    let answerId: string | undefined;
+    const status = handDownStatus(handDown, thread, busy, receipt, sources => { answerId = sources.answer?.id; });
+    const protectedStatus = status.kind === "done" ? { ...status, answer: answerId ? presentation.resolve(answerId) ?? CONTEXT_UNAVAILABLE : CONTEXT_UNAVAILABLE }
+      : status.kind === "failed" ? { ...status, reason: CONTEXT_UNAVAILABLE }
+      : status.kind === "running" ? { ...status, steps: status.steps.map(() => CONTEXT_UNAVAILABLE) } : status;
+    results[handDown.id] = handDownResult(protectedStatus);
+    if (answerId && answerId === presentation.sourceMessageId) answerResultId = handDown.id;
+    if (status.kind === "running" || status.kind === "starting") running.push(CONTEXT_UNAVAILABLE);
   }
   let timing: HostTiming | null = null;
+  const snapshot = presentation.snapshot({ state, history, said: brief ? "" : said, results, running, answer: brief ? presentation.answer : undefined, answerResultId });
   const events = brief
-    ? (deps.brief ?? runVoiceBrief)({ state, answer: said, host, history, results, signal: controller.signal })
-    : (deps.run ?? runVoiceHostTurn)({ state, history, said, host, lookup, results, running, signal: controller.signal, onTiming: (t) => (timing = t) });
+    ? (deps.brief ?? runVoiceBrief)({ snapshot, host, signal: controller.signal, onSource: presentation.source })
+    : (deps.run ?? runVoiceHostTurn)({ snapshot, host, lookup, signal: controller.signal, onSource: presentation.source, onTiming: (t) => (timing = t) });
   // One line per turn in the harness log: what the host chose and how fast,
   // never what was said. A live call is otherwise a black box afterwards.
   const started = Date.now();
   let first: number | null = null;
   const chose = new Set<string>();
+  let successful = false, spoken = false, failed = false;
   for await (const event of events) {
     if (controller.signal.aborted) break;
     if (first === null && event.type !== "done") first = Date.now() - started;
+    if (event.type === "done") successful = true;
+    if (event.type === "error") failed = true;
+    if (event.type === "sentence") spoken = true;
     chose.add(event.type === "error" ? `error:${event.reason}` : event.type);
-    res.write(`data: ${JSON.stringify(event)}\n\n`);
+    if (event.type === "hand_down") {
+      const request = project(event.request);
+      res.emit({ type: "hand_down", request, id: presentation.handDown(request) });
+    } else res.emit(event);
   }
+  const selected = presentation.finish(successful && !failed, spoken);
+  if (selected && !controller.signal.aborted) res.emit({ type: "audio", callSessionId: selected.callId, threadId, replyId: selected.replyId });
+  res.detach(cancelled);
   chose.delete("done");
   const t = timing as HostTiming | null;
   const stages = t
@@ -350,4 +414,10 @@ export async function handleVoiceHostRoute(
   console.log(`[voice-host] ${brief ? "brief" : group ? "room turn" : "turn"} via ${host?.via ?? "none"}: ${[...chose].join(",") || "nothing"}; first ${first ?? "-"} ms, all ${Date.now() - started} ms${controller.signal.aborted ? " (hung up)" : ""}${stages}`);
   res.end();
   return true;
+  } catch {
+    presentation.cancel();
+    if (!res.headersSent) return sendJson(409, { error: "call presentation unavailable" });
+    res.end();
+    return true;
+  }
 }

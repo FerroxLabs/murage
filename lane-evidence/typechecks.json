@@ -1,0 +1,14 @@
+{
+  "renderer": {
+    "exit": 0,
+    "NODE_OPTIONS": "--max-old-space-size=8192"
+  },
+  "server": {
+    "exit": 0,
+    "NODE_OPTIONS": "--max-old-space-size=8192"
+  },
+  "control-plane": {
+    "exit": 0,
+    "NODE_OPTIONS": "--max-old-space-size=8192"
+  }
+}

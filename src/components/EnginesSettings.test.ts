@@ -246,7 +246,7 @@ describe("claudeAccountChanger over the wire (EnginesSettings wiring)", () => {
     expect(log).toEqual([
       "busy true", "→ DELETE /api/claude-accounts/claude-work", "← DELETE /api/claude-accounts/claude-work", "draw DELETE", "→ GET /api/claude-accounts", "← GET /api/claude-accounts", "busy false",
       "→ GET /api/instances", "← GET /api/instances",
-      "error Saved, but the engine list could not refresh. Switch to another window and back to probe the engines again.",
+      "error Saved, but the engine list could not refresh. Switch to another window and back to check the engines again.",
     ]);
   });
 });

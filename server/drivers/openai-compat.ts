@@ -229,7 +229,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       includeUsageInCompleted: true,
       nativeLog: {
         source: "openai-compat.chat.completions",
-        outgoing: (_turn, messages, model) => ({ model, messageCount: messages.length }),
+        outgoingCount: (_turn, messageCount, model) => ({ model, messageCount }),
         incoming: ({ text, reasoning, usage }) => ({
           textLength: text.length,
           reasoningLength: reasoning.length,

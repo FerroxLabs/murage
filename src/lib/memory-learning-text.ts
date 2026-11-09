@@ -4,6 +4,7 @@
 // The sentences of the Memory page's status lines and the learning history, in the language in use.
 // They live apart from memory-learning.ts because that file is read by server tests, which cannot
 // reach the renderer's language catalogue.
+import { canRaiseCeiling } from "@/lib/learning-limit";
 import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
 import { ceilingState, formatTokens, learningConnectionLabel, type LearningCeilingStatus, type MemoryLearning, type SemanticIndexStatus } from "@/lib/memory-learning";
@@ -51,7 +52,7 @@ export const ceilingMonthLine = (ceiling: LearningCeilingStatus) => t("settings.
 export function ceilingStatusLine(ceiling: LearningCeilingStatus): { text: string; follow: "none" | "raise" | "advanced" } {
   const state = ceilingState(ceiling);
   if (state === "off") return { text: t("memoryLearning.ceiling.off"), follow: "advanced" };
-  if (state === "paused") return { text: t("memoryLearning.ceiling.paused"), follow: "raise" };
+  if (state === "paused") return { text: t(ceiling.pausedBy === "unseen" ? "memoryLearning.ceiling.pausedUnseen" : "memoryLearning.ceiling.paused"), follow: canRaiseCeiling(ceiling) ? "raise" : "none" };
   return { text: ceilingMonthLine(ceiling), follow: "none" };
 }
 

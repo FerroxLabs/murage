@@ -1,3 +1,5 @@
+import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 import { fixtureCredentialFingerprint } from "../testing/fixture-dump.ts";
 // Codex driver contract tests, run against the scripted fake app-server
 // in server/testing/fake-codex-app-server.ts — the driver must drive the
@@ -16,18 +18,20 @@ import * as procs from "../procs.ts";
 
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
-import { CODEX_MCP_TOOL_TIMEOUT_SEC, CodexDriver, codexCloudBilling, readCodexLogin } from "./codex.ts";
-import { HOOK_ASK_BOUND_MS, HOOK_LIVENESS_WIN32_MS, setCodexFloorsForTests } from "./codex-hook.ts";
+import { CODEX_MCP_TOOL_TIMEOUT_SEC, CodexDriver, codexCloudBilling, readCodexLogin, readCodexLoginMode } from "./codex.ts";
+import { CodexHookGate, HOOK_ASK_BOUND_MS, HOOK_LIVENESS_WIN32_MS, setCodexFloorsForTests, setHookRuntimeForTests } from "./codex-hook.ts";
 import { DATA_DIR } from "../config.ts";
 import { flushDecisionLog } from "../decision-log.ts";
 import { resetIsolationCache } from "./isolation-cache.ts";
 import { scopedCliHomeRoot } from "./scoped-cli-home.ts";
+import * as scopedHome from "./scoped-cli-home.ts";
 import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
 import { PassThrough } from "node:stream";
 import { TURN_BOT, TURN_RENDER, cloudTurnLaunch } from "../cloud-home/turn-process.ts";
 import { ABSENT_PINS, valuePins } from "../../shared/arg-vocabulary.ts";
 import type { CloudLauncherSpawn } from "../cloud-home/bot-state.ts";
+import * as cloudBotState from "../cloud-home/bot-state.ts";
 import { buildRemoteMount } from "../custom-mcp-mounts.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
 import { unsupportedCallsNotice } from "./codex-unsupported-calls.ts";
@@ -37,6 +41,12 @@ import { isMountRecord } from "../../shared/mount-identity.ts";
 import { autoVerdict } from "../auto-approve.ts";
 import { execChecks, gate, resetExecChecks } from "../testing/exec-check-spy.ts";
 import { approveStartupWrite } from "../testing/startup-write.ts";
+import * as codexHookModule from "./codex-hook.ts";
+import * as localInject from "./local-inject.ts";
+import { beginOutsideTurn, forgetOutsideState, markTurnOutside, turnOutsideRead, wireOutsideStore } from "../email/external-marks.ts";
+import { fileOutsideStore } from "../outside-store.ts";
+import { noteEnginePath, noteToolStartOutside } from "../outside-wire.ts";
+import { forgetEngineEnv } from "../outside-scan.ts";
 
 vi.mock("node:child_process", async (original) => (await import("../testing/exec-check-spy.ts")).withExecCheckSpy(await original()));
 
@@ -108,6 +118,72 @@ describe("CodexDriver turns (fake app-server)", () => {
     recorder?.stop();
     await instance?.dispose();
     await removeTempDir(scratch);
+  });
+
+  it.each(["", undefined])("dispatches an empty native selection %s with the live catalog default", async model => {
+    const dump = join(scratch, "blank-model.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+    await create();
+    const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "blank-model", text: "hi", model });
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId);
+    const { calls } = JSON.parse(readFileSync(dump, "utf8"));
+    expect(calls.find((call: { method: string }) => call.method === "thread/start").params.model).toBe("gpt-fake-default");
+  });
+
+  // STOP-NONACP: a Stop, Stop All (codex has no reset) before the dispatch slot exists (model refresh, prewarm takeover, stuck-process
+  // retry) found nothing to stop, so the engine launched, handshook and prompted. It is recorded now and read as the slot is taken.
+  describe("STOP-NONACP: a Stop before the dispatch slot", () => {
+    const callsLog = () => join(scratch, "calls-prestop.log");
+    afterEach(() => { delete process.env.FAKE_CODEX_CALL_LOG; });
+    const engineMethods = () => (existsSync(callsLog()) ? readFileSync(callsLog(), "utf8").split("\n").filter(Boolean).map((l) => l.split(" ")[1]) : []);
+
+    it.each(["Stop", "Stop All"] as const)("%s: the stopped pair, no engine process, no initialize, no prompt", async (kind) => {
+      process.env.FAKE_CODEX_CALL_LOG = callsLog();
+      await create();
+      const threadId = `t-prestop-${kind === "Stop" ? "one" : "all"}`;
+      const sending = instance.adapter.sendTurn({ threadId, text: "go", cwd: scratch });
+      void (kind === "Stop" ? instance.adapter.interruptTurn(threadId) : instance.adapter.stopAll!()).catch(() => {});
+      const { turnId } = await sending;
+      const done: any = await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === turnId);
+      expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const mine = recorder.events.filter((e: any) => e.turnId === turnId);
+      expect(mine.filter((e: any) => e.type === "turn.started")).toHaveLength(1);
+      expect(mine.filter((e: any) => e.type === "turn.completed")).toHaveLength(1);
+      expect(mine.some((e: any) => e.type === "runtime.error")).toBe(false);
+      expect(engineMethods().filter((m) => m === "thread/start" || m === "thread/resume" || m === "turn/start")).toEqual([]);
+      const lines = existsSync(callsLog()) ? readFileSync(callsLog(), "utf8").split("\n").filter(Boolean).map((l) => l.split(" ") as [string, string]) : [];
+      const listers = new Set(lines.filter(([, m]) => m === "model/list").map(([pid]) => pid));
+      expect(lines.filter(([pid, m]) => m === "initialize" && !listers.has(pid))).toEqual([]);
+    }, 20_000);
+
+    it("control: a Stop for another thread leaves the starting turn to launch and prompt", async () => {
+      process.env.FAKE_CODEX_CALL_LOG = callsLog();
+      await create();
+      const sending = instance.adapter.sendTurn({ threadId: "t-prestop-control", text: "go", cwd: scratch });
+      void instance.adapter.interruptTurn("some-other-thread").catch(() => {});
+      const { turnId } = await sending;
+      const done: any = await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === turnId);
+      expect(done).toMatchObject({ ok: true });
+      expect(done.stopReason).not.toBe("cancelled");
+      expect(engineMethods()).toContain("turn/start");
+    }, 20_000);
+
+    it("a Stop that lands while the scope is set up, then a scope failure: the stopped pair, never a scope_unavailable card", async () => {
+      await create();
+      const spy = vi.spyOn(scopedHome, "awaitScopeStart").mockImplementation(async () => {
+        await instance.adapter.interruptTurn("t-prestop-scope");
+        throw new scopedHome.ScopeUnavailableError("the engine folder is busy", false, { code: "unavailable", engine: "codex" } as never);
+      });
+      try {
+        const { turnId } = await instance.adapter.sendTurn({ threadId: "t-prestop-scope", text: "go", cwd: scratch });
+        const done: any = await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === turnId);
+        expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+        const mine = recorder.events.filter((e: any) => e.turnId === turnId);
+        expect(mine.some((e: any) => e.type === "runtime.error")).toBe(false);
+        expect(mine.some((e: any) => e.type === "turn.completed" && e.stopReason === "scope_unavailable")).toBe(false);
+      } finally { spy.mockRestore(); }
+    }, 20_000);
   });
 
   // D20 (adapted from OpenMausBot cc411b61b): a call Codex refused as unsupported left no item; the turn names it once.
@@ -201,7 +277,7 @@ describe("CodexDriver turns (fake app-server)", () => {
 
     it("reports nothing when skills/list gives no list, so the older event sequence holds", async () => {
       await create();
-      await instance.adapter.sendTurn({ threadId: "t-no-skills", text: "hi" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-no-skills", text: "hi" });
       await recorder.until((e) => e.type === "turn.completed");
       expect(recorder.events.some((e) => e.type === "engine.commands")).toBe(false);
     });
@@ -209,7 +285,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     it("runs /review as review/start and shows the review", async () => {
       process.env.FAKE_CODEX_DUMP = join(scratch, "dump.json");
       await create();
-      await instance.adapter.sendTurn({ threadId: "t-review", text: "/review the auth change", system: "You are Moss.", engineCommand: { name: "review", args: "the auth change" } });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-review", text: "/review the auth change", system: "You are Moss.", engineCommand: { name: "review", args: "the auth change" } });
       expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
       const review = calls().find((call) => call.method === "review/start");
       expect(review?.params).toEqual({ threadId: "codex-thread-1", target: { type: "custom", instructions: "the auth change" }, delivery: "inline" });
@@ -220,7 +296,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     it("reviews uncommitted changes when /review has nothing after it", async () => {
       process.env.FAKE_CODEX_DUMP = join(scratch, "dump.json");
       await create();
-      await instance.adapter.sendTurn({ threadId: "t-review-bare", text: "/review", engineCommand: { name: "review", args: "" } });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-review-bare", text: "/review", engineCommand: { name: "review", args: "" } });
       await recorder.until((e) => e.type === "turn.completed");
       expect(calls().find((call) => call.method === "review/start")?.params.target).toEqual({ type: "uncommittedChanges" });
     });
@@ -228,7 +304,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     it("runs /compact as thread/compact/start and settles on its turn", async () => {
       process.env.FAKE_CODEX_DUMP = join(scratch, "dump.json");
       await create();
-      await instance.adapter.sendTurn({ threadId: "t-compact", text: "/compact", engineCommand: { name: "compact", args: "" } });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-compact", text: "/compact", engineCommand: { name: "compact", args: "" } });
       expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
       expect(calls().find((call) => call.method === "thread/compact/start")?.params).toEqual({ threadId: "codex-thread-1" });
       expect(recorder.events.filter((e) => e.type === "item.started")).toMatchObject([{ itemType: "tool", title: "compact" }]);
@@ -238,7 +314,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       process.env.FAKE_CODEX_SKILLS = JSON.stringify([SKILL]);
       process.env.FAKE_CODEX_DUMP = join(scratch, "dump.json");
       await create();
-      await instance.adapter.sendTurn({ threadId: "t-skill", text: "/release-notes v2", system: "You are Moss.", engineCommand: { name: "release-notes", args: "v2" } });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-skill", text: "/release-notes v2", system: "You are Moss.", engineCommand: { name: "release-notes", args: "v2" } });
       expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
       expect(calls().find((call) => call.method === "turn/start")?.params.input).toEqual([
         { type: "text", text: "$release-notes v2" },
@@ -250,7 +326,7 @@ describe("CodexDriver turns (fake app-server)", () => {
   it.each(["parent-isolation", "parent-early"])("isolates parent native events (%s)", async (mode) => {
     await create({ mode });
     process.env.FAKE_CODEX_DUMP = join(scratch, "dump.json");
-    await instance.adapter.sendTurn({ threadId: "parent-isolation", text: "one parent action" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "parent-isolation", text: "one parent action" });
     await recorder.until((e) => e.type === "turn.completed");
     expect(recorder.events.filter((e) => e.type === "turn.completed")).toMatchObject([
       { ok: true, usage: { input: 11, output: 2 } },
@@ -267,9 +343,24 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(seen.calls.filter((c: { method: string }) => c.method === "turn/start")).toHaveLength(1);
   });
 
+  it.each(["key_budget_reached", "budget_exceeded", "premium_locked"])("preserves the routed CLI refusal %s and its key", async code => {
+    const { isBudgetReached, resetUnavailable } = await import("../voice/voice-routes.ts");
+    resetUnavailable();
+    await create({ mode: `flux-budget-${code}` });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-cli-budget", text: "hi", model: "fixture-model",
+      providerRoute: { connectionId: "fixture", revision: "1", preset: "flux", protocol: "responses", baseUrl: "https://fixture.invalid/v1", apiKey: "fixture-budget", model: "fixture-model" } });
+    await recorder.until(e => e.type === "turn.completed");
+    const failure = recorder.events.find(e => e.type === "runtime.error" && e.providerError?.fluxBudget);
+    expect(Boolean(failure)).toBe(code !== "premium_locked");
+    expect(isBudgetReached({ via: "flux", label: "Flux", baseUrl: "https://fixture.invalid/v1", key: "fixture-budget", model: "speech" })).toBe(code !== "premium_locked");
+    expect(isBudgetReached({ via: "flux", label: "Flux", baseUrl: "https://fixture.invalid/v1", key: "different-key", model: "speech" })).toBe(false);
+    if (code !== "premium_locked") expect(recorder.events.some(e => e.type === "content.delta" && e.streamKind === "assistant_text")).toBe(false);
+    resetUnavailable();
+  });
+
   it.each(["terminal-error", "terminal-error-duplicate"])("surfaces a terminal provider error exactly once (%s)", async (mode) => {
     await create({ mode });
-    await instance.adapter.sendTurn({ threadId: "terminal-diagnostic", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "terminal-diagnostic", text: "hi" });
     await recorder.until(e => e.type === "turn.completed");
     expect(recorder.events.filter(e => e.type === "runtime.error").map(e => e.message)).toEqual(["Provider rejected the request"]);
     expect(recorder.events.filter(e => e.type === "turn.completed")).toMatchObject([{ ok: false }]);
@@ -279,7 +370,7 @@ describe("CodexDriver turns (fake app-server)", () => {
 
   it.each(["parent-invalid-ack", "parent-overflow"])("fails unbound parent output explicitly (%s)", async (mode) => {
     await create({ mode });
-    await instance.adapter.sendTurn({ threadId: "parent-failure", text: "one parent action" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "parent-failure", text: "one parent action" });
     await recorder.until((e) => e.type === "turn.completed");
     expect(recorder.events.filter((e) => e.type === "turn.completed")).toMatchObject([{ ok: false }]);
     expect(recorder.events.some((e) => e.type === "content.delta" || e.type === "thread.token-usage.updated")).toBe(false);
@@ -292,7 +383,7 @@ describe("CodexDriver turns (fake app-server)", () => {
   it("preserves helper approval requests while ignoring helper completion", async () => {
     await create({ mode: "parent-approval" });
     process.env.FAKE_CODEX_DUMP = join(scratch, "dump.json");
-    await instance.adapter.sendTurn({ threadId: "parent-approval", text: "one parent action" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "parent-approval", text: "one parent action" });
     const ask = await recorder.until((e) => e.type === "request.opened");
     expect(ask).toMatchObject({ summary: "helper command" });
     expect(recorder.events.some((e) => e.type === "turn.completed")).toBe(false);
@@ -312,7 +403,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       return originalTimeout(callback, delay, ...args);
     }) as typeof setTimeout);
     try {
-      await instance.adapter.sendTurn({ threadId: "held-approval", text: "one parent action" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "held-approval", text: "one parent action" });
       const ask = await recorder.until((e) => e.type === "request.opened");
       expect(armed).toEqual([]);
       await instance.adapter.respondToRequest("held-approval", String(ask.requestId), { behavior: "allow" });
@@ -330,7 +421,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     process.env.BOX_TOKEN = "box-should-not-leak";
     process.env.MURAGE_TTS_KEY = "tts-should-not-leak";
 
-    const { turnId } = await instance.adapter.sendTurn({
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-happy",
       text: "list files",
       system: "You are Testy.",
@@ -388,7 +479,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     await create({ mode: "late-output" });
     const dump = join(scratch, "shutdown.json");
     process.env.FAKE_CODEX_DUMP = dump;
-    await instance.adapter.sendTurn({ threadId: "t-shutdown", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-shutdown", text: "go" });
     await recorder.until((event) => event.type === "item.completed" && event.itemType === "assistant_text");
     const { pid } = JSON.parse(readFileSync(dump, "utf8"));
     expect(instance.adapter.hasSession?.("t-shutdown")).toBe(true);
@@ -407,7 +498,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "shutdown-timeout.json");
     process.env.FAKE_CODEX_DUMP = dump;
     await create({ mode: "late-output", environment: { FAKE_CODEX_SHUTDOWN_DELAY_MS: "5500" } });
-    await instance.adapter.sendTurn({ threadId: "t-timeout", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-timeout", text: "go" });
     await recorder.until(event => event.type === "item.completed" && event.itemType === "assistant_text");
     let windowsPid: number | undefined;
     if (process.platform === "win32") {
@@ -443,13 +534,15 @@ describe("CodexDriver turns (fake app-server)", () => {
     await create({ mode: "late-output" });
     const confirm = vi.spyOn(procs, "awaitCliTreeStopped").mockResolvedValue(false);
     try {
-      await instance.adapter.sendTurn({ threadId: "t-uncertain-group", text: "go" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-uncertain-group", text: "go" });
       await recorder.until(event => event.type === "runtime.error" && event.message === "Codex Test did not close after Stop. This conversation stays busy until it does; restart Murage if it stays stuck.");
       await expect(instance.adapter.interruptTurn("t-uncertain-group")).rejects.toThrow("shutdown is still pending");
       await expect(instance.adapter.stopAll()).rejects.toThrow("shutdown is still pending");
       await expect(instance.dispose()).rejects.toThrow("listeners remain attached");
       expect(instance.adapter.hasSession("t-uncertain-group")).toBe(true);
-      expect(recorder.events.some(event => event.type === "turn.completed")).toBe(false);
+      // STOP-NONACP-DISPOSE (r3 B, U2): the dispose that rejects has already delivered the turn ending, exactly once. stopAll asked first, so
+      // asked beats closing: the stopped pair (a dispose alone would end engine-closing, see U2)
+      expect(recorder.events.filter(event => event.type === "turn.completed")).toEqual([expect.objectContaining({ ok: true, stopReason: "cancelled" })]);
     } finally {
       confirm.mockRestore();
       await instance.adapter.interruptTurn("t-uncertain-group");
@@ -476,7 +569,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       const dump = join(scratch, "dump-routing.json");
       process.env.FAKE_CODEX_DUMP = dump;
 
-      await instance.adapter.sendTurn({ threadId: "t-routing", text: "hi" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-routing", text: "hi" });
       await recorder.until((e) => e.type === "turn.completed");
 
       const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -499,7 +592,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       const dump = join(scratch, "flux.json");
       process.env.FAKE_CODEX_DUMP = dump;
 
-      await instance.adapter.sendTurn({ threadId: "t-flux", text: "hi", model: "flux::flux-auto", warmIdentity: { botId: "b", audience: "owner", decidedOwner: true } });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-flux", text: "hi", model: "flux::flux-auto", warmIdentity: { botId: "b", audience: "owner", decidedOwner: true } });
       await recorder.until((event) => event.type === "turn.completed");
 
       const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -530,7 +623,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       const dump = join(scratch, "flux-native.json");
       process.env.FAKE_CODEX_DUMP = dump;
 
-      await instance.adapter.sendTurn({ threadId: "t-flux-native", text: "hi", model: "gpt-5.6-sol" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-flux-native", text: "hi", model: "gpt-5.6-sol" });
       await recorder.until((event) => event.type === "turn.completed");
 
       const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -552,7 +645,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       const dump = join(scratch, "flux-bare.json");
       process.env.FAKE_CODEX_DUMP = dump;
 
-      await instance.adapter.sendTurn({ threadId: "t-flux-bare", text: "hi", model: "flux-auto" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-flux-bare", text: "hi", model: "flux-auto" });
       await recorder.until((event) => event.type === "turn.completed");
 
       const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -565,7 +658,7 @@ describe("CodexDriver turns (fake app-server)", () => {
 
   it("normalizes native image generation bytes without exposing the provider path", async () => {
     await create({ mode: "image" });
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-image",
       text: "make an image",
       model: "gpt-5.6-sol",
@@ -595,19 +688,38 @@ describe("CodexDriver turns (fake app-server)", () => {
     // boot) and swallows the ENOENT, so the unit test makes it itself.
     mkdirSync(NATIVE_DIR, { recursive: true });
     const threadId = `t-image-log-${Date.now()}`;
-    await instance.adapter.sendTurn({ threadId, text: "make an image", model: "gpt-5.6-sol" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "make an image", model: "gpt-5.6-sol" });
     await recorder.until((event) => event.type === "turn.completed");
 
     const logged = readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8");
     expect(logged).toContain("imageGeneration");
-    expect(logged).toContain("base64 chars]");
+    // ql2 sink fold (was a "[N base64 chars]" stand-in): the raster field is not written at all
+    expect(logged).not.toContain("base64");
     expect(logged).not.toContain("iVBORw0KGgo");
     expect(logged).not.toContain("provider-owned-path");
   });
 
+  // ALL.eld250: a thread/resume answer is the whole conversation. The raw line's length keeps it out of the redaction walk.
+  it("a frame over the record limit is dropped by its raw length; an image frame the log cuts down is still kept", async () => {
+    await create({ mode: "big-frame" });
+    mkdirSync(NATIVE_DIR, { recursive: true });
+    const threadId = `t-big-frame-${Date.now()}`;
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go", model: "gpt-5.6-sol" });
+    await recorder.until((event) => event.type === "turn.completed");
+    const logged = readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8");
+    expect(logged).toContain("frame exceeds byte limit before redaction");
+    expect(logged).not.toContain("BIGFRAME-CANARY");
+    const rows = logged.trim().split("\n");
+    const imageRow = rows.find((line) => line.includes("img2") && line.includes("imageGeneration"));
+    expect(imageRow).toBeDefined();
+    expect(imageRow).not.toContain("native_trace_record_omitted");
+    expect(logged).not.toContain("base64");
+    expect(logged).not.toContain("AAAAAAAAAAAAAAAA");
+  });
+
   it("keeps the full command when a Windows interpreter prefix is long", async () => {
     await create({ mode: "windows-command" });
-    await instance.adapter.sendTurn({ threadId: "t-windows-command", text: "read notes" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-windows-command", text: "read notes" });
 
     const command = [
       "\"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\"",
@@ -632,7 +744,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "environment.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-environment", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-environment", text: "hi" });
     await recorder.until((event) => event.type === "turn.completed");
 
     // The child runs in a scoped CODEX_HOME (codex-isolation.ts) whose login links to the instance's home.
@@ -648,7 +760,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     for (const [name, flags] of [["plain", {}], ["routeAsks", { routeAsks: true as const }], ["stopLine", { stopLine: true as const }]] as const) {
       const dump = join(scratch, `composio-${name}.json`);
       process.env.FAKE_CODEX_DUMP = dump;
-      const sent = await instance.adapter.sendTurn({ threadId: `t-composio-${name}`, text: "hi", ...flags, integrations: { composio } });
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-composio-${name}`, text: "hi", ...flags, integrations: { composio } });
       await recorder.until((event) => event.type === "turn.completed" && event.turnId === sent.turnId);
       const argv = JSON.parse(readFileSync(dump, "utf8")).argv.join(" ");
       expect(argv.includes("mcp_servers.murage_connectors.default_tools_approval_mode")).toBe(name === "plain");
@@ -661,7 +773,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     process.env.FAKE_CODEX_DUMP = dump;
     expect(instance.adapter.capabilities.composioMcp).toBe(true);
 
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-composio",
       text: "check mail",
       integrations: {
@@ -687,7 +799,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     await create();
     const dump = join(scratch, "custom-mcp-clash.json");
     process.env.FAKE_CODEX_DUMP = dump;
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-custom-mcp-clash",
       text: "go",
       integrations: {
@@ -740,7 +852,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       command: "attacker-mcp", args: [], env: { [key]: "attacker-value", CUSTOM_REJECTED_MARKER: "must-not-copy" },
     }]));
 
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-custom-mcp",
       text: "go",
       integrations: {
@@ -801,7 +913,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     process.env.FAKE_CODEX_DUMP = dump;
     const token = "b2".repeat(24);
     const context = { execPath: process.execPath, proxyPath: "/fake/remote-mcp-proxy.js", harnessUrl: "http://127.0.0.1:1", token: () => token };
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-remote-mounts",
       text: "go",
       integrations: {
@@ -842,7 +954,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "collision.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-mcp-collision",
       text: "go",
       integrations: {
@@ -882,7 +994,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "double-collision.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-mcp-double-collision",
       text: "go",
       integrations: {
@@ -936,7 +1048,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       const dump = join(scratch, `spelling-${label}.json`);
       process.env.FAKE_CODEX_DUMP = dump;
 
-      await instance.adapter.sendTurn({
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
         threadId: `t-spelling-${label}`,
         text: "go",
         integrations: { custom: { fibery: { command: "uv", args: ["tool", "run", "fibery-mcp-server"], env: {} } } },
@@ -960,7 +1072,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "unreadable.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-unreadable-config",
       text: "go",
       integrations: {
@@ -984,7 +1096,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const phoneJobs = { command: process.execPath, args: ["/fake/phone-jobs-proxy.js", "--x"], env: { MURAGE_PHONE_TOOLS: "calendar_read", MURAGE_PJ_OTHER: "b" } };
     const withDump = join(scratch, "pj-with.json");
     process.env.FAKE_CODEX_DUMP = withDump;
-    await instance.adapter.sendTurn({ threadId: "t-pj-with", text: "go", integrations: { phoneJobs } });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pj-with", text: "go", integrations: { phoneJobs } });
     await recorder.until((event) => event.type === "turn.completed" && event.threadId === "t-pj-with");
     const argv: string[] = JSON.parse(readFileSync(withDump, "utf8")).argv;
     const flag = (key: string) => { const arg = argv.find((item) => item.startsWith(`mcp_servers.phoneJobs.${key}=`)); return arg ? JSON.parse(arg.slice(`mcp_servers.phoneJobs.${key}=`.length)) : undefined; };
@@ -995,7 +1107,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(argv.some((arg) => arg.startsWith("mcp_servers.phoneJobs.default_tools_approval_mode="))).toBe(true);
     const withoutDump = join(scratch, "pj-without.json");
     process.env.FAKE_CODEX_DUMP = withoutDump;
-    await instance.adapter.sendTurn({ threadId: "t-pj-without", text: "go", integrations: { browser: { command: process.execPath, args: ["/fake/browser-proxy.js"], env: {} } } });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pj-without", text: "go", integrations: { browser: { command: process.execPath, args: ["/fake/browser-proxy.js"], env: {} } } });
     await recorder.until((event) => event.type === "turn.completed" && event.threadId === "t-pj-without");
     expect(JSON.parse(readFileSync(withoutDump, "utf8")).argv.some((arg: string) => arg.includes("phoneJobs"))).toBe(false);
   });
@@ -1004,7 +1116,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     await create();
     const dump = join(scratch, "tool-surface.json");
     process.env.FAKE_CODEX_DUMP = dump;
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-tool-surface",
       text: "go",
       preloadBrowserTools: true,
@@ -1026,7 +1138,7 @@ describe("CodexDriver turns (fake app-server)", () => {
   it("mounts dedicated memory without agents and rejects custom replacement without exposing its token in argv", async () => {
     await create();
     const dump=join(scratch,"memory.json");process.env.FAKE_CODEX_DUMP=dump;
-    await instance.adapter.sendTurn({threadId:"memory-only",text:"recall",integrations:{
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),threadId:"memory-only",text:"recall",integrations:{
       memory:{command:process.execPath,args:["/fake/memory-proxy.js"],env:{MURAGE_HARNESS_URL:"http://127.0.0.1:1",MURAGE_MEMORY_TOKEN:"memory-fixture-secret"}},
       custom:{"murage-memory":{command:"attacker-mcp",args:[],env:{}},forged:{command:"attacker-mcp",args:[],env:{MURAGE_MEMORY_TOKEN:"forged"}}},
     }});
@@ -1046,7 +1158,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "agents.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-agents",
       text: "ask the researcher",
       integrations: {
@@ -1081,7 +1193,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     process.env.FAKE_CODEX_DUMP = dump;
     expect(instance.adapter.capabilities.computerMcp).toBe(true);
 
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-local-computer",
       text: "open the browser",
       integrations: {
@@ -1107,7 +1219,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "remote-computer.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-remote-computer",
       text: "take a screenshot",
       integrations: {
@@ -1129,7 +1241,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     await create({ environment: { UNSLOTH_STUDIO_AUTH_TOKEN: "unsloth-secret" } });
     const dump = join(scratch, "dump.json");
     process.env.FAKE_CODEX_DUMP = dump;
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-local",
       text: "hi",
       model: "unsloth::Qwen3.6-35B-A3B-bf16:qwen3-5-6-n-r-reasoning",
@@ -1149,7 +1261,7 @@ describe("CodexDriver turns (fake app-server)", () => {
   it("streams agentMessage deltas without re-emitting the settled text", async () => {
     process.env.FAKE_CODEX_MODE = "stream";
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-stream", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stream", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const text = recorder.events.filter(
@@ -1169,7 +1281,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "dump.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-resume", text: "again", resumeCursor: "codex-thread-9" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-resume", text: "again", resumeCursor: "codex-thread-9" });
     const started = await recorder.until((e) => e.type === "session.started");
     expect(started).toMatchObject({ sessionId: "codex-thread-9" });
     await recorder.until((e) => e.type === "turn.completed");
@@ -1181,7 +1293,7 @@ describe("CodexDriver turns (fake app-server)", () => {
 
   it("falls back to a fresh thread when resume fails", async () => {
     await create(); // fake rejects thread/resume outside resume mode
-    await instance.adapter.sendTurn({ threadId: "t-fallback", text: "go", resumeCursor: "gone-thread" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fallback", text: "go", resumeCursor: "gone-thread" });
     const started = await recorder.until((e) => e.type === "session.started");
     expect(started).toMatchObject({ sessionId: "codex-thread-1" });
     await recorder.until((e) => e.type === "turn.completed");
@@ -1193,7 +1305,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     await create(); // fake rejects thread/resume outside resume mode
     const dump = join(scratch, "r3-dump.json");
     process.env.FAKE_CODEX_DUMP = dump;
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-r3-replay", text: "What did I say?", resumeCursor: "gone-thread",
       transcript: [{ role: "user", text: "Remember ALPHA." }, { role: "assistant", text: "Remembered." }],
     });
@@ -1208,7 +1320,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     await create({ mode: "resume" });
     const dump = join(scratch, "r3-dump-ok.json");
     process.env.FAKE_CODEX_DUMP = dump;
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-r3-noreplay", text: "again", resumeCursor: "codex-thread-9",
       transcript: [{ role: "user", text: "Remember ALPHA." }],
     });
@@ -1342,7 +1454,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "dump.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-approve", text: "clean up" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-approve", text: "clean up" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({ requestType: "permission", tool: "shell", summary: "rm -rf scratch" });
 
@@ -1361,7 +1473,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       params: { command: ["rm", "-rf", "build dir"], reason: "Just tidying the workspace" },
     });
     await create({ mode: "approval" });
-    await instance.adapter.sendTurn({ threadId: "t-approve-argv", text: "clean up" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-approve-argv", text: "clean up" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({ tool: "shell", summary: "rm -rf 'build dir'", reason: "Just tidying the workspace" });
     await instance.adapter.respondToRequest("t-approve-argv", opened.requestId!, { behavior: "deny" });
@@ -1374,7 +1486,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       params: { fileChanges: { "src/a.ts": { type: "update" }, "src/b.ts": { type: "add" } }, reason: "Fixing the bug" },
     });
     await create({ mode: "approval" });
-    await instance.adapter.sendTurn({ threadId: "t-approve-patch", text: "patch" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-approve-patch", text: "patch" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({ tool: "edit", summary: "src/a.ts, src/b.ts", reason: "Fixing the bug", toolCall: { name: "edit", input: { paths: ["src/a.ts", "src/b.ts"] } } });
     expect((opened as { toolInputMissing?: string }).toolInputMissing).toBeUndefined();
@@ -1387,7 +1499,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "mcp-elicitation.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-mcp-elicitation", text: "list bots" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-mcp-elicitation", text: "list bots" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     // Rule 12: the fake's ask names its tool only in the message prose, which
     // is never read, so the call is named by the server with an empty tool part
@@ -1410,7 +1522,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const timer = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) =>
       original(callback, delay === 30 * 60_000 ? 50 : delay, ...args)) as typeof setTimeout);
     try {
-      await instance.adapter.sendTurn({ threadId: "project-question", text: "choose" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "project-question", text: "choose" });
       const opened = await recorder.until(event => event.type === "request.opened");
       expect(opened).toMatchObject({ requestType: "question" });
       await new Promise(resolve => original(resolve, 200));
@@ -1425,7 +1537,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "form-elicitation.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-form-elicitation", text: "deploy it" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-form-elicitation", text: "deploy it" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     // ASK1 carded this as a permission named "elicitation"; ASK3 makes it the
     // question it is, with the MCP server's field as the card's question.
@@ -1454,7 +1566,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "form-elicitation-skip.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-form-skip", text: "deploy it" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-form-skip", text: "deploy it" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     await expect(instance.adapter.respondToRequest("t-form-skip", opened.requestId!, { behavior: "deny" })).resolves.toBe("rejected");
     await recorder.until((e) => e.type === "turn.completed");
@@ -1466,7 +1578,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "user-input.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-user-input", text: "set it up" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-user-input", text: "set it up" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     // fullAuto never answers a question; the card carries all three questions
     expect(opened).toMatchObject({
@@ -1504,7 +1616,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "user-input-skip.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-user-input-skip", text: "set it up" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-user-input-skip", text: "set it up" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     await expect(instance.adapter.respondToRequest("t-user-input-skip", opened.requestId!, { behavior: "deny" })).resolves.toBe("rejected");
     expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "user" });
@@ -1519,7 +1631,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "user-input-ended.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-user-input-end", text: "set it up" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-user-input-end", text: "set it up" });
     await recorder.until((e) => e.type === "request.opened");
     await instance.adapter.interruptTurn("t-user-input-end");
     expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "system" });
@@ -1533,7 +1645,7 @@ describe("CodexDriver turns (fake app-server)", () => {
   const hostComputer = { localComputer: { command: "/cua-driver", args: ["mcp"], env: {}, platform: "darwin" as const, scope: "local-computer" as const } };
   it("does not stamp a shell command as computer control when the host computer is attached", async () => {
     await create({ mode: "approval" });
-    await instance.adapter.sendTurn({ threadId: "t-host-shell", text: "clean up", integrations: hostComputer });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-host-shell", text: "clean up", integrations: hostComputer });
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({ tool: "shell", toolCall: { name: "shell" } });
     expect((opened as { approvalScope?: string }).approvalScope).toBeUndefined();
@@ -1543,7 +1655,7 @@ describe("CodexDriver turns (fake app-server)", () => {
 
   it("does not stamp another MCP server's tool as computer control", async () => {
     await create({ mode: "mcp-elicitation" });
-    await instance.adapter.sendTurn({ threadId: "t-host-mcp", text: "list", integrations: hostComputer });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-host-mcp", text: "list", integrations: hostComputer });
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({ toolCall: { name: "mcp__agents__" } });
     expect((opened as { approvalScope?: string }).approvalScope).toBeUndefined();
@@ -1559,7 +1671,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     // host-mounted: a computer tool carries the scope that keeps the
     // harness's local-computer-block backstop in force for remembered
     // always-allows
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-host-scope",
       text: "clean up",
       integrations: {
@@ -1572,7 +1684,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     await recorder.until((e) => e.type === "turn.completed");
 
     // a Local VM mount is not the host: no scope stamped
-    await instance.adapter.sendTurn({
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-vm-scope",
       text: "clean up",
       integrations: {
@@ -1590,7 +1702,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "dump.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-auto", text: "clean up" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-auto", text: "clean up" });
     await recorder.until((e) => e.type === "turn.completed");
 
     expect(recorder.events.some((e) => e.type === "request.opened")).toBe(false);
@@ -1609,7 +1721,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       process.env.FAKE_CODEX_DUMP = dump;
       for (const [turn, enforced] of [false, true, false].entries()) {
         const threadId = `t-enforce-${fullAuto}-${turn}`;
-        const sent = await instance.adapter.sendTurn({
+        const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
           threadId, text: "hi",
           ...(enforced ? { routeAsks: true as const } : {}),
         });
@@ -1639,7 +1751,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     await create({ mode: "approval", fullAuto: true });
     const dump = join(scratch, "dump-stop-line.json");
     process.env.FAKE_CODEX_DUMP = dump;
-    await instance.adapter.sendTurn({ threadId: "t-stop-line", text: "clean up", stopLine: true });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stop-line", text: "clean up", stopLine: true });
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({ requestType: "permission", tool: "shell", toolCall: { name: "shell", input: { command: "rm -rf scratch" } } });
     await instance.adapter.respondToRequest("t-stop-line", opened.requestId!, { behavior: "allow" });
@@ -1655,7 +1767,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     await create({ mode: "approval", fullAuto: true });
     const dump = join(scratch, "dump-route-asks.json");
     process.env.FAKE_CODEX_DUMP = dump;
-    await instance.adapter.sendTurn({ threadId: "t-route-asks", text: "clean up", routeAsks: true });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-route-asks", text: "clean up", routeAsks: true });
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({ requestType: "permission", tool: "shell", toolCall: { name: "shell", input: { command: "rm -rf scratch" } } });
     await instance.adapter.respondToRequest("t-route-asks", opened.requestId!, { behavior: "allow" });
@@ -1667,7 +1779,7 @@ describe("CodexDriver turns (fake app-server)", () => {
 
   it("reports an MCP tool call's server, name and arguments for the stop line", async () => {
     await create({ mode: "mcp-elicitation" });
-    await instance.adapter.sendTurn({ threadId: "t-mcp-toolcall", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-mcp-toolcall", text: "go" });
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({ toolCall: { name: "mcp__agents__", input: { bot: "lena", limit: 3 } } });
     await instance.adapter.respondToRequest("t-mcp-toolcall", opened.requestId!, { behavior: "allow" });
@@ -1700,7 +1812,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       toolInputMissing?: string;
     };
     const ask = async (threadId: string, integrations?: Record<string, unknown>): Promise<Opened> => {
-      await instance.adapter.sendTurn({ threadId, text: "go", ...(integrations ? { integrations } : {}) } as never);
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go", ...(integrations ? { integrations } : {}) } as never);
       const opened = await recorder.until((e) => e.type === "request.opened" && e.threadId === threadId);
       await instance.adapter.respondToRequest(threadId, opened.requestId!, { behavior: "deny" });
       await recorder.until((e) => e.type === "turn.completed" && e.threadId === threadId);
@@ -1795,7 +1907,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       await create();
       const dump = join(scratch, "double-underscore.json");
       process.env.FAKE_CODEX_DUMP = dump;
-      await instance.adapter.sendTurn({
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
         threadId: "t-dunder",
         text: "go",
         integrations: { custom: { bad__name: { command: "x", args: [], env: {} }, ok: { command: "y", args: [], env: {} } } },
@@ -1847,7 +1959,7 @@ describe("CodexDriver turns (fake app-server)", () => {
 
   it("a user Stop settles the turn as cancelled with no runtime error (STOP1)", async () => {
     await create({ mode: "approval" }); // approval mode parks the turn open
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-codex-user-stop", text: "go" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-codex-user-stop", text: "go" });
     await recorder.until((e) => e.type === "request.opened");
     await instance.adapter.interruptTurn("t-codex-user-stop");
     const done = await recorder.until((e) => e.type === "turn.completed");
@@ -1859,7 +1971,7 @@ describe("CodexDriver turns (fake app-server)", () => {
 
   it("a Stop still settles as cancelled when Codex reports a clean end after it (STOP1 race)", async () => {
     await create({ mode: "approval" });
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-codex-stop-race", text: "go" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-codex-stop-race", text: "go" });
     await recorder.until((e) => e.type === "request.opened");
     // Hold the kill: the app-server stays alive, gets the Stop's deny of its open ask and answers with a clean
     // turn/completed, which therefore always reaches the driver after the Stop (the order that failed 3-4 of 5 runs).
@@ -1882,7 +1994,7 @@ describe("CodexDriver turns (fake app-server)", () => {
 
   it("a reply that finished before the Stop keeps its finished state (STOP1 race)", async () => {
     await create({ mode: "approval" });
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-codex-done-then-stop", text: "go" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-codex-done-then-stop", text: "go" });
     const ask: any = await recorder.until((e) => e.type === "request.opened");
     await instance.adapter.respondToRequest("t-codex-done-then-stop", String(ask.requestId), { behavior: "allow" });
     const done = await recorder.until((e) => e.type === "turn.completed");
@@ -1893,9 +2005,9 @@ describe("CodexDriver turns (fake app-server)", () => {
 
   it("rejects a second turn while one is in flight", async () => {
     await create({ mode: "approval" }); // approval mode parks the turn open
-    await instance.adapter.sendTurn({ threadId: "t-busy", text: "one" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-busy", text: "one" });
     await recorder.until((e) => e.type === "request.opened");
-    await expect(instance.adapter.sendTurn({ threadId: "t-busy", text: "two" })).rejects.toThrow(/already running/);
+    await expect(instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-busy", text: "two" })).rejects.toThrow(/already running/);
     await instance.adapter.interruptTurn("t-busy");
     await recorder.until((e) => e.type === "turn.completed");
   });
@@ -1910,10 +2022,66 @@ describe("CodexDriver turns (fake app-server)", () => {
     });
     recorder = recordEvents(instance.adapter);
 
-    await instance.adapter.sendTurn({ threadId: "t-missing", text: "go" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-missing", text: "go" });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: false });
     expect(await instance.snapshot()).toMatchObject({ state: "unavailable" });
+  });
+
+  it.each([
+    ["Logged in using ChatGPT", "subscription"], ["Logged in using API key", "metered"],
+    ["Logged in using an API key", "metered"], ["logged in using api-key", "metered"],
+    ["Not logged in", "signed-out"], ["Logged in", "unknown"], ["", "unknown"], ["unrecognized", "unknown"],
+  ])("C1: login mode %s is %s", (text, expected) => { expect(readCodexLoginMode(text)).toBe(expected); });
+
+  it.each([
+    ["Logged in using ChatGPT", false, true, "subscription"],
+    ["Logged in using an API key", false, true, "metered"],
+    ["Not logged in", true, false, undefined],
+    ["Logged in using something new", false, true, undefined],
+    ["", false, undefined, undefined], ["", true, undefined, undefined],
+  ] as const)("C2: snapshot retains callback authentication and billing: %s failed=%s", async (text, failed, authenticated, billing) => {
+    await create();
+    const exec = vi.spyOn(procs, "execCli").mockImplementation((...args: Parameters<typeof procs.execCli>) => {
+      const callback = args[args.length - 1] as (error: Error | null, stdout: string, stderr: string) => void;
+      if (args[1].includes("--version")) callback(null, "codex-cli 0.151.0", "");
+      else callback(failed ? Object.assign(new Error("timed out"), { killed: true, code: "ETIMEDOUT" }) : null, "", text);
+      return undefined as never;
+    });
+    try {
+      const snapshot = await instance.snapshot();
+      expect(snapshot.state).toBe("available");
+      if (authenticated === undefined) {
+        expect(snapshot).not.toHaveProperty("authenticated");
+        expect(snapshot.authUnverified).toBe(true);
+      } else expect(snapshot.authenticated).toBe(authenticated);
+      if (billing === undefined) expect(snapshot).not.toHaveProperty("billing");
+      else expect(snapshot.billing).toBe(billing);
+      expect(exec).toHaveBeenCalled();
+    } finally { exec.mockRestore(); }
+  });
+
+  it.each([
+    ["apikey", "Logged in using ChatGPT", "metered"],
+    ["chatgpt", "Logged in using an API key", "subscription"],
+  ] as const)("C2 Cloud snapshot: launcher %s overrides CLI %s", async (mode, text, billing) => {
+    await create();
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+    const launcher = vi.spyOn(cloudBotState, "queryCloudBotState").mockResolvedValue({
+      tombstoned: false, engines: { codex: { mode, signedIn: true, expiresAt: null } },
+    });
+    const exec = vi.spyOn(procs, "execCli").mockImplementation((...args: Parameters<typeof procs.execCli>) => {
+      const callback = args[args.length - 1] as (error: Error | null, stdout: string, stderr: string) => void;
+      callback(null, args[1].includes("--version") ? "codex-cli 0.151.0" : "", args[1].includes("--version") ? "" : text);
+      return undefined as never;
+    });
+    try {
+      expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: true, billing });
+      expect(launcher).toHaveBeenCalledExactlyOnceWith(undefined, undefined);
+      expect(exec.mock.calls.filter(call => call[1].includes("status"))).toHaveLength(1);
+    } finally {
+      exec.mockRestore(); launcher.mockRestore(); vi.unstubAllEnvs();
+    }
   });
 
   it("reports whether the installed Codex CLI is signed in", async () => {
@@ -1958,7 +2126,7 @@ describe("CodexDriver turns (fake app-server)", () => {
 
   it("marks a Codex 401 as setup so the UI offers sign-in instead of Retry", async () => {
     await create({ mode: "unauthorized" });
-    await instance.adapter.sendTurn({ threadId: "t-unauthorized", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-unauthorized", text: "hi" });
 
     const error = await recorder.until((event) => event.type === "runtime.error");
     expect(error).toMatchObject({ setup: true });
@@ -1973,7 +2141,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     process.env.FAKE_CODEX_STATE = join(scratch, "codex-launches");
     process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-codex-retry", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-codex-retry", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed" && e.ok === true);
 
     const retries = recorder.events.filter((e) => e.type === "turn.retrying");
@@ -1988,7 +2156,7 @@ describe("CodexDriver turns (fake app-server)", () => {
   it("does not relaunch a provider safety rejection wrapped in 429", async () => {
     await create({ mode: "safety-rejection" });
     process.env.FAKE_CODEX_DUMP = join(scratch, "safety-calls.json");
-    await instance.adapter.sendTurn({ threadId: "safety-rejection", text: "synthetic request" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "safety-rejection", text: "synthetic request" });
     await recorder.until(e => e.type === "turn.completed");
     expect(recorder.events.filter(e => e.type === "turn.completed")).toMatchObject([{ ok: false }]);
     expect(recorder.events.filter(e => e.type === "turn.retrying")).toEqual([]);
@@ -2002,7 +2170,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     process.env.FAKE_CODEX_STATE = join(scratch, "codex-launches-cap");
     process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-codex-cap", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-codex-cap", text: "hi" });
 
     await expect(recorder.until((e) => e.type === "turn.completed" && e.ok === false)).resolves.toBeTruthy();
     const retries = recorder.events.filter((e) => e.type === "turn.retrying");
@@ -2014,8 +2182,8 @@ describe("CodexDriver turns (fake app-server)", () => {
     process.env.FAKE_CODEX_STATE = join(scratch, "codex-launches-concurrent");
     await create();
 
-    const first = instance.adapter.sendTurn({ threadId: "t-codex-stop", text: "stop me" });
-    const second = instance.adapter.sendTurn({ threadId: "t-codex-continue", text: "keep going" });
+    const first = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-codex-stop", text: "stop me" });
+    const second = instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-codex-continue", text: "keep going" });
     await recorder.until((e) => e.type === "turn.retrying" && e.threadId === "t-codex-stop");
     await recorder.until((e) => e.type === "turn.retrying" && e.threadId === "t-codex-continue");
     await instance.adapter.interruptTurn("t-codex-stop");
@@ -2040,7 +2208,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     process.env.FAKE_CODEX_RETRY_SCALE = "60";
     await create();
     const threadId = "t-codex-cancel-backoff";
-    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "hi" });
     await recorder.until((e) => e.type === "turn.retrying");
     const stoppedAt = Date.now();
     await instance.adapter.interruptTurn(threadId);
@@ -2061,7 +2229,7 @@ describe("CodexDriver turns (fake app-server)", () => {
   describe("CLOSE-STOP quit vs Stop", () => {
     const holding = async (threadId: string) => {
       await create({ mode: "tool-hold" });
-      const { turnId } = await instance.adapter.sendTurn({ threadId, text: "go" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go" });
       // the fake started a command it never finishes: the turn is held mid-tool
       await recorder.until((e) => e.type === "item.started" && e.turnId === turnId && JSON.stringify(e).includes("sleep 3600"));
       return turnId;
@@ -2094,7 +2262,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
     await create();
     const threadId = "t-codex-stop-race";
-    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "hi" });
     await recorder.until((e) => e.type === "session.started");
     // the fixture holds turn/start: the handshake phase is reached
     for (let i = 0; i < 1_000 && !existsSync(marker); i++) await new Promise((resolve) => setTimeout(resolve, 5));
@@ -2130,7 +2298,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       process.env.FAKE_CODEX_STATE = join(scratch, "launch-crash");
       process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
       await create();
-      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-codex-launch-crash", text: "hi" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-codex-launch-crash", text: "hi" });
 
       const done = await recorder.until((e) => e.type === "turn.completed");
       expect(done).toMatchObject({ ok: true, turnId });
@@ -2147,7 +2315,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       process.env.FAKE_CODEX_STATE = join(scratch, "launch-kill");
       process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
       await create();
-      await instance.adapter.sendTurn({ threadId: "t-codex-launch-kill", text: "hi" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-codex-launch-kill", text: "hi" });
 
       const done = await recorder.until((e) => e.type === "turn.completed");
       expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
@@ -2173,7 +2341,7 @@ describe("CodexDriver turns (fake app-server)", () => {
         });
       });
       try {
-        await instance.adapter.sendTurn({ threadId: "t-codex-launch-silent", text: "hi" });
+        await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-codex-launch-silent", text: "hi" });
         const done = await recorder.until((e) => e.type === "turn.completed");
         expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
         expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
@@ -2190,7 +2358,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       process.env.FAKE_CODEX_STATE = join(scratch, `preack-${variant}`);
       process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
       await create();
-      await instance.adapter.sendTurn({ threadId: `t-codex-preack-${variant}`, text: "hi" });
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-codex-preack-${variant}`, text: "hi" });
 
       const done = await recorder.until((e) => e.type === "turn.completed");
       expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
@@ -2215,7 +2383,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       });
       try {
         await create();
-        await instance.adapter.sendTurn({ threadId: "t-codex-ack-crash", text: "hi" });
+        await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-codex-ack-crash", text: "hi" });
         const done = await recorder.until((e) => e.type === "turn.completed");
         expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
         expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
@@ -2240,7 +2408,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       });
       try {
         await create();
-        await instance.adapter.sendTurn({ threadId: "t-codex-exit-mid-turn", text: "hi" });
+        await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-codex-exit-mid-turn", text: "hi" });
         await recorder.until((e) => e.type === "content.delta" && e.streamKind === "reasoning_text");
         writeFileSync(killGate, "");
         const done = await recorder.until((e) => e.type === "turn.completed");
@@ -2264,7 +2432,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       process.env.FAKE_CODEX_RETRY_SCALE = "60";
       await create();
       const threadId = "t-codex-crash-stop";
-      const { turnId } = await instance.adapter.sendTurn({ threadId, text: "hi" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "hi" });
       await recorder.until((e) => e.type === "turn.retrying");
       const stoppedAt = Date.now();
       await instance.adapter.interruptTurn(threadId);
@@ -2285,7 +2453,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       const threadId = "t-codex-crash-unconfirmed";
       const confirm = vi.spyOn(procs, "awaitCliTreeStopped").mockResolvedValue(false);
       try {
-        await instance.adapter.sendTurn({ threadId, text: "hi" });
+        await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "hi" });
         await recorder.until((e) => e.type === "runtime.error" && e.message === "Codex Test did not close after Stop. This conversation stays busy until it does; restart Murage if it stays stuck.");
         expect(recorder.events.some((e) => e.type === "turn.retrying")).toBe(false);
         expect(recorder.events.some((e) => e.type === "turn.completed")).toBe(false);
@@ -2322,7 +2490,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       const dump = join(scratch, `f4-silent-${knob}.json`);
       process.env.FAKE_CODEX_DUMP = dump;
       await create();
-      const { turnId } = await instance.adapter.sendTurn({ threadId: `t-f4-silent-${knob}`, text: "hi" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-f4-silent-${knob}`, text: "hi" });
       const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
       expect(done).toMatchObject({ ok: false, stopReason: "rpc_error" });
       expect(turnStarts()).toBe(1);
@@ -2339,7 +2507,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     it("F3: an error answer to turn/start after a buffered notification => no relaunch", async () => {
       process.env.FAKE_CODEX_TURNSTART_SILENT = "notify-error";
       await create();
-      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-f4-notify-error", text: "hi" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-f4-notify-error", text: "hi" });
       const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
       expect(done).toMatchObject({ ok: false });
       expect(turnStarts()).toBe(1);
@@ -2350,7 +2518,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       process.env.FAKE_CODEX_TURNSTART_SILENT = "plain";
       process.env.MURAGE_CODEX_RPC_TIMEOUT_MS = "10000";
       await create();
-      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-f4-stop", text: "hi" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-f4-stop", text: "hi" });
       const end = Date.now() + 5_000;
       while (turnStarts() === 0 && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
       await instance.adapter.interruptTurn("t-f4-stop");
@@ -2365,7 +2533,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     it("F6: the ACK and a turn notification arrive after the timer fired, while the process holds its shutdown => one turn/start, no relaunch, one completion", async () => {
       process.env.FAKE_CODEX_TURNSTART_LATE = "1";
       await create();
-      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-f4-late", text: "hi" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-f4-late", text: "hi" });
       const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
       expect(done).toMatchObject({ ok: false });
       await new Promise((r) => setTimeout(r, 500));
@@ -2383,7 +2551,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       await create();
       const dump = join(scratch, "f4-model.json");
       process.env.FAKE_CODEX_DUMP = dump;
-      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-f4-model", text: "hi", model: "gpt-f4-chosen" });
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-f4-model", text: "hi", model: "gpt-f4-chosen" });
       await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
       expect(callsOf(dump, "turn/start")[0]).toMatchObject({ model: "gpt-f4-chosen" });
     });
@@ -2394,7 +2562,7 @@ describe("CodexDriver turns (fake app-server)", () => {
         await create({ mode: "resume" });
         const dump = join(scratch, "f4-flux.json");
         process.env.FAKE_CODEX_DUMP = dump;
-        const flux = await instance.adapter.sendTurn({ threadId: "t-f4-flux", text: "hi", model: "flux::flux-auto", resumeCursor: "thread-flux", warmIdentity: { botId: "b", audience: "owner", decidedOwner: true } });
+        const flux = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-f4-flux", text: "hi", model: "flux::flux-auto", resumeCursor: "thread-flux", warmIdentity: { botId: "b", audience: "owner", decidedOwner: true } });
         await recorder.until((e) => e.type === "turn.completed" && e.turnId === flux.turnId);
         expect(callsOf(dump, "thread/resume")[0]).toMatchObject({ threadId: "thread-flux", model: "flux-auto", modelProvider: "flux" });
         expect(callsOf(dump, "thread/start")).toHaveLength(0);
@@ -2403,7 +2571,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       }
       const dump2 = join(scratch, "f4-route.json");
       process.env.FAKE_CODEX_DUMP = dump2;
-      const routed = await instance.adapter.sendTurn({ threadId: "t-f4-route", text: "hi", resumeCursor: "thread-route",
+      const routed = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-f4-route", text: "hi", resumeCursor: "thread-route",
         providerRoute: { connectionId: "fixture-provider", revision: "fixture-revision", preset: "openai", protocol: "responses", baseUrl: "https://provider.example/v1", apiKey: "fixture-only-not-real", model: "routed-model" } } as never);
       await recorder.until((e) => e.type === "turn.completed" && e.turnId === routed.turnId);
       const resume = callsOf(dump2, "thread/resume")[0];
@@ -2419,7 +2587,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     process.env.FAKE_CODEX_STATE = join(scratch, "codex-launches-partial");
     process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
     await create();
-    await instance.adapter.sendTurn({ threadId: "t-codex-partial", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-codex-partial", text: "hi" });
 
     await expect(recorder.until((e) => e.type === "turn.completed" && e.ok === false)).resolves.toBeTruthy();
     expect(recorder.events.some((e) => e.type === "content.delta" && e.streamKind === "assistant_text")).toBe(true);
@@ -2449,7 +2617,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "effort.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-effort", text: "hi", effort: "xhigh" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-effort", text: "hi", effort: "xhigh" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -2467,7 +2635,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     process.env.FAKE_CODEX_DUMP = dump;
     const data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aM1sAAAAASUVORK5CYII=";
 
-    await instance.adapter.sendTurn({ threadId: "t-image", text: "what is this", images: [{ mimeType: "image/png", data }] });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-image", text: "what is this", images: [{ mimeType: "image/png", data }] });
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -2484,7 +2652,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "no-image.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-no-image", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-no-image", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -2497,7 +2665,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "no-effort.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({ threadId: "t-no-effort", text: "hi" });
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-no-effort", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
@@ -2535,8 +2703,8 @@ describe("CodexDriver bounded ingress (A4)", () => {
 
   it("fails only the turn whose frame is over the limit, even when turn/completed follows it", async () => {
     await create();
-    const oversized = await instance.adapter.sendTurn({ threadId: "t-oversize", text: "__fixture_oversize_frame__" });
-    const ordinary = await instance.adapter.sendTurn({ threadId: "t-ordinary", text: "hello" });
+    const oversized = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oversize", text: "__fixture_oversize_frame__" });
+    const ordinary = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-ordinary", text: "hello" });
     const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === oversized.turnId);
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === ordinary.turnId);
 
@@ -2556,7 +2724,7 @@ describe("CodexDriver bounded ingress (A4)", () => {
 
   it("fails an unterminated oversized frame without waiting for a newline", async () => {
     await create();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-open", text: "__fixture_oversize_open_frame__" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-open", text: "__fixture_oversize_open_frame__" });
     const failed = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
 
     expect(failed).toMatchObject({ ok: false, stopReason: "frame_too_large" });
@@ -2567,7 +2735,7 @@ describe("CodexDriver bounded ingress (A4)", () => {
   // image was read for its ok flag and dropped.
   it("surfaces an MCP tool's image and withholds the computer surface's frame", async () => {
     await create();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-mcp-image", text: "__fixture_mcp_tool_image__" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-mcp-image", text: "__fixture_mcp_tool_image__" });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
 
     const images = recorder.events.filter((e) => e.type === "item.completed" && e.itemType === "assistant_image");
@@ -2581,7 +2749,7 @@ describe("CodexDriver bounded ingress (A4)", () => {
 
   it("still carries a generated image at the 10 MiB image cap", async () => {
     await create();
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-large", text: "__fixture_large_frame__" });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-large", text: "__fixture_large_frame__" });
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
 
     expect(done).toMatchObject({ ok: true });
@@ -2937,6 +3105,43 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     expect(recorder.events.some((e: any) => e.type === "item.started" && e.origin === "engine")).toBe(false);
   });
 
+  // HOOK-LIVENESS-COLD-START (1.0.15 r6 gate): on a freshly unpacked Mac app the first exec of the hook's runtime (Murage Helper as
+  // node) took longer than the 10 s bound and the first Codex turn was refused. The stand-in runtime here is slow on its first start
+  // only (3x the bound), as a program the operating system has not run yet is; every later start is fast.
+  // POSIX: the stand-in is a sh script (Windows runs the hook through its cmd launcher and keeps its wider bound, see above)
+  it.skipIf(process.platform === "win32")("runs the first turn when the hook runtime's first start is slower than the bound, and still refuses a hook that never posts", async () => {
+    const bound = 400;
+    process.env.MURAGE_CODEX_HOOK_LIVENESS_MS = String(bound);
+    const coldRuntime = (name: string) => {
+      const mark = join(scratch, `${name}.started-once`);
+      const path = join(scratch, `${name}.sh`);
+      writeFileSync(path, `#!/bin/sh\nif [ ! -e '${mark}' ]; then sleep ${(bound * 3) / 1000}; : > '${mark}'; fi\nexec '${process.execPath}' "$@"\n`);
+      chmodSync(path, 0o755);
+      setHookRuntimeForTests(path);
+      return mark;
+    };
+    onTestFinished(() => setHookRuntimeForTests());
+    const sessions = join(scratch, "cold-sessions.log");
+    process.env.FAKE_CODEX_SESSION_LOG = sessions;
+    const mark = coldRuntime("cold-runtime");
+    await recreate();
+    const r = await run("t-cold", [{ kind: "shell", id: "c1", command: "echo hi" }], () => ({ behavior: "allow" }));
+    expect(r.done).toMatchObject({ ok: true });
+    expect(recorder.events.some((e: any) => e.type === "runtime.error" && /pre-execution hook did not start/.test(e.message))).toBe(false);
+    expect(existsSync(mark)).toBe(true);
+    expect(readFileSync(sessions, "utf8").split("\n").filter(Boolean)).toHaveLength(1);
+    // the bound itself is unchanged: on a cold runtime a hook that never posts is still refused, at the bound and not before
+    process.env.FAKE_CODEX_HOOKS = "dead";
+    coldRuntime("cold-runtime-dead");
+    await recreate();
+    const started = Date.now();
+    const dead = await run("t-cold-dead", [], () => null);
+    expect(dead.done).toMatchObject({ ok: false, stopReason: "scope_unavailable" });
+    expect(recorder.events.find((e) => e.type === "runtime.error")).toMatchObject({ message: expect.stringContaining("pre-execution hook did not start") });
+    // the cold first start (3x the bound) runs out before turn/start, and the whole bound runs after it (Astra r1 #3)
+    expect(Date.now() - started).toBeGreaterThanOrEqual(bound * 3 + bound);
+  }, 30_000);
+
   // Astra BLOCK 2: the turn is held until the hook is proven, so a Codex that carries on past a dead hook never ends a turn cleanly
   it("refuses a turn that completes before the SessionStart proof, and stops a call that starts unproven", async () => {
     process.env.FAKE_CODEX_HOOKS = "dead-runs";
@@ -3224,6 +3429,60 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     expect(r.opened[0].toolInputMissing).toBeUndefined();
   });
 
+  // NOLIMITS v1 1.0.19 A4 (U8): the fileChange item carries its changes, so a write on a marked turn registers its path (the
+  // server judges the item exactly as index.ts does: noteToolStartOutside on the item.started event) and a fresh chat's read Matches
+  // NOLIMITS 1.0.18 envfix (Astra acct5 r1 H4): Codex keeps the shell's own folder on the item (input.cwd); the server judges
+  // the item.started event as index.ts does, and the scan's disk hooks are built in THAT folder, not the turn's
+  it("NOLIMITS 1.0.18 envfix H4: a shell item's own folder builds the scan's disk hooks (a bunfig.toml there marks bun)", async () => {
+    setCodexFloorsForTests({ retired: [0, 200, 0], gate: [0, 300, 0] });
+    await create();
+    const p = mkdtempSync(join(tmpdir(), "codex-h4-"));
+    writeFileSync(join(p, "bunfig.toml"), "preload = ['./hook.ts']\n");
+    expect(wireOutsideStore(fileOutsideStore(join(scratch, "outside-state.jsonl")))).toBe(true);
+    try {
+      beginOutsideTurn("t-h4", "codex-gate", undefined, false);
+      await run("t-h4", [{ kind: "shell", id: "h4", command: "bun app.ts", cwd: p }]);
+      const started = recorder.events.find((e: any) => e.type === "item.started" && e.itemId === "h4") as any;
+      expect(started).toMatchObject({ origin: "engine", input: { command: "bun app.ts", cwd: p } });
+      // the fake app-server's spawn env can turn the env relief off (engineEnvDenied marks every interpreter text, on base
+      // too, which made this row pass on 73d6335ec): cleared, so only the folder the call names decides
+      forgetEngineEnv();
+      noteEnginePath("t-h4", process.env.PATH);
+      noteToolStartOutside("t-h4", started, scratch);
+      expect(turnOutsideRead("t-h4")).toBe("interpreter");
+      // control: the same call naming the turn's own folder (no bunfig.toml there) stays clean
+      beginOutsideTurn("t-h4-turn", "codex-gate", undefined, false);
+      noteEnginePath("t-h4-turn", process.env.PATH);
+      noteToolStartOutside("t-h4-turn", { ...started, input: { ...started.input, cwd: scratch } }, scratch);
+      expect(turnOutsideRead("t-h4-turn")).toBeNull();
+    } finally {
+      forgetOutsideState();
+    }
+  });
+
+  it("NOLIMITS 1.0.19 U8: a fileChange on a marked turn registers its path; a fresh chat's `cat` of it marks downloaded file", async () => {
+    setCodexFloorsForTests({ retired: [0, 200, 0], gate: [0, 300, 0] });
+    await create();
+    const out = join(scratch, "out.md");
+    writeFileSync(out, "x\n");
+    expect(wireOutsideStore(fileOutsideStore(join(scratch, "outside-state.jsonl")))).toBe(true);
+    try {
+      beginOutsideTurn("t-u8", "codex-gate", undefined, false);
+      markTurnOutside("t-u8", "web page");
+      await run("t-u8", [{ kind: "apply_patch", id: "u8", patch: `*** Begin Patch\n*** Update File: ${out}\n+y\n*** End Patch`, escalate: true }]);
+      const started = recorder.events.find((e: any) => e.type === "item.started" && e.itemId === "u8") as any;
+      expect(started).toMatchObject({ origin: "engine", input: { changes: [{ path: out }] }, callKey: "u8" });
+      noteToolStartOutside("t-u8", started, scratch);
+      beginOutsideTurn("t-u8-fresh", "codex-gate", undefined, false);
+      // a fresh chat's engine is spawned (spawnCli notes its PATH for the thread) before any of its tools is judged
+      noteEnginePath("t-u8-fresh", process.env.PATH);
+      noteToolStartOutside("t-u8-fresh", { origin: "engine", title: "cat", toolIdentity: { name: "shell" }, input: { command: `cat ${out}` } }, scratch);
+      expect(turnOutsideRead("t-u8-fresh")).toBe("downloaded file");
+    } finally {
+      forgetOutsideState();
+    }
+  });
+
   it("NOLIMITS-CODEX-EDIT: a native file-change approval nothing announced stays a card that says what it lacks", async () => {
     setCodexFloorsForTests({ retired: [0, 200, 0], gate: [0, 300, 0] });
     process.env.FAKE_CODEX_MODE = "approval";
@@ -3326,6 +3585,90 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     expect(methods).not.toContain("turn/start");
   }, 20_000);
 
+  // STOP-NONACP: a Stop while the hook gate listens (before the engine is spawned) spawned the engine and wrote `initialize` anyway
+  it("STOP-NONACP: a Stop during the hook gate's listen spawns no engine and writes no initialize: the stopped pair", async () => {
+    const log = join(scratch, "calls-prestop-gate.log");
+    process.env.FAKE_CODEX_CALL_LOG = log;
+    await recreate("codex-cli 0.164.0");
+    const realListen = CodexHookGate.prototype.listen;
+    const spy = vi.spyOn(CodexHookGate.prototype, "listen").mockImplementation(async function (this: CodexHookGate) {
+      await instance.adapter.interruptTurn("t-prestop-gate");
+      return realListen.call(this);
+    });
+    try {
+      const sent = await instance.adapter.sendTurn({ threadId: "t-prestop-gate", text: "go", cwd: scratch, integrations: { agents: AGENTS } } as never);
+      const done: any = await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === sent.turnId);
+      expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+      expect(spy).toHaveBeenCalled();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const lines = existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean).map((l) => l.split(" ") as [string, string]) : [];
+      const listers = new Set(lines.filter(([, m]) => m === "model/list").map(([pid]) => pid));
+      // no engine process wrote `initialize` for the turn (the model-list refresh process also initializes, and lists models)
+      expect(lines.filter(([pid, m]) => m === "initialize" && !listers.has(pid))).toEqual([]);
+      expect(lines.filter(([, m]) => m === "thread/start" || m === "thread/resume" || m === "turn/start")).toEqual([]);
+      expect(recorder.events.some((e: any) => e.turnId === sent.turnId && e.type === "runtime.error")).toBe(false);
+    } finally { spy.mockRestore(); delete process.env.FAKE_CODEX_CALL_LOG; }
+  }, 20_000);
+
+  it("STOP-NONACP: a Stop during the hook gate's listen, then the listen rejects: still the stopped pair", async () => {
+    await recreate("codex-cli 0.164.0");
+    const spy = vi.spyOn(CodexHookGate.prototype, "listen").mockImplementation(async function (this: CodexHookGate) {
+      await instance.adapter.interruptTurn("t-prestop-gate-rej");
+      throw new Error("listen failed");
+    });
+    try {
+      const sent = await instance.adapter.sendTurn({ threadId: "t-prestop-gate-rej", text: "go", cwd: scratch, integrations: { agents: AGENTS } } as never);
+      const done: any = await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === sent.turnId);
+      expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+      expect(recorder.events.filter((e: any) => e.turnId === sent.turnId).map((e: any) => e.type)).toEqual(["turn.started", "turn.completed"]);
+    } finally { spy.mockRestore(); }
+  }, 20_000);
+
+  // STOP-NONACP r2 (a): after a retry the active entry is a later attempt's handle, so the thread stayed busy once the relaunch ended on a Stop
+  it("STOP-NONACP: a Stop during a relaunch's setup frees the thread: the next send is not refused as already running", async () => {
+    process.env.FAKE_CODEX_LAUNCH_CRASHES = "1";
+    process.env.FAKE_CODEX_STATE = join(scratch, "launch-crash-prestop-retry");
+    process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+    await create();
+    const realScope = scopedHome.awaitScopeStart;
+    let calls = 0;
+    const spy = vi.spyOn(scopedHome, "awaitScopeStart").mockImplementation(async (...args: any[]) => {
+      calls++;
+      if (calls === 2) { void instance.adapter.interruptTurn("t-prestop-retry").catch(() => {}); await new Promise((resolve) => setTimeout(resolve, 50)); }   // the relaunch's setup
+      return (realScope as any)(...args);
+    });
+    try {
+      const first = await instance.adapter.sendTurn({ threadId: "t-prestop-retry", text: "go", cwd: scratch });
+      const done: any = await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === first.turnId);
+      expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+      expect(calls).toBeGreaterThanOrEqual(2);
+      expect(instance.adapter.hasSession("t-prestop-retry")).toBe(false);
+      spy.mockRestore();
+      const second = await instance.adapter.sendTurn({ threadId: "t-prestop-retry", text: "again", cwd: scratch });   // pre-fix: throws "already running"
+      await recorder.until((e: any) => e.type === "session.started" && e.turnId === second.turnId);   // the fake engine then waits on an approval: the turn is live
+      expect(instance.adapter.hasSession("t-prestop-retry")).toBe(true);
+      await instance.adapter.interruptTurn("t-prestop-retry");
+      expect(await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === second.turnId)).toMatchObject({ ok: true, stopReason: "cancelled" });
+    } finally { spy.mockRestore(); delete process.env.FAKE_CODEX_LAUNCH_CRASHES; delete process.env.FAKE_CODEX_STATE; delete process.env.FAKE_CODEX_RETRY_SCALE; }
+  }, 20_000);
+
+  // STOP-NONACP: a dispose before the slot (CLOSE-STOP-1014: ends as the engine closing, never the owner's Stop; the listeners are cleared by then, so only the engine's calls are observable)
+  it("STOP-NONACP: a dispose before the dispatch slot launches no engine and writes no prompt", async () => {
+    const log = join(scratch, "calls-predispose.log");
+    process.env.FAKE_CODEX_CALL_LOG = log;
+    try {
+      await create();
+      const sending = instance.adapter.sendTurn({ threadId: "t-predispose", text: "go", cwd: scratch });
+      const closing = instance.dispose();
+      await sending.catch(() => {});
+      await closing.catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const methods = existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean).map((l) => l.split(" ")[1]) : [];
+      expect(methods.filter((m) => m === "thread/start" || m === "thread/resume" || m === "turn/start")).toEqual([]);
+      expect(instance.adapter.hasSession("t-predispose")).toBe(false);
+    } finally { delete process.env.FAKE_CODEX_CALL_LOG; }
+  }, 20_000);
+
   // F4 design 2c (03-1): two conversations of one bot, each with its own app-server, each hook reaching its own turn
   it("F11: two concurrent conversations of one gated bot => each process's hook reads its own socket and token, and each approval lands on its own turn", async () => {
     process.env.FAKE_CODEX_SESSION_DELAY_MS = "600";
@@ -3388,8 +3731,11 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     expect(readFileSync(log, "utf8")).toContain("turn/interrupt");
     expect(r.dump().interrupted).toBe(true);
     await flushDecisionLog(DATA_DIR);
-    const rows = readFileSync(join(DATA_DIR, "decisions.ndjson"), "utf8").split("\n").filter((l) => l.includes("cat /etc/hostname")).map((l) => JSON.parse(l));
-    expect(rows.at(-1)).toMatchObject({ threadId: "t-trip", source: "observed", decision: "auto-denied" });
+    // GrokBuild case 19: the decision row names the tool, never the command (the live error above still shows it)
+    const decisions = readFileSync(join(DATA_DIR, "decisions.ndjson"), "utf8");
+    expect(decisions).not.toContain("cat /etc/hostname");
+    const rows = decisions.split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((row) => row.threadId === "t-trip" && row.source === "observed");
+    expect(rows.at(-1)).toMatchObject({ threadId: "t-trip", tool: "shell", summary: "shell", source: "observed", decision: "auto-denied" });
     // the next turn re-runs the handshake on a fresh process and its prompt carries the line
     writeFileSync(log, "");
     const next = await run("t-trip", [], () => null);
@@ -3436,4 +3782,336 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
       }
     }
   });
+  // ---- STOP-NONACP-DISPOSE (s4, codex): the stop gate's rows. Tests here share a describe whose afterEach does not clear every
+  // FAKE_CODEX_* name: each test deletes what it sets.
+  describe("STOP-NONACP-DISPOSE: the stop gate", () => {
+    const callsLog = () => join(scratch, "calls-gate.log");
+    const logLines = () => (existsSync(callsLog()) ? readFileSync(callsLog(), "utf8").split("\n").filter(Boolean) : []);
+    const count = (method: string) => logLines().filter((l) => l.endsWith(` ${method}`)).length;
+    const endings = (turnId: string) => recorder.events.filter((e: any) => e.turnId === turnId && e.type === "turn.completed");
+    const errorsOf = (turnId: string) => recorder.events.filter((e: any) => e.turnId === turnId && e.type === "runtime.error");
+    const startsOf = (turnId: string) => recorder.events.filter((e: any) => e.turnId === turnId && e.type === "turn.started");
+    const CLOSED = "closed before it finished its reply";
+    afterEach(() => {
+      delete process.env.FAKE_CODEX_CALL_LOG;
+      delete process.env.MURAGE_PROVIDER_CLOSE_MS;
+      delete process.env.FAKE_CODEX_TOOLS;
+      delete process.env.FAKE_CODEX_DUMP;
+    });
+
+    /** Holds every process stop: killCliTree records instead of killing, awaitCliTreeStopped waits for release() and then runs the real stop. */
+    const holdStops = () => {
+      const realKill = procs.killCliTree;
+      const realStopped = procs.awaitCliTreeStopped;
+      const held: any[] = [];
+      let open!: () => void;
+      const released = new Promise<void>((resolve) => { open = resolve; });
+      const kill = vi.spyOn(procs, "killCliTree").mockImplementation((child: any) => { held.push(child); });
+      const stopped = vi.spyOn(procs, "awaitCliTreeStopped").mockImplementation(async (child: any) => { await released; return realStopped(child); });
+      return { release: () => { for (const child of held) realKill(child); open(); }, restore: () => { kill.mockRestore(); stopped.mockRestore(); open(); } };
+    };
+
+    it("control: a plain turn starts once and ends once, ok, and an idle dispose resolves at once with no event", async () => {
+      await create();
+      const r = await run("t-gate-plain", []);
+      expect(r.done).toMatchObject({ ok: true });
+      expect(startsOf(r.sent.turnId)).toHaveLength(1);
+      expect(endings(r.sent.turnId)).toHaveLength(1);
+      expect(errorsOf(r.sent.turnId)).toEqual([]);
+      await recreate();
+      const before = recorder.events.length;
+      const startedAt = Date.now();
+      await instance.dispose();
+      expect(Date.now() - startedAt).toBeLessThan(1_000);
+      expect(recorder.events.length).toBe(before);
+    }, 30_000);
+
+    it("X1 the stop handler's continuation (terminate, then the root close) completes despite its own mark: one stopped pair, the thread is free", async () => {
+      await create();
+      process.env.FAKE_CODEX_TOOLS = JSON.stringify([{ kind: "shell", id: "x1", command: "ls", cwd: scratch }]);
+      const sent = await instance.adapter.sendTurn({ threadId: "t-x1", text: "go", cwd: scratch, integrations: { agents: AGENTS } } as never);
+      await recorder.until((e: any) => e.type === "request.opened" && e.turnId === sent.turnId);
+      await instance.adapter.interruptTurn("t-x1");
+      expect(endings(sent.turnId)).toEqual([expect.objectContaining({ ok: true, stopReason: "cancelled" })]);
+      expect(startsOf(sent.turnId)).toHaveLength(1);
+      expect(errorsOf(sent.turnId)).toEqual([]);
+      expect(instance.adapter.hasSession("t-x1")).toBe(false);
+    }, 30_000);
+
+    it("X3 a turn on a retained warm process, Stop lands before turn/start: the stopped pair and no turn/start write", async () => {
+      process.env.FAKE_CODEX_CALL_LOG = callsLog();
+      await create();
+      const warm = { warmIdentity: { botId: "b-x3", audience: "owner" as const } };
+      const first = await run("t-x3", [], () => ({ behavior: "allow" }), warm);
+      expect(first.done).toMatchObject({ ok: true });
+      const initialises = count("initialize");
+      const turnStarts = count("turn/start");
+      expect(turnStarts).toBe(1);
+      const realTrust = codexHookModule.trustHooks;
+      const held = gate();
+      const trust = vi.spyOn(codexHookModule, "trustHooks").mockImplementation(async (...args: Parameters<typeof realTrust>) => { await held.promise; return realTrust(...args); });
+      const stops = holdStops();
+      try {
+        // the reuse: the hooks/list check is the last await before turn/start, and the Stop lands while it is held
+        const sent = await instance.adapter.sendTurn({ threadId: "t-x3", text: "again", cwd: scratch, integrations: { agents: AGENTS }, ...warm, resumeCursor: "codex-thread-1" } as never);
+        await vi.waitFor(() => expect(trust).toHaveBeenCalled());
+        void instance.adapter.interruptTurn("t-x3").catch(() => {});
+        held.open();
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        // the process is still alive (its stop is held), so a write would show in the engine's own log
+        expect(count("turn/start")).toBe(turnStarts);
+        stops.release();
+        const done: any = await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === sent.turnId);
+        expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+        expect(startsOf(sent.turnId)).toHaveLength(1);
+        expect(endings(sent.turnId)).toHaveLength(1);
+        expect(errorsOf(sent.turnId)).toEqual([]);
+        expect(count("turn/start")).toBe(turnStarts);
+        expect(count("initialize")).toBe(initialises);
+      } finally { stops.restore(); trust.mockRestore(); held.open(); }
+    }, 40_000);
+
+    it("DT2 dispose while the detached startup holds, after sendTurn returned, 200 ms deadline: one closing receipt before dispose resolves, nothing spawned", async () => {
+      process.env.FAKE_CODEX_CALL_LOG = callsLog();
+      process.env.MURAGE_PROVIDER_CLOSE_MS = "200";
+      await create();
+      const held = gate();
+      const realArgs = localInject.codexLocalProviderArgs;
+      const spy = vi.spyOn(localInject, "codexLocalProviderArgs").mockImplementation(async (...args: Parameters<typeof realArgs>) => { await held.promise; return realArgs(...args); });
+      try {
+        const sent = await instance.adapter.sendTurn({ threadId: "t-dt2", text: "go", cwd: scratch });
+        await vi.waitFor(() => expect(spy).toHaveBeenCalled());
+        const startedAt = Date.now();
+        await instance.dispose();
+        expect(Date.now() - startedAt).toBeLessThan(3_000);
+        // delivered before dispose resolved (the listeners clear with it): the engine closing, once
+        expect(startsOf(sent.turnId)).toHaveLength(1);
+        expect(errorsOf(sent.turnId)).toEqual([expect.objectContaining({ message: expect.stringContaining(CLOSED) })]);
+        expect(endings(sent.turnId)).toEqual([expect.objectContaining({ ok: false, stopReason: "exit_before_result" })]);
+        held.open();
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        expect(count("thread/start") + count("thread/resume") + count("turn/start")).toBe(0);
+        expect(instance.adapter.hasSession("t-dt2")).toBe(false);
+      } finally { spy.mockRestore(); held.open(); }
+    }, 30_000);
+
+    it("U2 dispose with an unconfirmed child stop: one closing receipt, dispose rejects with today's message, the listeners stay attached", async () => {
+      process.env.MURAGE_PROVIDER_CLOSE_MS = "200";
+      await create();
+      process.env.FAKE_CODEX_TOOLS = JSON.stringify([{ kind: "shell", id: "u2", command: "ls", cwd: scratch }]);
+      const sent = await instance.adapter.sendTurn({ threadId: "t-u2", text: "go", cwd: scratch, integrations: { agents: AGENTS } } as never);
+      await recorder.until((e: any) => e.type === "request.opened" && e.turnId === sent.turnId);
+      const kill = vi.spyOn(procs, "killCliTree").mockImplementation(() => {});
+      const confirm = vi.spyOn(procs, "awaitCliTreeStopped").mockResolvedValue(false);
+      try {
+        await expect(instance.dispose()).rejects.toThrow("listeners remain attached");
+        // the receipt was delivered by the settle before the throw
+        expect(endings(sent.turnId)).toEqual([expect.objectContaining({ ok: false, stopReason: "exit_before_result" })]);
+        // (the engine's own "did not close after Stop" line may precede it: it is the unconfirmed stop, not an ending)
+        expect(errorsOf(sent.turnId).filter((e: any) => String(e.message).includes(CLOSED))).toHaveLength(1);
+        // the listeners are kept: a send after the failed dispose still reaches the recorder (the gate is closed, so it ends closing)
+        const later = await instance.adapter.sendTurn({ threadId: "t-u2-later", text: "go", cwd: scratch });
+        expect(endings(later.turnId)).toEqual([expect.objectContaining({ ok: false, stopReason: "exit_before_result" })]);
+      } finally { kill.mockRestore(); confirm.mockRestore(); }
+    }, 30_000);
+
+    it("STOP-NONACP s6 P1: a spawn that throws synchronously ends the turn once, with an error; a later Stop and Stop All end nothing twice", async () => {
+      await create();
+      const realSpawnCli = procs.spawnCli;
+      const spy = vi.spyOn(procs, "spawnCli").mockImplementation((cli, args, ...rest) => {
+        if (args.includes("app-server")) throw new Error("spawn failed (s6)");
+        return realSpawnCli(cli, args, ...rest);
+      });
+      try {
+        const sent = await instance.adapter.sendTurn({ threadId: "t-s6-spawn", text: "go", cwd: scratch });
+        await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === sent.turnId);
+        await instance.adapter.interruptTurn("t-s6-spawn").catch(() => {});
+        await instance.adapter.stopAll!().catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(spy).toHaveBeenCalled();
+        expect(endings(sent.turnId)).toEqual([expect.objectContaining({ ok: false })]);
+        expect(errorsOf(sent.turnId)).toHaveLength(1);
+      } finally { spy.mockRestore(); }
+    }, 30_000);
+
+    it("STOP-NONACP s7 P1 retireAfterExit (crash before turn/start): the replacement spawn throws synchronously after the retire; the turn ends once with an error, live is false, no dispose timeout is needed", async () => {
+      process.env.FAKE_CODEX_LAUNCH_CRASHES = "1";
+      process.env.FAKE_CODEX_STATE = join(scratch, "s7-launch-crash");
+      process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+      await create();
+      const realSpawnCli = procs.spawnCli;
+      let appServers = 0;
+      const spy = vi.spyOn(procs, "spawnCli").mockImplementation((cli, args, ...rest) => {
+        if (args.includes("app-server") && ++appServers >= 2) throw new Error("replacement spawn failed (s7)");
+        return realSpawnCli(cli, args, ...rest);
+      });
+      try {
+        const sent = await instance.adapter.sendTurn({ threadId: "t-s7-crash", text: "go", cwd: fixtureBotFolder() });
+        await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === sent.turnId, 8_000);
+        await instance.adapter.interruptTurn("t-s7-crash").catch(() => {});
+        await instance.adapter.stopAll!().catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(appServers).toBeGreaterThanOrEqual(2);
+        expect(endings(sent.turnId)).toEqual([expect.objectContaining({ ok: false })]);
+        expect(errorsOf(sent.turnId)).toHaveLength(1);
+      } finally { spy.mockRestore(); delete process.env.FAKE_CODEX_LAUNCH_CRASHES; delete process.env.FAKE_CODEX_TRANSIENTS; delete process.env.FAKE_CODEX_STATE; }
+    }, 30_000);
+
+    it("STOP-NONACP s7 P1 retireAndRelaunch (transient turn/start failure): the replacement spawn throws synchronously after the retire; the turn ends once with an error, live is false, no dispose timeout is needed", async () => {
+      process.env.FAKE_CODEX_TRANSIENTS = "1";
+      process.env.FAKE_CODEX_STATE = join(scratch, "s7-transient");
+      process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+      await create();
+      const realSpawnCli = procs.spawnCli;
+      let appServers = 0;
+      const spy = vi.spyOn(procs, "spawnCli").mockImplementation((cli, args, ...rest) => {
+        if (args.includes("app-server") && ++appServers >= 2) throw new Error("replacement spawn failed (s7)");
+        return realSpawnCli(cli, args, ...rest);
+      });
+      try {
+        const sent = await instance.adapter.sendTurn({ threadId: "t-s7-transient", text: "go", cwd: fixtureBotFolder() });
+        await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === sent.turnId, 8_000);
+        await instance.adapter.interruptTurn("t-s7-transient").catch(() => {});
+        await instance.adapter.stopAll!().catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(appServers).toBeGreaterThanOrEqual(2);
+        expect(endings(sent.turnId)).toEqual([expect.objectContaining({ ok: false })]);
+        expect(errorsOf(sent.turnId)).toHaveLength(1);
+      } finally { spy.mockRestore(); delete process.env.FAKE_CODEX_LAUNCH_CRASHES; delete process.env.FAKE_CODEX_TRANSIENTS; delete process.env.FAKE_CODEX_STATE; }
+    }, 30_000);
+
+    it("STOP-NONACP s7 control: a normal relaunch after a pre-start exit ends the turn exactly once and ok, and a later Stop and Stop All end nothing", async () => {
+      process.env.FAKE_CODEX_LAUNCH_CRASHES = "1";
+      process.env.FAKE_CODEX_STATE = join(scratch, "s7-control");
+      process.env.FAKE_CODEX_TOOLS = "[]";
+      process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+      await create();
+      const realSpawnCli = procs.spawnCli;
+      let appServers = 0;
+      const spy = vi.spyOn(procs, "spawnCli").mockImplementation((cli, args, ...rest) => {
+        if (args.includes("app-server")) appServers++;
+        return realSpawnCli(cli, args, ...rest);
+      });
+      try {
+        const sent = await instance.adapter.sendTurn({ threadId: "t-s7-control", text: "go", cwd: fixtureBotFolder() });
+        await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === sent.turnId, 8_000);
+        await instance.adapter.interruptTurn("t-s7-control").catch(() => {});
+        await instance.adapter.stopAll!().catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(appServers).toBeGreaterThanOrEqual(2);
+        expect(recorder.events.filter((e: any) => e.type === "turn.retrying")).toHaveLength(1);
+        expect(endings(sent.turnId)).toEqual([expect.objectContaining({ ok: true })]);
+        expect(errorsOf(sent.turnId)).toHaveLength(0);
+      } finally { spy.mockRestore(); delete process.env.FAKE_CODEX_LAUNCH_CRASHES; delete process.env.FAKE_CODEX_TRANSIENTS; delete process.env.FAKE_CODEX_STATE; }
+    }, 30_000);
+
+    it("STOP-NONACP s7 M-LIVE-CX: a turn started through gate.launch is live: it stays in the gate after startup, a Stop ends it once as cancelled, and no did-not-start error is raised", async () => {
+      process.env.FAKE_CODEX_TOOLS = JSON.stringify([{ kind: "shell", id: "s7live", command: "ls", cwd: scratch }]);
+      await create();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const sent = await instance.adapter.sendTurn({ threadId: "t-s7-live", text: "go", cwd: scratch, integrations: { agents: AGENTS } } as never);
+        await recorder.until((e: any) => e.type === "request.opened" && e.turnId === sent.turnId);
+        // startup has finished and the turn waits on an approval: the gate still owns it, and nothing has ended it
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(endings(sent.turnId)).toHaveLength(0);
+        expect(warn.mock.calls.some((c) => String(c[0]).includes("detached startup ended without launching"))).toBe(false);
+        await instance.adapter.interruptTurn("t-s7-live");
+        await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === sent.turnId);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(endings(sent.turnId)).toEqual([expect.objectContaining({ ok: true, stopReason: "cancelled" })]);
+        expect(errorsOf(sent.turnId)).toHaveLength(0);
+      } finally { warn.mockRestore(); delete process.env.FAKE_CODEX_TOOLS; }
+    }, 30_000);
+
+    it("LR1 a late rejection after the turn was settled closing: one ending only, never a second one", async () => {
+      process.env.MURAGE_PROVIDER_CLOSE_MS = "200";
+      await create();
+      // a live turn whose child stop never confirms keeps dispose rejecting, so the listeners stay and a second ending would be heard
+      process.env.FAKE_CODEX_TOOLS = JSON.stringify([{ kind: "shell", id: "lr1", command: "ls", cwd: scratch }]);
+      const live = await instance.adapter.sendTurn({ threadId: "t-lr1-live", text: "go", cwd: scratch, integrations: { agents: AGENTS } } as never);
+      await recorder.until((e: any) => e.type === "request.opened" && e.turnId === live.turnId);
+      const held = gate();
+      const spy = vi.spyOn(localInject, "codexLocalProviderArgs").mockImplementation(async () => { await held.promise; throw new Error("late provider failure"); });
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const kill = vi.spyOn(procs, "killCliTree").mockImplementation(() => {});
+      const confirm = vi.spyOn(procs, "awaitCliTreeStopped").mockResolvedValue(false);
+      try {
+        const sent = await instance.adapter.sendTurn({ threadId: "t-lr1", text: "go", cwd: scratch });
+        await vi.waitFor(() => expect(spy).toHaveBeenCalled());
+        await expect(instance.dispose()).rejects.toThrow("listeners remain attached");
+        expect(endings(sent.turnId)).toEqual([expect.objectContaining({ ok: false, stopReason: "exit_before_result" })]);
+        held.open();
+        await vi.waitFor(() => expect(warn.mock.calls.some((c) => String(c[0]).includes("late rejection after the turn ended"))).toBe(true));
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(endings(sent.turnId)).toHaveLength(1);
+        expect(errorsOf(sent.turnId)).toHaveLength(1);
+        expect(instance.adapter.hasSession("t-lr1")).toBe(false);
+      } finally { spy.mockRestore(); warn.mockRestore(); kill.mockRestore(); confirm.mockRestore(); held.open(); }
+    }, 30_000);
+
+    it.each(["Stop", "dispose"] as const)("USAGE-1 codex %s on a live turn that already reported usage keeps it on the final turn.completed", async (kind) => {
+      const gateFile = join(scratch, `usage1-${kind}-gate`);
+      writeFileSync(gateFile, "");
+      process.env.FAKE_CODEX_EXIT_MID_TURN = gateFile;
+      process.env.FAKE_CODEX_USAGE_MID_TURN = "1";
+      process.env.FAKE_CODEX_STATE = join(scratch, `usage1-${kind}`);
+      try {
+        await create();
+        const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-usage1-${kind}`, text: "go" });
+        await recorder.until((e: any) => e.type === "thread.token-usage.updated" && e.turnId === sent.turnId);
+        if (kind === "Stop") await instance.adapter.interruptTurn(`t-usage1-${kind}`);
+        else await instance.dispose();
+        if (kind === "Stop") expect(endings(sent.turnId)).toEqual([expect.objectContaining({ ok: true, stopReason: "cancelled", usage: { input: 11, output: 2 } })]);
+        else expect(endings(sent.turnId)).toEqual([expect.objectContaining({ ok: false, stopReason: "exit_before_result", usage: { input: 11, output: 2 } })]);
+      } finally { delete process.env.FAKE_CODEX_EXIT_MID_TURN; delete process.env.FAKE_CODEX_USAGE_MID_TURN; delete process.env.FAKE_CODEX_STATE; }
+    }, 30_000);
+
+    it("USAGE-1 codex drain timeout: a dispose whose child stop never confirms ends through the gate's settleOutstanding with the usage already reported, once", async () => {
+      const gateFile = join(scratch, "usage1-drain-gate");
+      writeFileSync(gateFile, "");
+      process.env.FAKE_CODEX_EXIT_MID_TURN = gateFile;
+      process.env.FAKE_CODEX_USAGE_MID_TURN = "1";
+      process.env.FAKE_CODEX_STATE = join(scratch, "usage1-drain");
+      process.env.MURAGE_PROVIDER_CLOSE_MS = "200";
+      let kill: ReturnType<typeof vi.spyOn> | undefined;
+      let confirm: ReturnType<typeof vi.spyOn> | undefined;
+      try {
+        await create();
+        const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-usage1-drain", text: "go" });
+        await recorder.until((e: any) => e.type === "thread.token-usage.updated" && e.turnId === sent.turnId);
+        kill = vi.spyOn(procs, "killCliTree").mockImplementation(() => {});
+        confirm = vi.spyOn(procs, "awaitCliTreeStopped").mockResolvedValue(false);
+        await expect(instance.dispose()).rejects.toThrow("listeners remain attached");
+        // the one ending, delivered by the gate's settle before the throw, with the usage the turn had already reported
+        expect(endings(sent.turnId)).toEqual([expect.objectContaining({ ok: false, stopReason: "exit_before_result", usage: { input: 11, output: 2 } })]);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(endings(sent.turnId)).toHaveLength(1);
+      } finally {
+        kill?.mockRestore(); confirm?.mockRestore();
+        delete process.env.FAKE_CODEX_EXIT_MID_TURN; delete process.env.FAKE_CODEX_USAGE_MID_TURN; delete process.env.FAKE_CODEX_STATE; delete process.env.MURAGE_PROVIDER_CLOSE_MS;
+      }
+    }, 30_000);
+
+    it("F1 a Stop after a gate incident keeps gate_incident: the turn's own end, not the stopped pair", async () => {
+      await create();
+      process.env.FAKE_CODEX_TOOLS = JSON.stringify([{ kind: "shell", id: "f1", command: "rm -rf build", cwd: scratch, runAnyway: true }]);
+      const sent = await instance.adapter.sendTurn({ threadId: "t-f1", text: "go", cwd: scratch, integrations: { agents: AGENTS } } as never);
+      const opened: any = await recorder.until((e: any) => e.type === "request.opened" && e.turnId === sent.turnId);
+      const stops = holdStops();
+      try {
+        await instance.adapter.respondToRequest("t-f1", opened.requestId, { behavior: "deny" });
+        await recorder.until((e: any) => e.type === "runtime.error" && e.turnId === sent.turnId && String(e.message).includes("rm -rf build"));
+        // the incident's settle waits on the held child stop; the owner's Stop lands in that window
+        void instance.adapter.interruptTurn("t-f1").catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        stops.release();
+        const done: any = await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === sent.turnId);
+        expect(done).toMatchObject({ ok: false, stopReason: "gate_incident" });
+        expect(endings(sent.turnId)).toHaveLength(1);
+      } finally { stops.restore(); }
+    }, 30_000);
+  });
 });
+
+useOutsideStoreFixture();

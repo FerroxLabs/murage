@@ -106,14 +106,16 @@ describe("a panel that throws while rendering is not a failed load", () => {
 
 it("wraps every lazy surface: Settings, BotSettings, ComputerPanel, the calls and the editor", () => {
   const app = read("../App.tsx");
-  for (const [chunk, close] of [["BotSettings", "toggleSettings"], ["Computer", "toggleComputer"], ["Settings", "toggleAppSettings"]]) {
-    expect(app).toContain(`<LazyBoundary onRetry={${chunk}.retry} onDismiss={() => dispatch({ type: "${close}", open: false })}>`);
+  for (const [chunk, close, name, covers] of [["BotSettings", "toggleSettings", "bot-settings", "always"], ["Computer", "toggleComputer", "computer", "while-loading"], ["Settings", "toggleAppSettings", "settings", "always"]]) {
+    const tag = app.split(`<LazyOverlay name="${name}"`)[1]?.split("\n")[0] ?? "";
+    expect(tag).toContain(`kind="window" covers="${covers}"`);
+    expect(tag).toContain(`onRetry={${chunk}.retry} onDismiss={() => dispatch({ type: "${close}", open: false })}`);
   }
   expect(app).not.toMatch(/\blazy\(/);
   const calls = read("./CallControls.tsx");
   // Close on a call screen ends the call it belongs to (and only that one)
-  expect(calls).toContain("<LazyBoundary onRetry={CallChunk.retry} onDismiss={() => endCall(bot.id)}>");
-  expect(calls).toContain("<LazyBoundary onRetry={GroupCallChunk.retry} onDismiss={() => endCall(group.id)}>");
+  expect(calls).toContain('<LazyOverlay name="call" kind="dialog" covers="while-loading" onRetry={CallChunk.retry} onDismiss={() => endCall(bot.id)}>');
+  expect(calls).toContain('<LazyOverlay name="group-call" kind="dialog" covers="while-loading" onRetry={GroupCallChunk.retry} onDismiss={() => endCall(group.id)}>');
   expect(calls).not.toMatch(/\blazy\(/);
   const pane = read("./WorkspacePane.tsx");
   expect(pane).toContain("<LazyBoundary inline onRetry={Editor.retry}>");

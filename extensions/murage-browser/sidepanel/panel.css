@@ -5,7 +5,7 @@ header{display:flex;align-items:center;gap:10px;min-height:56px;padding:0 16px;b
 [data-role=title]{font-size:15px;line-height:1.2}[data-role=brand]{font-weight:700;letter-spacing:-.01em}[data-role=brand-suffix]{margin-left:6px;font-size:13px;color:var(--secondary)}[data-role=connection]{margin-left:auto;color:var(--secondary);font-size:12px;display:inline-flex;align-items:center;gap:6px}[data-role=connection-dot]{width:8px;height:8px;border-radius:50%;background:var(--success);flex:none}
 main,section.setup{padding:16px;display:flex;flex-direction:column;gap:16px}
 .card{background:var(--card);border:1px solid var(--hairline);border-radius:12px}
-.bot{display:flex;align-items:center;gap:12px;padding:12px}.av{width:36px;height:36px;border-radius:50%;background:var(--bot);color:var(--bot-ink);display:grid;place-items:center;font-weight:700;font-size:17px;flex:none}
+.bot{display:flex;align-items:center;gap:12px;padding:12px}.av{width:36px;height:36px;border-radius:50%;background:var(--bot);color:var(--bot-ink);display:grid;place-items:center;font-weight:700;font-size:17px;flex:none;overflow:hidden}.av img{width:100%;height:100%;object-fit:cover;display:block}
 [data-role=botname]{font-weight:650;font-size:15px;line-height:1.2}[data-role=botline]{color:var(--secondary);font-size:12px;overflow-wrap:anywhere}
 h2{font-size:12px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--secondary);margin:0 0 8px}
 p{margin:0}.hint{color:var(--secondary);font-size:13px;margin-top:8px}

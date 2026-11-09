@@ -38,6 +38,8 @@ export function buildMcpServers(turn: SendTurnInput, options: { askBeforeCustom?
   if (turn.integrations?.phone) servers.phone = { ...turn.integrations.phone };
   // 1.0.9 S13b: the owner's phone; asks on every call like any non-listed own mount.
   if (turn.integrations?.phoneJobs) servers.phoneJobs = { ...turn.integrations.phoneJobs };
+  // native HighLevel (HL-S2, read only): its read tools are pre-allowed; the host grant is the gate and lists no change tool.
+  if (turn.integrations?.highlevel) servers.highlevel = { ...turn.integrations.highlevel };
   if (turn.integrations?.dweb) {
     servers.dweb = {
       command: process.execPath,
@@ -69,6 +71,8 @@ export function piMountRecords(turn: SendTurnInput, servers: Record<string, unkn
   const own = new Map<string, string>([["murage-memory", "own:memory"], ["agents", "own:agents"], ["phone", "own:phone"], ["dweb", "own:dweb"], ["computer", "own:computer"]]);
   // only a turn that mounts the phone owns that name; no other server may claim `own:phoneJobs`
   if (turn.integrations?.phoneJobs) own.set("phoneJobs", "own:phoneJobs");
+  // likewise only a turn that mounts native HighLevel owns `own:highlevel`; an owner's own server of that name stays custom
+  if (turn.integrations?.highlevel) own.set("highlevel", "own:highlevel");
   if (turn.integrations?.composio) own.set(connectedAppsServerName(turn.integrations.composio.env), "own:connector");
   const records: McpMountRecord[] = [];
   for (const name of Object.keys(servers ?? {})) {

@@ -1,3 +1,4 @@
+import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -36,7 +37,7 @@ let base: string, out: string, etc: string, home: string;
 beforeEach(() => {
   base = mkdtempSync(join(tmpdir(), "pip-b2-"));
   out = join(base, "rec.jsonl"); etc = join(base, "etc"); home = join(base, "home");
-  mkdirSync(etc); mkdirSync(home);
+  mkdirSync(etc); mkdirSync(home); mkdirSync(join(base, "bot"));
 });
 // Windows: a child still exiting can hold the folder for a moment (EPERM/EBUSY); rm retries those.
 afterEach(() => removeTempDirSync(base));
@@ -52,7 +53,7 @@ const cfg = (scenario: string, extra: Partial<HeadlessEngineConfig> = {}): Headl
   pathValue: process.platform === "win32" ? process.env.PATH ?? "" : "/usr/bin:/bin", fluxKey: "flux-test-key", preflight: preflight(), postResultGraceMs: 3000, ...extra,
 });
 const input = (over: Partial<TextOnlyTurnInput> = {}): TextOnlyTurnInput => ({
-  system: fixedPrompt("SYS"), text: "USER", model: "model-1", outputSchema: SCHEMA, signal: new AbortController().signal,
+  cwd: join(base, "bot"), system: fixedPrompt("SYS"), text: "USER", model: "model-1", outputSchema: SCHEMA, signal: new AbortController().signal,
   maxOutputTokens: 2000, maxOutputBytes: 12 * 1024, context: { botId: "bot", runId: "run1", family: "lived", attempt: 1 }, ...over,
   // every learning transport refuses a call without a gate; PIP always passes one
   transport: { ...over.transport, gate: openLearningGate("continuity") },
@@ -74,7 +75,7 @@ posix("headless text-only: stub binary (group 1)", () => {
     const [r] = records();
     const T = r.env.HOME;
     expect(r.argv).toEqual([
-      "--cwd", `${T}/work`, "--no-leader", "-m", "murage_selected", "--permission-mode", "dontAsk", "--max-turns", "1",
+      "--cwd", join(base, "bot"), "--no-leader", "-m", "murage_selected", "--permission-mode", "dontAsk", "--max-turns", "1",
       "--tools", "mcp__murage__none", "--disallowed-tools", "search_tool,use_tool,Agent", "--disable-web-search", "--no-memory", "--no-auto-update", "--verbatim",
       "--output-format", "streaming-messages-json", "--json-schema", JSON.stringify(SCHEMA), "--prompt-file", `${T}/prompt.txt`, "--debug-file", `${T}/debug.log`,
     ]);
@@ -82,7 +83,7 @@ posix("headless text-only: stub binary (group 1)", () => {
     expect(r.env.FUIGO_HOME).toBe(`${T}/home`);
     expect(r.env.HOME).toBe(r.env.FUIGO_HOME.replace(/\/home$/, ""));
     // a child's cwd is reported canonical (macOS /var is /private/var)
-    expect(r.cwd.replace(/^\/private(?=\/var\/)/, "")).toBe(`${T}/work`);
+    expect(r.cwd.replace(/^\/private(?=\/var\/)/, "")).toBe(join(base, "bot"));
     expect(r.homeFiles).toContain("config.toml");
     expect(r.fuigoConfig).toMatch(/\n\[plugins\]\nauto_discover = false\n\[skills\]\nauto_discover = false\n$/); // Claude plugins and skill discovery off
     expect(r.prompt).toBe("SYS\n\nUSER");
@@ -157,6 +158,7 @@ posix("headless text-only: stub binary (group 1)", () => {
     const first = await headlessTextOnlyTurn(input(), cfg("agents-md"));
     expect(first.verdict).toMatchObject({ state: "refused", reason: "isolation", counted: true, missKey: "cwd:AGENTS.md" });
     expect(first.isolation.cwdNewFiles).toEqual(["AGENTS.md"]);
+    rmSync(join(base, "bot", "AGENTS.md")); // Restore the fixture before replaying the same write.
     const second = await headlessTextOnlyTurn(input({ transport: { history: recordMiss(emptyMissHistory(), first.verdict) } }), cfg("agents-md"));
     expect(second.verdict).toMatchObject({ state: "unsupported", reason: "managed-config" });
   });
@@ -169,7 +171,8 @@ posix("headless text-only: stub binary (group 1)", () => {
   it("a cancelled result and a schema failure are refused bad-output; nothing is replayed", async () => {
     const c = await headlessTextOnlyTurn(input(), cfg("cancelled"));
     expect(c.verdict).toMatchObject({ state: "refused", reason: "bad-output", detail: "cancelled", counted: true });
-    const b = await headlessTextOnlyTurn(input(), cfg("bad-schema"));
+    // a non-Flux route: a Flux one answers a schema miss once more (headless-text-only.flux-schema.test.ts)
+    const b = await headlessTextOnlyTurn(input({ providerRoute: route }), cfg("bad-schema"));
     expect(b.verdict).toMatchObject({ state: "refused", reason: "bad-output" });
     expect(records()).toHaveLength(2); // one spawn per call, no replay
   });
@@ -267,7 +270,7 @@ posix("host preflight (group 2)", () => {
 });
 
 posix("process ownership (group 3)", () => {
-  const spawnSleeper = (extraArgs: string[] = []) => spawnCli(process.execPath, [STUB, "--stub=sleep", `--stub-out=${out}`, ...extraArgs], { stdio: ["pipe", "pipe", "pipe"] });
+  const spawnSleeper = (extraArgs: string[] = []) => spawnCli(process.execPath, [STUB, "--stub=sleep", `--stub-out=${out}`, ...extraArgs], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] });
   const epochA = { pid: 1111, startedAt: 1 }, epochB = { pid: process.pid, startedAt: 2 };
   const intent = (root: string): TransportIntent => ({ runId: "r", family: "lived", attempt: 1, tempRoot: root, bootEpoch: epochA, intentAt: 1, deadlineAt: 2 });
 
@@ -457,12 +460,13 @@ posix("audit findings 6, 7 and 15: the per-run gate", () => {
     expect((await headlessTextOnlyTurn(input(), cfg("result-first"))).verdict).toMatchObject({ state: "refused", reason: "bad-output", detail: "result-before-init" });
   });
   it("Fuigo and Grok must answer in structured_output; only Claude's result text is a fallback", async () => {
-    expect((await headlessTextOnlyTurn(input(), cfg("text-result"))).verdict).toMatchObject({ state: "refused", reason: "bad-output", detail: "no-structured-output" });
+    // under --json-schema (every route but Flux, whose schema rides in the prompt: headless-text-only.flux-schema.test.ts)
+    expect((await headlessTextOnlyTurn(input({ providerRoute: route }), cfg("text-result"))).verdict).toMatchObject({ state: "refused", reason: "bad-output", detail: "no-structured-output" });
     expect((await headlessTextOnlyTurn(input(), cfg("text-result", { engine: "grok", parentGrokHome: grokParent() }))).verdict).toMatchObject({ state: "refused", reason: "bad-output" });
     expect((await claudeTextOnlyTurn(input(), claudeCfg("text-result"))).verdict).toEqual({ state: "validated", structured: { ok: true } });
   });
   it("a rejected attempt keeps its reported usage while its content is discarded (A.3)", async () => {
-    const r = await headlessTextOnlyTurn(input(), cfg("bad-schema"));
+    const r = await headlessTextOnlyTurn(input({ providerRoute: route }), cfg("bad-schema"));
     expect(r.verdict).toMatchObject({ state: "refused", reason: "bad-output" });
     expect(r.text).toBe("");
     expect(r.usage).toEqual({ inputTokens: 10, outputTokens: 5 });
@@ -640,7 +644,8 @@ describe("Astra audit2 transport regressions", () => {
 
   it("23: delivers a large reflection prompt verbatim through the production argv", async () => {
     const text = "You are reliable. ".repeat(2000);
-    const got = await headlessTextOnlyTurn(input({ text }), cfg("require-verbatim"));
+    // the A.1 argv and plain prompt: a non-Flux route (a Flux one ends the prompt with the schema, headless-text-only.flux-schema.test.ts)
+    const got = await headlessTextOnlyTurn(input({ text, providerRoute: route }), cfg("require-verbatim"));
     expect(got.verdict.state).toBe("validated");
     expect(records()[0].argv).toContain("--verbatim");
     expect(records()[0].prompt).toBe("SYS\n\n" + text);
