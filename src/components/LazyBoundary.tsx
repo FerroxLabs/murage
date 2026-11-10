@@ -49,6 +49,7 @@ export function retryableLazy<T extends ComponentType<any>>(load: () => Promise<
 }
 
 export const LAZY_RETRY_TEXT = "Couldn't open this. Tap to retry.";
+export const LAZY_CLOSE_TEXT = "Close";
 export const PANEL_ERROR_TEXT = "Something went wrong while showing this, so it couldn't be opened.";
 export const PANEL_ERROR_RETRY = "Try again";
 
@@ -150,13 +151,21 @@ export class LazyBoundary extends Component<
         {button}
       </div>
     );
-    if (this.props.inline) return this.inlineAlert(content);
+    if (this.props.inline) {
+      // The same rule the render-error branch follows: Close only where an owner can close it. Focus and Escape stay the owner's.
+      return this.inlineAlert(onDismiss ? (
+        <div className="flex flex-wrap items-center gap-2">
+          {content}
+          <button type="button" onClick={onDismiss} className="min-h-11 rounded-xl px-4 text-[13px] text-ink-secondary hover:text-ink">{closeLabel ?? LAZY_CLOSE_TEXT}</button>
+        </div>
+      ) : content);
+    }
     return (
       <OverlayShell onDismiss={onDismiss} className="overlay-inset fixed inset-0 flex flex-col items-center justify-center gap-2 bg-black/20">
         {content}
         {onDismiss && (
           <button type="button" onClick={onDismiss} className="min-h-11 rounded-xl px-4 text-[13px] text-white/80 hover:text-white">
-            {closeLabel ?? "Close"}
+            {closeLabel ?? LAZY_CLOSE_TEXT}
           </button>
         )}
       </OverlayShell>
@@ -179,7 +188,7 @@ export class LazyBoundary extends Component<
           </button>
           {onDismiss && (
             <button type="button" onClick={onDismiss} className="min-h-11 rounded-xl px-4 text-[13px] text-ink-secondary hover:text-ink">
-              {closeLabel ?? "Close"}
+              {closeLabel ?? LAZY_CLOSE_TEXT}
             </button>
           )}
         </div>

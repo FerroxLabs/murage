@@ -31,6 +31,7 @@ import { acceptReviewProblems } from "./copy-lint.mjs";
 import {
   HELP_PACK_DIR,
   LOCALES_DIR,
+  MAIN_LAZY_DIR,
   PACK_CODES,
   SOURCE_HASH_FILE,
   hashPath,
@@ -169,6 +170,27 @@ export function readSourceCatalogs(dir = LOCALES_DIR) {
 /** The main-partition English source (en.json plus en-ux fragments, en.json wins): what <code>.json translates. */
 export function readSourceCatalog(dir = LOCALES_DIR) {
   return readSourceCatalogs(dir).main;
+}
+
+// 1.0.19 (SETTINGS-ENGINES-1019 8.1): Settings' and the picker's words live in the lazy pack src/locales/en-settings/*.json,
+// out of the first paint. They are English all the same and belong to the main partition (locale-partitions.mjs), so the
+// other seven packs translate and check them like any en.json string. No key may be in both.
+export function mergeSourceCatalogs(base, fragments) {
+  const merged = { ...base };
+  for (const [file, fragment] of Object.entries(fragments)) {
+    if (!isRecord(fragment)) throw new Error(`${MAIN_LAZY_DIR}/${file}: must be a JSON object`);
+    for (const [key, value] of Object.entries(fragment)) {
+      if (Object.hasOwn(base, key)) throw new Error(`${MAIN_LAZY_DIR}/${file}: ${key} is already in en.json`);
+      if (Object.hasOwn(merged, key)) throw new Error(`${MAIN_LAZY_DIR}/${file}: ${key} is in another en-settings file`);
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+
+/** The English the translations are made from and checked against: en.json, the en-ux fragments and the lazy Settings pack. */
+export function sourceCatalog(dir = LOCALES_DIR) {
+  return readSourceCatalog(dir);
 }
 
 /** D24: the English pack shipped by src/locales/index.ts (en-ux fragments, en.json wins). */

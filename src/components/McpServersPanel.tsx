@@ -145,7 +145,7 @@ function draftFor(server: McpServerListing): McpDraft {
   };
 }
 
-export function McpServersPanel() {
+export function McpServersPanel({ embedded = false }: { embedded?: boolean } = {}) {
   const { bridge: shell, ready: shellReady } = useMcpBridge();
   const [allServers, setServers] = useState<AnyListing[] | null>(null);
   // The entry that only holds a pasted Netlify token is not a server the owner manages here.
@@ -343,16 +343,17 @@ export function McpServersPanel() {
   const buttonClass = "flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40 min-h-[40px] sm:min-h-0";
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-7 pt-5 [--box-pad:1.75rem] sm:px-8">
+    <div data-mcp-embedded={embedded || undefined} className={embedded ? "min-w-0 [--box-pad:0px]" : "min-h-0 flex-1 overflow-y-auto px-4 pb-7 pt-5 [--box-pad:1.75rem] sm:px-8"}>
       <div className="mx-auto max-w-[840px]">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
+          {!embedded && <div>
             <h3 className="text-[15px] font-semibold text-ink">{t("mcp.panel.heading")}</h3>
             <p className="mt-1 max-w-[610px] text-[12.5px] leading-relaxed text-ink-secondary">{t("mcp.panel.lede")}</p>
-          </div>
+          </div>}
           <div className="flex shrink-0 items-center gap-2">
             <button
               type="button"
+              data-setting-control={embedded ? "mcp-servers-heading" : undefined}
               onClick={() => void load()}
               disabled={busy !== null}
               className="rounded-lg p-2 text-ink-secondary transition-colors hover:bg-raised hover:text-ink disabled:opacity-40"

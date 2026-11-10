@@ -43,11 +43,12 @@ const OLD_KEYWORDS = [
 ];
 
 describe("the grouped sections", () => {
-  it("are twenty ids under five groups, in the approved order", () => {
-    expect(SETTINGS_GROUPS).toEqual(["you", "bots", "ai", "reach", "app"]);
+  it("are twenty-two ids under six groups, in the approved order", () => {
+    expect(SETTINGS_GROUPS).toEqual(["you", "bots", "allBots", "ai", "reach", "app"]);
     expect(SETTINGS_SECTIONS.map((entry) => `${entry.group}:${entry.id}`)).toEqual([
-      "you:general", "you:aboutMe",
-      "bots:botDefaults", "bots:houseRules", "bots:skills", "bots:experimental", "bots:memory",
+      "you:general", "you:calls", "you:aboutMe",
+      "bots:browseBots",
+      "allBots:botDefaults", "allBots:houseRules", "allBots:skills", "allBots:experimental", "allBots:memory",
       "ai:models", "ai:engines", "ai:images", "ai:webSearch", "ai:voice",
       "reach:connections", "reach:channels", "reach:companion", "reach:computer",
       "app:backups", "app:storage", "app:usage", "app:about",
@@ -57,10 +58,11 @@ describe("the grouped sections", () => {
     expect(groups.filter((group, index) => group !== groups[index - 1])).toEqual([...SETTINGS_GROUPS]);
   });
 
-  it("keeps every old id and adds six (storage in 1.0.3), with plain English labels", () => {
+  it("keeps every old id and adds six (storage in 1.0.3) and two (calls and browseBots in 1.0.19), with plain English labels", () => {
     const ids = SETTINGS_SECTIONS.map((entry) => entry.id);
     for (const id of [...OLD_IDS, ...NEW_IDS]) expect(ids, id).toContain(id);
-    expect(ids).toHaveLength(OLD_IDS.length + NEW_IDS.length);
+    expect(ids).toHaveLength(OLD_IDS.length + NEW_IDS.length + 2);
+    for (const id of ["calls", "browseBots"]) expect(ids, id).toContain(id);
     expect(settingsSectionLabel("connections")).toBe("Connected apps");
     expect(settingsSectionLabel("computer")).toBe("Computer & browser");
     expect(settingsSectionLabel("about")).toBe("About & updates");
@@ -85,9 +87,13 @@ describe("settings search across the groups", () => {
   });
 
   it("finds a group by its name", () => {
-    const ai = settingsSearchResults("ai");
+    // 1.0.19 names the groups "Models and tools" and "Connections" (the approved mockup); a group's name still finds its pages.
+    const ai = settingsSearchResults("models and tools");
     for (const id of ["models", "engines", "images", "webSearch", "voice"] as const) expect(ai).toContain(id);
-    expect(settingsSearchResults("reach")).toEqual(["connections", "channels", "companion", "computer"]);
+    // The whole intended result, in order: the group's four pages, plus Models & engines, whose own words mention connections.
+    expect(settingsSearchResults("connections")).toEqual(["models", "connections", "channels", "companion", "computer"]);
+    // "reach" was the old group id and is not a name anyone sees now.
+    expect(settingsSearchResults("reach")).toEqual([]);
   });
 
   it("finds the Storage page by disk words (1.0.3)", () => {
@@ -101,9 +107,9 @@ describe("settings search across the groups", () => {
 });
 
 describe("which sections a surface sees", () => {
-  it("gives a paired phone General, Usage and About & updates, and nothing with a key on it", () => {
-    expect(sectionsForSurface(SETTINGS_SECTIONS, false).map((entry) => entry.id)).toEqual(["general", "usage", "about"]);
-    expect(sectionsForSurface(SETTINGS_SECTIONS, undefined).map((entry) => entry.id)).toEqual(["general", "usage", "about"]);
+  it("admits Apps and its Messaging alias alongside General, Usage and About on a paired phone", () => {
+    expect(sectionsForSurface(SETTINGS_SECTIONS, false).map((entry) => entry.id)).toEqual(["general", "connections", "channels", "usage", "about"]);
+    expect(sectionsForSurface(SETTINGS_SECTIONS, undefined).map((entry) => entry.id)).toEqual(["general", "connections", "channels", "usage", "about"]);
     expect(sectionsForSurface(SETTINGS_SECTIONS, true)).toHaveLength(SETTINGS_SECTIONS.length);
   });
 

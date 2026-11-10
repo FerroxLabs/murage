@@ -11,7 +11,9 @@ import {
   checkCatalogs,
   readEnglishCatalog,
   main,
+  mergeSourceCatalogs,
   modelInvocation,
+  sourceCatalog,
   normalizeLocaleCode,
   parseModelCatalog,
   placeholders,
@@ -187,6 +189,22 @@ describe("locale draft validation", () => {
   it("never generates or accepts the English source catalog", () => {
     expect(() => main(["en", "English", "--force"])).toThrow(/English is the source catalog/i);
     expect(() => main(["en", "--accept"])).toThrow(/English is the source catalog/i);
+  });
+
+  // 1.0.19 slice P: Settings and picker words live in the lazy src/locales/en-settings pack, out of the
+  // first paint. The other seven packs translate them like any en.json string, so they are English here.
+  it("reads the lazy Settings pack as English, so the other seven packs can carry its keys", () => {
+    const dir = new URL("../src/locales/", import.meta.url);
+    const en = JSON.parse(readFileSync(new URL("en.json", dir), "utf8"));
+    const source = sourceCatalog();
+    for (const [key, value] of Object.entries(en)) expect(source[key]).toBe(value);
+    for (const name of readdirSync(new URL("en-settings/", dir)).filter((file) => file.endsWith(".json"))) {
+      for (const [key, value] of Object.entries(JSON.parse(readFileSync(new URL(`en-settings/${name}`, dir), "utf8")))) expect(source[key]).toBe(value);
+    }
+    expect(mergeSourceCatalogs({ a: "A" }, { "picker.json": { "picker.b": "B" } })).toEqual({ a: "A", "picker.b": "B" });
+    expect(() => mergeSourceCatalogs({ a: "A" }, { "picker.json": { a: "other" } })).toThrow(/already in en\.json/);
+    // a pack key that only en-settings has is English, not "key does not exist in English"
+    expect(validateTranslationCatalog(mergeSourceCatalogs({ a: "A" }, { "picker.json": { "picker.b": "B" } }), { "picker.b": "Be" })).toEqual([]);
   });
 });
 

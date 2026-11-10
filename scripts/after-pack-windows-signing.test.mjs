@@ -31,10 +31,19 @@ vi.mock("./prepare-browser.mjs", () => ({ verifyBrowserBundle: vi.fn() }));
 // The packaged-import guard has its own suite (windows-native-imports.test.mjs); the fixtures here are not real PE files.
 vi.mock("./windows-native-imports.mjs", () => ({ assertWindowsNativeImports: vi.fn(() => ({})) }));
 // The engine-exclusion addon gate has its own suite (engine-exclusion-build.test.mjs); this one is about signing, and has no packaged Electron to load it with.
-vi.mock("./engine-exclusion-resource.mjs", () => ({
-  validateEngineExclusionResource: (resources) => path.join(resources, "engine-exclusion.node"),
-  loadEngineExclusionResource: () => "loaded",
-}));
+// R16/R25: afterPack must hand the validator the build's own receipt; `exclusionRun.receipt` swaps in a test receipt and runs the REAL validator on it.
+const exclusionRun = vi.hoisted(() => ({ calls: [], receipt: undefined }));
+vi.mock("./engine-exclusion-resource.mjs", async importOriginal => {
+  const actual = await importOriginal();
+  return {
+    validateEngineExclusionResource: (resources, platform, arch, receipt) => {
+      exclusionRun.calls.push([platform, arch, receipt]);
+      if (exclusionRun.receipt === undefined) return path.join(resources, "engine-exclusion.node");
+      return actual.validateEngineExclusionResource(resources, platform, arch, exclusionRun.receipt);
+    },
+    loadEngineExclusionResource: () => "loaded",
+  };
+});
 // The GEPA runtime is required before signing (GEPA_RESOURCE_BUILD_RECEIPT_REQUIRED);
 // its bundle verification has its own suite (server/gepa-resource.test.ts).
 vi.mock("../server/gepa-resource.ts", () => ({ verifyGepaBundle: vi.fn() }));
@@ -56,6 +65,8 @@ import { verifyFuigoExecutable } from "./prepare-fuigo.mjs";
 const temporaryDirectories = [];
 afterEach(() => {
   vi.resetAllMocks();
+  exclusionRun.calls.length = 0;
+  exclusionRun.receipt = undefined;
   for (const directory of temporaryDirectories.splice(0)) removeTempDirSync(directory);
 });
 
@@ -164,6 +175,36 @@ it("verifies pinned inventory before signing engines and updater helper", async 
   verifyWindowsBackupTools(backupDirectory);
   expect(JSON.parse(fs.readFileSync(helperManifest, "utf8")).binarySha256).toBe(createHash("sha256").update(fs.readFileSync(helper)).digest("hex"));
   expect(fs.readFileSync(executable, "utf8")).toBe("pinned fixture signed fixture");
+});
+
+// CONTRACTS-B 1.5 R16/R25 (Astra r1 block 2): the /MT receipt check is part of the Windows packaging path, through afterPack itself.
+const peAddon = () => { const b = Buffer.alloc(4096); b[0] = 0x4d; b[1] = 0x5a; b.writeUInt32LE(0x80, 0x3c); b.writeUInt32BE(0x50450000, 0x80); b.writeUInt16LE(0x8664, 0x84); b.writeUInt16LE(0x2000, 0x80 + 22); return b; };
+const receiptFile = (context, value, raw) => {
+  const file = path.join(context.appOutDir, "receipt.json");
+  fs.writeFileSync(file, raw ?? JSON.stringify(value));
+  return file;
+};
+it("afterPack gives the Windows addon check the build script's own receipt for the target", async () => {
+  const { context } = fixture();
+  await afterPack(context);
+  expect(exclusionRun.calls).toHaveLength(1);
+  const [platform, arch, receipt] = exclusionRun.calls[0];
+  expect([platform, arch]).toEqual(["win32", "x64"]);
+  expect(receipt).toBe(path.resolve(import.meta.dirname, "..", "dist-native", "engine-exclusion", "win32-x64", "build.json"));
+});
+it("afterPack refuses a Windows addon whose receipt is missing, malformed or not /MT, and accepts /MT", async () => {
+  const run = async (make) => {
+    const { context } = fixture();
+    fs.writeFileSync(path.join(context.appOutDir, "resources", "engine-exclusion.node"), peAddon());
+    exclusionRun.receipt = make(context);
+    return afterPack(context);
+  };
+  await expect(run(context => path.join(context.appOutDir, "no-such-build.json"))).rejects.toThrow("ENGINE_EXCLUSION_RECEIPT_MISSING");
+  await expect(run(context => receiptFile(context, null, "not json"))).rejects.toThrow("ENGINE_EXCLUSION_RECEIPT_MISSING");
+  await expect(run(context => receiptFile(context, { crt: "MTd" }))).rejects.toThrow("ENGINE_EXCLUSION_RECEIPT_CRT");
+  await expect(run(context => receiptFile(context, { crt: "other" }))).rejects.toThrow("ENGINE_EXCLUSION_RECEIPT_CRT");
+  await expect(run(context => receiptFile(context, {}))).rejects.toThrow("ENGINE_EXCLUSION_RECEIPT_CRT");
+  await expect(run(context => receiptFile(context, { crt: "MT" }))).resolves.toBeUndefined();
 });
 
 it("never signs a package whose control-plane module differs from the source", async () => {
