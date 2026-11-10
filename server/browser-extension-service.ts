@@ -1372,6 +1372,7 @@ export async function createBrowserExtensionService(options: {
           selected:()=>documentFor(entry),
           documents:async()=>{await refresh(entry);if(!active(entry))throw authorizationError(entry);return [...entry.documents.values()].map(doc=>structuredClone(doc));},
           send:transport.send,
+          frames:document=>transport.send('Murage.getAllFrames',{},document),
           newTab:async raw=>{
             // SABLE-B 7.5/5.5 R2: no consent here. The hook's scope is read once; live after every await; a tab navigates only to a URL this call admitted.
             const scope=entry.executor?.scope as Scope|undefined;const check=()=>{if(!live(entry,scope))throw active(entry)?Object.assign(Error('binding_inactive'),{code:'binding_inactive'}):authorizationError(entry);};
