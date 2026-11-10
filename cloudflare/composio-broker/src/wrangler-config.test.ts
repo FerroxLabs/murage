@@ -124,7 +124,7 @@ describe("committed Worker config (wrangler.jsonc)", () => {
     );
     expect(registration.status).toBe(503);
 
-    const now = Date.now();
+    const now = Date.parse(LEGACY_BROKER_CUTOFF) - 86_400_000;   // CI-ONLY evidence patch: the committed cut-off (2026-11-10) has passed, so a live Date.now() is retired
     expect(migrationGate(claimedRow(), env as never, now)).toBeNull();
     expect(migrationGate(claimedRow({ claim_confirmed_at: now - 899_000 }), env as never, now)).toBeNull();
     const moved = migrationGate(claimedRow({ claim_confirmed_at: now - 901_000 }), env as never, now);

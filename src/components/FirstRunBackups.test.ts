@@ -160,13 +160,14 @@ describe("Backups page headline", () => {
     const page = read("./BackupSettings.tsx");
     expect(page).not.toContain("<details");
     expect(read("./BackupRemoteSettings.tsx")).not.toContain("<details");
-    const body = page.slice(page.indexOf("export function BackupSettings()"));
+    const body = page.slice(page.indexOf("export function BackupSettings("));
     expect(body.indexOf("RecoveryKeyKeepsafe")).toBeGreaterThan(-1);
     expect(body.indexOf("RecoveryKeyKeepsafe")).toBeLessThan(body.indexOf("<AdvancedSection"));
     expect(body).toContain("Off-site copy");
     expect(body).toContain('section="backups"');
     // Settings search scrolls to the headline by this anchor.
-    expect(page).toContain('id="backups-heading"');
+    // 1.0.19: the page mount (settings/pages/BackupsPage.tsx) carries the anchor as the card's id.
+    expect(read("./settings/pages/BackupsPage.tsx")).toContain('anchor: "backups-heading"');
   });
   it("copy has no em dashes and never says safe or unsafe", () => {
     for (const text of Object.values(FIRST_RUN_BACKUP_COPY)) expect(text).not.toMatch(/—|\bsafe|\bunsafe/i);
