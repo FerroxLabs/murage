@@ -15,7 +15,7 @@ import { ClaudeAccountsSettings } from "./ClaudeAccountsSettings";
 import { EngineGroupLabel } from "./EngineGroupLabel";
 import { EngineSetup, needsCli, needsSignIn } from "./EngineSetup";
 import { InstanceProviderMark } from "./ProviderIcons";
-import { engineFamilies, engineFamilyHeader } from "@/lib/provider-model-picker";
+import { engineFamilies, engineFamilyHeader } from "@/lib/provider-model-picker-dialog";
 import { engineLocalLine, LOCAL_MODELS_TITLE, OPEN_LOCAL_MODELS_EVENT } from "@/lib/local-models-view";
 import { localEngineSupport } from "../../shared/local-models";
 import { cn } from "@/lib/cn";
