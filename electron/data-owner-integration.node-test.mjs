@@ -56,9 +56,9 @@ function bootstrapWiring({ menu = [], selectionActive = false } = {}) {
   const inert = () => { throw new Error("backup branch must stay inert in an ordinary launch"); };
   return {
     backupStartupDispatch, createServerConnections, openServerPrompt, dialog: { showErrorBox() {} }, BrowserWindow: null, session: null, Menu, mainWindow: null, desktopSelectionActive: selectionActive,
-    createStartupSplash: () => ({ close() {} }), desktopMark: () => {}, firstStartOfVersion: () => false, FIRST_AFTER_UPDATE_NOTE: "", noteVersionStarted: () => {},  nativeTheme: { shouldUseDarkColors: false }, closedBackupRequested: false, initializeBackupScheduleHost: async () => {}, backupScheduleHost: null,
+    createStartupSplash: () => ({ close() {} }), desktopMark: () => {}, readStartupPicture: () => null, splashMode: () => "tip", startupIpc: { requestWhatsNew() {} }, noteVersionStarted: () => {},  nativeTheme: { shouldUseDarkColors: false }, closedBackupRequested: false, initializeBackupScheduleHost: async () => {}, backupScheduleHost: null,
     // The Sentinel host (sentinel-host.mjs) starts right after ownership; tests that care about its order override it.
-    initializeSentinelHost: async () => {}, sentinelHost: null, desktopRecoveryMode: false, desktopShutdownStarted: false,
+    initializeNotifySurfaces:()=>{},initializeAttentionActions:()=>{},initializeSentinelHost: async () => {}, sentinelHost: null, desktopRecoveryMode: false, desktopShutdownStarted: false,
     // The live gate is a top-level const in main.mjs, declared before app.whenReady; the startup block only schedules its probe.
     cloudLive: { start() {}, probeOnFocus() {} },
     // A cold-start Cloud link handoff (cloud-link-handoff.mjs) runs first at ready; an ordinary launch has none.
@@ -105,7 +105,7 @@ test("packaged bootstrap claims canonical ownership before credential reads or m
     app:{isPackaged:true,setAsDefaultProtocolClient(){},getPath:()=>"/fixture/home"}, process:{platform:"linux"}, APP_ICON:null,
     loadSecureCredentials:async()=>{events.push("read");return{};}, secureComposioConfig:async()=>events.push("composio"), secureWorkspaceConfig:async()=>events.push("workspace"),
     acquireDesktopDataOwner:()=>{events.push("lease");assert.deepEqual(menu,[["Server"]],"server menu is installed before ownership");}, assertDesktopStartupActive:()=>{},
-    initializeBackupScheduleHost:async()=>events.push("backup-host"), initializeSentinelHost:async()=>events.push("sentinel-host"),
+    initializeBackupScheduleHost:async()=>events.push("backup-host"), initializeNotifySurfaces:()=>{},initializeAttentionActions:()=>{},initializeSentinelHost:async()=>events.push("sentinel-host"),
   }, `${bootstrapDependencies} let secureCredentials;`, { menu });
   assert.deepEqual(events, ["lease", "sentinel-host", "backup-host", "read", "composio", "workspace"]);
   assert.deepEqual(menu, [["Server"]]);
@@ -316,7 +316,7 @@ function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanup
     stopAutomaticRemoteBackups:()=>{},backupScheduleHost:null,closedBackupRequested:false,internalBackupQuit:false,
     // The Sentinel host flushes its desktop producer on exit; it is never a release barrier.
     sentinelHost:{shutdown:async()=>{}},
-    notificationAuthorization:{invalidate(){}},showApprovalNotification:{dispose(){}},modelSignIn:{dispose(){}},localEngineLogin:{shutdown:async()=>{}},mcpServers:{dispose(){}},
+    notificationAuthorization:{invalidate(){}},showApprovalNotification:{dispose(){}},bannerNative:{dispose(){}},attentionSurfaces:{dispose(){}},modelSignIn:{dispose(){}},localEngineLogin:{shutdown:async()=>{}},mcpServers:{dispose(){}},
     desktopBackupTool:{invalidate(){},settled:()=>Promise.resolve()},backupToolCheck:Promise.resolve(),desktopResticTool:null,remoteBackupAttestation:{abort(){}},
     // The bundled adb daemon is not an owned child: it forks itself off the
     // first adb command and stays, so quitting has to stop it by name.
@@ -567,7 +567,7 @@ for(const winner of ["old","candidate"])test(`F11 T18 production startup exclude
   const host={internalStatus:()=>({phase:'install-requested'}),reconcileStartup:()=>({blocked:false}),publishCommitted(){},pendingUpgrade:instrument(operations.pendingUpgrade.name,{phase:'install-requested',candidate:{version:'2.0.0'}}),completeUpgrade:instrument('completeUpgrade')};
   host.settleRequestedInstall=instrument(operations.settleRequestedInstall.name,{kind:'review'});
   const scope={closedBackupRequested:false,console:{log(){}},app:{requestSingleInstanceLock:()=>won,isPackaged:true,getVersion:()=>version,getLocale:()=> 'en'},process:{exit:()=>{throw exit;},platform:"darwin",argv:[]},backupStartupDispatch,BACKUP_MODE_ARGUMENT,
-   acquireDesktopDataOwner:instrument(operations.acquireDesktopDataOwner.name),initializeSentinelHost:async()=>{},initializeBackupScheduleHost:async()=>{},desktopMark(){},announceLastBackupFailure(){},announceLastBackupResult(){},backupScheduleHost:host,ensureDesktopUpdater:()=>({}),backupToolCheck:Promise.resolve(),desktopStartup:Promise.resolve(),startupSplash:{set(){}},updateRecoveryWords:()=>({}),startUpdateGate:()=>host.settleRequestedInstall(),pauseForReview(){}};
+   acquireDesktopDataOwner:instrument(operations.acquireDesktopDataOwner.name),initializeNotifySurfaces:()=>{},initializeAttentionActions:()=>{},initializeSentinelHost:async()=>{},initializeBackupScheduleHost:async()=>{},desktopMark(){},announceLastBackupFailure(){},announceLastBackupResult(){},backupScheduleHost:host,ensureDesktopUpdater:()=>({}),backupToolCheck:Promise.resolve(),desktopStartup:Promise.resolve(),startupSplash:{set(){}},updateRecoveryWords:()=>({}),startUpdateGate:()=>host.settleRequestedInstall(),pauseForReview(){}};
   try{await runStartupBoundary(source,scope);}catch(error){assert.equal(error,exit);}
   assert.equal(counts[operations.acquireDesktopDataOwner.name]??0,won?1:0);
   // The winner reads the pending upgrade twice: backupStartupDispatch routes on it, then startup acts on it.

@@ -1,0 +1,5955 @@
+{
+  "generatedBy": "src/lib/settings-controls.test.ts (SETTINGS_CONTROLS_WRITE=1)",
+  "counts": {
+    "app": 82,
+    "bot": 37,
+    "botIndexed": 37,
+    "dataSetting": 37,
+    "controlAnchors": 63,
+    "dynamicControlAnchors": 15
+  },
+  "dataSetting": [
+    "bot.access.app-access",
+    "bot.access.apps",
+    "bot.access.browser",
+    "bot.access.computer",
+    "bot.access.folder",
+    "bot.access.phone",
+    "bot.access.phone-for-bots",
+    "bot.access.sites",
+    "bot.email.email",
+    "bot.history.history",
+    "bot.identity.avatar",
+    "bot.identity.instructions",
+    "bot.identity.name",
+    "bot.identity.personality",
+    "bot.identity.title",
+    "bot.learning.learning",
+    "bot.memory.memory",
+    "bot.memory.notebook",
+    "bot.model.backup",
+    "bot.model.effort",
+    "bot.model.model",
+    "bot.overview.role",
+    "bot.overview.setup",
+    "bot.permissions.always-allowed",
+    "bot.permissions.can-talk",
+    "bot.permissions.images",
+    "bot.permissions.level",
+    "bot.permissions.peers",
+    "bot.permissions.review",
+    "bot.routines.routines",
+    "bot.shapes.shapes",
+    "bot.skills.skills",
+    "bot.teams.teams",
+    "bot.usage.usage",
+    "bot.voice.calls",
+    "bot.voice.notifications",
+    "bot.voice.voice"
+  ],
+  "controlAnchors": [
+    "about-me-heading",
+    "about-version-heading",
+    "advanced-mode-heading",
+    "analytics-heading",
+    "announcements-heading",
+    "backups-heading",
+    "bot-email-heading",
+    "calls-settings-title",
+    "claude-accounts-heading",
+    "companion-heading",
+    "computer-settings-heading",
+    "connections-heading",
+    "diagnostics-heading",
+    "discord-app-setup-heading",
+    "discord-settings-title",
+    "health-heading",
+    "highlevel-heading",
+    "image-daily-check-heading",
+    "image-settings-heading",
+    "language-heading",
+    "local-models-heading",
+    "mcp-servers-heading",
+    "memory-audience-heading",
+    "memory-connection-heading",
+    "memory-health-heading",
+    "memory-import-heading",
+    "memory-learned-heading",
+    "memory-limit-heading",
+    "memory-people-heading",
+    "memory-procedures-heading",
+    "memory-reindex-heading",
+    "model-catalogs-heading",
+    "models-heading",
+    "new-bot-effort-heading",
+    "news-heading",
+    "paste-any-keys",
+    "phone-calls-heading",
+    "previous-version-heading",
+    "profile-heading",
+    "project-autonomy-heading",
+    "room-routing-label",
+    "room-turn-timeout",
+    "script-access-heading",
+    "search-settings-heading",
+    "setup-heading",
+    "shortcuts-heading",
+    "skill-scan-rules-heading",
+    "skills-settings-title",
+    "slack-app-setup-heading",
+    "slack-settings-title",
+    "startup-heading",
+    "storage-heading",
+    "telegram-settings-title",
+    "time-zone-heading",
+    "tool-calls-heading",
+    "updates-heading",
+    "usage-heading",
+    "usage-learning-heading",
+    "voice-key-heading",
+    "whats-new-heading",
+    "whatsapp-allow-heading",
+    "whatsapp-groups-heading",
+    "whatsapp-settings-title"
+  ],
+  "controlHomes": [
+    {
+      "anchor": "about-me-heading",
+      "owner": "general.about-me"
+    },
+    {
+      "anchor": "about-version-heading",
+      "owner": "about.version"
+    },
+    {
+      "anchor": "advanced-mode-heading",
+      "owner": "general.mode"
+    },
+    {
+      "anchor": "analytics-heading",
+      "owner": "general.analytics"
+    },
+    {
+      "anchor": "announcements-heading",
+      "owner": "about.announcements"
+    },
+    {
+      "anchor": "backups-heading",
+      "owner": "backups.backups"
+    },
+    {
+      "anchor": "bot-email-heading",
+      "owner": "connections.bot-email"
+    },
+    {
+      "anchor": "calls-settings-title",
+      "owner": "calls.calls"
+    },
+    {
+      "anchor": "claude-accounts-heading",
+      "owner": "models.claude-accounts"
+    },
+    {
+      "anchor": "companion-heading",
+      "owner": "companion.pairing"
+    },
+    {
+      "anchor": "computer-settings-heading",
+      "owner": "companion.computer"
+    },
+    {
+      "anchor": "connections-heading",
+      "owner": "connections.apps"
+    },
+    {
+      "anchor": "diagnostics-heading",
+      "owner": "about.diagnostics"
+    },
+    {
+      "anchor": "discord-app-setup-heading",
+      "owner": "channels.discord-setup"
+    },
+    {
+      "anchor": "discord-settings-title",
+      "owner": "channels.discord"
+    },
+    {
+      "anchor": "health-heading",
+      "owner": "about.health"
+    },
+    {
+      "anchor": "highlevel-heading",
+      "owner": "connections.highlevel"
+    },
+    {
+      "anchor": "image-daily-check-heading",
+      "owner": "webSearch.daily-check"
+    },
+    {
+      "anchor": "image-settings-heading",
+      "owner": "webSearch.images"
+    },
+    {
+      "anchor": "language-heading",
+      "owner": "general.language"
+    },
+    {
+      "anchor": "local-models-heading",
+      "owner": "models.local-servers"
+    },
+    {
+      "anchor": "mcp-servers-heading",
+      "owner": "connections.mcp"
+    },
+    {
+      "anchor": "memory-audience-heading",
+      "owner": "memory.audience"
+    },
+    {
+      "anchor": "memory-connection-heading",
+      "owner": "memory.connection"
+    },
+    {
+      "anchor": "memory-health-heading",
+      "owner": "memory.health"
+    },
+    {
+      "anchor": "memory-import-heading",
+      "owner": "memory.import"
+    },
+    {
+      "anchor": "memory-learned-heading",
+      "owner": "memory.learned"
+    },
+    {
+      "anchor": "memory-limit-heading",
+      "owner": "memory.limit"
+    },
+    {
+      "anchor": "memory-people-heading",
+      "owner": "memory.people"
+    },
+    {
+      "anchor": "memory-procedures-heading",
+      "owner": "memory.procedures"
+    },
+    {
+      "anchor": "memory-reindex-heading",
+      "owner": "memory.reindex"
+    },
+    {
+      "anchor": "model-catalogs-heading",
+      "owner": "models.catalogs"
+    },
+    {
+      "anchor": "models-heading",
+      "owner": "models.providers"
+    },
+    {
+      "anchor": "new-bot-effort-heading",
+      "owner": "botDefaults.new-bot-effort"
+    },
+    {
+      "anchor": "news-heading",
+      "owner": "about.news"
+    },
+    {
+      "anchor": "paste-any-keys",
+      "owner": "models.paste-keys"
+    },
+    {
+      "anchor": "phone-calls-heading",
+      "owner": "connections.phone-calls"
+    },
+    {
+      "anchor": "previous-version-heading",
+      "owner": "about.previous-version"
+    },
+    {
+      "anchor": "profile-heading",
+      "owner": "general.profile"
+    },
+    {
+      "anchor": "project-autonomy-heading",
+      "owner": "botDefaults.project-autonomy"
+    },
+    {
+      "anchor": "room-routing-label",
+      "owner": "botDefaults.room-routing"
+    },
+    {
+      "anchor": "room-turn-timeout",
+      "owner": "botDefaults.channel-turns"
+    },
+    {
+      "anchor": "script-access-heading",
+      "owner": "companion.script-access"
+    },
+    {
+      "anchor": "search-settings-heading",
+      "owner": "webSearch.search"
+    },
+    {
+      "anchor": "setup-heading",
+      "owner": "about.setup"
+    },
+    {
+      "anchor": "shortcuts-heading",
+      "owner": "about.shortcuts"
+    },
+    {
+      "anchor": "skill-scan-rules-heading",
+      "owner": "skills.scan-rules"
+    },
+    {
+      "anchor": "skills-settings-title",
+      "owner": "skills.library"
+    },
+    {
+      "anchor": "slack-app-setup-heading",
+      "owner": "channels.slack-setup"
+    },
+    {
+      "anchor": "slack-settings-title",
+      "owner": "channels.slack"
+    },
+    {
+      "anchor": "startup-heading",
+      "owner": "general.startup"
+    },
+    {
+      "anchor": "storage-heading",
+      "owner": "backups.storage"
+    },
+    {
+      "anchor": "telegram-settings-title",
+      "owner": "channels.telegram"
+    },
+    {
+      "anchor": "time-zone-heading",
+      "owner": "general.time-zone"
+    },
+    {
+      "anchor": "tool-calls-heading",
+      "owner": "botDefaults.tool-calls"
+    },
+    {
+      "anchor": "updates-heading",
+      "owner": "about.updates"
+    },
+    {
+      "anchor": "usage-heading",
+      "owner": "usage.by-bot"
+    },
+    {
+      "anchor": "usage-learning-heading",
+      "owner": "usage.learning"
+    },
+    {
+      "anchor": "voice-key-heading",
+      "owner": "webSearch.voice-key"
+    },
+    {
+      "anchor": "whats-new-heading",
+      "owner": "about.whats-new"
+    },
+    {
+      "anchor": "whatsapp-allow-heading",
+      "owner": "channels.allow-lists"
+    },
+    {
+      "anchor": "whatsapp-groups-heading",
+      "owner": "channels.whatsapp-groups"
+    },
+    {
+      "anchor": "whatsapp-settings-title",
+      "owner": "channels.whatsapp"
+    }
+  ],
+  "appControls": [
+    {
+      "card": "general.mode",
+      "control": "Advanced mode",
+      "kind": "switch",
+      "key": "localStorage murage.settings.mode (\"simple\" | \"advanced\"), per device; the upgrader default reads murage.settings.advancedFoldSeen",
+      "default": false,
+      "source": "src/components/settings/AdvancedModeCard.tsx; src/lib/settings-mode.ts:15,36",
+      "modelControl": "mode"
+    },
+    {
+      "card": "general.profile",
+      "control": "Your name",
+      "kind": "text",
+      "key": "PUT /api/config {profile.name} (saves on blur; read-only off desktop)",
+      "default": null,
+      "source": "src/components/SettingsModal.tsx:213",
+      "modelControl": "name"
+    },
+    {
+      "card": "general.profile",
+      "control": "Your email",
+      "kind": "text",
+      "key": "PUT /api/config {profile.email} (saves on blur)",
+      "default": null,
+      "source": "src/components/SettingsModal.tsx:214",
+      "modelControl": "email"
+    },
+    {
+      "card": "general.profile",
+      "control": "Retry save",
+      "kind": "button",
+      "key": "re-sends PUT /api/config {profile} (shown on error only)",
+      "default": null,
+      "source": "src/components/SettingsModal.tsx:226",
+      "modelControl": null
+    },
+    {
+      "card": "general.appearance",
+      "control": "Appearance (Light / Dark / Automatic)",
+      "kind": "choice",
+      "key": "localStorage murage-skin (light|dark|auto)",
+      "default": "auto",
+      "source": "src/components/SkinPicker.tsx:51-54; src/lib/skins.ts:42,51",
+      "modelControl": "theme"
+    },
+    {
+      "card": "general.appearance",
+      "control": "Interface font",
+      "kind": "select",
+      "key": "localStorage murage-font (default|system|serif|rounded)",
+      "default": "default",
+      "source": "src/components/SettingsModal.tsx:718-740; src/lib/fonts.ts:13,23",
+      "modelControl": "font"
+    },
+    {
+      "card": "general.sidebar-density",
+      "control": "Sidebar (Standard / Roomy / Rail)",
+      "kind": "choice",
+      "key": "localStorage murage.sidebarDensity (compact|comfortable|icons); earlier installs without a saved value show comfortable",
+      "default": "compact",
+      "source": "src/components/SettingsModal.tsx:753-776; src/lib/sidebar-preferences.ts:10,17",
+      "modelControl": "sidebar-density"
+    },
+    {
+      "card": "general.sidebar-density",
+      "control": "Fold the sidebar on narrow windows",
+      "kind": "switch",
+      "key": "localStorage murage.sidebarAutoRail (\"off\" = false, otherwise on)",
+      "default": true,
+      "source": "src/components/SettingsModal.tsx:797; src/lib/sidebar-preferences.ts:14,137",
+      "modelControl": "auto-rail"
+    },
+    {
+      "card": "general.language",
+      "control": "App language",
+      "kind": "select",
+      "key": "PATCH /api/config {language} (\"\" = System)",
+      "default": "",
+      "source": "src/components/SettingsModal.tsx:340-385",
+      "modelControl": "language"
+    },
+    {
+      "card": "general.time-zone",
+      "control": "Your time zone",
+      "kind": "text",
+      "key": "GET/PUT /api/owner/timezone {timeZone} (saves on blur/Enter; datalist of zones)",
+      "default": null,
+      "source": "src/components/TimeZoneSettings.tsx:100,129",
+      "modelControl": "time-zone"
+    },
+    {
+      "card": "general.time-zone",
+      "control": "Follow this computer ({zone})",
+      "kind": "button",
+      "key": "PUT /api/owner/timezone {timeZone:null} (shown only when offerFollow)",
+      "default": null,
+      "source": "src/components/TimeZoneSettings.tsx:144-150",
+      "modelControl": null
+    },
+    {
+      "card": "general.time-zone",
+      "control": "Current zone and local time line",
+      "kind": "readout",
+      "key": "read-only (GET /api/owner/timezone)",
+      "default": null,
+      "source": "src/components/TimeZoneSettings.tsx:140-142",
+      "modelControl": null
+    },
+    {
+      "card": "general.send-key",
+      "control": "Sending messages (Enter / Shift+Enter / Cmd or Ctrl+Enter)",
+      "kind": "choice",
+      "key": "localStorage murage.sendKey (enter|shift-enter|mod-enter); ja locale defaults mod-enter; murage.sendKeySettled is a migration marker",
+      "default": "enter",
+      "source": "src/components/SettingsModal.tsx:895-930; src/lib/send-key.ts:13,23,64",
+      "modelControl": "send-key"
+    },
+    {
+      "card": "general.notifications",
+      "control": "Needs your attention",
+      "kind": "switch",
+      "key": "PUT /api/config {notifications.attention} (draft, saved by Save notifications)",
+      "default": true,
+      "source": "src/components/NotificationSettings.tsx:69,73; shared/notification-preferences.ts:9",
+      "modelControl": "attention"
+    },
+    {
+      "card": "general.notifications",
+      "control": "Task completed",
+      "kind": "switch",
+      "key": "PUT /api/config {notifications.completion}",
+      "default": true,
+      "source": "src/components/NotificationSettings.tsx:74",
+      "modelControl": "completion"
+    },
+    {
+      "card": "general.notifications",
+      "control": "Task failed",
+      "kind": "switch",
+      "key": "PUT /api/config {notifications.failures}",
+      "default": true,
+      "source": "src/components/NotificationSettings.tsx:75",
+      "modelControl": "failures"
+    },
+    {
+      "card": "general.notifications",
+      "control": "Memories waiting for you",
+      "kind": "switch",
+      "key": "PUT /api/config {notifications.memories}",
+      "default": true,
+      "source": "src/components/NotificationSettings.tsx:76",
+      "modelControl": "memories"
+    },
+    {
+      "card": "general.notifications",
+      "control": "Show notification previews",
+      "kind": "switch",
+      "key": "PUT /api/config {notifications.previewContent}",
+      "default": true,
+      "source": "src/components/NotificationSettings.tsx:77",
+      "modelControl": "preview"
+    },
+    {
+      "card": "general.notifications",
+      "control": "Quiet hours",
+      "kind": "switch",
+      "key": "PUT /api/config {notifications.quietHours.enabled}; first on seeds start 22:00, end 08:00, device time zone",
+      "default": false,
+      "source": "src/components/NotificationSettings.tsx:34-38,82-86",
+      "modelControl": "quiet"
+    },
+    {
+      "card": "general.notifications",
+      "control": "Quiet hours start",
+      "kind": "text",
+      "key": "PUT /api/config {notifications.quietHours.start} (time input)",
+      "default": "22:00",
+      "source": "src/components/NotificationSettings.tsx:89-92",
+      "modelControl": "quiet"
+    },
+    {
+      "card": "general.notifications",
+      "control": "Quiet hours end",
+      "kind": "text",
+      "key": "PUT /api/config {notifications.quietHours.end} (time input)",
+      "default": "08:00",
+      "source": "src/components/NotificationSettings.tsx:93-96",
+      "modelControl": "quiet"
+    },
+    {
+      "card": "general.notifications",
+      "control": "Quiet hours time zone",
+      "kind": "text",
+      "key": "PUT /api/config {notifications.quietHours.timeZone}",
+      "default": null,
+      "source": "src/components/NotificationSettings.tsx:97-101",
+      "modelControl": "time-zone"
+    },
+    {
+      "card": "general.notifications",
+      "control": "Play a sound",
+      "kind": "switch",
+      "key": "localStorage murage.notificationSounds (\"0\" = off, otherwise on); applies at once, not via Save",
+      "default": true,
+      "source": "src/components/NotificationSettings.tsx:104-107; src/lib/notification-sounds.ts:15,33",
+      "modelControl": "sound"
+    },
+    {
+      "card": "general.notifications",
+      "control": "Notification permission status",
+      "kind": "readout",
+      "key": "read-only (browser Notification.permission)",
+      "default": null,
+      "source": "src/components/NotificationSettings.tsx:108-111",
+      "modelControl": null
+    },
+    {
+      "card": "general.notifications",
+      "control": "Request notification permission",
+      "kind": "button",
+      "key": "browser Notification permission request (shown when permission is default)",
+      "default": null,
+      "source": "src/components/NotificationSettings.tsx:112-114",
+      "modelControl": null
+    },
+    {
+      "card": "general.notifications",
+      "control": "Save notifications",
+      "kind": "button",
+      "key": "PUT /api/config {notifications} (whole object, confirmed against response)",
+      "default": null,
+      "source": "src/components/NotificationSettings.tsx:119-122",
+      "modelControl": null
+    },
+    {
+      "card": "general.notifications",
+      "control": "Calls: Off today (rendered inside this anchor by CallsSettings)",
+      "kind": "switch",
+      "key": "POST /api/calls/off-today {on, tz?}",
+      "default": false,
+      "source": "src/components/CallsSettings.tsx:76,91",
+      "modelControl": null
+    },
+    {
+      "card": "general.notifications",
+      "control": "Calls: Show more (history)",
+      "kind": "button",
+      "key": "GET /api/calls/history?limit=20&before=",
+      "default": null,
+      "source": "src/components/CallsSettings.tsx:50,114",
+      "modelControl": null
+    },
+    {
+      "card": "general.startup",
+      "control": "Keep running when the window closes",
+      "kind": "switch",
+      "key": "Electron preferences keepRunning via window.muragebox.startup.update({keepRunning}) (main process, electron/background-lifecycle.mjs); unset = macOS true, else false",
+      "default": null,
+      "source": "src/components/StartupSettings.tsx:8; electron/background-lifecycle.mjs:3-8",
+      "modelControl": null
+    },
+    {
+      "card": "general.startup",
+      "control": "Start when I sign in",
+      "kind": "switch",
+      "key": "OS login item via window.muragebox.startup.update({startAtLogin}); read from login.openAtLogin",
+      "default": false,
+      "source": "src/components/StartupSettings.tsx:13",
+      "modelControl": "start-at-login"
+    },
+    {
+      "card": "general.startup",
+      "control": "Background status line",
+      "kind": "readout",
+      "key": "read-only (startup state: quitting/suspended/automationsPaused)",
+      "default": null,
+      "source": "src/components/StartupSettings.tsx:17",
+      "modelControl": null
+    },
+    {
+      "card": "general.analytics",
+      "control": "Send usage analytics",
+      "kind": "switch",
+      "key": "localStorage murage-analytics-opt-out (\"1\" = off, \"0\" = on); in-process choice outranks storage",
+      "default": true,
+      "source": "src/components/SettingsModal.tsx:329; src/lib/analytics.ts:37,53,72",
+      "modelControl": "analytics"
+    },
+    {
+      "card": "general.about-me",
+      "control": "About me (rich editor, plain textarea fallback)",
+      "kind": "textarea",
+      "key": "GET/PUT /api/about-me {text}; max 4000 chars (server-reported maxChars); unsaved draft kept in settingsDrafts 'about-me'",
+      "default": "",
+      "source": "src/components/AboutMeSettings.tsx:93-96,115-125",
+      "modelControl": "about-me"
+    },
+    {
+      "card": "general.about-me",
+      "control": "Character counter",
+      "kind": "readout",
+      "key": "read-only",
+      "default": null,
+      "source": "src/components/AboutMeSettings.tsx:127",
+      "modelControl": null
+    },
+    {
+      "card": "general.about-me",
+      "control": "Save",
+      "kind": "button",
+      "key": "PUT /api/about-me {text}",
+      "default": null,
+      "source": "src/components/AboutMeSettings.tsx:133",
+      "modelControl": null
+    },
+    {
+      "card": "general.about-me",
+      "control": "Undo changes",
+      "kind": "button",
+      "key": "none (local draft reset to saved text)",
+      "default": null,
+      "source": "src/components/AboutMeSettings.tsx:134-136",
+      "modelControl": null
+    },
+    {
+      "card": "general.bring-your-ai",
+      "control": "Bring a Grok Bot",
+      "kind": "button",
+      "key": "none (navigation only: closes Settings, opens Team library > Import tab)",
+      "default": null,
+      "source": "src/components/BringYourAi.tsx:35,26-31",
+      "modelControl": "import"
+    },
+    {
+      "card": "general.bring-your-ai",
+      "control": "Bring what another AI knows",
+      "kind": "button",
+      "key": "none (navigation only: opens Settings > Memory at the Learn about me anchor)",
+      "default": null,
+      "source": "src/components/BringYourAi.tsx:36,32-34",
+      "modelControl": "learn"
+    },
+    {
+      "card": "calls.calls",
+      "control": "Calls off for today",
+      "kind": "switch",
+      "key": "POST /api/calls/off-today {on, tz} (lapses at midnight in the owner's zone)",
+      "default": false,
+      "source": "src/components/CallsSettings.tsx:88",
+      "modelControl": "off-today"
+    },
+    {
+      "card": "botDefaults.new-bot-effort",
+      "control": "Effort for new bots",
+      "kind": "select",
+      "key": "PATCH /api/config {newBots.effort} (\"\" sends null = Engine default; options low|medium|high|xhigh|max)",
+      "default": null,
+      "source": "src/components/SettingsModal.tsx:395-415",
+      "modelControl": "effort"
+    },
+    {
+      "card": "botDefaults.tool-calls",
+      "control": "Show tool calls in chat",
+      "kind": "switch",
+      "key": "PATCH /api/config {features.showToolCalls}",
+      "default": false,
+      "source": "src/components/SettingsModal.tsx:434; src/components/SettingsSearchResults.tsx:24-46; src/lib/feature-flags.ts:31",
+      "modelControl": "show"
+    },
+    {
+      "card": "botDefaults.project-autonomy",
+      "control": "Projects work on their own",
+      "kind": "switch",
+      "key": "PATCH /api/config {features.projectsAutonomy}; card renders only when the projects surface is on",
+      "default": false,
+      "source": "src/components/ProjectAutonomySetting.tsx:26",
+      "modelControl": "autonomy"
+    },
+    {
+      "card": "botDefaults.project-autonomy",
+      "control": "Parallel project cards",
+      "kind": "switch",
+      "key": "PATCH /api/config {features.projectsParallelCards} (anything but false counts as on)",
+      "default": true,
+      "source": "src/components/ProjectAutonomySetting.tsx:31",
+      "modelControl": "parallel"
+    },
+    {
+      "card": "botDefaults.channel-turns",
+      "control": "No activity limit (minutes)",
+      "kind": "number",
+      "key": "PUT /api/config {rooms.turnTimeoutMinutes}; min 20, max 1440, saves on blur/Enter",
+      "default": 20,
+      "source": "src/components/RoomTurnTimeoutSettings.tsx:12-13,28-45,60-75; src/lib/room-turn-timeout.ts:6-8",
+      "modelControl": "timeout"
+    },
+    {
+      "card": "botDefaults.channel-turns",
+      "control": "Help text with current limit",
+      "kind": "readout",
+      "key": "read-only (config.rooms.turnTimeoutMinutes)",
+      "default": null,
+      "source": "src/components/RoomTurnTimeoutSettings.tsx:84",
+      "modelControl": null
+    },
+    {
+      "card": "botDefaults.room-routing",
+      "control": "Let Murage pick who answers in channels set to Auto",
+      "kind": "switch",
+      "key": "PATCH /api/config {decider:{enabled, jobs:{roomRouting}}}; disabled without Flux Router key or when decider unavailable",
+      "default": false,
+      "source": "src/components/RoomRoutingSettings.tsx:32-49,63-70",
+      "modelControl": "routing"
+    },
+    {
+      "card": "botDefaults.starter-profiles",
+      "control": "Profile cards (one button per starter profile)",
+      "kind": "list",
+      "key": "POST /api/starter-profiles {action:'catalog'}; selection is local state",
+      "default": null,
+      "source": "src/components/StarterProfiles.tsx:114",
+      "modelControl": "profiles"
+    },
+    {
+      "card": "botDefaults.starter-profiles",
+      "control": "Optional routines (checkbox per routine)",
+      "kind": "checkbox",
+      "key": "none (local selection sent in the preview/import request as selection.routines)",
+      "default": false,
+      "source": "src/components/StarterProfiles.tsx:127-129",
+      "modelControl": null
+    },
+    {
+      "card": "botDefaults.starter-profiles",
+      "control": "Review profile",
+      "kind": "button",
+      "key": "POST /api/starter-profiles {action:'preview', profileId, selection}",
+      "default": null,
+      "source": "src/components/StarterProfiles.tsx:137",
+      "modelControl": null
+    },
+    {
+      "card": "botDefaults.starter-profiles",
+      "control": "I reviewed the warnings (acknowledge)",
+      "kind": "checkbox",
+      "key": "none (sent as acknowledgeWarnings on import)",
+      "default": false,
+      "source": "src/components/StarterProfiles.tsx:134",
+      "modelControl": null
+    },
+    {
+      "card": "botDefaults.starter-profiles",
+      "control": "Import starter profile",
+      "kind": "button",
+      "key": "POST /api/starter-profiles {action:'import', profileId, selection, archiveSha256, reviewHash, acknowledgeWarnings}",
+      "default": null,
+      "source": "src/components/StarterProfiles.tsx:138",
+      "modelControl": null
+    },
+    {
+      "card": "botDefaults.starter-profiles",
+      "control": "Open first task",
+      "kind": "button",
+      "key": "writes a composer draft (localStorage draft record), selects the bot, closes Settings",
+      "default": null,
+      "source": "src/components/StarterProfiles.tsx:143-146",
+      "modelControl": null
+    },
+    {
+      "card": "botDefaults.starter-profiles",
+      "control": "Retry loading profiles",
+      "kind": "button",
+      "key": "re-sends catalog request",
+      "default": null,
+      "source": "src/components/StarterProfiles.tsx:151",
+      "modelControl": null
+    },
+    {
+      "card": "botDefaults.house-rules",
+      "control": "Use house rules",
+      "kind": "switch",
+      "key": "PUT /api/house-rules {enabled}; server flag file, enabled unless flag.enabled === false",
+      "default": true,
+      "source": "src/components/HouseRulesSettings.tsx:159,121-126; server/house-rules.ts:68,89",
+      "modelControl": "enabled"
+    },
+    {
+      "card": "botDefaults.house-rules",
+      "control": "House rules (rich editor, plain textarea fallback)",
+      "kind": "textarea",
+      "key": "GET/PUT /api/house-rules {text}; unsaved draft kept in settingsDrafts 'house-rules'",
+      "default": null,
+      "source": "src/components/HouseRulesSettings.tsx:171-186",
+      "modelControl": "rules"
+    },
+    {
+      "card": "botDefaults.house-rules",
+      "control": "Length hint",
+      "kind": "readout",
+      "key": "read-only (word count)",
+      "default": null,
+      "source": "src/components/HouseRulesSettings.tsx:187",
+      "modelControl": null
+    },
+    {
+      "card": "botDefaults.house-rules",
+      "control": "Save",
+      "kind": "button",
+      "key": "PUT /api/house-rules {text}",
+      "default": null,
+      "source": "src/components/HouseRulesSettings.tsx:194",
+      "modelControl": "save"
+    },
+    {
+      "card": "botDefaults.house-rules",
+      "control": "Undo changes",
+      "kind": "button",
+      "key": "none (local draft reset to saved text)",
+      "default": null,
+      "source": "src/components/HouseRulesSettings.tsx:195",
+      "modelControl": "undo"
+    },
+    {
+      "card": "botDefaults.house-rules",
+      "control": "Reset to default",
+      "kind": "button",
+      "key": "POST /api/house-rules/reset (after in-card Reset / Keep mine confirm)",
+      "default": null,
+      "source": "src/components/HouseRulesSettings.tsx:196-198,203-210",
+      "modelControl": "reset"
+    },
+    {
+      "card": "botDefaults.house-rules",
+      "control": "Always on, even with house rules off",
+      "kind": "readout",
+      "key": "read-only (alwaysOnRules())",
+      "default": null,
+      "source": "src/components/HouseRulesSettings.tsx:213-216",
+      "modelControl": "always-on"
+    },
+    {
+      "card": "skills.recorder",
+      "control": "Show Teach a skill",
+      "kind": "switch",
+      "key": "PATCH /api/config {features.skillRecorder}; on unless explicitly false; disabled until config loads",
+      "default": true,
+      "source": "src/components/SettingsModal.tsx:466-495; src/lib/feature-flags.ts:8",
+      "modelControl": "on"
+    },
+    {
+      "card": "skills.library",
+      "control": "Import skill",
+      "kind": "button",
+      "key": "none (opens the import panel; panel posts POST /api/skills/import)",
+      "default": null,
+      "source": "src/components/skills/SkillsSettings.tsx:107",
+      "modelControl": "import"
+    },
+    {
+      "card": "skills.library",
+      "control": "Search skills",
+      "kind": "text",
+      "key": "GET /api/skills?q= (local query state)",
+      "default": "",
+      "source": "src/components/skills/SkillsSettings.tsx:113-120",
+      "modelControl": null
+    },
+    {
+      "card": "skills.library",
+      "control": "Topic filter",
+      "kind": "select",
+      "key": "GET /api/skills?category= (local state; shown when library ready)",
+      "default": "",
+      "source": "src/components/skills/SkillsSettings.tsx:123-125",
+      "modelControl": null
+    },
+    {
+      "card": "skills.library",
+      "control": "Your skills / Built-in / Library lists (row opens the reader)",
+      "kind": "list",
+      "key": "GET /api/skills (read-only list; usedBy per skill)",
+      "default": null,
+      "source": "src/components/skills/SkillsSettings.tsx:132-150",
+      "modelControl": "list"
+    },
+    {
+      "card": "skills.scan-rules",
+      "control": "Scan rules (what the check looks for, 5 bullets)",
+      "kind": "readout",
+      "key": "read-only",
+      "default": null,
+      "source": "src/components/skills/SkillsSettings.tsx:48-64",
+      "modelControl": "rules"
+    },
+    {
+      "card": "skills.scan-rules",
+      "control": "Results line (clean / review / blocked)",
+      "kind": "readout",
+      "key": "read-only",
+      "default": null,
+      "source": "src/components/skills/SkillsSettings.tsx:62",
+      "modelControl": null
+    },
+    {
+      "card": "memory.overview",
+      "control": "Memory on",
+      "kind": "switch",
+      "key": "POST /api/memory/action {action:configure, mode:active|paused}",
+      "default": true,
+      "source": "src/components/MemorySection.tsx:131",
+      "modelControl": "on"
+    },
+    {
+      "card": "memory.overview",
+      "control": "Refresh",
+      "kind": "button",
+      "key": "GET /api/memory/status (reload only)",
+      "default": null,
+      "source": "src/components/MemorySection.tsx:124",
+      "modelControl": null
+    },
+    {
+      "card": "memory.overview",
+      "control": "Status line (memories, waiting, index)",
+      "kind": "readout",
+      "key": "read-only (status.records.active, learning, semantic)",
+      "default": null,
+      "source": "src/components/MemorySection.tsx:133",
+      "modelControl": "count"
+    },
+    {
+      "card": "memory.overview",
+      "control": "Ceiling line: Raise limit",
+      "kind": "button",
+      "key": "POST /api/memory/action {action:configure, ceiling, learningRevision}",
+      "default": null,
+      "source": "src/components/MemorySection.tsx:135-136",
+      "modelControl": null
+    },
+    {
+      "card": "memory.overview",
+      "control": "Ceiling line: Open Advanced",
+      "kind": "button",
+      "key": "none (navigation only)",
+      "default": null,
+      "source": "src/components/MemorySection.tsx:137",
+      "modelControl": null
+    },
+    {
+      "card": "memory.how-it-learns",
+      "control": "Learn as we talk",
+      "kind": "switch",
+      "key": "POST /api/memory/action {action:configure, learning:{automaticFacts,automaticProcedures}} (both set together)",
+      "default": true,
+      "source": "src/components/MemorySection.tsx:143",
+      "modelControl": "when"
+    },
+    {
+      "card": "memory.how-it-learns",
+      "control": "Review before using",
+      "kind": "switch",
+      "key": "POST /api/memory/action {configure, learning:{reviewMode}}",
+      "default": false,
+      "source": "src/components/MemorySection.tsx:145",
+      "modelControl": null
+    },
+    {
+      "card": "memory.how-it-learns",
+      "control": "Learn from chats",
+      "kind": "switch",
+      "key": "POST /api/memory/action {configure, learning:{learnFrom.chats}}",
+      "default": true,
+      "source": "src/components/MemorySection.tsx:147",
+      "modelControl": "chats"
+    },
+    {
+      "card": "memory.how-it-learns",
+      "control": "Learn from channels",
+      "kind": "switch",
+      "key": "POST /api/memory/action {configure, learning:{learnFrom.channels}}",
+      "default": true,
+      "source": "src/components/MemorySection.tsx:149",
+      "modelControl": "channels"
+    },
+    {
+      "card": "memory.bots",
+      "control": "One switch per bot (bot name)",
+      "kind": "list",
+      "key": "POST /api/memory/action {action:learning-bot, botId, enabled, learningRevision}; stored as learning.botsPaused[]",
+      "default": true,
+      "source": "src/components/MemorySection.tsx:153",
+      "modelControl": "per-bot"
+    },
+    {
+      "card": "memory.bots",
+      "control": "Empty note (no bots)",
+      "kind": "readout",
+      "key": "read-only",
+      "default": null,
+      "source": "src/components/MemorySection.tsx:154",
+      "modelControl": null
+    },
+    {
+      "card": "memory.learned",
+      "control": "Show (all bots / one bot)",
+      "kind": "select",
+      "key": "local state filter; GET history for botId (not stored)",
+      "default": "",
+      "source": "src/components/MemorySection.tsx:157",
+      "modelControl": "filter"
+    },
+    {
+      "card": "memory.learned",
+      "control": "Learning events list",
+      "kind": "list",
+      "key": "read-only (learning events, cursor paged)",
+      "default": null,
+      "source": "src/components/MemorySection.tsx:159-161",
+      "modelControl": "recent"
+    },
+    {
+      "card": "memory.learned",
+      "control": "Keep",
+      "kind": "button",
+      "key": "POST /api/memory/action {action:learning-keep, eventId}",
+      "default": null,
+      "source": "src/components/MemorySection.tsx:108",
+      "modelControl": null
+    },
+    {
+      "card": "memory.learned",
+      "control": "Undo",
+      "kind": "button",
+      "key": "POST /api/memory/action {action:learning-undo, eventId}",
+      "default": null,
+      "source": "src/components/MemorySection.tsx:109",
+      "modelControl": null
+    },
+    {
+      "card": "memory.learned",
+      "control": "Try again (skipped slice)",
+      "kind": "button",
+      "key": "POST /api/memory/action {action:retry-skipped,...}",
+      "default": null,
+      "source": "src/components/MemorySection.tsx:104",
+      "modelControl": null
+    },
+    {
+      "card": "memory.learned",
+      "control": "Open source conversation link",
+      "kind": "button",
+      "key": "none (navigation only)",
+      "default": null,
+      "source": "src/components/MemorySection.tsx:102",
+      "modelControl": null
+    },
+    {
+      "card": "memory.learned",
+      "control": "See all (more history)",
+      "kind": "button",
+      "key": "none (loads next page)",
+      "default": null,
+      "source": "src/components/MemorySection.tsx:163",
+      "modelControl": null
+    },
+    {
+      "card": "memory.people",
+      "control": "People: per account My account",
+      "kind": "button",
+      "key": "POST /api/memory/action {action:human-link, bindingId, expectedRevision, as:owner}",
+      "default": null,
+      "source": "src/components/MemoryPeople.tsx:~118",
+      "modelControl": "people"
+    },
+    {
+      "card": "memory.people",
+      "control": "People: Separate person",
+      "kind": "button",
+      "key": "POST /api/memory/action {human-link, as:person}",
+      "default": null,
+      "source": "src/components/MemoryPeople.tsx:~119",
+      "modelControl": "people"
+    },
+    {
+      "card": "memory.people",
+      "control": "People: Same person as (select + link)",
+      "kind": "select",
+      "key": "POST /api/memory/action {human-link, as:person-id}",
+      "default": null,
+      "source": "src/components/MemoryPeople.tsx:~120",
+      "modelControl": "people"
+    },
+    {
+      "card": "memory.people",
+      "control": "People: Unlink",
+      "kind": "button",
+      "key": "POST /api/memory/action {human-link, as:unlink}",
+      "default": null,
+      "source": "src/components/MemoryPeople.tsx:~121",
+      "modelControl": "people"
+    },
+    {
+      "card": "memory.people",
+      "control": "Shared audiences: Share an audience select + Share",
+      "kind": "select",
+      "key": "POST /api/memory/action {action:human-share, personId, scopeId, granted:true}",
+      "default": "",
+      "source": "src/components/MemoryPeople.tsx:~133",
+      "modelControl": "people"
+    },
+    {
+      "card": "memory.people",
+      "control": "Stop sharing",
+      "kind": "button",
+      "key": "POST /api/memory/action {human-share, granted:false}",
+      "default": null,
+      "source": "src/components/MemoryPeople.tsx:~129",
+      "modelControl": "people"
+    },
+    {
+      "card": "memory.people",
+      "control": "Refresh (after conflict)",
+      "kind": "button",
+      "key": "none (reload people)",
+      "default": null,
+      "source": "src/components/MemoryPeople.tsx:~106",
+      "modelControl": null
+    },
+    {
+      "card": "memory.import",
+      "control": "Import notes (show/hide panel)",
+      "kind": "button",
+      "key": "local state importOpen",
+      "default": false,
+      "source": "src/components/MemorySettings.tsx:360",
+      "modelControl": null
+    },
+    {
+      "card": "memory.import",
+      "control": "Find notebooks",
+      "kind": "button",
+      "key": "POST /api/memory/action {action:import-inventory}",
+      "default": null,
+      "source": "src/components/MemoryNotebookPicker.tsx:28",
+      "modelControl": "choose"
+    },
+    {
+      "card": "memory.import",
+      "control": "Notebook checkboxes (up to 20)",
+      "kind": "checkbox",
+      "key": "local selection; sent as import-preview selections",
+      "default": false,
+      "source": "src/components/MemoryNotebookPicker.tsx:36",
+      "modelControl": "choose"
+    },
+    {
+      "card": "memory.import",
+      "control": "Preview selected (picker)",
+      "kind": "button",
+      "key": "POST /api/memory/action {action:import-preview, selections}",
+      "default": null,
+      "source": "src/components/MemoryNotebookPicker.tsx:44",
+      "modelControl": null
+    },
+    {
+      "card": "memory.import",
+      "control": "Stop tracking",
+      "kind": "button",
+      "key": "POST /api/memory/action {action:import-stop-tracking, id}",
+      "default": null,
+      "source": "src/components/MemoryNotebookPicker.tsx:48",
+      "modelControl": "last"
+    },
+    {
+      "card": "memory.import",
+      "control": "Keep importing as notes change (track)",
+      "kind": "switch",
+      "key": "local state trackImports, sent as import-commit {track}",
+      "default": false,
+      "source": "src/components/MemorySettings.tsx:363",
+      "modelControl": null
+    },
+    {
+      "card": "memory.import",
+      "control": "Notes to import (bot notebook / team brief select)",
+      "kind": "select",
+      "key": "local state importChoice",
+      "default": "",
+      "source": "src/components/MemorySettings.tsx:~368",
+      "modelControl": "choose"
+    },
+    {
+      "card": "memory.import",
+      "control": "Topic (bot notebook only)",
+      "kind": "text",
+      "key": "local state topic, import-preview selection.topic",
+      "default": "",
+      "source": "src/components/MemorySettings.tsx:~369",
+      "modelControl": null
+    },
+    {
+      "card": "memory.import",
+      "control": "Preview (form submit)",
+      "kind": "button",
+      "key": "POST /api/memory/action {action:import-preview, selections}",
+      "default": null,
+      "source": "src/components/MemorySettings.tsx:~370",
+      "modelControl": null
+    },
+    {
+      "card": "memory.import",
+      "control": "Import / commit preview",
+      "kind": "button",
+      "key": "POST /api/memory/action {action:import-commit, previewId, track}",
+      "default": null,
+      "source": "src/components/MemorySettings.tsx:~372",
+      "modelControl": null
+    },
+    {
+      "card": "memory.import",
+      "control": "Previewed items list",
+      "kind": "readout",
+      "key": "read-only (preview.items)",
+      "default": null,
+      "source": "src/components/MemorySettings.tsx:~372",
+      "modelControl": "last"
+    },
+    {
+      "card": "memory.mode",
+      "control": "Memory mode: On / Capture only / Paused",
+      "kind": "choice",
+      "key": "POST /api/memory/action {action:configure, mode:active|capture|paused}",
+      "default": "active",
+      "source": "src/components/MemorySection.tsx:167",
+      "modelControl": "mode"
+    },
+    {
+      "card": "memory.mode",
+      "control": "Learn facts",
+      "kind": "switch",
+      "key": "POST /api/memory/action {configure, learning:{automaticFacts}}",
+      "default": true,
+      "source": "src/components/MemorySection.tsx:172",
+      "modelControl": "facts"
+    },
+    {
+      "card": "memory.mode",
+      "control": "Learn how you like things done",
+      "kind": "switch",
+      "key": "POST /api/memory/action {configure, learning:{automaticProcedures}}",
+      "default": true,
+      "source": "src/components/MemorySection.tsx:173",
+      "modelControl": "procedures"
+    },
+    {
+      "card": "memory.mode",
+      "control": "Mode description sentence",
+      "kind": "readout",
+      "key": "read-only",
+      "default": null,
+      "source": "src/components/MemorySection.tsx:170",
+      "modelControl": null
+    },
+    {
+      "card": "memory.limit",
+      "control": "Tokens read this month (progress)",
+      "kind": "readout",
+      "key": "read-only (learning.ceiling.inputUsed / input)",
+      "default": null,
+      "source": "src/components/MemorySection.tsx:~199",
+      "modelControl": null
+    },
+    {
+      "card": "memory.limit",
+      "control": "Tokens written this month (progress)",
+      "kind": "readout",
+      "key": "read-only (learning.ceiling.outputUsed / output)",
+      "default": null,
+      "source": "src/components/MemorySection.tsx:~199",
+      "modelControl": null
+    },
+    {
+      "card": "memory.limit",
+      "control": "Change limit",
+      "kind": "button",
+      "key": "local state editing",
+      "default": null,
+      "source": "src/components/MemorySection.tsx:204",
+      "modelControl": "limit"
+    },
+    {
+      "card": "memory.limit",
+      "control": "Read limit (millions of tokens)",
+      "kind": "number",
+      "key": "POST /api/memory/action {configure, ceiling.input, learningRevision}",
+      "default": 100000000,
+      "source": "src/components/MemorySection.tsx:~64",
+      "modelControl": "limit"
+    },
+    {
+      "card": "memory.limit",
+      "control": "Written limit (millions of tokens)",
+      "kind": "number",
+      "key": "POST /api/memory/action {configure, ceiling.output, learningRevision}",
+      "default": 15000000,
+      "source": "src/components/MemorySection.tsx:~65",
+      "modelControl": "limit"
+    },
+    {
+      "card": "memory.limit",
+      "control": "Save limit",
+      "kind": "button",
+      "key": "POST /api/memory/action {configure, ceiling}",
+      "default": null,
+      "source": "src/components/MemorySection.tsx:~70",
+      "modelControl": null
+    },
+    {
+      "card": "memory.limit",
+      "control": "Cancel",
+      "kind": "button",
+      "key": "none (navigation only)",
+      "default": null,
+      "source": "src/components/MemorySection.tsx:~71",
+      "modelControl": null
+    },
+    {
+      "card": "memory.connection",
+      "control": "Extract facts with (learning connection)",
+      "kind": "select",
+      "key": "POST /api/memory/action {configure, extractorInstanceId}; status.configuration.extractorInstanceId",
+      "default": "@murage/flux-fast",
+      "source": "src/components/MemorySection.tsx:52",
+      "modelControl": "model"
+    },
+    {
+      "card": "memory.connection",
+      "control": "Use suggested connection",
+      "kind": "button",
+      "key": "POST /api/memory/action {configure, extractorInstanceId: suggestion.instanceId}",
+      "default": null,
+      "source": "src/components/MemorySection.tsx:~186",
+      "modelControl": null
+    },
+    {
+      "card": "memory.audience",
+      "control": "Allow for (bot or channel)",
+      "kind": "select",
+      "key": "local state subject",
+      "default": "",
+      "source": "src/components/MemorySettings.tsx:351",
+      "modelControl": "audience"
+    },
+    {
+      "card": "memory.audience",
+      "control": "Shared audience select",
+      "kind": "select",
+      "key": "local state bindingScope",
+      "default": "",
+      "source": "src/components/MemorySettings.tsx:352",
+      "modelControl": "audience"
+    },
+    {
+      "card": "memory.audience",
+      "control": "Grant access",
+      "kind": "button",
+      "key": "POST /api/memory/action {action:bind, scopeId, bot/room}",
+      "default": null,
+      "source": "src/components/MemorySettings.tsx:352",
+      "modelControl": "audience"
+    },
+    {
+      "card": "memory.audience",
+      "control": "Folder (only where folder memory already used)",
+      "kind": "text",
+      "key": "local state projectPath",
+      "default": "",
+      "source": "src/components/MemorySettings.tsx:354",
+      "modelControl": null
+    },
+    {
+      "card": "memory.audience",
+      "control": "Add folder",
+      "kind": "button",
+      "key": "POST /api/memory/action {action:project, path, bot/room}",
+      "default": null,
+      "source": "src/components/MemorySettings.tsx:354",
+      "modelControl": null
+    },
+    {
+      "card": "memory.procedures",
+      "control": "Waiting review",
+      "kind": "select",
+      "key": "local procedure-evaluation-admissions store; POST /api/memory/action {action:procedure-evaluation-preview, reviewId}",
+      "default": "",
+      "source": "src/components/ProcedureEvaluationAdmissions.tsx:23",
+      "modelControl": "pending"
+    },
+    {
+      "card": "memory.procedures",
+      "control": "Refresh reviews",
+      "kind": "button",
+      "key": "GET /api/memory/status (reload)",
+      "default": null,
+      "source": "src/components/ProcedureEvaluationAdmissions.tsx:24",
+      "modelControl": null
+    },
+    {
+      "card": "memory.procedures",
+      "control": "Refresh preview",
+      "kind": "button",
+      "key": "POST /api/memory/action {procedure-evaluation-preview}",
+      "default": null,
+      "source": "src/components/ProcedureEvaluationAdmissions.tsx:31",
+      "modelControl": null
+    },
+    {
+      "card": "memory.procedures",
+      "control": "Allow this test run",
+      "kind": "button",
+      "key": "POST /api/memory/action {action:procedure-evaluation-authorize, preview}",
+      "default": null,
+      "source": "src/components/ProcedureEvaluationAdmissions.tsx:~38",
+      "modelControl": "review"
+    },
+    {
+      "card": "memory.procedures",
+      "control": "Retry evaluation",
+      "kind": "button",
+      "key": "POST /api/memory/action {action:procedure-evaluation-retry, reviewId}",
+      "default": null,
+      "source": "src/components/ProcedureEvaluationAdmissions.tsx:~39",
+      "modelControl": null
+    },
+    {
+      "card": "memory.procedures",
+      "control": "Preview details (audience, sent to, test set, exact text)",
+      "kind": "readout",
+      "key": "read-only",
+      "default": null,
+      "source": "src/components/ProcedureEvaluationAdmissions.tsx:~34-37",
+      "modelControl": null
+    },
+    {
+      "card": "memory.reindex",
+      "control": "Rebuild search index",
+      "kind": "button",
+      "key": "POST /api/memory/action {action:rebuild-index}",
+      "default": null,
+      "source": "src/components/MemorySettings.tsx:338",
+      "modelControl": "rebuild"
+    },
+    {
+      "card": "memory.reindex",
+      "control": "Index progress status",
+      "kind": "readout",
+      "key": "read-only (status.semantic)",
+      "default": null,
+      "source": "src/components/MemorySettings.tsx:335",
+      "modelControl": "progress"
+    },
+    {
+      "card": "memory.health",
+      "control": "Health: captured / processed / retrieved / supplied / synthesis / backlog",
+      "kind": "readout",
+      "key": "read-only (status.health, status.backlog)",
+      "default": null,
+      "source": "src/components/MemoryLearningControls.tsx:56-90",
+      "modelControl": "stats"
+    },
+    {
+      "card": "memory.health",
+      "control": "Reclaim space (Memory storage)",
+      "kind": "button",
+      "key": "POST /api/memory/storage/reclaim",
+      "default": null,
+      "source": "src/components/MemoryUpgradeDetail.tsx:40-94",
+      "modelControl": "reclaim"
+    },
+    {
+      "card": "memory.health",
+      "control": "Excluded conversations (per-thread checkboxes)",
+      "kind": "checkbox",
+      "key": "POST /api/memory/action {action:configure, excludedThreadIds}",
+      "default": false,
+      "source": "src/components/MemorySettings.tsx:~345",
+      "modelControl": "excluded"
+    },
+    {
+      "card": "memory.health",
+      "control": "Save exclusions",
+      "kind": "button",
+      "key": "POST /api/memory/action {configure, excludedThreadIds}",
+      "default": null,
+      "source": "src/components/MemorySettings.tsx:~347",
+      "modelControl": "excluded"
+    },
+    {
+      "card": "memory.health",
+      "control": "Download smart-search model",
+      "kind": "button",
+      "key": "POST /api/memory/action {action:model-download, confirm:true}",
+      "default": null,
+      "source": "src/components/MemorySettings.tsx:~327",
+      "modelControl": null
+    },
+    {
+      "card": "memory.health",
+      "control": "Smart-search model status / progress",
+      "kind": "readout",
+      "key": "read-only (status.model)",
+      "default": null,
+      "source": "src/components/MemorySettings.tsx:~322",
+      "modelControl": null
+    },
+    {
+      "card": "memory.health",
+      "control": "Evolution / classification / policy history controls",
+      "kind": "composite",
+      "key": "MemoryEvolutionControls (status.evolution, status.classificationEvolution)",
+      "default": null,
+      "source": "src/components/MemorySettings.tsx:~315-316",
+      "modelControl": "policy"
+    },
+    {
+      "card": "models.providers",
+      "control": "API key (Model API key)",
+      "kind": "password",
+      "key": "POST /api/provider-connections/mutate {action:create, preset, key, label} (muragebox.mutateProviderConnection on desktop); not stored in UI",
+      "default": "",
+      "source": "src/components/ModelsSettings.tsx:~193",
+      "modelControl": "paste"
+    },
+    {
+      "card": "models.providers",
+      "control": "Which provider issued this key? (provider buttons)",
+      "kind": "choice",
+      "key": "local state chosen -> mutate {preset}",
+      "default": null,
+      "source": "src/components/ModelsSettings.tsx:~194",
+      "modelControl": "paste"
+    },
+    {
+      "card": "models.providers",
+      "control": "Connection name (optional)",
+      "kind": "text",
+      "key": "mutate {label}",
+      "default": "",
+      "source": "src/components/ModelsSettings.tsx:~196",
+      "modelControl": "paste"
+    },
+    {
+      "card": "models.providers",
+      "control": "Add connection",
+      "kind": "button",
+      "key": "POST /api/provider-connections/mutate {action:create}, then POST /api/provider-connections/:id/refresh",
+      "default": null,
+      "source": "src/components/ModelsSettings.tsx:~197",
+      "modelControl": "paste"
+    },
+    {
+      "card": "models.providers",
+      "control": "Recognised-as hint / key issue message / storage note",
+      "kind": "readout",
+      "key": "read-only",
+      "default": null,
+      "source": "src/components/ModelsSettings.tsx:~195-199",
+      "modelControl": null
+    },
+    {
+      "card": "models.engines",
+      "control": "Engine row (name, CLI path, status line)",
+      "kind": "readout",
+      "key": "read-only (state.instances, GET /api/instances)",
+      "default": null,
+      "source": "src/components/EnginesSettings.tsx:276-330",
+      "modelControl": "rows"
+    },
+    {
+      "card": "models.engines",
+      "control": "Enable / Disable engine",
+      "kind": "button",
+      "key": "PATCH /api/instances/:instanceId {enabled}",
+      "default": true,
+      "source": "src/components/EnginesSettings.tsx:293",
+      "modelControl": "rows"
+    },
+    {
+      "card": "models.engines",
+      "control": "Confirm enable / disable",
+      "kind": "button",
+      "key": "PATCH /api/instances/:instanceId {enabled}",
+      "default": null,
+      "source": "src/components/EnginesSettings.tsx:346",
+      "modelControl": null
+    },
+    {
+      "card": "models.engines",
+      "control": "Hide engine",
+      "kind": "button",
+      "key": "PATCH /api/instances/:instanceId {hidden:true}",
+      "default": false,
+      "source": "src/components/EnginesSettings.tsx:282",
+      "modelControl": null
+    },
+    {
+      "card": "models.engines",
+      "control": "Unhide (Hidden engines list)",
+      "kind": "button",
+      "key": "PATCH /api/instances/:instanceId {hidden:false}",
+      "default": null,
+      "source": "src/components/EnginesSettings.tsx:503",
+      "modelControl": "off-group"
+    },
+    {
+      "card": "models.engines",
+      "control": "Open Local models link (from engine row)",
+      "kind": "button",
+      "key": "none (navigation only)",
+      "default": null,
+      "source": "src/components/EnginesSettings.tsx:334",
+      "modelControl": "add-local"
+    },
+    {
+      "card": "models.engines",
+      "control": "Engine setup / management (install, sign in)",
+      "kind": "composite",
+      "key": "EngineSetup / EngineManagement components",
+      "default": null,
+      "source": "src/components/EnginesSettings.tsx:~337-339",
+      "modelControl": null
+    },
+    {
+      "card": "models.engines",
+      "control": "Flux spend limits note, shell environment notes",
+      "kind": "readout",
+      "key": "read-only",
+      "default": null,
+      "source": "src/components/EnginesSettings.tsx:~523-532",
+      "modelControl": null
+    },
+    {
+      "card": "models.paste-keys",
+      "control": "Paste keys to look through",
+      "kind": "textarea",
+      "key": "local only (cleared); not stored",
+      "default": "",
+      "source": "src/components/PasteKeys.tsx:145",
+      "modelControl": "paste"
+    },
+    {
+      "card": "models.paste-keys",
+      "control": "Look for keys",
+      "kind": "button",
+      "key": "none (scans pasted text locally)",
+      "default": null,
+      "source": "src/components/PasteKeys.tsx:158",
+      "modelControl": "paste"
+    },
+    {
+      "card": "models.paste-keys",
+      "control": "Which key is this? (provider buttons)",
+      "kind": "choice",
+      "key": "local row.chosen",
+      "default": null,
+      "source": "src/components/PasteKeys.tsx:~275",
+      "modelControl": null
+    },
+    {
+      "card": "models.paste-keys",
+      "control": "Add key / Replace key / Add connection",
+      "kind": "button",
+      "key": "PUT /api/config {provider.body(value)} or POST /api/provider-connections/mutate",
+      "default": null,
+      "source": "src/components/PasteKeys.tsx:302-322 (calls 514,522)",
+      "modelControl": "paste"
+    },
+    {
+      "card": "models.paste-keys",
+      "control": "Open Flux Router in Models (flux keys)",
+      "kind": "button",
+      "key": "none (navigation only)",
+      "default": null,
+      "source": "src/components/PasteKeys.tsx:~318",
+      "modelControl": null
+    },
+    {
+      "card": "models.paste-keys",
+      "control": "Ignore",
+      "kind": "button",
+      "key": "none (drops row locally)",
+      "default": null,
+      "source": "src/components/PasteKeys.tsx:~330",
+      "modelControl": null
+    },
+    {
+      "card": "models.existing-keys",
+      "control": "OpenCode provider key",
+      "kind": "password",
+      "key": "config.opencodeGo.apiKey (PUT /api/config {opencodeGo:{apiKey}} or muragebox.setCredential opencodeGoApiKey)",
+      "default": "",
+      "source": "src/components/ModelsSettings.tsx:224 (ExistingKey 38-62)",
+      "modelControl": "opencode-default"
+    },
+    {
+      "card": "models.existing-keys",
+      "control": "Legacy xAI key (when present)",
+      "kind": "password",
+      "key": "config.xai.key (PUT /api/config {xai:{key}} or muragebox.setCredential xaiApiKey)",
+      "default": "",
+      "source": "src/components/ModelsSettings.tsx:225",
+      "modelControl": "saved-keys"
+    },
+    {
+      "card": "models.existing-keys",
+      "control": "Legacy OpenAI image key (when present)",
+      "kind": "password",
+      "key": "config.imageGen.key (PUT /api/config {imageGen:{key}} or setCredential openaiImageApiKey)",
+      "default": "",
+      "source": "src/components/ModelsSettings.tsx:225",
+      "modelControl": "saved-keys"
+    },
+    {
+      "card": "models.existing-keys",
+      "control": "Legacy OpenAI-compatible key (when present)",
+      "kind": "password",
+      "key": "config.openaiCompat.key (PUT /api/config {openaiCompat:{key}})",
+      "default": "",
+      "source": "src/components/ModelsSettings.tsx:225",
+      "modelControl": "saved-keys"
+    },
+    {
+      "card": "models.existing-keys",
+      "control": "Save <label> key",
+      "kind": "button",
+      "key": "PUT /api/config (same fields as above)",
+      "default": null,
+      "source": "src/components/ModelsSettings.tsx:56",
+      "modelControl": "saved-keys"
+    },
+    {
+      "card": "models.existing-keys",
+      "control": "Remove <label> key + Confirm key removal / Cancel",
+      "kind": "button",
+      "key": "PUT /api/config with empty key",
+      "default": null,
+      "source": "src/components/ModelsSettings.tsx:56-57",
+      "modelControl": "saved-keys"
+    },
+    {
+      "card": "models.catalogs",
+      "control": "Search chat models",
+      "kind": "text",
+      "key": "local state query (not stored)",
+      "default": "",
+      "source": "src/components/ModelsSettings.tsx:201",
+      "modelControl": "catalogs"
+    },
+    {
+      "card": "models.catalogs",
+      "control": "Refresh connections",
+      "kind": "button",
+      "key": "GET /api/provider-connections and GET /api/flux-connection",
+      "default": null,
+      "source": "src/components/ModelsSettings.tsx:~203",
+      "modelControl": null
+    },
+    {
+      "card": "models.catalogs",
+      "control": "Use connection (per connection)",
+      "kind": "switch",
+      "key": "POST /api/provider-connections/mutate {action:update, id, revision, enabled}",
+      "default": true,
+      "source": "src/components/ModelsSettings.tsx:209",
+      "modelControl": null
+    },
+    {
+      "card": "models.catalogs",
+      "control": "Refresh models for <connection>",
+      "kind": "button",
+      "key": "POST /api/provider-connections/:id/refresh",
+      "default": null,
+      "source": "src/components/ModelsSettings.tsx:~211",
+      "modelControl": "catalogs"
+    },
+    {
+      "card": "models.catalogs",
+      "control": "Rename <connection> (name input, Save name, Cancel)",
+      "kind": "text",
+      "key": "POST /api/provider-connections/mutate {action:update, id, revision, label}",
+      "default": null,
+      "source": "src/components/ModelsSettings.tsx:~213-214",
+      "modelControl": null
+    },
+    {
+      "card": "models.catalogs",
+      "control": "Remove <connection> (Remove saved connection / Cancel)",
+      "kind": "button",
+      "key": "POST /api/provider-connections/mutate {action:remove, id, revision}",
+      "default": null,
+      "source": "src/components/ModelsSettings.tsx:~215",
+      "modelControl": null
+    },
+    {
+      "card": "models.catalogs",
+      "control": "Connection model list (label, id, context, tools, image input)",
+      "kind": "list",
+      "key": "read-only (connection.catalog.models)",
+      "default": null,
+      "source": "src/components/ModelsSettings.tsx:~216",
+      "modelControl": "catalogs"
+    },
+    {
+      "card": "models.catalogs",
+      "control": "Flux Router models list",
+      "kind": "list",
+      "key": "read-only (legacy-flux connection catalog)",
+      "default": null,
+      "source": "src/components/ModelsSettings.tsx:~185",
+      "modelControl": "catalogs"
+    },
+    {
+      "card": "models.local-servers",
+      "control": "Check for local model servers again",
+      "kind": "button",
+      "key": "GET /api/local-models",
+      "default": null,
+      "source": "src/components/LocalModelsSettings.tsx:351",
+      "modelControl": null
+    },
+    {
+      "card": "models.local-servers",
+      "control": "Detected servers and models list",
+      "kind": "list",
+      "key": "read-only (GET /api/local-models)",
+      "default": null,
+      "source": "src/components/LocalModelsSettings.tsx:361",
+      "modelControl": null
+    },
+    {
+      "card": "models.local-servers",
+      "control": "Add a server",
+      "kind": "button",
+      "key": "none (opens form)",
+      "default": null,
+      "source": "src/components/LocalModelsSettings.tsx:367",
+      "modelControl": "add-local"
+    },
+    {
+      "card": "models.local-servers",
+      "control": "Server address",
+      "kind": "text",
+      "key": "POST /api/local-models/servers {address}",
+      "default": "",
+      "source": "src/components/LocalModelsSettings.tsx:87",
+      "modelControl": "add-local"
+    },
+    {
+      "card": "models.local-servers",
+      "control": "Server name (optional)",
+      "kind": "text",
+      "key": "POST /api/local-models/servers {name}",
+      "default": "",
+      "source": "src/components/LocalModelsSettings.tsx:92",
+      "modelControl": "add-local"
+    },
+    {
+      "card": "models.local-servers",
+      "control": "Server type",
+      "kind": "select",
+      "key": "POST /api/local-models/servers {kind}",
+      "default": "auto",
+      "source": "src/components/LocalModelsSettings.tsx:96",
+      "modelControl": "add-local"
+    },
+    {
+      "card": "models.local-servers",
+      "control": "Server API key (optional)",
+      "kind": "password",
+      "key": "POST /api/local-models/servers {apiKey}",
+      "default": "",
+      "source": "src/components/LocalModelsSettings.tsx:102",
+      "modelControl": "add-local"
+    },
+    {
+      "card": "models.local-servers",
+      "control": "Add server / Cancel",
+      "kind": "button",
+      "key": "POST /api/local-models/servers",
+      "default": null,
+      "source": "src/components/LocalModelsSettings.tsx:108-109",
+      "modelControl": "add-local"
+    },
+    {
+      "card": "models.local-servers",
+      "control": "Check again (per server)",
+      "kind": "button",
+      "key": "GET /api/local-models",
+      "default": null,
+      "source": "src/components/LocalModelsSettings.tsx:273",
+      "modelControl": null
+    },
+    {
+      "card": "models.local-servers",
+      "control": "Edit <server> (name, address, type, API key, remove saved key checkbox, Save changes, Cancel)",
+      "kind": "composite",
+      "key": "PATCH /api/local-models/servers/:id {name,address,kind,apiKey,clearKey}",
+      "default": null,
+      "source": "src/components/LocalModelsSettings.tsx:126-154,275",
+      "modelControl": null
+    },
+    {
+      "card": "models.local-servers",
+      "control": "Remove <server> / Remove this server",
+      "kind": "button",
+      "key": "DELETE /api/local-models/servers/:id",
+      "default": null,
+      "source": "src/components/LocalModelsSettings.tsx:251,276,284",
+      "modelControl": null
+    },
+    {
+      "card": "models.local-servers",
+      "control": "Per-model tool test",
+      "kind": "button",
+      "key": "POST /api/local-models/servers/:id/test {model}",
+      "default": null,
+      "source": "src/components/LocalModelsSettings.tsx:176,221",
+      "modelControl": null
+    },
+    {
+      "card": "models.local-servers",
+      "control": "Ollama context copy",
+      "kind": "button",
+      "key": "POST /api/local-models/servers/:id/ollama-context-copy {model}",
+      "default": null,
+      "source": "src/components/LocalModelsSettings.tsx:194",
+      "modelControl": null
+    },
+    {
+      "card": "models.claude-accounts",
+      "control": "Refresh accounts",
+      "kind": "button",
+      "key": "GET /api/claude-accounts (read-only reload)",
+      "default": null,
+      "source": "src/components/ClaudeAccountsSettings.tsx:139",
+      "modelControl": null
+    },
+    {
+      "card": "models.claude-accounts",
+      "control": "Add Claude account",
+      "kind": "button",
+      "key": "opens form; POST /api/claude-accounts {displayName, configDir}",
+      "default": null,
+      "source": "src/components/ClaudeAccountsSettings.tsx:140",
+      "modelControl": "claude-accounts"
+    },
+    {
+      "card": "models.claude-accounts",
+      "control": "Claude accounts list (row: name, Default, signed-in state, config dir)",
+      "kind": "list",
+      "key": "GET /api/claude-accounts {accounts[]}",
+      "default": null,
+      "source": "src/components/ClaudeAccountsSettings.tsx:146",
+      "modelControl": "claude-accounts"
+    },
+    {
+      "card": "models.claude-accounts",
+      "control": "Edit {name} account",
+      "kind": "button",
+      "key": "opens form; PATCH /api/claude-accounts/:id {displayName, configDir}",
+      "default": null,
+      "source": "src/components/ClaudeAccountsSettings.tsx:150",
+      "modelControl": "claude-accounts"
+    },
+    {
+      "card": "models.claude-accounts",
+      "control": "Remove {name} account (with confirm)",
+      "kind": "button",
+      "key": "DELETE /api/claude-accounts/:id",
+      "default": null,
+      "source": "src/components/ClaudeAccountsSettings.tsx:151",
+      "modelControl": "claude-accounts"
+    },
+    {
+      "card": "models.claude-accounts",
+      "control": "Copy sign-in command",
+      "kind": "button",
+      "key": "none (copies account.signInCommand to clipboard)",
+      "default": null,
+      "source": "src/components/ClaudeAccountsSettings.tsx:158",
+      "modelControl": null
+    },
+    {
+      "card": "models.claude-accounts",
+      "control": "Account name",
+      "kind": "text",
+      "key": "POST/PATCH /api/claude-accounts {displayName} (max 80)",
+      "default": "",
+      "source": "src/components/ClaudeAccountsSettings.tsx:163",
+      "modelControl": "claude-accounts"
+    },
+    {
+      "card": "models.claude-accounts",
+      "control": "Configuration directory",
+      "kind": "text",
+      "key": "POST/PATCH /api/claude-accounts {configDir} (optional on new, max 4096)",
+      "default": "",
+      "source": "src/components/ClaudeAccountsSettings.tsx:164",
+      "modelControl": "claude-accounts"
+    },
+    {
+      "card": "models.command-lines",
+      "control": "Engines list (one row per engine: name, current CLI path or default)",
+      "kind": "list",
+      "key": "InstanceInfo.cli / cliDefault from GET /api/instances",
+      "default": null,
+      "source": "src/components/EnginesSettings.tsx:430-445",
+      "modelControl": "rows"
+    },
+    {
+      "card": "models.command-lines",
+      "control": "Reset",
+      "kind": "button",
+      "key": "PATCH /api/instances/:id {cli: \"\"}",
+      "default": null,
+      "source": "src/components/EnginesSettings.tsx:382,404",
+      "modelControl": "rows"
+    },
+    {
+      "card": "models.command-lines",
+      "control": "Choose location",
+      "kind": "button",
+      "key": "toggles the picker (not stored); hidden for grok, openai-compat, boxAgent",
+      "default": null,
+      "source": "src/components/EnginesSettings.tsx:412-425",
+      "modelControl": "rows"
+    },
+    {
+      "card": "models.command-lines",
+      "control": "Found copy select (picker)",
+      "kind": "select",
+      "key": "candidates from GET /api/cli-candidates?name=; saved via PATCH /api/instances/:id {cli}",
+      "default": "",
+      "source": "src/components/EnginesSettings.tsx:126-142",
+      "modelControl": "rows"
+    },
+    {
+      "card": "models.command-lines",
+      "control": "Custom location text (picker)",
+      "kind": "text",
+      "key": "PATCH /api/instances/:id {cli}; tested first by POST /api/cli-test {cli, driver}",
+      "default": "",
+      "source": "src/components/EnginesSettings.tsx:144-160",
+      "modelControl": "rows"
+    },
+    {
+      "card": "webSearch.search",
+      "control": "Search provider",
+      "kind": "select",
+      "key": "config.webSearch.provider via PUT /api/config {webSearch:{provider}} (engine|auto|flux|tavily|exa|firecrawl|off)",
+      "default": "engine",
+      "source": "src/components/SearchSettings.tsx:60-70",
+      "modelControl": "service"
+    },
+    {
+      "card": "webSearch.images",
+      "control": "Allow image requests",
+      "kind": "switch",
+      "key": "POST /api/images/settings {enabled}",
+      "default": false,
+      "source": "src/components/ImageSettings.tsx:201",
+      "modelControl": "on"
+    },
+    {
+      "card": "webSearch.images",
+      "control": "Connection",
+      "kind": "select",
+      "key": "POST /api/images/settings {connectionId}",
+      "default": null,
+      "source": "src/components/ImageSettings.tsx:206",
+      "modelControl": null
+    },
+    {
+      "card": "webSearch.images",
+      "control": "Image model",
+      "kind": "select",
+      "key": "POST /api/images/settings {connectionId, model}",
+      "default": null,
+      "source": "src/components/ImageSettings.tsx:211",
+      "modelControl": "model"
+    },
+    {
+      "card": "webSearch.images",
+      "control": "Check this model now (+ confirm / cancel)",
+      "kind": "button",
+      "key": "POST /api/images/probe {connectionId, model}",
+      "default": null,
+      "source": "src/components/ImageSettings.tsx:222-228",
+      "modelControl": null
+    },
+    {
+      "card": "webSearch.images",
+      "control": "Refresh connections",
+      "kind": "button",
+      "key": "GET /api/images/settings?refresh=1 (read-only)",
+      "default": null,
+      "source": "src/components/ImageSettings.tsx:240",
+      "modelControl": null
+    },
+    {
+      "card": "webSearch.images",
+      "control": "Library tab: saved prompt blocks and reference packs",
+      "kind": "list",
+      "key": "ImageLibrary component (/api/images library routes; see ImageLibrary.tsx)",
+      "default": null,
+      "source": "src/components/ToolsSettings.tsx:56-64",
+      "modelControl": "packs"
+    },
+    {
+      "card": "webSearch.images",
+      "control": "Setup / Library tabs",
+      "kind": "choice",
+      "key": "none (navigation only; local React state)",
+      "default": "setup",
+      "source": "src/components/ToolsSettings.tsx:22-50",
+      "modelControl": null
+    },
+    {
+      "card": "webSearch.voice",
+      "control": "AssemblyAI transcription status (dot + Connected)",
+      "kind": "readout",
+      "key": "read-only: window.muragebox.transcription.status().configured",
+      "default": null,
+      "source": "src/components/TranscriptionSettings.tsx:44-48",
+      "modelControl": "route"
+    },
+    {
+      "card": "webSearch.voice",
+      "control": "Open AssemblyAI dashboard",
+      "kind": "button",
+      "key": "none (navigation only, external link)",
+      "default": null,
+      "source": "src/components/TranscriptionSettings.tsx:78",
+      "modelControl": null
+    },
+    {
+      "card": "webSearch.provider-keys",
+      "control": "Tavily API key",
+      "kind": "password",
+      "key": "window.muragebox.setCredential(tavilySearchApiKey) else PUT /api/config {webSearch:{tavilyApiKey}}",
+      "default": "",
+      "source": "src/components/SearchSettings.tsx:97",
+      "modelControl": "keys"
+    },
+    {
+      "card": "webSearch.provider-keys",
+      "control": "Exa API key",
+      "kind": "password",
+      "key": "setCredential(exaSearchApiKey) else PUT /api/config {webSearch:{exaApiKey}}",
+      "default": "",
+      "source": "src/components/SearchSettings.tsx:97",
+      "modelControl": "keys"
+    },
+    {
+      "card": "webSearch.provider-keys",
+      "control": "Firecrawl API key",
+      "kind": "password",
+      "key": "setCredential(firecrawlSearchApiKey) else PUT /api/config {webSearch:{firecrawlApiKey}}",
+      "default": "",
+      "source": "src/components/SearchSettings.tsx:97",
+      "modelControl": "keys"
+    },
+    {
+      "card": "webSearch.provider-keys",
+      "control": "Save (per provider)",
+      "kind": "button",
+      "key": "same as the key field above",
+      "default": null,
+      "source": "src/components/SearchSettings.tsx:102",
+      "modelControl": "keys"
+    },
+    {
+      "card": "webSearch.provider-keys",
+      "control": "Clear (per provider, shown when saved)",
+      "kind": "button",
+      "key": "same key written as empty string",
+      "default": null,
+      "source": "src/components/SearchSettings.tsx:106",
+      "modelControl": "keys"
+    },
+    {
+      "card": "webSearch.provider-keys",
+      "control": "Key saved / No key state",
+      "kind": "readout",
+      "key": "read-only: config.webSearch.{tavily,exa,firecrawl}Configured",
+      "default": null,
+      "source": "src/components/SearchSettings.tsx:93",
+      "modelControl": null
+    },
+    {
+      "card": "webSearch.daily-check",
+      "control": "Check the default model once a day",
+      "kind": "switch",
+      "key": "POST /api/images/settings {dailyProbe}",
+      "default": false,
+      "source": "src/components/ImageSettings.tsx:232",
+      "modelControl": "on"
+    },
+    {
+      "card": "webSearch.voice-key",
+      "control": "AssemblyAI API key",
+      "kind": "password",
+      "key": "window.muragebox.transcription.setKey(value) (OS-protected store); disabled outside the desktop app",
+      "default": "",
+      "source": "src/components/TranscriptionSettings.tsx:56-66",
+      "modelControl": "key"
+    },
+    {
+      "card": "webSearch.voice-key",
+      "control": "Save / Clear (button turns Clear when field empty and key saved)",
+      "kind": "button",
+      "key": "same as AssemblyAI API key (empty value clears)",
+      "default": null,
+      "source": "src/components/TranscriptionSettings.tsx:67-78",
+      "modelControl": "key"
+    },
+    {
+      "card": "connections.apps",
+      "control": "Connected apps service is ready",
+      "kind": "readout",
+      "key": "read-only: config.composio.mode === managed",
+      "default": null,
+      "source": "src/components/SettingsModal.tsx:970",
+      "modelControl": null
+    },
+    {
+      "card": "connections.apps",
+      "control": "Open Connected apps",
+      "kind": "button",
+      "key": "none (navigation only; opens the Apps panel, where connect/disconnect live)",
+      "default": null,
+      "source": "src/components/SettingsModal.tsx:975",
+      "modelControl": "connect"
+    },
+    {
+      "card": "connections.bot-email",
+      "control": "Turn on bot email / Turn off (account switch, confirm on off)",
+      "kind": "switch",
+      "key": "POST /api/email/account {on, confirm|acceptTermsVersion}",
+      "default": false,
+      "source": "src/components/BotEmailSettings.tsx:150",
+      "modelControl": "turn-on"
+    },
+    {
+      "card": "connections.bot-email",
+      "control": "Account line (on/off) + price, stale, key, reason lines",
+      "kind": "readout",
+      "key": "read-only: GET email status view",
+      "default": null,
+      "source": "src/components/BotEmailSettings.tsx:147-155",
+      "modelControl": "state"
+    },
+    {
+      "card": "connections.bot-email",
+      "control": "Sign in (email owner key)",
+      "kind": "button",
+      "key": "signInEmailOwner() desktop bridge; then read email status",
+      "default": null,
+      "source": "src/components/BotEmailSettings.tsx:156",
+      "modelControl": null
+    },
+    {
+      "card": "connections.bot-email",
+      "control": "Sent today count",
+      "kind": "readout",
+      "key": "read-only: view.accountSends",
+      "default": null,
+      "source": "src/components/BotEmailSettings.tsx:157",
+      "modelControl": null
+    },
+    {
+      "card": "connections.bot-email",
+      "control": "Other setups list (address + Remove)",
+      "kind": "list",
+      "key": "removeOtherSetup(inboxId) via email API; view.otherSetups",
+      "default": null,
+      "source": "src/components/BotEmailSettings.tsx:159-169",
+      "modelControl": "bots"
+    },
+    {
+      "card": "connections.bot-email",
+      "control": "Stub (not signed in / needs account / checking): Sign in with Flux or Open Models",
+      "kind": "button",
+      "key": "none (navigation / Flux sign-in)",
+      "default": null,
+      "source": "src/components/BotEmailSettings.tsx:60-110",
+      "modelControl": null
+    },
+    {
+      "card": "connections.highlevel",
+      "control": "Private integration token",
+      "kind": "password",
+      "key": "window.muragebox.setCredential(highlevelPrivateToken) else PUT /api/config {highlevel:{privateToken}}",
+      "default": "",
+      "source": "src/components/HighLevelSettings.tsx:123",
+      "modelControl": "token"
+    },
+    {
+      "card": "connections.highlevel",
+      "control": "Save token",
+      "kind": "button",
+      "key": "same as token",
+      "default": null,
+      "source": "src/components/HighLevelSettings.tsx:127",
+      "modelControl": "token"
+    },
+    {
+      "card": "connections.highlevel",
+      "control": "Remove token",
+      "kind": "button",
+      "key": "same key written as empty string",
+      "default": null,
+      "source": "src/components/HighLevelSettings.tsx:130",
+      "modelControl": "token"
+    },
+    {
+      "card": "connections.highlevel",
+      "control": "Location ID",
+      "kind": "text",
+      "key": "POST /api/highlevel/token/check {locationId}",
+      "default": "",
+      "source": "src/components/HighLevelSettings.tsx:139",
+      "modelControl": "location"
+    },
+    {
+      "card": "connections.highlevel",
+      "control": "Check location",
+      "kind": "button",
+      "key": "POST /api/highlevel/token/check {locationId}",
+      "default": null,
+      "source": "src/components/HighLevelSettings.tsx:141",
+      "modelControl": "location"
+    },
+    {
+      "card": "connections.highlevel",
+      "control": "Confirm",
+      "kind": "button",
+      "key": "POST /api/highlevel/token/:opId/confirm",
+      "default": null,
+      "source": "src/components/HighLevelSettings.tsx:148",
+      "modelControl": null
+    },
+    {
+      "card": "connections.highlevel",
+      "control": "Disconnect",
+      "kind": "button",
+      "key": "DELETE /api/highlevel/connections/:connectionId",
+      "default": null,
+      "source": "src/components/HighLevelSettings.tsx:155",
+      "modelControl": null
+    },
+    {
+      "card": "connections.highlevel",
+      "control": "{bot} can read HighLevel (one switch per bot)",
+      "kind": "switch",
+      "key": "PUT /api/highlevel/bots/:botId/access {grants for connectionId}",
+      "default": false,
+      "source": "src/components/HighLevelSettings.tsx:164",
+      "modelControl": null
+    },
+    {
+      "card": "connections.highlevel",
+      "control": "Connection status line",
+      "kind": "readout",
+      "key": "read-only: GET /api/highlevel view",
+      "default": null,
+      "source": "src/components/HighLevelSettings.tsx:48-54",
+      "modelControl": null
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Voice account key (field + Save)",
+      "kind": "password",
+      "key": "window.muragebox.phoneKey.save(value) (desktop bridge, handed to server)",
+      "default": "",
+      "source": "src/components/PhoneCallsSettings.tsx:131-135",
+      "modelControl": "voice-account-key"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Remove key",
+      "kind": "button",
+      "key": "window.muragebox.phoneKey.remove()",
+      "default": null,
+      "source": "src/components/PhoneCallsSettings.tsx:127",
+      "modelControl": "voice-account-key"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Find numbers",
+      "kind": "button",
+      "key": "POST /api/phone-calls/setup {}",
+      "default": null,
+      "source": "src/components/PhoneCallsSettings.tsx:174",
+      "modelControl": "find-numbers"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Phone number radios",
+      "kind": "choice",
+      "key": "PUT /api/phone-calls/settings {phoneNumberId}",
+      "default": "",
+      "source": "src/components/PhoneCallsSettings.tsx:180",
+      "modelControl": null
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "AI line (checkbox + own words)",
+      "kind": "composite",
+      "key": "PUT /api/phone-calls/settings {aiLine:{on, edits[lang]}}",
+      "default": {
+        "on": true,
+        "edits": {}
+      },
+      "source": "src/components/PhoneCallsSettings.tsx:228-233",
+      "modelControl": null
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Recording notice line (checkbox + own words)",
+      "kind": "composite",
+      "key": "PUT /api/phone-calls/settings {notice:{on, edits[lang]}}",
+      "default": {
+        "on": true,
+        "edits": {}
+      },
+      "source": "src/components/PhoneCallsSettings.tsx:228-233",
+      "modelControl": null
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Your name",
+      "kind": "text",
+      "key": "PUT /api/phone-calls/settings {ownerName} (max 80)",
+      "default": "",
+      "source": "src/components/PhoneCallsSettings.tsx:197",
+      "modelControl": "owner-name"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Language",
+      "kind": "select",
+      "key": "PUT /api/phone-calls/settings {language}",
+      "default": "auto",
+      "source": "src/components/PhoneCallsSettings.tsx:201",
+      "modelControl": null
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Longest call, minutes",
+      "kind": "number",
+      "key": "PUT /api/phone-calls/settings {maxSeconds} (minutes x 60, 1-60)",
+      "default": 300,
+      "source": "src/components/PhoneCallsSettings.tsx:208",
+      "modelControl": "max-minutes"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Record audio",
+      "kind": "switch",
+      "key": "PUT /api/phone-calls/settings {recordAudio}",
+      "default": false,
+      "source": "src/components/PhoneCallsSettings.tsx:215",
+      "modelControl": "record-audio"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Save",
+      "kind": "button",
+      "key": "PUT /api/phone-calls/settings (whole form)",
+      "default": null,
+      "source": "src/components/PhoneCallsSettings.tsx:217",
+      "modelControl": "save"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Older scheduled calls list + Cancel",
+      "kind": "list",
+      "key": "POST /api/phone-calls/:id/cancel",
+      "default": null,
+      "source": "src/components/PhoneCallsSettings.tsx:240-256",
+      "modelControl": "upcoming"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Recent calls list (status, cost, length) + Cancel",
+      "kind": "list",
+      "key": "GET /api/phone-calls; POST /api/phone-calls/:id/cancel",
+      "default": null,
+      "source": "src/components/PhoneCallsSettings.tsx:330-345",
+      "modelControl": "past"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Show / Hide transcript",
+      "kind": "button",
+      "key": "none (local expand)",
+      "default": null,
+      "source": "src/components/PhoneCallsSettings.tsx:346",
+      "modelControl": "past"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Share transcript with bot",
+      "kind": "button",
+      "key": "POST /api/phone-calls/:id/share",
+      "default": null,
+      "source": "src/components/PhoneCallsSettings.tsx:347",
+      "modelControl": "past"
+    },
+    {
+      "card": "connections.phone-calls",
+      "control": "Ask {chief}",
+      "kind": "button",
+      "key": "none (prefills a chat draft)",
+      "default": null,
+      "source": "src/components/PhoneCallsSettings.tsx:76",
+      "modelControl": "ask-bot"
+    },
+    {
+      "card": "connections.mcp",
+      "control": "Connected tools (opens MCP servers panel)",
+      "kind": "button",
+      "key": "none (navigation only; servers list, on/off, edit, remove live in the panel)",
+      "default": null,
+      "source": "src/components/SettingsModal.tsx:999",
+      "modelControl": "servers"
+    },
+    {
+      "card": "channels.telegram",
+      "control": "Status line (health label)",
+      "kind": "readout",
+      "key": "read-only: GET /api/telegram/status",
+      "default": null,
+      "source": "src/components/TelegramSettings.tsx:97",
+      "modelControl": "state"
+    },
+    {
+      "card": "channels.telegram",
+      "control": "Bot token",
+      "kind": "password",
+      "key": "window.muragebox.setCredential(telegramBotToken) else PUT /api/config {telegram:{botToken}}",
+      "default": "",
+      "source": "src/components/TelegramSettings.tsx:103",
+      "modelControl": "token"
+    },
+    {
+      "card": "channels.telegram",
+      "control": "Save token / Replace token",
+      "kind": "button",
+      "key": "same as Bot token; first save then auto-starts POST /api/telegram/pair",
+      "default": null,
+      "source": "src/components/TelegramSettings.tsx:107",
+      "modelControl": "token"
+    },
+    {
+      "card": "channels.telegram",
+      "control": "Pair with Chief / Create new pairing code",
+      "kind": "button",
+      "key": "POST /api/telegram/pair {}",
+      "default": null,
+      "source": "src/components/TelegramSettings.tsx:112",
+      "modelControl": null
+    },
+    {
+      "card": "channels.telegram",
+      "control": "Refresh status",
+      "kind": "button",
+      "key": "GET /api/telegram/status (read-only)",
+      "default": null,
+      "source": "src/components/TelegramSettings.tsx:113",
+      "modelControl": null
+    },
+    {
+      "card": "channels.telegram",
+      "control": "Revoke",
+      "kind": "button",
+      "key": "POST /api/telegram/revoke {}",
+      "default": null,
+      "source": "src/components/TelegramSettings.tsx:114",
+      "modelControl": "disconnect"
+    },
+    {
+      "card": "channels.telegram",
+      "control": "Copy pairing command",
+      "kind": "button",
+      "key": "none (clipboard: /pair CODE)",
+      "default": null,
+      "source": "src/components/TelegramSettings.tsx:118",
+      "modelControl": null
+    },
+    {
+      "card": "channels.telegram",
+      "control": "Retry now / Reconnect",
+      "kind": "button",
+      "key": "POST /api/telegram/resume {}",
+      "default": null,
+      "source": "src/components/TelegramSettings.tsx:125",
+      "modelControl": null
+    },
+    {
+      "card": "channels.slack",
+      "control": "Status line (slackHealth)",
+      "kind": "readout",
+      "key": "read-only: GET /api/slack/status",
+      "default": null,
+      "source": "src/components/SlackSettings.tsx:136",
+      "modelControl": "workspace"
+    },
+    {
+      "card": "channels.slack",
+      "control": "App-level token",
+      "kind": "password",
+      "key": "window.muragebox.setCredential(slackAppToken) (desktop only)",
+      "default": "",
+      "source": "src/components/SlackSettings.tsx:145",
+      "modelControl": "app-token"
+    },
+    {
+      "card": "channels.slack",
+      "control": "Bot token",
+      "kind": "password",
+      "key": "window.muragebox.setCredential(slackBotToken) (desktop only)",
+      "default": "",
+      "source": "src/components/SlackSettings.tsx:148",
+      "modelControl": "bot-token"
+    },
+    {
+      "card": "channels.slack",
+      "control": "Save credentials",
+      "kind": "button",
+      "key": "setCredential slackAppToken / slackBotToken",
+      "default": null,
+      "source": "src/components/SlackSettings.tsx:151",
+      "modelControl": "bot-token"
+    },
+    {
+      "card": "channels.slack",
+      "control": "Workspace ID",
+      "kind": "text",
+      "key": "PATCH /api/config {slack:{teamId}}",
+      "default": "",
+      "source": "src/components/SlackSettings.tsx:156",
+      "modelControl": null
+    },
+    {
+      "card": "channels.slack",
+      "control": "App ID",
+      "kind": "text",
+      "key": "PATCH /api/config {slack:{appId}}",
+      "default": "",
+      "source": "src/components/SlackSettings.tsx:156",
+      "modelControl": null
+    },
+    {
+      "card": "channels.slack",
+      "control": "Owner member ID",
+      "kind": "text",
+      "key": "PATCH /api/config {slack:{ownerUserId}}",
+      "default": "",
+      "source": "src/components/SlackSettings.tsx:156",
+      "modelControl": null
+    },
+    {
+      "card": "channels.slack",
+      "control": "Save workspace details",
+      "kind": "button",
+      "key": "PATCH /api/config {slack:{teamId,appId,ownerUserId}}",
+      "default": null,
+      "source": "src/components/SlackSettings.tsx:159",
+      "modelControl": null
+    },
+    {
+      "card": "channels.slack",
+      "control": "Pair with Chief",
+      "kind": "button",
+      "key": "POST /api/slack/pair {}",
+      "default": null,
+      "source": "src/components/SlackSettings.tsx:164",
+      "modelControl": "add"
+    },
+    {
+      "card": "channels.slack",
+      "control": "Reconnect (retry)",
+      "kind": "button",
+      "key": "POST /api/slack/resume {}",
+      "default": null,
+      "source": "src/components/SlackSettings.tsx:170",
+      "modelControl": null
+    },
+    {
+      "card": "channels.slack",
+      "control": "Refresh status",
+      "kind": "button",
+      "key": "GET /api/slack/status (read-only)",
+      "default": null,
+      "source": "src/components/SlackSettings.tsx:171",
+      "modelControl": null
+    },
+    {
+      "card": "channels.slack",
+      "control": "Revoke connection",
+      "kind": "button",
+      "key": "POST /api/slack/revoke {}",
+      "default": null,
+      "source": "src/components/SlackSettings.tsx:172",
+      "modelControl": "disconnect"
+    },
+    {
+      "card": "channels.slack",
+      "control": "Copy pairing message",
+      "kind": "button",
+      "key": "none (clipboard: pair CODE)",
+      "default": null,
+      "source": "src/components/SlackSettings.tsx:182",
+      "modelControl": null
+    },
+    {
+      "card": "channels.discord",
+      "control": "Status line (discordHealth)",
+      "kind": "readout",
+      "key": "read-only: GET /api/discord/status",
+      "default": null,
+      "source": "src/components/DiscordSettings.tsx:136",
+      "modelControl": "server"
+    },
+    {
+      "card": "channels.discord",
+      "control": "Bot token",
+      "kind": "password",
+      "key": "window.muragebox.setCredential(discordBotToken) (desktop only)",
+      "default": "",
+      "source": "src/components/DiscordSettings.tsx:145",
+      "modelControl": "bot-token"
+    },
+    {
+      "card": "channels.discord",
+      "control": "Save credentials",
+      "kind": "button",
+      "key": "setCredential discordBotToken",
+      "default": null,
+      "source": "src/components/DiscordSettings.tsx:147",
+      "modelControl": "bot-token"
+    },
+    {
+      "card": "channels.discord",
+      "control": "Application ID",
+      "kind": "text",
+      "key": "PATCH /api/config {discord:{applicationId}} (max 20)",
+      "default": "",
+      "source": "src/components/DiscordSettings.tsx:152",
+      "modelControl": "app-id"
+    },
+    {
+      "card": "channels.discord",
+      "control": "Owner user ID",
+      "kind": "text",
+      "key": "PATCH /api/config {discord:{ownerUserId}} (max 20)",
+      "default": "",
+      "source": "src/components/DiscordSettings.tsx:152",
+      "modelControl": null
+    },
+    {
+      "card": "channels.discord",
+      "control": "Save application details",
+      "kind": "button",
+      "key": "PATCH /api/config {discord:{applicationId,ownerUserId}}",
+      "default": null,
+      "source": "src/components/DiscordSettings.tsx:156",
+      "modelControl": null
+    },
+    {
+      "card": "channels.discord",
+      "control": "Pair with Chief",
+      "kind": "button",
+      "key": "POST /api/discord/pair {}",
+      "default": null,
+      "source": "src/components/DiscordSettings.tsx:160",
+      "modelControl": "add"
+    },
+    {
+      "card": "channels.discord",
+      "control": "Reconnect (retry)",
+      "kind": "button",
+      "key": "POST /api/discord/resume {}",
+      "default": null,
+      "source": "src/components/DiscordSettings.tsx:166",
+      "modelControl": null
+    },
+    {
+      "card": "channels.discord",
+      "control": "Refresh status",
+      "kind": "button",
+      "key": "GET /api/discord/status (read-only)",
+      "default": null,
+      "source": "src/components/DiscordSettings.tsx:167",
+      "modelControl": null
+    },
+    {
+      "card": "channels.discord",
+      "control": "Revoke connection",
+      "kind": "button",
+      "key": "POST /api/discord/revoke {}",
+      "default": null,
+      "source": "src/components/DiscordSettings.tsx:168",
+      "modelControl": "disconnect"
+    },
+    {
+      "card": "channels.discord",
+      "control": "Copy pairing command",
+      "kind": "button",
+      "key": "none (clipboard: /pair CODE)",
+      "default": null,
+      "source": "src/components/DiscordSettings.tsx:174",
+      "modelControl": null
+    },
+    {
+      "card": "channels.whatsapp",
+      "control": "Status line (whatsappMessage)",
+      "kind": "readout",
+      "key": "read-only: GET /api/whatsapp/status",
+      "default": null,
+      "source": "src/components/WhatsAppSettings.tsx:198",
+      "modelControl": "number"
+    },
+    {
+      "card": "channels.whatsapp",
+      "control": "Link WhatsApp / Relink (QR)",
+      "kind": "button",
+      "key": "POST /api/whatsapp/link {method:qr}",
+      "default": null,
+      "source": "src/components/WhatsAppSettings.tsx:204",
+      "modelControl": "pair"
+    },
+    {
+      "card": "channels.whatsapp",
+      "control": "Link with a code instead / Link with a QR code instead",
+      "kind": "button",
+      "key": "none (local method toggle) then POST /api/whatsapp/link {method:code, phone}",
+      "default": null,
+      "source": "src/components/WhatsAppSettings.tsx:205",
+      "modelControl": null
+    },
+    {
+      "card": "channels.whatsapp",
+      "control": "Phone number with country code",
+      "kind": "text",
+      "key": "POST /api/whatsapp/link {phone} (8-15 digits, not stored)",
+      "default": "",
+      "source": "src/components/WhatsAppSettings.tsx:199",
+      "modelControl": null
+    },
+    {
+      "card": "channels.whatsapp",
+      "control": "Resume",
+      "kind": "button",
+      "key": "POST /api/whatsapp/resume {}",
+      "default": null,
+      "source": "src/components/WhatsAppSettings.tsx:228",
+      "modelControl": null
+    },
+    {
+      "card": "channels.whatsapp",
+      "control": "Refresh status",
+      "kind": "button",
+      "key": "GET /api/whatsapp/status (read-only)",
+      "default": null,
+      "source": "src/components/WhatsAppSettings.tsx:229",
+      "modelControl": null
+    },
+    {
+      "card": "channels.whatsapp",
+      "control": "Unlink (with confirm)",
+      "kind": "button",
+      "key": "POST /api/whatsapp/unlink {}",
+      "default": null,
+      "source": "src/components/WhatsAppSettings.tsx:230-238",
+      "modelControl": "disconnect"
+    },
+    {
+      "card": "channels.whatsapp",
+      "control": "Who can message the bot (Only me / Me and chosen contacts)",
+      "kind": "choice",
+      "key": "PATCH /api/config {whatsapp:{mode}} self-chat|contacts",
+      "default": "self-chat",
+      "source": "src/components/WhatsAppSettings.tsx:244-247",
+      "modelControl": null
+    },
+    {
+      "card": "channels.whatsapp",
+      "control": "Pairing code (per pending request)",
+      "kind": "text",
+      "key": "none (sent to POST /api/whatsapp/approve | dismiss {code})",
+      "default": "",
+      "source": "src/components/WhatsAppSettings.tsx:264-266",
+      "modelControl": null
+    },
+    {
+      "card": "channels.whatsapp",
+      "control": "Approve as (person)",
+      "kind": "select",
+      "key": "POST /api/whatsapp/approve {personId}",
+      "default": "",
+      "source": "src/components/WhatsAppSettings.tsx:268",
+      "modelControl": null
+    },
+    {
+      "card": "channels.whatsapp",
+      "control": "Confirm pairing / Dismiss",
+      "kind": "button",
+      "key": "POST /api/whatsapp/approve | /api/whatsapp/dismiss",
+      "default": null,
+      "source": "src/components/WhatsAppSettings.tsx:272-282",
+      "modelControl": null
+    },
+    {
+      "card": "channels.whatsapp",
+      "control": "Send read receipts",
+      "kind": "checkbox",
+      "key": "PATCH /api/config {whatsapp:{readReceipts}}",
+      "default": false,
+      "source": "src/components/WhatsAppSettings.tsx:312",
+      "modelControl": null
+    },
+    {
+      "card": "channels.whatsapp",
+      "control": "Quote the message being answered (Off/Groups/All)",
+      "kind": "select",
+      "key": "PATCH /api/config {whatsapp:{quoteReplies}}",
+      "default": "groups",
+      "source": "src/components/WhatsAppSettings.tsx:313",
+      "modelControl": null
+    },
+    {
+      "card": "channels.slack-setup",
+      "control": "Open Slack app settings",
+      "kind": "button",
+      "key": "none (navigation only: external link to api.slack.com/apps)",
+      "default": null,
+      "source": "src/components/SlackSettings.tsx:140",
+      "modelControl": null
+    },
+    {
+      "card": "channels.discord-setup",
+      "control": "Open Discord app settings",
+      "kind": "button",
+      "key": "none (navigation only: external link to discord.com/developers/applications)",
+      "default": null,
+      "source": "src/components/DiscordSettings.tsx:140",
+      "modelControl": null
+    },
+    {
+      "card": "channels.allow-lists",
+      "control": "Allowed contacts list (+number, remove x)",
+      "kind": "list",
+      "key": "PATCH /api/config {whatsapp:{allowFrom[]}} (max 200)",
+      "default": [],
+      "source": "src/components/WhatsAppSettings.tsx:251-254",
+      "modelControl": "contacts"
+    },
+    {
+      "card": "channels.allow-lists",
+      "control": "Contact number with country code",
+      "kind": "text",
+      "key": "none (draft; added via allowFrom)",
+      "default": "",
+      "source": "src/components/WhatsAppSettings.tsx:255",
+      "modelControl": "add"
+    },
+    {
+      "card": "channels.allow-lists",
+      "control": "Add number",
+      "kind": "button",
+      "key": "PATCH /api/config {whatsapp:{allowFrom}}",
+      "default": null,
+      "source": "src/components/WhatsAppSettings.tsx:257",
+      "modelControl": "add"
+    },
+    {
+      "card": "channels.whatsapp-groups",
+      "control": "Allow chosen groups",
+      "kind": "checkbox",
+      "key": "PATCH /api/config {whatsapp:{groups:{policy:'allowlist'|'disabled'}}}",
+      "default": false,
+      "source": "src/components/WhatsAppSettings.tsx:287",
+      "modelControl": "groups"
+    },
+    {
+      "card": "channels.whatsapp-groups",
+      "control": "Who in a group can talk to the bot",
+      "kind": "select",
+      "key": "PATCH /api/config {whatsapp:{groups:{senders:'members'|'allowlist'}}}",
+      "default": null,
+      "source": "src/components/WhatsAppSettings.tsx:291",
+      "modelControl": null
+    },
+    {
+      "card": "channels.whatsapp-groups",
+      "control": "Load my groups",
+      "kind": "button",
+      "key": "GET /api/whatsapp/groups (read-only list)",
+      "default": null,
+      "source": "src/components/WhatsAppSettings.tsx:293",
+      "modelControl": null
+    },
+    {
+      "card": "channels.whatsapp-groups",
+      "control": "Use {group} in Murage (per group)",
+      "kind": "checkbox",
+      "key": "PATCH /api/config {whatsapp:{groups:{allow:[{jid,name,activation}]}}} (max 50)",
+      "default": false,
+      "source": "src/components/WhatsAppSettings.tsx:299",
+      "modelControl": null
+    },
+    {
+      "card": "channels.whatsapp-groups",
+      "control": "Activation for {group}",
+      "kind": "select",
+      "key": "PATCH /api/config {whatsapp:{groups:{allow[].activation:'mention'|'always'}}}",
+      "default": "mention",
+      "source": "src/components/WhatsAppSettings.tsx:301",
+      "modelControl": null
+    },
+    {
+      "card": "companion.browser",
+      "control": "Enable the built-in browser",
+      "kind": "switch",
+      "key": "PATCH /api/config {features:{browser}}",
+      "default": true,
+      "source": "src/components/SettingsModal.tsx:486",
+      "modelControl": "on"
+    },
+    {
+      "card": "companion.pairing",
+      "control": "Turn on: Phone and other devices",
+      "kind": "switch",
+      "key": "desktop bridge window.muragebox.companion.start/stop (companion state.enabled)",
+      "default": false,
+      "source": "src/components/CompanionSection.tsx:645",
+      "modelControl": "pair"
+    },
+    {
+      "card": "companion.pairing",
+      "control": "Show me the code / Add another device",
+      "kind": "button",
+      "key": "companion pairing window (muragebox.companion.pairing / account); opens a short-lived code",
+      "default": null,
+      "source": "src/components/CompanionSection.tsx:470",
+      "modelControl": "pair"
+    },
+    {
+      "card": "companion.pairing",
+      "control": "Sign-in QR code and typed code",
+      "kind": "readout",
+      "key": "read-only (companion state.pairing.code, expiresAt)",
+      "default": null,
+      "source": "src/components/CompanionSection.tsx:428",
+      "modelControl": "pair"
+    },
+    {
+      "card": "companion.pairing",
+      "control": "Copy sign-in link",
+      "kind": "button",
+      "key": "none (clipboard)",
+      "default": null,
+      "source": "src/components/CompanionSection.tsx:446",
+      "modelControl": null
+    },
+    {
+      "card": "companion.pairing",
+      "control": "Create a new code",
+      "kind": "button",
+      "key": "companion refreshCode (new pairing code)",
+      "default": null,
+      "source": "src/components/CompanionSection.tsx:447",
+      "modelControl": null
+    },
+    {
+      "card": "companion.pairing",
+      "control": "Allow remote access",
+      "kind": "switch",
+      "key": "muragebox.companion.remoteAccess(enabled) (tailscale serve; persists across restarts)",
+      "default": false,
+      "source": "src/components/CompanionSection.tsx:702",
+      "modelControl": "address"
+    },
+    {
+      "card": "companion.pairing",
+      "control": "Access URL",
+      "kind": "readout",
+      "key": "read-only (companion door URL)",
+      "default": null,
+      "source": "src/components/CompanionSection.tsx:718",
+      "modelControl": "address"
+    },
+    {
+      "card": "companion.pairing",
+      "control": "Copy access URL",
+      "kind": "button",
+      "key": "none (clipboard)",
+      "default": null,
+      "source": "src/components/CompanionSection.tsx:730",
+      "modelControl": null
+    },
+    {
+      "card": "companion.pairing",
+      "control": "Check Tailscale again",
+      "kind": "button",
+      "key": "muragebox.companion.refreshTailscale()",
+      "default": null,
+      "source": "src/components/CompanionSection.tsx:751",
+      "modelControl": "address"
+    },
+    {
+      "card": "companion.pairing",
+      "control": "Status steps",
+      "kind": "readout",
+      "key": "read-only (StepStrip from companion state)",
+      "default": null,
+      "source": "src/components/CompanionSection.tsx:685",
+      "modelControl": null
+    },
+    {
+      "card": "companion.pairing",
+      "control": "Paired devices list",
+      "kind": "list",
+      "key": "read-only list of companion state.devices",
+      "default": null,
+      "source": "src/components/CompanionSection.tsx:773",
+      "modelControl": "devices"
+    },
+    {
+      "card": "companion.pairing",
+      "control": "Revoke {device}",
+      "kind": "button",
+      "key": "muragebox.companion.revoke(deviceId)",
+      "default": null,
+      "source": "src/components/CompanionSection.tsx:788",
+      "modelControl": "devices"
+    },
+    {
+      "card": "companion.pairing",
+      "control": "Computer view access for {device}",
+      "kind": "switch",
+      "key": "muragebox.companion.cloudDesktop(deviceId, allowed) (device.cloudDesktopAccess)",
+      "default": false,
+      "source": "src/components/CompanionSection.tsx:824",
+      "modelControl": "devices"
+    },
+    {
+      "card": "companion.pairing",
+      "control": "Share and ask: {device}",
+      "kind": "switch",
+      "key": "muragebox.companion.shareAsk(deviceId, allowed) (device.shareAsk)",
+      "default": false,
+      "source": "src/components/CompanionSection.tsx:529",
+      "modelControl": "devices"
+    },
+    {
+      "card": "companion.pairing",
+      "control": "Keep this computer awake while a phone is paired",
+      "kind": "switch",
+      "key": "muragebox.companion.keepAwake(enabled)",
+      "default": false,
+      "source": "src/components/KeepAwakeOffer.tsx:15",
+      "modelControl": null
+    },
+    {
+      "card": "companion.pairing",
+      "control": "Phone tools (preview)",
+      "kind": "switch",
+      "key": "PATCH /api/config {features:{phoneTools}}; reads GET /api/phones/offered",
+      "default": false,
+      "source": "src/components/PhonePreviewSwitches.tsx:92",
+      "modelControl": null
+    },
+    {
+      "card": "companion.pairing",
+      "control": "Share and ask (preview)",
+      "kind": "switch",
+      "key": "PATCH /api/config {features:{phoneShareAsk}}; reads GET /api/phones/offered",
+      "default": false,
+      "source": "src/components/PhonePreviewSwitches.tsx:92",
+      "modelControl": null
+    },
+    {
+      "card": "companion.pairing",
+      "control": "Recent activity (Refresh)",
+      "kind": "list",
+      "key": "read-only; Refresh calls muragebox.companion.state()",
+      "default": null,
+      "source": "src/components/CompanionSection.tsx:850",
+      "modelControl": null
+    },
+    {
+      "card": "companion.script-access",
+      "control": "Let scripts use a bot",
+      "kind": "switch",
+      "key": "on = any grant exists; on opens the form, off DELETE /api/mcp-grants/:id for every grant",
+      "default": false,
+      "source": "src/components/ScriptAccessSettings.tsx:66",
+      "modelControl": "enabled"
+    },
+    {
+      "card": "companion.script-access",
+      "control": "Bot",
+      "kind": "select",
+      "key": "POST /api/mcp-grants {botId}",
+      "default": "first visible bot",
+      "source": "src/components/ScriptAccessSettings.tsx:99",
+      "modelControl": "create-bot"
+    },
+    {
+      "card": "companion.script-access",
+      "control": "Also let it send messages to this bot",
+      "kind": "checkbox",
+      "key": "POST /api/mcp-grants {send}",
+      "default": false,
+      "source": "src/components/ScriptAccessSettings.tsx:105",
+      "modelControl": "create-send"
+    },
+    {
+      "card": "companion.script-access",
+      "control": "Create access",
+      "kind": "button",
+      "key": "POST /api/mcp-grants {botId, send}; token shown once",
+      "default": null,
+      "source": "src/components/ScriptAccessSettings.tsx:110",
+      "modelControl": "create"
+    },
+    {
+      "card": "companion.script-access",
+      "control": "Script access token",
+      "kind": "readout",
+      "key": "read-only (token from POST /api/mcp-grants response)",
+      "default": null,
+      "source": "src/components/ScriptAccessSettings.tsx:86",
+      "modelControl": "create"
+    },
+    {
+      "card": "companion.script-access",
+      "control": "Grants list",
+      "kind": "list",
+      "key": "GET /api/mcp-grants (read-only rows)",
+      "default": null,
+      "source": "src/components/ScriptAccessSettings.tsx:91",
+      "modelControl": "grants"
+    },
+    {
+      "card": "companion.script-access",
+      "control": "Switch off (per grant)",
+      "kind": "button",
+      "key": "DELETE /api/mcp-grants/:id",
+      "default": null,
+      "source": "src/components/ScriptAccessSettings.tsx:96",
+      "modelControl": "grants"
+    },
+    {
+      "card": "companion.script-access",
+      "control": "Add another bot",
+      "kind": "button",
+      "key": "none (opens the new-access form)",
+      "default": null,
+      "source": "src/components/ScriptAccessSettings.tsx:119",
+      "modelControl": "create"
+    },
+    {
+      "card": "companion.script-access",
+      "control": "Switch all off (the master switch when on)",
+      "kind": "button",
+      "key": "DELETE /api/mcp-grants/:id for each grant",
+      "default": null,
+      "source": "src/components/ScriptAccessSettings.tsx:50",
+      "modelControl": "revoke-all"
+    },
+    {
+      "card": "companion.vps",
+      "control": "Box API key",
+      "kind": "password",
+      "key": "PUT /api/config {box:{token}} (desktop: muragebox.setCredential('boxToken')); Clear removes it",
+      "default": null,
+      "source": "src/components/ApiKeys.tsx:188",
+      "modelControl": "key"
+    },
+    {
+      "card": "companion.vps",
+      "control": "Self-hosted VPS SSH config alias",
+      "kind": "text",
+      "key": "PUT /api/config {vps:{sshAlias}}",
+      "default": "",
+      "source": "src/components/ApiKeys.tsx:279",
+      "modelControl": "host"
+    },
+    {
+      "card": "companion.vps",
+      "control": "Connected status",
+      "kind": "readout",
+      "key": "read-only (config.vps.configured, config.box.configured)",
+      "default": null,
+      "source": "src/components/ApiKeys.tsx:300",
+      "modelControl": "state"
+    },
+    {
+      "card": "companion.computer",
+      "control": "Local VM status and Re-check",
+      "kind": "button",
+      "key": "GET /api/local-computer (read-only status)",
+      "default": null,
+      "source": "src/components/LocalComputerSection.tsx:257",
+      "modelControl": null
+    },
+    {
+      "card": "companion.computer",
+      "control": "Watch screen",
+      "kind": "button",
+      "key": "none (opens desktop viewer; reads GET /api/local-computer)",
+      "default": null,
+      "source": "src/components/LocalComputerSection.tsx:269",
+      "modelControl": null
+    },
+    {
+      "card": "companion.computer",
+      "control": "Isolation: Shared / Per bot",
+      "kind": "choice",
+      "key": "PATCH /api/config {localVm:{mode:'shared'|'per-bot', maxInstances}}",
+      "default": "shared",
+      "source": "src/components/LocalComputerSection.tsx:293",
+      "modelControl": null
+    },
+    {
+      "card": "companion.computer",
+      "control": "Maximum per-bot desktops",
+      "kind": "select",
+      "key": "PATCH /api/config {localVm:{maxInstances:1-8}}",
+      "default": 2,
+      "source": "src/components/LocalComputerSection.tsx:307",
+      "modelControl": null
+    },
+    {
+      "card": "companion.computer",
+      "control": "Prepare Cua desktop",
+      "kind": "button",
+      "key": "POST /api/local-computer/pull",
+      "default": null,
+      "source": "src/components/LocalComputerSection.tsx:350",
+      "modelControl": null
+    },
+    {
+      "card": "companion.computer",
+      "control": "Create Local VM / Start Local VM / Delete and recreate",
+      "kind": "button",
+      "key": "POST /api/local-computer/run | start | remove (+run)",
+      "default": null,
+      "source": "src/components/LocalComputerSection.tsx:375",
+      "modelControl": null
+    },
+    {
+      "card": "companion.computer",
+      "control": "Stop",
+      "kind": "button",
+      "key": "POST /api/local-computer/stop",
+      "default": null,
+      "source": "src/components/LocalComputerSection.tsx:412",
+      "modelControl": null
+    },
+    {
+      "card": "companion.computer",
+      "control": "Delete VM / Delete legacy shared VM",
+      "kind": "button",
+      "key": "POST /api/local-computer/remove",
+      "default": null,
+      "source": "src/components/LocalComputerSection.tsx:416",
+      "modelControl": null
+    },
+    {
+      "card": "companion.computer",
+      "control": "Browser profile name (rename)",
+      "kind": "text",
+      "key": "PATCH /api/config browserProfileReplacementPatch (config.browserProfiles[].name, max 40)",
+      "default": null,
+      "source": "src/components/SettingsModal.tsx:613",
+      "modelControl": "profiles"
+    },
+    {
+      "card": "companion.computer",
+      "control": "Browser profiles list",
+      "kind": "list",
+      "key": "config.browserProfiles (read; used by bots via bot.browserProfile)",
+      "default": null,
+      "source": "src/components/SettingsModal.tsx:583",
+      "modelControl": "profiles"
+    },
+    {
+      "card": "companion.computer",
+      "control": "Delete browser profile",
+      "kind": "button",
+      "key": "PATCH /api/config browserProfileReplacementPatch (removes profile, wipes partition)",
+      "default": null,
+      "source": "src/components/SettingsModal.tsx:643",
+      "modelControl": "profiles"
+    },
+    {
+      "card": "companion.computer",
+      "control": "Refresh profiles",
+      "kind": "button",
+      "key": "GET /api/config",
+      "default": null,
+      "source": "src/components/SettingsModal.tsx:655",
+      "modelControl": null
+    },
+    {
+      "card": "companion.computer",
+      "control": "Allow external browser tools",
+      "kind": "switch",
+      "key": "POST /api/browser-extension/clients {action:'enabled', enabled}",
+      "default": false,
+      "source": "src/components/BrowserExternalClients.tsx:27",
+      "modelControl": "external"
+    },
+    {
+      "card": "companion.computer",
+      "control": "Agent name",
+      "kind": "text",
+      "key": "POST /api/browser-extension/clients {action:'pair', label}",
+      "default": "",
+      "source": "src/components/BrowserExternalClients.tsx:30",
+      "modelControl": "external"
+    },
+    {
+      "card": "companion.computer",
+      "control": "Browser profile (for pairing)",
+      "kind": "select",
+      "key": "POST /api/browser-extension/clients {action:'pair', profileId}",
+      "default": null,
+      "source": "src/components/BrowserExternalClients.tsx:31",
+      "modelControl": "external"
+    },
+    {
+      "card": "companion.computer",
+      "control": "Pair agent",
+      "kind": "button",
+      "key": "POST /api/browser-extension/clients {action:'pair', label, profileId}",
+      "default": null,
+      "source": "src/components/BrowserExternalClients.tsx:32",
+      "modelControl": "external"
+    },
+    {
+      "card": "companion.computer",
+      "control": "Revoke {agent}",
+      "kind": "button",
+      "key": "POST /api/browser-extension/clients {action:'revoke', clientId}",
+      "default": null,
+      "source": "src/components/BrowserExternalClients.tsx:34",
+      "modelControl": "external"
+    },
+    {
+      "card": "companion.computer",
+      "control": "MCP configuration to add to the agent",
+      "kind": "readout",
+      "key": "read-only (config returned by pair)",
+      "default": null,
+      "source": "src/components/BrowserExternalClients.tsx:36",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Backups on",
+      "kind": "switch",
+      "key": "muragebox.backupSchedule.configure(revision,{enabled}) (status.enabled)",
+      "default": false,
+      "source": "src/components/BackupSettings.tsx:484",
+      "modelControl": "on"
+    },
+    {
+      "card": "backups.backups",
+      "control": "Headline: last backup, verified",
+      "kind": "readout",
+      "key": "read-only (backupSchedule status.lastVerified, phase)",
+      "default": null,
+      "source": "src/components/BackupSettings.tsx:477",
+      "modelControl": "last"
+    },
+    {
+      "card": "backups.backups",
+      "control": "Back up now / Continue",
+      "kind": "button",
+      "key": "muragebox.backupSchedule.runNow(revision); app closes and reopens",
+      "default": null,
+      "source": "src/components/BackupSettings.tsx:481",
+      "modelControl": "now"
+    },
+    {
+      "card": "backups.backups",
+      "control": "Clear and try again",
+      "kind": "button",
+      "key": "muragebox.backupSchedule.clearReview(revision)",
+      "default": null,
+      "source": "src/components/BackupSettings.tsx:206",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Answer {bot} / End that run (waiting bots)",
+      "kind": "button",
+      "key": "opens the bot's thread / ends the run (BackupWaitingActions)",
+      "default": null,
+      "source": "src/components/BackupSettings.tsx:461",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Choose backup folder and recovery key",
+      "kind": "button",
+      "key": "muragebox.backupSchedule select references (destinationRef, recoveryRef, installationRef)",
+      "default": null,
+      "source": "src/components/BackupSettings.tsx:313",
+      "modelControl": "where"
+    },
+    {
+      "card": "backups.backups",
+      "control": "Turn on backups (one step)",
+      "kind": "button",
+      "key": "setUp(): creates folder and key, then configure()",
+      "default": null,
+      "source": "src/components/BackupSettings.tsx:312",
+      "modelControl": "on"
+    },
+    {
+      "card": "backups.backups",
+      "control": "Use a key I already have",
+      "kind": "button",
+      "key": "setUp({existingKey:true})",
+      "default": null,
+      "source": "src/components/BackupSettings.tsx:319",
+      "modelControl": "key"
+    },
+    {
+      "card": "backups.backups",
+      "control": "Choose a different folder",
+      "kind": "button",
+      "key": "setUp / select references (destinationRef)",
+      "default": null,
+      "source": "src/components/BackupSettings.tsx:330",
+      "modelControl": "where"
+    },
+    {
+      "card": "backups.backups",
+      "control": "Time each day",
+      "kind": "text",
+      "key": "backupSchedule schedule.time (HH:MM)",
+      "default": "02:00",
+      "source": "src/components/BackupSettings.tsx:338",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Time zone",
+      "kind": "text",
+      "key": "backupSchedule schedule.timezone",
+      "default": "device time zone",
+      "source": "src/components/BackupSettings.tsx:339",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Back up while Murage is closed",
+      "kind": "switch",
+      "key": "backupSchedule schedule.closedApp (needs closedAppSupported)",
+      "default": false,
+      "source": "src/components/BackupSettings.tsx:345",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Set limits / Review limits",
+      "kind": "button",
+      "key": "none (opens Advanced, focuses limits)",
+      "default": null,
+      "source": "src/components/BackupSettings.tsx:355",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Consent to daily backups",
+      "kind": "checkbox",
+      "key": "none (local state; gates Turn on daily backups)",
+      "default": false,
+      "source": "src/components/BackupSettings.tsx:362",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Turn on daily backups",
+      "kind": "button",
+      "key": "backupSchedule.configure(revision,{...choices,enabled:true,allowIdleRestart:true})",
+      "default": null,
+      "source": "src/components/BackupSettings.tsx:366",
+      "modelControl": "on"
+    },
+    {
+      "card": "backups.backups",
+      "control": "Turn off",
+      "kind": "button",
+      "key": "backupSchedule.configure(revision,{enabled:false})",
+      "default": null,
+      "source": "src/components/BackupSettings.tsx:391",
+      "modelControl": "on"
+    },
+    {
+      "card": "backups.backups",
+      "control": "Save a copy... (recovery key)",
+      "kind": "button",
+      "key": "desktop bridge recovery-key copy to a chosen file (muragebox.backup)",
+      "default": null,
+      "source": "src/components/BackupSettings.tsx:277",
+      "modelControl": "key"
+    },
+    {
+      "card": "backups.backups",
+      "control": "Recovery key label and public key",
+      "kind": "readout",
+      "key": "read-only (status.refs.recoveryLabel, createdKey.publicKey)",
+      "default": null,
+      "source": "src/components/BackupSettings.tsx:268",
+      "modelControl": "key"
+    },
+    {
+      "card": "backups.backups",
+      "control": "Move / Keep here (key in a cloud-synced folder)",
+      "kind": "button",
+      "key": "muragebox.backup recoveryKeyCloudNotice, keepRecoveryKeyHere / move",
+      "default": null,
+      "source": "src/components/BackupSettings.tsx:253",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Restore (latest checked backup)",
+      "kind": "button",
+      "key": "muragebox.backup restart into Backup mode",
+      "default": null,
+      "source": "src/components/BackupSettings.tsx:514",
+      "modelControl": "restore"
+    },
+    {
+      "card": "backups.backups",
+      "control": "Restore from an existing backup",
+      "kind": "button",
+      "key": "muragebox.backup restart into Backup mode",
+      "default": null,
+      "source": "src/components/BackupSettings.tsx:518",
+      "modelControl": "restore"
+    },
+    {
+      "card": "backups.backups",
+      "control": "Off-site copy: Set up",
+      "kind": "button",
+      "key": "none (opens Advanced, focuses off-site details)",
+      "default": null,
+      "source": "src/components/BackupSettings.tsx:547",
+      "modelControl": "where"
+    },
+    {
+      "card": "backups.backups",
+      "control": "Off-site type: S3-compatible / SFTP",
+      "kind": "choice",
+      "key": "muragebox.backupRemote save (kind)",
+      "default": "s3",
+      "source": "src/components/BackupRemoteSettings.tsx:257",
+      "modelControl": "where"
+    },
+    {
+      "card": "backups.backups",
+      "control": "S3 fields: destination name, endpoint, bucket, folder, region, bucket addressing",
+      "kind": "composite",
+      "key": "muragebox.backupRemote save destination {label,endpoint,bucket,prefix,region,bucketLookup}",
+      "default": null,
+      "source": "src/components/BackupRemoteSettings.tsx:265",
+      "modelControl": "where"
+    },
+    {
+      "card": "backups.backups",
+      "control": "S3 access key ID, secret access key, session token",
+      "kind": "password",
+      "key": "muragebox.backupRemote save credentials (stored by the desktop app, never shown again)",
+      "default": null,
+      "source": "src/components/BackupRemoteSettings.tsx:267",
+      "modelControl": "where"
+    },
+    {
+      "card": "backups.backups",
+      "control": "SFTP fields: name, server, port, user, folder",
+      "kind": "composite",
+      "key": "muragebox.backupRemote save destination {label,host,port,user,folder}",
+      "default": null,
+      "source": "src/components/BackupRemoteSettings.tsx:276",
+      "modelControl": "where"
+    },
+    {
+      "card": "backups.backups",
+      "control": "Save off-site destination",
+      "kind": "button",
+      "key": "muragebox.backupRemote save",
+      "default": null,
+      "source": "src/components/BackupRemoteSettings.tsx:269",
+      "modelControl": "where"
+    },
+    {
+      "card": "backups.backups",
+      "control": "Off-site password file (create / choose / save copy)",
+      "kind": "button",
+      "key": "backupRemote.createRepositoryPassword / selectRepositoryPassword / saveRepositoryPasswordCopy",
+      "default": null,
+      "source": "src/components/BackupRemoteSettings.tsx:288",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Test connection / Trust this server",
+      "kind": "button",
+      "key": "backupRemote connect test; trust server fingerprint",
+      "default": null,
+      "source": "src/components/BackupRemoteSettings.tsx:293",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Upload this encrypted backup (consent)",
+      "kind": "checkbox",
+      "key": "none (local consent; gates uploadLatest)",
+      "default": false,
+      "source": "src/components/BackupRemoteSettings.tsx:305",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Upload latest backup",
+      "kind": "button",
+      "key": "backupRemote.uploadLatest(ref,revision,jobId)",
+      "default": null,
+      "source": "src/components/BackupRemoteSettings.tsx:306",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Automatic off-site uploads",
+      "kind": "button",
+      "key": "backupRemote.setAutomaticUpload(ref,revision,enabled)",
+      "default": false,
+      "source": "src/components/BackupRemoteSettings.tsx:313",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Remove this destination",
+      "kind": "button",
+      "key": "backupRemote.remove(ref,revision)",
+      "default": null,
+      "source": "src/components/BackupRemoteSettings.tsx:317",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Maintenance access key ID and secret (off-site cleanup)",
+      "kind": "password",
+      "key": "backupRemote.saveMaintenanceCredentials",
+      "default": null,
+      "source": "src/components/BackupRemoteSettings.tsx:342",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Copies to keep: latest, daily, weekly, monthly",
+      "kind": "number",
+      "key": "backupRemote retention policy {keepLast,keepDaily,keepWeekly,keepMonthly} (1-1000, local draft until applied)",
+      "default": null,
+      "source": "src/components/BackupRemoteSettings.tsx:347",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Preview / apply cleanup, clear review",
+      "kind": "button",
+      "key": "backupRemote.previewRetention / applyRetention / clearRetentionReview",
+      "default": null,
+      "source": "src/components/BackupRemoteSettings.tsx:350",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Backup to recover (off-site list)",
+      "kind": "select",
+      "key": "backupRemote.listBackups; none stored (selection is local)",
+      "default": null,
+      "source": "src/components/BackupRemoteSettings.tsx:375",
+      "modelControl": "restore"
+    },
+    {
+      "card": "backups.backups",
+      "control": "Download selected off-site backup",
+      "kind": "button",
+      "key": "backupRemote.downloadBackup",
+      "default": null,
+      "source": "src/components/BackupRemoteSettings.tsx:377",
+      "modelControl": "restore"
+    },
+    {
+      "card": "backups.backups",
+      "control": "Refresh off-site status",
+      "kind": "button",
+      "key": "backupRemote.status()",
+      "default": null,
+      "source": "src/components/BackupRemoteSettings.tsx:386",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Late start allowed (hours)",
+      "kind": "number",
+      "key": "backupSchedule schedule.catchupMs (hours x 3600000)",
+      "default": 12,
+      "source": "src/components/BackupSettings.tsx:402",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Maximum backup size (GiB)",
+      "kind": "number",
+      "key": "backupSchedule schedule.maxBytes (GiB x 1024^3)",
+      "default": 50,
+      "source": "src/components/BackupSettings.tsx:404",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Minimum time allowed (minutes)",
+      "kind": "number",
+      "key": "backupSchedule schedule.maxDurationMs (minutes x 60000)",
+      "default": 30,
+      "source": "src/components/BackupSettings.tsx:406",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Back up before installing an in-app update",
+      "kind": "switch",
+      "key": "backupSchedule schedule.preUpgrade (needs preUpgradeSupported)",
+      "default": false,
+      "source": "src/components/BackupSettings.tsx:410",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Closed-app background job: Prepare / Register / Disable",
+      "kind": "button",
+      "key": "muragebox.backupClosed stage | install | disable",
+      "default": null,
+      "source": "src/components/BackupSettings.tsx:419",
+      "modelControl": null
+    },
+    {
+      "card": "backups.backups",
+      "control": "Refresh schedule status",
+      "kind": "button",
+      "key": "backupSchedule.status()",
+      "default": null,
+      "source": "src/components/BackupSettings.tsx:559",
+      "modelControl": null
+    },
+    {
+      "card": "backups.storage",
+      "control": "Space left on this disk",
+      "kind": "readout",
+      "key": "read-only (GET /api/storage)",
+      "default": null,
+      "source": "src/components/StorageSettings.tsx:30",
+      "modelControl": "free"
+    },
+    {
+      "card": "backups.storage",
+      "control": "Attachments",
+      "kind": "readout",
+      "key": "read-only (GET /api/storage)",
+      "default": null,
+      "source": "src/components/StorageSettings.tsx:32",
+      "modelControl": "attachments"
+    },
+    {
+      "card": "backups.storage",
+      "control": "Files",
+      "kind": "readout",
+      "key": "read-only (GET /api/storage)",
+      "default": null,
+      "source": "src/components/StorageSettings.tsx:34",
+      "modelControl": null
+    },
+    {
+      "card": "backups.storage",
+      "control": "Check again",
+      "kind": "button",
+      "key": "GET /api/storage",
+      "default": null,
+      "source": "src/components/StorageSettings.tsx:38",
+      "modelControl": null
+    },
+    {
+      "card": "backups.storage",
+      "control": "Order: Largest first / Newest first",
+      "kind": "choice",
+      "key": "GET /api/storage/attachments?order=size|newest (local state, not stored)",
+      "default": "size",
+      "source": "src/components/StorageListView.tsx:41",
+      "modelControl": "attachments"
+    },
+    {
+      "card": "backups.storage",
+      "control": "Attachment files list",
+      "kind": "list",
+      "key": "GET /api/storage/attachments (read-only rows)",
+      "default": null,
+      "source": "src/components/StorageListView.tsx:38",
+      "modelControl": "attachments"
+    },
+    {
+      "card": "backups.storage",
+      "control": "Remove (per file) / Remove this file / Keep it",
+      "kind": "button",
+      "key": "POST /api/storage/attachments/remove {names:[name]} (this computer only)",
+      "default": null,
+      "source": "src/components/StorageListView.tsx:76",
+      "modelControl": "reclaim"
+    },
+    {
+      "card": "backups.storage",
+      "control": "Reload the list / Show more",
+      "kind": "button",
+      "key": "GET /api/storage/attachments (paging)",
+      "default": null,
+      "source": "src/components/StorageListView.tsx:35",
+      "modelControl": null
+    },
+    {
+      "card": "usage.by-bot",
+      "control": "Monthly limit in dollars",
+      "kind": "number",
+      "key": "PATCH /api/config {spend:{monthlyLimitUsd}} (null removes)",
+      "default": null,
+      "source": "src/components/SpendLimitCard.tsx:57",
+      "modelControl": null
+    },
+    {
+      "card": "usage.by-bot",
+      "control": "Save limit",
+      "kind": "button",
+      "key": "PATCH /api/config {spend:{monthlyLimitUsd:number}}",
+      "default": null,
+      "source": "src/components/SpendLimitCard.tsx:31",
+      "modelControl": null
+    },
+    {
+      "card": "usage.by-bot",
+      "control": "Remove limit",
+      "kind": "button",
+      "key": "PATCH /api/config {spend:{monthlyLimitUsd:null}}",
+      "default": null,
+      "source": "src/components/SpendLimitCard.tsx:37",
+      "modelControl": null
+    },
+    {
+      "card": "usage.by-bot",
+      "control": "Plan usage",
+      "kind": "readout",
+      "key": "GET /api/plan-usage (read-only)",
+      "default": null,
+      "source": "src/components/PlanUsageCard.tsx:91",
+      "modelControl": null
+    },
+    {
+      "card": "usage.by-bot",
+      "control": "Plan usage Refresh",
+      "kind": "button",
+      "key": "POST /api/plan-usage/refresh",
+      "default": null,
+      "source": "src/components/PlanUsageCard.tsx:95",
+      "modelControl": null
+    },
+    {
+      "card": "usage.by-bot",
+      "control": "Plan usage Previous / Next page",
+      "kind": "button",
+      "key": "GET /api/plan-usage (cursor paging)",
+      "default": null,
+      "source": "src/components/PlanUsageCard.tsx:129",
+      "modelControl": null
+    },
+    {
+      "card": "usage.by-bot",
+      "control": "This month by bot (bot, replies, tokens, total)",
+      "kind": "list",
+      "key": "read-only (store state.bots usage rows)",
+      "default": null,
+      "source": "src/components/UsageSection.tsx:116",
+      "modelControl": "bots"
+    },
+    {
+      "card": "usage.by-bot",
+      "control": "Export",
+      "kind": "button",
+      "key": "none (downloads usage-this-month.csv from the rows)",
+      "default": null,
+      "source": "src/components/UsageSection.tsx:114",
+      "modelControl": "export"
+    },
+    {
+      "card": "usage.by-bot",
+      "control": "This month by routine",
+      "kind": "list",
+      "key": "read-only (store state.bots routine usage)",
+      "default": null,
+      "source": "src/components/UsageSection.tsx:150",
+      "modelControl": null
+    },
+    {
+      "card": "usage.learning",
+      "control": "Tokens read (bar)",
+      "kind": "readout",
+      "key": "read-only (GET /api/memory/status learning.ceiling input/inputUsed)",
+      "default": null,
+      "source": "src/components/UsageSection.tsx:175",
+      "modelControl": "read"
+    },
+    {
+      "card": "usage.learning",
+      "control": "Tokens written (bar)",
+      "kind": "readout",
+      "key": "read-only (GET /api/memory/status learning.ceiling output/outputUsed)",
+      "default": null,
+      "source": "src/components/UsageSection.tsx:176",
+      "modelControl": "written"
+    },
+    {
+      "card": "usage.learning",
+      "control": "Learning paused / runs-on line",
+      "kind": "readout",
+      "key": "read-only (ceiling.paused, learning.connection)",
+      "default": null,
+      "source": "src/components/UsageSection.tsx:177",
+      "modelControl": null
+    },
+    {
+      "card": "usage.learning",
+      "control": "Change the limit",
+      "kind": "button",
+      "key": "none (navigation only: opens Memory settings at the learning limit)",
+      "default": null,
+      "source": "src/components/UsageSection.tsx:185",
+      "modelControl": null
+    },
+    {
+      "card": "about.version",
+      "control": "Murage {version}",
+      "kind": "readout",
+      "key": "read-only (updater currentVersion or APP_VERSION)",
+      "default": null,
+      "source": "src/components/SettingsModal.tsx:817",
+      "modelControl": "version"
+    },
+    {
+      "card": "about.version",
+      "control": "Update status line",
+      "kind": "readout",
+      "key": "read-only (muragebox.updater state)",
+      "default": null,
+      "source": "src/components/SettingsModal.tsx:817",
+      "modelControl": "version"
+    },
+    {
+      "card": "about.version",
+      "control": "Open What's new",
+      "kind": "button",
+      "key": "none (navigation only: closes Settings, opens What's new)",
+      "default": null,
+      "source": "src/components/SettingsModal.tsx:828",
+      "modelControl": null
+    },
+    {
+      "card": "about.version",
+      "control": "Copy version",
+      "kind": "button",
+      "key": "none (clipboard line: version, platform, arch)",
+      "default": null,
+      "source": "src/components/SettingsModal.tsx:838",
+      "modelControl": "copy"
+    },
+    {
+      "card": "about.updates",
+      "control": "Check for updates / Download / Restart and install / Retry",
+      "kind": "button",
+      "key": "muragebox.updater check | download | install | retry (no stored value)",
+      "default": null,
+      "source": "src/components/SettingsModal.tsx:288",
+      "modelControl": "check"
+    },
+    {
+      "card": "about.whats-new",
+      "control": "Open What's new",
+      "kind": "button",
+      "key": "none (navigation only: closes Settings, opens What's new page)",
+      "default": null,
+      "source": "src/components/SettingsModal.tsx:856",
+      "modelControl": "tiles"
+    },
+    {
+      "card": "about.announcements",
+      "control": "Show announcements",
+      "kind": "switch",
+      "key": "POST /api/announcements/settings {show} (GET same route; stored in the data dir)",
+      "default": true,
+      "source": "src/components/AnnouncementsSettings.tsx:49",
+      "modelControl": "announcements"
+    },
+    {
+      "card": "about.diagnostics",
+      "control": "Export Diagnostics...",
+      "kind": "button",
+      "key": "muragebox.exportDiagnostics() writes a redacted text file; no stored value",
+      "default": null,
+      "source": "src/components/SettingsModal.tsx:699",
+      "modelControl": "save"
+    },
+    {
+      "card": "about.setup",
+      "control": "Run setup again",
+      "kind": "button",
+      "key": "none (navigation only: closes Settings, opens first run)",
+      "default": null,
+      "source": "src/components/SettingsModal.tsx:159",
+      "modelControl": "run"
+    },
+    {
+      "card": "about.shortcuts",
+      "control": "Show shortcuts",
+      "kind": "button",
+      "key": "none (navigation only: opens the keyboard shortcuts view)",
+      "default": null,
+      "source": "src/components/SettingsModal.tsx:938",
+      "modelControl": "list"
+    },
+    {
+      "card": "about.previous-version",
+      "control": "Prepare (go back to the previous version)",
+      "kind": "button",
+      "key": "muragebox.updater.preparePreviousVersion(); app asks to confirm; hidden when the bridge lacks it",
+      "default": null,
+      "source": "src/components/PreviousVersionRow.tsx:24",
+      "modelControl": "previous"
+    },
+    {
+      "card": "about.news",
+      "control": "Your email",
+      "kind": "text",
+      "key": "POST /api/subscribe {email,name,from:'settings'}; prefilled from config.profile.email",
+      "default": "profile email",
+      "source": "src/components/NewsSignupSettings.tsx:77",
+      "modelControl": "email"
+    },
+    {
+      "card": "about.news",
+      "control": "Add me",
+      "kind": "button",
+      "key": "POST /api/subscribe; GET /api/news {onList}",
+      "default": null,
+      "source": "src/components/NewsSignupSettings.tsx:89",
+      "modelControl": "email"
+    },
+    {
+      "card": "about.health",
+      "control": "Open Health",
+      "kind": "button",
+      "key": "none (navigation only: dispatch showHealth)",
+      "default": null,
+      "source": "src/components/SettingsModal.tsx:665",
+      "modelControl": "checks"
+    }
+  ],
+  "app": [
+    {
+      "id": "general.mode",
+      "section": "general",
+      "anchor": "advanced-mode-heading",
+      "advanced": false,
+      "surface": "any",
+      "label": "Advanced mode",
+      "home": {
+        "page": "general",
+        "card": "general.mode",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "general.profile",
+      "section": "general",
+      "anchor": "profile-heading",
+      "advanced": false,
+      "surface": "any",
+      "label": "Your name and email",
+      "home": {
+        "page": "general",
+        "card": "general.about-you",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "general.appearance",
+      "section": "general",
+      "anchor": "appearance-heading",
+      "advanced": false,
+      "surface": "any",
+      "label": "Appearance and colors",
+      "home": {
+        "page": "general",
+        "card": "general.appearance",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "general.sidebar-density",
+      "section": "general",
+      "anchor": "sidebar-density-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Sidebar density",
+      "home": {
+        "page": "general",
+        "card": "general.appearance",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "general.language",
+      "section": "general",
+      "anchor": "language-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Language",
+      "home": {
+        "page": "general",
+        "card": "general.language-time",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "general.time-zone",
+      "section": "general",
+      "anchor": "time-zone-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Time zone",
+      "home": {
+        "page": "general",
+        "card": "general.language-time",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "general.send-key",
+      "section": "general",
+      "anchor": "send-key-heading",
+      "advanced": false,
+      "surface": "any",
+      "label": "Sending messages",
+      "home": {
+        "page": "general",
+        "card": "general.send-key",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "general.notifications",
+      "section": "general",
+      "anchor": "notifications-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Notifications and sounds",
+      "home": {
+        "page": "general",
+        "card": "general.notifications",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "general.startup",
+      "section": "general",
+      "anchor": "startup-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Start at login and run in the background",
+      "home": {
+        "page": "general",
+        "card": "general.startup",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "general.analytics",
+      "section": "general",
+      "anchor": "analytics-heading",
+      "advanced": true,
+      "surface": "any",
+      "label": "Send usage analytics",
+      "home": {
+        "page": "general",
+        "card": "general.analytics",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "general.about-me",
+      "section": "general",
+      "anchor": "about-me-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "About me, for every bot",
+      "home": {
+        "page": "general",
+        "card": "general.about-you",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "general.bring-your-ai",
+      "section": "general",
+      "anchor": "bring-your-ai-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Bring a Grok Bot, or what another AI knows about you",
+      "home": {
+        "page": "general",
+        "card": "general.bring-your-ai",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "calls.calls",
+      "section": "calls",
+      "anchor": "calls-settings-title",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Calls",
+      "home": {
+        "page": "calls",
+        "card": "calls.off-today",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "botDefaults.new-bot-effort",
+      "section": "botDefaults",
+      "anchor": "new-bot-effort-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Effort for new bots",
+      "home": {
+        "page": "models",
+        "card": "models.defaults",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "botDefaults.tool-calls",
+      "section": "botDefaults",
+      "anchor": "tool-calls-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Show tool calls in the conversation",
+      "home": {
+        "page": "botDefaults",
+        "card": "botDefaults.tool-calls",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "botDefaults.project-autonomy",
+      "section": "botDefaults",
+      "anchor": "project-autonomy-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Project autonomy",
+      "home": {
+        "page": "botDefaults",
+        "card": "botDefaults.project-autonomy",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "botDefaults.channel-turns",
+      "section": "botDefaults",
+      "anchor": "room-turn-timeout",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Time limit for bot activity in channels",
+      "home": {
+        "page": "botDefaults",
+        "card": "botDefaults.channel-turns",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "botDefaults.room-routing",
+      "section": "botDefaults",
+      "anchor": "room-routing-label",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Who answers in channels",
+      "home": {
+        "page": "botDefaults",
+        "card": "botDefaults.room-routing",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "botDefaults.starter-profiles",
+      "section": "botDefaults",
+      "anchor": "starter-profiles-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Starter profiles",
+      "home": {
+        "page": "botDefaults",
+        "card": "botDefaults.starter-profiles",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "botDefaults.house-rules",
+      "section": "botDefaults",
+      "anchor": "house-rules-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "House rules",
+      "home": {
+        "page": "botDefaults",
+        "card": "botDefaults.house-rules",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "skills.recorder",
+      "section": "skills",
+      "anchor": "skill-recorder-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Teach a skill",
+      "home": {
+        "page": "skills",
+        "card": "skills.recorder",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "skills.library",
+      "section": "skills",
+      "anchor": "skills-settings-title",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Skills library and import",
+      "home": {
+        "page": "skills",
+        "card": "skills.library",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "skills.scan-rules",
+      "section": "skills",
+      "anchor": "skill-scan-rules-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Skill scan rules",
+      "home": {
+        "page": "skills",
+        "card": "skills.scan-rules",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "memory.overview",
+      "section": "memory",
+      "anchor": "memory-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Memory and what it learned",
+      "home": {
+        "page": "memory",
+        "card": "memory.overview",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "memory.how-it-learns",
+      "section": "memory",
+      "anchor": "memory-how-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "How memory learns",
+      "home": {
+        "page": "memory",
+        "card": "memory.how-it-learns",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "memory.bots",
+      "section": "memory",
+      "anchor": "memory-bots-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Memory for each bot",
+      "home": {
+        "page": "memory",
+        "card": "memory.bots",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "memory.learned",
+      "section": "memory",
+      "anchor": "memory-learned-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "What memory learned",
+      "home": {
+        "page": "memory",
+        "card": "memory.learned",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "memory.people",
+      "section": "memory",
+      "anchor": "memory-people-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "People in memory",
+      "home": {
+        "page": "memory",
+        "card": "memory.people",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "memory.import",
+      "section": "memory",
+      "anchor": "memory-import-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Import notes",
+      "home": {
+        "page": "memory",
+        "card": "memory.import",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "memory.mode",
+      "section": "memory",
+      "anchor": "memory-mode-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Memory mode",
+      "home": {
+        "page": "memory",
+        "card": "memory.mode",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "memory.limit",
+      "section": "memory",
+      "anchor": "memory-limit-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Monthly learning limit",
+      "home": {
+        "page": "usage",
+        "card": "usage.learning-limit",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "memory.connection",
+      "section": "memory",
+      "anchor": "memory-connection-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Learning connection",
+      "home": {
+        "page": "memoryUpkeep",
+        "card": "memoryUpkeep.connection",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "memory.audience",
+      "section": "memory",
+      "anchor": "memory-audience-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Who can access memory",
+      "home": {
+        "page": "memoryUpkeep",
+        "card": "memoryUpkeep.audience",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "memory.procedures",
+      "section": "memory",
+      "anchor": "memory-procedures-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Procedure reviews",
+      "home": {
+        "page": "memoryUpkeep",
+        "card": "memoryUpkeep.procedures",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "memory.reindex",
+      "section": "memory",
+      "anchor": "memory-reindex-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Rebuild search index",
+      "home": {
+        "page": "memoryUpkeep",
+        "card": "memoryUpkeep.reindex",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "memory.health",
+      "section": "memory",
+      "anchor": "memory-health-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Memory health",
+      "home": {
+        "page": "memoryUpkeep",
+        "card": "memoryUpkeep.health",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "models.providers",
+      "section": "models",
+      "anchor": "models-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Models and keys",
+      "home": {
+        "page": "models",
+        "card": "models.accounts",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "models.engines",
+      "section": "models",
+      "anchor": "engines-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Engines",
+      "home": {
+        "page": "models",
+        "card": "models.engines",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "models.paste-keys",
+      "section": "models",
+      "anchor": "paste-any-keys",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Add a key",
+      "home": {
+        "page": "models",
+        "card": "models.accounts",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "models.existing-keys",
+      "section": "models",
+      "anchor": "existing-keys-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Existing default keys",
+      "home": {
+        "page": "models",
+        "card": "models.accounts",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "models.catalogs",
+      "section": "models",
+      "anchor": "model-catalogs-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Model catalogs",
+      "home": {
+        "page": "models",
+        "card": "models.catalogs",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "models.local-servers",
+      "section": "models",
+      "anchor": "local-models-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Local model servers",
+      "home": {
+        "page": "models",
+        "card": "models.engines",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "models.claude-accounts",
+      "section": "models",
+      "anchor": "claude-accounts-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Several Claude accounts",
+      "home": {
+        "page": "models",
+        "card": "models.accounts",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "models.command-lines",
+      "section": "models",
+      "anchor": "engine-command-lines-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Engine command lines",
+      "home": {
+        "page": "models",
+        "card": "models.command-lines",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "webSearch.search",
+      "section": "webSearch",
+      "anchor": "search-settings-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Web search service",
+      "home": {
+        "page": "webSearch",
+        "card": "webSearch.search",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "webSearch.images",
+      "section": "webSearch",
+      "anchor": "image-settings-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Image generation",
+      "home": {
+        "page": "images",
+        "card": "images.images",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "webSearch.voice",
+      "section": "webSearch",
+      "anchor": "voice-settings-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Voice notes and transcription",
+      "home": {
+        "page": "voice",
+        "card": "voice.voice",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "webSearch.provider-keys",
+      "section": "webSearch",
+      "anchor": "search-keys-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Search service keys",
+      "home": {
+        "page": "webSearch",
+        "card": "webSearch.provider-keys",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "webSearch.daily-check",
+      "section": "webSearch",
+      "anchor": "image-daily-check-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Daily image check",
+      "home": {
+        "page": "images",
+        "card": "images.daily-check",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "webSearch.voice-key",
+      "section": "webSearch",
+      "anchor": "voice-key-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Voice transcription key",
+      "home": {
+        "page": "voice",
+        "card": "voice.voice-key",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "connections.apps",
+      "section": "connections",
+      "anchor": "connections-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Connected apps",
+      "home": {
+        "page": "connections",
+        "card": "connections.apps",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "connections.bot-email",
+      "section": "connections",
+      "anchor": "bot-email-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Bot email",
+      "home": {
+        "page": "connections",
+        "card": "connections.bot-email",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "connections.highlevel",
+      "section": "connections",
+      "anchor": "highlevel-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "HighLevel",
+      "home": {
+        "page": "connections",
+        "card": "connections.highlevel",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "connections.phone-calls",
+      "section": "connections",
+      "anchor": "phone-calls-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Phone calls",
+      "home": {
+        "page": "calls",
+        "card": "calls.outbound",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "connections.mcp",
+      "section": "connections",
+      "anchor": "mcp-servers-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Connected tools details",
+      "home": {
+        "page": "connections",
+        "card": "connections.mcp",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "channels.telegram",
+      "section": "channels",
+      "anchor": "telegram-settings-title",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Telegram",
+      "home": {
+        "page": "channels",
+        "card": "channels.telegram",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "channels.slack",
+      "section": "channels",
+      "anchor": "slack-settings-title",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Slack",
+      "home": {
+        "page": "channels",
+        "card": "channels.slack",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "channels.discord",
+      "section": "channels",
+      "anchor": "discord-settings-title",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Discord",
+      "home": {
+        "page": "channels",
+        "card": "channels.discord",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "channels.whatsapp",
+      "section": "channels",
+      "anchor": "whatsapp-settings-title",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "WhatsApp",
+      "home": {
+        "page": "channels",
+        "card": "channels.whatsapp",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "channels.slack-setup",
+      "section": "channels",
+      "anchor": "slack-app-setup-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Private Slack app setup",
+      "home": {
+        "page": "channels",
+        "card": "channels.slack-setup",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "channels.discord-setup",
+      "section": "channels",
+      "anchor": "discord-app-setup-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Private Discord app setup",
+      "home": {
+        "page": "channels",
+        "card": "channels.discord-setup",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "channels.allow-lists",
+      "section": "channels",
+      "anchor": "whatsapp-allow-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "WhatsApp allowed contacts",
+      "home": {
+        "page": "channels",
+        "card": "channels.allow-lists",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "channels.whatsapp-groups",
+      "section": "channels",
+      "anchor": "whatsapp-groups-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "WhatsApp groups",
+      "home": {
+        "page": "channels",
+        "card": "channels.whatsapp-groups",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "companion.browser",
+      "section": "computer",
+      "anchor": "browser-settings-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Built-in browser",
+      "home": {
+        "page": "computer",
+        "card": "computer.browser",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "companion.pairing",
+      "section": "companion",
+      "anchor": "companion-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Phone and other devices",
+      "home": {
+        "page": "companion",
+        "card": "companion.pairing",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "companion.script-access",
+      "section": "computer",
+      "anchor": "script-access-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Script access",
+      "home": {
+        "page": "computer",
+        "card": "computer.script-access",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "companion.vps",
+      "section": "computer",
+      "anchor": "vps-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "Remote computer (VPS)",
+      "home": {
+        "page": "computer",
+        "card": "computer.vps",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "companion.computer",
+      "section": "computer",
+      "anchor": "computer-settings-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Computer and browser",
+      "home": {
+        "page": "computer",
+        "card": "computer.computer",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "backups.backups",
+      "section": "backups",
+      "anchor": "backups-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Backups and recovery key",
+      "home": {
+        "page": "backups",
+        "card": "backups.backups",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "backups.storage",
+      "section": "backups",
+      "anchor": "storage-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Storage",
+      "home": {
+        "page": "backups",
+        "card": "backups.storage",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "usage.by-bot",
+      "section": "usage",
+      "anchor": "usage-heading",
+      "advanced": false,
+      "surface": "any",
+      "label": "This month by bot",
+      "home": {
+        "page": "usage",
+        "card": "usage.by-bot",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "usage.learning",
+      "section": "usage",
+      "anchor": "usage-learning-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Memory learning this month",
+      "home": {
+        "page": "usage",
+        "card": "usage.learning",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "about.version",
+      "section": "about",
+      "anchor": "about-version-heading",
+      "advanced": false,
+      "surface": "any",
+      "label": "App version",
+      "home": {
+        "page": "about",
+        "card": "about.version",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "about.updates",
+      "section": "about",
+      "anchor": "updates-heading",
+      "advanced": false,
+      "surface": "any",
+      "label": "Check for updates",
+      "home": {
+        "page": "about",
+        "card": "about.version",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "about.whats-new",
+      "section": "about",
+      "anchor": "whats-new-heading",
+      "advanced": false,
+      "surface": "any",
+      "label": "What's new",
+      "home": {
+        "page": "about",
+        "card": "about.whats-new",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "about.announcements",
+      "section": "about",
+      "anchor": "announcements-heading",
+      "advanced": true,
+      "surface": "desktop",
+      "label": "News from us",
+      "home": {
+        "page": "about",
+        "card": "about.news",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "about.diagnostics",
+      "section": "about",
+      "anchor": "diagnostics-heading",
+      "advanced": true,
+      "surface": "any",
+      "label": "Diagnostics report",
+      "home": {
+        "page": "about",
+        "card": "about.diagnostics",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "about.setup",
+      "section": "about",
+      "anchor": "setup-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Run setup again",
+      "home": {
+        "page": "about",
+        "card": "about.setup",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "about.shortcuts",
+      "section": "about",
+      "anchor": "shortcuts-heading",
+      "advanced": false,
+      "surface": "any",
+      "label": "Keyboard shortcuts",
+      "home": {
+        "page": "about",
+        "card": "about.shortcuts",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "about.previous-version",
+      "section": "about",
+      "anchor": "previous-version-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Go back to a previous version",
+      "home": {
+        "page": "about",
+        "card": "about.version",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "about.news",
+      "section": "about",
+      "anchor": "news-heading",
+      "advanced": false,
+      "surface": "desktop",
+      "label": "Get the setup guide and every new release",
+      "home": {
+        "page": "about",
+        "card": "about.news",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "about.health",
+      "section": "about",
+      "anchor": "health-heading",
+      "advanced": false,
+      "surface": "any",
+      "label": "Health",
+      "home": {
+        "page": "about",
+        "card": "about.health",
+        "mode": "Advanced"
+      }
+    }
+  ],
+  "bot": [
+    {
+      "id": "bot.overview.setup",
+      "indexed": true,
+      "anchor": "bot-setting-setup",
+      "surface": "any",
+      "label": "What is this bot for?",
+      "kind": "button",
+      "key": "none (opens the intake form)",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "overview",
+        "row": "bot.overview.setup",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.overview.role",
+      "indexed": true,
+      "anchor": "bot-setting-role",
+      "surface": "any",
+      "label": "Role",
+      "kind": "choice",
+      "key": "chiefOfStaff + chiefScope + individual + section (chiefTier on write)",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "overview",
+        "row": "bot.overview.role",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.identity.avatar",
+      "indexed": true,
+      "anchor": "bot-setting-avatar",
+      "surface": "any",
+      "label": "Appearance",
+      "kind": "picker",
+      "key": "color, mascotExpression, mascotBody, avatarUrl, avatarCrop, avatarZoom, avatarFocusX, avatarFocusY",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "identity",
+        "row": "bot.identity.avatar",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.identity.name",
+      "indexed": true,
+      "anchor": "bot-setting-name",
+      "surface": "any",
+      "label": "Name",
+      "kind": "text",
+      "key": "name",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "identity",
+        "row": "bot.identity.name",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.identity.title",
+      "indexed": true,
+      "anchor": "bot-setting-title",
+      "surface": "any",
+      "label": "Title",
+      "kind": "text",
+      "key": "title",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "identity",
+        "row": "bot.identity.title",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.identity.instructions",
+      "indexed": true,
+      "anchor": "bot-setting-instructions",
+      "surface": "any",
+      "label": "Instructions",
+      "kind": "textarea",
+      "key": "description",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "identity",
+        "row": "bot.identity.instructions",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.identity.personality",
+      "indexed": true,
+      "anchor": "bot-setting-personality",
+      "surface": "any",
+      "label": "Personality",
+      "kind": "textarea",
+      "key": "persona",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "identity",
+        "row": "bot.identity.personality",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.shapes.shapes",
+      "indexed": true,
+      "anchor": "bot-setting-shapes",
+      "surface": "desktop",
+      "label": "What shapes this bot",
+      "kind": "list",
+      "key": "house-rules flag (app-wide), aboutMe, teamBrief, skills enabled",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "shapes",
+        "row": "bot.shapes.shapes",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "bot.skills.skills",
+      "indexed": true,
+      "anchor": "bot-setting-skills",
+      "surface": "any",
+      "label": "Skills",
+      "kind": "list",
+      "key": "PATCH /api/bots/:id/skills/:name {enabled}",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "skills",
+        "row": "bot.skills.skills",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "bot.learning.learning",
+      "indexed": true,
+      "anchor": "bot-setting-learning",
+      "surface": "desktop",
+      "label": "Learning",
+      "kind": "composite",
+      "key": "learning handlers (setEnabled, setAskFirst, lessons)",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "learning",
+        "row": "bot.learning.learning",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "bot.memory.memory",
+      "indexed": true,
+      "anchor": "bot-setting-memory",
+      "surface": "any",
+      "label": "Managed memory",
+      "kind": "button",
+      "key": "none (opens memory)",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "memory",
+        "row": "bot.memory.memory",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "bot.memory.notebook",
+      "indexed": true,
+      "anchor": "bot-setting-notebook",
+      "surface": "any",
+      "label": "Legacy notebook",
+      "kind": "textarea",
+      "key": "GET/PUT /api/bots/:id/memory with revision",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "memory",
+        "row": "bot.memory.notebook",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "bot.routines.routines",
+      "indexed": true,
+      "anchor": "bot-setting-routines",
+      "surface": "any",
+      "label": "Routines",
+      "kind": "list",
+      "key": "state.routines (read)",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "routines",
+        "row": "bot.routines.routines",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "bot.teams.teams",
+      "indexed": true,
+      "anchor": "bot-setting-teams",
+      "surface": "desktop",
+      "label": "Teams",
+      "kind": "list",
+      "key": "team routes (not traced in G0)",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "teams",
+        "row": "bot.teams.teams",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "bot.access.apps",
+      "indexed": true,
+      "anchor": "bot-setting-apps",
+      "surface": "any",
+      "label": "Connected apps",
+      "kind": "switch",
+      "key": "composio",
+      "default": true,
+      "home": {
+        "page": "bot",
+        "section": "access",
+        "row": "bot.access.apps",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.access.app-access",
+      "indexed": true,
+      "anchor": "bot-setting-app-access",
+      "surface": "any",
+      "label": "App access and approvals",
+      "kind": "list",
+      "key": "per-bot access URL (path not read in G0)",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "access",
+        "row": "bot.access.app-access",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.access.phone",
+      "indexed": true,
+      "anchor": "bot-setting-phone",
+      "surface": "any",
+      "label": "Phone",
+      "kind": "list",
+      "key": "/api/phones, savePhoneApps",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "access",
+        "row": "bot.access.phone",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.access.phone-for-bots",
+      "indexed": true,
+      "anchor": "bot-setting-phone-for-bots",
+      "surface": "any",
+      "label": "Phone for your bots",
+      "kind": "button",
+      "key": "none (opens a native screen)",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "access",
+        "row": "bot.access.phone-for-bots",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.access.browser",
+      "indexed": true,
+      "anchor": "bot-setting-browser",
+      "surface": "any",
+      "label": "Browser",
+      "kind": "switch",
+      "key": "browser",
+      "default": true,
+      "home": {
+        "page": "bot",
+        "section": "access",
+        "row": "bot.access.browser",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.access.computer",
+      "indexed": true,
+      "anchor": "bot-setting-computer",
+      "surface": "desktop",
+      "label": "Computer",
+      "kind": "choice",
+      "key": "computer, cloudBackend, autoStartVps",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "access",
+        "row": "bot.access.computer",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.access.folder",
+      "indexed": true,
+      "anchor": "bot-setting-folder",
+      "surface": "any",
+      "label": "Working folder",
+      "kind": "path",
+      "key": "cwd",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "access",
+        "row": "bot.access.folder",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.access.sites",
+      "indexed": true,
+      "anchor": "bot-setting-sites",
+      "surface": "any",
+      "label": "Sites this bot published",
+      "kind": "list",
+      "key": "server publish records",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "access",
+        "row": "bot.access.sites",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.email.email",
+      "indexed": true,
+      "anchor": "bot-setting-email",
+      "surface": "any",
+      "label": "Email",
+      "kind": "composite",
+      "key": "bot-email status (not read in full in G0)",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "email",
+        "row": "bot.email.email",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "bot.model.model",
+      "indexed": true,
+      "anchor": "bot-setting-model",
+      "surface": "any",
+      "label": "Model",
+      "kind": "picker",
+      "key": "modelSelection {instanceId, model, connectionId, effort}",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "model",
+        "row": "bot.model.model",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.model.backup",
+      "indexed": true,
+      "anchor": "bot-setting-backup",
+      "surface": "desktop",
+      "label": "When this engine is at its limit",
+      "kind": "picker",
+      "key": "limitBackup {selection, routines, at}",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "model",
+        "row": "bot.model.backup",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.model.effort",
+      "indexed": true,
+      "anchor": "bot-setting-effort",
+      "surface": "any",
+      "label": "Effort",
+      "kind": "choice",
+      "key": "modelSelection.effort",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "model",
+        "row": "bot.model.effort",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.permissions.level",
+      "indexed": true,
+      "anchor": "bot-setting-level",
+      "surface": "any",
+      "label": "Approvals",
+      "kind": "choice",
+      "key": "autoApprove, fullAccess, noLimits (+ acknowledgements, channel and setup sub-switches)",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "permissions",
+        "row": "bot.permissions.level",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.permissions.can-talk",
+      "indexed": true,
+      "anchor": "bot-setting-can-talk",
+      "surface": "any",
+      "label": "Can talk to",
+      "kind": "choice",
+      "key": "messageAllow {mode, botIds, grantedBy}",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "permissions",
+        "row": "bot.permissions.can-talk",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.permissions.peers",
+      "indexed": true,
+      "anchor": "bot-setting-peers",
+      "surface": "any",
+      "label": "Ask me before contacting other bots",
+      "kind": "switch",
+      "key": "approvePeerComms",
+      "default": false,
+      "home": {
+        "page": "bot",
+        "section": "permissions",
+        "row": "bot.permissions.peers",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.permissions.images",
+      "indexed": true,
+      "anchor": "bot-setting-images",
+      "surface": "any",
+      "label": "Images",
+      "kind": "choice",
+      "key": "imageApproval, imageAskAfter",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "permissions",
+        "row": "bot.permissions.images",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.permissions.always-allowed",
+      "indexed": true,
+      "anchor": "bot-setting-always-allowed",
+      "surface": "any",
+      "label": "Always allowed",
+      "kind": "list",
+      "key": "alwaysAllow",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "permissions",
+        "row": "bot.permissions.always-allowed",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.permissions.review",
+      "indexed": true,
+      "anchor": "bot-setting-review",
+      "surface": "any",
+      "label": "Review ordinary approvals",
+      "kind": "choice",
+      "key": "autoReview",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "permissions",
+        "row": "bot.permissions.review",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.voice.voice",
+      "indexed": true,
+      "anchor": "bot-setting-voice",
+      "surface": "any",
+      "label": "Voice",
+      "kind": "composite",
+      "key": "speakReplies, voice, voiceProvider (+ tts key)",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "voice",
+        "row": "bot.voice.voice",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.voice.notifications",
+      "indexed": true,
+      "anchor": "bot-setting-notifications",
+      "surface": "any",
+      "label": "Notifications",
+      "kind": "switch",
+      "key": "notifications",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "voice",
+        "row": "bot.voice.notifications",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.voice.calls",
+      "indexed": true,
+      "anchor": "bot-setting-calls",
+      "surface": "any",
+      "label": "Calls",
+      "kind": "switch",
+      "key": "GET/PUT /api/bots/:id/calls/rules {enabled, neededNow}",
+      "default": false,
+      "home": {
+        "page": "bot",
+        "section": "voice",
+        "row": "bot.voice.calls",
+        "mode": "Simple"
+      }
+    },
+    {
+      "id": "bot.history.history",
+      "indexed": true,
+      "anchor": "bot-setting-history",
+      "surface": "any",
+      "label": "History",
+      "kind": "list",
+      "key": "allHeldTasks(bot)",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "history",
+        "row": "bot.history.history",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "bot.usage.usage",
+      "indexed": true,
+      "anchor": "bot-setting-usage",
+      "surface": "any",
+      "label": "Usage",
+      "kind": "readout",
+      "key": "read-only usage",
+      "default": null,
+      "home": {
+        "page": "bot",
+        "section": "usage",
+        "row": "bot.usage.usage",
+        "mode": "Advanced"
+      }
+    }
+  ],
+  "extra": [
+    {
+      "id": "bot.memory.continuity",
+      "kind": "switch",
+      "key": "continuity, continuityOptions",
+      "default": true,
+      "why": "ContinuityBlock is rendered but not indexed (G0 part2 1.6)",
+      "home": {
+        "page": "bot",
+        "section": "memory",
+        "row": "bot.memory.continuity",
+        "mode": "Advanced"
+      }
+    },
+    {
+      "id": "bot.voice.dictation",
+      "kind": "switch",
+      "key": "localStorage murage.cleanUpDictation (this device)",
+      "default": true,
+      "why": "VoiceSettings dictation switch, per device (G0 part1 V3)",
+      "home": {
+        "page": "bot",
+        "section": "voice",
+        "row": "bot.voice.dictation",
+        "mode": "Simple"
+      }
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 import "./memory/pre-listen-enable.ts";
+import { filesNamedByToolLine } from "./files-touched.ts";
 import { searchRowRendered } from "./search-rendered.ts";
 import { readChatsGen, registerChatsGenPublisher, publishChatsGenHeartbeat, publishChatsGenImmediately } from "./thread-summary.ts";
 import { fuigoRootRelocation } from "./drivers/acp/fuigo-policy.ts";
@@ -34,6 +35,8 @@ import { verifiedDoorTicket, verifiedRecoveryHold } from "./cloud-home/b1b-ident
 import { doorRefusal } from "./cloud-home/door-log.ts";
 import { withCloudOpening } from "./cloud-home/opening-screen.ts";
 import { resolveStaticFile } from "./static-files.ts";
+import { createStaticUiDiagnostics } from "./static-ui-reason.ts";
+import { createSetupPageResponder } from "./static-ui-setup-page.ts";
 import { CloudSessions } from "./cloud-sessions.ts";
 import { listenCloudProxy } from "./cloud-home/proxy-socket.ts";
 import { createCloudRequestAuth } from "./cloud-request-auth.ts";
@@ -302,7 +305,10 @@ import { driverMountsPhoneJobs } from "./phone-jobs-engines.ts";
 import { aiProviderName } from "../shared/phone-ai-provider.ts";
 import { chatsReader, companionAuthorized, doorAuthorized, launchProofPresent, ownerActs } from "./companion-authority.ts";
 import { ownerAppSurface } from "./owner-app.ts";
-import { readOwnerPrefs, todayViewRoute, writeOwnerPrefs } from "./owner-prefs.ts";
+import { firstRunJobsRoute, readOwnerPrefs, todayViewRoute, writeOwnerPrefs } from "./owner-prefs.ts";
+import { ensureHired, parseHireBody, type HireDeps, type HirePackageId } from "./setup-hire.ts";
+import { convertGrokExports, findMoveIn, forgetGrokCount, grokCountForSetup } from "./move-in-found.ts";
+import { parseBotPackageManifest } from "./bot-package-manifest.ts";
 import { replayEarlyParentMessages } from "./launch-secret.ts";
 import { createMcpAccessCheck, readOrCreateMcpAccessKey, removeMcpAccessKey } from "./mcp-access.ts";
 import { McpGrants, mcpGrantAdmits, type McpGrant } from "./mcp-grants.ts";
@@ -407,7 +413,8 @@ import { withBackupNotices } from "./inbox-backup-notices.ts";
 import { leaveLearningPaused, learningPausedRow, withLearningPaused } from "./inbox-learning-paused.ts";
 import { sliceSizer } from "./slice-budget.ts";
 import { hasThreadSnooze, sweepThreadSnoozes, wakesActivitySnooze, threadSnoozeRequest, unsnoozeThread, wakeThreadOnActivity, type ThreadSnoozeDeps } from "./thread-snooze.ts";
-import { TRAY_ITEM_LIMIT, traySummary } from "./tray-summary.ts";
+import { TRAY_ITEM_LIMIT, traySummary, type TraySummary } from "./tray-summary.ts";
+import { HeldDuringQuiet, closedOutsideMap, judgeOutsideCard, outsideDisplay, outsideOkMap, parseOutsideBody } from "./desktop-attention.ts";
 import { handleVoiceHostRoute, VOICE_HOST_PATH } from "./voice/voice-host-route.ts";
 import { CALL_NOTE_PATH, handleCallNoteRoute } from "./voice/call-note.ts";
 import { callAccess, callTargetAccess, callSourceVisible } from "./voice/call-access.ts";
@@ -957,7 +964,7 @@ import { type SetupTiming, createSetupTiming, pressWaitOf, readSideBySide } from
 import { type EngineChoice, bootEngineChoice, nativeTurnModel, defaultModel, fuigoBirthModel, fuigoUsable, pickDefaultEngine } from "./default-engine.ts";
 import { hiddenEngineRows, hideEngineRefusal, isHiddenEngine, withoutHiddenEngines } from "./hidden-engines.ts";
 import { couldMoveEngine, createEngineRepick, targetCheck } from "./engine-repick.ts";
-import { type SetupCardData, readSetupCard, setupCardKey } from "../shared/setup-card.ts";
+import { type SetupCardData, SETUP_OWN_RECORD_KEYS, isOwnRecordVariant, readSetupCard, setupCardKey } from "../shared/setup-card.ts";
 import { plainConnectedAppText } from "../shared/connected-app-tools.ts";
 import { resumesLegacySession, withLegacyNames } from "../shared/connected-app-names.ts";
 import { chiefConfirmation, chiefConfirmationsFor } from "../shared/first-run-chief.ts";
@@ -1139,7 +1146,7 @@ import { createBotPackageExportBundle } from "./package-export-bundle.ts";
 import { searchWeb, searchFlux, SearchError } from "./web-search.ts";
 import { searchFreeWeb, FreeWebSearchError } from "./free-web-search.ts";
 import { handleSkillsApi } from "./skills-api.ts";
-import { applyNotificationPreferences, quietHoursActive, resolveNotificationPreferences } from "../shared/notification-preferences.ts";
+import { applyNotificationPreferences, notificationDropReason, quietHoursActive, quietHoursEndsAt, resolveNotificationPreferences } from "../shared/notification-preferences.ts";
 import { ProjectTurnLeases } from "./project-turn-leases.ts";
 import { providerCloseDeadlineMs } from "./drivers/child-teardown.ts";
 import { TelegramService, TelegramTokenRefusal } from "./telegram-service.ts";
@@ -1229,6 +1236,8 @@ const USER_CHROME_ALLOW_PANEL_MESSAGE = "Chrome did not let Murage connect. When
 const PORT = Number(process.env.MURAGE_PORT || process.env.MURAGEBOX_PORT || 8799);
 const WEBHOOK_PORT = Number(process.env.MURAGE_WEBHOOK_PORT || PORT + 1);
 const STATIC_DIR = process.env.MURAGE_STATIC_DIR || null;
+/** Says why the app page could not be served (a missing or locked ui folder), once per reason, and checks the folder at boot. Never logs file contents. */
+const staticUiDiagnostics = STATIC_DIR ? createStaticUiDiagnostics(STATIC_DIR) : null;
 /** A Cloud home tells its own app which home it is (the "Continue from murage.ai" link): MURAGE_CLOUD_MACHINE_ID (equals cloud_homes.id), else the pinned control-plane binding. Never taken from the URL. */
 let cloudHomeIdSource: (() => string | undefined) | undefined;
 function withCloudHomeId(html: Buffer): Buffer {
@@ -1678,6 +1687,9 @@ type UtilityParentPort = {
 // SAFETY: Electron's utility-process runtime is the only environment that
 // supplies parentPort; plain Node intentionally leaves it absent.
 const cloudHome = process.env.MURAGE_CLOUD_ROLE === "home";
+/** A page load the packaged server cannot serve (files missing or locked) gets a self-contained HTML setup page, never JSON (WIN-NOROUTE-1019). The log link is the desktop child's only. */
+const setupResponder = STATIC_DIR ? createSetupPageResponder({ logLink: !cloudHome }) : null;
+const staticUiTrace = process.env.MURAGE_STATIC_UI_TRACE === "1";
 installCloudProcessHooks(); // no-op unless this is a Cloud home; the desktop is unchanged
 const homeSessions = (() => {
   if (!cloudHome) return undefined;
@@ -4750,6 +4762,7 @@ async function setupLiveState({ seat = true, timing }: { seat?: boolean; timing?
     agents: setupAgentsReading(described),
     // Who runs on each one: Needs you names only an engine a bot uses (setupEngineUsers).
     signedOutAgents: setupEngineUsers(setupSignedOutReading(described), store.bots, routines?.listRoutines() ?? []),
+    moveIn: { grok: await grokCountForSetup().catch(() => 0) },
     flux: { configured: flux.configured, conflict: flux.conflict, looksValid: fluxKeyLooksValid(fluxKey()) },
     bundledEngine: bundledEngineStatus(),
     connectedApps: connected.count,
@@ -4952,6 +4965,87 @@ function chiefConfirms(step: SetupStep, answer: string): void {
   }
 }
 
+/** The commit step of a package import: one place, used by the package routes and by hiring (POST /api/setup/hire). */
+function packageImportAtomicCommit(refuseRepeatedImport: () => void): Parameters<typeof importBotPackageArchive>[0]["atomicCommit"] {
+  return ({ prepared }) => {
+    if (dataWritersStopped || !routines) throw new Error("Installation is closing");
+    for (const bot of prepared.bots) store.botIdGuard?.(bot.id);
+    refuseRepeatedImport();
+    if(cloudHome && [...prepared.bots,...prepared.routines].some(record=>record.alwaysAllow?.length)) throw Object.assign(new Error(cloudHomeCopy.alwaysAllowUnavailable),{status:403});
+    for (const bot of prepared.bots) bot.packageImportReceipt = { reviewHash: prepared.reviewHash, archiveSha256: prepared.archiveSha256, importId: prepared.id, selectionHash: prepared.selectionHash, ...(prepared.agentKeys[bot.id] ? { agentKey: prepared.agentKeys[bot.id] } : {}) };
+    prepared.bots[0].packageImportReceipt!.baseline = prepared.baseline;
+    const botBatch = store.preparePackageAddition(prepared.bots, prepared.groups, { born: new Set(prepared.bornBotIds) });
+    // Leads are decided here, on each lead's final engine (born or the starter's pick), with nothing awaited since the birth.
+    const admitted = prepared.leadBotIds.filter(id => { const selection = prepared.bots.find(bot => bot.id === id)?.modelSelection; return !!selection && leadershipAdmissionError(registry.get(selection.instanceId), selection.instanceId) === null; });
+    prepared.leadBotIds.splice(0, prepared.leadBotIds.length, ...admitted);
+    const routineBatch = routines.preparePackageAddition(prepared.routines);
+    const replacements = new Map([...botBatch.files, ["routines.json", routineBatch.bytes] as const,
+      ...prepared.files.map(file => [file.path, file.content] as const)]);
+    const expected = new Map<string, string | null>();
+    for (const relative of replacements.keys()) {
+      try { expected.set(relative, createHash("sha256").update(readFileSync(join(DATA_DIR, relative))).digest("hex")); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; expected.set(relative, null); }
+    }
+    const assertOwned = () => { if (dataWritersStopped) throw new Error("Installation is closing"); };
+    try {
+      commitPackageImportFiles(DATA_DIR, replacements, expected, { allowedNewBotIds: prepared.bots.map(bot => bot.id), assertOwned });
+    } catch (error) {
+      // Settle a recoverable write failure before the event loop admits
+      // another writer. A durable commit must still publish its state.
+      let recovered: ReturnType<typeof recoverPackageImportTransaction>;
+      try { recovered = recoverPackageImportTransaction(DATA_DIR, { assertOwned }); }
+      catch {
+        // Memory may no longer describe disk. Stop synchronously so no
+        // timer/provider callback writes over retained recovery evidence.
+        // Leave dataWritersStopped false: the stale lease and journal
+        // must survive for explicit recovery at the next startup.
+        process.stderr.write("Package import recovery could not establish a consistent installation. Murage stopped; the recovery journal and original copies were retained.\n");
+        process.exit(1);
+      }
+      if (recovered.status !== "committed") throw error;
+    }
+    routineBatch.publish();
+    botBatch.publish();
+  };
+}
+
+/**
+ * The shipped starter import for one package with an explicit selection, run inside the server for POST
+ * /api/setup/hire: preview, then import, with the same commit the package routes use. Never `firstRun`, and never a
+ * lead: a hired bot starts on Ask and reports to the Chief, who is never replaced.
+ */
+async function importStarterAgents(profileId: HirePackageId, selection: { agents: string[]; skills: string[]; instructions: string[]; routines: string[] }): Promise<void> {
+  return importReviewedContents(starterProfileContents(profileId), selection);
+}
+
+async function importReviewedContents(contents: ReturnType<typeof starterProfileContents>, selection: { agents: string[]; skills: string[]; instructions: string[]; routines: string[] }): Promise<void> {
+  const preview = await previewBotPackageContents(contents, { selection, existingBots: store.bots });
+  if (preview.scan.blocked) throw new Error("That package did not pass this computer's content checks.");
+  const selectionHash = packageImportSelectionHash(selection);
+  const refuseRepeatedImport = () => {
+    if (store.bots.some(bot => bot.packageImportReceipt?.archiveSha256 === preview.archiveSha256 && bot.packageImportReceipt?.selectionHash === selectionHash)) {
+      throw Object.assign(new Error("This reviewed package was already imported"), { status: 409 });
+    }
+  };
+  refuseRepeatedImport();
+  await importBotPackageContents({
+    contents, dataDir: DATA_DIR, selection, expectedArchiveSha256: preview.archiveSha256, expectedReviewHash: preview.reviewHash,
+    acknowledgeWarnings: false, existingBots: store.bots, modelSelection: "birth",
+    existingSections: [...store.bots, ...store.groups].flatMap(record => record.section?.trim() ? [record.section.trim()] : []),
+    starterLeads: false, assertFreshBotId: assertCloudBotIdNotTombstoned,
+    atomicCommit: packageImportAtomicCommit(refuseRepeatedImport),
+  });
+}
+
+const setupHireDeps: HireDeps = {
+  bots: () => store.bots,
+  shape: (profileId) => {
+    const pkg = starterProfileContents(profileId).manifest.definition.package;
+    return { agents: pkg.agents.map(agent => agent.key), routines: (pkg.routines ?? []).map(routine => ({ key: routine.key, agent: routine.agent })) };
+  },
+  importAgents: importStarterAgents,
+};
+
 function driveSetupConversation(view: SetupView): void {
   if (!view.chiefBotId) return;
   const chief = store.bot(view.chiefBotId);
@@ -4965,7 +5059,8 @@ function driveSetupConversation(view: SetupView): void {
       const parsed = card ? readSetupCard(card) : null;
       if (card && parsed) present.set(parsed.key, { id: message.id, card, setup: parsed });
     }
-    const plan = setupConversationPlan(view, new Set(present.keys()));
+    const settledKeys = new Set([...present].filter(([, entry]) => entry.setup.settled === true).map(([key]) => key));
+    const plan = setupConversationPlan(view, new Set(present.keys()), settledKeys);
     // A card whose step went BACK has to come back live, which is the half
     // this early return used to be blind to: "Something else" reopened `chat`
     // and the plan had nothing to append, so the driver returned here and the
@@ -5017,6 +5112,9 @@ function driveSetupConversation(view: SetupView): void {
           title: card.title,
           subtitle: card.subtitle,
           options: [],
+          // The three 1.0.19 cards carry a non-empty `answered` so a 1.0.18 renderer, which cannot read their variant,
+          // hides them instead of showing the generic onboarding card; 1.0.19 reads `setup.settled`, never `answered`.
+          ...(isOwnRecordVariant(card.variant) ? { answered: "setup" } : {}),
           setup: { step: card.step, variant: card.variant, key: card.key },
         },
       }));
@@ -5867,6 +5965,8 @@ store.onChange((change) => {
       const card = change.message.card;
       if (card?.requestId && ((card.answered !== undefined && card.answered !== null) || card.dismissed || card.expired)) {
         const key = `${change.threadId}:${card.requestId}`;
+        // The desktop's outside surfaces fold, close or clear this card (ids only, never content).
+        broadcast({ kind: "attention.settled", threadId: change.threadId, requestId: card.requestId });
         try {
           if (pushOutbox.resolve(change.threadId, card.requestId, settledBy(card, answeredWhere.take(key)))) void pushOutbox.flush().catch(pushFailed("flush"));
         } catch (error) { pushWarn("patch", error); /* never fail the patch */ }
@@ -6875,13 +6975,17 @@ async function answerRequest(
   answers?: QuestionAnswer[],
   /** "Allow for this task" on a stop-line card: record the card's own scoped
    * grant for this bot and conversation once the engine has taken the answer. */
-  options?: { allowForTask?: boolean; desktop?: boolean; receipt?: TaskGrantReceipt; batch?: { batchId: string; batchSize: number } },
+  options?: { allowForTask?: boolean; desktop?: boolean; outside?: boolean; receipt?: TaskGrantReceipt; batch?: { batchId: string; batchSize: number } },
 ): Promise<RequestOutcome> {
   const flight = `${threadId}:${requestId}`;
+  // NOTIFY-EVERYWHERE-1019: while an outside answer is being delivered, any other answer to the card is refused (one decision only).
+  if (options?.outside !== true && outsideFlights.has(flight)) return "unavailable";
+  if (options?.outside === true) outsideFlights.add(flight);
   answersInFlight.set(flight, (answersInFlight.get(flight) ?? 0) + 1);
   try {
     return await deliverAnswer(threadId, instanceId, requestId, behavior, message, decidedFor, answers, options);
   } finally {
+    if (options?.outside === true) outsideFlights.delete(flight);
     const left = (answersInFlight.get(flight) ?? 1) - 1;
     if (left > 0) answersInFlight.set(flight, left);
     else answersInFlight.delete(flight);
@@ -6958,7 +7062,7 @@ async function deliverAnswer(
   message?: string,
   decidedFor?: { id: string; name: string },
   answers?: QuestionAnswer[],
-  options?: { allowForTask?: boolean; desktop?: boolean; receipt?: TaskGrantReceipt; batch?: { batchId: string; batchSize: number } },
+  options?: { allowForTask?: boolean; desktop?: boolean; outside?: boolean; receipt?: TaskGrantReceipt; batch?: { batchId: string; batchSize: number } },
 ): Promise<RequestOutcome> {
   // Putting something on the internet is said yes to on the computer running Murage only.
   // A chat button, a push action or a paired phone can still say no.
@@ -7561,6 +7665,132 @@ async function freshAuthRefusal(req: IncomingMessage, url: URL, threadId: string
   });
   return result.ok ? null : result;
 }
+// ---- NOTIFY-EVERYWHERE-1019 S1: answering from outside the app (design section 5.1) ----
+/** Distinct files the turn wrote, from its own tool lines since it started (0 when the start is unknown). */
+function filesTouchedSince(threadId: string, startedMs: number | undefined): number {
+  if (!startedMs) return 0;
+  const files = new Set<string>();
+  try {
+    store.scanNewest(threadId, message => {
+      if (message.at < startedMs) return true;
+      const tool = message.kind === "activity" ? message.tool : undefined;
+      if (tool && /^(write|edit|multiedit|notebookedit|create|apply_patch|patch)/i.test(tool.name ?? "")) {
+        // Files, not tool lines: the same file edited twice is one file; a line naming no path counts nothing.
+        for (const path of filesNamedByToolLine(tool.name ?? "", tool.summary).paths) files.add(path);
+      }
+      return false;
+    });
+  } catch { /* a receipt never fails a turn */ }
+  // Distinct named paths only: a count phrase cannot say which files, so it adds nothing.
+  return files.size;
+}
+/** One id per server process: main keys every tracked card by it, so a restart never reuses a token. */
+const ATTENTION_EPOCH = randomUUID();
+/** What quiet hours dropped, for the "N things waited" summary (never persisted). */
+const heldDuringQuiet = new HeldDuringQuiet();
+/** When each thread's turn started, so a finished turn can say how long it took (done frames carry durationMs). Bounded. */
+const turnStartedAtMs = new Map<string, number>();
+/** The attention read lists at most this many open cards (counts and summaries only, never settlement). */
+const ATTENTION_OPEN_LIMIT = 50;
+/** The Inbox's decisions as the tray and the attention read show them. previewContent decides what text leaves the server. */
+async function desktopInboxSummary(itemLimit: number): Promise<{ status: number; body: unknown }> {
+  const result = inboxRequest(database(), { method: "GET", path: "/api/inbox", query: { view: "decisions", page: 0, pageSize: itemLimit } }, { owner: true, threads: inboxThreads(store), routineRuns: inboxRoutineRuns() }, { cache: true });
+  if (result.status !== 200) return result;
+  // Not an empty tray while the Inbox is getting ready: no summary at all.
+  if ((result.body as InboxPage).preparing) return { status: 503, body: { error: "Getting your inbox ready" } };
+  return {
+    status: 200,
+    body: traySummary({
+      page: result.body as InboxPage,
+      bots: store.bots,
+      chiefId: store.workspaceChief()?.id,
+      message: (threadId, messageId) => store.messageById(threadId, messageId),
+      // the turn's newest tool line, read back from the newest row to the turn's start
+      newestActivity: (threadId, startedAt) => {
+        let last: Message | undefined;
+        store.scanNewest(threadId, message => {
+          if (startedAt && message.at < startedAt) return true;
+          if (message.kind === "activity" && message.tool) { last = message; return true; }
+          return false;
+        });
+        return last;
+      },
+      stopHit: (threadId, requestId) => stopHitByRequest.has(`${threadId}:${requestId}`),
+      signedOutEngines: await traySignedOutEngines(),
+      previewContent: resolveNotificationPreferences(cfg.notifications).previewContent,
+      digest: approvalDigestSync,
+      itemLimit,
+    }),
+  };
+}
+/** The record of one open card for an outside surface (the same shape as an `open` entry), or null when it is not waiting. */
+function attentionCardRecord(threadId: string, messageId: string) {
+  const message = store.messageById(threadId, messageId);
+  const card = message?.card;
+  if (!message || !card?.requestId || card.answered || card.dismissed || card.expired) return null;
+  const previews = resolveNotificationPreferences(cfg.notifications).previewContent;
+  const botId = message.from?.botId ?? store.botByThread(threadId)?.id;
+  const botName = (botId ? store.bot(botId)?.name : undefined) ?? "Murage";
+  const stopHit = stopHitByRequest.has(`${threadId}:${card.requestId}`);
+  const display = previews ? outsideDisplay(card, botName) : null;
+  return {
+    threadId, messageId, requestId: card.requestId, ...(botId ? { botId } : {}), ...(display ? { display } : {}),
+    outsideOk: previews ? outsideOkMap(card, { stopHit, botName }) : closedOutsideMap(),
+    ...(previews ? { digest: approvalDigestSync(threadId, card.requestId, card) } : {}),
+  };
+}
+/** Flights an outside answer started: a second answer from anywhere else is refused until it settles (one decision only). */
+const outsideFlights = new Set<string>();
+/** Each special kind's live predicate (the same probes respondToCard builds): an outside answer never reaches any of them. */
+function outsideSpecialCard(threadId: string, requestId: string, card: Message["card"] | undefined): boolean {
+  return requestId.startsWith("limit-") || isEmailRequestId(requestId) || isVenuePostRequestId(requestId)
+    || Boolean(card && isQuestionCard(card))
+    || Boolean(store.cardForRequest(threadId, requestId, (message) => Boolean(message.card?.skillRequest))?.card?.skillRequest)
+    || Boolean(store.cardForRequest(threadId, requestId, (message) => Boolean(message.card?.routineRequest))?.card?.routineRequest)
+    || Boolean(peerApprovalHolder(requestId)) || Boolean(browserExtension?.knowsCard(requestId)) || hostComputerConsentPending(requestId);
+}
+/** The one outside answer path (rev 3 redesign, Astra r2 #1). SYNCHRONOUS: there is NO await between its checks and the call to
+ *  answerRequest, so nothing can change in between, and it never enters a special resolver. A static test pins that. */
+function answerOutside(io: { req: IncomingMessage; url: URL; res: ServerResponse }, threadId: string, body: Record<string, unknown>): Promise<void> | void {
+  const { req, url, res } = io;
+  // 1. Authority: the owner's desktop app (Cloud: the owner-desktop scope only) for EVERY behavior, Deny and Reply included.
+  const owner = ownerAppSurface(req.headers, url.searchParams);
+  if (!owner.ok || owner.app.kind !== "desktop") return json(res, 403, { error: APPROVAL_NEEDS_OWNER, code: "outside_needs_desktop" });
+  if (!mayApprove(req, url)) return json(res, 403, { error: APPROVAL_NEEDS_OWNER, code: "outside_needs_desktop" });
+  // 2. Shape: allow or deny (Reply is deny with words), nothing else.
+  const parsed = parseOutsideBody(body);
+  if (!parsed.ok) return json(res, parsed.status, { error: "That answer was not in the expected shape.", code: parsed.code });
+  // 3. Privacy: with details hidden nothing can be answered outside the app.
+  if (!resolveNotificationPreferences(cfg.notifications).previewContent) return json(res, 403, { error: "With details hidden, answer this in Murage.", code: "previews_off" });
+  // The fresh-auth gate returns null for the desktop surface today; assert it still would, and refuse if it ever would not.
+  if (!skipsFreshAuth(req.headers, url.searchParams)) return json(res, 403, { error: APPROVAL_NEEDS_OWNER, code: "outside_needs_desktop" });
+  const { requestId } = parsed, flight = `${threadId}:${requestId}`;
+  // 4. Card: re-read the live card; open, ordinary, same digest, and it fits the token's own surface.
+  const asked = threadRequestOwner(threadId, requestId);
+  const card = asked.pending?.card ?? pushCard(threadId, requestId);
+  const botId = asked.pending?.from?.botId ?? asked.owner?.id;
+  const verdict = judgeOutsideCard({
+    card, special: outsideSpecialCard(threadId, requestId, card), digestAsked: parsed.digest,
+    digestNow: card?.requestId ? approvalDigestSync(threadId, requestId, card) : null,
+    stopHit: stopHitByRequest.has(flight), botName: (botId ? store.bot(botId)?.name : undefined) ?? asked.owner?.name, surface: parsed.surface,
+  });
+  if (!verdict.ok) return json(res, verdict.status, { error: "This request changed. Open it in Murage to answer.", code: verdict.code });
+  // 5. Ownership and exclusivity: still pending, and no answer from any surface is being delivered right now.
+  if (!asked.owner && !asked.pending) return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });
+  if (answersInFlight.has(flight)) return json(res, 409, { error: "That request is already being answered.", code: "in_flight" });
+  if (!publishAnswerAllowed(requestId, parsed.behavior, "desktop")) return json(res, 403, { error: PUBLISH_NEEDS_COMPUTER });
+  // 6. Exactly the call respondToCard makes for an in-app Allow or Deny: never allowForTask or batch. desktop:true is what
+  //    deliverAnswer re-checks for publish cards. Its synchronous first step registers the flight.
+  try { answeredWhere.attempt(flight, "desktop", res); } catch (error) { pushWarn("respond-route", error); }
+  const receipt: TaskGrantReceipt = {};
+  return answerRequest(threadId, asked.instanceId, requestId, parsed.behavior, parsed.message, asked.decidedFor, undefined, { desktop: true, outside: true, receipt }).then(
+    (outcome) => { json(res, 200, { ok: true, outcome }); },
+    (error: unknown) => {
+      try { answeredWhere.forget(flight); } catch (forgetError) { pushWarn("respond-route", forgetError); }
+      json(res, error instanceof ApprovalDeliveryError ? 503 : 500, { error: "That answer could not be delivered. Open it in Murage to answer." });
+    },
+  );
+}
 /** The one function that answers a card (APPROVE-ALL design 6.1): the body of POST /api/threads/:id/respond, branch for
  *  branch and in its order. The route and Approve all share it. `bulk` is set only by the Approve all apply route, whose
  *  body is always exactly { requestId, behavior: "allow" }: with it, each branch either runs as on a single Allow or
@@ -7573,6 +7803,8 @@ async function respondToCard(io: { req: IncomingMessage; url: URL; res: ServerRe
   const cardOwner = (cardBotId: string | undefined): string | undefined => route ? route.botId : cardBotId ?? store.botByThread(threadId)?.id;
   if (threadId === APPROVE_ALL_THREAD) return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });
   if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400, { error: "behavior must be allow, deny, answer, or skip" });
+  // NOTIFY-EVERYWHERE-1019: an outside answer hands off here, before any branch, to its own synchronous path (never in bulk).
+  if (body.outside !== undefined) return bulk ? json(res, 400, { error: "behavior must be allow, deny, answer, or skip" }) : answerOutside(io, threadId, body);
   const behavior = requestBehavior(body.behavior);
   const reviewedSha256 = typeof body.reviewedSha256 === "string" ? body.reviewedSha256 : undefined;
   const skip = body.behavior === "skip";
@@ -7620,6 +7852,8 @@ async function respondToCard(io: { req: IncomingMessage; url: URL; res: ServerRe
     if (undoCard && undoBotId && resolveAndSendRoutine(res, { botId: undoBotId, botName: store.bot(undoBotId)?.name, threadId, requestId, behavior })) return;
     return json(res, 400, { error: UNDO_ONLY_AUTOMATIONS });
   }
+  // NOTIFY-EVERYWHERE-1019: an outside answer is being delivered: a distinct 409 (not an "unavailable" 200) BEFORE any attempt is recorded.
+  if (outsideFlights.has(`${threadId}:${requestId}`)) return json(res, 409, { error: "That request is already being answered.", code: "in_flight" });
   // Kept only if this route accepts the answer (AnsweredWhere.attempt).
   try { answeredWhere.attempt(`${threadId}:${requestId}`, requestSurface(req.headers, url.searchParams) === "desktop" ? "desktop" : "elsewhere", res); } catch (error) { pushWarn("respond-route", error); }
   // a question card (answer-as-send included) is never approved in bulk: refused before either resolver runs
@@ -7641,6 +7875,7 @@ async function respondToCard(io: { req: IncomingMessage; url: URL; res: ServerRe
   // harness-owned branches below are left alone.
   if (question.kind === "deliver") {
     const asked = threadRequestOwner(threadId, requestId);
+    if (outsideFlights.has(`${threadId}:${requestId}`)) return json(res, 409, { error: "That request is already being answered.", code: "in_flight" });
     const outcome = await answerRequest(threadId, asked.instanceId, requestId, question.behavior, question.message, asked.decidedFor, question.answers);
     return json(res, 200, { ok: true, outcome });
   }
@@ -7705,6 +7940,7 @@ async function respondToCard(io: { req: IncomingMessage; url: URL; res: ServerRe
   if (!publishAnswerAllowed(requestId, behavior, onComputer ? "desktop" : "elsewhere")) return json(res, 403, { error: PUBLISH_NEEDS_COMPUTER });
   // the task row was checked first, above; the reply names what it added (UX-TRUST-MOMENTS-1012 1.3)
   const receipt: TaskGrantReceipt = {};
+  if (outsideFlights.has(`${threadId}:${requestId}`)) return json(res, 409, { error: "That request is already being answered.", code: "in_flight" });
   const outcome = await answerRequest(threadId, asked.instanceId, requestId, behavior, body.message as string | undefined, asked.decidedFor, undefined, { receipt, ...(body.allowForTask === true ? { allowForTask: true } : {}), ...(onComputer ? { desktop: true } : {}), ...(bulk ? { batch: { batchId: bulk.batchId, batchSize: bulk.batchSize } } : {}) });
   return json(res, 200, { ok: true, outcome, ...(receipt.taskAdded ? { taskAdded: receipt.taskAdded } : {}) });
 }
@@ -8022,6 +8258,14 @@ function notify(notification: Notification | null, askDeviceId?: string) {
   // exactly like {kind:"message", message} and {kind:"bot", bot}
   const selected = notification && applyNotificationPreferences(notification, cfg.notifications, new Date());
   if (!selected) {
+    // Quiet hours as the ONLY reason (after the per-bot mute in buildNotification and the category filter): remember it for the summary.
+    try {
+      if (notification && notificationDropReason(notification, cfg.notifications, new Date()) === "quiet") {
+        heldDuringQuiet.add({ kind: notification.kind, botId: notification.botId, threadId: notification.threadId, at: Date.now(),
+          ...(notification.messageId ? { messageId: notification.messageId } : {}), ...(notification.requestId ? { requestId: notification.requestId } : {}),
+          ...(notification.deliveryId ? { deliveryId: notification.deliveryId } : {}) });
+      }
+    } catch (error) { pushWarn("held", error); }
     if (notification && (notification.kind === "approval" || notification.kind === "question")) console.info(`mobile push: ${notification.kind} filtered by notification preferences thread=${notification.threadId}`);
     return;
   }
@@ -8975,6 +9219,7 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
   // Set only for the assistant-text item this guard cut.
   let cutSpeaker: string | undefined;
   if (event.type === "turn.started") replySpeakerTurns.started(event.threadId, event.turnId);
+  if (event.type === "turn.started") { turnStartedAtMs.set(event.threadId, Date.now()); if (turnStartedAtMs.size > 2000) turnStartedAtMs.delete(turnStartedAtMs.keys().next().value!); }
   if (event.type === "turn.completed") queueMicrotask(() => replySpeakerTurns.completed(event.threadId, event.turnId));
   // a room's live provider turn (direct turns have turnAttribution): the turn a member's ask_user card was asked in (QW rooms)
   if (event.type === "turn.started" && event.turnId && store.groupByThread(event.threadId)) roomLiveTurns.set(event.threadId, event.turnId);
@@ -10204,7 +10449,11 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
           const completionDetail = routineRun
             ? reply || routineRun.output || routineRun.routineName
             : reply;
-          notify(buildNotification("done", bot, routineReportThread ?? event.threadId, completionDetail, { avatarUrl: bot.avatarUrl }), askDevice);
+          const startedMs = turnStartedAtMs.get(event.threadId);
+          turnStartedAtMs.delete(event.threadId);
+          const durationMs = startedMs ? Math.max(0, Date.now() - startedMs) : undefined;
+          notify(buildNotification("done", bot, routineReportThread ?? event.threadId, completionDetail, { avatarUrl: bot.avatarUrl, deliveryId: randomUUID(), ...(durationMs !== undefined ? { durationMs } : {}),
+            receipt: { engineLabel: engineLabelOf(bot.modelSelection), filesTouched: filesTouchedSince(event.threadId, startedMs), sent: null } }), askDevice);
         }
         if (screenPollers.get(bot.id)?.threadId===event.threadId) {
           // the last live frame becomes a settled inline screen message —
@@ -23762,28 +24011,34 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
     // ordinary approval through /api/threads/:id/respond like the app does.
     if (method === "GET" && path === "/api/desktop/tray") {
       if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 403, { error: "the tray menu is available on the desktop app" });
-      const result = inboxRequest(database(), { method: "GET", path: "/api/inbox", query: { view: "decisions", page: 0, pageSize: TRAY_ITEM_LIMIT } }, { owner: true, threads: inboxThreads(store), routineRuns: inboxRoutineRuns() }, { cache: true });
-      if (result.status !== 200) return json(res, result.status, result.body);
-      // Not an empty tray while the Inbox is getting ready: no summary at all.
-      if ((result.body as InboxPage).preparing) return json(res, 503, { error: "Getting your inbox ready" });
-      return json(res, 200, traySummary({
-        page: result.body as InboxPage,
-        bots: store.bots,
-        chiefId: store.workspaceChief()?.id,
-        message: (threadId, messageId) => store.messageById(threadId, messageId),
-        // the turn's newest tool line, read back from the newest row to the turn's start
-        newestActivity: (threadId, startedAt) => {
-          let last: Message | undefined;
-          store.scanNewest(threadId, message => {
-            if (startedAt && message.at < startedAt) return true;
-            if (message.kind === "activity" && message.tool) { last = message; return true; }
-            return false;
-          });
-          return last;
-        },
-        stopHit: (threadId, requestId) => stopHitByRequest.has(`${threadId}:${requestId}`),
-        signedOutEngines: await traySignedOutEngines(),
-      }));
+      const summary = await desktopInboxSummary(TRAY_ITEM_LIMIT);
+      return json(res, summary.status, summary.body);
+    }
+    // NOTIFY-EVERYWHERE-1019 S1: what the desktop's outside surfaces read. Desktop only (route class desktop), read-only, and with
+    // previews off the same redaction as the tray: no card text and every outsideOk entry false.
+    if (method === "GET" && path === "/api/desktop/attention") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 403, { error: "the attention read is available on the desktop app" });
+      const summary = await desktopInboxSummary(ATTENTION_OPEN_LIMIT);
+      if (summary.status !== 200) return json(res, summary.status, summary.body);
+      const tray = summary.body as TraySummary;
+      const endsAt = quietHoursEndsAt(cfg.notifications, new Date());
+      return json(res, 200, {
+        epoch: ATTENTION_EPOCH, needsYou: tray.needsYou, quietHours: { active: endsAt !== null, endsAt },
+        heldDuringQuiet: heldDuringQuiet.list(),
+        open: tray.items.filter(item => item.requestId).map(item => ({ threadId: item.threadId, messageId: item.messageId, requestId: item.requestId, ...(item.botId ? { botId: item.botId } : {}), ...(item.display ? { display: item.display } : {}), outsideOk: item.outsideOk, ...(item.digest ? { digest: item.digest } : {}) })),
+      });
+    }
+    if (method === "POST" && path === "/api/desktop/attention/held/ack") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 403, { error: "the attention read is available on the desktop app" });
+      const upTo = ((await readBody(req)) as { upTo?: unknown } | null)?.upTo;
+      heldDuringQuiet.ack(typeof upTo === "number" && Number.isFinite(upTo) ? upTo : undefined);
+      return json(res, 200, { ok: true });
+    }
+    if (method === "GET" && path === "/api/desktop/attention/card") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 403, { error: "the attention read is available on the desktop app" });
+      const threadId = url.searchParams.get("threadId") ?? "", messageId = url.searchParams.get("messageId") ?? "";
+      const record = threadId && messageId ? attentionCardRecord(threadId, messageId) : null;
+      return record ? json(res, 200, record) : json(res, 404, { error: "that card is not waiting" });
     }
     // Progress of the output-lineage conversion and space reclaim (memory v7).
     if(method==="GET" && path==="/api/memory/storage") return json(res,200,lineageStorageStatus(database()));
@@ -27135,46 +27390,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         // A shipped starter crew names its lead; whether the lead's engine can coordinate bots is decided in the commit, on its final engine.
         starterLeads: starter,
         assertFreshBotId: assertCloudBotIdNotTombstoned,
-        atomicCommit: ({ prepared }) => {
-          if (dataWritersStopped || !routines) throw new Error("Installation is closing");
-          for (const bot of prepared.bots) store.botIdGuard?.(bot.id);
-          refuseRepeatedImport();
-          if(cloudHome && [...prepared.bots,...prepared.routines].some(record=>record.alwaysAllow?.length)) throw Object.assign(new Error(cloudHomeCopy.alwaysAllowUnavailable),{status:403});
-          for (const bot of prepared.bots) bot.packageImportReceipt = { reviewHash: prepared.reviewHash, archiveSha256: prepared.archiveSha256, importId: prepared.id, selectionHash: prepared.selectionHash };
-          prepared.bots[0].packageImportReceipt!.baseline = prepared.baseline;
-          const botBatch = store.preparePackageAddition(prepared.bots, prepared.groups, { born: new Set(prepared.bornBotIds) });
-          // Leads are decided here, on each lead's final engine (born or the starter's pick), with nothing awaited since the birth.
-          const admitted = prepared.leadBotIds.filter(id => { const selection = prepared.bots.find(bot => bot.id === id)?.modelSelection; return !!selection && leadershipAdmissionError(registry.get(selection.instanceId), selection.instanceId) === null; });
-          prepared.leadBotIds.splice(0, prepared.leadBotIds.length, ...admitted);
-          const routineBatch = routines.preparePackageAddition(prepared.routines);
-          const replacements = new Map([...botBatch.files, ["routines.json", routineBatch.bytes] as const,
-            ...prepared.files.map(file => [file.path, file.content] as const)]);
-          const expected = new Map<string, string | null>();
-          for (const relative of replacements.keys()) {
-            try { expected.set(relative, createHash("sha256").update(readFileSync(join(DATA_DIR, relative))).digest("hex")); }
-            catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; expected.set(relative, null); }
-          }
-          const assertOwned = () => { if (dataWritersStopped) throw new Error("Installation is closing"); };
-          try {
-            commitPackageImportFiles(DATA_DIR, replacements, expected, { allowedNewBotIds: prepared.bots.map(bot => bot.id), assertOwned });
-          } catch (error) {
-            // Settle a recoverable write failure before the event loop admits
-            // another writer. A durable commit must still publish its state.
-            let recovered: ReturnType<typeof recoverPackageImportTransaction>;
-            try { recovered = recoverPackageImportTransaction(DATA_DIR, { assertOwned }); }
-            catch {
-              // Memory may no longer describe disk. Stop synchronously so no
-              // timer/provider callback writes over retained recovery evidence.
-              // Leave dataWritersStopped false: the stale lease and journal
-              // must survive for explicit recovery at the next startup.
-              process.stderr.write("Package import recovery could not establish a consistent installation. Murage stopped; the recovery journal and original copies were retained.\n");
-              process.exit(1);
-            }
-            if (recovered.status !== "committed") throw error;
-          }
-          routineBatch.publish();
-          botBatch.publish();
-        },
+        atomicCommit: packageImportAtomicCommit(refuseRepeatedImport),
       });
       // A shipped starter crew is led from the start: the import wrote every
       // bot with no access, and its lead is appointed here, the way the
@@ -30732,6 +30948,12 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
     }
     // Today design 2b: the Calm | Detailed choice, one owner pref on the server so the desktop and the phone app share
     // it. Read anywhere Today renders; saved only where the same owner-app check as the caution route admits.
+    // FIRSTRUN-1019 D2: the first run's queue of ticked jobs, owner surfaces only.
+    if ((method === "GET" || method === "POST") && path === "/api/owner/first-run-jobs") {
+      const owner = ownerAppSurface(req.headers, url.searchParams);
+      const result = firstRunJobsRoute(DATA_DIR, method, owner, method === "POST" && owner.ok ? await readBody(req) : undefined);
+      return json(res, result.status, result.body);
+    }
     if ((method === "GET" || method === "POST") && path === "/api/owner-prefs/today-view") {
       const owner = ownerAppSurface(req.headers, url.searchParams);
       const result = todayViewRoute(DATA_DIR, method, owner, method === "POST" && owner.ok ? await readBody(req) : undefined);
@@ -31891,6 +32113,80 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const view = setupView(setup.read(live), live);
       if (!peek) await driveSetup(view);
       return json(res, 200, view);
+    }
+
+    // POST /api/setup/card: the three 1.0.19 cards (notify, hire, move from Grok Bot) settle by their own record.
+    // A finished step never settles them and a reopened step never unsettles them; only this does, and it runs the
+    // driver so the next card is appended in the same response. Idempotent.
+    if (method === "POST" && path === "/api/setup/card") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 404, { error: "no such route" });
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      const body = await readBody(req);
+      const key = typeof body?.key === "string" ? body.key : "";
+      if (body?.action !== "settle" || !(SETUP_OWN_RECORD_KEYS as readonly string[]).includes(key)) return json(res, 400, { error: "That card cannot be settled this way." });
+      await setupLiveState();
+      const chiefId = setup.chiefBotId();
+      const chief = chiefId ? store.bot(chiefId) : null;
+      if (!chief) return json(res, 409, { error: "There is nobody here to own this yet." });
+      const message = store.keyedCards(chief.threadId, "setup").find(candidate => (candidate.card ? readSetupCard(candidate.card) : null)?.key === key);
+      const parsedCard = message?.card ? readSetupCard(message.card) : null;
+      if (!message || !message.card || !parsedCard) return json(res, 409, { error: "That card is not in the conversation yet." });
+      if (parsedCard.settled !== true) store.patchMessage(chief.threadId, message.id, { card: { ...message.card, setup: { ...parsedCard, settled: true } } });
+      const live = await setupLiveState();
+      const view = setupView(setup.read(live), live);
+      await driveSetup(view);
+      return json(res, 200, view);
+    }
+
+    // GET /api/move-in/found (slice F): what can be moved in from this computer. Label and count, never a path.
+    // 403 for anything but the desktop app (paired phones and service callers included).
+    if (method === "GET" && path === "/api/move-in/found") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 403, { error: "This is shown on the computer." });
+      return json(res, 200, await findMoveIn().catch(() => ({ grok: { label: "Grok Bot", count: 0 } })));
+    }
+    // POST /api/move-in/grok: move the Grok Bot exports found in Downloads in, as bots with their skills and paused
+    // routines on the default engine, through the shipped importer and the package guards. Desktop only.
+    if (method === "POST" && path === "/api/move-in/grok") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 403, { error: "This is done on the computer." });
+      try {
+        const moved: string[] = [];
+        const notes: string[] = [];
+        // Every export is tried. One already imported (409) counts as moved, so a retry after a partial success or a lost
+        // answer carries on with the ones still missing; any other failure is raised once all have been tried.
+        let failure: unknown = null;
+        for (const result of await convertGrokExports()) {
+          const definition = parseBotPackage(result.document);
+          const pkg = definition.package;
+          try {
+            const contents = { manifest: parseBotPackageManifest({ format: "murage.package.bundle", version: 1, definition, skills: [], instructions: [], entries: [] }), payloads: new Map<string, Buffer>() };
+            await importReviewedContents(contents, { agents: pkg.agents.map(agent => agent.key), skills: [], instructions: [], routines: (pkg.routines ?? []).map(routine => routine.key) });
+          } catch (error) {
+            if ((error as { status?: number }).status !== 409) { failure ??= error; continue; }
+          }
+          moved.push(...pkg.agents.map(agent => agent.name));
+          notes.push(...result.notes);
+        }
+        if (failure) throw failure;
+        forgetGrokCount();
+        return json(res, 200, { moved, notes });
+      } catch (error) {
+        const status = (error as { status?: number }).status;
+        return json(res, status === 409 ? 409 : 500, { error: "That did not work. Try again." });
+      }
+    }
+
+    // POST /api/setup/hire: ensure the ticked starter teammates exist (FIRSTRUN-1019 1.11). Desktop only, JSON only.
+    if (method === "POST" && path === "/api/setup/hire") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 404, { error: "no such route" });
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      const parsedHire = parseHireBody(await readBody(req));
+      if (!parsedHire.ok) return json(res, 400, { error: parsedHire.error });
+      try {
+        return json(res, 200, { hired: await ensureHired(parsedHire.agents, setupHireDeps) });
+      } catch (error) {
+        const status = (error as { status?: number }).status;
+        return json(res, status === 400 ? 400 : 500, { error: status === 400 ? (error as Error).message : "That did not work. Try again." });
+      }
     }
 
     // POST /api/setup/routine — the brief, and the couple more after it.
@@ -33653,6 +33949,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
     // packaged app: the server serves the built UI too (window → :8799 for
     // everything, no dev proxy to die). MURAGE_STATIC_DIR is set by Electron.
     if ((method === "GET" || method === "HEAD") && !path.startsWith("/api/") && STATIC_DIR) {
+      // Repro-box debug only (MURAGE_STATIC_UI_TRACE=1): one server.log line per document response, with its content type.
+      if (staticUiTrace) setupResponder?.trace(req, res);
       const resolved = resolveStaticFile(STATIC_DIR, path);
       if (resolved.kind === "refused") return json(res, 404, { error: `no route: ${method} ${path}` });
       const file = resolved.file, safe = resolved.rel;
@@ -33676,14 +33974,19 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         if (/^\/mermaid-frame(?:-[0-9a-f]{16})?\.html$/.test(safe)) headers["content-security-policy"] = mermaidFrameCsp(data);
         const cacheControl = staticCacheControl(safe);
         if (cacheControl) headers["cache-control"] = cacheControl;
-        if (safe === "/index.html") data = withCloudHomeId(data);
+        if (safe === "/index.html") { data = withCloudHomeId(data); setupResponder?.served(); }
         return send(200, headers, data);
       } catch {
         // SPA fallback
         try {
-          return send(200, { "content-type": "text/html" }, withCloudHomeId(readFileSync(join(STATIC_DIR, "index.html"))));
-        } catch {
-          /* fall through to 404 */
+          const indexHtml = withCloudHomeId(readFileSync(join(STATIC_DIR, "index.html")));
+          setupResponder?.served();
+          return send(200, { "content-type": "text/html" }, indexHtml);
+        } catch (indexError) {
+          // Neither the file nor index.html could be read: say why in server.log. A page load gets the setup page
+          // (it refreshes itself until the app is back); every other request falls through to the JSON 404 unchanged.
+          staticUiDiagnostics?.unreadable(indexError);
+          if (setupResponder?.respond(req, res, indexError)) return;
         }
       }
     }
@@ -33829,6 +34132,7 @@ if (process.platform === "linux" && !cloudHome) { void startHostPowerStub(); voi
 void releasePreListenHealth().catch(() => undefined).then(() => { startLoopLagMonitor(); server.listen(PORT, "127.0.0.1", () => {
   if (cloudHome) listenCloudProxy(server, process.env.MURAGE_TRUSTED_PROXY?.slice(5) ?? "/data/proxy/murage.sock");
   console.log(`murage server on http://127.0.0.1:${PORT}`);
+  staticUiDiagnostics?.boot();
   startupMark("listen");
   listenTickWitness();
   // the listen tick only listens and gates (one SELECT: unfinished forgets)

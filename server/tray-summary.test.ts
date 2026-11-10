@@ -88,4 +88,30 @@ describe("traySummary", () => {
     expect(summary.bots[0]!.chief).toBe(true);
     expect(summary.moreBots).toBe(false);
   });
+
+  describe("outside answers (NOTIFY-EVERYWHERE-1019 S1)", () => {
+    const open = (extra: Partial<Parameters<typeof traySummary>[0]> = {}) => traySummary({ page: { decisions: 2, items: [1, 2].map(item) }, bots, chiefId: "b-chief",
+      messagesFor: id => messages[id] ?? [], stopHit: () => false, digest: (t, r) => `${t}:${r}`, ...extra });
+    it("carries the full display, a per-surface outsideOk map and the digest", () => {
+      const first = open().items[0]!;
+      expect(first.display).toEqual({ botName: "Zed", title: "Approval needed", willRun: "Read the weekly report draft" });
+      expect(first.digest).toBe("t-zed:r1");
+      expect(first.outsideOk).toMatchObject({ pill: true, "banner-mac": false, menu: false });
+      expect(open().items[1]!.outsideOk.pill).toBe(false);
+    });
+    it("with previews off carries no card text, no Allow once and every entry false", () => {
+      const closed = open({ previewContent: false });
+      for (const entry of closed.items) {
+        expect(entry).toMatchObject({ botName: "Murage", summary: "Your attention is needed.", quick: false });
+        expect(entry.display).toBeUndefined(); expect(entry.digest).toBeUndefined();
+        expect(Object.values(entry.outsideOk).some(Boolean)).toBe(false);
+      }
+      expect(JSON.stringify(closed)).not.toMatch(/weekly report|Zed|Approval needed|reading a file|Sable|"name":"amy"/);
+      expect(closed.bots.every(bot => bot.name === "Murage")).toBe(true);
+      expect(closed.working.every(w => w.botName === "Murage" && w.doing === "Working")).toBe(true);
+    });
+    it("the attention read can list up to the limit it asks for", () => {
+      expect(traySummary({ page: { decisions: 9, items: Array.from({ length: 9 }, (_, n) => item(n)) }, bots, messagesFor: id => messages[id] ?? [], stopHit: () => false, itemLimit: 50 }).items).toHaveLength(9);
+    });
+  });
 });

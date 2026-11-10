@@ -327,6 +327,15 @@ export async function answerSetupStep(step: SetupStep, answer: string, timing?: 
   forgetSetupView();
 }
 
+/**
+ * Settle one of the three 1.0.19 cards by its own record (FIRSTRUN-1019 D4). Nothing but this settles them: a finished
+ * step never does. The answer is the setup view with the next card already appended.
+ */
+export async function settleSetupCard(key: "flux:notify" | "chat:hire" | "detect:move-grok"): Promise<void> {
+  await api("/api/setup/card", { method: "POST", body: JSON.stringify({ key, action: "settle" }) });
+  forgetSetupView();
+}
+
 /** Passed over deliberately. Skipped is not done, and the Chief does not
  *  bring it up again unasked. */
 export async function skipSetupStep(step: SetupStep, timing?: FirstRunTiming): Promise<void> {

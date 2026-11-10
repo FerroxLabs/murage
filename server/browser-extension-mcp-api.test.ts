@@ -32,6 +32,7 @@ registerHooks({load(url,context,next){
     const {method,params}=command.params;let r={};const tab=b.tabs[0];
     if(method==='Page.navigate'){tab.url=params.url;tab.origin=new URL(params.url).origin;tab.navigationEpoch++}
     if(method==='Page.getFrameTree')r={frameTree:{frame:{id:'frame',loaderId:'L'}}};
+    if(method==='Murage.getAllFrames')r={frames:[{frameId:0,parentFrameId:-1}]};
     if(method==='Page.createIsolatedWorld')r={executionContextId:7};
     if(method==='DOM.getDocument')r={root:{nodeId:1}};
     if(method==='DOM.describeNode')r={node:{backendNodeId:1}};

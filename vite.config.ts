@@ -23,10 +23,26 @@ export default defineConfig({
   // precompressPlugin: `.br`/`.gz` copies of hashed assets for the browser
   // door, written after the bundle (build only; inert under vitest and dev).
   plugins: [react(), tailwindcss(), murageRenderPlugins(), precompressPlugin()],
+  experimental: {
+    // The attention entry also loads from a packaged file URL. Resolve its
+    // HTML assets and chunk dependencies relative to their emitted files;
+    // the app's HTML keeps its existing root-relative asset paths.
+    renderBuiltUrl(_filename, { hostType, hostId, type }) {
+      if (type === "asset" && (hostType === "js" || hostType === "css" || hostId === "src/tray-panel/index.html" || hostId === "src/float/bubble.html" || hostId === "src/float/dock.html")) return { relative: true };
+    },
+  },
   build: {
     // dist/.vite/manifest.json: which files the first paint loads, read by
     // scripts/check-bundle-budget.mjs after every CI build (spec §6)
     manifest: true,
+    rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL("./index.html", import.meta.url)),
+        trayPanel: fileURLToPath(new URL("./src/tray-panel/index.html", import.meta.url)),
+        bubble: fileURLToPath(new URL("./src/float/bubble.html", import.meta.url)),
+        dock: fileURLToPath(new URL("./src/float/dock.html", import.meta.url)),
+      },
+    },
   },
   test: {
     environment: "node",
@@ -38,6 +54,9 @@ export default defineConfig({
       "src/components/PhoneAccessCard.test.tsx",
       "src/components/PhoneForBotsRow.test.tsx",
       "src/components/RoomShareCard.test.tsx",
+      "src/attention-ui/AttentionPanel.test.tsx",
+      "src/float/*.test.tsx",
+      "src/components/PinToEdgeMenuItem.test.tsx",
       "src/components/DataFolderSettings.test.tsx",
       "shared/**/*.test.ts",
       "tools/**/*.test.ts",

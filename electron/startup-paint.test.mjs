@@ -27,7 +27,7 @@ for (const quiet of [false, true]) test(`BF-B1: slow load keeps splash until fir
     slog: noop, desktopMark: noop, startupSplash: { stage: noop }, closeStartupSplash: () => { splash = false; },
     pendingRevealWindows: new Set(), setTimeout: (fn, ms) => { timers.push({ fn, ms }); return { unref() {} }; },
     WINDOW_REVEAL_FALLBACK_MS: 15000, attachUpdaterWindow: noop, installWindowStatePersistence: noop,
-    applyUnreadBadge: noop, createMainWindowOpenHandler: noop, createMainNavigationGuard: () => ({ willNavigate: noop, willRedirect: noop }),
+    applyUnreadBadge: noop, appReadiness: { track: noop }, createMainWindowOpenHandler: noop, createMainNavigationGuard: () => ({ willNavigate: noop, willRedirect: noop }),
     createRendererRecovery: () => ({}), serverReady: true, SERVER_PORT: 8799, noteVersionStarted: noop,
   });
   vm.runInContext(body, ctx);

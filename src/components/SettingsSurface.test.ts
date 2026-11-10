@@ -80,6 +80,6 @@ describe("which settings a surface may see", () => {
   });
 });
 
-it("loads Memory as a separate chunk after About me",()=>{expect(source).toMatch(/retryableLazy\(\(\) => import\("\.\/MemorySection"\)\)/);expect(source).not.toMatch(/import .* from "\.\/MemorySection"/);const ids=SETTINGS_SECTIONS.map(entry=>entry.id);expect(ids.indexOf("memory")).toBeGreaterThan(ids.indexOf("aboutMe"));expect(SETTINGS_SECTIONS.find(entry=>entry.id==="memory")).toMatchObject({group:"bots",desktopOnly:true});});
+it("loads Memory as a separate chunk after About me",()=>{expect(source).toMatch(/retryableLazy\(\(\) => import\("\.\/MemorySection"\)\)/);expect(source).not.toMatch(/import .* from "\.\/MemorySection"/);const ids=SETTINGS_SECTIONS.map(entry=>entry.id);expect(ids.indexOf("memory")).toBeGreaterThan(ids.indexOf("aboutMe"));expect(SETTINGS_SECTIONS.find(entry=>entry.id==="memory")).toMatchObject({group:"allBots",desktopOnly:true});});
 
 it("Memory uses the retryable component and its retry boundary",()=>{expect(source).toContain('<MemorySection.Component advanced={advancedFor("memory")} />');expect(source).toContain("onRetry={MemorySection.retry}");});

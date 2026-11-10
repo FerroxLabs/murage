@@ -95,6 +95,7 @@ async function fixture(extra: Record<string, unknown> = {}) {
     if (command.operation === 'cdp') {
       const { method, params: p } = params as { method: string; params: Record<string, unknown> }; let value: any = {};
       if (method === 'Page.getFrameTree') value = { frameTree: { frame: { id: 'frame', loaderId: 'L' } } };
+      if (method === "Murage.getAllFrames") value = { frames: [{ frameId: 0, parentFrameId: -1 }] };
       if (method === 'Page.createIsolatedWorld') value = { executionContextId: 7 };
       if (method === 'DOM.getDocument') value = { root: { nodeType: 9, children: [] } };
       if (method === 'DOM.describeNode') value = { node: { backendNodeId: 12 } };

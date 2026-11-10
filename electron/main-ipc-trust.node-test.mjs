@@ -447,6 +447,11 @@ test("every IPC channel main.mjs registers refuses a foreign sender before its l
     "desktop:unread-count": { threw: false, hasReturnValue: false, returnValue: null },
     // call audio for a fed recognizer session (0.1.59): fire-and-forget
     "speech:pcm": { threw: false, hasReturnValue: false, returnValue: null },
+    // the renderer's answer to a readiness probe (WIN-NOROUTE-1019 A14): fire-and-forget
+    "app-readiness:alive": { threw: false, hasReturnValue: false, returnValue: null },
+    // the window's ack of the payloads it dropped (NOTIFY-EVERYWHERE-1019 S3R R4): fire-and-forget, one per window family
+    "attention:freed": { threw: false, hasReturnValue: false, returnValue: null },
+    "cloud-attention:freed": { threw: false, hasReturnValue: false, returnValue: null },
   });
 
   // Every channel the preload can reach is registered by main.mjs through the
@@ -465,11 +470,12 @@ test("every IPC channel main.mjs registers refuses a foreign sender before its l
 
 test("main.mjs routes its registrars and the main window through the B6 policy", () => {
   const source = fs.readFileSync(path.join(electronDir, "main.mjs"), "utf8");
-  // The raw Electron ipcMain is reachable in exactly three places: its import,
-  // the gate that wraps it, and the recovery window with its own exact-file
-  // sender check (installation-recovery-window.node-test.mjs).
+  // The raw Electron ipcMain is reachable in exactly four places: its import,
+  // the gate that wraps it, the recovery window with its own exact-file
+  // sender check (installation-recovery-window.node-test.mjs), and the notification attention windows (S6 panel, S9 bubble and dock),
+  // which register their OWN sender-checked gate on it on purpose (attention-surfaces.mjs, NOTIFY-EVERYWHERE-1019).
   assert.match(source, /import \{[^}]*\bipcMain as electronIpcMain\b[^}]*\} from "electron";/);
-  assert.equal([...source.matchAll(/\belectronIpcMain\b/g)].length, 3);
+  assert.equal([...source.matchAll(/\belectronIpcMain\b/g)].length, 4);
   assert.match(source, /const ipcMain = createOwnedMainIpc\(\{\s*ipcMain: electronIpcMain,/);
   assert.match(source, /BrowserWindow, ipcMain: electronIpcMain, dialog, baseDir: __dirname,/);
   assert.match(source, /registerCuaIpc\(ipcMain\);/);

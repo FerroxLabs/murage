@@ -53,6 +53,7 @@ import { useOlderTasks } from "@/lib/use-ensure-task";
 import { useBotSettingsDraft, useBotSettingsNavigation } from "./bot-settings-drafts";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 import { notebookCanSave, notebookSaveBody } from "./notebook-save";
+import { SettingsAskLine } from "./SettingsAskLine";
 
 // Bot settings > Teams loads on first open (SPEC-X 13.1): the owner's
 // sharing routes are desktop only, and none of it belongs in first paint.
@@ -66,7 +67,7 @@ export function SettingsSection({ id, active, children }: { id: BotSettingsSecti
   const shown = active === undefined || active === id;
   const [seen, setSeen] = useState(shown);
   if (shown && !seen) setSeen(true);
-  return <section hidden={!shown} data-settings-section={id} className="space-y-4">{seen ? children : null}</section>;
+  return <section hidden={!shown} data-settings-section={id} className="space-y-4">{seen ? <>{children}<SettingsAskLine /></> : null}</section>;
 }
 
 function Field({

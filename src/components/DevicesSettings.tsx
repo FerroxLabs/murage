@@ -25,15 +25,19 @@ export function ComputerAndBrowserSettings({ browserProfiles }: { browserProfile
   );
 }
 
-export function DevicesSettings({ advanced, profileEmail, bots, browserProfiles }: {
+/** Phone and other devices (1.0.19: the computer cards moved to their own page, Computer & browser). */
+export function DevicesSettings({ profileEmail }: { profileEmail?: string }) {
+  return <Anchor id="companion-heading"><CompanionSection profileEmail={profileEmail} /></Anchor>;
+}
+
+/** Computer & browser: a computer and a browser your bots can use; the remote computer and script access sit in Advanced. */
+export function ComputerSettings({ advanced, bots, browserProfiles }: {
   advanced: PageAdvanced;
-  profileEmail?: string;
   bots: ReadonlyArray<{ id: string; name: string; hidden?: boolean }>;
   browserProfiles: ReactNode;
 }) {
   return (
     <>
-      <Anchor id="companion-heading"><CompanionSection profileEmail={profileEmail} /></Anchor>
       <Anchor id="computer-settings-heading"><ComputerAndBrowserSettings browserProfiles={browserProfiles} /></Anchor>
       <AdvancedSection {...advanced} summary={t("settings.l4.advanced.companion")}>
         <ScriptAccessSettings bots={bots} />

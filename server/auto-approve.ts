@@ -31,6 +31,7 @@ import { requiredFields } from "./drivers/contracts.ts";
 import { homedir } from "node:os";
 import { realPathInOrder, win32Canonical, type PlaceOptions } from "../shared/in-project.ts";
 import { isOwnAlwaysAsk, isOwnComputerRead, isOwnHandlerCarded, isOwnQuiet, isOwnUnasked, ownAlwaysAskByName } from "../shared/own-servers.ts";
+import { askShapeOf, type AskShape } from "./ask-shape.ts";
 import { APP_LOOKUPS, ownAppTool } from "../shared/app-action-words.ts";
 import { pinOverrideIn, promptVerdict, type PromptFacts } from "../shared/prompt-capable.ts";
 import { bareToolName, isBareCommandGrant, isCommandTool, isQuestionGrant, isQuestionTool } from "../shared/grant-tool-names.ts";
@@ -859,6 +860,7 @@ type KeyWhy = "path" | "value" | "field" | "mcp" | "summary" | "unmodeled" | "pw
 const keyWhyOf = new WeakMap<AutoVerdict, KeyWhy>();
 /** APPROVALS-SIMPLE-1018: why the reader held an `unreadable` hit, a fixed content-free name (UnseenWhy and three more). */
 const readerWhyOf = new WeakMap<AutoVerdict, string>();
+const readerShapeOf = new WeakMap<AutoVerdict, AskShape>();
 const ASK_LOG_MS = 60_000;
 const ALWAYS_ASK_LOG_RULES = new Set(["delete-root", "delete-home", "delete-system-folder", "disk-erase", "fork-bomb", "unknown-target", "protected-path"]);
 
@@ -924,7 +926,7 @@ function logAsked(bot: AutoApprover, tool: string, verdict: AutoVerdict, context
   const row = keyRow ?? (verdict.source === "sensitive-guard" ? ruleRowId(verdict.rule) : undefined);
   const why = keyWhyOf.get(verdict) ?? readerWhyOf.get(verdict);
   const keyFields = `${row ? ` row=${row}` : ""}${why ? ` why=${why}` : ""}`;
-  console.info(`approvals: asked bot=${botId} tool=${toolName} reason=${reason} origin=${origin} unattended=${context?.unattended ? 1 : 0} cmd=${cmd}${reader} level=${askLevel(bot)} owner=${context?.ownerStarted === true ? 1 : 0}${held ? ` held=${held}` : ""} suppressed=${previous?.suppressed ?? 0}${keyFields}${outsideField}`);
+  console.info(`approvals: asked bot=${botId} tool=${toolName} reason=${reason} origin=${origin} unattended=${context?.unattended ? 1 : 0} cmd=${cmd}${reader} level=${askLevel(bot)} owner=${context?.ownerStarted === true ? 1 : 0}${held ? ` held=${held}` : ""} suppressed=${previous?.suppressed ?? 0}${keyFields}${outsideField}${readerShapeOf.has(verdict) ? ` shape=${readerShapeOf.get(verdict)}` : ""}`);
 }
 
 export function autoVerdict(bot: AutoApprover, tool: string, summary: string, context?: AutoContext): AutoVerdict {
@@ -1080,6 +1082,7 @@ function autoVerdictOf(
         classification: catastrophe.classification ?? "ask", reason: catastrophe.reason ?? catastrophe.doubt ?? catastrophe.rule,
         note: alwaysAskNote(catastrophe), ...(reader ? { reader } : {}) };
       if (reader) readerWhyOf.set(held, catastrophe.mandatory ? catastrophe.reason ?? "named" : catastrophe.doubt ?? catastrophe.unseenWhy ?? (catastrophe.unseenScript ? "unseen-script" : catastrophe.readerFailed ? "reader-failed" : "named"));
+      if (reader) readerShapeOf.set(held, askShapeOf(text ?? summary));
       return held;
     }
   } else {
@@ -1125,6 +1128,7 @@ function autoVerdictOf(
       const held: AutoVerdict = { approve: null, source: "always-ask", rule: catastrophe.rule, note: alwaysAskNote(catastrophe), ...(reader ? { reader } : {}) };
       // APPROVALS-SIMPLE-1018 5 (NOLIMITS-UNREADABLE R6): the asked line says which reader shape still cards, no text
       if (reader) readerWhyOf.set(held, catastrophe.doubt ?? catastrophe.unseenWhy ?? (catastrophe.unseenScript ? "unseen-script" : catastrophe.readerFailed ? "reader-failed" : "named"));
+      if (reader) readerShapeOf.set(held, askShapeOf(text ?? summary));
       return held;
     }
   }

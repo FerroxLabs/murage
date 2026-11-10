@@ -78,6 +78,7 @@ import { formatRelativeListTime, formatTaskMoment } from "@/lib/task-list";
 import { useRelativeNow } from "@/lib/relative-now";
 
 import { BotAvatar } from "./Avatar";
+import { PinToEdgeMenuItem } from "./PinToEdgeMenuItem";
 import { SidebarNewChatPanel } from "./SidebarNewChatPanel";
 import { UpdateIndicator } from "./UpdateIndicator";
 import { UpdateDot } from "./UpdateDot";
@@ -1410,6 +1411,8 @@ export function BotContextMenu({
       className="fixed z-40 w-[228px] overflow-y-auto overflow-x-hidden overscroll-contain rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60"
     >
       {[
+        <PinToEdgeMenuItem key="pin-to-edge" botId={bot.id} onPinned={onClose}
+          onError={message => dispatch({ type: "error", message })} />,
         item(
           bot.pinned ? <PinOff size={16} className="text-ink-secondary" /> : <Pin size={16} className="text-ink-secondary" />,
           bot.pinned ? "Unpin" : "Pin",

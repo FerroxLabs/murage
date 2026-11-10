@@ -125,6 +125,8 @@ export interface PreparedBotPackageImport {
   leadBotIds: string[];
   /** 1.0.15 BIRTH-FUIGO P5: bots with no owner pick, written empty; Store.preparePackageAddition births them once, in the commit. */
   bornBotIds: string[];
+  /** bot id to the source agent's key, so the import receipt can name it (slice D, hiring). */
+  agentKeys: Record<string, string>;
   files: Array<{ path: string; content: Buffer }>;
   baseline: ReturnType<typeof createPackageImportBaseline>;
 }
@@ -145,7 +147,7 @@ function prepare(intake: Intake, inspected: ReturnType<typeof inspect>, options:
   const freshId = () => { let id: string; do { id = randomUUID(); } while (takenIds.has(id)); takenIds.add(id); return id; };
   const result: PreparedBotPackageImport = { id: randomUUID(), archiveSha256: intake.sha256, reviewHash: inspected.reviewHash,
     selectionHash: inspected.selectionHash,
-    bots: [], groups: [], routines: [], leadBotIds: [], bornBotIds: [], files: [], baseline: createPackageImportBaseline(manifest) };
+    bots: [], groups: [], routines: [], leadBotIds: [], bornBotIds: [], agentKeys: {}, files: [], baseline: createPackageImportBaseline(manifest) };
   const ids = new Map<string, string>();
   const pkg = manifest.definition.package;
   // A team's label is its name everywhere it is shown, so it never carries an
@@ -208,7 +210,7 @@ function prepare(intake: Intake, inspected: ReturnType<typeof inspect>, options:
         sourceRole: agent.role ?? (agent.key === pkg.chiefOfStaff ? "chief" : "member"), sourceTeam: agent.team,
         ...(agent.emailIntent === "was-on" ? { emailIntent: "was-on" as const } : {}) },
     };
-    result.bots.push(bot); ids.set(agent.key, id);
+    result.bots.push(bot); ids.set(agent.key, id); result.agentKeys[id] = agent.key;
     if (options.modelSelection === "birth") result.bornBotIds.push(id);
     if (leadKeys.has(agent.key)) result.leadBotIds.push(id);
     const assigned = new Set<string>();

@@ -30,6 +30,9 @@ import { drawerCloseKey } from "@/lib/drawer-close";
 import { CommandPaletteHost } from "@/components/CommandPaletteHost";
 import { DictationStatusBar } from "@/components/DictationStatusBar";
 import { FirstRunPhases } from "@/components/FirstRunPhases";
+import { FirstRunWelcome } from "@/components/FirstRunWelcome";
+import { StartupPictureWriter } from "@/components/StartupPictureWriter";
+import { pictureHeld } from "@/lib/startup-picture-schedule";
 import { useSetupView } from "@/components/FirstRunChrome";
 import { firstRunOwnsMainView } from "@/lib/first-run";
 import { settleSendKeyForUpgrade } from "@/lib/send-key";
@@ -480,6 +483,11 @@ function Shell() {
           browser door is not a fresh machine and must never be shown a
           first-run screen. */}
       {desktop === true && <FirstRunPhases />}
+      {/* The welcome (Ember pops in): the first paint of a brand-new install, above everything, desktop only. Its rule is
+          welcomeShouldShow (src/lib/first-run-welcome.ts). */}
+      {desktop === true && <FirstRunWelcome />}
+      {/* The cached start-up picture (FIRSTRUN-1019 slice B): the next start's tip and the Chief's own face, drawn off screen. Nothing on screen; held while the welcome is up. */}
+      {desktop === true && <StartupPictureWriter chiefBotId={setupView?.chiefBotId ?? null} suspended={pictureHeld(setupView ?? null)} />}
       <div className="relative flex min-h-0 flex-1">
       <BotListDrawerProvider value={drawerControl}>
       {/* The "Open bot list" button is not drawn here. Each main view's header

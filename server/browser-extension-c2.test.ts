@@ -32,6 +32,7 @@ async function world() {
       if (command.operation === "cdp") {
         const { method, params } = command.params as any; let value: any = {};
         if (method === "Page.getFrameTree") value = { frameTree: { frame: { id: "frame", loaderId: "L" } } };
+        if (method === "Murage.getAllFrames") value = { frames: [{ frameId: 0, parentFrameId: -1 }] };
         if (method === "Page.createIsolatedWorld") value = { executionContextId: 7 };
         if (method === "DOM.getDocument") value = { root: { nodeType: 9, children: [] } };
         if (method === "DOM.describeNode") value = { node: { backendNodeId: 12 } };

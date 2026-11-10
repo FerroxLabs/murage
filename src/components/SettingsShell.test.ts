@@ -15,11 +15,11 @@ const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.m
 const modal = read("./SettingsModal.tsx");
 
 describe("the sidebar", () => {
-  it("draws the twelve pages under five headings, with the mockup's labels", () => {
-    expect(SECTION_PAGES).toHaveLength(12);
-    expect(SETTINGS_PAGE_GROUPS.map((group) => en[`settings.group.${group}` as keyof typeof en])).toEqual(["You", "Bots", "AI", "Reach", "App"]);
+  it("draws the fourteen pages under six headings, with the mockup's labels", () => {
+    expect(SECTION_PAGES).toHaveLength(14);
+    expect(SETTINGS_PAGE_GROUPS.map((group) => en[`settings.group.${group}` as keyof typeof en])).toEqual(["You", "Each bot", "All bots", "Models and tools", "Connections", "App"]);
     expect(SECTION_PAGES.map((page) => en[`settings.page.${page.id}` as keyof typeof en])).toEqual([
-      "General", "Bots", "Skills", "Memory", "Models & engines", "Tools", "Connected apps", "Messaging apps", "Devices", "Backups", "Usage", "About & updates",
+      "General", "Calls", "How every bot behaves", "Skills", "Memory", "Models & engines", "Search, images and dictation", "Connected apps", "Messaging apps", "Computer & browser", "Phone and other devices", "Backups", "Usage", "About & help",
     ]);
     for (const group of SETTINGS_PAGE_GROUPS) expect(en[`settings.groupNote.${group}` as keyof typeof en], group).toBeTruthy();
     expect(modal).toContain("SECTION_PAGES.map((entry) => ({ ...entry, icon: PAGE_ICONS[entry.id] }))");
@@ -39,8 +39,8 @@ describe("the anchor in the store", () => {
     expect(reducer(initialState, { type: "toggleAppSettings", open: true, section: "nonsense" as AppSettingsSection }).appSettingsAnchor).toBeNull();
   });
 
-  it("resolves every one of the 19 ids to a page", () => {
-    for (const id of ["general", "aboutMe", "botDefaults", "houseRules", "skills", "memory", "models", "engines", "images", "webSearch", "voice", "connections", "computer", "channels", "companion", "backups", "usage", "about", "experimental"] as const) {
+  it("resolves every one of the 21 ids to a page", () => {
+    for (const id of ["general", "calls", "browseBots", "aboutMe", "botDefaults", "houseRules", "skills", "memory", "models", "engines", "images", "webSearch", "voice", "connections", "computer", "channels", "companion", "backups", "usage", "about", "experimental"] as const) {
       const state = reducer(initialState, { type: "toggleAppSettings", open: true, section: id });
       expect(state.appSettingsSection, id).toBe(id);
     }

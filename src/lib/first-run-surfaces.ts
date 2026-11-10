@@ -25,6 +25,7 @@ import { CHIEF_CONFIRMATIONS } from "../../shared/first-run-chief.ts";
 import { SETUP_CARD_COPY } from "../../server/setup-conversation.ts";
 
 import { FIRST_RUN_PHASES } from "./first-run.ts";
+import { FIRST_RUN_WELCOME, welcomeFootLine } from "./first-run-welcome.ts";
 import { morningOffer } from "./first-run-flow.ts";
 import {
   FIRST_RUN_BRIEF_TIME,
@@ -69,6 +70,8 @@ export const FIRST_RUN_SURFACES = {
   // the register test's area was widened to reach them, so a fifth sentence
   // added there is gated the moment it exists.
   CHIEF_CONFIRMATIONS,
+  // THE WELCOME, the first screen of a brand-new install: two lines and one button.
+  FIRST_RUN_WELCOME,
 } as const;
 
 /**
@@ -82,12 +85,15 @@ export const FIRST_RUN_SURFACE_MODULES: Readonly<Record<string, string>> = {
   "setup-conversation.ts": "surface: SETUP_CARD_COPY",
   "first-run-surfaces.ts": "the register itself",
   "first-run-crew.ts": "shapes the crew screen reads; its words come from FIRST_RUN_COPY",
+  "first-run-pending.ts": "the queue of ticked jobs and its rules; its words come from FIRST_RUN_COPY",
   "first-run-detect.ts": "reads what is installed; says nothing",
   "first-run-flow.ts": "step and screen structure; its words come from FIRST_RUN_COPY",
   "first-run-jobs.ts": "job shapes and requirements; its words come from FIRST_RUN_COPY",
   "first-run-phone.ts": "pairing state; says nothing",
   "first-run-timing.ts": "press timing; logs numbers and step names only, holds no readable copy",
   "first-run.ts": "surface: FIRST_RUN_PHASES",
+  "first-run-starter-team.ts": "the shipped starter agents' names and looks, not prose; first-run-starter-team.test.ts pins them to the packages",
+  "first-run-welcome.ts": "surface: FIRST_RUN_WELCOME; the foot line is assembled below",
   "first-run-chief.ts": "surface: CHIEF_CONFIRMATIONS",
 };
 
@@ -133,6 +139,7 @@ export function firstRunStoredStrings(): ReadableString[] {
  */
 export function firstRunAssembledStrings(): ReadableString[] {
   return [
+    { path: "welcomeFootLine", text: welcomeFootLine("1.0.19") },
     { path: "foundAgentsLine(one)", text: foundAgentsLine(["Claude Code"]) },
     { path: "foundAgentsLine(two)", text: foundAgentsLine(["Claude Code", "Codex"]) },
     { path: "foundAgentsLine(three)", text: foundAgentsLine(["Claude Code", "Codex", "Fuigo"]) },

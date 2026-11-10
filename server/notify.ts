@@ -32,6 +32,10 @@ export interface Notification {
   requestId?: string;
   messageId?: string;
   requestTurnId?: string;
+  /** done frames: unique per delivery, so a surface shows one receipt per delivery. */
+  deliveryId?: string;
+  durationMs?: number;
+  receipt?: { engineLabel: string; filesTouched: number; sent: string | null };
 }
 
 /** One line, short enough for a lock screen, with the newlines and code
@@ -85,7 +89,7 @@ export function buildNotification(
   bot: NotifyBot,
   threadId: string,
   detail: string,
-  extra?: { avatarUrl?: string; requestId?: string; messageId?: string; requestTurnId?: string },
+  extra?: { avatarUrl?: string; requestId?: string; messageId?: string; requestTurnId?: string; deliveryId?: string; durationMs?: number; receipt?: { engineLabel: string; filesTouched: number; sent: string | null } },
 ): Notification | null {
   // The toggle means what it says: off is off, including for approvals.
   // A bot whose notifications you turned off can still block waiting for

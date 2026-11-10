@@ -80,6 +80,7 @@ import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
 import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib/webhooks";
 import { currentCall } from "@/lib/call";
 import { isHealthPage, showHealthPage, showNotification } from "@/lib/notify";
+import { forwardAttentionConfig, forwardAttentionSettled, reportAttentionVisible, routeNotification } from "@/lib/attention-offer";
 import { replyController } from "@/lib/tts/reply-speech";
 import { knownComputer, surface } from "@/lib/surface";
 import { refreshAfterFluxKey } from "@/lib/flux-key-paste";
@@ -4730,6 +4731,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   stateRef.current = state;
   const syncReplyContext = (hydrated = Boolean(stateRef.current.hydrated)) => replyController.configure({ desktop: knownComputer() === true, hydrated, threadId: visibleNotificationThread(stateRef.current), botId: stateRef.current.bots.find(bot => bot.id === stateRef.current.selectedId)?.id, visible: document.visibilityState !== "hidden", call: currentCall() !== null });
   useEffect(() => { syncReplyContext(); }, [state.hydrated, state.selectedId, state.activeView, state.bots, state.groups]);
+  // NOTIFY-EVERYWHERE-1019 S3: tell the router which conversation is on screen and whether this window has focus (changes only).
+  useEffect(() => {
+    const report = () => reportAttentionVisible(visibleNotificationThread(stateRef.current), document.hasFocus() && document.visibilityState !== "hidden");
+    report();
+    window.addEventListener("focus", report);
+    window.addEventListener("blur", report);
+    document.addEventListener("visibilitychange", report);
+    return () => { window.removeEventListener("focus", report); window.removeEventListener("blur", report); document.removeEventListener("visibilitychange", report); };
+  }, [state.selectedId, state.activeView, state.bots, state.groups]);
   useEffect(() => {
     let alive = true;
     void surface().then(() => { if (alive) syncReplyContext(); });
@@ -6280,6 +6290,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // transcript on a reconnect it already covered is pure waste.
     handleFrame = (frame, replayed = false) => {
       if (frame.kind === "inbox.changed") { emitInboxChanged(frame.pollScale); return; }
+      if (frame.kind === "attention.settled") { forwardAttentionSettled(frame); return; }
+      if (frame.kind === "config") forwardAttentionConfig(); // a content-free signal; the handling below is unchanged
       // A memory the bot just kept (B5m): the open chat attaches its chip under the reply it came from.
       if (frame.kind === "learning.remembered" || frame.kind === "learning.improved") { window.dispatchEvent(new CustomEvent(REMEMBERED_EVENT, { detail: frame })); return; }
       // How many memories wait for the owner (counts only): the shared counts, the badge and the Memory screen move at once.
@@ -6399,12 +6411,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // unread:false back. Opening a bot from its own notification and
           // watching the badge return on the next hydration is exactly the
           // bug that makes notifications feel broken.
-          showNotification(
-            frame.notification,
+          // NOTIFY-EVERYWHERE-1019 S3: the desktop's router decides first (routing ids only cross); the display below is unchanged and
+          // runs when the router says show, or at once when there is no router.
+          routeNotification(frame.notification, (shown) => showNotification(
+            shown as typeof frame.notification,
             (target) => openNotificationTarget(dispatch, target, stateRef.current),
             stateRef.current.bots.find((bot) => bot.id === frame.notification.botId)?.avatarUrl,
             visibleNotificationThread(stateRef.current),
-          );
+          ));
           break;
         case "group.deleted":
           rawDispatch({

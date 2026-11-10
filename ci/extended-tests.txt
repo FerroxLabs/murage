@@ -133,6 +133,7 @@ server/branch-index.test.ts	extended
 server/branching.test.ts	extended
 server/broker-socket-path.test.ts	extended
 server/browser-check-state.test.ts	extended
+server/browser-document-guard-oopif.real-chrome.test.ts	extended
 server/browser-extension-batch1.test.ts	extended
 server/browser-extension-check-availability.test.ts	extended
 server/browser-extension-desktop102.test.ts	extended
@@ -895,6 +896,7 @@ shared/memory-learning-contract.test.ts	extended
 shared/message-actor.test.ts	extended
 shared/message-limits.test.ts	extended
 shared/model-label.test.ts	extended
+shared/murage-lockup.test.ts	extended
 shared/outcome-choices.test.ts	extended
 shared/plain-engine-error.test.ts	extended
 shared/plain-time-zone.test.ts	extended
@@ -986,6 +988,7 @@ src/components/EnginesSettings.test.ts	extended
 src/components/Files.test.ts	extended
 src/components/FirstRunBackups.test.ts	extended
 src/components/FirstRunPhases.test.ts	extended
+src/components/FirstRunWelcome.test.ts	extended
 src/components/FluxKeyProblemBanner.test.ts	extended
 src/components/FluxRouterConnection.test.ts	extended
 src/components/FolderTrustNote.test.ts	extended
@@ -1025,6 +1028,7 @@ src/components/MemorySection.test.ts	extended
 src/components/MemorySettings.test.ts	extended
 src/components/MemoryUpgradeDetail.test.ts	extended
 src/components/ModelPicker.test.ts	extended
+src/components/MurageLockup.real.test.ts	extended
 src/components/NewFromTemplateDialog.test.ts	extended
 src/components/NewProjectDialog.test.ts	extended
 src/components/NewTeamDialog.test.ts	extended
@@ -1079,6 +1083,7 @@ src/components/SidebarSectionHeader.test.ts	extended
 src/components/SidebarSharedRows.test.ts	extended
 src/components/SignedOutCard.test.ts	extended
 src/components/SkillAffordances.test.ts	extended
+src/components/StartupPictureWriter.dom.test.ts	extended
 src/components/StartupSettings.test.ts	extended
 src/components/StoppedRow.test.ts	extended
 src/components/StorageListView.test.ts	extended
@@ -1123,6 +1128,7 @@ src/components/copy-failure-banner.test.ts	extended
 src/components/delegation-label.test.ts	extended
 src/components/editor/emittedValues.test.ts	extended
 src/components/editor/slashMenu.test.ts	extended
+src/components/ember-default.test.ts	extended
 src/components/engine-swap-notes.test.ts	delete (pending review; runs here until then)
 src/components/held-queue-settled.test.ts	extended
 src/components/naming.test.ts	delete (pending review; runs here until then)
@@ -1229,7 +1235,9 @@ src/lib/field-focus.test.ts	extended
 src/lib/file-drop-zone.test.ts	extended
 src/lib/files-view.test.ts	extended
 src/lib/first-run-copy.test.ts	extended
+src/lib/first-run-hire-rows.test.ts	extended
 src/lib/first-run-jobs.test.ts	extended
+src/lib/first-run-pending.test.ts	extended
 src/lib/first-run-phone.test.ts	extended
 src/lib/first-run-surfaces.test.ts	delete (pending review; runs here until then)
 src/lib/flux-invite.test.ts	extended
@@ -1372,6 +1380,10 @@ src/lib/skill-recorder.test.ts	extended
 src/lib/skills-api.test.ts	extended
 src/lib/skins.test.ts	extended
 src/lib/starter-first-task.test.ts	extended
+src/lib/startup-picture-compose.test.ts	extended
+src/lib/startup-picture-schedule.test.ts	extended
+src/lib/startup-picture-team.test.ts	extended
+src/lib/startup-tips.test.ts	extended
 src/lib/storage-summary.test.ts	extended
 src/lib/stream-mic.test.ts	extended
 src/lib/stream-paint.test.ts	extended
@@ -1415,10 +1427,12 @@ src/lib/visual-viewport.test.ts	extended
 src/lib/voice-host.test.ts	extended
 src/lib/webhook-credentials.test.ts	extended
 src/lib/webhooks.test.ts	extended
+src/lib/whats-new-startup.test.ts	extended
 src/lib/window-confirm.test.ts	extended
 src/lib/working-time.test.ts	extended
 src/lib/workspace-pane.test.ts	extended
 src/lib/zod-config.test.ts	delete (pending review; runs here until then)
+src/locales/startup-tips/startup-tips-copy.test.ts	extended
 src/locales/terms-copy.test.ts	extended
 src/mermaid-frame/frame-page.test.ts	extended
 src/no-composio-in-user-text.test.ts	extended
@@ -1508,3 +1522,20 @@ server/memory/turnstart-r15-s1s2.test.ts	extended
 server/memory/turnstart-r15.test.ts	extended
 server/memory/verdict-store-r15.test.ts	extended
 server/launch-inventory-1018.test.ts	extended
+src/lib/notify-surfaces.test.ts	extended
+server/desktop-attention.test.ts	extended
+server/answered-where-attempt.test.ts	extended
+shared/notification-preferences-endsat.test.ts	extended
+server/desktop-attention-http.test.ts	extended
+shared/notification-drop.test.ts	extended
+src/attention-ui/AttentionPanel.test.tsx	extended
+src/components/PinToEdgeMenuItem.test.tsx	extended
+src/components/ShortcutRecorder.test.ts	extended
+src/float/FloatPanel.test.tsx	extended
+src/float/float-guard.test.ts	extended
+server/files-touched.test.ts	extended
+electron/attention-notice.electron.test.mjs	extended
+electron/setup-page.electron.test.mjs	extended
+server/static-ui-reason.test.ts	extended
+server/static-ui-setup-page.test.ts	extended
+server/static-ui-setup-page.e2e.test.ts	extended
