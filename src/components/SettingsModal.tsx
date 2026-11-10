@@ -15,7 +15,7 @@ import { SEND_KEYS, chooseSendKey, currentSendKey, isMacPlatform, sendKeyName, s
 import { waitForAnchor } from "@/lib/anchor-wait";
 import { landOnSetting, type LandingElement } from "@/lib/settings-landing";
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Archive, BookOpen, Bot, Brain, ChevronRight, Coins, Globe, LifeBuoy, MessageCircle, Puzzle, Search, Smartphone, Trash2, User, Wrench, X } from "lucide-react";
+import { Archive, BookOpen, Bot, Brain, Coins, Globe, LifeBuoy, MessageCircle, Monitor, Phone, Puzzle, Search, Smartphone, Trash2, User, Users, Wrench, X } from "lucide-react";
 import { api, useStore, type AppSettingsSection, type Bot as BotRecord, type ConfigStatus } from "@/state/store";
 import type { BotSettingsLeave } from "./BotSettingsPane";
 import { loadBotSettingsPane, loadedBotSettingsPane } from "@/lib/bot-settings-pane-load";
@@ -32,7 +32,7 @@ import { Anchor } from "./SettingsAnchor";
 import { BotsSettings } from "./BotsSettings";
 import { AiSettings } from "./AiSettings";
 import { ToolsSettings } from "./ToolsSettings";
-import { DevicesSettings } from "./DevicesSettings";
+import { ComputerSettings, DevicesSettings } from "./DevicesSettings";
 import { UsageSection } from "./UsageSection";
 import { SkinPicker } from "./SkinPicker";
 import { SkillsSettings } from "./skills/SkillsSettings";
@@ -56,6 +56,7 @@ import { NewsSignupSettings } from "./NewsSignupSettings";
 import { BotEmailAccountCard } from "./BotEmailSettings";
 import { HighLevelSettings } from "./HighLevelSettings";
 import { ComputerOnlyStub, SETTINGS_STUB_COPY } from "./SettingsStub";
+import { SettingsAskLine } from "./SettingsAskLine";
 import { TelegramSettings } from "./TelegramSettings";
 import { SlackSettings } from "./SlackSettings";
 import { WhatsAppSettings } from "./WhatsAppSettings";
@@ -86,7 +87,16 @@ import {
   settingsSectionNote,
   settingsSectionRedirect,
 } from "@/lib/settings-sections";
-import { SECTION_PAGES, resolveSettingsSection, type SettingsPage, type SettingsPageEntry } from "@/lib/settings-pages";
+import { BROWSE_BOTS_ROUTE, SECTION_PAGES, isSimpleTarget, resolveSettingsSection, type SettingsPage, type SettingsPageEntry } from "@/lib/settings-pages";
+import { noteAdvancedFoldOpened, setSettingsMode, useSettingsMode } from "@/lib/settings-mode";
+import { sidebarBots } from "@/lib/settings-shell-bots";
+import { sw } from "@/lib/settings-words";
+import { settingsPageLink } from "@/lib/settings-link";
+import { AdvancedModeCard, ADVANCED_MODE_ANCHOR } from "./settings/AdvancedModeCard";
+import { BrowseBotsPage } from "./settings/BrowseBotsPage";
+import { SettingsBreadcrumb } from "./settings/SettingsBreadcrumb";
+import { SettingsPageMount, hasPageFile } from "./settings/page-registry";
+import { SetInAdvancedLine } from "./settings/PageCards";
 import { cardForAnchor, type SettingsCard } from "@/lib/settings-cards";
 import { SETTINGS_CARDS } from "@/lib/settings-card-registry";
 import {
@@ -102,6 +112,8 @@ import { sourceCodeLink, sourceVersionLabel } from "@/lib/source-code";
 import { openKeyboardShortcuts, openWhatsNew } from "@/lib/app-events";
 import { copyText } from "@/lib/copy-text";
 import { FONT_IDS, FONT_LABELS, applyFont, isFontId, readFont, type FontId } from "@/lib/fonts";
+// Settings' own words, on this chunk rather than the first paint (1.0.19, SettingsCopy.lazy.test.ts).
+import "@/lib/settings-copy";
 
 export { sectionsForSurface, settingsSectionRedirect } from "@/lib/settings-sections";
 export { settingsSearchResults } from "@/lib/settings-search";
@@ -114,7 +126,9 @@ const PhoneCallsSection = retryableLazy(() => import("./PhoneCallsSettings"));
 
 const PAGE_ICONS: Record<SettingsPage, typeof User> = {
   general: User,
-  botDefaults: Bot,
+  calls: Phone,
+  computer: Monitor,
+  botDefaults: Users,
   skills: BookOpen,
   memory: Brain,
   models: Globe,
@@ -1045,19 +1059,25 @@ export function inSettingsTabOrder(element: Pick<Element, "closest" | "parentEle
 export function SettingsModal({ bot, onBotClose }: { bot?: BotRecord; onBotClose?: () => void } = {}) {
   const { state, dispatch } = useStore();
   const botLeave = useRef<BotSettingsLeave | null>(null);
-  const [botsListOpen, setBotsListOpen] = useState(false);
+  const mode = useSettingsMode();
   // The store keeps the id it was asked for (any of the 19); the page it lands on is `section` below, so the page
   // bodies read as they always have. An alias also names a card on that page (state.appSettingsAnchor).
   const requested = state.appSettingsSection;
   // A Cloud window: a page it cannot use matches none of the page bodies and shows the "on your computer only" card instead.
   const cloud = isCloudOrigin();
   const blocked = cloudSectionBlocked(requested);
-  const section = (blocked ? "" : resolveSettingsSection(requested).section) as SettingsPage;
+  const browsing = !bot && requested === BROWSE_BOTS_ROUTE;
+  const resolved = (blocked || browsing ? "" : resolveSettingsSection(requested).section) as SettingsPage;
+  // A page with a file of its own (settings/page-registry.tsx) is mounted from there; `section` is what the legacy blocks
+  // below still match on, so it is empty for a page that has moved out. Pages leave the legacy blocks one at a time.
+  const mountedPage = resolved && hasPageFile(resolved) ? resolved : null;
+  const section = (mountedPage ? "" : resolved) as SettingsPage;
   // An alias the Cloud window may use can land on a page it may not (Images sits on Tools, whose search and voice keys
   // are this computer's): that page then renders only the alias's own card.
-  const pageComputerOnly = !blocked && cloudSectionBlocked(section);
+  const pageComputerOnly = !blocked && cloudSectionBlocked(resolved);
   // The nav marks the page the request lands on, blocked or not, so a Cloud window still shows where the person is.
-  const navPage = resolveSettingsSection(requested).section;
+  // Browse bots is a route, not a page: no page is marked while it shows (it would read as General).
+  const navPage = browsing ? null : resolveSettingsSection(requested).section;
   const anchor = state.appSettingsAnchor;
   const dialogRef = useRef<HTMLDivElement>(null);
   const settingsLayerOwner = useLayerOwner();
@@ -1067,11 +1087,22 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
   const [query, setQuery] = useState("");
   const q = query.trim();
   const { desktop, confirmed } = useSurfaceState();
-  const visiblePages = sectionsForSurface(PAGES, desktop);
-  const current = PAGES.find((entry) => entry.id === section);
+  // Browse bots (`browsing`, above) is a route of the Each bot group, not one of the 14 pages (settings-pages.ts BROWSE_BOTS_ROUTE).
+  // Simple lists the pages marked `simple` and nothing else; Advanced lists all 14. An opener that lands on a page Simple
+  // does not list turns Advanced mode on (below), so nothing is ever out of reach.
+  const visiblePages = sectionsForSurface(PAGES, desktop).filter((entry) => mode === "advanced" || entry.simple);
+  const current = PAGES.find((entry) => entry.id === resolved);
+  const botRows = sidebarBots(state.bots, bot?.id);
+  // The card an opener named stays "in view" for Copy link after the store has cleared the anchor, until the page changes.
+  const [landed, setLanded] = useState<{ section: AppSettingsSection; anchor: string } | null>(null);
+  // A page left and come back to without a card does not keep the old card for Copy link.
+  useEffect(() => { setLanded((now) => (anchor ? { section: requested, anchor } : now && now.section === requested ? now : null)); }, [anchor, requested]);
+  const pageLinkCard = landed && landed.section === requested ? cardForAnchor(SETTINGS_CARDS, landed.anchor) : undefined;
+  // A request for a page Simple does not list (a link, a What's new tile, a search result) turns Advanced mode on first.
+  useEffect(() => { if (!bot && mode === "simple" && !isSimpleTarget(requested)) setSettingsMode("advanced"); }, [bot, mode, requested]);
   // One Advanced per page, closed on a page change unless an opener opens it (below).
   const [advancedOpen, setAdvancedOpen] = useState<Record<SettingsPage, boolean>>(() => Object.fromEntries(SECTION_PAGES.map((entry) => [entry.id, false])) as Record<SettingsPage, boolean>);
-  const advancedFor = (page: SettingsPage) => ({ section: page, open: advancedOpen[page], onOpenChange: (open: boolean) => setAdvancedOpen((now) => ({ ...now, [page]: open })) });
+  const advancedFor = (page: SettingsPage) => ({ section: page, open: advancedOpen[page], onOpenChange: (open: boolean) => { if (open) noteAdvancedFoldOpened(); setAdvancedOpen((now) => ({ ...now, [page]: open })); } });
 
   useEffect(() => {
     const visible = sectionsForSurface(SECTIONS, desktop);
@@ -1084,7 +1115,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
 
   useEffect(() => {
     setAdvancedOpen((now) => (Object.values(now).some(Boolean) ? Object.fromEntries(SECTION_PAGES.map((entry) => [entry.id, false])) as Record<SettingsPage, boolean> : now));
-  }, [section]);
+  }, [resolved]);
 
   // Land on the card the opener named: its page's Advanced first when it lives there, then scroll, focus, highlight.
   useEffect(() => {
@@ -1230,11 +1261,10 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
           </div>
           {SETTINGS_GROUPS.map((group) => {
             const entries = visiblePages.filter((entry) => entry.group === group);
-            // Archived bots are not listed, except the one this window is showing. The group stays closed until asked,
-            // so many bots never bury the groups below: only the open bot's row, and a lone bot needs no toggle.
-            const bots = group === "bots" ? state.bots.filter((each) => !each.hidden || each.id === bot?.id) : [];
-            const rows = botsListOpen || bots.length === 1 ? bots : bots.filter((each) => each.id === bot?.id);
-            if (entries.length === 0 && bots.length === 0) return null;
+            // Each bot (LOCKED 2.1): up to five rows, the Chief first, the open bot always one of them; past five, the
+            // Browse bots row opens the list page. Archived bots are not listed, except the one this window is showing.
+            const rows = group === "bots" ? botRows.rows : [];
+            if (entries.length === 0 && group !== "bots") return null;
             return (
               <div
                 key={group}
@@ -1273,22 +1303,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                     <span className="min-w-0 truncate">{settingsPageLabel(id)}</span>
                   </button>
                 ))}
-                {bots.length > 1 && (
-                  <button
-                    type="button"
-                    data-settings-bots-toggle
-                    aria-expanded={botsListOpen}
-                    onClick={() => setBotsListOpen((open) => !open)}
-                    className={cn(
-                      "flex h-7 shrink-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-[13.5px] text-ink-secondary hover:bg-control/50 hover:text-ink",
-                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus",
-                      "max-md:h-11 max-md:whitespace-nowrap max-md:rounded-full max-md:px-3.5",
-                    )}
-                  >
-                    <ChevronRight size={15} className={cn("shrink-0 transition-transform", botsListOpen && "rotate-90")} aria-hidden="true" />
-                    <span className="min-w-0 truncate">{t("settings.botsToggle", { count: bots.length })}</span>
-                  </button>
-                )}
+                {group === "bots" && botRows.total === 0 && <p data-settings-no-bots className="px-2.5 py-1 text-[12.5px] leading-snug text-ink-secondary max-md:hidden">{sw("settings.browse.noBots")}</p>}
                 {rows.map((each) => (
                   <button
                     key={`bot-${each.id}`}
@@ -1308,9 +1323,39 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                     <span className="min-w-0 truncate">{each.name}</span>
                   </button>
                 ))}
+                {group === "bots" && botRows.browse && desktop === true && (
+                  <button
+                    type="button"
+                    data-settings-section={BROWSE_BOTS_ROUTE}
+                    onClick={() => { setQuery(""); leave(() => dispatch({ type: "toggleAppSettings", open: true, section: BROWSE_BOTS_ROUTE })); }}
+                    aria-current={!bot && browsing ? "page" : undefined}
+                    className={cn(
+                      "flex h-7 shrink-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-[13.5px]",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus",
+                      "max-md:h-11 max-md:whitespace-nowrap max-md:rounded-full max-md:px-3.5",
+                      !bot && !q && browsing ? "bg-control font-medium text-ink" : "text-ink-secondary hover:bg-control/50 hover:text-ink",
+                    )}
+                  >
+                    <Users size={15} className="shrink-0" aria-hidden="true" />
+                    <span className="min-w-0 truncate">{sw("settings.browse.toggle", { count: botRows.total })}</span>
+                  </button>
+                )}
               </div>
             );
           })}
+          {/* Simple lists seven pages; one line at the bottom takes a person to the rest, so no page is out of reach. */}
+          {mode === "simple" && !bot && <div className="mt-2 px-1.5 max-md:hidden"><SetInAdvancedLine count={SECTION_PAGES.length - visiblePages.length} /></div>}
+          {/* On Advanced the bottom of the list says so and opens the one switch (LOCKED 2.5). */}
+          {mode === "advanced" && !bot && (
+            <button
+              type="button"
+              data-settings-mode-footer
+              onClick={() => { setQuery(""); dispatch({ type: "toggleAppSettings", open: true, section: "general", anchor: ADVANCED_MODE_ANCHOR }); }}
+              className="mt-2 flex min-h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-left text-[12px] text-ink-secondary hover:bg-control/50 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus max-md:hidden"
+            >
+              <span>{sw("settings.mode.footer")}</span><span aria-hidden="true">·</span><span className="underline underline-offset-2">{sw("settings.mode.footerChange")}</span>
+            </button>
+          )}
         </nav>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -1318,7 +1363,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
             <div className="min-w-0">
               {bot ? (
                 <>
-                  <span className="block truncate text-[15px] font-semibold text-ink"><span className="font-normal text-ink-secondary">{settingsGroupLabel("bots")}</span><span aria-hidden="true" className="px-1.5 font-normal text-ink-secondary">/</span><span>{bot.name}</span></span>
+                  <SettingsBreadcrumb crumbs={[{ label: settingsGroupLabel("bots") }, { label: bot.name, onClick: () => leave(() => dispatch({ type: "toggleSettings", open: true, botId: bot.id, intent: { section: "overview" } })) }]} link={null} />
                   <p data-settings-page-note className="mt-0.5 text-[12.5px] leading-snug text-ink-secondary">{`What ${bot.name} knows, can use and how it works.`}</p>
                 </>
               ) : q ? (
@@ -1328,12 +1373,13 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 </>
               ) : (
                 <>
-                  <span className="block truncate text-[15px] font-semibold text-ink">
-                    {current && <><span className="font-normal text-ink-secondary">{settingsGroupLabel(current.group)}</span><span aria-hidden="true" className="px-1.5 font-normal text-ink-secondary">/</span></>}
-                    <span>{current ? settingsPageLabel(current.id) : null}</span>
-                  </span>
+                  {browsing ? (
+                    <SettingsBreadcrumb crumbs={[{ label: settingsGroupLabel("bots") }, { label: t("settings.page.browseBots") }]} link={settingsPageLink(BROWSE_BOTS_ROUTE)} />
+                  ) : (
+                    <SettingsBreadcrumb crumbs={current ? [{ label: settingsGroupLabel(current.group) }, { label: settingsPageLabel(current.id) }] : []} link={current ? settingsPageLink(current.id, pageLinkCard?.id) : null} />
+                  )}
                   {/* What the page is for, in one line (the grandma test). */}
-                  {current && <p data-settings-page-note className="mt-0.5 text-[12.5px] leading-snug text-ink-secondary">{settingsSectionNote(current.id)}</p>}
+                  {browsing ? <p data-settings-page-note className="mt-0.5 text-[12.5px] leading-snug text-ink-secondary">{t("settings.pageNote.browseBots")}</p> : current && <p data-settings-page-note className="mt-0.5 text-[12.5px] leading-snug text-ink-secondary">{settingsSectionNote(current.id)}</p>}
                 </>
               )}
             </div>
@@ -1354,7 +1400,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
             </LazyBoundary>
           ) : (
           <BoxBody ref={paneRef} className="flex flex-1 flex-col gap-4 px-5 pb-5 [--box-pad:1.25rem]">
-            {q && <SettingsSearchResults query={q} desktop={desktop} onOpen={openCard} />}
+            {q && <SettingsSearchResults query={q} desktop={desktop} onOpen={openCard} onLeave={() => setQuery("")} />}
             {/* A search hides the open page instead of unmounting it, so words typed and not yet
               * saved there (a skill being written, House rules) are still there when the search clears. */}
             <div data-settings-page-body hidden={q ? true : undefined} className={q ? "hidden" : "contents"}>
@@ -1363,8 +1409,17 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 <p data-cloud-computer-only={requested} className="text-[13px] text-ink-secondary">{settingsSectionLabel(requested)}</p>
               </Card>
             )}
+            {mountedPage && <SettingsPageMount page={mountedPage} mode={mode} desktop={desktop} cloud={cloud} anchor={anchor} />}
+            {browsing && (
+              <BrowseBotsPage
+                bots={state.bots}
+                openId={null}
+                onOpen={openBot}
+              />
+            )}
             {section === "general" && (
               <>
+                <Anchor id="advanced-mode-heading"><AdvancedModeCard /></Anchor>
                 <Anchor id="profile-heading">
                   <Card title={t("settings.l4.profile.title")} subtitle={desktop === true ? t("settings.l4.profile.noteDesktop") : t("settings.l4.profile.note")}>
                     <ProfileFields />
@@ -1381,7 +1436,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 </Anchor>
                 {desktop === true && <Anchor id="language-heading"><LanguageRow /></Anchor>}
                 {!inNativeShell() && <Anchor id="send-key-heading"><SendKeyRow /></Anchor>}
-                {desktop === true && <Anchor id="notifications-heading"><NotificationSettings /><CallsSettings /></Anchor>}
+                {desktop === true && <Anchor id="notifications-heading"><NotificationSettings /></Anchor>}
                 {desktop !== true && <p className="text-[12px] text-ink-secondary">{t("settings.general.remoteNote")}</p>}
                 {/* Confirmed remote only. `undefined` renders the neutral
                   * thing, and the desktop has no session to sign out of: the
@@ -1406,6 +1461,8 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 {desktop !== true && homeMeta(document).homeId && <Card title="Devices" subtitle="Browsers and computers connected to this Cloud home."><CloudDevicesSettings /></Card>}
               </>
             )}
+
+            {desktop === true && section === "calls" && <CallsSettings />}
 
             {desktop === true && section === "botDefaults" && (
               <BotsSettings advanced={advancedFor("botDefaults")} effortRow={<NewBotEffortRow />} toolCallsRow={<ToolCallsRow />} />
@@ -1438,8 +1495,12 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
               </AdvancedHost>
             )}
 
+            {desktop === true && section === "computer" && (
+              <ComputerSettings advanced={advancedFor("computer")} bots={state.bots} browserProfiles={<><Anchor id="browser-settings-heading"><WorkspaceFeatureRow feature="browser" /></Anchor><BrowserProfilesRow /></>} />
+            )}
+
             {desktop === true && section === "companion" && (
-              <DevicesSettings advanced={advancedFor("companion")} profileEmail={state.config?.profile?.email} bots={state.bots} browserProfiles={<><Anchor id="browser-settings-heading"><WorkspaceFeatureRow feature="browser" /></Anchor><BrowserProfilesRow /></>} />
+              <DevicesSettings profileEmail={state.config?.profile?.email} />
             )}
 
             {desktop === true && section === "backups" && <div className="space-y-4"><DataFolderSettings /><BackupSettings /><div id="storage-heading"><StorageSettings /></div></div>}
@@ -1464,6 +1525,8 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 </AdvancedSection>
               </>
             )}
+            {/* Every page ends with the one quiet way out (SETTINGS-LOCKED-1019 section 10). */}
+            <SettingsAskLine />
             </div>
           </BoxBody>
           )}

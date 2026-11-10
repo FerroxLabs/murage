@@ -266,6 +266,7 @@ const PRICE_KNOWN: Array<{ file: string; text: string; why: string }> = [
   { file: "src/components/BrowserActivityLog.tsx", text: "browserExt.decision.free", why: "the activity log's internal decision key `free` means no approval was needed; the owner sees \"no approval needed\", never a price" },
   { file: "src/components/today/MonthCard.tsx", text: "/api/spend", why: "the meter's route path, never shown" },
   { file: "src/components/today/MonthCard.tsx", text: "spend:", why: "the Needs you row id, never shown" },
+  { file: "src/lib/settings-search.ts", text: "spend", why: "a search synonym the ranker matches against what a person types (cost, spend, usage), never shown (SETTINGS-SEARCH-RANKER-1019 R2)" },
 ];
 // 1.0.12: providerError.payment.summary no longer names HTTP 402 (the code sits in the card's details fold).
 // VOICE-402-CALL rev 4.1 §6.3 explicitly requires this billing boundary.

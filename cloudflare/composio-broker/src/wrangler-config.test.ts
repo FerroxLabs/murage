@@ -124,11 +124,27 @@ describe("committed Worker config (wrangler.jsonc)", () => {
     );
     expect(registration.status).toBe(503);
 
-    const now = Date.now();
+    // Pinned to one day before the cut-off, never Date.now(): this test is about
+    // the migration-gate grace rules, and a wall-clock read would flip it to the
+    // retirement 410 the moment the cut-off passes (it did, 2026-11-10). The
+    // after-cut-off behaviour is asserted above and below with explicit instants.
+    const now = Date.parse(LEGACY_BROKER_CUTOFF) - 86_400_000;
     expect(migrationGate(claimedRow(), env as never, now)).toBeNull();
     expect(migrationGate(claimedRow({ claim_confirmed_at: now - 899_000 }), env as never, now)).toBeNull();
     const moved = migrationGate(claimedRow({ claim_confirmed_at: now - 901_000 }), env as never, now);
     expect(moved?.status).toBe(410);
     await expect(moved?.json()).resolves.toMatchObject({ code: "migrated_to_flux" });
+  });
+
+  it("retires every install after the cut-off whatever its claim state, at any later time", async () => {
+    const env = committedVars();
+    const cutoff = Date.parse(LEGACY_BROKER_CUTOFF);
+    for (const now of [cutoff, cutoff + 1, cutoff + 30 * 86_400_000]) {
+      for (const row of [claimedRow(), claimedRow({ claim_confirmed_at: now - 1_000 })]) {
+        const retired = migrationGate(row, env as never, now);
+        expect(retired?.status).toBe(410);
+        await expect(retired?.json()).resolves.toMatchObject({ code: "legacy_broker_retired" });
+      }
+    }
   });
 });

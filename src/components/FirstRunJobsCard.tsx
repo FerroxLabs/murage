@@ -38,7 +38,9 @@ import {
 import { ConnectLabelForm } from "./ConnectLabelForm";
 import { t } from "@/lib/i18n";
 import { opensPurchasePages } from "@/lib/native-shell";
-import { FIRST_RUN_COPY, firstRunAddress } from "@/lib/first-run-copy";
+import { FIRST_RUN_COPY, firstRunAddress, setUpJobsLabel } from "@/lib/first-run-copy";
+import { inTableOrder, jobTitle, setPendingLocal, writePendingJobs } from "@/lib/first-run-pending";
+import { usePendingJobs } from "./today/use-pending-jobs";
 import { enableFirstRunReview, installFirstRunCrew } from "@/lib/first-run-crew";
 import { engineRowTitle } from "@/lib/first-run-detect";
 import {
@@ -252,6 +254,14 @@ export function FirstRunJobsCard({ settled, bot }: { settled: boolean; bot?: Bot
    * Chief working, not a pause.
    */
   const [picked, setPicked] = useState<FirstRunJobId | "">("");
+  /** The ticks. Brief, day and notes come ticked (FIRSTRUN-1019 1.12); every ticked job gets set up. */
+  const [pick, setPick] = useState<ReadonlySet<FirstRunJobId>>(() => new Set<FirstRunJobId>(["brief", "day", "notes"]));
+  const toggle = (id: FirstRunJobId) => setPick((before) => {
+    const next = new Set(before);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
   useEffect(() => {
     if (settled) setPicked("");
   }, [settled]);
@@ -302,6 +312,35 @@ export function FirstRunJobsCard({ settled, bot }: { settled: boolean; bot?: Bot
     }
   };
 
+  /**
+   * "SET UP THESE n". The first ticked job, in table order, runs now and is answered exactly as before
+   * (`answerSetupStep("chat", id)`), so the `chat` note stays ONE job id for every shipped reader (guard 4). The rest are
+   * written to the queue first, so they survive a restart, and start by themselves one after another (ruling 4).
+   */
+  const commit = async () => {
+    if (busy || done) return;
+    const ticked = inTableOrder(pick);
+    if (ticked.length === 0) return;
+    const [first, ...rest] = ticked;
+    setBusy(first);
+    setPicked(first);
+    setFailure("");
+    const timing = startFirstRunTiming(`job ${first}`);
+    try {
+      forgetEscapeHatch();
+      await afterPaint();
+      setPendingLocal(await writePendingJobs(api, rest));
+      await answerSetupStep("chat", first, timing);
+      setActed(true);
+    } catch (cause) {
+      setPicked("");
+      setFailure(failureText(cause, flowCopy.failure));
+    } finally {
+      timing.done();
+      setBusy("");
+    }
+  };
+
   const rows: readonly JobRowView[] | null = world ? firstRunJobRows(world) : null;
 
   return (
@@ -319,44 +358,76 @@ export function FirstRunJobsCard({ settled, bot }: { settled: boolean; bot?: Bot
       <div className="mt-2 text-[17px] font-semibold text-ink">{chiefQuestion(firstRunAddress(view?.ownerName))}</div>
       <FirstRunLine>{world ? chiefLead(world) : jobsCopy.lead}</FirstRunLine>
 
+      {world && chiefLead(world) === jobsCopy.leadNoBrain && <FirstRunLine quiet>{jobsCopy.waiting}</FirstRunLine>}
       <ul className="mt-3 grid gap-2">
-        {(rows ?? UNKNOWN_ROWS).map((row, index) => (
-          <li key={row.id}>
-            <button
-              type="button"
-              disabled={done || !rows || Boolean(busy)}
-              data-state={picked === row.id ? "picked" : undefined}
-              aria-busy={picked === row.id || undefined}
-              onClick={() => void choose(row.id, false)}
-              className={`flex w-full flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-left ${FIRST_RUN_FOCUS} ${
-                picked === row.id ? "border-accent bg-accent/10" : index === 0 ? "border-accent/60 bg-inset" : "border-hairline/40 bg-inset"
-              } ${picked === row.id ? "" : "disabled:opacity-60"}`}
-            >
-              <span className="min-w-0">
-                <span className="block text-[14px] font-medium text-ink">
-                  {row.title}
-                  {row.recommended && (
-                    <span className="ml-2 rounded-full border border-accent/60 px-2 py-0.5 align-middle text-[11.5px] font-medium text-accent">
-                      {row.recommended}
+        {(rows ?? UNKNOWN_ROWS).map((row, index) => {
+          const on = pick.has(row.id);
+          return (
+            <li key={row.id}>
+              <label
+                data-state={picked === row.id ? "picked" : undefined}
+                className={`flex w-full cursor-pointer flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-left ${
+                  on ? "border-accent bg-accent/10" : index === 0 ? "border-accent/60 bg-inset" : "border-hairline/40 bg-inset"
+                } ${done ? "opacity-60" : ""}`}
+              >
+                <span className="flex min-w-0 items-start gap-3">
+                  <input
+                    type="checkbox"
+                    className={`mt-1 size-4 shrink-0 accent-accent ${FIRST_RUN_FOCUS}`}
+                    checked={on}
+                    disabled={done || !rows || Boolean(busy)}
+                    onChange={() => toggle(row.id)}
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-[14px] font-medium text-ink">
+                      {row.title}
+                      {row.recommended && (
+                        <span className="ml-2 rounded-full border border-accent/60 px-2 py-0.5 align-middle text-[11.5px] font-medium text-accent">
+                          {row.recommended}
+                        </span>
+                      )}
                     </span>
-                  )}
+                    <span className="block text-[12.5px] leading-relaxed text-ink-secondary">{row.sub}</span>
+                  </span>
                 </span>
-                <span className="block text-[12.5px] leading-relaxed text-ink-secondary">{row.sub}</span>
-              </span>
-              {row.tag && (
-                <span
-                  className={`shrink-0 text-[12.5px] ${
-                    row.tag.tone === "ready" ? "text-success" : row.tag.tone === "accent" ? "text-accent" : "text-ink-secondary"
-                  }`}
-                >
-                  {row.tag.text}
-                </span>
-              )}
-            </button>
-            {row.note && <p className="mt-1 px-3 text-[12.5px] text-ink-secondary">{row.note}</p>}
-          </li>
-        ))}
+                {row.tag && (
+                  <span
+                    className={`shrink-0 text-[12.5px] ${
+                      row.tag.tone === "ready" ? "text-success" : row.tag.tone === "accent" ? "text-accent" : "text-ink-secondary"
+                    }`}
+                  >
+                    {row.tag.text}
+                  </span>
+                )}
+              </label>
+              {row.note && <p className="mt-1 px-3 text-[12.5px] text-ink-secondary">{row.note}</p>}
+            </li>
+          );
+        })}
       </ul>
+      {!done && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={pick.size === 0 || !rows || Boolean(busy)}
+            onClick={() => void commit()}
+            className={`${FIRST_RUN_PRIMARY} ${FIRST_RUN_FOCUS}`}
+          >
+            {setUpJobsLabel(pick.size)}
+          </button>
+          <button
+            type="button"
+            disabled={!rows || Boolean(busy)}
+            onClick={() => setPick(new Set<FirstRunJobId>(FIRST_RUN_JOB_IDS))}
+            className={`${FIRST_RUN_CHIP} ${FIRST_RUN_FOCUS}`}
+          >
+            {jobsCopy.tickAll}
+          </button>
+        </div>
+      )}
+      {done && acted && pick.size > 0 && (
+        <FirstRunLine quiet>{`${jobsCopy.settledPrefix} ${inTableOrder(pick).map(jobTitle).join(", ")}`}</FirstRunLine>
+      )}
 
       {picked && !settled && <FirstRunWorking bot={bot} words={t(JOB_PRESS_WORDS[picked])} />}
       {!done && !picked && (
@@ -895,7 +966,7 @@ export async function firstRunGo(
  * the answer. Every stage's words come out of the two modules; nothing is
  * decided here except where the person is.
  */
-export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean }) {
+function FirstRunDoItCardInner({ bot, settled }: { bot: Bot; settled: boolean }) {
   // NOTHING ON A RESULT SCREEN IS AN OPEN QUESTION. Every other card in this
   // flow hides its controls once the server says the step landed; this one's
   // only control is "take something else off my plate", which is the way back
@@ -1464,5 +1535,28 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
       onSwitchOn={() => void switchOnReview()}
       onAgain={() => void elsewhere()}
     />
+  );
+}
+
+/**
+ * THE OTHER TICKED JOBS, SAID UNDER THE FIRST JOB'S RESULT (FIRSTRUN-1019 1.12, ruling 4). They start by themselves; this
+ * line is only the promise, and the hook is also what keeps the queue moving while the person stays in the thread.
+ */
+function NextOnYourList() {
+  const { ids, firstJobFinished } = usePendingJobs();
+  if (!firstJobFinished || ids.length === 0) return null;
+  return (
+    <FirstRunBubble>
+      <FirstRunLine quiet>{`${jobsCopy.nextPrefix} ${ids.map(jobTitle).join(", ")}.`}</FirstRunLine>
+    </FirstRunBubble>
+  );
+}
+
+export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean }) {
+  return (
+    <div className="w-full min-w-0">
+      <FirstRunDoItCardInner bot={bot} settled={settled} />
+      <NextOnYourList />
+    </div>
   );
 }

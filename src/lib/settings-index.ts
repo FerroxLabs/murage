@@ -115,6 +115,8 @@ export const BOT_SETTINGS_CARDS: readonly BotIndexEntry[] = [
   bot("permissions", "review", () => t("settings.bot.review.title"), { keywords: ["review", "auto review", "shadow", "enforce", "routine approvals", "check"] }),
   bot("voice", "voice", () => "Voice", { keywords: ["voice", "speech", "speak", "read aloud", "read replies aloud", "elevenlabs", "tts", "talk"] }),
   bot("voice", "notifications", () => t("settings.bot.notifications.title"), { keywords: ["notifications", "notify", "alerts", "alert", "sound", "ping", "badge"] }),
+  // Rendered by BotCallsSettings.tsx in the bot's Voice & alerts (SETTINGS-LOCKED-1019 gap 2).
+  bot("voice", "calls", () => t("settings.index.calls.label"), { keywords: ["calls", "call", "ring", "phone call", "urgent", "call me", "only urgent", "rearm"] }),
   bot("history", "history", () => sectionLabel("history"), { keywords: ["history", "conversations", "threads", "tasks", "past chats", "older"] }),
   bot("usage", "usage", () => t("usageCard.title"), { keywords: ["usage", "cost", "spend", "tokens", "billing", "this month", "turns"] }),
 ];
@@ -132,6 +134,30 @@ export const APP_SETTINGS_ENTRIES: readonly AppIndexEntry[] = SETTINGS_CARDS.map
   card,
   ...(APP_GATES[card.id] ? { gate: APP_GATES[card.id] } : {}),
 }));
+
+/** A search row that explains where something lives outside Settings and opens it (SETTINGS-LOCKED-1019 section 6).
+ *  Not a control: kept out of SETTINGS_INDEX, so addresses, the concierge and the anchor gates never see it. */
+export interface ExplainerIndexEntry extends IndexFields {
+  scope: "explainer";
+  /** The store action Open dispatches. */
+  open: { type: "showNeedsYou"; tab: "approvals" };
+  /** The path parts shown under the label. */
+  path: () => string[];
+}
+
+export const SETTINGS_EXPLAINERS: readonly ExplainerIndexEntry[] = [
+  {
+    id: "explainer.approve-all",
+    scope: "explainer",
+    anchor: "approve-all",
+    advanced: false,
+    surface: "any",
+    words: ["approve all", "bulk approve", "approve everything", "approve them all", "approvals"],
+    label: () => t("settings.search.approveAll.label"),
+    path: () => [t("nav.needsYou"), t("settings.search.approveAll.path")],
+    open: { type: "showNeedsYou", tab: "approvals" },
+  },
+];
 
 /** One index, app first, then every bot control. Registry order is the ranker's tie-break. */
 export const SETTINGS_INDEX: readonly SettingsIndexEntry[] = [...APP_SETTINGS_ENTRIES, ...BOT_SETTINGS_CARDS];

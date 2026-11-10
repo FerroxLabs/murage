@@ -15,7 +15,9 @@ describe("Settings addresses", () => {
     for (const entry of SETTINGS_INDEX) {
       if (entry.scope !== "app") continue;
       const address = parseSettingsAddress(settingsAddressFor(entry));
-      expect(address, entry.id).toEqual({ scope: "app", section: entry.section, name: entry.id.slice(entry.section.length + 1) });
+      // A card that moved page keeps its id, so its address names the id's own prefix, not the page it renders on.
+      const idSection = entry.id.slice(0, entry.id.indexOf("."));
+      expect(address, entry.id).toEqual({ scope: "app", section: idSection, name: entry.id.slice(idSection.length + 1) });
       expect(settingsAddressActions(address!, context), entry.id).toEqual([{ type: "toggleAppSettings", open: true, section: entry.section, anchor: entry.anchor }]);
     }
   });

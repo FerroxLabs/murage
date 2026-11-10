@@ -11,7 +11,7 @@ test.beforeAll(async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
   cache = mkdtempSync(join(tmpdir(), "murage-model-refresh-"));
   server = await createServer({ configFile: false, root, cacheDir: cache, envFile: false,
-    optimizeDeps: { noDiscovery: true, include: ["react", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime", "lucide-react"] },
+    optimizeDeps: { noDiscovery: true, include: ["react", "react-dom", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime", "lucide-react"] },
     resolve: { alias: { "@": `${root}/src` } }, server: { host: "127.0.0.1", watch: null, hmr: false },
     plugins: [tailwindcss(), { name: "model-refresh-fixture", enforce: "pre",
       resolveId(id) { if (id.endsWith("/src/state/store") || id === "@/state/store") return "\0fixture-store"; if (id === "/__models.js") return "\0fixture-models"; },

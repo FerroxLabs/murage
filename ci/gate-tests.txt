@@ -221,6 +221,7 @@ server/approve-all.test.ts	all	Approve all never approves a card the owner would
 server/artifacts-disk.test.ts	all	disk-full refusal when saving artifacts
 server/artifacts.test.ts	all	artifact schema upgrade and history survive restart
 server/ask-origin-wait.test.ts	all	Ask reply delivers once its row arrives
+server/ask-shape.test.ts	all	the held-command line a bot asks with names the command shape, never its text
 server/ask-turn-device.test.ts	all	a reply goes to the phone that asked for that turn, and queued starts run in order, one at a time
 server/ask-user-answer-api.test.ts	all	a bot question answered by the owner next message: one claim, steered only into its own turn, queued otherwise, at most once after a crash
 server/ask-user-normalize.test.ts	all	bot questions keep their limits, secrets refused, answers cannot forge a question
@@ -334,8 +335,10 @@ server/browser-connection.test.ts	all	browser descriptor loopback-only, per-turn
 server/browser-content-probe.test.ts	all	detects instruction injection in page text
 server/browser-control-takectl.test.ts	all	take control owner-input wait is bounded
 server/browser-control.test.ts	all	browser ownership boundary human versus bot
+server/browser-document-guard-bigtree.test.ts	all	a long ordinary page is locked as sensitive, or a real lock stops holding
 server/browser-document-guard-chromereal.test.ts	all	Private inputs detected by label and password
 server/browser-document-guard-dialog.test.ts	all	accepts an alert and a beforeunload, and dismisses a confirm and a prompt, while a call is in flight
+server/browser-document-guard-oopif.test.ts	all	a page with a cross-site frame stays open to the bot instead of locking
 server/browser-document-guard-scope.test.ts	all	the page check looks at the bot's own tabs, so owners with many tabs can use their Chrome
 server/browser-engine-policy.test.ts	all	headless browser rejects forged scope and destinations
 server/browser-engine.test.ts	all	browser install verified signed with no fallback
@@ -370,6 +373,7 @@ server/browser-extension-mode-api.test.ts	all	browser mode changes need desktop 
 server/browser-extension-modes-api.test.ts	all	only desktop can raise site access level
 server/browser-extension-modes-property.test.ts	all	Modes never loosen the floor
 server/browser-extension-modes.test.ts	all	browser access modes Ask/Full gating at service level
+server/browser-extension-oopif.test.ts	all	the extension frame listing misses a cross-origin frame, so a page that must lock stays open
 server/browser-extension-opus-review.test.ts	all	browser runtime folder never pauses backup
 server/browser-extension-phone.test.ts	all	paired phone cannot approve or register browser
 server/browser-extension-policy.test.ts	all	site access never authorizes writes
@@ -974,11 +978,13 @@ server/installation-activation.test.ts	all	restored install requires hash-bound 
 server/installation-archive.test.ts	all	restore rejects malformed archives
 server/installation-backup-encryption.test.ts	all	backup encryption with pinned age
 server/installation-damaged-export.test.ts	all	Damaged data exported unchanged, safe refusals
+server/move-in-found.test.ts	all	move-in opens a file that is not an export, or shows a path, a chat, a cookie or a secret
 server/opencode-destination-key.test.ts	all	OpenCode live account reads and bounded read-only connection lifetime
 server/opencode-destination-probe.test.ts	all	Bounded destination probes and confirmed stop
 server/opencode-destination-settle.test.ts	all	OpenCode cache settling and BUILD-FIX 2 through 5
 server/opencode-destination.test.ts	all	Effective OpenCode destination and config key
 server/opencode-typed-model-api.test.ts	all	OpenCode typed model edits validate through the bot API
+server/owner-prefs-firstrun.test.ts	all	an upgrade write drops the first-run job queue or another owner preference
 server/settle-copy-backup.test.ts	all	a backup never carries a deleted conversation in its search index or freed pages
 server/settle-copy-damaged-export.test.ts	all	a damaged export carries a settled conversations database or none, never a raw copy
 server/settle-copy-pre-prune.test.ts	all	the copy taken before a start-up prune never keeps a deleted conversation
@@ -1630,9 +1636,12 @@ server/session-end-flush.test.ts	all	logging out or shutting down saves the chat
 server/setup-answer-timing.test.ts	all	first run answer says where its time went
 server/setup-api.test.ts	all	first run seats Chief on fresh install
 server/setup-backup.test.ts	all	Setup completes only after first backup
+server/setup-card-route.test.ts	all	the first-run card route answers off desktop or accepts a key outside its allowlist
 server/setup-chief-local.test.ts	all	first run claims a local model only on this computer
+server/setup-conversation-1019.test.ts	all	the first-run setup conversation shows cards out of order or never settles one
 server/setup-conversation.test.ts	all	first-run Chief conversation
 server/setup-engine-users.test.ts	all	Needs you names the bots that run on an engine nobody is signed in to
+server/setup-hire.test.ts	all	first-run hire imports a package twice or leaves a routine behind its owner
 server/setup-signed-out.test.ts	all	signed-out engine offered with fix command
 server/setup-timing.test.ts	all	first run answer waits for the slower read, not the sum
 server/setup.test.ts	all	first-run setup checklist driven by live state
@@ -1892,7 +1901,9 @@ src/components/RoomShareCard.test.tsx	all	a share card whose request is gone aft
 src/components/RoutineSchedulerNotice.test.ts	all	late routine scheduler warning shown
 src/components/SearchIme.test.ts	all	a key that picks an input-method candidate in search closes the panel or jumps away
 src/components/ServerLifecycleBanner.test.ts	all	banner when engine not running
+src/components/SettingsCopy.lazy.test.ts	all	Settings and picker words stay in the lazy en-settings pack, reached only by the Settings chunk and the picker dialog, so en.json and the first paint do not grow
 src/components/SettingsOneWindow.test.ts	all	a bot opens its settings in a second window, or leaving its page loses unsaved edits
+src/components/settings/settings-shell.dom.test.ts	all	the mode switch, Set in Advanced line, breadcrumb with Copy link or Browse bots stops saying what the lock says
 src/components/SettingsSurface.test.ts	all	credential panes withheld from phone surface
 src/components/SlackSettings.test.ts	all	status strips undeclared secret fields
 src/components/TimeZoneSettings.test.ts	all	The time zone card shows and saves the owner's zone
@@ -1998,6 +2009,7 @@ src/lib/first-run-crew.test.ts	all	business crew import reviewed then installed
 src/lib/first-run-detect.test.ts	all	first run detects existing engines/sign-ins
 src/lib/first-run-flow.test.ts	all	first-run flow states honest per job
 src/lib/first-run-reachable.test.ts	all	first run screen works on every machine
+src/lib/first-run-welcome.test.ts	all	the first-run welcome shows to an existing install or after hello is done
 src/lib/first-run.test.ts	all	restored install never sees first run
 src/lib/flux-key-paste.test.ts	all	Flux key recognised on paste, sentences rejected
 src/lib/focus-trap.test.ts	all	Tab and Shift+Tab stay inside an open window and wrap, so keyboard owners never lose their place
@@ -2025,6 +2037,7 @@ src/lib/project-activity-handoff.test.ts	all	Activity hand-off line names the te
 src/lib/question-fence-display.test.ts	all	a fence hides only when its card exists, streaming fences never show raw JSON
 src/lib/random-uuid-polyfill.test.ts	all	phone page over plain http crashes when a screen creates an ID
 src/lib/remote-sign-out.test.ts	all	sign out removes this device by DELETE
+src/lib/route-state.test.ts	all	an engine row names the wrong state, offers a blocked route as pickable, drops its one fix, or shows credit it never read
 src/lib/routine-attention.test.ts	all	a routine whose bot or room is gone keeps asking for attention
 src/lib/screen-envelope.test.ts	all	the screen envelope drops drafts, keys, names and ids, and refuses any field outside its fixed tables
 src/lib/screens-index.test.ts	all	the help panel knows which screen the owner is on
@@ -2269,3 +2282,8 @@ server/nl-win-1018.test.ts	all	on Windows a bot command inside its own folder ru
 server/routines-fence-race.test.ts	all	a channel run that follows a refused turn rebuild settles once by token; no false task-failed notice and no duplicate answer
 server/win-pwsh-1018.test.ts	all	a PowerShell command is checked on the shell that will run it; a shell found by a path that is not the trusted one is refused
 server/win-pwsh-env-1018.test.ts	all	the PowerShell check reads the same environment the bot shell gets
+src/lib/settings-controls.test.ts	all	a Settings control is dropped or moved without a home, a kind, a default or a stored key in the new model
+src/lib/settings-search-1019.test.ts	all	Settings search misses a bot's row, Approve all or Calls, or a stub string drifts
+src/lib/settings-shell-1019.test.ts	all	a Settings page, heading, Simple/Advanced rule or bot row of the shell drifts from the lock
+src/lib/attention-offer.test.ts	all	an attention card is shown once, answered once, never by a foreign session, and never lost when 300 wait
+src/lib/notify-chooser.test.ts	all	the first-run chooser saves exactly what the owner ticked and asks the Mac for permission only after Continue

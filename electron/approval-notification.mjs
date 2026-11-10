@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright 2026 Ferrox Labs
 import { randomBytes } from "node:crypto";
 // Approval-only native presentation. OS sound settings and DND remain authoritative.
 export const APPROVAL_SOUND = "murage-approval.wav";
@@ -30,12 +32,40 @@ export function approvalOptions(payload, platform, launch, silent = false) {
 /** Bounded identities survive renderer remounts for this desktop launch.
  * Oldest of 1024 identities is evicted; SSE replay suppression is independent. */
 export function createApprovalNotifications({ Notification, platform, onOpen, authorize, revalidate, limit = 1024 }) {
-  const seen = new Set();
-  const active = new Map(), pending = new Set();
-  const routes = new Map(), routeKeys = new Map();
-  const capacity = platform === "win32" ? (Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, 1024) : 1024) : limit;
-  let activationRegistered = false;
-  const forgetRoute = (key, expectedToken) => { const token = routeKeys.get(key); if (expectedToken !== undefined && token !== expectedToken) return; if (token) routes.delete(token); routeKeys.delete(key); };
+  // The ownership marker prevents an old cancellation from deleting a newer
+  // reservation. Seen retains ids only, never payloads or native objects.
+  const seen = new Map(), active = new Map(), pending = new Map();
+  const pendingIdentities = new Map(), preparedSlots = new WeakMap(), routes = new Map();
+  const capacity = Number.isSafeInteger(limit) && limit > 0 ? Math.max(1024, limit) : 1024;
+  let activationRegistered = false, stopped = false, sequence = 0, onEvict;
+  const releaseIdentity = slot => {
+    if (seen.get(slot.identity) === slot.owner) seen.delete(slot.identity);
+  };
+  const forgetPending = slot => {
+    if (pending.get(slot.key) === slot) pending.delete(slot.key);
+    if (pendingIdentities.get(slot.identity) === slot) pendingIdentities.delete(slot.identity);
+  };
+  const current = slot => !stopped && pending.get(slot.key) === slot && slot.status === "pending";
+  const reject = (slot, cancelled = false) => {
+    if (slot.status !== "pending") return;
+    slot.status = "ended";
+    forgetPending(slot);
+    if (cancelled || !slot.legacy) releaseIdentity(slot);
+    slot.resolve({ ok: false });
+  };
+  const removeListeners = notice => {
+    try { notice.removeAllListeners(); } catch { /* Continue withdrawing other notices. */ }
+  };
+  const closeActive = entry => {
+    if (active.get(entry.key) !== entry || entry.closing) return false;
+    // close() may synchronously emit failed or call back into close/dispose.
+    entry.closing = true;
+    try { entry.notice.close(); } catch { /* Still retire this activation route. */ }
+    if (entry.token) routes.delete(entry.token);
+    active.delete(entry.key);
+    removeListeners(entry.notice);
+    return true;
+  };
   const registerActivation = () => {
     if (platform !== "win32" || activationRegistered) return;
     Notification.handleActivation(details => {
@@ -44,64 +74,145 @@ export function createApprovalNotifications({ Notification, platform, onOpen, au
     });
     activationRegistered = true;
   };
-  let stopped=false,generation=0;
-  const show = input => {
+  const reserve = (input, key, onSlot) => {
     const payload = approvalPayload(input);
-    if (!payload||stopped) return { accepted: false };
-    // The renderer's choice, kept aside: the server's re-read copy of the
-    // approval knows nothing about this computer's sound setting.
-    const silent = payload.silent === true;
-    const options = approvalOptions(payload, platform, undefined, silent);
-    if (!options) return { accepted: false };
-    const key = JSON.stringify([payload.botId, payload.threadId, payload.requestTurnId ?? "", payload.requestId]);
-    if (seen.has(key)||pending.has(key)||pending.size>=capacity) return { accepted: false };
-    seen.add(key);
-    if (seen.size > capacity) { const oldest=seen.values().next().value; seen.delete(oldest); forgetRoute(oldest); }
-    const present = current => {
-    if(stopped||!Notification.isSupported())return {accepted:false};
+    if (!payload || stopped || typeof key !== "string" || !key || pending.has(key) || active.has(key)) return null;
+    if (platform !== "darwin" && platform !== "win32") return null;
+    const id = JSON.stringify([payload.botId, payload.threadId, payload.requestTurnId ?? "", payload.requestId]);
+    if (seen.has(id) || pendingIdentities.has(id) || pending.size >= capacity) return null;
+    const slot = { key, identity: id, owner: Symbol(), payload, status: "pending" };
+    slot.promise = new Promise(resolve => { slot.resolve = resolve; });
+    slot.cancel = () => reject(slot, true);
+    seen.set(id, slot.owner);
+    if (seen.size > 1024) seen.delete(seen.keys().next().value);
+    pending.set(key, slot);
+    pendingIdentities.set(id, slot);
+    // Hand the caller its cancellation hook before any asynchronous work.
+    try { onSlot?.({ cancel: slot.cancel }); } catch { slot.cancel(); }
+    return slot;
+  };
+  const ready = (slot, payload) => {
+    if (!current(slot)) return { ok: false };
+    slot.prepared = { words: { title: payload.title, body: payload.body } };
+    slot.display = payload;
+    preparedSlots.set(slot.prepared, slot);
+    const result = { ok: true, prepared: slot.prepared };
+    slot.resolve(result);
+    return result;
+  };
+  const prepare = slot => {
+    if (!current(slot)) return slot.promise;
+    if (platform === "win32" && typeof revalidate !== "function") {
+      ready(slot, slot.payload);
+    } else {
+      void Promise.resolve().then(async () => {
+        if (!current(slot)) return;
+        if (platform === "darwin") {
+          if (typeof authorize !== "function" || typeof revalidate !== "function") return reject(slot);
+          const granted = await authorize();
+          if (!current(slot)) return;
+          if (granted !== true) return reject(slot);
+        }
+        // Re-read only this card's ids, and accept words only from that card.
+        const payload = approvalPayload(await revalidate({ ...slot.payload }));
+        if (!current(slot)) return;
+        if (!payload || ["botId", "threadId", "requestId", "messageId", "requestTurnId"].some(field => payload[field] !== slot.payload[field])) return reject(slot);
+        if (platform === "darwin") {
+          const stillGranted = await authorize(false);
+          if (!current(slot)) return;
+          if (stillGranted !== true) return reject(slot);
+        }
+        ready(slot, payload);
+      }).catch(() => { if (current(slot)) reject(slot); });
+    }
+    return slot.promise;
+  };
+  const present = (prepared, { key, onFailed, onClick } = {}) => {
+    const slot = preparedSlots.get(prepared);
+    if (!slot || !current(slot) || slot.key !== key || slot.prepared !== prepared) return { accepted: false };
+    slot.status = "presented";
+    forgetPending(slot);
+    preparedSlots.delete(prepared);
+    const refused = () => {
+      // Router attempts may retry with orphan words. Flag-off callers retain
+      // their existing consumed-on-failure dedupe behavior.
+      if (!slot.legacy) releaseIdentity(slot);
+      return { accepted: false };
+    };
+    let entry;
     try {
+      if (!Notification.isSupported()) return refused();
       registerActivation();
       const token = platform === "win32" ? activationPrefix + randomBytes(16).toString("hex") : undefined;
-      const notice = new Notification(approvalOptions(current,platform,token,silent));
-      active.set(key, notice);
+      // The local sound choice survives the server's privacy projection.
+      const notice = new Notification(approvalOptions({ ...slot.display, title: prepared.words.title, body: prepared.words.body }, platform, token, slot.payload.silent === true));
+      entry = { key, notice, token, closing: false };
+      active.set(key, entry);
       let opened = false;
       const openOnce = () => {
-        if (opened || stopped || (token && !routes.has(token))) return;
+        if (opened || stopped || entry.closing || active.get(key) !== entry || (token && !routes.has(token))) return;
         opened = true;
-        if (token) forgetRoute(key);
-        try { onOpen({ botId: payload.botId, threadId: payload.threadId, messageId: payload.messageId }); } catch { /* Navigation failure never changes authority. */ }
+        if (token) routes.delete(token);
+        const { botId, threadId, messageId } = slot.payload;
+        try {
+          if (typeof onClick === "function") onClick();
+          else onOpen({ botId, threadId, messageId });
+        } catch { /* Navigation failure never changes authority. */ }
       };
-      if (token) { routes.set(token, openOnce); routeKeys.set(key, token); }
+      if (token) routes.set(token, openOnce);
       notice.on("click", openOnce);
-      const release = () => { if (active.get(key) === notice) active.delete(key); };
-      notice.on("close", release);
-      notice.on("failed", () => { release(); forgetRoute(key, token); });
-      // Keep native callbacks bounded even when an OS omits close events.
-      if (active.size > capacity) {
-        const oldest = active.keys().next().value;
-        const retired = active.get(oldest);
-        active.delete(oldest);
-        forgetRoute(oldest);
-        retired?.removeAllListeners();
+      // OS close (including a toast timeout) leaves ownership unchanged.
+      notice.on("failed", () => {
+        if (entry.closing || active.get(key) !== entry) return;
+        active.delete(key);
+        if (token) routes.delete(token);
+        removeListeners(notice);
+        try { onFailed?.(key); } catch { /* The route is already retired. */ }
+      });
+      while (active.size > capacity) {
+        const oldest = active.values().next().value;
+        if (!closeActive(oldest)) break;
+        try { onEvict?.(oldest.key); } catch { /* The notice is already withdrawn. */ }
       }
+      if (stopped || active.get(key) !== entry) return refused();
       notice.show();
-      return { accepted: true };
+      if (active.get(key) !== entry) return refused();
+      return { accepted: true, handle: `n:${key}` };
     } catch {
-      active.delete(key); forgetRoute(key);
+      if (entry) closeActive(entry);
+      return refused();
+    }
+  };
+  // Keep flag-off callers' synchronous Windows reply and accepted-only shape.
+  const show = input => {
+    const key = `legacy|desktop|${++sequence}|1`, slot = reserve(input, key);
+    if (!slot) return { accepted: false };
+    slot.legacy = true;
+    const commit = result => ({ accepted: result.ok ? present(result.prepared, { key }).accepted : false });
+    if (platform === "win32") return commit(ready(slot, slot.payload));
+    if (typeof authorize !== "function" || typeof revalidate !== "function") {
+      reject(slot);
       return { accepted: false };
     }
-    };
-    if(platform!=="darwin")return present(payload);
-    if(typeof authorize!=="function"||typeof revalidate!=="function")return{accepted:false};
-    pending.add(key);const epoch=generation;
-    return Promise.resolve().then(authorize).then(async granted=>{
-      if(granted!==true||stopped||generation!==epoch)return{accepted:false};
-      const current=approvalPayload(await revalidate(payload));
-      if(!current||stopped||generation!==epoch||["botId","threadId","requestId","messageId","requestTurnId"].some(field=>current[field]!==payload[field]))return{accepted:false};
-      if(await authorize(false)!==true||stopped||generation!==epoch)return{accepted:false};
-      return present(current);
-    }).catch(()=>({accepted:false})).finally(()=>pending.delete(key));
+    return prepare(slot).then(commit);
   };
-  show.dispose=()=>{stopped=true;generation++;pending.clear();routes.clear();routeKeys.clear();for(const notice of active.values())notice.removeAllListeners();active.clear();};
+  show.prepare = (input, { key, onSlot } = {}) => {
+    const slot = reserve(input, key, onSlot);
+    return slot ? prepare(slot) : Promise.resolve({ ok: false });
+  };
+  show.present = present;
+  show.close = key => {
+    const slot = pending.get(key);
+    if (slot) slot.cancel();
+    const entry = active.get(key);
+    return (entry ? closeActive(entry) : false) || Boolean(slot);
+  };
+  show.setOnEvict = fn => { onEvict = typeof fn === "function" ? fn : undefined; };
+  show.dispose = () => {
+    stopped = true;
+    for (const slot of pending.values()) slot.cancel();
+    for (const entry of active.values()) closeActive(entry);
+    routes.clear(); seen.clear();
+  };
   return show;
 }

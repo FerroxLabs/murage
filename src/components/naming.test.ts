@@ -192,7 +192,7 @@ describe("the copy quick wins", () => {
     expect(effortLabel("xhigh")).toBe("X-High");
     expect(effortLabel("medium")).toBe("Medium");
     expect(effortLabel(undefined)).toBe("Default");
-    expect(read("./ModelPicker.tsx")).toContain("{effortLabel(level)}");
+    expect(read("./ModelPickerDialog.tsx")).toContain("{effortLabel(level)}");
     expect(read("./SettingsPanel.tsx")).toContain("{effortLabel(level)}");
     expect(read("./SettingsPanel.tsx")).not.toContain("(Default: no level is sent)");
   });

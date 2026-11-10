@@ -27,17 +27,16 @@ const electronDir = path.dirname(fileURLToPath(import.meta.url));
 const read = (name) => fs.readFileSync(path.join(electronDir, name), "utf8");
 const HOME = "h-abc";
 const ORIGIN = "http://127.0.0.1:8799";
-const flagOn = loadIpcInventory({ electronDir, env: { MURAGE_DESKTOP_CLOUD: "1" } });
 
 // ── 1. the bridge ───────────────────────────────────────────────────────────
 
 function runCloudPreload({ argv, location }) {
-  const sent = [], invoked = [], listened = [], invokedArgs = [];
+  const sent = [], invoked = [], listened = [], invokedArgs = [], sentArgs = [];
   let exposed = null;
   const electron = {
     contextBridge: { exposeInMainWorld: (key, value) => { exposed = { key, value }; } },
     ipcRenderer: {
-      send: (channel) => sent.push(channel),
+      send: (channel, ...args) => { sent.push(channel); sentArgs.push([channel, ...args]); },
       sendSync: (channel) => { sent.push(channel); return ""; },
       invoke: (channel, ...args) => { invoked.push(channel); invokedArgs.push([channel, ...args]); return Promise.resolve({ ok: true }); },
       on: (channel) => listened.push(channel),
@@ -45,7 +44,7 @@ function runCloudPreload({ argv, location }) {
     },
   };
   vm.runInNewContext(read("preload-cloud.cjs"), { require: () => electron, process: { platform: "darwin", argv }, globalThis: { location }, location, URL, queueMicrotask });
-  return { exposed, sent, invoked, listened, invokedArgs };
+  return { exposed, sent, invoked, listened, invokedArgs, sentArgs };
 }
 
 test("the Cloud bridge hands main the address unchanged, and adds nothing to it", async () => {
@@ -75,7 +74,8 @@ test("hostile page: the Cloud bridge appears only on its own home's document", (
 test("hostile page: whatever the page passes to the bridge, only cloud-safe / cloud-only channels are reached", async () => {
   const { exposed, sent, invoked, listened } = runCloudPreload({ argv: ["electron", `--murage-cloud-home=${HOME}`], location: { protocol: "murage-home:", hostname: HOME } });
   const bridge = exposed.value;
-  assert.deepEqual(Object.keys(bridge).sort(), ["approvalNotifications", "disconnectThisComputer", "homeId", "openExternal", "platform", "reachable", "setUnreadCount"]);
+  assert.deepEqual(Object.keys(bridge).sort(), ["approvalNotifications", "attention", "disconnectThisComputer", "homeId", "openExternal", "platform", "reachable", "setUnreadCount"]);
+  assert.deepEqual(Object.keys(bridge.attention).sort(), ["freed", "gone", "hello", "offer", "onShow", "present", "visible"]);
   assert.equal(Object.hasOwn(bridge, "ipcRenderer") || Object.hasOwn(bridge, "invoke") || Object.hasOwn(bridge, "send"), false, "no raw IPC handle");
   const hostile = [undefined, null, "../../x", { channel: "credential:set" }, { toString() { throw new Error("boom"); } }, JSON.parse('{"__proto__":{"channel":"credential:set"}}'), "x".repeat(1_000_000), -1, NaN, [], () => {}];
   for (const arg of hostile) {
@@ -86,6 +86,10 @@ test("hostile page: whatever the page passes to the bridge, only cloud-safe / cl
       () => bridge.openExternal(arg),
       () => bridge.approvalNotifications.show(arg),
       () => bridge.approvalNotifications.onOpen(arg),
+      () => bridge.attention.hello(arg),
+      () => bridge.attention.present(arg),
+      () => bridge.attention.gone(arg),
+      () => bridge.attention.freed(arg),
     ]) {
       try { await call(); } catch { /* a throwing page argument is its own problem; it still reached no other channel */ }
     }
@@ -97,6 +101,34 @@ test("hostile page: whatever the page passes to the bridge, only cloud-safe / cl
   for (const channel of reached) assert.notEqual(channelClass(channel), CLASS_LOCAL_ONLY, channel);
 });
 
+test("hostile attention payloads stay in the preload; valid calls use classified Cloud channels", async () => {
+  const f = runCloudPreload({ argv: ["electron", `--murage-cloud-home=${HOME}`], location: { protocol: "murage-home:", hostname: HOME } });
+  const bridge = f.exposed.value.attention, session = "a".repeat(25);
+  const identity = { session, ref: "r1", gen: 1 };
+  const present = { ...identity, title: "Review", body: "Details", privatePreview: false, silent: false, botId: "bot", threadId: "thread", icon: "data:image/png;base64,AAAA" };
+  const cases = {
+    hello: [{}, { session: "short" }, { session: 42 }, { session: "A".repeat(25) }],
+    present: [{ ...present, title: "x".repeat(257) }, { ...present, body: "x".repeat(1025) }, { ...present, gen: -1 }, { ...present, gen: 1.5 }, { ...present, ref: "" }, { ...present, session: "short" }, { ...present, silent: "yes" }, { ...present, privatePreview: 1 }, { ...present, botId: {} }, { ...present, icon: "https://example.com/x.png" }, { ...present, icon: "data:image/png;base64," + "A".repeat(65536) }],
+    gone: [{ ...identity, gen: NaN }, { ...identity, ref: "x".repeat(65) }, { ...identity, session: "short" }],
+    freed: [{ session, refs: "r1" }, { session, refs: [null] }, { session, refs: [""] }, { session, refs: Array(289).fill("r") }, { session: "short", refs: ["r1"] }],
+  };
+  for (const [method, inputs] of Object.entries(cases)) for (const input of [null, undefined, [], "credential:set", ...inputs]) {
+    await bridge[method](input);
+    assert.equal(f.invoked.length, 0, `${method} malformed invoke`);
+    assert.equal(f.sent.length, 0, `${method} malformed send`);
+  }
+  const valid = { hello: { session }, present, gone: identity, freed: { session, refs: ["r1"] } };
+  for (const [method, input] of Object.entries(valid)) {
+    await bridge[method]({ ...input, channel: "credential:set", home: "h-other" });
+    const actual = (method === "freed" ? f.sentArgs : f.invokedArgs).at(-1);
+    assert.equal(actual[0], `cloud-attention:${method}`);
+    assert.deepEqual(JSON.parse(JSON.stringify(actual[1])), input, "only the validated shape crosses IPC");
+    assert.equal(channelClass(actual[0]), CLASS_CLOUD_SAFE);
+    assert.equal(channelClass(`attention:${method}`), CLASS_LOCAL_ONLY);
+  }
+  assert.equal(f.invoked.length, 3); assert.equal(f.sent.length, 1);
+});
+
 // ── 2. main's gate ──────────────────────────────────────────────────────────
 
 function frameFixture(url, extra = {}) {
@@ -106,6 +138,7 @@ function frameFixture(url, extra = {}) {
 }
 
 test("hostile page: every channel x every hostile sender is refused in main's log (or is cloud-safe from the genuine top frame)", async () => {
+  const flagOn = loadIpcInventory({ electronDir, env: { MURAGE_DESKTOP_CLOUD: "1" } });
   const main = frameFixture(`${ORIGIN}/`);
   const cloud = frameFixture(`murage-home://${HOME}/`);
   const raw = { handles: new Map(), listeners: new Map() };

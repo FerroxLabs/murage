@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Switch } from "./SettingsPrimitives";
+import { NotifyMeSettings } from "./NotifyMeSettings";
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { requestNotificationPermission } from "@/lib/notify";
 import { setNotificationSounds, useNotificationSounds } from "@/lib/notification-sounds";
@@ -68,7 +69,7 @@ export function NotificationSettings() {
       <span id={`notification-${field}`}>{label}<span className="mt-0.5 block text-[11px] leading-relaxed text-ink-secondary">{detail}</span></span>
       <Switch data-setting-control={field === "attention" ? "notifications-heading" : undefined} aria-labelledby={`notification-${field}`} checked={draft[field]} disabled={!state.config || saving} onClick={() => edit({ ...draft, [field]: !draft[field] })} className={focus} />
     </div>;
-  return <section aria-labelledby="notification-settings-title" className="rounded-xl border border-hairline/40 bg-card p-4">
+  return <><section aria-labelledby="notification-settings-title" className="rounded-xl border border-hairline/40 bg-card p-4">
     <h3 id="notification-settings-title" className="text-[15px] font-medium text-ink">{t("notificationSettings.title")}</h3>
     <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{t("notificationSettings.intro")}</p>
     <div className="mt-3">
@@ -122,5 +123,7 @@ export function NotificationSettings() {
         {saving ? t("notificationSettings.saving") : t("notificationSettings.save")}
       </button>
     </div>
-  </section>;
+  </section>
+  <NotifyMeSettings />
+  </>;
 }

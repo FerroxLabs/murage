@@ -88,7 +88,7 @@ export function CallsSettings() {
             {off ? BOT_CALL_WORDS.offTodayOn(clock(offUntil!)) : BOT_CALL_WORDS.offTodayHelp}
           </span>
         </span>
-        <Switch aria-labelledby="calls-off-today" checked={off} disabled={!loaded || saving} onClick={() => void toggle()} className={focus} />
+        <Switch data-setting-control="calls-settings-title" aria-labelledby="calls-off-today" checked={off} disabled={!loaded || saving} onClick={() => void toggle()} className={focus} />
       </div>
       {error && <p role="alert" className="mt-1 text-[12px] text-danger">{error}</p>}
       <h4 className="mt-4 text-[13px] font-medium text-ink">{BOT_CALL_WORDS.history}</h4>
