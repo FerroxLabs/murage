@@ -20,21 +20,23 @@ import {
   orderedPickerModels,
   pickerHeadings,
   pickerZone,
-  CUSTOM_MODELS_GROUP,
-  LOCAL_MODELS_GROUP,
-  NO_LOCAL_SERVER_ROW,
-  NO_MODEL_CHOSEN,
   pickerCountLine,
   pickerEmptyState,
-  pickerTriggerTitle,
-  contextLabel,
   localPickerRows,
   localRowLabel,
   localRowNote,
   localToolsWarning,
+  showNoLocalServerRow,
+} from "./provider-model-picker-dialog";
+import {
+  CUSTOM_MODELS_GROUP,
+  LOCAL_MODELS_GROUP,
+  NO_LOCAL_SERVER_ROW,
+  NO_MODEL_CHOSEN,
+  pickerTriggerTitle,
+  contextLabel,
   pickerModels,
   pickerConnectionsToRefresh,
-  showNoLocalServerRow,
   unavailableSelectionLabel,
   type PickerEngine,
   type PickerModel,
@@ -45,7 +47,8 @@ import { fileURLToPath } from "node:url";
 import { preloadModelMetadata } from "./model-metadata";
 // The snapshot is its own chunk since 1.0.18 (BUNDLE-HEADROOM-1018); these tests read it.
 beforeAll(() => preloadModelMetadata());
-const pickerSource =readFileSync(fileURLToPath(new URL("../components/ModelPicker.tsx", import.meta.url)), "utf8");
+// The chip and its lazy dialog (1.0.19 slice P) are one picker: read both.
+const pickerSource = ["../components/ModelPicker.tsx", "../components/ModelPickerDialog.tsx"].map((file) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8")).join("\n");
 
 function fluxConnection(): PublicProviderConnection {
   const ids=["flux-auto","flux-reasoning","flux-standard","flux-fast","flux-pinned-glm-5-3","future-vendor-choice"];

@@ -185,8 +185,8 @@ export function WhatsAppSettings() {
   for (const e of groupsFor?.allow ?? []) if (!shownGroups.some(g => g.jid === e.jid)) shownGroups.push({ jid: e.jid, name: e.name ?? t("whatsapp.groups.saved"), entry: e });
   const off = Boolean(busy) || !status || status.busy;
 
-  return <section aria-labelledby="whatsapp-settings-title" className="min-w-0 rounded-xl border border-hairline/40 bg-card p-4">
-    <h3 id="whatsapp-settings-title" className="text-[15px] font-semibold text-ink">{t("whatsapp.title")}</h3>
+  return <section aria-labelledby="whatsapp-settings-name" className="min-w-0 rounded-xl border border-hairline/40 bg-card p-4">
+    <h3 id="whatsapp-settings-name"className="text-[15px] font-semibold text-ink">{t("whatsapp.title")}</h3>
     <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{t("whatsapp.intro")}</p>
     <div className="mt-3 rounded-lg bg-inset p-3 text-[12px] leading-relaxed text-ink-secondary">
       <h4 className="text-[13px] font-medium text-ink">{t("whatsapp.risk.title")}</h4>
@@ -245,7 +245,7 @@ export function WhatsAppSettings() {
       <p className="text-[12px] text-ink-secondary">{t("whatsapp.mode.help")}</p>
 
       {settings.mode === "contacts" && <>
-        <InAdvanced><div id="whatsapp-allow-heading" tabIndex={-1} className="rounded-xl bg-card p-4">
+        <InAdvanced slot="allow-lists"><div className="rounded-xl bg-card p-4">
         <h4 className="mt-5 text-[13px] font-medium text-ink">{t("whatsapp.allow.title")}</h4>
         {settings.allowFrom.length === 0 ? <p className="mt-1 text-[12px] text-ink-secondary">{t("whatsapp.allow.empty")}</p> :
           <ul className="mt-1 space-y-1">{settings.allowFrom.map(n => <li key={n} className="flex items-center justify-between gap-2 text-[12px] text-ink">
@@ -281,7 +281,7 @@ export function WhatsAppSettings() {
             </div></li>)}</ul></>}
       </>}
 
-      <InAdvanced><div id="whatsapp-groups-heading" tabIndex={-1} className="rounded-xl bg-card p-4">
+      <InAdvanced slot="whatsapp-groups"><div className="rounded-xl bg-card p-4">
       <h4 className="mt-5 text-[13px] font-medium text-ink">{t("whatsapp.groups.title")}</h4>
       <p className="mt-1 text-[12px] text-ink-secondary">{t("whatsapp.groups.help")}</p>
       <label className={checkClass}><input type="checkbox" data-setting-control="whatsapp-groups-heading" checked={settings.groups.policy === "allowlist"} disabled={off}
