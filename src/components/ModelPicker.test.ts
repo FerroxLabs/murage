@@ -8,15 +8,17 @@
 // fleet failure is a secondary line, never the catalog's replacement (FOLLOW6,
 // FOLLOW4 verifier). The renderer suite has no DOM, so the outcome function is
 // driven directly and the notices are rendered to static markup.
-import { createElement } from "react";
+import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { PublicProviderConnection } from "../../shared/provider-connections";
 import { preloadModelMetadata } from "@/lib/model-metadata";
-import { EngineListNote, EngineOptionRows, PickerPriceNote, PickerRowMeta, pickerRowTitle, ModelPickerBusyNotice, ModelPickerNotices, isThreadModelMutationLocked, modelPickerMaxHeight, modelPickerViewportOffset, refreshModelPickerCatalog } from "./ModelPicker";
-import { ENGINE_DISABLED_SUFFIX, PRICE_UNKNOWN, engineMenuFamilies, priceBandNote, type PickerEngine, type PickerModel } from "@/lib/provider-model-picker";
+import { isThreadModelMutationLocked, refreshModelPickerCatalog } from "./ModelPicker";
+import { EngineListNote, EngineOptionRows, PickerPriceNote, PickerRowMeta, pickerRowTitle, ModelPickerBusyNotice, ModelPickerNotices, modelPickerMaxHeight, modelPickerViewportOffset } from "./ModelPickerDialog";
+import { PRICE_UNKNOWN, priceBandNote, type PickerEngine, type PickerModel } from "@/lib/provider-model-picker";
+import { ENGINE_DISABLED_SUFFIX, engineMenuFamilies } from "@/lib/provider-model-picker-dialog";
 
 const connection = (id: string, catalog: Partial<PublicProviderConnection["catalog"]> = {}): PublicProviderConnection => ({
   id, label: id, enabled: true, catalog: { models: [], ...catalog },
@@ -27,7 +29,8 @@ const connection = (id: string, catalog: Partial<PublicProviderConnection["catal
 // (FOLLOW7; the wording claudeAccounts.fleetRefreshError already uses).
 const fleetLine = "The engine list could not refresh; the engines shown are the last known ones. Switch to another window and back to check the engines again.";
 const partialLine = "Some model lists could not refresh. Their last saved models are preserved; check Models settings for details.";
-const pickerSource = readFileSync(fileURLToPath(new URL("./ModelPicker.tsx", import.meta.url)), "utf8");
+// The chip and its lazy dialog (1.0.19 slice P) are one picker: read both.
+const pickerSource = ["./ModelPicker.tsx", "./ModelPickerDialog.tsx"].map((file) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8")).join("\n");
 // The snapshot is its own chunk since 1.0.18 (BUNDLE-HEADROOM-1018); these tests read it.
 beforeAll(() => preloadModelMetadata());
 
@@ -328,7 +331,7 @@ describe("the price-band note", () => {
   });
 
   it("ends with a row for your own account that opens Settings, Engines", async () => {
-    const { OwnAccountRow } = await import("./ModelPicker");
+    const { OwnAccountRow } = await import("./ModelPickerDialog");
     let opened = 0;
     const html = renderToStaticMarkup(createElement(OwnAccountRow, { onOpen: () => { opened++; } }));
     expect(html).toContain("data-own-account-row");
@@ -388,7 +391,7 @@ describe("the list reads in the owner's order, with true labels", () => {
 
 describe("engine switch notice (triage row 22)", () => {
   it("lists what the engine shown would lose or gain, and nothing when it matches", async () => {
-    const { EngineSwitchNotice } = await import("./ModelPicker");
+    const { EngineSwitchNotice } = await import("./ModelPickerDialog");
     expect(renderToStaticMarkup(createElement(EngineSwitchNotice, { lines: [] }))).toBe("");
     const html = renderToStaticMarkup(createElement(EngineSwitchNotice, { lines: ["On Grok: it can use the browser."] }));
     expect(html).toContain("data-engine-switch-notice");
@@ -448,4 +451,54 @@ it("renders the catalog recommendation as readable text", () => {
     label: "GPT-6.1 Sol", group: "Engine models", provider: "Codex", recommended: true };
   expect(renderToStaticMarkup(createElement(PickerRowMeta, { row }))).toContain("Recommended");
   expect(renderToStaticMarkup(createElement(PickerRowMeta, { row: { ...row, recommended: false } }))).not.toContain("Recommended");
+});
+
+// SETTINGS-P-LAZY-FAILURE-1019 sections 2-3: a dialog chunk that fails to load
+// leaves a frame that behaves like the dialog: on screen, focused, closable.
+describe("the picker's load-failure frame", () => {
+  const source = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
+  const picker = source("./ModelPicker.tsx"), dialog = source("./ModelPickerDialog.tsx");
+
+  it("keeps itself on screen with the same eager helper the dialog uses", () => {
+    const clamp = source("../lib/popover-clamp.ts");
+    for (const file of [picker, dialog]) {
+      expect(file).toMatch(/from "@\/lib\/popover-clamp"/);
+      expect(file).toContain("usePopoverClamp(");
+    }
+    expect(dialog).not.toContain("new ResizeObserver");
+    expect(clamp).not.toContain("ModelPickerDialog");
+  });
+
+  it("clamps a left-edge anchor inside the 12px gutter, the numbers the dialog had", async () => {
+    const { popoverViewportOffset, popoverMaxHeight } = await import("@/lib/popover-clamp");
+    expect(150 - 366 + popoverViewportOffset(150, 366, 390)).toBe(12);
+    expect(popoverViewportOffset(900, 390, 1440)).toBe(0);
+    expect(popoverMaxHeight(110, 844, 390)).toBe(722);
+    expect(popoverMaxHeight(60, 900, 1440)).toBe(560);
+    expect(popoverMaxHeight(400, 520, 390)).toBe(240);
+    expect(modelPickerViewportOffset).toBe(popoverViewportOffset);
+    expect(modelPickerMaxHeight).toBe(popoverMaxHeight);
+  });
+
+  it("shows Retry and Close inside the dialog-shaped frame", async () => {
+    const { ModelPickerLoadErrorFrame } = await import("./ModelPicker");
+    const { LazyBoundary } = await import("./LazyBoundary");
+    const onDismiss = vi.fn();
+    const boundary = new LazyBoundary({ children: null, inline: true, onRetry: vi.fn(), onDismiss,
+      frame: (alert) => createElement(ModelPickerLoadErrorFrame, { root: { current: null }, contained: false, children: alert }) });
+    boundary.state = { failed: true, broken: false };
+    const html = renderToStaticMarkup(boundary.render() as ReactElement);
+    expect(html).toContain("data-model-picker-load-error");
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain('aria-label="Choose model"');
+    expect(html).toContain("Couldn&#x27;t open this. Tap to retry.");
+    expect(html).toMatch(/>Close<\/button>/);
+  });
+
+  it("takes focus like the dialog, and Close and Escape close it at once with focus back on the opener", () => {
+    expect(picker).toContain('querySelector<HTMLButtonElement>("button")?.focus({preventScroll:true})');
+    expect(picker).toContain("onDismiss={()=>{setOpen(false);focusTrigger();}}");
+    // Escape skips the clear-the-search step while the failure frame is shown: there is no search box.
+    expect(picker).toContain("[data-model-picker-load-error]");
+  });
 });

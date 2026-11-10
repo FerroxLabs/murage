@@ -15,11 +15,15 @@ const modal = read("SettingsModal.tsx");
 // Every file a page draws its cards from.
 const PAGE_FILES: Record<string, string[]> = {
   general: ["SettingsModal.tsx", "AboutMeSettings.tsx", "NotificationSettings.tsx", "StartupSettings.tsx", "ScriptAccessSettings.tsx"],
+  calls: ["CallsSettings.tsx"],
   botDefaults: ["BotsSettings.tsx", "HouseRulesSettings.tsx", "StarterProfiles.tsx", "RoomTurnTimeoutSettings.tsx", "RoomRoutingSettings.tsx", "ProjectAutonomySetting.tsx"],
   models: ["AiSettings.tsx", "ModelsSettings.tsx", "EnginesSettings.tsx", "ClaudeAccountsSettings.tsx", "LocalModelsSettings.tsx"],
   webSearch: ["ToolsSettings.tsx", "SearchSettings.tsx", "ImageSettings.tsx", "TranscriptionSettings.tsx"],
-  companion: ["SettingsModal.tsx", "DevicesSettings.tsx", "CompanionSection.tsx", "ScriptAccessSettings.tsx"],
-  about: ["SettingsModal.tsx", "AnnouncementsSettings.tsx"],
+  computer: ["settings/pages/ComputerPage.tsx", "SettingsModal.tsx", "LocalComputerSection.tsx", "ScriptAccessSettings.tsx"],
+  companion: ["settings/pages/CompanionPage.tsx", "CompanionSection.tsx"],
+  backups: ["settings/pages/BackupsPage.tsx", "BackupSettings.tsx", "StorageSettings.tsx"],
+  usage: ["settings/pages/UsagePage.tsx", "UsageSection.tsx"],
+  about: ["settings/pages/AboutPage.tsx", "settings/pages/about-rows.tsx", "SettingsModal.tsx", "AnnouncementsSettings.tsx"],
 };
 
 describe("the regrouped pages", () => {
@@ -28,7 +32,7 @@ describe("the regrouped pages", () => {
     for (const [page, files] of Object.entries(PAGE_FILES)) {
       const source = files.map(read).join("\n");
       for (const card of SETTINGS_CARDS.filter((entry) => entry.section === page)) {
-        expect(source.includes(`id="${card.anchor}"`) || source.includes(`id: "${card.anchor}"`), `${page}: ${card.anchor}`).toBe(true);
+        expect(source.includes(`id="${card.anchor}"`) || source.includes(`id: "${card.anchor}"`) || source.includes(`anchor: "${card.anchor}"`), `${page}: ${card.anchor}`).toBe(true);
       }
     }
   });
@@ -36,7 +40,7 @@ describe("the regrouped pages", () => {
   it("gives each page one Advanced, and each Advanced card a home inside it", () => {
     const pageSource: Record<string, string> = {
       general: modal, botDefaults: read("BotsSettings.tsx"), models: read("AiSettings.tsx"),
-      webSearch: read("ToolsSettings.tsx"), companion: read("DevicesSettings.tsx"), about: modal,
+      webSearch: read("ToolsSettings.tsx"),
     };
     for (const [page, source] of Object.entries(pageSource)) {
       const advanced = SETTINGS_CARDS.filter((card) => card.section === page && card.advanced);
@@ -61,16 +65,16 @@ describe("the regrouped pages", () => {
   });
 
   it("withholds the desktop cards from a phone and keeps General and About on every surface", () => {
-    for (const id of ["general.about-me", "general.startup", "general.sidebar-density", "skills.recorder", "companion.browser", "about.announcements"]) {
+    for (const id of ["general.about-me", "general.startup", "general.sidebar-density", "skills.recorder", "companion.browser", "about.news"]) {
       expect(SETTINGS_CARDS.find((card) => card.id === id)!.surface, id).toBe("desktop");
     }
     const visible = new Set(cardsForSurface(SETTINGS_CARDS, false).map((card) => card.id));
-    for (const id of ["general.profile", "general.appearance", "about.version", "about.updates", "about.diagnostics"]) expect(visible.has(id), id).toBe(true);
+    for (const id of ["general.profile", "general.appearance", "about.version", "about.diagnostics"]) expect(visible.has(id), id).toBe(true);
     for (const id of ["general.about-me", "skills.recorder", "companion.browser"]) expect(visible.has(id), id).toBe(false);
     for (const page of ["general", "about"]) expect(SECTION_PAGES.find((entry) => entry.id === page)!.desktopOnly, page).toBeFalsy();
-    expect(modal).toMatch(/desktop === true && <Anchor id="announcements-heading">/);
+    expect(read("settings/pages/AboutPage.tsx")).toMatch(/desktop === true\s*\? <><NewsSignupSettings \/><Anchor id="announcements-heading"><AnnouncementsSettings/);
     expect(modal).toMatch(/desktop === true && section === "skills" && \([\s\S]*?<WorkspaceFeatureRow feature="skillRecorder"/);
-    expect(modal).toMatch(/desktop === true && section === "companion" && \([\s\S]*?<WorkspaceFeatureRow feature="browser"/);
+    expect(read("settings/pages/ComputerPage.tsx")).toContain("<WorkspaceFeatureRow feature=\"browser\" />");
     expect(modal).not.toContain("ExperimentalFeaturesRow");
     expect(modal).not.toContain('id="experimental-settings"');
   });
@@ -78,7 +82,7 @@ describe("the regrouped pages", () => {
   it("renders the anchor every alias lands on", () => {
     const all = [...new Set(Object.values(PAGE_FILES).flat())].map(read).join("\n");
     for (const [alias, target] of Object.entries(SECTION_ALIASES)) {
-      expect(all.includes(`id="${target.anchor}"`) || all.includes(`id: "${target.anchor}"`), alias).toBe(true);
+      expect(all.includes(`id="${target.anchor}"`) || all.includes(`id: "${target.anchor}"`) || all.includes(`anchor: "${target.anchor}"`), alias).toBe(true);
     }
   });
 
@@ -90,11 +94,12 @@ describe("the regrouped pages", () => {
   });
 
   it("keeps the About items 1.0.3 already built", () => {
-    for (const id of ["AboutVersionCard", "WhatsNewRow", "SetupAgainRow", "ShortcutsRow", "SourceCodeRow", "DiagnosticsRow"]) expect(modal, id).toContain(`<${id} />`);
-    // 1.0.10: one update control on the page, in the version card (as the sidebar footer has one), not a second Updates card
-    expect(modal).not.toContain("<UpdatesRow />");
-    expect(modal).toContain('<Anchor id="updates-heading">{cloudCardHidden("updates-heading") ? <ComputerOnlyStub anchor="updates-heading" /> : <UpdateActionButton state={s} />}</Anchor>');
-    expect(modal).toContain("versionCopy");
+    const about = read("settings/pages/AboutPage.tsx") + read("settings/pages/about-rows.tsx");
+    for (const id of ["AboutVersionCard", "WhatsNewRow", "SetupAgainRow", "ShortcutsRow", "SourceCodeRow", "DiagnosticsRow"]) expect(about, id).toContain(`<${id} />`);
+    // 1.0.19: the update row keeps its anchor inside the single Version and updates card.
+    expect(about).toContain('<Anchor id="updates-heading"><UpdatesCard /></Anchor>');
+    expect(about).toContain('cloudCardHidden("updates-heading") ? <ComputerOnlyStub anchor="updates-heading" inline /> : <UpdateActionButton state={s} />');
+    expect(about).toContain("versionCopy");
   });
 
   it("opens the Advanced parts by anchor from What's new", () => {

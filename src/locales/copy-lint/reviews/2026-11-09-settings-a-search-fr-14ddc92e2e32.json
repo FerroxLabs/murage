@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "SETTINGS19",
+  "date": "2026-11-09",
+  "base": "40b87b6ef",
+  "scope": "settings A fr fix",
+  "strings": {
+    "fr:settings.search.approveAll.on": {
+      "text": "Apparaît quand 2 demandes ou plus remplissent les conditions.",
+      "en": "Shows when 2 or more requests qualify.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

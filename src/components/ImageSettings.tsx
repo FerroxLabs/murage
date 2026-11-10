@@ -185,6 +185,9 @@ export interface ImageSettingsViewProps {
 export function ImageSettingsView({ snapshot, busy, error, notice, onChange, onRefresh, probing = false, onProbe, showLibrary = true }: ImageSettingsViewProps) {
   const [confirming, setConfirming] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const libraryOpener = useRef<HTMLButtonElement>(null), focusOpener = useRef(false);
+  // Close on a failed library load remounts the opener; focus goes back to it so a keyboard user is not left on nothing.
+  useEffect(() => { if (!libraryOpen && focusOpener.current) { focusOpener.current = false; libraryOpener.current?.focus(); } }, [libraryOpen]);
   const connectionId = snapshot?.selected?.connectionId ?? snapshot?.catalog?.connectionId ?? "";
   const connection = snapshot?.connections.find(item => item.id === connectionId);
   const catalog = snapshot?.catalog?.connectionId === connectionId ? snapshot.catalog : null;
@@ -235,9 +238,9 @@ export function ImageSettingsView({ snapshot, busy, error, notice, onChange, onR
       {connection && <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.usesConnection", { label: connection.label })}</p>}
     </>}
     <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.oneRequest")}</p>
-    {onProbe && showLibrary && (libraryOpen ? <LazyBoundary inline onRetry={Library.retry} onDismiss={() => setLibraryOpen(false)}>
+    {onProbe && showLibrary && (libraryOpen ? <LazyBoundary inline onRetry={Library.retry} onDismiss={() => { focusOpener.current = true; setLibraryOpen(false); }}>
       <Suspense fallback={<p role="status" className="mt-3 text-[12px] text-ink-secondary">{t("imageLibrary.busy")}</p>}><Library.Component /></Suspense>
-    </LazyBoundary> : <button type="button" onClick={() => setLibraryOpen(true)} className={`mt-3 block min-h-11 rounded-lg bg-control px-3 text-[12px] text-ink ${focus}`}>{t("imageSettings.library.open")}</button>)}
+    </LazyBoundary> : <button ref={libraryOpener} type="button" onClick={() => setLibraryOpen(true)} className={`mt-3 block min-h-11 rounded-lg bg-control px-3 text-[12px] text-ink ${focus}`}>{t("imageSettings.library.open")}</button>)}
     <button type="button" onClick={onRefresh} disabled={Boolean(busy)} className={`mt-3 min-h-11 rounded-lg bg-control px-3 text-[12px] text-ink disabled:opacity-50 ${focus}`}>{busy === "load" ? t("imageSettings.loading") : t("imageSettings.refresh")}</button>
     {busy === "save" && <p role="status" className="mt-2 text-[12px] text-ink-secondary">{t("imageSettings.saving")}</p>}
     {notice && <p role="status" className="mt-2 text-[12px] text-success">{notice}</p>}

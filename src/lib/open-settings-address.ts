@@ -11,6 +11,7 @@ import { SETTINGS_INDEX, type SettingsIndexEntry } from "./settings-index";
 import type { SettingsAddress } from "./settings-address";
 import type { AppSettingsSection } from "./settings-sections";
 import { leaveBotPage } from "./settings-leave";
+import { resolveSettingsCard } from "./settings-card-registry";
 
 const BOT_SECTION_IDS = new Set<string>(BOT_SETTINGS_SECTIONS.map((section) => section.id));
 
@@ -27,6 +28,9 @@ export function settingsAddressActions(address: SettingsAddress, context: Addres
     const id = address.name ? `${address.section}.${address.name}` : null;
     const entry = id ? index.find((item) => item.scope === "app" && item.id === id) : undefined;
     if (entry && entry.scope === "app") return [{ type: "toggleAppSettings", open: true, section: entry.section, anchor: entry.anchor }];
+    const card = resolveSettingsCard(id ?? address.section)
+      ?? (address.name ? resolveSettingsCard(address.name) : undefined);
+    if (card) return [{ type: "toggleAppSettings", open: true, section: card.section, anchor: card.anchor }];
     // A page, an old id, or a card that has since moved: its page (unknown lands on General, as everywhere else).
     return [{ type: "toggleAppSettings", open: true, section: address.section as AppSettingsSection }];
   }
