@@ -96,7 +96,7 @@ const baseBot = {
   usageTotal: USAGE,
 };
 
-function render(bot: Record<string, unknown>, muragebox: Record<string, unknown> | undefined) {
+function render(bot: Record<string, unknown>, muragebox: Record<string, unknown> | undefined, botComputerNotices?: Record<string, string>) {
   store.state = {
     instances: [{
       instanceId: "i1",
@@ -109,6 +109,7 @@ function render(bot: Record<string, unknown>, muragebox: Record<string, unknown>
     routines: [],
     error: null,
     mascotMotion: null,
+    botComputerNotices,
   };
   vi.stubGlobal("window", { muragebox });
   return renderToStaticMarkup(createElement(SettingsPanel, { bot: bot as never }));
@@ -152,6 +153,18 @@ describe("bot settings in another language", () => {
   afterAll(async () => {
     delete localeLoaders["zz"];
     await setLocale("en");
+  });
+
+  it.each([
+    ["local", "b1", true],
+    [undefined, "b1", true],
+    ["local", "b2", false],
+    ["vm", "b1", false],
+  ] as const)("shows the creation fallback only for the affected computer (%s, %s)", (computer, botId, shown) => {
+    const notice = "That computer is not available here, so this assistant started on this computer.";
+    const markup = render({ ...baseBot, computer }, undefined, { [botId]: notice });
+    expect(markup.includes(notice)).toBe(shown);
+    if (shown) expect(markup).toContain(`<p role="status" class="mt-2 text-[13px] text-ink-secondary">${notice}</p>`);
   });
 
   it("shows no English of its own: usage card, labels, placeholders, titles", () => {

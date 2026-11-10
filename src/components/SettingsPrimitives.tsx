@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState, type ComponentProps, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, Copy, X } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -103,21 +103,27 @@ export function AdvancedSection({ section, summary, open, onOpenChange, children
 // the page wraps its body in <AdvancedHost>, puts <AdvancedSlotTarget/> inside its AdvancedSection, and a card sends
 // its Advanced part through <InAdvanced>. Closed Advanced mounts no target, so the part is not rendered; a card used
 // outside a host renders its part inline.
-const AdvancedSlotContext = createContext<{ slot: HTMLElement | null; setSlot: (element: HTMLElement | null) => void } | null>(null);
+// A page whose registry cards each own one part of such a component (Messaging apps: the Slack card and its private
+// setup card) names its slots: <AdvancedSlotTarget name="slack-setup"/> receives <InAdvanced slot="slack-setup">.
+const AdvancedSlotContext = createContext<{ slots: Record<string, HTMLElement | null>; setSlot: (name: string, element: HTMLElement | null) => void } | null>(null);
 
 export function AdvancedHost({ children }: { children: ReactNode }) {
-  const [slot, setSlot] = useState<HTMLElement | null>(null);
-  const value = useMemo(() => ({ slot, setSlot }), [slot]);
+  const [slots, setSlots] = useState<Record<string, HTMLElement | null>>({});
+  const setSlot = useCallback((name: string, element: HTMLElement | null) => setSlots((current) => (current[name] === element ? current : { ...current, [name]: element })), []);
+  const value = useMemo(() => ({ slots, setSlot }), [slots, setSlot]);
   return <AdvancedSlotContext.Provider value={value}>{children}</AdvancedSlotContext.Provider>;
 }
 
-export function AdvancedSlotTarget() {
+export function AdvancedSlotTarget({ name = "", className = "space-y-4" }: { name?: string; className?: string }) {
   const host = useContext(AdvancedSlotContext);
-  return <div ref={host?.setSlot} className="space-y-4" />;
+  const setSlot = host?.setSlot;
+  const ref = useCallback((element: HTMLElement | null) => setSlot?.(name, element), [setSlot, name]);
+  return <div ref={ref} className={className} />;
 }
 
-export function InAdvanced({ children }: { children: ReactNode }) {
+export function InAdvanced({ children, slot = "" }: { children: ReactNode; slot?: string }) {
   const host = useContext(AdvancedSlotContext);
   if (!host) return <>{children}</>;
-  return host.slot ? createPortal(children, host.slot) : null;
+  const target = host.slots[slot] ?? null;
+  return target ? createPortal(children, target) : null;
 }

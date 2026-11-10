@@ -302,7 +302,8 @@ for (const width of [390, 1440]) test(`another bot's row asks first when there a
   const folder = dialog.getByRole("textbox", { name: "Working folder path", exact: true });
   await folder.fill("/tmp/unsaved-proof");
   const nav = dialog.getByRole("navigation", { name: "Settings sections", exact: true }), rows = nav.locator("[data-settings-bot]");
-  await nav.locator("[data-settings-bots-toggle]").click();
+  // 1.0.19: Each bot lists up to five bots, the open one always among them (no toggle to open first)
+  await expect(rows.filter({ hasText: "Level proof bot" })).toBeVisible();
   page.once("dialog", confirm => confirm.dismiss());
   await rows.filter({ hasText: "Level proof bot" }).click();
   await expect(dialog).toBeVisible();

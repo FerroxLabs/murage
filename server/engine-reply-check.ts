@@ -9,6 +9,7 @@ import { chmodSync, lstatSync, mkdirSync, readdirSync, realpathSync } from "node
 import { homedir } from "node:os";
 import { posix, win32 } from "node:path";
 import { DATA_DIR } from "./config.ts";
+import { requireWindowsAddon } from "./engine-exclusion.ts";
 import { ENGINE_REPLY_PROMPT } from "./drivers/cli-memory-learning.ts";
 import { CLAUDE_MANAGED_MCP_CONFLICT } from "./drivers/claude-guards.ts";
 
@@ -91,12 +92,11 @@ export const engineCheckHost = {
   })(),
   /** icacls on Windows only: arguments in, output out. */
   icacls: (args: string[]): string => execFileSync("icacls", args, { encoding: "utf8", windowsHide: true, timeout: 15_000 }),
-  /** The owner SID of a folder on Windows (null when it cannot be read). The path travels in the environment, never in a command string. */
+  /** The owner SID of a folder on Windows (null when it cannot be read). Read by the engine-exclusion addon (GetSecurityInfo on the folder itself, a link not followed); no program is started and no path travels in a command. */
   owner: (folder: string): string | null => {
     try {
-      const out = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "(Get-Acl -LiteralPath $env:MURAGE_CHECK_PATH).GetOwner([System.Security.Principal.SecurityIdentifier]).Value"],
-        { encoding: "utf8", windowsHide: true, timeout: 20_000, env: { ...process.env, MURAGE_CHECK_PATH: folder } }).trim();
-      return /^S-1-[0-9-]+$/.test(out) ? out : null;
+      const out = requireWindowsAddon().fileOwnerSid?.(folder);
+      return typeof out === "string" && /^S-1-\d+(?:-\d+)+$/.test(out) ? out : null;
     } catch { return null; }
   },
   /** The system folder the check base lives in. Always undefined here; a test answers with a temp dir (the platform default is used otherwise). */
