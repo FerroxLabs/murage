@@ -180,10 +180,13 @@ describe("phone calls and the first paint", () => {
   const src = (file: string) => readFileSync(join(ROOT, "src", file), "utf8");
 
   it("loads the screen only behind import(), and its words only with it", () => {
-    const modal = src("components/SettingsModal.tsx");
-    expect(modal).toContain('retryableLazy(() => import("./PhoneCallsSettings"))');
-    expect(modal).not.toMatch(/^import[^\n]*PhoneCallsSettings/m);
-    expect(modal).not.toMatch(/^import[^\n]*lib\/phone-calls/m);
+    // The screen loads from the Connections page now that the settings pages live outside SettingsModal.
+    expect(src("components/settings/pages/ConnectionsPage.tsx")).toContain('retryableLazy(() => import("../../PhoneCallsSettings"))');
+    for (const file of ["components/SettingsModal.tsx", "components/settings/pages/ConnectionsPage.tsx"]) {
+      const page = src(file);
+      expect(page, file).not.toMatch(/^import[^\n]*PhoneCallsSettings/m);
+      expect(page, file).not.toMatch(/^import[^\n]*lib\/phone-calls/m);
+    }
     for (const file of ["main.tsx", "App.tsx", "locales/index.ts", "state/store.tsx"]) {
       expect(src(file), file).not.toMatch(/phone-calls|PhoneCallsSettings/);
     }

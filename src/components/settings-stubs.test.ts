@@ -290,7 +290,7 @@ describe("cards that need this computer, in the Cloud window", () => {
 
   it("paths name the page and the fold", () => {
     expect(settingsCardPath("startup-heading")?.path).toBe("General > Advanced > Start at login and run in the background");
-    expect(settingsCardPath("setup-heading")?.path).toBe("About & updates > Run setup again");
+    expect(settingsCardPath("setup-heading")?.path).toBe("About & help > Run setup again");
   });
 });
 

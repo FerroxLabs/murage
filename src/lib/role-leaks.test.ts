@@ -41,6 +41,8 @@ const ALLOWED: Record<string, string> = {
   "components/BotRoleControl.tsx":
     "seats this bot in the chair on a copy of the roster (flag and scope together) so the shared handover rule " +
     "(shared/chief-handover.ts) can say what the former Chief becomes; the role it renders comes from botRole()",
+  "components/settings/BrowseBotsPage.tsx":
+    "names the raw fields in its row type only; the role it renders comes from botRole()",
   "components/Sidebar.tsx":
     "the archive/restore round-trip sends the flag back over the wire verbatim; every " +
     "rendered role in this file goes through botRole()",
