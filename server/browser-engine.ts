@@ -15,9 +15,10 @@ import { browserLockTurnNote, type BrowserProtection } from "./browser-lock.ts";
 import { BEFOREUNLOAD_GUARD_SCRIPT } from "./browser-beforeunload-guard.ts";
 import { murageTool } from "./murage-tool-surface.ts";
 import { DATA_DIR } from "./config.ts";
-import { AGENT_BROWSER_VERSION, agentBrowserReleaseVersion, agentBrowserReleaseUrl, resolveAgentBrowserReleaseAsset, type AgentBrowserReleaseAsset } from "./browser-engine-release.ts";
+import { AGENT_BROWSER_VERSION, agentBrowserReleaseVersion, agentBrowserReleaseUrl, agentBrowserVersionOutputAccepted, resolveAgentBrowserReleaseAsset, type AgentBrowserReleaseAsset } from "./browser-engine-release.ts";
 import { browserLaunchFailure, CLOUD_BROWSER_BOT, spawnCloudBrowser } from "./cloud-home/browser-process.ts";
 import { cloudHomeCopy } from "./cloud-home/copy.ts";
+import { CONTROL_TOKEN_ENV, newControlToken } from "./browser-control-token.ts";
 
 const KEY_FILE = "browser-engine-key";
 type ResolveOptions = { dataDir?: string; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; arch?: string; musl?: boolean; /** false: read what is already known and never launch a signature check. */ startCheck?: boolean; /** Windows' signature check (test seam); default: the packaged engine-exclusion addon. */ authenticode?: NativeAuthenticode | null };
@@ -429,6 +430,8 @@ export function agentBrowserIntegration(input: {
     const env = { [CLOUD_BROWSER_BOT]: input.botId, HOME: home, USERPROFILE: home,
       AGENT_BROWSER_SOCKET_DIR: `${home}/sockets`, AGENT_BROWSER_SESSION: input.session,
       AGENT_BROWSER_ENCRYPTION_KEY: input.encryptionKey,
+      // BRTOKEN19: one control token per launch, for the engine's stream port and Windows daemon port. Env only, never argv.
+      [CONTROL_TOKEN_ENV]: newControlToken(),
       AGENT_BROWSER_RESTORE_SAVE: input.persistent === false || input.session.startsWith("guest-") ? "never" : "auto" };
     return { command: input.binaryPath, args: ["mcp", "--tools", "core", "--no-webmcp"], env: {
       ...env, ...(env.AGENT_BROWSER_RESTORE_SAVE === "auto" ? { AGENT_BROWSER_RESTORE: input.session } : {}) } };
@@ -452,6 +455,8 @@ export function agentBrowserIntegration(input: {
     AGENT_BROWSER_SESSION: input.session,
     AGENT_BROWSER_RESTORE_SAVE: input.persistent === false || input.session.startsWith("guest-") ? "never" : "auto",
     AGENT_BROWSER_ENCRYPTION_KEY: input.encryptionKey,
+    // BRTOKEN19: one control token per launch, for the engine's stream port and Windows daemon port. Env only, never argv.
+    [CONTROL_TOKEN_ENV]: newControlToken(),
     AGENT_BROWSER_HEADED: "0",
     AGENT_BROWSER_NO_WEBMCP: "1",
     AGENT_BROWSER_IDLE_TIMEOUT_MS: "60000",
@@ -526,7 +531,7 @@ function runEngine(binary: string, args: string[], env: NodeJS.ProcessEnv, timeo
 const AGENT_BROWSER_VERIFY_TIMEOUT_MS = 20_000;
 async function checkAgentBrowserVersion(binary: string, env: NodeJS.ProcessEnv): Promise<void> {
   const output = await runEngine(binary, ["--version"], env, AGENT_BROWSER_VERIFY_TIMEOUT_MS);
-  if (output !== `agent-browser ${AGENT_BROWSER_VERSION}` && output !== `agent-browser ${agentBrowserReleaseVersion(resolveAgentBrowserReleaseAsset())}`) throw new Error(`agent-browser ${AGENT_BROWSER_VERSION} is required`);
+  if (!agentBrowserVersionOutputAccepted(output, resolveAgentBrowserReleaseAsset())) throw new Error(`agent-browser ${AGENT_BROWSER_VERSION} is required`);
 }
 /** Successful (or in-flight) checks, per resolved binary path. The stamp is
  * the file's identity and content shape, so replacing or updating the engine
