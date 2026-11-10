@@ -174,8 +174,9 @@ describe("the copy quick wins", () => {
   it("does not say Discord or WhatsApp is coming soon above working cards", () => {
     const telegram = read("./TelegramSettings.tsx");
     expect(telegram).not.toContain("coming soon");
-    expect(read("./SettingsModal.tsx")).toContain("<DiscordSettings />");
-    expect(read("./SettingsModal.tsx")).toContain("<WhatsAppSettings />");
+    // 1.0.19: the Messaging apps page file (settings/pages/ChannelsPage.tsx) renders the four app cards.
+    expect(read("./settings/pages/ChannelsPage.tsx")).toContain("<DiscordSettings");
+    expect(read("./settings/pages/ChannelsPage.tsx")).toContain("<WhatsAppSettings");
   });
 
   it("counts one bot as one bot", () => {
@@ -192,7 +193,7 @@ describe("the copy quick wins", () => {
     expect(effortLabel("xhigh")).toBe("X-High");
     expect(effortLabel("medium")).toBe("Medium");
     expect(effortLabel(undefined)).toBe("Default");
-    expect(read("./ModelPicker.tsx")).toContain("{effortLabel(level)}");
+    expect(read("./ModelPickerDialog.tsx")).toContain("{effortLabel(level)}");
     expect(read("./SettingsPanel.tsx")).toContain("{effortLabel(level)}");
     expect(read("./SettingsPanel.tsx")).not.toContain("(Default: no level is sent)");
   });
