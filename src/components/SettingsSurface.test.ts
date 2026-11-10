@@ -19,9 +19,9 @@ const source = readFileSync(fileURLToPath(new URL("./SettingsModal.tsx", import.
 
 const SECTIONS = [
   { id: "general", desktopOnly: undefined },
-  { id: "connections", desktopOnly: true },
+  { id: "connections", desktopOnly: undefined },
   { id: "engines", desktopOnly: true },
-  { id: "channels", desktopOnly: true },
+  { id: "channels", desktopOnly: undefined },
   { id: "companion", desktopOnly: true },
   { id: "computer", desktopOnly: true },
   { id: "memory", desktopOnly: true },
@@ -31,30 +31,30 @@ const SECTIONS = [
 describe("which settings a surface may see", () => {
   it("withholds every credential and execution pane from a phone", () => {
     const ids = sectionsForSurface(SECTIONS, false).map((entry) => entry.id);
-    expect(ids).not.toContain("connections");
+    expect(ids).toContain("connections");
     expect(ids).not.toContain("engines");
-    expect(ids).not.toContain("channels");
+    expect(ids).toContain("channels");
     expect(ids).not.toContain("computer");
     expect(ids).not.toContain("companion");
     // and still leaves it something worth opening
-    expect(ids).toEqual(["general", "usage"]);
+    expect(ids).toEqual(["general", "connections", "channels", "usage"]);
   });
 
   it("withholds them while the surface is still unknown", () => {
     // Neutral is the narrow side here. Showing an API key for one frame and
     // then hiding it has already disclosed it; a section arriving a moment
     // late on the desktop costs nothing.
-    expect(sectionsForSurface(SECTIONS, undefined).map((entry) => entry.id)).toEqual(["general", "usage"]);
+    expect(sectionsForSurface(SECTIONS, undefined).map((entry) => entry.id)).toEqual(["general", "connections", "channels", "usage"]);
   });
 
   it("waits for the surface before leaving a desktop section it was opened on", () => {
-    // Opened on Models before the surface answered: stay, do not land on General for good.
-    expect(settingsSectionRedirect(SECTIONS, "connections" as never, undefined, sectionsForSurface(SECTIONS, undefined))).toBeNull();
+    // Opened on Engines before the surface answered: stay, do not land on General for good.
+    expect(settingsSectionRedirect(SECTIONS, "engines", undefined, sectionsForSurface(SECTIONS, undefined))).toBeNull();
     // Once the phone answers, the withheld pane is left.
-    expect(settingsSectionRedirect(SECTIONS, "connections" as never, false, sectionsForSurface(SECTIONS, false))).toBe("general");
+    expect(settingsSectionRedirect(SECTIONS, "engines", false, sectionsForSurface(SECTIONS, false))).toBe("general");
     // A failed first ask answers false without confirming anything: a desktop
     // whose /api/config blipped once must not be moved to General for good.
-    expect(settingsSectionRedirect(SECTIONS, "connections" as never, false, sectionsForSurface(SECTIONS, false), false)).toBeNull();
+    expect(settingsSectionRedirect(SECTIONS, "engines", false, sectionsForSurface(SECTIONS, false), false)).toBeNull();
     expect(source).toContain("settingsSectionRedirect(SECTIONS, requested, desktop, visible, confirmed)");
     // A section on offer is kept; one filtered out by search moves to the first match.
     expect(settingsSectionRedirect(SECTIONS, "usage" as never, undefined, sectionsForSurface(SECTIONS, undefined))).toBeNull();
@@ -69,7 +69,8 @@ describe("which settings a surface may see", () => {
     // A stale `appSettingsSection` — set on the desktop, or restored from
     // state — must not render a withheld pane just because the nav no longer
     // offers it.
-    for (const id of ["connections", "channels", "companion", "memory", "botDefaults", "webSearch", "models", "backups", "skills"]) {
+    // Apps contains Messaging; its page keeps remote readouts and stubs desktop actions.
+    for (const id of ["memory", "botDefaults", "webSearch", "models", "skills"]) {
       expect(source, `${id} renders without a surface check`).toContain(`desktop === true && section === "${id}"`);
     }
   });
@@ -80,6 +81,6 @@ describe("which settings a surface may see", () => {
   });
 });
 
-it("loads Memory as a separate chunk after About me",()=>{expect(source).toMatch(/retryableLazy\(\(\) => import\("\.\/MemorySection"\)\)/);expect(source).not.toMatch(/import .* from "\.\/MemorySection"/);const ids=SETTINGS_SECTIONS.map(entry=>entry.id);expect(ids.indexOf("memory")).toBeGreaterThan(ids.indexOf("aboutMe"));expect(SETTINGS_SECTIONS.find(entry=>entry.id==="memory")).toMatchObject({group:"bots",desktopOnly:true});});
+it("loads Memory as a separate chunk after About me",()=>{expect(source).toMatch(/retryableLazy\(\(\) => import\("\.\/MemorySection"\)\)/);expect(source).not.toMatch(/import .* from "\.\/MemorySection"/);const ids=SETTINGS_SECTIONS.map(entry=>entry.id);expect(ids.indexOf("memory")).toBeGreaterThan(ids.indexOf("aboutMe"));expect(SETTINGS_SECTIONS.find(entry=>entry.id==="memory")).toMatchObject({group:"allBots",desktopOnly:true});});
 
 it("Memory uses the retryable component and its retry boundary",()=>{expect(source).toContain('<MemorySection.Component advanced={advancedFor("memory")} />');expect(source).toContain("onRetry={MemorySection.retry}");});

@@ -17,7 +17,8 @@ import { describe, expect, it } from "vitest";
 const here = dirname(fileURLToPath(import.meta.url));
 const models = readFileSync(join(here, "ModelsSettings.tsx"), "utf8");
 const section = readFileSync(join(here, "LocalModelsSettings.tsx"), "utf8");
-const picker = readFileSync(join(here, "ModelPicker.tsx"), "utf8");
+// The chip and its lazy dialog (1.0.19 slice P) are one picker: read both.
+const picker = ["ModelPicker.tsx", "ModelPickerDialog.tsx"].map((file) => readFileSync(join(here, file), "utf8")).join("\n");
 const engines = readFileSync(join(here, "EnginesSettings.tsx"), "utf8");
 const setup = readFileSync(join(here, "EngineSetup.tsx"), "utf8");
 

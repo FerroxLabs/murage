@@ -1,0 +1,1266 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "SETTINGS19e",
+  "date": "2026-11-09",
+  "base": "40b87b6ef",
+  "scope": "engine state lines (routeState, EngineRow)",
+  "strings": {
+    "en:settings.route.off": {
+      "text": "Off. Turn it on to use {engine} again.",
+      "en": "Off. Turn it on to use {engine} again.",
+      "verdict": "pass"
+    },
+    "en:settings.route.install": {
+      "text": "{engine} is not installed on this computer.",
+      "en": "{engine} is not installed on this computer.",
+      "verdict": "pass"
+    },
+    "en:settings.route.repair": {
+      "text": "{engine} needs a repair.",
+      "en": "{engine} needs a repair.",
+      "verdict": "pass"
+    },
+    "en:settings.route.renew": {
+      "text": "Sign in to {engine} again on your computer.",
+      "en": "Sign in to {engine} again on your computer.",
+      "verdict": "pass"
+    },
+    "en:settings.route.signIn": {
+      "text": "{engine} needs you to sign in.",
+      "en": "{engine} needs you to sign in.",
+      "verdict": "pass"
+    },
+    "en:settings.route.signInCodex": {
+      "text": "Or use your ChatGPT account in Accounts and keys.",
+      "en": "Or use your ChatGPT account in Accounts and keys.",
+      "verdict": "pass"
+    },
+    "en:settings.route.checkingSignIn": {
+      "text": "Checking {engine}'s sign-in…",
+      "en": "Checking {engine}'s sign-in…",
+      "verdict": "pass"
+    },
+    "en:settings.route.checkingCredit": {
+      "text": "Checking credit…",
+      "en": "Checking credit…",
+      "verdict": "pass"
+    },
+    "en:settings.route.creditOut": {
+      "text": "Your Flux credit has run out.",
+      "en": "Your Flux credit has run out.",
+      "verdict": "pass"
+    },
+    "en:settings.route.creditOutIncluded": {
+      "text": "Your included credit is used up.",
+      "en": "Your included credit is used up.",
+      "verdict": "pass"
+    },
+    "en:settings.route.balance": {
+      "text": "Balance: {balance}.",
+      "en": "Balance: {balance}.",
+      "verdict": "pass"
+    },
+    "en:settings.route.creditLow": {
+      "text": "Low credit: {engine} runs one thing at a time.",
+      "en": "Low credit: {engine} runs one thing at a time.",
+      "verdict": "pass"
+    },
+    "en:settings.route.ready.account": {
+      "text": "Ready · signed in as {account}",
+      "en": "Ready · signed in as {account}",
+      "verdict": "pass"
+    },
+    "en:settings.route.ready.signedIn": {
+      "text": "Ready · signed in",
+      "en": "Ready · signed in",
+      "verdict": "pass"
+    },
+    "en:settings.route.ready.flux": {
+      "text": "Ready · on Flux credit",
+      "en": "Ready · on Flux credit",
+      "verdict": "pass"
+    },
+    "en:settings.route.ready.key": {
+      "text": "Ready · your key",
+      "en": "Ready · your key",
+      "verdict": "pass"
+    },
+    "en:settings.route.ready.local": {
+      "text": "Ready · {n} models on this computer",
+      "en": "Ready · {n} models on this computer",
+      "verdict": "pass"
+    },
+    "en:settings.route.ready.local1": {
+      "text": "Ready · 1 model on this computer",
+      "en": "Ready · 1 model on this computer",
+      "verdict": "pass"
+    },
+    "en:settings.route.ready.plain": {
+      "text": "Ready",
+      "en": "Ready",
+      "verdict": "pass"
+    },
+    "en:settings.route.fix.turnOn": {
+      "text": "Turn on",
+      "en": "Turn on",
+      "verdict": "pass"
+    },
+    "en:settings.route.fix.install": {
+      "text": "Install",
+      "en": "Install",
+      "verdict": "pass"
+    },
+    "en:settings.route.fix.repair": {
+      "text": "Repair",
+      "en": "Repair",
+      "verdict": "pass"
+    },
+    "en:settings.route.fix.renew": {
+      "text": "Sign in again",
+      "en": "Sign in again",
+      "verdict": "pass"
+    },
+    "en:settings.route.fix.signIn": {
+      "text": "Sign in",
+      "en": "Sign in",
+      "verdict": "pass"
+    },
+    "en:settings.route.fix.addCredit": {
+      "text": "Add credit",
+      "en": "Add credit",
+      "verdict": "pass"
+    },
+    "en:settings.route.fixName.turnOn": {
+      "text": "Turn on {engine}",
+      "en": "Turn on {engine}",
+      "verdict": "pass"
+    },
+    "en:settings.route.fixName.install": {
+      "text": "Install {engine}",
+      "en": "Install {engine}",
+      "verdict": "pass"
+    },
+    "en:settings.route.fixName.repair": {
+      "text": "Repair {engine}",
+      "en": "Repair {engine}",
+      "verdict": "pass"
+    },
+    "en:settings.route.fixName.renew": {
+      "text": "Sign in to {engine} again",
+      "en": "Sign in to {engine} again",
+      "verdict": "pass"
+    },
+    "en:settings.route.fixName.signIn": {
+      "text": "Sign in to {engine}",
+      "en": "Sign in to {engine}",
+      "verdict": "pass"
+    },
+    "en:settings.route.fixName.addCredit": {
+      "text": "Add credit for {engine}",
+      "en": "Add credit for {engine}",
+      "verdict": "pass"
+    },
+    "de:settings.route.off": {
+      "text": "Aus. Schalte {engine} wieder ein, um es zu nutzen.",
+      "en": "Off. Turn it on to use {engine} again.",
+      "verdict": "pass"
+    },
+    "de:settings.route.install": {
+      "text": "{engine} ist auf diesem Computer nicht installiert.",
+      "en": "{engine} is not installed on this computer.",
+      "verdict": "pass"
+    },
+    "de:settings.route.repair": {
+      "text": "{engine} muss repariert werden.",
+      "en": "{engine} needs a repair.",
+      "verdict": "pass"
+    },
+    "de:settings.route.renew": {
+      "text": "Melde dich auf deinem Computer erneut bei {engine} an.",
+      "en": "Sign in to {engine} again on your computer.",
+      "verdict": "pass"
+    },
+    "de:settings.route.signIn": {
+      "text": "{engine} braucht deine Anmeldung.",
+      "en": "{engine} needs you to sign in.",
+      "verdict": "pass"
+    },
+    "de:settings.route.signInCodex": {
+      "text": "Oder nutze dein ChatGPT-Konto unter Konten und Schlüssel.",
+      "en": "Or use your ChatGPT account in Accounts and keys.",
+      "verdict": "pass"
+    },
+    "de:settings.route.checkingSignIn": {
+      "text": "Anmeldung bei {engine} wird geprüft…",
+      "en": "Checking {engine}'s sign-in…",
+      "verdict": "pass"
+    },
+    "de:settings.route.checkingCredit": {
+      "text": "Guthaben wird geprüft…",
+      "en": "Checking credit…",
+      "verdict": "pass"
+    },
+    "de:settings.route.creditOut": {
+      "text": "Dein Flux-Guthaben ist aufgebraucht.",
+      "en": "Your Flux credit has run out.",
+      "verdict": "pass"
+    },
+    "de:settings.route.creditOutIncluded": {
+      "text": "Dein mitgeliefertes Guthaben ist aufgebraucht.",
+      "en": "Your included credit is used up.",
+      "verdict": "pass"
+    },
+    "de:settings.route.balance": {
+      "text": "Guthaben: {balance}.",
+      "en": "Balance: {balance}.",
+      "verdict": "pass"
+    },
+    "de:settings.route.creditLow": {
+      "text": "Wenig Guthaben: {engine} arbeitet jeweils an einer Sache.",
+      "en": "Low credit: {engine} runs one thing at a time.",
+      "verdict": "pass"
+    },
+    "de:settings.route.ready.account": {
+      "text": "Bereit · angemeldet als {account}",
+      "en": "Ready · signed in as {account}",
+      "verdict": "pass"
+    },
+    "de:settings.route.ready.signedIn": {
+      "text": "Bereit · angemeldet",
+      "en": "Ready · signed in",
+      "verdict": "pass"
+    },
+    "de:settings.route.ready.flux": {
+      "text": "Bereit · mit Flux-Guthaben",
+      "en": "Ready · on Flux credit",
+      "verdict": "pass"
+    },
+    "de:settings.route.ready.key": {
+      "text": "Bereit · dein Schlüssel",
+      "en": "Ready · your key",
+      "verdict": "pass"
+    },
+    "de:settings.route.ready.local": {
+      "text": "Bereit · {n} Modelle auf diesem Computer",
+      "en": "Ready · {n} models on this computer",
+      "verdict": "pass"
+    },
+    "de:settings.route.ready.local1": {
+      "text": "Bereit · 1 Modell auf diesem Computer",
+      "en": "Ready · 1 model on this computer",
+      "verdict": "pass"
+    },
+    "de:settings.route.ready.plain": {
+      "text": "Bereit",
+      "en": "Ready",
+      "verdict": "pass"
+    },
+    "de:settings.route.fix.turnOn": {
+      "text": "Einschalten",
+      "en": "Turn on",
+      "verdict": "pass"
+    },
+    "de:settings.route.fix.install": {
+      "text": "Installieren",
+      "en": "Install",
+      "verdict": "pass"
+    },
+    "de:settings.route.fix.repair": {
+      "text": "Reparieren",
+      "en": "Repair",
+      "verdict": "pass"
+    },
+    "de:settings.route.fix.renew": {
+      "text": "Erneut anmelden",
+      "en": "Sign in again",
+      "verdict": "pass"
+    },
+    "de:settings.route.fix.signIn": {
+      "text": "Anmelden",
+      "en": "Sign in",
+      "verdict": "pass"
+    },
+    "de:settings.route.fix.addCredit": {
+      "text": "Guthaben aufladen",
+      "en": "Add credit",
+      "verdict": "pass"
+    },
+    "de:settings.route.fixName.turnOn": {
+      "text": "{engine} einschalten",
+      "en": "Turn on {engine}",
+      "verdict": "pass"
+    },
+    "de:settings.route.fixName.install": {
+      "text": "{engine} installieren",
+      "en": "Install {engine}",
+      "verdict": "pass"
+    },
+    "de:settings.route.fixName.repair": {
+      "text": "{engine} reparieren",
+      "en": "Repair {engine}",
+      "verdict": "pass"
+    },
+    "de:settings.route.fixName.renew": {
+      "text": "Erneut bei {engine} anmelden",
+      "en": "Sign in to {engine} again",
+      "verdict": "pass"
+    },
+    "de:settings.route.fixName.signIn": {
+      "text": "Bei {engine} anmelden",
+      "en": "Sign in to {engine}",
+      "verdict": "pass"
+    },
+    "de:settings.route.fixName.addCredit": {
+      "text": "Guthaben für {engine} aufladen",
+      "en": "Add credit for {engine}",
+      "verdict": "pass"
+    },
+    "es:settings.route.off": {
+      "text": "Desactivado. Actívalo para volver a usar {engine}.",
+      "en": "Off. Turn it on to use {engine} again.",
+      "verdict": "pass"
+    },
+    "es:settings.route.install": {
+      "text": "{engine} no está instalado en este ordenador.",
+      "en": "{engine} is not installed on this computer.",
+      "verdict": "pass"
+    },
+    "es:settings.route.repair": {
+      "text": "{engine} necesita una reparación.",
+      "en": "{engine} needs a repair.",
+      "verdict": "pass"
+    },
+    "es:settings.route.renew": {
+      "text": "Vuelve a iniciar sesión en {engine} en tu ordenador.",
+      "en": "Sign in to {engine} again on your computer.",
+      "verdict": "pass"
+    },
+    "es:settings.route.signIn": {
+      "text": "{engine} necesita que inicies sesión.",
+      "en": "{engine} needs you to sign in.",
+      "verdict": "pass"
+    },
+    "es:settings.route.signInCodex": {
+      "text": "O usa tu cuenta de ChatGPT en Cuentas y claves.",
+      "en": "Or use your ChatGPT account in Accounts and keys.",
+      "verdict": "pass"
+    },
+    "es:settings.route.checkingSignIn": {
+      "text": "Comprobando el inicio de sesión de {engine}…",
+      "en": "Checking {engine}'s sign-in…",
+      "verdict": "pass"
+    },
+    "es:settings.route.checkingCredit": {
+      "text": "Comprobando el crédito…",
+      "en": "Checking credit…",
+      "verdict": "pass"
+    },
+    "es:settings.route.creditOut": {
+      "text": "Se te acabó el crédito de Flux.",
+      "en": "Your Flux credit has run out.",
+      "verdict": "pass"
+    },
+    "es:settings.route.creditOutIncluded": {
+      "text": "Tu crédito incluido se ha agotado.",
+      "en": "Your included credit is used up.",
+      "verdict": "pass"
+    },
+    "es:settings.route.balance": {
+      "text": "Saldo: {balance}.",
+      "en": "Balance: {balance}.",
+      "verdict": "pass"
+    },
+    "es:settings.route.creditLow": {
+      "text": "Poco crédito: {engine} hace una sola cosa a la vez.",
+      "en": "Low credit: {engine} runs one thing at a time.",
+      "verdict": "pass"
+    },
+    "es:settings.route.ready.account": {
+      "text": "Listo · sesión iniciada como {account}",
+      "en": "Ready · signed in as {account}",
+      "verdict": "pass"
+    },
+    "es:settings.route.ready.signedIn": {
+      "text": "Listo · sesión iniciada",
+      "en": "Ready · signed in",
+      "verdict": "pass"
+    },
+    "es:settings.route.ready.flux": {
+      "text": "Listo · con crédito de Flux",
+      "en": "Ready · on Flux credit",
+      "verdict": "pass"
+    },
+    "es:settings.route.ready.key": {
+      "text": "Listo · tu clave",
+      "en": "Ready · your key",
+      "verdict": "pass"
+    },
+    "es:settings.route.ready.local": {
+      "text": "Listo · {n} modelos en este ordenador",
+      "en": "Ready · {n} models on this computer",
+      "verdict": "pass"
+    },
+    "es:settings.route.ready.local1": {
+      "text": "Listo · 1 modelo en este ordenador",
+      "en": "Ready · 1 model on this computer",
+      "verdict": "pass"
+    },
+    "es:settings.route.ready.plain": {
+      "text": "Listo",
+      "en": "Ready",
+      "verdict": "pass"
+    },
+    "es:settings.route.fix.turnOn": {
+      "text": "Activar",
+      "en": "Turn on",
+      "verdict": "pass"
+    },
+    "es:settings.route.fix.install": {
+      "text": "Instalar",
+      "en": "Install",
+      "verdict": "pass"
+    },
+    "es:settings.route.fix.repair": {
+      "text": "Reparar",
+      "en": "Repair",
+      "verdict": "pass"
+    },
+    "es:settings.route.fix.renew": {
+      "text": "Volver a entrar",
+      "en": "Sign in again",
+      "verdict": "pass"
+    },
+    "es:settings.route.fix.signIn": {
+      "text": "Iniciar sesión",
+      "en": "Sign in",
+      "verdict": "pass"
+    },
+    "es:settings.route.fix.addCredit": {
+      "text": "Añadir crédito",
+      "en": "Add credit",
+      "verdict": "pass"
+    },
+    "es:settings.route.fixName.turnOn": {
+      "text": "Activar {engine}",
+      "en": "Turn on {engine}",
+      "verdict": "pass"
+    },
+    "es:settings.route.fixName.install": {
+      "text": "Instalar {engine}",
+      "en": "Install {engine}",
+      "verdict": "pass"
+    },
+    "es:settings.route.fixName.repair": {
+      "text": "Reparar {engine}",
+      "en": "Repair {engine}",
+      "verdict": "pass"
+    },
+    "es:settings.route.fixName.renew": {
+      "text": "Volver a entrar en {engine}",
+      "en": "Sign in to {engine} again",
+      "verdict": "pass"
+    },
+    "es:settings.route.fixName.signIn": {
+      "text": "Inicia sesión en {engine}",
+      "en": "Sign in to {engine}",
+      "verdict": "pass"
+    },
+    "es:settings.route.fixName.addCredit": {
+      "text": "Añadir crédito para {engine}",
+      "en": "Add credit for {engine}",
+      "verdict": "pass"
+    },
+    "fr:settings.route.off": {
+      "text": "Désactivé. Réactive-le pour utiliser {engine} à nouveau.",
+      "en": "Off. Turn it on to use {engine} again.",
+      "verdict": "pass"
+    },
+    "fr:settings.route.install": {
+      "text": "{engine} n'est pas installé sur cet ordinateur.",
+      "en": "{engine} is not installed on this computer.",
+      "verdict": "pass"
+    },
+    "fr:settings.route.repair": {
+      "text": "{engine} a besoin d'une réparation.",
+      "en": "{engine} needs a repair.",
+      "verdict": "pass"
+    },
+    "fr:settings.route.renew": {
+      "text": "Reconnecte-toi à {engine} sur ton ordinateur.",
+      "en": "Sign in to {engine} again on your computer.",
+      "verdict": "pass"
+    },
+    "fr:settings.route.signIn": {
+      "text": "{engine} a besoin que tu te connectes.",
+      "en": "{engine} needs you to sign in.",
+      "verdict": "pass"
+    },
+    "fr:settings.route.signInCodex": {
+      "text": "Ou utilise ton compte ChatGPT dans Comptes et clés.",
+      "en": "Or use your ChatGPT account in Accounts and keys.",
+      "verdict": "pass"
+    },
+    "fr:settings.route.checkingSignIn": {
+      "text": "Vérification de la connexion à {engine}…",
+      "en": "Checking {engine}'s sign-in…",
+      "verdict": "pass"
+    },
+    "fr:settings.route.checkingCredit": {
+      "text": "Vérification du crédit…",
+      "en": "Checking credit…",
+      "verdict": "pass"
+    },
+    "fr:settings.route.creditOut": {
+      "text": "Ton crédit Flux est épuisé.",
+      "en": "Your Flux credit has run out.",
+      "verdict": "pass"
+    },
+    "fr:settings.route.creditOutIncluded": {
+      "text": "Ton crédit inclus est épuisé.",
+      "en": "Your included credit is used up.",
+      "verdict": "pass"
+    },
+    "fr:settings.route.balance": {
+      "text": "Solde : {balance}.",
+      "en": "Balance: {balance}.",
+      "verdict": "pass"
+    },
+    "fr:settings.route.creditLow": {
+      "text": "Crédit faible : {engine} fait une seule chose à la fois.",
+      "en": "Low credit: {engine} runs one thing at a time.",
+      "verdict": "pass"
+    },
+    "fr:settings.route.ready.account": {
+      "text": "Prêt · connecté en tant que {account}",
+      "en": "Ready · signed in as {account}",
+      "verdict": "pass"
+    },
+    "fr:settings.route.ready.signedIn": {
+      "text": "Prêt · connecté",
+      "en": "Ready · signed in",
+      "verdict": "pass"
+    },
+    "fr:settings.route.ready.flux": {
+      "text": "Prêt · avec le crédit Flux",
+      "en": "Ready · on Flux credit",
+      "verdict": "pass"
+    },
+    "fr:settings.route.ready.key": {
+      "text": "Prêt · ta clé",
+      "en": "Ready · your key",
+      "verdict": "pass"
+    },
+    "fr:settings.route.ready.local": {
+      "text": "Prêt · {n} modèles sur cet ordinateur",
+      "en": "Ready · {n} models on this computer",
+      "verdict": "pass"
+    },
+    "fr:settings.route.ready.local1": {
+      "text": "Prêt · 1 modèle sur cet ordinateur",
+      "en": "Ready · 1 model on this computer",
+      "verdict": "pass"
+    },
+    "fr:settings.route.ready.plain": {
+      "text": "Prêt",
+      "en": "Ready",
+      "verdict": "pass"
+    },
+    "fr:settings.route.fix.turnOn": {
+      "text": "Activer",
+      "en": "Turn on",
+      "verdict": "pass"
+    },
+    "fr:settings.route.fix.install": {
+      "text": "Installer",
+      "en": "Install",
+      "verdict": "pass"
+    },
+    "fr:settings.route.fix.repair": {
+      "text": "Réparer",
+      "en": "Repair",
+      "verdict": "pass"
+    },
+    "fr:settings.route.fix.renew": {
+      "text": "Se reconnecter",
+      "en": "Sign in again",
+      "verdict": "pass"
+    },
+    "fr:settings.route.fix.signIn": {
+      "text": "Se connecter",
+      "en": "Sign in",
+      "verdict": "pass"
+    },
+    "fr:settings.route.fix.addCredit": {
+      "text": "Ajouter du crédit",
+      "en": "Add credit",
+      "verdict": "pass"
+    },
+    "fr:settings.route.fixName.turnOn": {
+      "text": "Activer {engine}",
+      "en": "Turn on {engine}",
+      "verdict": "pass"
+    },
+    "fr:settings.route.fixName.install": {
+      "text": "Installer {engine}",
+      "en": "Install {engine}",
+      "verdict": "pass"
+    },
+    "fr:settings.route.fixName.repair": {
+      "text": "Réparer {engine}",
+      "en": "Repair {engine}",
+      "verdict": "pass"
+    },
+    "fr:settings.route.fixName.renew": {
+      "text": "Se reconnecter à {engine}",
+      "en": "Sign in to {engine} again",
+      "verdict": "pass"
+    },
+    "fr:settings.route.fixName.signIn": {
+      "text": "Se connecter à {engine}",
+      "en": "Sign in to {engine}",
+      "verdict": "pass"
+    },
+    "fr:settings.route.fixName.addCredit": {
+      "text": "Ajouter du crédit pour {engine}",
+      "en": "Add credit for {engine}",
+      "verdict": "pass"
+    },
+    "hi:settings.route.off": {
+      "text": "बंद। {engine} फिर से इस्तेमाल करने के लिए इसे चालू करें।",
+      "en": "Off. Turn it on to use {engine} again.",
+      "verdict": "pass",
+      "note": "Round 1 asked for informal Hindi; the shipped Hindi pack is formal throughout (720 आप uses, none informal), so the text follows the pack. Sol round 2 confirmed the formal register is fine."
+    },
+    "hi:settings.route.install": {
+      "text": "{engine} इस कंप्यूटर पर इंस्टॉल नहीं है।",
+      "en": "{engine} is not installed on this computer.",
+      "verdict": "pass"
+    },
+    "hi:settings.route.repair": {
+      "text": "{engine} की मरम्मत करनी होगी।",
+      "en": "{engine} needs a repair.",
+      "verdict": "pass"
+    },
+    "hi:settings.route.renew": {
+      "text": "अपने कंप्यूटर पर {engine} में फिर से साइन इन करें।",
+      "en": "Sign in to {engine} again on your computer.",
+      "verdict": "pass"
+    },
+    "hi:settings.route.signIn": {
+      "text": "{engine} के लिए आपको साइन इन करना होगा।",
+      "en": "{engine} needs you to sign in.",
+      "verdict": "pass",
+      "note": "Round 1 asked for informal Hindi; the shipped Hindi pack is formal throughout (720 आप uses, none informal), so the text follows the pack. Sol round 2 confirmed the formal register is fine."
+    },
+    "hi:settings.route.signInCodex": {
+      "text": "या «खाते और कुंजियाँ» में अपना ChatGPT खाता इस्तेमाल करें।",
+      "en": "Or use your ChatGPT account in Accounts and keys.",
+      "verdict": "pass"
+    },
+    "hi:settings.route.checkingSignIn": {
+      "text": "{engine} का साइन-इन जाँचा जा रहा है…",
+      "en": "Checking {engine}'s sign-in…",
+      "verdict": "pass"
+    },
+    "hi:settings.route.checkingCredit": {
+      "text": "क्रेडिट जाँचा जा रहा है…",
+      "en": "Checking credit…",
+      "verdict": "pass"
+    },
+    "hi:settings.route.creditOut": {
+      "text": "आपका Flux क्रेडिट खत्म हो गया है।",
+      "en": "Your Flux credit has run out.",
+      "verdict": "pass",
+      "note": "Round 1 asked for informal Hindi; the shipped Hindi pack is formal throughout (720 आप uses, none informal), so the text follows the pack. Sol round 2 confirmed the formal register is fine."
+    },
+    "hi:settings.route.creditOutIncluded": {
+      "text": "आपको साथ मिला क्रेडिट खत्म हो गया है।",
+      "en": "Your included credit is used up.",
+      "verdict": "pass"
+    },
+    "hi:settings.route.balance": {
+      "text": "शेष राशि: {balance}।",
+      "en": "Balance: {balance}.",
+      "verdict": "pass"
+    },
+    "hi:settings.route.creditLow": {
+      "text": "क्रेडिट कम है: {engine} एक बार में एक ही काम करता है।",
+      "en": "Low credit: {engine} runs one thing at a time.",
+      "verdict": "pass"
+    },
+    "hi:settings.route.ready.account": {
+      "text": "तैयार · {account} के रूप में साइन इन",
+      "en": "Ready · signed in as {account}",
+      "verdict": "pass"
+    },
+    "hi:settings.route.ready.signedIn": {
+      "text": "तैयार · साइन इन हो चुका है",
+      "en": "Ready · signed in",
+      "verdict": "pass"
+    },
+    "hi:settings.route.ready.flux": {
+      "text": "तैयार · Flux क्रेडिट पर",
+      "en": "Ready · on Flux credit",
+      "verdict": "pass"
+    },
+    "hi:settings.route.ready.key": {
+      "text": "तैयार · आपकी कुंजी",
+      "en": "Ready · your key",
+      "verdict": "pass",
+      "note": "Round 1 asked for informal Hindi; the shipped Hindi pack is formal throughout (720 आप uses, none informal), so the text follows the pack. Sol round 2 confirmed the formal register is fine."
+    },
+    "hi:settings.route.ready.local": {
+      "text": "तैयार · इस कंप्यूटर पर {n} मॉडल",
+      "en": "Ready · {n} models on this computer",
+      "verdict": "pass"
+    },
+    "hi:settings.route.ready.local1": {
+      "text": "तैयार · इस कंप्यूटर पर 1 मॉडल",
+      "en": "Ready · 1 model on this computer",
+      "verdict": "pass"
+    },
+    "hi:settings.route.ready.plain": {
+      "text": "तैयार",
+      "en": "Ready",
+      "verdict": "pass"
+    },
+    "hi:settings.route.fix.turnOn": {
+      "text": "चालू करें",
+      "en": "Turn on",
+      "verdict": "pass",
+      "note": "Round 1 asked for informal Hindi; the shipped Hindi pack is formal throughout (720 आप uses, none informal), so the text follows the pack. Sol round 2 confirmed the formal register is fine."
+    },
+    "hi:settings.route.fix.install": {
+      "text": "इंस्टॉल करें",
+      "en": "Install",
+      "verdict": "pass",
+      "note": "Round 1 asked for informal Hindi; the shipped Hindi pack is formal throughout (720 आप uses, none informal), so the text follows the pack. Sol round 2 confirmed the formal register is fine."
+    },
+    "hi:settings.route.fix.repair": {
+      "text": "मरम्मत करें",
+      "en": "Repair",
+      "verdict": "pass",
+      "note": "Round 1 asked for informal Hindi; the shipped Hindi pack is formal throughout (720 आप uses, none informal), so the text follows the pack. Sol round 2 confirmed the formal register is fine."
+    },
+    "hi:settings.route.fix.renew": {
+      "text": "फिर से साइन इन करें",
+      "en": "Sign in again",
+      "verdict": "pass"
+    },
+    "hi:settings.route.fix.signIn": {
+      "text": "साइन इन करें",
+      "en": "Sign in",
+      "verdict": "pass",
+      "note": "Round 1 asked for informal Hindi; the shipped Hindi pack is formal throughout (720 आप uses, none informal), so the text follows the pack. Sol round 2 confirmed the formal register is fine."
+    },
+    "hi:settings.route.fix.addCredit": {
+      "text": "क्रेडिट जोड़ें",
+      "en": "Add credit",
+      "verdict": "pass"
+    },
+    "hi:settings.route.fixName.turnOn": {
+      "text": "{engine} चालू करें",
+      "en": "Turn on {engine}",
+      "verdict": "pass",
+      "note": "Round 1 asked for informal Hindi; the shipped Hindi pack is formal throughout (720 आप uses, none informal), so the text follows the pack. Sol round 2 confirmed the formal register is fine."
+    },
+    "hi:settings.route.fixName.install": {
+      "text": "{engine} इंस्टॉल करें",
+      "en": "Install {engine}",
+      "verdict": "pass",
+      "note": "Round 1 asked for informal Hindi; the shipped Hindi pack is formal throughout (720 आप uses, none informal), so the text follows the pack. Sol round 2 confirmed the formal register is fine."
+    },
+    "hi:settings.route.fixName.repair": {
+      "text": "{engine} की मरम्मत करें",
+      "en": "Repair {engine}",
+      "verdict": "pass",
+      "note": "Round 1 asked for informal Hindi; the shipped Hindi pack is formal throughout (720 आप uses, none informal), so the text follows the pack. Sol round 2 confirmed the formal register is fine."
+    },
+    "hi:settings.route.fixName.renew": {
+      "text": "{engine} में फिर से साइन इन करें",
+      "en": "Sign in to {engine} again",
+      "verdict": "pass"
+    },
+    "hi:settings.route.fixName.signIn": {
+      "text": "{engine} में साइन इन करें",
+      "en": "Sign in to {engine}",
+      "verdict": "pass"
+    },
+    "hi:settings.route.fixName.addCredit": {
+      "text": "{engine} के लिए क्रेडिट जोड़ें",
+      "en": "Add credit for {engine}",
+      "verdict": "pass"
+    },
+    "ja:settings.route.off": {
+      "text": "オフです。{engine} をもう一度使うにはオンにしてください。",
+      "en": "Off. Turn it on to use {engine} again.",
+      "verdict": "pass"
+    },
+    "ja:settings.route.install": {
+      "text": "{engine} はこのコンピューターにインストールされていません。",
+      "en": "{engine} is not installed on this computer.",
+      "verdict": "pass"
+    },
+    "ja:settings.route.repair": {
+      "text": "{engine} の修復が必要です。",
+      "en": "{engine} needs a repair.",
+      "verdict": "pass"
+    },
+    "ja:settings.route.renew": {
+      "text": "お使いのコンピューターで {engine} にもう一度サインインしてください。",
+      "en": "Sign in to {engine} again on your computer.",
+      "verdict": "pass"
+    },
+    "ja:settings.route.signIn": {
+      "text": "{engine} にサインインしてください。",
+      "en": "{engine} needs you to sign in.",
+      "verdict": "pass"
+    },
+    "ja:settings.route.signInCodex": {
+      "text": "または「アカウントとキー」でChatGPTアカウントを使えます。",
+      "en": "Or use your ChatGPT account in Accounts and keys.",
+      "verdict": "pass"
+    },
+    "ja:settings.route.checkingSignIn": {
+      "text": "{engine} のサインインを確認しています…",
+      "en": "Checking {engine}'s sign-in…",
+      "verdict": "pass"
+    },
+    "ja:settings.route.checkingCredit": {
+      "text": "クレジットを確認しています…",
+      "en": "Checking credit…",
+      "verdict": "pass"
+    },
+    "ja:settings.route.creditOut": {
+      "text": "Fluxのクレジットを使い切りました。",
+      "en": "Your Flux credit has run out.",
+      "verdict": "pass"
+    },
+    "ja:settings.route.creditOutIncluded": {
+      "text": "付属のクレジットを使い切りました。",
+      "en": "Your included credit is used up.",
+      "verdict": "pass"
+    },
+    "ja:settings.route.balance": {
+      "text": "残高: {balance}。",
+      "en": "Balance: {balance}.",
+      "verdict": "pass"
+    },
+    "ja:settings.route.creditLow": {
+      "text": "クレジット残りわずか: {engine} は一度に1つの作業だけ行います。",
+      "en": "Low credit: {engine} runs one thing at a time.",
+      "verdict": "pass"
+    },
+    "ja:settings.route.ready.account": {
+      "text": "準備完了 · {account} としてサインイン済み",
+      "en": "Ready · signed in as {account}",
+      "verdict": "pass"
+    },
+    "ja:settings.route.ready.signedIn": {
+      "text": "準備完了 · サインイン済み",
+      "en": "Ready · signed in",
+      "verdict": "pass"
+    },
+    "ja:settings.route.ready.flux": {
+      "text": "準備完了 · Fluxクレジットを使用",
+      "en": "Ready · on Flux credit",
+      "verdict": "pass"
+    },
+    "ja:settings.route.ready.key": {
+      "text": "準備完了 · あなたのキー",
+      "en": "Ready · your key",
+      "verdict": "pass"
+    },
+    "ja:settings.route.ready.local": {
+      "text": "準備完了 · このコンピューター上に {n} 個のモデル",
+      "en": "Ready · {n} models on this computer",
+      "verdict": "pass"
+    },
+    "ja:settings.route.ready.local1": {
+      "text": "準備完了 · このコンピューター上に1個のモデル",
+      "en": "Ready · 1 model on this computer",
+      "verdict": "pass"
+    },
+    "ja:settings.route.ready.plain": {
+      "text": "準備完了",
+      "en": "Ready",
+      "verdict": "pass"
+    },
+    "ja:settings.route.fix.turnOn": {
+      "text": "オンにする",
+      "en": "Turn on",
+      "verdict": "pass"
+    },
+    "ja:settings.route.fix.install": {
+      "text": "インストール",
+      "en": "Install",
+      "verdict": "pass"
+    },
+    "ja:settings.route.fix.repair": {
+      "text": "修復",
+      "en": "Repair",
+      "verdict": "pass"
+    },
+    "ja:settings.route.fix.renew": {
+      "text": "再サインイン",
+      "en": "Sign in again",
+      "verdict": "pass"
+    },
+    "ja:settings.route.fix.signIn": {
+      "text": "サインイン",
+      "en": "Sign in",
+      "verdict": "pass"
+    },
+    "ja:settings.route.fix.addCredit": {
+      "text": "クレジットを追加",
+      "en": "Add credit",
+      "verdict": "pass"
+    },
+    "ja:settings.route.fixName.turnOn": {
+      "text": "{engine} をオンにする",
+      "en": "Turn on {engine}",
+      "verdict": "pass"
+    },
+    "ja:settings.route.fixName.install": {
+      "text": "{engine} をインストール",
+      "en": "Install {engine}",
+      "verdict": "pass"
+    },
+    "ja:settings.route.fixName.repair": {
+      "text": "{engine} を修復",
+      "en": "Repair {engine}",
+      "verdict": "pass"
+    },
+    "ja:settings.route.fixName.renew": {
+      "text": "{engine} に再サインイン",
+      "en": "Sign in to {engine} again",
+      "verdict": "pass"
+    },
+    "ja:settings.route.fixName.signIn": {
+      "text": "{engine} にサインイン",
+      "en": "Sign in to {engine}",
+      "verdict": "pass"
+    },
+    "ja:settings.route.fixName.addCredit": {
+      "text": "{engine} のクレジットを追加",
+      "en": "Add credit for {engine}",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.off": {
+      "text": "Desativado. Ative para usar {engine} de novo.",
+      "en": "Off. Turn it on to use {engine} again.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.install": {
+      "text": "{engine} não está instalado neste computador.",
+      "en": "{engine} is not installed on this computer.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.repair": {
+      "text": "{engine} precisa de reparo.",
+      "en": "{engine} needs a repair.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.renew": {
+      "text": "Entre de novo no {engine} pelo seu computador.",
+      "en": "Sign in to {engine} again on your computer.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.signIn": {
+      "text": "{engine} precisa que você entre.",
+      "en": "{engine} needs you to sign in.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.signInCodex": {
+      "text": "Ou use sua conta do ChatGPT em Contas e chaves.",
+      "en": "Or use your ChatGPT account in Accounts and keys.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.checkingSignIn": {
+      "text": "Verificando o login do {engine}…",
+      "en": "Checking {engine}'s sign-in…",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.checkingCredit": {
+      "text": "Verificando o crédito…",
+      "en": "Checking credit…",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.creditOut": {
+      "text": "Seu crédito do Flux acabou.",
+      "en": "Your Flux credit has run out.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.creditOutIncluded": {
+      "text": "Seu crédito incluído acabou.",
+      "en": "Your included credit is used up.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.balance": {
+      "text": "Saldo: {balance}.",
+      "en": "Balance: {balance}.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.creditLow": {
+      "text": "Crédito baixo: {engine} faz uma coisa de cada vez.",
+      "en": "Low credit: {engine} runs one thing at a time.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.ready.account": {
+      "text": "Pronto · conectado como {account}",
+      "en": "Ready · signed in as {account}",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.ready.signedIn": {
+      "text": "Pronto · conectado",
+      "en": "Ready · signed in",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.ready.flux": {
+      "text": "Pronto · com crédito do Flux",
+      "en": "Ready · on Flux credit",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.ready.key": {
+      "text": "Pronto · sua chave",
+      "en": "Ready · your key",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.ready.local": {
+      "text": "Pronto · {n} modelos neste computador",
+      "en": "Ready · {n} models on this computer",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.ready.local1": {
+      "text": "Pronto · 1 modelo neste computador",
+      "en": "Ready · 1 model on this computer",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.ready.plain": {
+      "text": "Pronto",
+      "en": "Ready",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.fix.turnOn": {
+      "text": "Ativar",
+      "en": "Turn on",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.fix.install": {
+      "text": "Instalar",
+      "en": "Install",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.fix.repair": {
+      "text": "Reparar",
+      "en": "Repair",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.fix.renew": {
+      "text": "Entrar de novo",
+      "en": "Sign in again",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.fix.signIn": {
+      "text": "Entrar",
+      "en": "Sign in",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.fix.addCredit": {
+      "text": "Adicionar crédito",
+      "en": "Add credit",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.fixName.turnOn": {
+      "text": "Ativar {engine}",
+      "en": "Turn on {engine}",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.fixName.install": {
+      "text": "Instalar {engine}",
+      "en": "Install {engine}",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.fixName.repair": {
+      "text": "Reparar {engine}",
+      "en": "Repair {engine}",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.fixName.renew": {
+      "text": "Entrar de novo no {engine}",
+      "en": "Sign in to {engine} again",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.fixName.signIn": {
+      "text": "Entrar no {engine}",
+      "en": "Sign in to {engine}",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.fixName.addCredit": {
+      "text": "Adicionar crédito para o {engine}",
+      "en": "Add credit for {engine}",
+      "verdict": "pass"
+    },
+    "zh:settings.route.off": {
+      "text": "已关闭。开启后即可再次使用 {engine}。",
+      "en": "Off. Turn it on to use {engine} again.",
+      "verdict": "pass"
+    },
+    "zh:settings.route.install": {
+      "text": "此电脑上未安装 {engine}。",
+      "en": "{engine} is not installed on this computer.",
+      "verdict": "pass"
+    },
+    "zh:settings.route.repair": {
+      "text": "{engine} 需要修复。",
+      "en": "{engine} needs a repair.",
+      "verdict": "pass"
+    },
+    "zh:settings.route.renew": {
+      "text": "请在你的电脑上重新登录 {engine}。",
+      "en": "Sign in to {engine} again on your computer.",
+      "verdict": "pass"
+    },
+    "zh:settings.route.signIn": {
+      "text": "{engine} 需要你登录。",
+      "en": "{engine} needs you to sign in.",
+      "verdict": "pass"
+    },
+    "zh:settings.route.signInCodex": {
+      "text": "也可以在“账户和密钥”中使用你的 ChatGPT 账户。",
+      "en": "Or use your ChatGPT account in Accounts and keys.",
+      "verdict": "pass"
+    },
+    "zh:settings.route.checkingSignIn": {
+      "text": "正在检查 {engine} 的登录状态…",
+      "en": "Checking {engine}'s sign-in…",
+      "verdict": "pass"
+    },
+    "zh:settings.route.checkingCredit": {
+      "text": "正在检查额度…",
+      "en": "Checking credit…",
+      "verdict": "pass"
+    },
+    "zh:settings.route.creditOut": {
+      "text": "你的 Flux 额度已用完。",
+      "en": "Your Flux credit has run out.",
+      "verdict": "pass"
+    },
+    "zh:settings.route.creditOutIncluded": {
+      "text": "附带的额度已用完。",
+      "en": "Your included credit is used up.",
+      "verdict": "pass"
+    },
+    "zh:settings.route.balance": {
+      "text": "余额：{balance}。",
+      "en": "Balance: {balance}.",
+      "verdict": "pass"
+    },
+    "zh:settings.route.creditLow": {
+      "text": "剩余额度较少：{engine} 一次只做一件事。",
+      "en": "Low credit: {engine} runs one thing at a time.",
+      "verdict": "pass"
+    },
+    "zh:settings.route.ready.account": {
+      "text": "就绪 · 已以 {account} 登录",
+      "en": "Ready · signed in as {account}",
+      "verdict": "pass"
+    },
+    "zh:settings.route.ready.signedIn": {
+      "text": "就绪 · 已登录",
+      "en": "Ready · signed in",
+      "verdict": "pass"
+    },
+    "zh:settings.route.ready.flux": {
+      "text": "就绪 · 使用 Flux 额度",
+      "en": "Ready · on Flux credit",
+      "verdict": "pass"
+    },
+    "zh:settings.route.ready.key": {
+      "text": "就绪 · 你的密钥",
+      "en": "Ready · your key",
+      "verdict": "pass"
+    },
+    "zh:settings.route.ready.local": {
+      "text": "就绪 · 此电脑上有 {n} 个模型",
+      "en": "Ready · {n} models on this computer",
+      "verdict": "pass"
+    },
+    "zh:settings.route.ready.local1": {
+      "text": "就绪 · 此电脑上有 1 个模型",
+      "en": "Ready · 1 model on this computer",
+      "verdict": "pass"
+    },
+    "zh:settings.route.ready.plain": {
+      "text": "就绪",
+      "en": "Ready",
+      "verdict": "pass"
+    },
+    "zh:settings.route.fix.turnOn": {
+      "text": "开启",
+      "en": "Turn on",
+      "verdict": "pass"
+    },
+    "zh:settings.route.fix.install": {
+      "text": "安装",
+      "en": "Install",
+      "verdict": "pass"
+    },
+    "zh:settings.route.fix.repair": {
+      "text": "修复",
+      "en": "Repair",
+      "verdict": "pass"
+    },
+    "zh:settings.route.fix.renew": {
+      "text": "重新登录",
+      "en": "Sign in again",
+      "verdict": "pass"
+    },
+    "zh:settings.route.fix.signIn": {
+      "text": "登录",
+      "en": "Sign in",
+      "verdict": "pass"
+    },
+    "zh:settings.route.fix.addCredit": {
+      "text": "充值",
+      "en": "Add credit",
+      "verdict": "pass"
+    },
+    "zh:settings.route.fixName.turnOn": {
+      "text": "开启 {engine}",
+      "en": "Turn on {engine}",
+      "verdict": "pass"
+    },
+    "zh:settings.route.fixName.install": {
+      "text": "安装 {engine}",
+      "en": "Install {engine}",
+      "verdict": "pass"
+    },
+    "zh:settings.route.fixName.repair": {
+      "text": "修复 {engine}",
+      "en": "Repair {engine}",
+      "verdict": "pass"
+    },
+    "zh:settings.route.fixName.renew": {
+      "text": "重新登录 {engine}",
+      "en": "Sign in to {engine} again",
+      "verdict": "pass"
+    },
+    "zh:settings.route.fixName.signIn": {
+      "text": "登录 {engine}",
+      "en": "Sign in to {engine}",
+      "verdict": "pass"
+    },
+    "zh:settings.route.fixName.addCredit": {
+      "text": "为 {engine} 充值",
+      "en": "Add credit for {engine}",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

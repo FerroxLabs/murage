@@ -1,0 +1,256 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "SETTINGS19",
+  "date": "2026-11-09",
+  "base": "40b87b6ef",
+  "scope": "settings A strings",
+  "strings": {
+    "en:settings.askLine.text": {
+      "text": "Can't find it? Ask {chief}.",
+      "en": "Can't find it? Ask {chief}.",
+      "verdict": "pass"
+    },
+    "en:settings.askLine.prefill": {
+      "text": "Where in Settings do I",
+      "en": "Where in Settings do I",
+      "verdict": "pass"
+    },
+    "en:settings.search.more": {
+      "text": "More results ({count})",
+      "en": "More results ({count})",
+      "verdict": "pass"
+    },
+    "en:settings.search.approveAll.on": {
+      "text": "Shows when 2 or more requests qualify.",
+      "en": "Shows when 2 or more requests qualify.",
+      "verdict": "pass"
+    },
+    "en:settings.search.approveAll.off": {
+      "text": "Shows in the desktop app and the phone app.",
+      "en": "Shows in the desktop app and the phone app.",
+      "verdict": "pass"
+    },
+    "en:settings.search.approveAll.label": {
+      "text": "Approve all",
+      "en": "Approve all",
+      "verdict": "pass"
+    },
+    "de:settings.askLine.text": {
+      "text": "Nicht gefunden? Frag {chief}.",
+      "en": "Can't find it? Ask {chief}.",
+      "verdict": "pass"
+    },
+    "de:settings.askLine.prefill": {
+      "text": "Wo in den Einstellungen kann ich",
+      "en": "Where in Settings do I",
+      "verdict": "pass"
+    },
+    "de:settings.search.more": {
+      "text": "Weitere Ergebnisse ({count})",
+      "en": "More results ({count})",
+      "verdict": "pass"
+    },
+    "de:settings.search.approveAll.on": {
+      "text": "Erscheint, wenn 2 oder mehr Anfragen passen.",
+      "en": "Shows when 2 or more requests qualify.",
+      "verdict": "pass"
+    },
+    "de:settings.search.approveAll.off": {
+      "text": "Erscheint in der Desktop-App und in der Handy-App.",
+      "en": "Shows in the desktop app and the phone app.",
+      "verdict": "pass"
+    },
+    "de:settings.search.approveAll.label": {
+      "text": "Alle erlauben",
+      "en": "Approve all",
+      "verdict": "pass"
+    },
+    "es:settings.askLine.text": {
+      "text": "¿No lo encuentras? Pregunta a {chief}.",
+      "en": "Can't find it? Ask {chief}.",
+      "verdict": "pass"
+    },
+    "es:settings.askLine.prefill": {
+      "text": "¿Dónde en Ajustes puedo",
+      "en": "Where in Settings do I",
+      "verdict": "pass"
+    },
+    "es:settings.search.more": {
+      "text": "Más resultados ({count})",
+      "en": "More results ({count})",
+      "verdict": "pass"
+    },
+    "es:settings.search.approveAll.on": {
+      "text": "Aparece cuando 2 o más solicitudes cumplen las condiciones.",
+      "en": "Shows when 2 or more requests qualify.",
+      "verdict": "pass"
+    },
+    "es:settings.search.approveAll.off": {
+      "text": "Aparece en la app de escritorio y en la app del teléfono.",
+      "en": "Shows in the desktop app and the phone app.",
+      "verdict": "pass"
+    },
+    "es:settings.search.approveAll.label": {
+      "text": "Aprobar todo",
+      "en": "Approve all",
+      "verdict": "pass"
+    },
+    "fr:settings.askLine.text": {
+      "text": "Introuvable ? Demande à {chief}.",
+      "en": "Can't find it? Ask {chief}.",
+      "verdict": "pass"
+    },
+    "fr:settings.askLine.prefill": {
+      "text": "Où dans les réglages puis-je",
+      "en": "Where in Settings do I",
+      "verdict": "pass"
+    },
+    "fr:settings.search.more": {
+      "text": "Plus de résultats ({count})",
+      "en": "More results ({count})",
+      "verdict": "pass"
+    },
+    "fr:settings.search.approveAll.on": {
+      "text": "Apparaît quand 2 demandes ou plus sont concernées.",
+      "en": "Shows when 2 or more requests qualify.",
+      "verdict": "fail",
+      "note": "« Sont concernées » means involved, not eligible. Use « remplissent les conditions »."
+    },
+    "fr:settings.search.approveAll.off": {
+      "text": "Apparaît dans l’app de bureau et l’app du téléphone.",
+      "en": "Shows in the desktop app and the phone app.",
+      "verdict": "pass"
+    },
+    "fr:settings.search.approveAll.label": {
+      "text": "Tout approuver",
+      "en": "Approve all",
+      "verdict": "pass"
+    },
+    "hi:settings.askLine.text": {
+      "text": "नहीं मिल रहा? {chief} से पूछें।",
+      "en": "Can't find it? Ask {chief}.",
+      "verdict": "pass"
+    },
+    "hi:settings.askLine.prefill": {
+      "text": "सेटिंग्स में मैं कहाँ",
+      "en": "Where in Settings do I",
+      "verdict": "pass"
+    },
+    "hi:settings.search.more": {
+      "text": "और नतीजे ({count})",
+      "en": "More results ({count})",
+      "verdict": "pass"
+    },
+    "hi:settings.search.approveAll.on": {
+      "text": "तब दिखता है जब 2 या ज़्यादा अनुरोध योग्य हों।",
+      "en": "Shows when 2 or more requests qualify.",
+      "verdict": "pass"
+    },
+    "hi:settings.search.approveAll.off": {
+      "text": "डेस्कटॉप ऐप और फ़ोन ऐप में दिखता है।",
+      "en": "Shows in the desktop app and the phone app.",
+      "verdict": "pass"
+    },
+    "hi:settings.search.approveAll.label": {
+      "text": "सभी को मंज़ूरी दें",
+      "en": "Approve all",
+      "verdict": "pass"
+    },
+    "ja:settings.askLine.text": {
+      "text": "見つかりませんか？ {chief} に聞いてください。",
+      "en": "Can't find it? Ask {chief}.",
+      "verdict": "pass"
+    },
+    "ja:settings.askLine.prefill": {
+      "text": "設定のどこで",
+      "en": "Where in Settings do I",
+      "verdict": "pass"
+    },
+    "ja:settings.search.more": {
+      "text": "その他の結果（{count}）",
+      "en": "More results ({count})",
+      "verdict": "pass"
+    },
+    "ja:settings.search.approveAll.on": {
+      "text": "対象のリクエストが 2 件以上あるときに表示されます。",
+      "en": "Shows when 2 or more requests qualify.",
+      "verdict": "pass"
+    },
+    "ja:settings.search.approveAll.off": {
+      "text": "デスクトップアプリとスマートフォンアプリに表示されます。",
+      "en": "Shows in the desktop app and the phone app.",
+      "verdict": "pass"
+    },
+    "ja:settings.search.approveAll.label": {
+      "text": "すべて承認",
+      "en": "Approve all",
+      "verdict": "pass"
+    },
+    "pt-br:settings.askLine.text": {
+      "text": "Não encontrou? Pergunte a {chief}.",
+      "en": "Can't find it? Ask {chief}.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.askLine.prefill": {
+      "text": "Onde nas Configurações eu",
+      "en": "Where in Settings do I",
+      "verdict": "pass"
+    },
+    "pt-br:settings.search.more": {
+      "text": "Mais resultados ({count})",
+      "en": "More results ({count})",
+      "verdict": "pass"
+    },
+    "pt-br:settings.search.approveAll.on": {
+      "text": "Aparece quando 2 ou mais pedidos se qualificam.",
+      "en": "Shows when 2 or more requests qualify.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.search.approveAll.off": {
+      "text": "Aparece no app para computador e no app do celular.",
+      "en": "Shows in the desktop app and the phone app.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.search.approveAll.label": {
+      "text": "Aprovar tudo",
+      "en": "Approve all",
+      "verdict": "pass"
+    },
+    "zh:settings.askLine.text": {
+      "text": "找不到？问问 {chief}。",
+      "en": "Can't find it? Ask {chief}.",
+      "verdict": "pass"
+    },
+    "zh:settings.askLine.prefill": {
+      "text": "在设置里哪里可以",
+      "en": "Where in Settings do I",
+      "verdict": "pass"
+    },
+    "zh:settings.search.more": {
+      "text": "更多结果（{count}）",
+      "en": "More results ({count})",
+      "verdict": "pass"
+    },
+    "zh:settings.search.approveAll.on": {
+      "text": "有 2 个或更多符合条件的请求时显示。",
+      "en": "Shows when 2 or more requests qualify.",
+      "verdict": "pass"
+    },
+    "zh:settings.search.approveAll.off": {
+      "text": "在桌面应用和手机应用中显示。",
+      "en": "Shows in the desktop app and the phone app.",
+      "verdict": "pass"
+    },
+    "zh:settings.search.approveAll.label": {
+      "text": "全部批准",
+      "en": "Approve all",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}
