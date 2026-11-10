@@ -15,7 +15,7 @@
   "ux.l2c.headsUp.leaving": "Saving",
   "ux.l2c.headsUp.left": "Left for this month",
   "ux.l2c.headsUp.leaveFailed": "Could not save that. Try again.",
-  "ux.l2c.usage.title": "Monthly limit",
+  "ux.l2c.usage.title": "Monthly spending notice",
   "ux.l2c.usage.subtitle": "What Flux billed this month, against a limit you choose.",
   "ux.l2c.usage.limitLine": "Monthly limit: {limit}. At 80% and at the limit, Today tells you. It is a heads-up only, and your bots keep working.",
   "ux.l2c.usage.noLimit": "No limit yet. Suggested: {suggested} a month.",

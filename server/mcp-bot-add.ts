@@ -47,7 +47,7 @@ const namesOnly = (what: string): BotMcpAddResult => refuse(`${what}. ${BOT_MCP_
 
 /** True when one token carries a credential: a known key prefix, a PEM
  * private-key header or a bearer-looking token. */
-function credentialShaped(token: string): boolean {
+export function credentialShaped(token: string): boolean {
   if (PEM_PRIVATE_KEY.test(token) || BEARER_TOKEN.test(token)) return true;
   return KEY_PREFIXES.some((pattern) => token.search(pattern) !== -1);
 }
