@@ -292,6 +292,15 @@ function PermissionLevelMenu({ bot, routine, onPick, onDone }: {
 }
 
 /** Renders the editable message composer and its pending attachments. */
+/** The level chip of the composer that owns `from`: the nearest ancestor holding one, so a second composer is never focused. */
+function levelChipNear(from: HTMLElement | null): HTMLElement | null {
+  for (let node = from?.parentElement ?? null; node; node = node.parentElement) {
+    const chip = node.querySelector<HTMLElement>('[data-coach="level-chip"]');
+    if (chip) return chip;
+  }
+  return null;
+}
+
 export function Composer({
   bot,
   group,
@@ -1845,7 +1854,7 @@ export function Composer({
         }}
       />
       {levelConfirm && autoBot && (
-        <LazyBoundary inline onRetry={LevelConfirmChunk.retry} onDismiss={() => setLevelConfirm(null)}>
+        <LazyBoundary inline onRetry={LevelConfirmChunk.retry} onDismiss={() => { setLevelConfirm(null); requestAnimationFrame(() => (levelChipNear(inputRef.current) ?? inputRef.current)?.focus()); }}>
           <Suspense fallback={null}>
             <LevelConfirmChunk.Component
               bot={autoBot.name}

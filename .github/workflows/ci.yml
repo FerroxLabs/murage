@@ -173,7 +173,7 @@ jobs:
         run: node scripts/smoke-app-permissions.mjs
 
   vitest:
-    if: ${{ !inputs.human_files }}
+    if: ${{ always() && !inputs.human_files }}
     name: ${{ inputs.vitest_file && 'Scoped Vitest confirmation' || format('Vitest shard {0}/{1}', matrix.vitest_shard, matrix.os == 'windows-latest' && 12 || 10) }} (${{ matrix.os }})
     # Preserve the previous validator-before-tests ordering for scoped dispatch.
     needs: quality

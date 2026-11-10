@@ -187,11 +187,12 @@ describe("the Health level", () => {
     expect(source("../state/store.tsx")).toContain('showHealthPage(frame.notification, () => dispatch({ type: "showHealth" }))');
   });
   it("Settings has one line to the Health screen, outside every desktop-only guard", () => {
-    const settings = source("SettingsModal.tsx");
+    // 1.0.19: the About page file lists the card, and about-rows.tsx holds the row that opens the Health screen.
+    const settings = source("settings/pages/AboutPage.tsx");
     const line = settings.split("\n").find((text) => text.includes("<SettingsHealthRow />"))!;
     expect(line).toBeTruthy();
     expect(line).not.toContain("desktop === true");
-    expect(settings).toContain('dispatch({ type: "showHealth" })');
+    expect(source("settings/pages/about-rows.tsx")).toContain('dispatch({ type: "showHealth" })');
   });
 });
 
