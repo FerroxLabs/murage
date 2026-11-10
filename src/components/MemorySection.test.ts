@@ -208,9 +208,9 @@ describe("history", () => {
 });
 
 describe("Advanced", () => {
-  it("holds mode, the monthly limit and the learning connection, with the limit's usage", () => {
+  it("holds mode and the learning connection (the monthly limit moved to Usage)", () => {
     const out = html();
-    for (const text of ["Memory mode", "Capture only", "Monthly learning limit", "Read: 2.1M of 100M tokens", "Written: 0.3M of 15M tokens", "The limit resets on the 1st of each month.", "Change limit", "Learning connection"]) expect(out).toContain(text);
+    for (const text of ["Memory mode", "Capture only", "Learning connection"]) expect(out).toContain(text);
     expect(out).toContain("Flux Fast (default)");
     expect(out).toContain('value="native" disabled=""');
     expect(out).toContain("Native sign-in: This connection does not provide text-only learning.");
@@ -221,8 +221,9 @@ describe("Advanced", () => {
     const out = html(p);
     expect(out.match(/Flux Fast \(default[^<]*/g)).toEqual([eligible ? "Flux Fast (default)" : "Flux Fast (default, add your key)"]);
   });
-  it("sends the new limit as a v3 ceiling patch from the editor", () => {
-    expect(read("./MemorySection.tsx")).toContain('onAction({ action: "configure", ceiling: next, learningRevision: learning.revision })');
+  it("sends the new limit as a v3 ceiling patch from the editor, which now lives on Usage", () => {
+    expect(read("./LearningLimitCard.tsx")).toContain('{ action: "configure", ceiling: next, learningRevision: learning.revision }');
+    expect(read("./MemorySection.tsx")).not.toContain("LimitCard");
   });
   it("is one Advanced toggle on the page, with no <details> left in the files this page owns", () => {
     const closed = renderToStaticMarkup(createElement(AdvancedSection, { section: "memory", summary: "Memory mode", open: false, onOpenChange: () => undefined, children: null }));
@@ -236,7 +237,7 @@ describe("Advanced", () => {
   });
   it("renders every memory anchor its cards name", () => {
     const source = ["MemorySection", "MemorySettings", "MemoryLearningControls", "ProcedureEvaluationAdmissions"].map(file => read(`./${file}.tsx`)).join("\n") + read("./SettingsModal.tsx");
-    for (const anchor of ["memory-heading", "memory-how-heading", "memory-bots-heading", "memory-learned-heading", "memory-people-heading", "memory-import-heading", "memory-mode-heading", "memory-limit-heading", "memory-connection-heading", "memory-audience-heading", "memory-procedures-heading", "memory-health-heading"]) expect(source, anchor).toContain(`id="${anchor}"`);
+    for (const anchor of ["memory-heading", "memory-how-heading", "memory-bots-heading", "memory-learned-heading", "memory-people-heading", "memory-import-heading", "memory-mode-heading", "memory-connection-heading", "memory-audience-heading", "memory-procedures-heading", "memory-health-heading"]) expect(source, anchor).toContain(`id="${anchor}"`);
   });
 });
 

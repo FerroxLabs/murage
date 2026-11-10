@@ -192,6 +192,7 @@ server/always-ask-r5-findings.test.ts	all	Always-ask bypass findings stay closed
 server/always-ask-routine-carveout.test.ts	all	Always ask classifier carve-out for routine reads
 server/always-ask-text-tool-options.test.ts	all	awk/tr exec options still ask (permissions)
 server/always-ask.test.ts	all	catastrophic commands always ask approval
+server/anchor-settle.test.ts	all	a Windows folder import ends in bounded steps and never holds a session lock across a blocked call
 server/announcements.test.ts	all	signed announcements reject tampered or forged bytes
 server/app-action-grant.test.ts	all	connected-app grant keys per action
 server/app-grant-a13-76b.test.ts	all	only executing bot uses routine's connected-app keys
@@ -791,6 +792,7 @@ server/engine-env-pins.test.ts	all	credential prompts and askpass pinned off
 server/engine-env-win-108.test.ts	all	Windows env check reads real Git Bash and PowerShell envelopes
 server/engine-env.test.ts	all	Engine environment capture keeps last valid map
 server/engine-exclusion-called-exports.test.ts	all	packaged native addon missing a call the app makes (removeTree) is refused at build
+server/engine-exclusion-hooks-r16.test.ts	all	a shipped engine-exclusion addon never exports a test hook and the gate lifecycle keeps its single-writer rules
 server/engine-exclusion-r17.test.ts	all	files changed only while engine cannot write
 server/engine-exclusion-r19.test.ts	all	engine files changed only while engine closed
 server/engine-exclusion-r20-real.test.ts	all	Real engines respect Murage's history lock
@@ -1131,6 +1133,7 @@ server/memory/learning-budget.test.ts	all	paid calls never spend past ceiling; d
 server/memory/learning-forgetting.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/learning-replies.test.ts	all	memory learning loses nothing to a network dip, skipped slices come back by themselves, a dead pinned model is today's path
 server/memory/learning-routes.test.ts	all	purges forgotten history; undo restores (forget)
+server/memory/learning-usage.test.ts	all	phone learning usage exposes only owner-authorized totals and public connection fields without changing memory
 server/memory/learning-send-boundary.test.ts	all	Every engine write in server/ goes through a learning gate or is pinned at its call site
 server/memory/learning-send-fence.test.ts	all	A learning call holding forgotten, deleted or edited words sends nothing
 server/memory/learning-send-transports.test.ts	all	Each learning transport sends once through its gate, holds the write lock under 50 ms, and sends nothing without a gate
@@ -1892,7 +1895,13 @@ src/components/RoomShareCard.test.tsx	all	a share card whose request is gone aft
 src/components/RoutineSchedulerNotice.test.ts	all	late routine scheduler warning shown
 src/components/SearchIme.test.ts	all	a key that picks an input-method candidate in search closes the panel or jumps away
 src/components/ServerLifecycleBanner.test.ts	all	banner when engine not running
+src/components/SettingsCopy.lazy.test.ts	all	Settings and picker words stay in the lazy en-settings pack, reached only by the Settings chunk and the picker dialog, so en.json and the first paint do not grow
 src/components/SettingsOneWindow.test.ts	all	a bot opens its settings in a second window, or leaving its page loses unsaved edits
+src/components/settings/settings-shell.dom.test.ts	all	the mode switch, Set in Advanced line, breadcrumb with Copy link or Browse bots stops saying what the lock says
+src/components/settings/pages/pages-b.test.ts	all	an About, Apps, Messaging, Computer, Phone, Backups or Usage page drops a card, shows the wrong ones in Simple, or shows nothing where a stub belongs
+server/claude-code-import.test.ts	all	the Claude Code copy reads outside its folder, follows a link out, copies a key, or lets a stale review import
+server/claude-code-import.native.test.ts	windows	the Windows Claude Code copy has no native helper, so it fails closed instead of opening outside its folder
+server/default-computer.test.ts	all	a new bot starts on a computer that is not there, or the default computer overwrites a bot that already has one
 src/components/SettingsSurface.test.ts	all	credential panes withheld from phone surface
 src/components/SlackSettings.test.ts	all	status strips undeclared secret fields
 src/components/TimeZoneSettings.test.ts	all	The time zone card shows and saves the owner's zone
@@ -2025,6 +2034,7 @@ src/lib/project-activity-handoff.test.ts	all	Activity hand-off line names the te
 src/lib/question-fence-display.test.ts	all	a fence hides only when its card exists, streaming fences never show raw JSON
 src/lib/random-uuid-polyfill.test.ts	all	phone page over plain http crashes when a screen creates an ID
 src/lib/remote-sign-out.test.ts	all	sign out removes this device by DELETE
+src/lib/route-state.test.ts	all	an engine row names the wrong state, offers a blocked route as pickable, drops its one fix, or shows credit it never read
 src/lib/routine-attention.test.ts	all	a routine whose bot or room is gone keeps asking for attention
 src/lib/screen-envelope.test.ts	all	the screen envelope drops drafts, keys, names and ids, and refuses any field outside its fixed tables
 src/lib/screens-index.test.ts	all	the help panel knows which screen the owner is on
@@ -2269,3 +2279,12 @@ server/nl-win-1018.test.ts	all	on Windows a bot command inside its own folder ru
 server/routines-fence-race.test.ts	all	a channel run that follows a refused turn rebuild settles once by token; no false task-failed notice and no duplicate answer
 server/win-pwsh-1018.test.ts	all	a PowerShell command is checked on the shell that will run it; a shell found by a path that is not the trusted one is refused
 server/win-pwsh-env-1018.test.ts	all	the PowerShell check reads the same environment the bot shell gets
+src/lib/settings-controls.test.ts	all	a Settings control is dropped or moved without a home, a kind, a default or a stored key in the new model
+src/lib/settings-search-1019.test.ts	all	Settings search misses a bot's row, Approve all or Calls, or a stub string drifts
+src/lib/settings-shell-1019.test.ts	all	a Settings page, heading, Simple/Advanced rule or bot row of the shell drifts from the lock
+src/components/ClaudeCodeImportCard.test.ts	all	the import card shows a raw path, hides a refusal reason or drops the linked-folder line
+src/components/LearningLimitCard.test.ts	all	the learning limit card loses its read states or its desktop-only write
+src/components/UsageSection.test.ts	all	phone learning usage reads the wrong route or offers the limit change
+src/components/settings/pages/about-rows.dom.test.ts	all	About rows lose the release-notes link on a phone or the desktop What is new button
+src/components/settings/settings-navigation.dom.test.ts	all	search or a deep link to an Advanced-only card stops switching to Advanced first
+src/state/bot-creation.test.ts	all	bot creation drops the default-computer fallback notice

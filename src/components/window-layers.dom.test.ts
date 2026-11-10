@@ -76,6 +76,8 @@ describe('actual window attachments', () => {
     mount(h(LazyOverlay, { name: 'picker-window', kind: 'window', covers: 'always', onDismiss: close, onRetry: vi.fn() }, h(PickerWindow, { bot, close })));
     const trigger = document.querySelector<HTMLButtonElement>('[aria-haspopup="dialog"]')!;
     act(() => trigger.click()); await settle();
+    // The dialog is a lazy chunk since 1.0.19 slice P: wait for it to draw.
+    await vi.waitFor(() => { if (!document.querySelector("[data-model-picker-content] input")) throw new Error("dialog not drawn yet"); });
     const search = document.querySelector<HTMLInputElement>('[data-model-picker-content] input')!;
     search.focus(); inputValue(search, 'query');
     act(() => press('Escape', search)); expect(search.value).toBe(''); expect(close).not.toHaveBeenCalled();

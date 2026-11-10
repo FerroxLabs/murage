@@ -15,7 +15,7 @@ import { SEND_KEYS, chooseSendKey, currentSendKey, isMacPlatform, sendKeyName, s
 import { waitForAnchor } from "@/lib/anchor-wait";
 import { landOnSetting, type LandingElement } from "@/lib/settings-landing";
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Archive, BookOpen, Bot, Brain, ChevronRight, Coins, Globe, LifeBuoy, MessageCircle, Puzzle, Search, Smartphone, Trash2, User, Wrench, X } from "lucide-react";
+import { Archive, BookOpen, Bot, Brain, Coins, Globe, LifeBuoy, Monitor, Phone, Puzzle, Search, Smartphone, Trash2, User, Users, Wrench, X } from "lucide-react";
 import { api, useStore, type AppSettingsSection, type Bot as BotRecord, type ConfigStatus } from "@/state/store";
 import type { BotSettingsLeave } from "./BotSettingsPane";
 import { loadBotSettingsPane, loadedBotSettingsPane } from "@/lib/bot-settings-pane-load";
@@ -26,14 +26,11 @@ import { builtInBrowserEnabled, skillRecorderEnabled } from "@/lib/feature-flags
 import { localeChoices } from "@/locales";
 import { useUpdaterState, type UpdaterState } from "@/lib/updater";
 import { AdvancedHost, AdvancedSection, AdvancedSlotTarget, Card, Switch } from "./SettingsPrimitives";
-import { PreviousVersionRow } from "./PreviousVersionRow";
 import { SettingsSearchResults, useShowToolCalls } from "./SettingsSearchResults";
 import { Anchor } from "./SettingsAnchor";
 import { BotsSettings } from "./BotsSettings";
 import { AiSettings } from "./AiSettings";
 import { ToolsSettings } from "./ToolsSettings";
-import { DevicesSettings } from "./DevicesSettings";
-import { UsageSection } from "./UsageSection";
 import { SkinPicker } from "./SkinPicker";
 import { SkillsSettings } from "./skills/SkillsSettings";
 import { cloudCardHidden, cloudSectionBlocked, ON_YOUR_COMPUTER_ONLY, ON_YOUR_COMPUTER_ONLY_DETAIL } from "@/lib/cloud-settings";
@@ -47,19 +44,9 @@ import { BringYourAi } from "./BringYourAi";
 import { TimeZoneSettings } from "./TimeZoneSettings";
 import { NotificationSettings } from "./NotificationSettings";
 import { CallsSettings } from "./CallsSettings";
-import { BackupSettings } from "./BackupSettings";
-import { DataFolderSettings } from "./DataFolderSettings";
-import { StorageSettings } from "./StorageSettings";
 import { StartupSettings } from "./StartupSettings";
-import { AnnouncementsSettings } from "./AnnouncementsSettings";
-import { NewsSignupSettings } from "./NewsSignupSettings";
-import { BotEmailAccountCard } from "./BotEmailSettings";
-import { HighLevelSettings } from "./HighLevelSettings";
 import { ComputerOnlyStub, SETTINGS_STUB_COPY } from "./SettingsStub";
-import { TelegramSettings } from "./TelegramSettings";
-import { SlackSettings } from "./SlackSettings";
-import { WhatsAppSettings } from "./WhatsAppSettings";
-import { DiscordSettings } from "./DiscordSettings";
+import { SettingsAskLine } from "./SettingsAskLine";
 import { RemoteSignOut } from "./RemoteSignOut";
 import { PhoneNotifications } from "./PhoneNotifications";
 import { PhonePayCard } from "./phone/PhonePayCard";
@@ -86,9 +73,19 @@ import {
   settingsSectionNote,
   settingsSectionRedirect,
 } from "@/lib/settings-sections";
-import { SECTION_PAGES, resolveSettingsSection, type SettingsPage, type SettingsPageEntry } from "@/lib/settings-pages";
+import { BROWSE_BOTS_ROUTE, SECTION_PAGES, isSimpleTarget, resolveSettingsSection, type SettingsPage, type SettingsPageEntry } from "@/lib/settings-pages";
+import { noteAdvancedFoldOpened, setSettingsMode, useSettingsMode } from "@/lib/settings-mode";
+import { sidebarBots } from "@/lib/settings-shell-bots";
+import { sw } from "@/lib/settings-words";
+import { settingsPageLink } from "@/lib/settings-link";
+import { AdvancedModeCard, ADVANCED_MODE_ANCHOR } from "./settings/AdvancedModeCard";
+import { BrowseBotsPage } from "./settings/BrowseBotsPage";
+import { SettingsBreadcrumb } from "./settings/SettingsBreadcrumb";
+import { SettingsPageMount, hasPageFile } from "./settings/page-registry";
+import { SetInAdvancedLine } from "./settings/PageCards";
 import { cardForAnchor, type SettingsCard } from "@/lib/settings-cards";
-import { SETTINGS_CARDS } from "@/lib/settings-card-registry";
+import { SETTINGS_CARDS, resolveSettingsCard } from "@/lib/settings-card-registry";
+import { isAdvancedOnlyCard } from "@/lib/settings-simple-cards";
 import {
   chooseAutoRail,
   chooseSidebarDensity,
@@ -96,12 +93,9 @@ import {
   subscribeSidebarDensity,
   type SidebarDensity,
 } from "@/lib/sidebar-preferences";
-import { copyVersionText } from "@/lib/about-version";
-import { APP_VERSION } from "@/lib/whats-new";
-import { sourceCodeLink, sourceVersionLabel } from "@/lib/source-code";
-import { openKeyboardShortcuts, openWhatsNew } from "@/lib/app-events";
-import { copyText } from "@/lib/copy-text";
 import { FONT_IDS, FONT_LABELS, applyFont, isFontId, readFont, type FontId } from "@/lib/fonts";
+// Settings' own words, on this chunk rather than the first paint (1.0.19, SettingsCopy.lazy.test.ts).
+import "@/lib/settings-copy";
 
 export { sectionsForSurface, settingsSectionRedirect } from "@/lib/settings-sections";
 export { settingsSearchResults } from "@/lib/settings-search";
@@ -110,17 +104,17 @@ const MemorySection = retryableLazy(() => import("./MemorySection"));
 // A bot's page of this window (S7): loaded with the window by the bot opener (BotSettingsDialog), on first use otherwise.
 const BotPane = retryableLazy(() => loadBotSettingsPane().then((module) => ({ default: module.BotSettingsPane })));
 // Settings > Connected apps > Phone calls (BOT-CALLS-1020): its screen and its 8-language words load the first time the page shows.
-const PhoneCallsSection = retryableLazy(() => import("./PhoneCallsSettings"));
 
 const PAGE_ICONS: Record<SettingsPage, typeof User> = {
   general: User,
-  botDefaults: Bot,
+  calls: Phone,
+  computer: Monitor,
+  botDefaults: Users,
   skills: BookOpen,
   memory: Brain,
   models: Globe,
   webSearch: Wrench,
   connections: Puzzle,
-  channels: MessageCircle,
   companion: Smartphone,
   backups: Archive,
   usage: Coins,
@@ -262,7 +256,7 @@ export function updatesStatusLine(s: UpdaterState | null): string {
 /** The one button for the update in hand: Check, Download, Restart and install, Try again. The About card carries it (the
  *  page's only update control since 1.0.10). UpdatesRow is no longer on a page; it stays exported because the update-state
  *  tests and the localization spec render it to check the shared button and status line. */
-function UpdateActionButton({ state: s }: { state: UpdaterState | null }) {
+export function UpdateActionButton({ state: s }: { state: UpdaterState | null }) {
   const installer=installerOffer(s);
   const updater = window.muragebox?.updater;
   // the download page did not open: the button stays pressable and a line says so
@@ -655,62 +649,7 @@ export function BrowserProfilesRow() {
   );
 }
 
-/** Health in Settings: one quiet line to the Health screen, the one place issues are shown. */
-function SettingsHealthRow() {
-  const { dispatch } = useStore();
-  return <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline/50 bg-panel p-4 text-[13px]">
-    <div className="min-w-0"><h2 className="text-[15px] font-semibold text-ink">{t("ux.l2a.health.title")}</h2><p className="mt-1 text-ink-secondary">{t("ux.l2b.health.settingsLine")}</p></div>
-    <button type="button" data-setting-control="health-heading" className="min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus" onClick={() => dispatch({ type: "showHealth" })}>{t("ux.l2b.health.openHealth")}</button>
-  </div>;
-}
 
-/** Writes a redacted diagnostics file to a location the user picks. The
- * report holds versions, configured-or-not booleans and the server.log tail —
- * never credential values (the desktop shell does not read secret fields). */
-function DiagnosticsRow() {
-  const [exporting, setExporting] = useState(false);
-  const [result, setResult] = useState<{ kind: "success" | "error"; message: string } | null>(null);
-
-  const exportDiagnostics = async () => {
-    if (!window.muragebox?.exportDiagnostics || exporting) return;
-    setExporting(true);
-    setResult(null);
-    try {
-      const path = await window.muragebox.exportDiagnostics();
-      if (path) setResult({ kind: "success", message: `Saved to ${path}` });
-    } catch (e) {
-      setResult({ kind: "error", message: e instanceof Error ? e.message : String(e) });
-    } finally {
-      setExporting(false);
-    }
-  };
-
-  return (
-    <Card
-      title="Diagnostics"
-      subtitle="Versions, configuration on/off state and a redacted server log tail. Review the file before sharing it."
-    >
-      <div className="flex min-w-0 flex-col items-end gap-2">
-        <button
-          onClick={() => void exportDiagnostics()}
-          disabled={exporting}
-          data-setting-control="diagnostics-heading" aria-label="Export diagnostics to a text file"
-          className="rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control disabled:opacity-40"
-        >
-          {exporting ? "Exporting…" : "Export Diagnostics…"}
-        </button>
-        {result ? (
-          <span
-            role={result.kind === "error" ? "alert" : "status"}
-            className={`max-w-64 break-all text-right text-[12px] ${result.kind === "error" ? "text-danger" : "text-success"}`}
-          >
-            {result.message}
-          </span>
-        ) : null}
-      </div>
-    </Card>
-  );
-}
 
 /** The interface font, apart from the skin (B86): this machine only, like the skin. */
 function FontRow() {
@@ -797,91 +736,8 @@ function SidebarDensityRow() {
   );
 }
 
-/** The first card of About & updates: which Murage this is, where its update stands, and a line to paste into a support message. The release date
- * is left out: no build records one the app can read, and a guessed date would be worse than none. */
-function AboutVersionCard() {
-  const s = useUpdaterState();
-  const desktop = useDesktopSurface();
-  const { dispatch } = useStore();
-  const [copied, setCopied] = useState(false);
-  const [copyFailed, setCopyFailed] = useState(false);
-  const version = s?.currentVersion || APP_VERSION;
-  const copy = () => {
-    const line = copyVersionText(version, window.muragebox?.platform, window.muragebox?.arch);
-    void copyText(line).then((ok) => {
-      setCopyFailed(!ok);
-      if (!ok) return;
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    });
-  };
-  return (
-    <Card title={t("settings.about.versionTitle", { version })} subtitle={window.muragebox?.updater ? updatesStatusLine(s) : undefined}>
-      <div className="flex flex-wrap items-center gap-2">
-        {/* The page's one update control, as the sidebar footer has one: the version, where the update stands and the
-            action share this card. The "updates" search card lands here; a Cloud window has no updater, so it shows the this-computer stub (S1). */}
-        <Anchor id="updates-heading">{cloudCardHidden("updates-heading") ? <ComputerOnlyStub anchor="updates-heading" /> : <UpdateActionButton state={s} />}</Anchor>
-        {desktop === true && (
-          <button
-            type="button"
-            onClick={() => {
-              dispatch({ type: "toggleAppSettings", open: false });
-              openWhatsNew();
-            }}
-            className={secondaryButton}
-          >
-            {t("settings.about.whatsNewOpen")}
-          </button>
-        )}
-        <button type="button" data-setting-control="about-version-heading" onClick={copy} className={secondaryButton}>
-          {copyFailed ? t("copy.failed") : copied ? t("settings.about.versionCopied") : t("settings.about.versionCopy")}
-        </button>
-      </div>
-      <span role="status" className="sr-only">{copied ? t("settings.about.versionCopied") : ""}</span>
-    </Card>
-  );
-}
 
-/** Opens the page What's new showed after the last update. */
-function WhatsNewRow() {
-  const { dispatch } = useStore();
-  const desktop = useDesktopSurface();
-  // Always on the desktop: a version without a page opens its release notes.
-  if (desktop !== true) return null;
-  return (
-    <Card title={t("settings.about.whatsNewTitle")} subtitle={t("settings.about.whatsNewNote")}>
-      <button
-        data-setting-control="whats-new-heading"
-        type="button"
-        onClick={() => {
-          dispatch({ type: "toggleAppSettings", open: false });
-          openWhatsNew();
-        }}
-        className="min-h-11 rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
-      >
-        {t("settings.about.whatsNewOpen")}
-      </button>
-    </Card>
-  );
-}
 
-/** The source offer the GNU AGPL (section 13) asks for. Shown on every
- * surface, the browser door included: whoever uses Murage over a network is
- * told where the source of this version is. */
-function SourceCodeRow() {
-  return (
-    <Card title={t("settings.about.sourceTitle")} subtitle={`${t("settings.about.sourceNote")} ${sourceVersionLabel(APP_VERSION)}.`}>
-      <a
-        href={sourceCodeLink()}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex min-h-11 items-center rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
-      >
-        {t("settings.about.sourceOpen")}
-      </a>
-    </Card>
-  );
-}
 
 /** Which key sends a message. Enter stays the default, Japanese starts on
  *  Ctrl/Cmd+Enter (an input method confirms its candidate with Enter), and the
@@ -928,80 +784,7 @@ function SendKeyRow() {
   );
 }
 
-function ShortcutsRow() {
-  const { dispatch } = useStore();
-  return (
-    <Card title={t("settings.about.shortcutsTitle")} subtitle={t("settings.about.shortcutsNote")}>
-      <button
-        data-setting-control="shortcuts-heading"
-        type="button"
-        onClick={() => {
-          dispatch({ type: "toggleAppSettings", open: false });
-          openKeyboardShortcuts();
-        }}
-        className="min-h-11 rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
-      >
-        {t("settings.about.shortcutsOpen")}
-      </button>
-    </Card>
-  );
-}
 
-const linkButton = "rounded px-0.5 font-medium text-accent-text underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus";
-const secondaryButton = "min-h-11 rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus";
-
-/** Settings > Connected apps: the key and the way into the panel. The apps
- *  themselves live in the panel (the sidebar's Apps place). */
-function ConnectedAppsSettings({ advancedOpen, onAdvancedOpenChange }: { advancedOpen: boolean; onAdvancedOpenChange: (open: boolean) => void }) {
-  const { state, dispatch } = useStore();
-  const go = (section: AppSettingsSection) => dispatch({ type: "toggleAppSettings", open: true, section });
-  const openPanel = (surface: "apps" | "mcp") => {
-    dispatch({ type: "toggleAppSettings", open: false });
-    dispatch({ type: "togglePlugins", open: true, surface });
-  };
-  return (
-    <>
-      <Anchor id="connections-heading">
-      <Card title={t("settings.section.connections")} subtitle={t("settings.connections.note")}>
-        <div className="flex flex-col gap-4">
-          {state.config?.composio.mode === "managed" ? (
-            <div className="rounded-lg border border-success/25 bg-success/10 px-3 py-2 text-[13px] text-success">
-              {t("settings.connections.ready")}
-            </div>
-          ) : null}
-          <div className="flex flex-wrap gap-2">
-            <button type="button" data-setting-control="connections-heading" onClick={() => openPanel("apps")} className={secondaryButton}>{t("settings.connections.openApps")}</button>
-          </div>
-        </div>
-      </Card>
-      </Anchor>
-      {/* 0.1.62 only: Image generation, web search and transcription keys
-          used to sit on this page, and an old notice or habit still lands
-          here looking for them. */}
-      <p className="px-1 text-[12.5px] leading-relaxed text-ink-secondary">
-        {t("settings.connections.moved")}{" "}
-        <button type="button" onClick={() => go("images")} className={linkButton}>{settingsSectionLabel("images")}</button>
-        {" · "}
-        <button type="button" onClick={() => go("webSearch")} className={linkButton}>{settingsSectionLabel("webSearch")}</button>
-        {" · "}
-        <button type="button" onClick={() => go("voice")} className={linkButton}>{settingsSectionLabel("voice")}</button>
-        {" · "}
-        <button type="button" onClick={() => go("models")} className={linkButton}>{t("settings.models.pasteTitle")}</button>
-      </p>
-      {/* The MCP servers panel runs this computer's servers (mcp-servers:*), which a Cloud window's bridge refuses: there the
-        * card is the "set this on your computer" stub (SETTINGS-UX-1011 S1). */}
-      <AdvancedSection section="connections" summary={t("settings.l1.advanced.connections")} open={advancedOpen} onOpenChange={onAdvancedOpenChange}>
-        <div id="mcp-servers-heading" tabIndex={-1} className="outline-none">
-          {cloudCardHidden("mcp-servers-heading") ? <ComputerOnlyStub anchor="mcp-servers-heading" /> : (
-            <Card title={t("settings.l1.mcp.title")} subtitle={t("settings.l1.mcp.note")}>
-              <button type="button" data-setting-control="mcp-servers-heading" onClick={() => openPanel("mcp")} className={secondaryButton}>{t("settings.connections.openMcp")}</button>
-            </Card>
-          )}
-        </div>
-      </AdvancedSection>
-    </>
-  );
-}
 
 /** Settings > Images: the setup, and the library of saved prompt blocks and
  *  reference packs as a tab of its own rather than a button inside a card. */
@@ -1045,20 +828,27 @@ export function inSettingsTabOrder(element: Pick<Element, "closest" | "parentEle
 export function SettingsModal({ bot, onBotClose }: { bot?: BotRecord; onBotClose?: () => void } = {}) {
   const { state, dispatch } = useStore();
   const botLeave = useRef<BotSettingsLeave | null>(null);
-  const [botsListOpen, setBotsListOpen] = useState(false);
+  const mode = useSettingsMode();
   // The store keeps the id it was asked for (any of the 19); the page it lands on is `section` below, so the page
   // bodies read as they always have. An alias also names a card on that page (state.appSettingsAnchor).
   const requested = state.appSettingsSection;
   // A Cloud window: a page it cannot use matches none of the page bodies and shows the "on your computer only" card instead.
   const cloud = isCloudOrigin();
   const blocked = cloudSectionBlocked(requested);
-  const section = (blocked ? "" : resolveSettingsSection(requested).section) as SettingsPage;
+  const browsing = !bot && requested === BROWSE_BOTS_ROUTE;
+  const resolved = (blocked || browsing ? "" : resolveSettingsSection(requested).section) as SettingsPage;
+  // A page with a file of its own (settings/page-registry.tsx) is mounted from there; `section` is what the legacy blocks
+  // below still match on, so it is empty for a page that has moved out. Pages leave the legacy blocks one at a time.
+  const mountedPage = resolved && hasPageFile(resolved) ? resolved : null;
+  const section = (mountedPage ? "" : resolved) as SettingsPage;
   // An alias the Cloud window may use can land on a page it may not (Images sits on Tools, whose search and voice keys
   // are this computer's): that page then renders only the alias's own card.
-  const pageComputerOnly = !blocked && cloudSectionBlocked(section);
+  const pageComputerOnly = !blocked && cloudSectionBlocked(resolved);
   // The nav marks the page the request lands on, blocked or not, so a Cloud window still shows where the person is.
-  const navPage = resolveSettingsSection(requested).section;
-  const anchor = state.appSettingsAnchor;
+  // Browse bots is a route, not a page: no page is marked while it shows (it would read as General).
+  const navPage = browsing ? null : resolveSettingsSection(requested).section;
+  const targetCard = state.appSettingsAnchor ? resolveSettingsCard(state.appSettingsAnchor) : undefined;
+  const anchor = targetCard?.anchor ?? state.appSettingsAnchor;
   const dialogRef = useRef<HTMLDivElement>(null);
   const settingsLayerOwner = useLayerOwner();
   const navRef = useRef<HTMLElement>(null);
@@ -1067,11 +857,22 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
   const [query, setQuery] = useState("");
   const q = query.trim();
   const { desktop, confirmed } = useSurfaceState();
-  const visiblePages = sectionsForSurface(PAGES, desktop);
-  const current = PAGES.find((entry) => entry.id === section);
+  // Browse bots (`browsing`, above) is a route of the Each bot group, not one of the 13 pages (settings-pages.ts BROWSE_BOTS_ROUTE).
+  // Simple lists the pages marked `simple` and nothing else; Advanced lists all 13. An opener that lands on a page Simple
+  // does not list turns Advanced mode on (below), so nothing is ever out of reach.
+  const visiblePages = sectionsForSurface(PAGES, desktop).filter((entry) => mode === "advanced" || entry.simple);
+  const current = PAGES.find((entry) => entry.id === resolved);
+  const botRows = sidebarBots(state.bots, bot?.id);
+  // The card an opener named stays "in view" for Copy link after the store has cleared the anchor, until the page changes.
+  const [landed, setLanded] = useState<{ section: AppSettingsSection; anchor: string } | null>(null);
+  // A page left and come back to without a card does not keep the old card for Copy link.
+  useEffect(() => { setLanded((now) => (anchor ? { section: requested, anchor } : now && now.section === requested ? now : null)); }, [anchor, requested]);
+  const pageLinkCard = landed && landed.section === requested ? cardForAnchor(SETTINGS_CARDS, landed.anchor) : undefined;
+  // A request for a page Simple does not list (a link, a What's new tile, a search result) turns Advanced mode on first.
+  useEffect(() => { if (!bot && mode === "simple" && !isSimpleTarget(requested)) setSettingsMode("advanced"); }, [bot, mode, requested]);
   // One Advanced per page, closed on a page change unless an opener opens it (below).
   const [advancedOpen, setAdvancedOpen] = useState<Record<SettingsPage, boolean>>(() => Object.fromEntries(SECTION_PAGES.map((entry) => [entry.id, false])) as Record<SettingsPage, boolean>);
-  const advancedFor = (page: SettingsPage) => ({ section: page, open: advancedOpen[page], onOpenChange: (open: boolean) => setAdvancedOpen((now) => ({ ...now, [page]: open })) });
+  const advancedFor = (page: SettingsPage) => ({ section: page, open: advancedOpen[page], onOpenChange: (open: boolean) => { if (open) noteAdvancedFoldOpened(); setAdvancedOpen((now) => ({ ...now, [page]: open })); } });
 
   useEffect(() => {
     const visible = sectionsForSurface(SECTIONS, desktop);
@@ -1084,12 +885,16 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
 
   useEffect(() => {
     setAdvancedOpen((now) => (Object.values(now).some(Boolean) ? Object.fromEntries(SECTION_PAGES.map((entry) => [entry.id, false])) as Record<SettingsPage, boolean> : now));
-  }, [section]);
+  }, [resolved]);
 
   // Land on the card the opener named: its page's Advanced first when it lives there, then scroll, focus, highlight.
   useEffect(() => {
     if (!anchor || query || bot) return;
-    const card = cardForAnchor(SETTINGS_CARDS, anchor);
+    const card = resolveSettingsCard(anchor);
+    if (card && mode === "simple" && isAdvancedOnlyCard(card.section, card.id)) {
+      setSettingsMode("advanced");
+      return;
+    }
     if (card?.advanced && !advancedOpen[card.section]) {
       setAdvancedOpen((now) => ({ ...now, [card.section]: true }));
       return;
@@ -1100,11 +905,12 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
     const startedAt = anchorWaitRef.current.at;
     return waitForAnchor({
       startedAt,
-      find: () => document.getElementById(anchor),
+      // A retained tab panel can already contain the anchor while still hidden. Wait for its tab to activate too.
+      find: () => { const element = document.getElementById(anchor); return element?.closest("[hidden]") ? null : element; },
       onFound: (element) => { anchorWaitRef.current = null; if (settingsLayerOwner?.handle?.active) revealAnchor(element); dispatch({ type: "appSettingsAnchorDone" }); },
       onGiveUp: () => { anchorWaitRef.current = null; paneRef.current?.scrollTo?.({ top: 0 }); dispatch({ type: "appSettingsAnchorDone" }); },
     });
-  }, [anchor, query, advancedOpen, dispatch, bot]);
+  }, [anchor, query, mode, advancedOpen, dispatch, bot]);
 
   const openCard = (card: SettingsCard) => dispatch({ type: "toggleAppSettings", open: true, section: card.section, anchor: card.anchor });
 
@@ -1140,7 +946,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
 
   const layer = useLayerContainer(dialogRef, { onEscape: closeSettings, initialFocus: null, holdFocus: false });
 
-  // A handful of sections (a paired phone sees three) read better as plain
+  // A handful of sections (a paired phone sees four) read better as plain
   // chips on the phone strip than under headings that each hold one or two.
   const fewSections = visiblePages.length <= 4;
 
@@ -1230,11 +1036,10 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
           </div>
           {SETTINGS_GROUPS.map((group) => {
             const entries = visiblePages.filter((entry) => entry.group === group);
-            // Archived bots are not listed, except the one this window is showing. The group stays closed until asked,
-            // so many bots never bury the groups below: only the open bot's row, and a lone bot needs no toggle.
-            const bots = group === "bots" ? state.bots.filter((each) => !each.hidden || each.id === bot?.id) : [];
-            const rows = botsListOpen || bots.length === 1 ? bots : bots.filter((each) => each.id === bot?.id);
-            if (entries.length === 0 && bots.length === 0) return null;
+            // Each bot (LOCKED 2.1): up to five rows, the Chief first, the open bot always one of them; past five, the
+            // Browse bots row opens the list page. Archived bots are not listed, except the one this window is showing.
+            const rows = group === "bots" ? botRows.rows : [];
+            if (entries.length === 0 && group !== "bots") return null;
             return (
               <div
                 key={group}
@@ -1273,22 +1078,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                     <span className="min-w-0 truncate">{settingsPageLabel(id)}</span>
                   </button>
                 ))}
-                {bots.length > 1 && (
-                  <button
-                    type="button"
-                    data-settings-bots-toggle
-                    aria-expanded={botsListOpen}
-                    onClick={() => setBotsListOpen((open) => !open)}
-                    className={cn(
-                      "flex h-7 shrink-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-[13.5px] text-ink-secondary hover:bg-control/50 hover:text-ink",
-                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus",
-                      "max-md:h-11 max-md:whitespace-nowrap max-md:rounded-full max-md:px-3.5",
-                    )}
-                  >
-                    <ChevronRight size={15} className={cn("shrink-0 transition-transform", botsListOpen && "rotate-90")} aria-hidden="true" />
-                    <span className="min-w-0 truncate">{t("settings.botsToggle", { count: bots.length })}</span>
-                  </button>
-                )}
+                {group === "bots" && botRows.total === 0 && <p data-settings-no-bots className="px-2.5 py-1 text-[12.5px] leading-snug text-ink-secondary max-md:hidden">{sw("settings.browse.noBots")}</p>}
                 {rows.map((each) => (
                   <button
                     key={`bot-${each.id}`}
@@ -1308,9 +1098,39 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                     <span className="min-w-0 truncate">{each.name}</span>
                   </button>
                 ))}
+                {group === "bots" && botRows.browse && desktop === true && (
+                  <button
+                    type="button"
+                    data-settings-section={BROWSE_BOTS_ROUTE}
+                    onClick={() => { setQuery(""); leave(() => dispatch({ type: "toggleAppSettings", open: true, section: BROWSE_BOTS_ROUTE })); }}
+                    aria-current={!bot && browsing ? "page" : undefined}
+                    className={cn(
+                      "flex h-7 shrink-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-[13.5px]",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus",
+                      "max-md:h-11 max-md:whitespace-nowrap max-md:rounded-full max-md:px-3.5",
+                      !bot && !q && browsing ? "bg-control font-medium text-ink" : "text-ink-secondary hover:bg-control/50 hover:text-ink",
+                    )}
+                  >
+                    <Users size={15} className="shrink-0" aria-hidden="true" />
+                    <span className="min-w-0 truncate">{sw("settings.browse.toggle", { count: botRows.total })}</span>
+                  </button>
+                )}
               </div>
             );
           })}
+          {/* Simple lists seven pages; one line at the bottom takes a person to the rest, so no page is out of reach. */}
+          {mode === "simple" && !bot && <div className="mt-2 px-1.5 max-md:hidden"><SetInAdvancedLine count={SECTION_PAGES.length - visiblePages.length} /></div>}
+          {/* On Advanced the bottom of the list says so and opens the one switch (LOCKED 2.5). */}
+          {mode === "advanced" && !bot && (
+            <button
+              type="button"
+              data-settings-mode-footer
+              onClick={() => { setQuery(""); dispatch({ type: "toggleAppSettings", open: true, section: "general", anchor: ADVANCED_MODE_ANCHOR }); }}
+              className="mt-2 flex min-h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-left text-[12px] text-ink-secondary hover:bg-control/50 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus max-md:hidden"
+            >
+              <span>{sw("settings.mode.footer")}</span><span aria-hidden="true">·</span><span className="underline underline-offset-2">{sw("settings.mode.footerChange")}</span>
+            </button>
+          )}
         </nav>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -1318,7 +1138,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
             <div className="min-w-0">
               {bot ? (
                 <>
-                  <span className="block truncate text-[15px] font-semibold text-ink"><span className="font-normal text-ink-secondary">{settingsGroupLabel("bots")}</span><span aria-hidden="true" className="px-1.5 font-normal text-ink-secondary">/</span><span>{bot.name}</span></span>
+                  <SettingsBreadcrumb crumbs={[{ label: settingsGroupLabel("bots") }, { label: bot.name, onClick: () => leave(() => dispatch({ type: "toggleSettings", open: true, botId: bot.id, intent: { section: "overview" } })) }]} link={null} />
                   <p data-settings-page-note className="mt-0.5 text-[12.5px] leading-snug text-ink-secondary">{`What ${bot.name} knows, can use and how it works.`}</p>
                 </>
               ) : q ? (
@@ -1328,12 +1148,13 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 </>
               ) : (
                 <>
-                  <span className="block truncate text-[15px] font-semibold text-ink">
-                    {current && <><span className="font-normal text-ink-secondary">{settingsGroupLabel(current.group)}</span><span aria-hidden="true" className="px-1.5 font-normal text-ink-secondary">/</span></>}
-                    <span>{current ? settingsPageLabel(current.id) : null}</span>
-                  </span>
+                  {browsing ? (
+                    <SettingsBreadcrumb crumbs={[{ label: settingsGroupLabel("bots") }, { label: t("settings.page.browseBots") }]} link={settingsPageLink(BROWSE_BOTS_ROUTE)} />
+                  ) : (
+                    <SettingsBreadcrumb crumbs={current ? [{ label: settingsGroupLabel(current.group) }, { label: settingsPageLabel(current.id) }] : []} link={current ? settingsPageLink(current.id, pageLinkCard?.id) : null} />
+                  )}
                   {/* What the page is for, in one line (the grandma test). */}
-                  {current && <p data-settings-page-note className="mt-0.5 text-[12.5px] leading-snug text-ink-secondary">{settingsSectionNote(current.id)}</p>}
+                  {browsing ? <p data-settings-page-note className="mt-0.5 text-[12.5px] leading-snug text-ink-secondary">{t("settings.pageNote.browseBots")}</p> : current && <p data-settings-page-note className="mt-0.5 text-[12.5px] leading-snug text-ink-secondary">{settingsSectionNote(current.id)}</p>}
                 </>
               )}
             </div>
@@ -1354,7 +1175,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
             </LazyBoundary>
           ) : (
           <BoxBody ref={paneRef} className="flex flex-1 flex-col gap-4 px-5 pb-5 [--box-pad:1.25rem]">
-            {q && <SettingsSearchResults query={q} desktop={desktop} onOpen={openCard} />}
+            {q && <SettingsSearchResults query={q} desktop={desktop} onOpen={openCard} onLeave={() => setQuery("")} />}
             {/* A search hides the open page instead of unmounting it, so words typed and not yet
               * saved there (a skill being written, House rules) are still there when the search clears. */}
             <div data-settings-page-body hidden={q ? true : undefined} className={q ? "hidden" : "contents"}>
@@ -1363,8 +1184,17 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 <p data-cloud-computer-only={requested} className="text-[13px] text-ink-secondary">{settingsSectionLabel(requested)}</p>
               </Card>
             )}
+            {mountedPage && <SettingsPageMount page={mountedPage} mode={mode} desktop={desktop} cloud={cloud} anchor={anchor} />}
+            {browsing && (
+              <BrowseBotsPage
+                bots={state.bots}
+                openId={null}
+                onOpen={openBot}
+              />
+            )}
             {section === "general" && (
               <>
+                <Anchor id="advanced-mode-heading"><AdvancedModeCard /></Anchor>
                 <Anchor id="profile-heading">
                   <Card title={t("settings.l4.profile.title")} subtitle={desktop === true ? t("settings.l4.profile.noteDesktop") : t("settings.l4.profile.note")}>
                     <ProfileFields />
@@ -1381,7 +1211,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 </Anchor>
                 {desktop === true && <Anchor id="language-heading"><LanguageRow /></Anchor>}
                 {!inNativeShell() && <Anchor id="send-key-heading"><SendKeyRow /></Anchor>}
-                {desktop === true && <Anchor id="notifications-heading"><NotificationSettings /><CallsSettings /></Anchor>}
+                {desktop === true && <Anchor id="notifications-heading"><NotificationSettings /></Anchor>}
                 {desktop !== true && <p className="text-[12px] text-ink-secondary">{t("settings.general.remoteNote")}</p>}
                 {/* Confirmed remote only. `undefined` renders the neutral
                   * thing, and the desktop has no session to sign out of: the
@@ -1407,6 +1237,8 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
               </>
             )}
 
+            {desktop === true && section === "calls" && <CallsSettings />}
+
             {desktop === true && section === "botDefaults" && (
               <BotsSettings advanced={advancedFor("botDefaults")} effortRow={<NewBotEffortRow />} toolCallsRow={<ToolCallsRow />} />
             )}
@@ -1425,45 +1257,9 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
 
             {desktop === true && section === "webSearch" && <ToolsSettings advanced={advancedFor("webSearch")} cloudImagesOnly={pageComputerOnly} />}
 
-            {desktop === true && section === "connections" && <ConnectedAppsSettings advancedOpen={advancedOpen.connections} onAdvancedOpenChange={advancedFor("connections").onOpenChange} />}
-            {/* Settings > Bot email (1.0.9): always rendered; while the server does not say email is on, the card is its stub (SETTINGS-UX-1011 S1) */}
-            {desktop === true && section === "connections" && <Anchor id="bot-email-heading"><BotEmailAccountCard /></Anchor>}
-            {desktop === true && section === "connections" && <Anchor id="highlevel-heading"><HighLevelSettings /></Anchor>}
-            {desktop === true && section === "connections" && <Anchor id="phone-calls-heading"><LazyBoundary inline onRetry={PhoneCallsSection.retry}><Suspense fallback={null}><PhoneCallsSection.Component /></Suspense></LazyBoundary></Anchor>}
 
-            {desktop === true && section === "channels" && (
-              <AdvancedHost>
-                <div className="space-y-4"><TelegramSettings /><SlackSettings /><DiscordSettings /><WhatsAppSettings /></div>
-                <AdvancedSection {...advancedFor("channels")} summary={t("settings.l1.advanced.channels")}><AdvancedSlotTarget /></AdvancedSection>
-              </AdvancedHost>
-            )}
-
-            {desktop === true && section === "companion" && (
-              <DevicesSettings advanced={advancedFor("companion")} profileEmail={state.config?.profile?.email} bots={state.bots} browserProfiles={<><Anchor id="browser-settings-heading"><WorkspaceFeatureRow feature="browser" /></Anchor><BrowserProfilesRow /></>} />
-            )}
-
-            {desktop === true && section === "backups" && <div className="space-y-4"><DataFolderSettings /><BackupSettings /><div id="storage-heading"><StorageSettings /></div></div>}
-
-            {section === "usage" && <Anchor id="usage-heading"><UsageSection /></Anchor>}
-
-            {section === "about" && (
-              <>
-                <Anchor id="about-version-heading"><AboutVersionCard /></Anchor>
-                {desktop === true && <Anchor id="whats-new-heading"><WhatsNewRow /></Anchor>}
-                {desktop === true && <Anchor id="news-heading"><NewsSignupSettings /></Anchor>}
-                {desktop === true && <Anchor id="setup-heading">{cloudCardHidden("setup-heading", cloud) ? <ComputerOnlyStub anchor="setup-heading" /> : <SetupAgainRow />}</Anchor>}
-                <Anchor id="shortcuts-heading"><ShortcutsRow /></Anchor>
-                <Anchor id="previous-version-heading"><PreviousVersionRow /></Anchor>
-                <SourceCodeRow />
-                {/* Health (1.0.9 Sentinel) sits beside Diagnostics and outside every desktop-only guard: the Cloud and
-                    self-host owner see the same card. The summary route answers the owner only. */}
-                <Anchor id="health-heading"><SettingsHealthRow /></Anchor>
-                <AdvancedSection {...advancedFor("about")} summary={t("settings.l1.advanced.about")}>
-                  {desktop === true && <Anchor id="announcements-heading"><AnnouncementsSettings /></Anchor>}
-                  <Anchor id="diagnostics-heading">{cloudCardHidden("diagnostics-heading", cloud) ? <ComputerOnlyStub anchor="diagnostics-heading" /> : <DiagnosticsRow />}</Anchor>
-                </AdvancedSection>
-              </>
-            )}
+            {/* Every page ends with the one quiet way out (SETTINGS-LOCKED-1019 section 10). */}
+            <SettingsAskLine />
             </div>
           </BoxBody>
           )}
