@@ -4245,6 +4245,8 @@ export class Store {
       /** A bot made by a caller that proved nothing (route-policy.ts): no
        *  computer, browser or connected apps until the owner turns them on. */
       noAccess?: boolean;
+      /** The computer the new bot starts on (config computer.defaultForNewBots, resolved by the caller). Never beats noAccess. */
+      computer?: BotRecord["computer"];
       /** 1.0.14 FIRST-ENGINE-REPICK: Murage chose the engine (no owner selection). Trusted callers only, never from a request body. */
       engineAutoPicked?: true;
     } = {},
@@ -4279,6 +4281,7 @@ export class Store {
     if (section) bot.section = section;
     bot.voice = pickDefaultVoice(this.bots);
     bot.voiceAssigned = true;
+    if (opts.computer && !opts.noAccess) bot.computer = opts.computer;
     if (opts.noAccess) { bot.computer = "off"; bot.browser = false; bot.composio = false; }
     // The one mark write (BIRTH-FUIGO section 5): a born bot, or a trusted caller's explicit mark (R3b), in the record saved below.
     if (born || opts.engineAutoPicked === true) bot.engineAutoPicked = true;
