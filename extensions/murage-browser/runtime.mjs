@@ -902,6 +902,19 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     if (req.operation !== 'cdp') fail('unsupported_operation');
     const { method, params = {} } = req.params;
     if (method === 'Target.getTargets') return { targetInfos: summary(b).tabs.map(t => ({ targetId: String(t.tabId), type: 'page', attached: b.attached.has(t.tabId), url: t.url })) };
+    // BRLOCK19: Page.getFrameTree cannot see a frame that lives in another process, so the page lock asks the browser for every frame
+    // of the tab. Read-only, scoped to a shared and approved tab, and any failure is an error the lock treats as "locked".
+    if (method === 'Murage.getAllFrames') {
+      active(b, req.generation);
+      const t = await checkedTab(b, req.params);
+      const frames = await api.webNavigation.getAllFrames({ tabId: t.tabId });
+      active(b, req.generation);
+      if (!Array.isArray(frames)) fail('frames_unavailable');
+      await checkedTab(b, req.params);
+      // Only live documents: a back/forward-cached or prerendered one is not on the page. An unreadable url goes through as missing, so the lock reads it as doubt.
+      const live = frames.filter(f => f.documentLifecycle === undefined || f.documentLifecycle === 'active');
+      return { result: { frames: live.map(f => ({ frameId: f.frameId, parentFrameId: f.parentFrameId, ...(typeof f.url === 'string' ? { url: f.url } : {}) })) }, tabId: t.tabId, navigationEpoch: t.navigationEpoch, origin: t.origin, url: t.url };
+    }
     if (!METHODS.has(method) || params.sessionId || params.targetId || params.uniqueContextId) fail('method_denied');
     if (isClipboardInput(method, params)) fail('clipboard_denied');
     const t = await checkedTab(b, req.params, BOOTSTRAP_METHODS.has(method));
