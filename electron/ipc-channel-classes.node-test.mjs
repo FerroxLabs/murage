@@ -16,6 +16,7 @@ import {
   CLASS_CLOUD_ONLY, CLASS_CLOUD_SAFE, CLASS_LOCAL_ONLY, CLOUD_ONLY_CHANNELS, CLOUD_ONLY_PREFIXES, CLOUD_REFUSED_PATTERNS, CLOUD_SAFE_CHANNELS,
   LOCAL_ONLY_CHANNELS, LOCAL_ONLY_PREFIXES, channelClass, isClassified, isCloudRefusedChannel,
 } from "./ipc-channel-classes.mjs";
+import { ATTENTION_CHANNELS } from "./attention-ipc.mjs";
 import { loadIpcInventory } from "./ipc-inventory-harness.mjs";
 import { installCloudHome } from "./cloud-home-window.mjs";
 import { CLOUD_WINDOW_IPC_REFUSAL, OWNED_MAIN_IPC_REFUSAL, createOwnedMainIpc, rendererOriginArguments } from "./main-ipc-trust.mjs";
@@ -61,7 +62,7 @@ test("every channel the preload can call has an explicit class, and none is buil
 
 test("only the known modules register IPC, so a new registrar cannot slip past the classes", () => {
   // cloud-home-engine-login.mjs (WP5) registers through the gate main.mjs hands it, only with the Cloud flag on; its channels are MAIN_ONLY_CLOUD_CHANNELS.
-  const KNOWN = new Set(["main.mjs", "cua.mjs", "updater.mjs", "android-device.mjs", "installation-recovery-window.mjs", "main-ipc-trust.mjs", "cloud-home-engine-login.mjs", "engine-login-local.mjs"]);
+  const KNOWN = new Set(["main.mjs", "cua.mjs", "updater.mjs", "android-device.mjs", "installation-recovery-window.mjs", "main-ipc-trust.mjs", "cloud-home-engine-login.mjs", "engine-login-local.mjs", "attention-ipc.mjs"]);
   const offenders = fs.readdirSync(electronDir)
     .filter((file) => /\.(mjs|cjs)$/.test(file) && !/\.(node-test|test|electron-smoke)\.mjs$/.test(file) && file !== "preload.cjs")
     .filter((file) => /\bipcMain\.(handle|on|once)\(/.test(read(file)) && !KNOWN.has(file));
@@ -102,7 +103,7 @@ test("WP4: the Cloud window's own preload reaches only cloud-safe and cloud-only
   const channels = [...source.matchAll(/ipcRenderer\.(?:invoke|sendSync|send|on|removeListener)\("([^"]+)"/g)].map((m) => m[1]);
   assert.ok(channels.length >= 3);
   for (const channel of channels) {
-    if (channel === "approval-notification:open") continue; // main -> window push, not a request
+    if (channel === "approval-notification:open" || channel === "cloud-attention:show") continue; // main -> window push, not a request
     assert.notEqual(channelClass(channel), CLASS_LOCAL_ONLY, `${channel}: the Cloud preload must not call a local-only channel`);
   }
   assert.equal([...source.matchAll(/ipcRenderer\.(?:invoke|sendSync|send)\(\s*[^"\s)]/g)].length, 0, "channels are string literals");
@@ -116,7 +117,7 @@ test("WP4: the Cloud window's own preload reaches only cloud-safe and cloud-only
   };
   const ok = run(["electron", "--murage-cloud-home=h-abc"], { protocol: "murage-home:", hostname: "h-abc" });
   assert.equal(ok.exposed.key, "muragecloud");
-  assert.deepEqual(Object.keys(ok.exposed.value).sort(), ["approvalNotifications", "disconnectThisComputer", "homeId", "openExternal", "platform", "reachable", "setUnreadCount"]);
+  assert.deepEqual(Object.keys(ok.exposed.value).sort(), ["approvalNotifications", "attention", "disconnectThisComputer", "homeId", "openExternal", "platform", "reachable", "setUnreadCount"]);
   for (const [label, argv, location] of [
     ["no argument", ["electron"], { protocol: "murage-home:", hostname: "h-abc" }],
     ["another home's host", ["electron", "--murage-cloud-home=h-abc"], { protocol: "murage-home:", hostname: "h-other" }],
@@ -351,4 +352,36 @@ test("if the Cloud-home window ever loads the shared preload it gets no bridge: 
 test("no flag: the same channels as flag on are registered, as stubs that refuse until Cloud is live", () => {
   assert.deepEqual(inertDefault.handles, flagOn.handles);
   assert.deepEqual(inertDefault.ons, flagOn.ons);
+});
+
+test("NOTIFY S3: the attention bridge is local-only, the two cloud-attention channels are cloud-safe, attention-window:* has its own gate", () => {
+  for (const channel of ["attention:hello", "attention:offer", "attention:visible", "attention:present", "attention:gone", "attention:freed"]) {
+    assert.ok(registered.has(channel), `${channel} is registered`);
+    assert.equal(channelClass(channel), CLASS_LOCAL_ONLY, `${channel}: the Cloud window must not reach the local bridge`);
+    assert.ok(LOCAL_ONLY_CHANNELS.includes(channel));
+  }
+  const cloudAttention = ["cloud-attention:hello", "cloud-attention:offer", "cloud-attention:visible", "cloud-attention:present", "cloud-attention:gone", "cloud-attention:freed"];
+  assert.deepEqual(CLOUD_SAFE_CHANNELS.filter((channel) => channel.includes("attention")), cloudAttention);
+  for (const channel of cloudAttention) {
+    assert.ok(registered.has(channel));
+    assert.equal(channelClass(channel), CLASS_CLOUD_SAFE);
+  }
+  for (const channel of ATTENTION_CHANNELS.all) {
+    assert.ok(isClassified(channel), `${channel} has a class`);
+    assert.equal(channelClass(channel), CLASS_LOCAL_ONLY, `${channel}: never from a Cloud window`);
+    assert.ok(!registered.has(channel), `${channel} is registered by the attention gate, not the owned-main gate`);
+  }
+  const main = read("main.mjs");
+  assert.match(main, /createAttentionSurfaces\(\{[^]*?ipcMain:electronIpcMain,/, "the attention gate registers on Electron's ipcMain, not the owned gate");
+  assert.match(read("attention-surfaces.mjs"), /createAttentionIpc\(\{ urlFor: loadUrlFor \}\)[^]*gate\.install\(ipcMain, host\)/, "one gate, installed once, with the host's handlers");
+  const gate = read("attention-ipc.mjs");
+  assert.ok(!gate.includes("createOwnedMainIpc") && !gate.includes("isOwnedMainSender"), "a separate gate, the owned-main gate untouched");
+});
+
+test("NOTIFY S3: both preloads carry routing ids only and every call is a literal channel", () => {
+  for (const [name, expected] of [["preload.cjs", ["attention:hello", "attention:offer", "attention:visible", "attention:present", "attention:gone"]], ["preload-cloud.cjs", ["cloud-attention:hello", "cloud-attention:offer", "cloud-attention:visible", "cloud-attention:present", "cloud-attention:gone"]]]) {
+    const source = read(name);
+    const channels = [...source.matchAll(/ipcRenderer\.invoke\("(c?[a-z-]*attention:[a-z]+)"/g)].map((m) => m[1]);
+    assert.deepEqual(channels, expected, name);
+  }
 });

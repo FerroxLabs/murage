@@ -13,6 +13,10 @@ on:
         description: "Scoped confirmation: existing test files/directories, one per line; other Vitest evidence reused"
         required: false
         type: string
+      full:
+        description: "Full run (RC candidates): also macOS shards, human specs and extended shards. Without it a dispatch (ci/try) runs the gate tiers on Ubuntu and Windows plus broker:test and test:electron."
+        type: boolean
+        default: false
       human_files:
         description: "Ubuntu human-only confirmation: existing src/e2e/*.human.spec.ts files, one per line; prior CI evidence reused"
         required: false
@@ -40,8 +44,11 @@ jobs:
       matrix:
         # The harness and pure desktop capabilities stay portable across all
         # supported host platforms. POSIX-only process tests self-skip.
-        os: ${{ fromJSON(inputs.windows_only && '["windows-latest"]' || '["macos-latest","ubuntu-24.04","windows-latest"]') }}
-    runs-on: ${{ matrix.os }}
+        os: ${{ fromJSON(inputs.windows_only && '["windows-latest"]' || !(github.event_name != 'workflow_dispatch' || inputs.full || endsWith(github.ref_name, '-full')) && '["ubuntu-24.04","windows-latest"]' || '["macos-latest","ubuntu-24.04","windows-latest"]') }}
+    # MURAGE_WIN_RUNNER (repository variable) is a JSON label array for the self-hosted Windows runner, for example
+    # ["self-hosted","Windows","X64"]. Unset or empty = GitHub-hosted windows-latest (the fallback). pull_request runs (forks
+    # included) never use it.
+    runs-on: ${{ matrix.os == 'windows-latest' && github.event_name != 'pull_request' && vars.MURAGE_WIN_RUNNER && fromJSON(vars.MURAGE_WIN_RUNNER) || matrix.os }}
     # Ubuntu also runs the complete desktop/mobile human suite after runtime
     # checks; the recorded 16-minute prelude left too little of the old 20m cap.
     timeout-minutes: ${{ matrix.os == 'windows-latest' && 40 || matrix.os == 'ubuntu-24.04' && 55 || 20 }}
@@ -180,7 +187,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(inputs.windows_only && '["windows-latest"]' || '["macos-latest","ubuntu-24.04","windows-latest"]') }}
+        os: ${{ fromJSON(inputs.windows_only && '["windows-latest"]' || !(github.event_name != 'workflow_dispatch' || inputs.full || endsWith(github.ref_name, '-full')) && '["ubuntu-24.04","windows-latest"]' || '["macos-latest","ubuntu-24.04","windows-latest"]') }}
         # Scoped dispatch keeps its existing single selected-file confirmation;
         # ordinary CI uses ten bounded shards: 1.0.0's suite outgrew three
         # (every 20-minute shard was cancelled mid-run, CI 37727970532) and
@@ -200,7 +207,10 @@ jobs:
             vitest_shard: 11
           - os: ubuntu-24.04
             vitest_shard: 12
-    runs-on: ${{ matrix.os }}
+    # MURAGE_WIN_RUNNER (repository variable) is a JSON label array for the self-hosted Windows runner, for example
+    # ["self-hosted","Windows","X64"]. Unset or empty = GitHub-hosted windows-latest (the fallback). pull_request runs (forks
+    # included) never use it.
+    runs-on: ${{ matrix.os == 'windows-latest' && github.event_name != 'pull_request' && vars.MURAGE_WIN_RUNNER && fromJSON(vars.MURAGE_WIN_RUNNER) || matrix.os }}
     # Windows runners are the slowest per shard: a 20-minute cap cancelled
     # shard 3 mid-run (CI 36317693740) before any failure text was printed.
     # 1.0.2 outgrew 30/45 too (CI 38718877034 and its base 38682984430: 16 of
@@ -419,7 +429,8 @@ jobs:
         run: pnpm exec vitest run server/host-power.test.ts server/procs.test.ts scripts/build-murage-cage.test.mjs scripts/power-seccomp.test.mjs
 
   human:
-    if: ${{ !inputs.windows_only && !inputs.human_files }}
+    # Full runs only (main, pull_request, RC dispatch with full=true, or a ci/try branch ending -full): 36-75 min x 6 shards.
+    if: ${{ !inputs.windows_only && !inputs.human_files && (github.event_name != 'workflow_dispatch' || inputs.full || endsWith(github.ref_name, '-full')) }}
     name: human specs ${{ matrix.human_shard }}/6 (Ubuntu)
     # One worker per process (the harness owns one store), so the suite is
     # split across runners instead: about 920 desktop+mobile tests need close
@@ -495,7 +506,7 @@ jobs:
     # EXTENDED tests (ci/extended-tests.txt): Linux only, visible, never blocking. Job-level continue-on-error keeps
     # a failed or timed-out shard from failing the run's conclusion, which is what scripts/release-ci-gate.mjs reads;
     # `required` does not list this job. Their failures are follow-up work, not release blockers.
-    if: ${{ !inputs.windows_only && !inputs.human_files && !inputs.vitest_file }}
+    if: ${{ !inputs.windows_only && !inputs.human_files && !inputs.vitest_file && (github.event_name != 'workflow_dispatch' || inputs.full || endsWith(github.ref_name, '-full')) }}
     name: extended (non-blocking) ${{ matrix.extended_shard }}/5 (Ubuntu)
     continue-on-error: true
     strategy:
@@ -548,6 +559,7 @@ jobs:
           VITEST: ${{ needs.vitest.result }}
           HOST_POWER_ARM64: ${{ needs.host-power-arm64.result }}
           HUMAN: ${{ needs.human.result }}
+          FULL_RUN: ${{ (github.event_name != 'workflow_dispatch' || inputs.full || endsWith(github.ref_name, '-full')) }}
           CONTROL_PLANE: ${{ needs.control-plane.result }}
           MOBILE: ${{ needs.mobile.result }}
           PACKAGE_LINUX: ${{ needs.package-linux.result }}
@@ -555,7 +567,8 @@ jobs:
           test "$QUALITY" = success
           test "$VITEST" = success
           test "$HOST_POWER_ARM64" = success
-          test "$HUMAN" = success
+          # human is skipped only on a light ci/try dispatch; release-ci-gate.mjs still demands every human job green (FULL_RUN_JOBS)
+          test "$HUMAN" = success || { test "$FULL_RUN" != true && test "$HUMAN" = skipped; }
           test "$CONTROL_PLANE" = success
           test "$MOBILE" = success
           test "$PACKAGE_LINUX" = success

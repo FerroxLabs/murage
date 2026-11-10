@@ -110,7 +110,7 @@ export function cloudRequestAllowed(url) {
  * @param {(homeId: string) => void} [deps.onWindowClosed] a Cloud window closed (main re-applies the unread badge)
  * @param {(m: string) => void} [deps.warn]
  */
-export function installCloudHome({ liveGate = null, packaged = true, protocol, session, BrowserWindow, shell, net, env, userDataDir, distDir, provider = null, createClient = null, cloudPreload, onWindowClosed = () => {}, warn = () => {}, timers = DEFAULT_TIMERS }) {
+export function installCloudHome({ liveGate = null, packaged = true, protocol, session, BrowserWindow, shell, net, env, userDataDir, distDir, provider = null, createClient = null, cloudPreload, onWindowClosed = () => {}, onWindowOpened = () => {}, warn = () => {}, timers = DEFAULT_TIMERS }) {
   // MURAGE_DESKTOP_CLOUD=0 is a hard off: nothing registered, null. Otherwise the scheme is ALWAYS registered (it must be
   // before app ready) but inert: active() is false, so every scheme request is refused, open() throws and the IPC stubs refuse,
   // until the developer override (unpackaged builds only) is on or the live gate (verified live:true from the pinned prod origin,
@@ -182,6 +182,7 @@ export function installCloudHome({ liveGate = null, packaged = true, protocol, s
         webPreferences: { partition, contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, ...(cloudPreload ? { preload: cloudPreload, additionalArguments: [`--murage-cloud-home=${homeId}`] } : {}) },
       });
       windows.set(homeId, win);
+      try { onWindowOpened(homeId); } catch {} // NOTIFY-EVERYWHERE-1019 S4a: a replaced Cloud window kills outstanding attention tokens
       // F43 load watchdog: a page that fails or hasn't loaded in CLOUD_OPEN_MS is the offline screen, which looks again by
       // itself every CLOUD_RETRY_MS and on Try again. `generation` makes a superseded load's late answer a no-op.
       const entry = cloudHomeEntryUrl(homeId);

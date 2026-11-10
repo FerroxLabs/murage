@@ -6,13 +6,12 @@ import {
   type PickerEngine,
   type PickerModel,
   PRICE_UNKNOWN,
-  isFluxRouterRow,
   isPriceUnknown,
   modelPriceLabel,
-  orderedPickerModels,
   pickerKey,
   pickerModels,
 } from "./provider-model-picker.ts";
+import { isFluxRouterRow, orderedPickerModels } from "./provider-model-picker-dialog.ts";
 
 // The snapshot is its own chunk since 1.0.18 (BUNDLE-HEADROOM-1018); these tests read it.
 beforeAll(() => preloadModelMetadata());

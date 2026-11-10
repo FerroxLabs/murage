@@ -266,7 +266,15 @@
       "ux.l4a.screen.add-client.title": "f76cd8f677314ef3fcce574d5b6f2a6329d2b5c2c14dd1738b996471b3cbddb0",
       "ux.l4a.screen.add-client.intro": "fa252e76d38a2e2758363181cfa6fc89b318897647285a776e5d0047b58f16ef",
       "ux.l4a.screen.add-client.tip1": "3c4fdd31d9974632eac5c5157ff72159cc5bf532f6628abf5aa10fb488c43566",
-      "ux.l4a.screen.add-client.why": "cef775d2d0fdd61f0a3e47e2e490efb13eb61b355f8e8e8190775c69b1a985ab"
+      "ux.l4a.screen.add-client.why": "cef775d2d0fdd61f0a3e47e2e490efb13eb61b355f8e8e8190775c69b1a985ab",
+      "ux.l4a.screen.settings.calls.title": "96c6d5f3bd2e3b9865361f46c4d7131346aae47af08d966e4322f024cc233ef8",
+      "ux.l4a.screen.settings.calls.intro": "9d989a718ba127b872fe7e1138ba53721b165a66ddd998535ff002487e7bd5a3",
+      "ux.l4a.screen.settings.calls.tip1": "79188178cacc1a1d2b7c165c20908b16e6224a26b1ffed3476abc8152a015f07",
+      "ux.l4a.screen.settings.calls.why": "4839c21c655e44c8802002a56def334351a71e7fb5f9f11801045c48d0a2d3d1",
+      "ux.l4a.screen.settings.computer.title": "3525a8e4b4ab109c29aa76e2f3f80890642a3750f67804e23727b56a0c84f234",
+      "ux.l4a.screen.settings.computer.intro": "d1514a7ef80379a941104758b34b2864d39bf6007dacea2a83fba317ed989f14",
+      "ux.l4a.screen.settings.computer.tip1": "5eaa630fb6962efc8c64d343054e18c3bce9c9a1c03a7a375bb3cc0f76413bcd",
+      "ux.l4a.screen.settings.computer.why": "a98e13268f5889be96cdc20dcfda93335a4f5074b4bf8df44b724d8185557ef8"
     },
     "es": {
       "ux.l4a.screen.today.title": "2b065c7c9ce466e5ebcad757987d5d660ee4c9ea708bc62c43444b53334738ba",
@@ -533,7 +541,15 @@
       "ux.l4a.screen.add-client.title": "f76cd8f677314ef3fcce574d5b6f2a6329d2b5c2c14dd1738b996471b3cbddb0",
       "ux.l4a.screen.add-client.intro": "fa252e76d38a2e2758363181cfa6fc89b318897647285a776e5d0047b58f16ef",
       "ux.l4a.screen.add-client.tip1": "3c4fdd31d9974632eac5c5157ff72159cc5bf532f6628abf5aa10fb488c43566",
-      "ux.l4a.screen.add-client.why": "cef775d2d0fdd61f0a3e47e2e490efb13eb61b355f8e8e8190775c69b1a985ab"
+      "ux.l4a.screen.add-client.why": "cef775d2d0fdd61f0a3e47e2e490efb13eb61b355f8e8e8190775c69b1a985ab",
+      "ux.l4a.screen.settings.calls.title": "96c6d5f3bd2e3b9865361f46c4d7131346aae47af08d966e4322f024cc233ef8",
+      "ux.l4a.screen.settings.calls.intro": "9d989a718ba127b872fe7e1138ba53721b165a66ddd998535ff002487e7bd5a3",
+      "ux.l4a.screen.settings.calls.tip1": "79188178cacc1a1d2b7c165c20908b16e6224a26b1ffed3476abc8152a015f07",
+      "ux.l4a.screen.settings.calls.why": "4839c21c655e44c8802002a56def334351a71e7fb5f9f11801045c48d0a2d3d1",
+      "ux.l4a.screen.settings.computer.title": "3525a8e4b4ab109c29aa76e2f3f80890642a3750f67804e23727b56a0c84f234",
+      "ux.l4a.screen.settings.computer.intro": "d1514a7ef80379a941104758b34b2864d39bf6007dacea2a83fba317ed989f14",
+      "ux.l4a.screen.settings.computer.tip1": "5eaa630fb6962efc8c64d343054e18c3bce9c9a1c03a7a375bb3cc0f76413bcd",
+      "ux.l4a.screen.settings.computer.why": "a98e13268f5889be96cdc20dcfda93335a4f5074b4bf8df44b724d8185557ef8"
     },
     "fr": {
       "ux.l4a.screen.today.title": "2b065c7c9ce466e5ebcad757987d5d660ee4c9ea708bc62c43444b53334738ba",
@@ -800,7 +816,15 @@
       "ux.l4a.screen.add-client.title": "f76cd8f677314ef3fcce574d5b6f2a6329d2b5c2c14dd1738b996471b3cbddb0",
       "ux.l4a.screen.add-client.intro": "fa252e76d38a2e2758363181cfa6fc89b318897647285a776e5d0047b58f16ef",
       "ux.l4a.screen.add-client.tip1": "3c4fdd31d9974632eac5c5157ff72159cc5bf532f6628abf5aa10fb488c43566",
-      "ux.l4a.screen.add-client.why": "cef775d2d0fdd61f0a3e47e2e490efb13eb61b355f8e8e8190775c69b1a985ab"
+      "ux.l4a.screen.add-client.why": "cef775d2d0fdd61f0a3e47e2e490efb13eb61b355f8e8e8190775c69b1a985ab",
+      "ux.l4a.screen.settings.calls.title": "96c6d5f3bd2e3b9865361f46c4d7131346aae47af08d966e4322f024cc233ef8",
+      "ux.l4a.screen.settings.calls.intro": "9d989a718ba127b872fe7e1138ba53721b165a66ddd998535ff002487e7bd5a3",
+      "ux.l4a.screen.settings.calls.tip1": "79188178cacc1a1d2b7c165c20908b16e6224a26b1ffed3476abc8152a015f07",
+      "ux.l4a.screen.settings.calls.why": "4839c21c655e44c8802002a56def334351a71e7fb5f9f11801045c48d0a2d3d1",
+      "ux.l4a.screen.settings.computer.title": "3525a8e4b4ab109c29aa76e2f3f80890642a3750f67804e23727b56a0c84f234",
+      "ux.l4a.screen.settings.computer.intro": "d1514a7ef80379a941104758b34b2864d39bf6007dacea2a83fba317ed989f14",
+      "ux.l4a.screen.settings.computer.tip1": "5eaa630fb6962efc8c64d343054e18c3bce9c9a1c03a7a375bb3cc0f76413bcd",
+      "ux.l4a.screen.settings.computer.why": "a98e13268f5889be96cdc20dcfda93335a4f5074b4bf8df44b724d8185557ef8"
     },
     "hi": {
       "ux.l4a.screen.today.title": "2b065c7c9ce466e5ebcad757987d5d660ee4c9ea708bc62c43444b53334738ba",
@@ -1067,7 +1091,15 @@
       "ux.l4a.screen.add-client.title": "f76cd8f677314ef3fcce574d5b6f2a6329d2b5c2c14dd1738b996471b3cbddb0",
       "ux.l4a.screen.add-client.intro": "fa252e76d38a2e2758363181cfa6fc89b318897647285a776e5d0047b58f16ef",
       "ux.l4a.screen.add-client.tip1": "3c4fdd31d9974632eac5c5157ff72159cc5bf532f6628abf5aa10fb488c43566",
-      "ux.l4a.screen.add-client.why": "cef775d2d0fdd61f0a3e47e2e490efb13eb61b355f8e8e8190775c69b1a985ab"
+      "ux.l4a.screen.add-client.why": "cef775d2d0fdd61f0a3e47e2e490efb13eb61b355f8e8e8190775c69b1a985ab",
+      "ux.l4a.screen.settings.calls.title": "96c6d5f3bd2e3b9865361f46c4d7131346aae47af08d966e4322f024cc233ef8",
+      "ux.l4a.screen.settings.calls.intro": "9d989a718ba127b872fe7e1138ba53721b165a66ddd998535ff002487e7bd5a3",
+      "ux.l4a.screen.settings.calls.tip1": "79188178cacc1a1d2b7c165c20908b16e6224a26b1ffed3476abc8152a015f07",
+      "ux.l4a.screen.settings.calls.why": "4839c21c655e44c8802002a56def334351a71e7fb5f9f11801045c48d0a2d3d1",
+      "ux.l4a.screen.settings.computer.title": "3525a8e4b4ab109c29aa76e2f3f80890642a3750f67804e23727b56a0c84f234",
+      "ux.l4a.screen.settings.computer.intro": "d1514a7ef80379a941104758b34b2864d39bf6007dacea2a83fba317ed989f14",
+      "ux.l4a.screen.settings.computer.tip1": "5eaa630fb6962efc8c64d343054e18c3bce9c9a1c03a7a375bb3cc0f76413bcd",
+      "ux.l4a.screen.settings.computer.why": "a98e13268f5889be96cdc20dcfda93335a4f5074b4bf8df44b724d8185557ef8"
     },
     "ja": {
       "ux.l4a.screen.today.title": "2b065c7c9ce466e5ebcad757987d5d660ee4c9ea708bc62c43444b53334738ba",
@@ -1334,7 +1366,15 @@
       "ux.l4a.screen.add-client.title": "f76cd8f677314ef3fcce574d5b6f2a6329d2b5c2c14dd1738b996471b3cbddb0",
       "ux.l4a.screen.add-client.intro": "fa252e76d38a2e2758363181cfa6fc89b318897647285a776e5d0047b58f16ef",
       "ux.l4a.screen.add-client.tip1": "3c4fdd31d9974632eac5c5157ff72159cc5bf532f6628abf5aa10fb488c43566",
-      "ux.l4a.screen.add-client.why": "cef775d2d0fdd61f0a3e47e2e490efb13eb61b355f8e8e8190775c69b1a985ab"
+      "ux.l4a.screen.add-client.why": "cef775d2d0fdd61f0a3e47e2e490efb13eb61b355f8e8e8190775c69b1a985ab",
+      "ux.l4a.screen.settings.calls.title": "96c6d5f3bd2e3b9865361f46c4d7131346aae47af08d966e4322f024cc233ef8",
+      "ux.l4a.screen.settings.calls.intro": "9d989a718ba127b872fe7e1138ba53721b165a66ddd998535ff002487e7bd5a3",
+      "ux.l4a.screen.settings.calls.tip1": "79188178cacc1a1d2b7c165c20908b16e6224a26b1ffed3476abc8152a015f07",
+      "ux.l4a.screen.settings.calls.why": "4839c21c655e44c8802002a56def334351a71e7fb5f9f11801045c48d0a2d3d1",
+      "ux.l4a.screen.settings.computer.title": "3525a8e4b4ab109c29aa76e2f3f80890642a3750f67804e23727b56a0c84f234",
+      "ux.l4a.screen.settings.computer.intro": "d1514a7ef80379a941104758b34b2864d39bf6007dacea2a83fba317ed989f14",
+      "ux.l4a.screen.settings.computer.tip1": "5eaa630fb6962efc8c64d343054e18c3bce9c9a1c03a7a375bb3cc0f76413bcd",
+      "ux.l4a.screen.settings.computer.why": "a98e13268f5889be96cdc20dcfda93335a4f5074b4bf8df44b724d8185557ef8"
     },
     "pt-br": {
       "ux.l4a.screen.today.title": "2b065c7c9ce466e5ebcad757987d5d660ee4c9ea708bc62c43444b53334738ba",
@@ -1601,7 +1641,15 @@
       "ux.l4a.screen.add-client.title": "f76cd8f677314ef3fcce574d5b6f2a6329d2b5c2c14dd1738b996471b3cbddb0",
       "ux.l4a.screen.add-client.intro": "fa252e76d38a2e2758363181cfa6fc89b318897647285a776e5d0047b58f16ef",
       "ux.l4a.screen.add-client.tip1": "3c4fdd31d9974632eac5c5157ff72159cc5bf532f6628abf5aa10fb488c43566",
-      "ux.l4a.screen.add-client.why": "cef775d2d0fdd61f0a3e47e2e490efb13eb61b355f8e8e8190775c69b1a985ab"
+      "ux.l4a.screen.add-client.why": "cef775d2d0fdd61f0a3e47e2e490efb13eb61b355f8e8e8190775c69b1a985ab",
+      "ux.l4a.screen.settings.calls.title": "96c6d5f3bd2e3b9865361f46c4d7131346aae47af08d966e4322f024cc233ef8",
+      "ux.l4a.screen.settings.calls.intro": "9d989a718ba127b872fe7e1138ba53721b165a66ddd998535ff002487e7bd5a3",
+      "ux.l4a.screen.settings.calls.tip1": "79188178cacc1a1d2b7c165c20908b16e6224a26b1ffed3476abc8152a015f07",
+      "ux.l4a.screen.settings.calls.why": "4839c21c655e44c8802002a56def334351a71e7fb5f9f11801045c48d0a2d3d1",
+      "ux.l4a.screen.settings.computer.title": "3525a8e4b4ab109c29aa76e2f3f80890642a3750f67804e23727b56a0c84f234",
+      "ux.l4a.screen.settings.computer.intro": "d1514a7ef80379a941104758b34b2864d39bf6007dacea2a83fba317ed989f14",
+      "ux.l4a.screen.settings.computer.tip1": "5eaa630fb6962efc8c64d343054e18c3bce9c9a1c03a7a375bb3cc0f76413bcd",
+      "ux.l4a.screen.settings.computer.why": "a98e13268f5889be96cdc20dcfda93335a4f5074b4bf8df44b724d8185557ef8"
     },
     "zh": {
       "ux.l4a.screen.today.title": "2b065c7c9ce466e5ebcad757987d5d660ee4c9ea708bc62c43444b53334738ba",
@@ -1868,7 +1916,15 @@
       "ux.l4a.screen.add-client.title": "f76cd8f677314ef3fcce574d5b6f2a6329d2b5c2c14dd1738b996471b3cbddb0",
       "ux.l4a.screen.add-client.intro": "fa252e76d38a2e2758363181cfa6fc89b318897647285a776e5d0047b58f16ef",
       "ux.l4a.screen.add-client.tip1": "3c4fdd31d9974632eac5c5157ff72159cc5bf532f6628abf5aa10fb488c43566",
-      "ux.l4a.screen.add-client.why": "cef775d2d0fdd61f0a3e47e2e490efb13eb61b355f8e8e8190775c69b1a985ab"
+      "ux.l4a.screen.add-client.why": "cef775d2d0fdd61f0a3e47e2e490efb13eb61b355f8e8e8190775c69b1a985ab",
+      "ux.l4a.screen.settings.calls.title": "96c6d5f3bd2e3b9865361f46c4d7131346aae47af08d966e4322f024cc233ef8",
+      "ux.l4a.screen.settings.calls.intro": "9d989a718ba127b872fe7e1138ba53721b165a66ddd998535ff002487e7bd5a3",
+      "ux.l4a.screen.settings.calls.tip1": "79188178cacc1a1d2b7c165c20908b16e6224a26b1ffed3476abc8152a015f07",
+      "ux.l4a.screen.settings.calls.why": "4839c21c655e44c8802002a56def334351a71e7fb5f9f11801045c48d0a2d3d1",
+      "ux.l4a.screen.settings.computer.title": "3525a8e4b4ab109c29aa76e2f3f80890642a3750f67804e23727b56a0c84f234",
+      "ux.l4a.screen.settings.computer.intro": "d1514a7ef80379a941104758b34b2864d39bf6007dacea2a83fba317ed989f14",
+      "ux.l4a.screen.settings.computer.tip1": "5eaa630fb6962efc8c64d343054e18c3bce9c9a1c03a7a375bb3cc0f76413bcd",
+      "ux.l4a.screen.settings.computer.why": "a98e13268f5889be96cdc20dcfda93335a4f5074b4bf8df44b724d8185557ef8"
     }
   }
 }

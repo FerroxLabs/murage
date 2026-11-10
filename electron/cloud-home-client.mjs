@@ -212,7 +212,15 @@ export function createCloudHomeClient({
 }) {
   if (!store || typeof fetchImpl !== "function" || !appVersion || typeof confirmStepUp !== "function") throw new TypeError("store, fetch, appVersion and confirmStepUp are required");
   /** homeId -> { record, token, tokenAt, healthAt, refreshing } . MAIN MEMORY ONLY. */
-  const sessions = new Map();
+  // NOTIFY-EVERYWHERE-1019 S4a: a per-home session generation, bumped only when a session is established, replaced, refreshed
+  // or removed (set, delete, a token refresh, deactivate, forgetTokens). A per-request connect() that reuses the live session
+  // leaves it unchanged, so an action's own validation read never invalidates its token.
+  const generations = new Map();
+  const bumpGeneration = (homeId) => { generations.set(homeId, (generations.get(homeId) ?? 0) + 1); };
+  const sessions = new (class extends Map {
+    set(homeId, state) { bumpGeneration(homeId); return super.set(homeId, state); }
+    delete(homeId) { bumpGeneration(homeId); return super.delete(homeId); }
+  })();
 
   const unreachable = () => new CloudHomeError("unreachable", COPY.unreachable);
   const SESSION_INVALID = new Set(["Open this on a device you've paired with your Cloud.", "Sign in required"]);
@@ -311,6 +319,7 @@ export function createCloudHomeClient({
     const result = await homeJson(record.publicOrigin, "POST", "/api/cloud/refresh", { deviceId: record.deviceId, challenge: challenge.body.challenge, at, signature: signWith(record.sessionPrivateKey, message) });
     if (result.status !== 200 || typeof result.body?.accessToken !== "string") throw refusedSignIn(result);
     state.token = result.body.accessToken; state.tokenAt = now();
+    bumpGeneration(record.homeId);
     arm(state);
   }
 
@@ -417,15 +426,20 @@ export function createCloudHomeClient({
    * Returns the raw Response (streamable). The body is held here as bytes, so a 401 refresh-retry and a
    * 403 step-up retry send exactly what the caller sent. Never queues: unreachable throws at once.
    */
-  async function fetchHome(homeId, path, { method = "GET", headers = {}, body, signal } = {}) {
+  async function fetchHome(homeId, path, { method = "GET", headers = {}, body, signal, beforeSend } = {}) {
     if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")) throw new TypeError("path must be a path on the home");
     const state = await connect(homeId);
     const origin = state.record.publicOrigin, verb = method.toUpperCase();
     const bytes = toBytes(body);
-    const attempt = (extra = {}) => send(origin + path, {
-      method: verb, body: bytes, signal: signal ?? AbortSignal.timeout(requestTimeoutMs),
-      headers: { ...headers, ...(verb === "GET" || verb === "HEAD" ? {} : { origin }), ...extra, authorization: `Bearer ${state.token}` },
-    });
+    // `beforeSend` runs immediately before EVERY network send (the first, the 401 refresh retry, the step-up retry); a throw stops it.
+    // The hook is SYNCHRONOUS and `send` is called in the same tick: nothing yields between the guard passing and the request leaving.
+    const attempt = (extra = {}) => {
+      try { if (typeof beforeSend === "function") beforeSend(); } catch (error) { return Promise.reject(error); }
+      return send(origin + path, {
+        method: verb, body: bytes, signal: signal ?? AbortSignal.timeout(requestTimeoutMs),
+        headers: { ...headers, ...(verb === "GET" || verb === "HEAD" ? {} : { origin }), ...extra, authorization: `Bearer ${state.token}` },
+      });
+    };
     let response = await attempt();
     // An invalid access token is a 401, or (on /api routes the home answers anonymous callers with) a 403 "paired device required".
     // Either way: one refresh, one retry with the same bytes. A second refusal is returned as it is.
@@ -970,6 +984,8 @@ export function createCloudHomeClient({
     listHomes, pairWithDeviceCode, mintDeviceCode, status, pairedHomes,
     startConnect, cancelConnect, connectStatus, acceptDoorLink, pasteDoorLink, resume, disconnect, settleUnfinished,
     fetch: fetchHome, stepUpRetry, fetchHomeInfo,
+    /** Per-home session generation (see above); an action captures it at mint time and compares it in beforeSend. */
+    sessionGeneration: (homeId) => generations.get(homeId) ?? 0,
     /** For WP1's proxy, in main only. Verifies pin + version, refreshes when due, returns the Bearer token. */
     async getAccessToken(homeId) { return (await connect(homeId)).token; },
     /** Sync, from the pin. Null when the home is not loaded; call getAccessToken/connect first or use loadedOrigin. */
@@ -993,7 +1009,7 @@ export function createCloudHomeClient({
     /** Drop the in-memory token (sign-out, lock). The pin and keys stay. */
     /** Load the pin, verify it, fetch a token and keep it fresh in memory. Call once per home when the Cloud window opens. */
     async activate(homeId) { const state = await connect(homeId); state.active = true; arm(state); await retryRevocations(); },
-    deactivate(homeId) { const state = sessions.get(homeId); if (state) { state.active = false; if (state.timer) clearTimeout(state.timer); state.token = null; state.tokenAt = 0; } },
+    deactivate(homeId) { const state = sessions.get(homeId); if (state) { state.active = false; if (state.timer) clearTimeout(state.timer); state.token = null; state.tokenAt = 0; bumpGeneration(homeId); } },
     /** WP1's CloudHomeProvider: (homeId) => { homeId, origin, getAccessToken() (sync, memory only) } | null. Null until activate(). */
     provider(homeId) {
       if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(String(homeId))) return null;
@@ -1005,6 +1021,6 @@ export function createCloudHomeClient({
       const state = sessions.get(homeId); if (!state) return false;
       try { await ensureFresh(state, true); return true; } catch { return false; }
     },
-    forgetTokens() { for (const state of sessions.values()) { state.token = null; state.tokenAt = 0; } },
+    forgetTokens() { for (const [homeId, state] of sessions) { state.token = null; state.tokenAt = 0; bumpGeneration(homeId); } },
   };
 }

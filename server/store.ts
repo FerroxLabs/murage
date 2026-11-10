@@ -1150,6 +1150,8 @@ export interface BotRecord {
   sidebarHidden?: boolean;
   /** Durable replay refusal for the exact reviewed package import. */
   packageImportReceipt?: { reviewHash: string; archiveSha256: string; importId: string; selectionHash?: string;
+    /** The source agent's key in the package (1.0.19): how "already hired" is told from a rename. Optional; 1.0.18 keeps it. */
+    agentKey?: string;
     baseline?: ReturnType<typeof import("./package-import-comparison.ts").createPackageImportBaseline> };
   /** which computer the bot acts on: its cloud box, this Mac (local CUA),
    * or none. Unset = auto (box when it exists, else local when available). */

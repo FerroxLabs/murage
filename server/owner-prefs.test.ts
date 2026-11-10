@@ -70,7 +70,7 @@ describe("Today view pref (Today design 2b)", () => {
   it("a view write keeps approveAllCautionDismissed and every other disk key, and a caution write keeps the view", () => {
     const d = dir();
     writeFileSync(join(d, "owner-prefs.json"), JSON.stringify({ approveAllCautionDismissed: true, other: 1 }));
-    expect(writeOwnerPrefs(d, { todayView: "detailed" })).toEqual({ approveAllCautionDismissed: true, todayView: "detailed" });
+    expect(writeOwnerPrefs(d, { todayView: "detailed" })).toEqual({ approveAllCautionDismissed: true, todayView: "detailed", firstRunJobs: { pending: [] } });
     writeOwnerPrefs(d, { approveAllCautionDismissed: false });
     expect(JSON.parse(readFileSync(join(d, "owner-prefs.json"), "utf8"))).toEqual({ approveAllCautionDismissed: false, other: 1, todayView: "detailed" });
     writeOwnerPrefs(d, { todayView: "junk" as never });

@@ -121,6 +121,8 @@ const ROUTE_TERMS = {
   "calendar-calls": "calls",
   // /api/chats: the All chats page and the bot chat pop-up list (1.0.6 chats slice 1, 47456b4dd)
   chats: "chats",
+  // /api/move-in/found and /api/move-in/grok: first-run move-in from another app on this computer (FR19c)
+  "move-in": "moving in from another app",
   "cli-candidates": "engines",
   "cli-test": "engines",
   connectors: "connected apps",

@@ -19,6 +19,7 @@ import { createDesktopTrace } from "./desktop-trace.mjs";
 import { app, BaseWindow, BrowserWindow, WebContentsView, clipboard, desktopCapturer, dialog, ipcMain as electronIpcMain, Menu, MenuItem, Notification, Tray, nativeImage, nativeTheme, net, powerMonitor, powerSaveBlocker, safeStorage, screen, session, shell, systemPreferences, utilityProcess, webContents } from "electron";
 import { protocol as electronProtocol } from "electron";
 import { crashReporter } from "electron";
+import { globalShortcut } from "electron";
 import { createCrashDumpLinker, crashDumpNamesInLog, includeCrashDumpOnRequest, pruneCrashDumps, startLocalCrashReporter, unnamedCrashDumps } from "./crash-dumps.mjs";
 import { installCloudHome, cloudHomeEnabled } from "./cloud-home-window.mjs";
 import { resolveCloudControlPlane } from "./cloud-control-plane.mjs";
@@ -60,9 +61,30 @@ import { remoteWorkDirectory,remoteSshDirectory,prepareRemoteFolder,remoteContro
 import { packagedResticPath } from "./backup-restic-attestation.mjs";
 import { execFile, spawn } from "node:child_process";
 import { createBackgroundLifecycle, linuxTrayHostAvailable } from "./background-lifecycle.mjs";
+import { createNotifySurfaces } from "./notify-surfaces.mjs";
+import { notifyCapabilities, linuxSessionType } from "./notify-capabilities.mjs";
+import { createGlobalShortcut, enableGlobalShortcutPortal, globalShortcutPortalAvailable } from "./global-shortcut.mjs";
+import { createBadgeSurfaces, parseMurageTask, routeMurageTask } from "./badge-surfaces.mjs";
+import { badgeSurfaceText } from "./badge-surface-copy.mjs";
+import { createAttentionActions } from "./attention-actions.mjs";
+import { createAttentionMain } from "./attention-main.mjs";
+import { createPresenceGuard } from "./presence-guard.mjs";
+import { createAttentionSurfaces } from "./attention-surfaces.mjs";
+import { createBannerApprovals } from "./native-banner-approvals.mjs";
+import { createMacBanners } from "./mac-banners.mjs";
+import { createLinuxBanners, loadSessionBus } from "./linux-notify.mjs";
+import { pickNativeBanner } from "./native-banner-pick.mjs";
+import { createCloudTransport, createLocalTransport } from "./attention-transport.mjs";
+import { createLockState } from "./lock-state.mjs";
+import { createLockReader, createLogindWatcher, wireAttentionInvalidation } from "./attention-wiring.mjs";
 import { watchInboxChanges } from "./inbox-watch.mjs";
+import { createAppReadiness } from "./app-readiness.mjs";
+import { createRendererSessions } from "./renderer-session.mjs";
+import { wirePresence } from "./presence-wiring.mjs";
 import { applyLoginProfileArguments, createBackgroundLogin } from "./background-login.mjs";
-import { createStartupSplash, splashPage, firstStartOfVersion, noteVersionStarted, FIRST_AFTER_UPDATE_NOTE } from "./startup-splash.mjs";
+import { createStartupSplash, splashPage, splashMode, noteVersionStarted } from "./startup-splash.mjs";
+import { readStartupPicture } from "./startup-picture.mjs";
+import { registerStartupIpc } from "./startup-ipc.mjs";
 import { createRequire } from "node:module";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createServer as createLoopbackServer } from "node:http";
@@ -129,6 +151,7 @@ import { createServerStopReason } from "./server-stop-reason.mjs";
 import { desktopViewerPermissionAllowed } from "./desktop-viewer-permissions.mjs";
 import {
   createMainWindowOpenHandler,
+  OPEN_LOG_URL,
   createOpenExternalHandler,
   mainAppPermissionCheckAllowed,
   mainAppPermissionRequestAllowed,
@@ -221,6 +244,7 @@ if (process.env.MURAGE_USER_DATA !== undefined) {
 const { desktopCapabilities, nativeDesktopActions } = capabilitiesModule;
 // Keep this outside the profile-isolation slice, but before Electron is ready.
 configureLinuxPasswordStore({ commandLine: app.commandLine });
+if(process.platform==="linux"&&linuxSessionType(process.env)==="wayland")enableGlobalShortcutPortal(app.commandLine);
 // Local crash dumps, started before "ready" as Electron requires and after any
 // user-data move so they land in this profile's app.getPath("crashDumps").
 // Uploads are off and there is no server address (crash-dumps.mjs).
@@ -267,6 +291,8 @@ const cloudCp = resolveCloudControlPlane({ env: process.env, qualification: clou
 const CLOUD_CP_ENVIRONMENT = cloudCp?.environment ?? "prod";
 const cloudLive = createCloudLiveGate({ resolve: () => resolveCloudControlPlane({ env: process.env }), cacheDir: () => app.getPath("userData"), warn: (m) => console.warn(`[cloud-live] ${m}`),
   hardOff: () => process.env.MURAGE_DESKTOP_CLOUD === "0" });
+// NOTIFY-EVERYWHERE-1019 S4a: set at app ready (initializeAttentionActions); the callbacks below tolerate null.
+let attentionActions=null,attentionWiring=null,attentionMain=null,attentionSurfaces=null,bannerNative=null,trayIcon=null;
 const cloudHome = installCloudHome({ liveGate: cloudLive, packaged: app.isPackaged, protocol: electronProtocol, session, BrowserWindow, shell, net, env: process.env,
   userDataDir: () => app.getPath("userData"), distDir: path.join(__dirname, "..", "dist"), warn: (m) => console.warn(`[cloud-home] ${m}`),
   createClient: () => createCloudHomeClient({ cp: cloudCp ? { [cloudCp.environment]: cloudCp } : {}, appVersion: app.getVersion(), cpEnvironment: CLOUD_CP_ENVIRONMENT,
@@ -283,7 +309,7 @@ const cloudHome = installCloudHome({ liveGate: cloudLive, packaged: app.isPackag
         const list = await cloudHome?.client?.fetchHomeInfo(homeId, "/api/bots?messages=0", { signal });
         const name = Array.isArray(list?.bots) ? list.bots.find((bot) => bot?.id === botId)?.name : undefined;
         return typeof name === "string" ? name : undefined; } }) }),
-  cloudPreload: path.join(__dirname, "preload-cloud.cjs"), onWindowClosed: () => applyUnreadBadge() });
+  cloudPreload: path.join(__dirname, "preload-cloud.cjs"), onWindowClosed: (homeId) => { attentionWiring?.cloudWindowChanged(); attentionMain?.homeGone(homeId); applyUnreadBadge(); }, onWindowOpened: (homeId) => { attentionWiring?.cloudWindowChanged(); attentionMain?.homeGone(homeId); } });
 // 127.0.0.1 explicitly — vite binds IPv4; a bare "localhost" here can
 // resolve to ::1 and paint a black window
 const DEV_URL = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:5199";
@@ -389,7 +415,209 @@ const ipcMain = createOwnedMainIpc({
 // B3 WP5: the Cloud engine sign-in terminal relay, main window only. Registered at every start (MURAGE_DESKTOP_CLOUD=0 registers nothing); refuses every call until Cloud is live.
 if (cloudHome?.client) registerEngineLoginIpc({ ipcMain, active: () => cloudHome.active(), relay: createEngineLoginRelay({ client: cloudHome.client,
   createSocket: (url, options) => new EngineLoginWebSocket(url, options), openExternal: (url) => shell.openExternal(url), log: slog }) });
+// Start-up screens (FIRSTRUN-1019): the cached picture the splash reads, and the What's new request from the update screen.
+const startupIpc = registerStartupIpc({ gate: ipcMain, userData: () => app.getPath("userData"), getMainContents: () => ownedMainContents() });
 let backgroundLifecycle=null;
+// NOTIFY-EVERYWHERE-1019 S2: the device file that says which outside-the-app surfaces this computer uses. Decided from disk
+// before the server spawns (the server creates messages.db), so an upgrade is never mistaken for a new install.
+// NOTIFY-EVERYWHERE-1019 S4a: the one action path and the lock state. The lock state starts UNKNOWN (which counts as locked: Allow and
+// Reply refused) and is fed an explicit boolean: getSystemIdleState on Mac and Windows, logind LockedHint on Linux. Every event that must
+// kill outstanding tokens (lock, suspend, server restart, data-owner change, Cloud window swap, previews change) is wired here.
+function initializeAttentionActions(){
+  if(attentionActions)return;
+  void initializeGlobalShortcut();
+  initializeBadgeSurfaces();
+  const logind=process.platform==="linux"?createLogindWatcher({spawn}):null;
+  const lock=createLockState({powerMonitor,readLocked:createLockReader({platform:process.platform,getSystemIdleState:seconds=>powerMonitor.getSystemIdleState(seconds),execFile,env:process.env,healthy:()=>logind?.healthy()??true})});
+  attentionActions=createAttentionActions({lock,log:line=>slog(line)});
+  attentionWiring=wireAttentionInvalidation({actions:attentionActions,lock,powerMonitor,logind});
+  // NOTIFY-EVERYWHERE-1019 S3: the router. Windows send routing ids only; main answers with the decision and, for the notification rungs,
+  // tells the offering window to show it (S4a/b/c replace that with native actionable banners). Presence (full screen, sharing, Focus,
+  // locked) is S3B's (electron/presence-guard.mjs): read once at each decision, and polled only while something is held.
+  const presenceRun=(file,args)=>new Promise((resolve,reject)=>execFile(file,args,{timeout:1500,maxBuffer:65536,env:process.env},(error,stdout)=>error?reject(error):resolve(String(stdout))));
+  const presenceGuard=createPresenceGuard({platform:process.platform,resourcesPath:process.resourcesPath,env:process.env,run:presenceRun,lock,log:line=>slog(line)});
+  // S4b/S4c: a banner's action token is minted against the transport and identity that were captured WITH the card read (never looked up
+  // again at mint time), answers go through the one action path with no window context, and a click opens the card in the offering home.
+  const mintBanner=({entry,surface,surfaceId,digest,transport,identity})=>{
+    if(!attentionActions||!transport||identity===undefined||identity===null||!entry?.frame?.requestId)return null;
+    return attentionActions.mint({home:entry.home,epoch:entry.epoch,threadId:entry.frame.threadId,messageId:entry.frame.messageId,requestId:entry.frame.requestId,digest,surface,surfaceId,identity,transport});
+  };
+  const bannerAct=(token,action,text)=>attentionActions.act(token,action,text);
+  const bannerOpen=(route,home="local")=>{
+    const candidate=home==="local"?mainWindow:cloudHome?.windows().get(home);
+    const win=candidate&&!candidate.isDestroyed()?candidate:mainWindow;
+    if(!win||win.isDestroyed())return;
+    if(win.isMinimized())win.restore();win.show();win.focus();
+    win.webContents.send("approval-notification:open",{botId:route.botId,threadId:route.threadId,messageId:route.messageId});
+  };
+  // A banner's Mute button has no server effect in 1.0.19 (no per-bot mute route): it opens the card instead, never answers it.
+  const macBanners=process.platform==="darwin"?createMacBanners({platform:"darwin",loadAddon:()=>notificationAuthorization.addon(),mint:mintBanner,act:bannerAct,open:bannerOpen,mute:bannerOpen,log:line=>slog(line)}):null;
+  const linuxBanners=process.platform==="linux"?createLinuxBanners({platform:"linux",loadBus:loadSessionBus,mint:mintBanner,act:bannerAct,open:bannerOpen,mute:bannerOpen,log:line=>slog(line),
+    language:()=>{try{return desktopStepUpLanguage({system:systemLanguage(),readDesktopConfig:()=>fs.readFileSync(path.join(ownedDesktopDataDir(),"config.json"),"utf8")});}catch{return "en";}}}):null;
+  attentionMain=createAttentionMain({
+    prefs:()=>notifySurfaces?.get()??null,
+    presence:presenceGuard,watchPresence:()=>presenceGuard.watch(),
+    sendToSession:(home,session,message)=>{
+      const win=home==="local"?mainWindow:cloudHome?.windows().get(home);
+      if(!win||win.isDestroyed())return false;
+      const bound=rendererSessions.current(win.webContents);
+      if(!bound?.alive||bound.home!==home||bound.session!==session)return false;
+      return attentionSend(home,message);
+    },
+    createNotice:options=>new Notification(options),
+    // S4b/S4c through S3R's one native seam: the actionable banners (Mac addon, Linux session bus) where they can post, else today's notifier
+    // (Mac, Windows) or a plain main notice (Linux). See electron/native-banner-approvals.mjs.
+    nativeApprovals:bannerNative=createBannerApprovals({
+      banner:pickNativeBanner({platform:process.platform,mac:macBanners,linux:linuxBanners}),
+      base:process.platform==="linux"?null:(()=>{
+        let onEvict;
+        const notifier=key=>{
+          const home=key.split("|")[0];
+          const show=home==="local"?showApprovalNotification:cloudApprovalNotifier(home);
+          show.setOnEvict?.(onEvict);return show;
+        };
+        return {
+          async prepare(input,options){
+            const show=notifier(options.key),result=await show.prepare(input,options);
+            return result.ok?{ok:true,prepared:{inner:result.prepared,words:result.prepared.words}}:{ok:false};
+          },
+          present(prepared,options){prepared.inner.words=prepared.words;return notifier(options.key).present(prepared.inner,options);},
+          close:key=>notifier(key).close(key),setOnEvict:fn=>{onEvict=fn;},
+        };
+      })(),
+      createNotice:options=>new Notification(options),transportFor:attentionTransportFor,mint:mintBanner,
+      actionsOn:()=>notifySurfaces?.get()?.notifyActions===true,log:line=>slog(line)}),
+    // The router's bubble rung (S9): the float surface shows the card's bot dot and the pinned bubble; a nudge reaches it through here.
+    showSurface:async(rung,entry)=>{
+      if(rung!=="bubble"||!attentionSurfaces)return null;
+      const id=await attentionSurfaces.floatSurface.show(entry);return id?[id]:null;
+    },
+    closeSurface:()=>attentionSurfaces?.floatSurface.close(),
+    onOpen:target=>{
+      const candidate=target.home==="local"?mainWindow:cloudHome?.windows().get(target.home);
+      const win=target.session&&candidate&&!candidate.isDestroyed()&&rendererSessions.current(candidate.webContents)?.session===target.session?candidate:mainWindow;
+      if(!win||win.isDestroyed())return;
+      if(win.isMinimized())win.restore();win.show();win.focus();
+      win.webContents.send("approval-notification:open",{botId:target.botId,threadId:target.threadId,messageId:target.messageId});
+    },
+    transportFor:attentionTransportFor,
+    invalidateTokens:()=>{},
+    onPreviewsChanged:()=>{attentionWiring?.previewsChanged();attentionSurfaces?.invalidateAll();},
+    readPreviews:async home=>{
+      let config;
+      if(home==="local")config=await harnessJson("/api/config");
+      else{const client=cloudHome?.client;if(!client)return null;const response=await client.fetch(home,"/api/config");if(response.status!==200)return null;config=JSON.parse(await response.text());}
+      return config?.notifications?.previewContent!==false;
+    },
+    onCounts:()=>{attentionSurfaces?.changed();},pillAvailable:()=>false,pinnedBotId:()=>notifySurfaces?.get()?.pinnedBotId??null,
+    log:line=>slog(line)});
+  // R6: every presence event bumps the guard's revision and asks for a complete read; only the guard's committed change releases held items.
+  wirePresence({lock,presenceGuard,attentionMain,powerMonitor});
+  // The attention windows' OWN gate (never the owned-main gate), registered on Electron's ipcMain directly, on purpose: S6 tray panel and
+  // S9 bubble/dock windows. One loadUrlFor serves the gate and every window; the panel is built the first time the tray asks for it.
+  attentionSurfaces=createAttentionSurfaces({
+    electron:{BrowserWindow,screen},ipcMain:electronIpcMain,platform:process.platform,
+    tray:{getBounds:()=>trayIcon.getBounds()},actions:attentionActions,
+    prefs:()=>notifySurfaces?.get()??null,
+    capabilities:()=>notifyCapabilities({platform:process.platform,env:process.env,trayHost:null}),
+    presence:()=>presenceGuard.quiet(),presenceWatch:()=>presenceGuard.watch(),
+    transportFor:attentionTransportFor,
+    readLocal:route=>harnessJson(route),
+    readPreviews:async()=>{try{return (await harnessJson("/api/config"))?.notifications?.previewContent!==false;}catch{return false;}},
+    openApp:async()=>{backgroundLifecycle?.open();},
+    openTarget,
+    sendToBot:sendDirectToBot,
+    pauseAutomations:async()=>{try{await backgroundLifecycle?.pauseAutomations();return {ok:true};}catch{return {ok:false};}},
+    loadUrlFor:attentionWindowUrl,log:line=>slog(line)});
+  // Floating surfaces follow presence: a share or a full-screen app hides them, the end of it restores them (the guard's committed change only).
+  presenceGuard.onChange(()=>{void attentionSurfaces?.sync();});
+  void attentionSurfaces.sync();
+}
+/** The exact file URL main loads into each kind of attention window: the gate's urlFor and every window's loadURL (one function). */
+function attentionWindowUrl(kind){
+  const page=kind==="bubble"?"src/float/bubble.html":kind==="dock"?"src/float/dock.html":kind==="popover"||kind==="flyout"||kind==="popup"?"src/tray-panel/index.html":null;
+  if(!page)return null;
+  const root=app.isPackaged?path.join(process.resourcesPath,"ui"):path.join(__dirname,"..","dist");
+  return pathToFileURL(path.join(root,...page.split("/"))).href;
+}
+/** The tray panel's and the pinned bubble's "send": one text to the Chief's or the pinned bot's direct thread, through the same route the composer uses. */
+async function sendDirectToBot(who,text){
+  if(!serverReady||!desktopSurfaceSecret||desktopShutdownStarted||desktopRecoveryMode||typeof text!=="string"||!text.trim())return {ok:false};
+  const headers={"x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret,"content-type":"application/json"};
+  const origin=`http://127.0.0.1:${SERVER_PORT}`;
+  try{
+    let botId=null;
+    if(who==="pinned")botId=notifySurfaces?.get()?.pinnedBotId??null;
+    else{const tray=await harnessJson("/api/desktop/tray");botId=(tray?.bots??[]).find(bot=>bot?.chief===true)?.id??null;}
+    if(typeof botId!=="string"||!botId)return {ok:false};
+    const list=await fetch(`${origin}/api/bots?messages=0`,{headers,signal:AbortSignal.timeout(5000),redirect:"error"});
+    if(!list.ok)return {ok:false};
+    const bot=(await list.json())?.bots?.find(row=>row?.id===botId);
+    if(typeof bot?.threadId!=="string"||!bot.threadId)return {ok:false};
+    const sent=await fetch(`${origin}/api/bots/${encodeURIComponent(botId)}/messages`,{method:"POST",headers,body:JSON.stringify({text:text.trim(),threadId:bot.threadId,sendId:randomUUID(),mode:"chat"}),signal:AbortSignal.timeout(8000),redirect:"error"});
+    return {ok:sent.ok};
+  }catch{return {ok:false};}
+}
+/** One message to the window that owns a home (the local window or that home's Cloud window): a show, a close or a previews change. */
+function attentionSend(home,message){
+  const win=home==="local"?mainWindow:cloudHome?.windows().get(home);
+  if(!win||win.isDestroyed())return false;
+  win.webContents.send(home==="local"?"attention:show":"cloud-attention:show",message);return true;
+}
+/** The transport an attention read or action uses for one home, captured now: null when that home cannot be reached right now. */
+function attentionTransportFor(home){
+  if(home==="local"){
+    const owner=desktopDataOwner,secret=desktopSurfaceSecret,proc=serverProc,port=SERVER_PORT;
+    if(!secret||!proc||!serverReady||desktopShutdownStarted||desktopRecoveryMode)return null;
+    const identity=()=>owner===desktopDataOwner&&secret===desktopSurfaceSecret&&proc===serverProc&&serverReady&&!desktopShutdownStarted&&!desktopRecoveryMode?`${port}|${proc.pid??"p"}`:"gone";
+    return createLocalTransport({origin:`http://127.0.0.1:${port}`,secret,identity});
+  }
+  const client=cloudHome?.client,win=cloudHome?.windows().get(home);
+  if(!client||!win||win.isDestroyed())return null;
+  return createCloudTransport({client,homeId:home,windowId:()=>win.isDestroyed()?-1:win.webContents.id});
+}
+let notifySurfaces=null;
+let shortcutOwner=null,shortcutReady=null;
+function initializeGlobalShortcut(){
+  if(shortcutReady)return shortcutReady;
+  shortcutReady=(async()=>{
+    const wayland=process.platform==="linux"&&linuxSessionType(process.env)==="wayland";
+    const portalAvailable=wayland?await globalShortcutPortalAvailable(execFile):false;
+    shortcutOwner=createGlobalShortcut({globalShortcut,platform:process.platform,isWayland:()=>wayland,
+      portal:{available:()=>portalAvailable,register:(accelerator,callback)=>{
+        if(!globalShortcut.register(accelerator,callback))return null;
+        return()=>globalShortcut.unregister(accelerator);
+      }},onTrigger:openShortcut,log:slog});
+    if(desktopShutdownStarted){shortcutOwner.dispose();return shortcutOwner;}
+    const state=notifySurfaces?.get();
+    shortcutOwner.sync(state?.surfaces.shortcut?state.shortcut:null);
+    return shortcutOwner;
+  })();
+  return shortcutReady;
+}
+/** S9 can replace this body with its quick chat window without changing shortcut ownership. */
+function openPinnedQuickChat(){
+  backgroundLifecycle?.open();
+  const botId=notifySurfaces?.get()?.pinnedBotId;
+  if(botId)openTarget({kind:"compose",botId});
+}
+async function openShortcut(){
+  if(desktopShutdownStarted||desktopRecoveryMode)return;
+  // Read on the press, so an old tray snapshot cannot send the owner to a settled card.
+  let summary;
+  try{summary=await harnessJson("/api/desktop/tray");}catch{summary=null;}
+  if(desktopShutdownStarted||desktopRecoveryMode)return;
+  if(summary?.needsYou===0){openPinnedQuickChat();return;}
+  // Needs you and unknown state both use the tray's existing Inbox open path.
+  backgroundLifecycle?.open();
+  sendWhenLoaded("startup-background:open-inbox");
+}
+function initializeNotifySurfaces(){
+  if(notifySurfaces)return;
+  let profileDir=null;
+  try{profileDir=desktopDataDir??(process.env.MURAGE_DATA_DIR&&process.env.MURAGE_USER_DATA?fs.realpathSync(process.env.MURAGE_DATA_DIR):null);}catch{profileDir=null;}
+  notifySurfaces=createNotifySurfaces({profileDir,platform:process.platform,onError:error=>slog(`notify-surfaces: ${error.message}`)});
+}
 let backupScheduleHost=null;
 // 1.0.9 Sentinel host (electron/sentinel-host.mjs): the health/ producer root, the desktop producer and the OS schedule.
 let sentinelHost=null;
@@ -802,6 +1030,33 @@ ipcMain.handle("approval-notification:show", (event, payload) => {
   const homeId = cloudHome?.senderHomeId(event);
   return homeId ? cloudApprovalNotifier(homeId)(payload) : showApprovalNotification(payload);
 });
+// NOTIFY-EVERYWHERE-1019 S3: a window offers an event or reports what is on screen by ROUTING IDS only. The local window calls
+// attention:*; a Cloud window calls cloud-attention:*, and main derives its home from the registered Cloud window, never the payload.
+// S3R: every call is bound to the trusted top frame's document nonce. These
+// pushes and invokes never enter appReadiness's deferred queue.
+const attentionBinder=prefix=>(event,payload,hello=false)=>{
+  const home=prefix==="attention"?"local":cloudHome?.senderHomeId(event);
+  if(!home||!attentionMain)return null;
+  rendererSessions.track(event.sender);
+  const trust={top:event.senderFrame?.parent===null,url:event.senderFrame?.url};
+  if(prefix==="cloud-attention")trust.trusted=true;
+  if(hello)return rendererSessions.hello(event.sender,{...trust,home,session:payload?.session}).record??null;
+  const record=rendererSessions.check(event.sender,payload?.session,trust);
+  return record?.home===home?record:null;
+};
+const attentionLocalBound=attentionBinder("attention"),attentionCloudBound=attentionBinder("cloud-attention");
+ipcMain.handle("attention:hello",(event,payload)=>{const record=attentionLocalBound(event,payload,true);return record?attentionMain.hello(record):{ok:false};});
+ipcMain.handle("attention:offer",(event,payload)=>{const record=attentionLocalBound(event,payload);return record?attentionMain.offer(record,payload):{ok:false};});
+ipcMain.handle("attention:visible",(event,payload)=>{const record=attentionLocalBound(event,payload);return record?attentionMain.visible(record,payload):{ok:false};});
+ipcMain.handle("attention:present",(event,payload)=>{const record=attentionLocalBound(event,payload);return record?attentionMain.present(record,payload):{ok:false};});
+ipcMain.handle("attention:gone",(event,payload)=>{const record=attentionLocalBound(event,payload);return record?attentionMain.gone(record,payload):{ok:false};});
+ipcMain.on("attention:freed",(event,payload)=>{const record=attentionLocalBound(event,payload);if(record)attentionMain.freed(record,payload?.refs);});
+ipcMain.handle("cloud-attention:hello",(event,payload)=>{const record=attentionCloudBound(event,payload,true);return record?attentionMain.hello(record):{ok:false};});
+ipcMain.handle("cloud-attention:offer",(event,payload)=>{const record=attentionCloudBound(event,payload);return record?attentionMain.offer(record,payload):{ok:false};});
+ipcMain.handle("cloud-attention:visible",(event,payload)=>{const record=attentionCloudBound(event,payload);return record?attentionMain.visible(record,payload):{ok:false};});
+ipcMain.handle("cloud-attention:present",(event,payload)=>{const record=attentionCloudBound(event,payload);return record?attentionMain.present(record,payload):{ok:false};});
+ipcMain.handle("cloud-attention:gone",(event,payload)=>{const record=attentionCloudBound(event,payload);return record?attentionMain.gone(record,payload):{ok:false};});
+ipcMain.on("cloud-attention:freed",(event,payload)=>{const record=attentionCloudBound(event,payload);if(record)attentionMain.freed(record,payload?.refs);});
 // B3 WP4: the pairing UI's channels (local window) and the Cloud window's reachability check. Flag off: not registered at all.
 if (cloudHome) cloudHome.onActiveChange((live) => { for (const win of BrowserWindow.getAllWindows()) { try { if (!win.isDestroyed() && win === mainWindow) win.webContents.send("cloud-home:live", { live }); } catch {} } });
 // A Cloud link waiting while Cloud was not live drains the moment the gate flips on.
@@ -895,20 +1150,40 @@ function installWindowStatePersistence(win) {
   win.on("close", flush);
 }
 
+let badgeSurfaces = null;
+function initializeBadgeSurfaces() {
+  if (badgeSurfaces) return;
+  const language = desktopStepUpLanguage({ system: systemLanguage(),
+    readDesktopConfig: () => fs.readFileSync(path.join(ownedDesktopDataDir(), "config.json"), "utf8") });
+  badgeSurfaces = createBadgeSurfaces({ app, Menu, platform: process.platform,
+    prefs: () => notifySurfaces?.get(), onTask: dispatchBadgeTask,
+    t: (key, values) => badgeSurfaceText(language, key, values), window: () => mainWindow,
+    overlayIcon: () => (unreadOverlayIcon ??= nativeImage.createFromPath(APP_ICON).resize({ width: 16, height: 16 })),
+  });
+  refreshBadgePreferences();
+}
+function refreshBadgePreferences() {
+  badgeSurfaces?.refreshMenu();
+  applyUnreadBadge();
+  // The device's surface choices changed: the tray panel's preference is read on the next click; floating windows follow at once.
+  void attentionSurfaces?.sync();
+}
+function dispatchBadgeTask(task) {
+  if (!task) return;
+  // A launch action can arrive before the server and tray are ready. Resolve the preference at dispatch time.
+  void desktopStartup.then(() => {
+    if (desktopRecoveryMode || desktopShutdownStarted || !backgroundLifecycle) return;
+    return routeMurageTask({ task, badgeMenuOn: notifySurfaces?.get()?.badgeMenu,
+      open: () => backgroundLifecycle.open(), openNeedsYou: () => backgroundLifecycle.openNeedsYou(),
+      newChiefTask: () => backgroundLifecycle.newChiefTask(), pauseAutomations: () => backgroundLifecycle.pauseAutomations(),
+    });
+  }).catch(error => { slog(`badge task: ${error.message}`); backgroundLifecycle?.open(); });
+}
 function applyUnreadBadge(win = mainWindow) {
   let cloudTotal = 0;
   for (const homeId of cloudHome ? cloudHome.windows().keys() : []) cloudTotal += cloudUnreadCounts.get(homeId) ?? 0;
-  const count = normalizeUnreadCount(normalizeUnreadCount(unreadCount) + cloudTotal);
-  if (process.platform === "win32") {
-    if (!win || win.isDestroyed()) return;
-    unreadOverlayIcon ??= nativeImage.createFromPath(APP_ICON).resize({ width: 16, height: 16 });
-    win.setOverlayIcon(
-      count > 0 && !unreadOverlayIcon.isEmpty() ? unreadOverlayIcon : null,
-      count > 0 ? `${count} unread conversation${count === 1 ? "" : "s"}` : "No unread conversations",
-    );
-    return;
-  }
-  if (process.platform === "darwin" || process.platform === "linux") app.setBadgeCount(count);
+  const unread = normalizeUnreadCount(normalizeUnreadCount(unreadCount) + cloudTotal);
+  badgeSurfaces?.apply({ unread, needsYou: backgroundLifecycle?.summary()?.needsYou }, win);
 }
 
 // GNOME groups the window with its installed desktop entry only when both
@@ -937,6 +1212,7 @@ if (!app.requestSingleInstanceLock()) {
 }
 function deliverPackageInstall(win) {
   if (!pendingPackageInstallUrl || !win || win.isDestroyed()) return;
+  if (!appReadiness.ready(win.webContents)) return;
   if (win.webContents.isLoadingMainFrame()) return;
   win.webContents.send("package:install", pendingPackageInstallUrl);
   pendingPackageInstallUrl = null;
@@ -952,14 +1228,59 @@ function queuePackageInstall(rawLink) {
   return true;
 }
 
+// Which windows are showing the app (a 200 on the trusted origin) right now. The server answers a page it cannot serve with its
+// own setup page (503), and a package install or Cloud link sent there would be swallowed, so both wait, queued, until the app loads.
+// A navigation that never committed (a cancelled link, a download) gives readiness back with no did-finish-load, so the queues drain here too.
+const appReadiness = createAppReadiness({
+  origin: () => trustedRendererOrigin(),
+  // A navigation that ended without committing asks the renderer to prove it is alive (A14); only its ack drains the queues.
+  probe: (contents, token) => {
+    try { contents.send("app-readiness:probe", token); } catch { /* the renderer is gone: no ack, the window stays not ready */ }
+  },
+  onRestored: (contents) => {
+    const win = BrowserWindow.fromWebContents(contents);
+    if (!win || win.isDestroyed()) return;
+    deliverPackageInstall(win);
+    cloudLinks.drain();
+    flushCloudLinkEvent(win);
+    appReadiness.flush(contents);
+  },
+});
+
+// NOTIFY-EVERYWHERE S3R R2: the notification delivery session per window, an extension of A14 (the bound nonce, home and payload ledger).
+// It ends on a committed cross-document navigation, a crash, destroy or a new-nonce hello, and tells attention-main once.
+const rendererSessions = createRendererSessions({
+  origin: () => trustedRendererOrigin(),
+  onEnd: (webContentsId, session, record) => { attentionMain?.sessionEnded?.(webContentsId, session, record); },
+});
+
+// The renderer answers an app-readiness probe from its top frame; the owned-IPC gate has already refused any other sender.
+ipcMain.on("app-readiness:alive", (event, token) => {
+  appReadiness.alive(event.sender, token, { top: event.senderFrame?.parent === null, url: event.senderFrame?.url });
+});
+
 // Cloud links: murage://open-cloud?h=, murage://connect-cloud and murage://door?h=&o=#t=. Every source (open-url before
 // or after ready, argv on a Windows or Linux cold start, second-instance, the sealed handoff, "Use copied link") goes into
 // ONE slot (cloud-link-queue.mjs); it drains once the app is ready, Cloud is live and the main window has loaded. A door
 // link carries a ticket, so nothing here logs a link: only `[cloud] door: <reason>`. The window hears the kind, never the link.
 let cloudLinkReady = false;
-const cloudLinkWindowLoaded = () => Boolean(mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoadingMainFrame());
+const cloudLinkWindowLoaded = () => Boolean(mainWindow && !mainWindow.isDestroyed() && appReadiness.ready(mainWindow.webContents) && !mainWindow.webContents.isLoadingMainFrame());
+// A link event the window could not take (it was on the setup page) waits here and is sent once, when the app has loaded.
+let pendingCloudLinkEvent = null;
 function tellCloudLinkWindow(event) {
-  try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("cloud-home:link-event", event); } catch { /* the window went away */ }
+  try {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (appReadiness.ready(mainWindow.webContents)) mainWindow.webContents.send("cloud-home:link-event", event);
+    else pendingCloudLinkEvent = event;
+  } catch { /* the window went away */ }
+}
+function flushCloudLinkEvent(win) {
+  try {
+    if (!pendingCloudLinkEvent || win !== mainWindow || win.isDestroyed() || !appReadiness.ready(win.webContents)) return;
+    const event = pendingCloudLinkEvent;
+    pendingCloudLinkEvent = null;
+    win.webContents.send("cloud-home:link-event", event);
+  } catch { /* the window went away */ }
 }
 function focusConnectCard(kind) {
   if (mainWindow && !mainWindow.isDestroyed()) activateExistingWindow([mainWindow]);
@@ -1063,6 +1384,8 @@ app.on("second-instance", (_event, commandLine) => {
   const packageUrl = packageUrlFromCommandLine(commandLine);
   if (packageUrl) pendingPackageInstallUrl = packageUrl;
   if(reopenUpdateRecoveryIfNeeded())return;
+  const task = parseMurageTask(commandLine);
+  if (task) { dispatchBadgeTask(task); return; }
   activateExistingWindow(BrowserWindow.getAllWindows());
   const target = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed());
   deliverPackageInstall(target);
@@ -1146,6 +1469,9 @@ function publishServerLifecycle(next) {
 function superviseServerChild(proc, lifecycle) {
   proc.once("exit", (code) => {
     if (proc !== serverProc) return; // superseded by a later child
+    attentionWiring?.serverChanged(); // a dead server's cards are not answered
+    attentionMain?.serverChanged();
+    attentionSurfaces?.invalidateAll(); // and the panel, bubble and dock forget the cards they were shown
     const decision = serverSupervisor.decide({ code, intentional: desktopShutdownStarted || lifecycle?.stopRequested === true });
     if (decision.action === "stay-down") {
       slog(`server supervisor: staying down (${decision.reason})`);
@@ -2524,6 +2850,9 @@ async function startServerPackaged() {
         serverProc = started.proc;
         SERVER_PORT = port;
         superviseServerChild(started.proc, started.lifecycle);
+        attentionWiring?.serverChanged(); // a new server run: tokens minted against the old one die
+        attentionMain?.serverChanged();
+        attentionSurfaces?.invalidateAll();
         // The owner's own MCP servers: hand the new harness every saved doc
         // (each naming its origin), then refresh what expired while closed.
         void mcpServers.resume().catch((error) => slog(`mcp server secrets resume failed: ${error?.message ?? error}`));
@@ -2700,18 +3029,20 @@ function escapeHtml(value) {
   return value.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 }
 
+// The exact data: URL buildErrorPage last made: the one page besides the app's own origin the log link is trusted from.
+let lastErrorPageUrl = null;
 function buildErrorPage({ allPortsOccupied }) {
   const serverLogPath = path.join(LOG_DIR, "server.log");
-  const serverLogHref = pathToFileURL(serverLogPath).href;
   const reason = allPortsOccupied
     ? "Another program is using every port Murage can use (8799, 18799 and 28799). It is most likely a second copy of Murage. Quit that program, then quit and reopen Murage."
     : "Murage's background server didn't start in time. This is usually a slow start, not a problem with your data. Quit and reopen Murage.";
-  return (
+  // The log link is the private OPEN_LOG_URL (a file: address is never offered from a data: page); the open handler maps it to server.log.
+  lastErrorPageUrl =
     "data:text/html;charset=utf-8," +
     encodeURIComponent(
-      `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🔥</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#fcfcfc99;line-height:1.5">${escapeHtml(reason)} If it keeps happening, check <a target="_blank" rel="noopener" href="${serverLogHref}" style="color:#fcfcfc">${escapeHtml(serverLogPath)}</a>.</p></div></body>`,
-    )
-  );
+      `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🔥</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#fcfcfc99;line-height:1.5">${escapeHtml(reason)} If it keeps happening, check <a target="_blank" rel="noopener" href="${OPEN_LOG_URL}" style="color:#fcfcfc">${escapeHtml(serverLogPath)}</a>.</p></div></body>`,
+    );
+  return lastErrorPageUrl;
 }
 
 // How long one packaged-server child gets to answer /api/health before the
@@ -3454,8 +3785,10 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
 function sendWhenLoaded(channel,...args){
   const win=mainWindow;if(!win||win.isDestroyed())return;
   const send=()=>{if(!win.isDestroyed())win.webContents.send(channel,...args);};
-  if(win.webContents.isLoadingMainFrame())win.webContents.once("did-finish-load",send);else send();
+  // Tray and inbox events wait, queued, until the window is showing the app (a 503 setup page would swallow them).
+  if(appReadiness.ready(win.webContents)&&!win.webContents.isLoadingMainFrame())send();else appReadiness.defer(win.webContents,send);
 }
+function openTarget(target){sendWhenLoaded("tray:open",target);}
 /** The tray menu's reads and answers: the desktop surface, like the app. */
 async function harnessJson(route,body){
   if(!serverReady||!desktopSurfaceSecret||desktopShutdownStarted)throw new Error("Murage is not ready yet.");
@@ -3468,7 +3801,8 @@ async function harnessJson(route,body){
 }
 // The tray's Inbox change watcher (electron/inbox-watch.mjs), bound to this
 // process's server port and desktop surface proof.
-const watchTrayInbox=onChange=>watchInboxChanges(onChange,{
+const watchTrayInbox=onChange=>watchInboxChanges(change=>{attentionMain?.reconcile();if(change?.scale===undefined)void attentionMain?.previewsCheck("local");void attentionSurfaces?.sync();onChange(change);},{
+  onFrame:frame=>{attentionMain?.watcherFrame(frame);attentionSurfaces?.botFrame(frame);},
   ready:()=>serverReady&&Boolean(desktopSurfaceSecret)&&!desktopShutdownStarted,
   url:()=>`http://127.0.0.1:${SERVER_PORT}/api/events?screens=off`,
   headers:()=>({accept:"text/event-stream","x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret}),
@@ -3489,7 +3823,9 @@ function initializeBackgroundLifecycle(){
     loadPreferences:()=>{try{if(!preferenceFile)return {};const stat=fs.lstatSync(preferenceFile);if(!stat.isFile()||stat.isSymbolicLink()||stat.size>8192)return {};return JSON.parse(fs.readFileSync(preferenceFile,"utf8"));}catch{return {};}},
     savePreferences:value=>{if(!preferenceFile)throw new Error("An owned installation is required to save startup settings.");if(app.isPackaged)ownedDesktopDataDir();const temporary=`${preferenceFile}.${process.pid}.tmp`;fs.writeFileSync(temporary,JSON.stringify(value),{mode:0o600});fs.renameSync(temporary,preferenceFile);},
     dockAvailable:()=>process.platform==="darwin"&&app.dock?.isVisible()===true,
-    createTray:onOpen=>{const tray=new Tray(trayImage(false));tray.setToolTip("Murage");tray.on("click",onOpen);return tray;},
+    createTray:onOpen=>{const tray=new Tray(trayImage(false));tray.setToolTip("Murage");tray.on("click",onOpen);trayIcon=tray;return tray;},
+    // S6: the tray panel (built on first use) and the device's tray preference. Off, a tray click opens the window as before.
+    trayPanel:attentionSurfaces?.trayPanel,trayPanelOn:()=>notifySurfaces?.get()?.surfaces?.tray===true,
     presentTray:(()=>{let shown=null;return(tray,view)=>{
       tray.setToolTip(view.tooltip);
       if(process.platform==="darwin")tray.setTitle(view.title);
@@ -3497,15 +3833,16 @@ function initializeBackgroundLifecycle(){
     };})(),
     harness:{get:route=>harnessJson(route),post:(route,body)=>harnessJson(route,body)},
     watch:watchTrayInbox,
-    openTarget:target=>sendWhenLoaded("tray:open",target),
+    openTarget,
     checkForUpdates:app.isPackaged?()=>{checkForUpdatesNow();}:undefined,
-    setTrayMenu:(tray,items)=>tray.setContextMenu(Menu.buildFromTemplate(items)),
+    // With a panel the menu is built and RETURNED unattached (a right click pops it up); without, it is attached as before.
+    setTrayMenu:(tray,items,{manual=false}={})=>{const menu=Menu.buildFromTemplate(items);if(!manual)tray.setContextMenu(menu);return menu;},
     probeTray:tray=>process.platform==="linux"?linuxTrayHostAvailable(execFile):(()=>{try{const bounds=tray.getBounds();return bounds.width>0&&bounds.height>0;}catch{return false;}})(),
     openWindow:()=>{if(pendingSwap&&!pendingSwap.done){pendingSwap.wantVisible=true;pendingSwap.wantFocus=true;const old=pendingSwap.old;if(!old.isDestroyed()){if(old.isMinimized())old.restore();old.show();old.focus();}return;}const win=mainWindow&&!mainWindow.isDestroyed()?mainWindow:createWindow();if(win.isMinimized())win.restore();win.show();win.focus();},
     openInbox:()=>sendWhenLoaded("startup-background:open-inbox"),
     explainClose:async win=>{const options={type:"info",title:"Murage stays available",message:"Closing this window keeps Murage running.",detail:"Use the Murage menu bar or tray icon to reopen it, open Inbox or quit. Automatic work only runs while Murage is open and this computer is awake. Change this in Settings → General → Startup & background.",buttons:["Keep running","Quit Murage"],defaultId:0,cancelId:0};const result=win?await dialog.showMessageBox(win,options):await dialog.showMessageBox(options);return result.response===1?"quit":"keep";},
     automationStatus:()=>automation(),setAutomationsPaused:paused=>automation(paused),quit:requestOwnerQuit,
-    onChange:state=>{if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send("startup-background:changed",state);},
+    onChange:state=>{applyUnreadBadge();if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send("startup-background:changed",state);},
     onError:error=>{slog(`startup/background: ${error.message}`);},
   });
   return {lifecycle:backgroundLifecycle,login};
@@ -3516,6 +3853,45 @@ function backgroundForEvent(event){
 }
 ipcMain.handle("startup-background:status",event=>backgroundForEvent(event).status());
 ipcMain.handle("startup-background:update",(event,patch)=>backgroundForEvent(event).update(patch));
+// Device notification surfaces: the main window only (local-only class); one key per set, validated in main.
+const notifySurfacesForEvent=()=>{initializeNotifySurfaces();return notifySurfaces;};
+ipcMain.handle("notify-surfaces:get",()=>notifySurfacesForEvent().get());
+ipcMain.handle("notify-surfaces:set",async(_event,key,value)=>{
+  const prefs=notifySurfacesForEvent();
+  if(key!=="shortcut"&&key!=="surfaces.shortcut"){const state=prefs.set(key,value);refreshBadgePreferences();return state;}
+  const owner=await initializeGlobalShortcut(),before=prefs.get();
+  let result;
+  if(key==="shortcut")result=value===null?owner.sync(null):owner.trySet(value);
+  else if(value===true)result=owner.trySet(before.shortcut);
+  else if(value===false)result=owner.sync(null);
+  else return {ok:false,reason:"invalid"};
+  if(!result.ok)return result;
+  try{
+    const state=prefs.set(key,value);
+    // Recording tests the key even when the surface is off; enabling the row activates it.
+    if(!state.surfaces.shortcut||state.shortcut===null)owner.sync(null);
+    refreshBadgePreferences();
+    return state;
+  }catch(error){
+    const restored=owner.sync(before.surfaces.shortcut?before.shortcut:null);
+    if(!restored.ok)owner.sync(null);
+    throw error;
+  }
+});
+ipcMain.handle("notify-surfaces:reset",()=>{
+  const state=notifySurfacesForEvent().reset();
+  shortcutOwner?.sync(null);
+  refreshBadgePreferences();
+  return state;
+});
+// The Mac permission prompt, asked only from the first-run chooser's Continue click (design 3.1); nothing to ask on other systems.
+ipcMain.handle("notify-surfaces:ensure-permission",async()=>{notifySurfacesForEvent();if(process.platform!=="darwin")return{authorized:true};try{const result=await notificationAuthorization.ensure();return{authorized:result?.authorized===true};}catch{return{authorized:false};}});
+ipcMain.handle("notify-surfaces:capabilities",async()=>{
+  const caps=notifyCapabilities({platform:process.platform,env:process.env,trayHost:process.platform==="linux"?await linuxTrayHostAvailable(execFile).catch(()=>null):null});
+  const owner=await initializeGlobalShortcut();
+  if(owner.status().disabledReason)caps.surfaces.shortcut={available:false,reason:"portal-needed"};
+  return caps;
+});
 
 // The origin the owned main window should show, read lazily because the
 // packaged server port is chosen at boot. null (never trusted) if unparsable.
@@ -3563,6 +3939,7 @@ function createWindow({quiet=false}={}) {
   });
   mainWindow = win;
   win.on("focus", () => cloudLive.probeOnFocus());
+  win.webContents.on("did-finish-load", () => startupIpc.deliver());
   desktopMark("window.created");
   win.once("ready-to-show", () => { desktopMark("window.ready-to-show"); noteVersionStarted({ userData: () => app.getPath("userData"), appVersion: () => app.getVersion() }); });
   // The bar reaches 100% when the real window exists; the window appears, and
@@ -3580,9 +3957,15 @@ function createWindow({quiet=false}={}) {
       pendingRevealWindows.delete(win);
       if (restored.maximized) win.maximize();
       win.show();
+      desktopMark("splash.handoff");
       closeStartupSplash();
     };
-    win.once("ready-to-show", reveal);
+    // The splash decides when: at once if it was never drawn (a fast start), else after its minimum dwell and any fade in progress.
+    // A window that is closed or swapped while that is pending is dropped by reveal's own checks above.
+    win.once("ready-to-show", () => {
+      const splash = startupSplash;
+      if (splash && typeof splash.whenRevealable === "function") splash.whenRevealable(reveal); else reveal();
+    });
   }
   win.on("close",event=>backgroundLifecycle?.handleClose(event));
   attachUpdaterWindow(win);
@@ -3608,7 +3991,8 @@ function createWindow({quiet=false}={}) {
       if (error) throw new Error("DIAGNOSTICS_UNAVAILABLE");
     },
     currentUrl: () => (win.isDestroyed() ? "" : win.webContents.getURL()),
-    diagnosticsLogHref: () => (app.isPackaged ? pathToFileURL(path.join(LOG_DIR, "server.log")).href : null),
+    trustedOrigin: () => trustedRendererOrigin(),
+    errorPageUrl: () => lastErrorPageUrl,
     warn: (message) => console.warn(`[external-link] ${message}`),
   }));
   // The privileged preload must never end up on another origin (B6). A link
@@ -3622,7 +4006,10 @@ function createWindow({quiet=false}={}) {
   });
   win.webContents.on("will-navigate", navigationGuard.willNavigate);
   win.webContents.on("will-redirect", navigationGuard.willRedirect);
-  win.webContents.on("did-finish-load", () => { deliverPackageInstall(win); cloudLinks.drain(); });
+  appReadiness.track(win.webContents);
+  rendererSessions.track(win.webContents);
+  win.webContents.on("did-finish-load", () => { deliverPackageInstall(win); cloudLinks.drain(); appReadiness.flush(win.webContents); });
+  win.webContents.on("did-finish-load", () => flushCloudLinkEvent(win));
 
   // A renderer crash used to leave NO trace anywhere. RootErrorBoundary logs
   // "Murage failed to render" to the renderer console, and the renderer
@@ -5023,7 +5410,16 @@ const desktopStartup = app.whenReady().then(async () => {
   if (app.isPackaged && !process.argv.includes(BACKUP_MODE_ARGUMENT) && !process.argv.includes("--murage-login")) {
     let wasOpenedAtLogin = false;
     try { wasOpenedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin === true; } catch { /* unsupported platform */ }
-    if (!wasOpenedAtLogin) { startupSplash = createStartupSplash({ BrowserWindow, dark: nativeTheme.shouldUseDarkColors, icon: APP_ICON, language: app.getLocale?.(), onUserClose: requestOwnerQuit, note: firstStartOfVersion({ userData: () => app.getPath("userData"), appVersion: () => app.getVersion() }) ? FIRST_AFTER_UPDATE_NOTE : "" }); desktopMark("splash.shown"); }
+    if (!wasOpenedAtLogin) {
+      const splashUserData = () => app.getPath("userData"), splashVersion = () => app.getVersion();
+      const picture = readStartupPicture({ userData: splashUserData });
+      const mode = splashMode({ userData: splashUserData, appVersion: splashVersion, picture });
+      let reducedMotion = false;
+      try { reducedMotion = systemPreferences.getAnimationSettings?.().prefersReducedMotion === true; } catch { /* not supported here */ }
+      // created hidden: it is drawn after the grace, and only if the window is not ready by then (splash.shown, splash.fade come from its own clock)
+      startupSplash = createStartupSplash({ BrowserWindow, dark: nativeTheme.shouldUseDarkColors, icon: APP_ICON, language: app.getLocale?.(), onUserClose: requestOwnerQuit, mode, picture, version: splashVersion, reducedMotion, sinceLaunchMs: () => process.uptime() * 1000, onWhatsNew: () => startupIpc.requestWhatsNew(), onMark: desktopMark });
+      desktopMark("splash.created");
+    }
   }
   const connectionError = error => dialog.showErrorBox("Murage server connection", error.message);
   const serverConnections = createServerConnections({ BrowserWindow, session, onError: connectionError });
@@ -5051,6 +5447,8 @@ const desktopStartup = app.whenReady().then(async () => {
   if (app.isPackaged) { acquireDesktopDataOwner(); await initializeSentinelHost(); }
   await initializeBackupScheduleHost();
   desktopMark("backup-host.ready");
+  initializeNotifySurfaces();
+  initializeAttentionActions();
   const backupDispatch=backupStartupDispatch({host:backupScheduleHost,backupMode:process.argv.includes(BACKUP_MODE_ARGUMENT),publish:()=>backupScheduleHost?.publishCommitted()});
   if(backupDispatch.blocked){showDesktopRecovery("BACKUP_REQUESTED");return;}
   // A settled wait whose installer offer or landed hops were unreadable pauses for review (BW-B9).
@@ -5369,6 +5767,7 @@ function closeSplashWhenNoMainWindow() {
 }
 // A Cloud link that arrived during startup drains once startup is through (and again on window load and the live flip).
 void desktopStartup.then(() => cloudLinks.drain()).catch(() => {});
+dispatchBadgeTask(parseMurageTask(process.argv));
 void desktopStartup.then(()=>{if(!desktopRecoveryMode&&!desktopShutdownStarted){backupScheduleHost?.start();void backupRemoteReady.then(()=>{if(!desktopRecoveryMode&&!desktopShutdownStarted)startAutomaticRemoteBackups();});}}).catch(()=>{});
 const startupSettleDeps = {
   record: recordStartupRefusal,
@@ -5408,6 +5807,7 @@ app.on("window-all-closed", () => {
   }
 });
 app.on("will-quit",()=>backgroundLifecycle?.dispose());
+app.on("will-quit",()=>shortcutOwner?.dispose());
 
 // EMBEDDING.md lifecycle rule: defer the first quit until the embedded
 // daemon's async cleanup completes — it can't run after the host exits.
@@ -5480,7 +5880,7 @@ function cleanupDesktopForExit(reason="user-stop",token) {
   const localEngineLoginEnded = localEngineLogin.shutdown().catch(() => {});
   modelSignIn.dispose();
   mcpServers.dispose();
-  notificationAuthorization.invalidate();showApprovalNotification.dispose();
+  notificationAuthorization.invalidate();showApprovalNotification.dispose();bannerNative?.dispose();attentionSurfaces?.dispose();
   desktopBackupTool.invalidate();
   desktopResticTool?.invalidate();
   remoteBackupAttestation.abort();

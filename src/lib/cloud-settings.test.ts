@@ -52,9 +52,10 @@ describe("Settings in a Cloud window", () => {
   it("SettingsModal routes blocked sections through the classifier and stubs this computer's cards", () => {
     const source = read("SettingsModal.tsx");
     expect(source).toContain("cloudSectionBlocked(requested)");
-    // 1.0.3: the 20 ids land on 12 pages (settings-pages.ts); a blocked id lands on none of them.
-    expect(source).toContain('const section = (blocked ? "" : resolveSettingsSection(requested).section) as SettingsPage;');
-    expect(source).toContain("const pageComputerOnly = !blocked && cloudSectionBlocked(section);");
+    // 1.0.19: the ids land on 14 pages (settings-pages.ts); a blocked id lands on none of them, and neither does Browse bots.
+    expect(source).toContain('const resolved = (blocked || browsing ? "" : resolveSettingsSection(requested).section) as SettingsPage;');
+    expect(source).toContain('const section = (mountedPage ? "" : resolved) as SettingsPage;');
+    expect(source).toContain("const pageComputerOnly = !blocked && cloudSectionBlocked(resolved);");
     expect(source).toContain("ON_YOUR_COMPUTER_ONLY");
     // SETTINGS-UX-1011 S1: a Cloud window renders each of this computer's cards as the "set this on your computer" stub, never nothing.
     expect(source).toContain('{desktop === true && <Anchor id="startup-heading">{cloudCardHidden("startup-heading", cloud) ? <ComputerOnlyStub anchor="startup-heading" /> : <StartupSettings />}</Anchor>}');
@@ -69,7 +70,7 @@ describe("Settings in a Cloud window", () => {
     // every page body reads `section`, which is "" for a blocked id, and the nav and redirect read `requested`
     for (const entry of SECTION_PAGES) expect(source, entry.id).toContain(`section === "${entry.id}"`);
     expect(source).not.toMatch(/\bsection === id\b/);
-    expect(source).toContain("const navPage = resolveSettingsSection(requested).section;");
+    expect(source).toContain("const navPage = browsing ? null : resolveSettingsSection(requested).section;");
     // UX-L3B S7: one Settings window; a bot's row takes the page mark while its settings are open
     expect(source).toContain('aria-current={!bot && navPage === id ? "page" : undefined}');
     expect(ON_YOUR_COMPUTER_ONLY).toBe("On your computer only");

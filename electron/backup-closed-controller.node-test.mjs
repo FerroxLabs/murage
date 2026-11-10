@@ -188,7 +188,7 @@ test("actual startup fences closed invocation before normal writers and selected
   const calls=[];
   const traced=[];
   const context=vm.createContext({backupStartupDispatch,cloudLive:{start(){},probeOnFocus(){}},takeLaunchCloudLink:async()=>false,closedTrace:stage=>traced.push(stage),desktopMark:()=>{},app:{whenReady:()=>Promise.resolve()},assertDesktopStartupActive:()=>{},closedBackupRequested:true,desktopRecoveryMode:false,
-    acquireDesktopDataOwner:()=>calls.push("owner"),initializeSentinelHost:async()=>calls.push("sentinel"),initializeBackupScheduleHost:async()=>calls.push("host"),
+    acquireDesktopDataOwner:()=>calls.push("owner"),initializeNotifySurfaces:()=>{},initializeAttentionActions:()=>{},initializeSentinelHost:async()=>calls.push("sentinel"),initializeBackupScheduleHost:async()=>calls.push("host"),
     // A slow first tool check must not turn the closed-app run into "unavailable".
     desktopBackupTool:{waitReady:async()=>{calls.push("tool");}},
     backupScheduleHost:{reconcileStartup:()=>({blocked:false}),publishCommitted(){},runClosedDue:async()=>{calls.push("capture");return{status:"verified"};}},finishClosedBackup:result=>calls.push(result.status),

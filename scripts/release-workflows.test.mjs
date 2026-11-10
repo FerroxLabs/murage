@@ -534,11 +534,33 @@ describe("scoped Windows confirmation", () => {
   it("keeps default CI complete and retains the full test command", () => {
     const ci = load("ci.yml");
     expect(triggers(ci).workflow_dispatch.inputs.windows_only.default).toBe(false);
-    for (const job of ["quality", "vitest"]) expect(ci.jobs[job].strategy.matrix.os, job).toBe('${{ fromJSON(inputs.windows_only && \'["windows-latest"]\' || \'["macos-latest","ubuntu-24.04","windows-latest"]\') }}');
+    for (const job of ["quality", "vitest"]) expect(ci.jobs[job].strategy.matrix.os, job).toBe(LIGHT_OR_FULL_OS);
     expect(ci.jobs.vitest.steps.find(step => step.name === "Run Vitest shard").run).toContain("--tier gate");
     expect(ci.jobs.quality.steps.some(step => step.run === "pnpm test:electron")).toBe(true);
     expect(ci.jobs['control-plane'].if).toBe('${{ !inputs.windows_only && !inputs.human_files }}');
     expect(ci.jobs['package-linux'].if).toBe('${{ !inputs.windows_only && !inputs.human_files }}');
+  });
+});
+
+// CIOPT-1019: a ci/try dispatch is light (gate tiers on Ubuntu + Windows, broker:test, test:electron); main, pull_request and a
+// dispatch with full=true (or a ci/try branch ending -full) run everything. release-ci-gate.mjs still demands every job of a full run.
+const FULL_RUN = "(github.event_name != 'workflow_dispatch' || inputs.full || endsWith(github.ref_name, '-full'))";
+const LIGHT_OR_FULL_OS = `\${{ fromJSON(inputs.windows_only && '["windows-latest"]' || !${FULL_RUN} && '["ubuntu-24.04","windows-latest"]' || '["macos-latest","ubuntu-24.04","windows-latest"]') }}`;
+
+describe("light ci/try runs and full runs (CIOPT-1019)", () => {
+  it("human and extended jobs and the macOS shards run only on a full run; the Windows runner never serves pull_request", () => {
+    const ci = load("ci.yml");
+    expect(triggers(ci).workflow_dispatch.inputs.full.default).toBe(false);
+    expect(ci.jobs.extended.if).toContain(FULL_RUN);
+    expect(ci.jobs.human.if).toContain(FULL_RUN);
+    expect(ci.jobs.required.needs).toContain("human");
+    const required = ci.jobs.required.steps[0].run;
+    expect(required).toContain('test "$HUMAN" = success || { test "$FULL_RUN" != true && test "$HUMAN" = skipped; }');
+    for (const job of ["quality", "vitest"]) {
+      expect(ci.jobs[job]["runs-on"], job).toContain("github.event_name != 'pull_request'");
+      expect(ci.jobs[job]["runs-on"], job).toContain("vars.MURAGE_WIN_RUNNER");
+    }
+    expect(JSON.stringify(ci)).not.toContain("pull_request_target");
   });
 });
 
@@ -547,7 +569,7 @@ describe("scoped Ubuntu human confirmation", () => {
     const ci = load("ci.yml");
     expect(triggers(ci).workflow_dispatch.inputs.human_files.type).toBe("string");
     for (const job of ["quality", "vitest"]) expect(ci.jobs[job].if, job).toBe('${{ !inputs.human_files }}');
-    expect(ci.jobs.human.if).toBe('${{ !inputs.windows_only && !inputs.human_files }}');
+    expect(ci.jobs.human.if).toBe(`\${{ !inputs.windows_only && !inputs.human_files && ${FULL_RUN} }}`);
     const job = ci.jobs["human-confirmation"];
     expect(job.if).toBe("${{ github.event_name == 'workflow_dispatch' && inputs.human_files != '' }}");
     expect(job["runs-on"]).toBe("ubuntu-24.04");
@@ -796,7 +818,7 @@ describe("only GATE tests block CI (ci/gate-tests.txt)", () => {
     // runner is blocking and covers every declared OS before counting them.
     const quality = load("ci.yml").jobs.quality;
     expect(quality["continue-on-error"]).toBeUndefined();
-    expect(quality.strategy.matrix.os).toBe(`\${{ fromJSON(inputs.windows_only && '["windows-latest"]' || '["macos-latest","ubuntu-24.04","windows-latest"]') }}`);
+    expect(quality.strategy.matrix.os).toBe(LIGHT_OR_FULL_OS);
     const nodeStep = quality.steps.find(step => step.run === "pnpm test:electron");
     expect(nodeStep).toBeDefined();
     expect(nodeStep.if).toBeUndefined();
