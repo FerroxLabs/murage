@@ -1,0 +1,4329 @@
+diff --git a/README.md b/README.md
+index fee408f..d8db966 100644
+--- a/README.md
++++ b/README.md
+@@ -1934,2 +1934,8 @@ When enabled, agent-browser connects to an AgentCore cloud browser session inste
+ 
+ Apache-2.0
++
++## Ownership maintenance in the Murage vendor build
++
++`close-only --session NAME` connects to an existing daemon. `launch-group --owner-file PATH --status` reads ownership without starting a browser. On Windows, `launch-group --owner-file PATH --stop` opens the recorded named job and confirms zero active processes before reporting exhaustion. Unix external stop is refused; only the owning daemon may stop its held children. Maintenance commands are intentionally absent from browser-automation MCP tools.
++
++`close --all`, `dashboard stop`, and the dashboard stop endpoint require an owned stop channel or job. A standalone dashboard without an ownership record remains available for its owner to close; a PID file alone never authorizes a signal.
+diff --git a/cli/Cargo.toml b/cli/Cargo.toml
+index 113df52..e8dd08c 100644
+--- a/cli/Cargo.toml
++++ b/cli/Cargo.toml
+@@ -44,6 +44,7 @@ rust-embed = "8"
+ libc = "0.2"
+ 
++# Modified by Ferrox Labs: Windows ownership uses a non-breakaway Job Object.
+ [target.'cfg(windows)'.dependencies]
+-windows-sys = { version = "0.52", features = ["Win32_System_Threading", "Win32_Foundation", "Win32_Storage_FileSystem"] }
++windows-sys = { version = "0.52", features = ["Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_SystemServices", "Win32_Security", "Win32_Foundation", "Win32_Storage_FileSystem"] }
+ 
+ [dev-dependencies]
+diff --git a/cli/src/connection.rs b/cli/src/connection.rs
+index 11b0f08..12d3e5e 100644
+--- a/cli/src/connection.rs
++++ b/cli/src/connection.rs
+@@ -714,50 +714,10 @@ fn daemon_version_matches(session: &str) -> bool {
+ }
+ 
+-/// Kill a running daemon by reading its PID file and sending a kill signal.
+-fn kill_stale_daemon(session: &str) {
+-    // Remove the socket first so no new connections reach the old daemon
+-    #[cfg(unix)]
+-    {
+-        let socket_path = get_socket_path(session);
+-        let _ = fs::remove_file(&socket_path);
+-    }
+-
+-    let pid_path = get_pid_path(session);
+-    if let Ok(pid_str) = fs::read_to_string(&pid_path) {
+-        if let Ok(pid) = pid_str.trim().parse::<u32>() {
+-            #[cfg(unix)]
+-            {
+-                unsafe {
+-                    libc::kill(pid as i32, libc::SIGTERM);
+-                }
+-                // Wait up to 1s for graceful shutdown, then force-kill
+-                for _ in 0..10 {
+-                    thread::sleep(Duration::from_millis(100));
+-                    if unsafe { libc::kill(pid as i32, 0) } != 0 {
+-                        break;
+-                    }
+-                }
+-                // Force-kill if still alive
+-                if unsafe { libc::kill(pid as i32, 0) } == 0 {
+-                    unsafe {
+-                        libc::kill(pid as i32, libc::SIGKILL);
+-                    }
+-                    thread::sleep(Duration::from_millis(100));
+-                }
+-            }
+-            #[cfg(windows)]
+-            {
+-                let _ = Command::new("taskkill")
+-                    .args(["/PID", &pid.to_string(), "/F"])
+-                    .stdout(Stdio::null())
+-                    .stderr(Stdio::null())
+-                    .status();
+-                thread::sleep(Duration::from_millis(500));
+-            }
+-        }
+-    }
+-
+-    // Clean up leftover files regardless
++/// Stop an existing daemon through its owned endpoint or Windows job.
++// Modified by Ferrox Labs: stale-file observations never authorize numeric signals.
++fn kill_stale_daemon(session: &str) -> Result<(), String> {
++    crate::native::ownership::stop_existing(session)?;
+     cleanup_stale_files(session);
++    Ok(())
+ }
+ 
+@@ -785,8 +745,9 @@ fn request_graceful_daemon_shutdown(session: &str) -> bool {
+ }
+ 
+-fn stop_existing_daemon_for_restart(session: &str) {
++fn stop_existing_daemon_for_restart(session: &str) -> Result<(), String> {
+     if !request_graceful_daemon_shutdown(session) {
+-        kill_stale_daemon(session);
++        kill_stale_daemon(session)?;
+     }
++    Ok(())
+ }
+ 
+@@ -816,4 +777,10 @@ pub(crate) fn prevent_stdio_handle_inheritance() {
+ pub fn ensure_daemon(session: &str, opts: &DaemonOptions) -> Result<DaemonResult, String> {
+     let mut restarted = false;
++    if env::var("AGENT_BROWSER_LAUNCH_ID").is_ok()
++        && get_socket_dir().join(format!("{session}.spawned")).exists()
++        && !daemon_ready(session)
++    {
++        return Err("launch_used".into());
++    }
+ 
+     // Socket connectivity is the sole liveness check — no PID check — so
+@@ -834,5 +801,5 @@ pub fn ensure_daemon(session: &str, opts: &DaemonOptions) -> Result<DaemonResult
+                 crate::color::warning_indicator()
+             );
+-            stop_existing_daemon_for_restart(session);
++            stop_existing_daemon_for_restart(session)?;
+             restarted = true;
+             // Fall through to spawn a new daemon below
+@@ -841,5 +808,5 @@ pub fn ensure_daemon(session: &str, opts: &DaemonOptions) -> Result<DaemonResult
+                 Some(result) => return Ok(result),
+                 None => {
+-                    stop_existing_daemon_for_restart(session);
++                    stop_existing_daemon_for_restart(session)?;
+                     restarted = true;
+                 }
+@@ -889,4 +856,33 @@ pub fn ensure_daemon(session: &str, opts: &DaemonOptions) -> Result<DaemonResult
+     }
+ 
++    // Modified by Ferrox Labs: a launch directory admits exactly one daemon.
++    let spawn_marker = if let Ok(id) = env::var("AGENT_BROWSER_LAUNCH_ID") {
++        crate::native::ownership::validate_launch_id(&id).map_err(|e| e.to_string())?;
++        let path = socket_dir.join(format!("{session}.spawned"));
++        let mut options = fs::OpenOptions::new();
++        options.write(true).create_new(true);
++        #[cfg(unix)]
++        {
++            use std::os::unix::fs::OpenOptionsExt;
++            options.mode(0o600);
++        }
++        match options.open(&path) {
++            Ok(file) => {
++                file.sync_all().map_err(|e| e.to_string())?;
++            }
++            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
++                return Err("launch_used".into())
++            }
++            Err(e) => return Err(e.to_string()),
++        }
++        #[cfg(unix)]
++        fs::File::open(&socket_dir)
++            .and_then(|dir| dir.sync_all())
++            .map_err(|e| e.to_string())?;
++        Some(path)
++    } else {
++        None
++    };
++
+     let exe_path = env::current_exe().map_err(|e| e.to_string())?;
+     let exe_path = exe_path.canonicalize().unwrap_or(exe_path);
+@@ -943,4 +939,13 @@ pub fn ensure_daemon(session: &str, opts: &DaemonOptions) -> Result<DaemonResult
+ 
+     let spawned_pid = daemon_child.as_ref().map(|child| child.id());
++    if let (Some(path), Some(pid)) = (spawn_marker, spawned_pid) {
++        // The CLI still holds its unreaped child while recording this identity.
++        let identity = crate::native::ownership::identity(pid).map_err(|e| e.to_string())?;
++        crate::native::ownership::atomic_write(
++            &path,
++            &serde_json::to_vec(&identity).map_err(|e| e.to_string())?,
++        )
++        .map_err(|e| e.to_string())?;
++    }
+ 
+     for _ in 0..50 {
+@@ -1163,5 +1168,7 @@ fn send_command_once(cmd: &Value, session: &str) -> Result<Response, String> {
+             Gate::Open => None,
+             Gate::Refuse => {
+-                return Err("control_token_missing: AGENT_BROWSER_CONTROL_TOKEN is not set".to_string())
++                return Err(
++                    "control_token_missing: AGENT_BROWSER_CONTROL_TOKEN is not set".to_string(),
++                )
+             }
+         }
+@@ -1767,5 +1774,7 @@ mod tests {
+                 reader.read_line(&mut hello).unwrap();
+                 let (reply, pending) = server_reply(&t, &hello).unwrap();
+-                (&stream).write_all(format!("{reply}\n").as_bytes()).unwrap();
++                (&stream)
++                    .write_all(format!("{reply}\n").as_bytes())
++                    .unwrap();
+                 let mut auth = String::new();
+                 reader.read_line(&mut auth).unwrap();
+@@ -1842,5 +1851,8 @@ mod tests {
+             let elapsed = started.elapsed();
+             assert!(err.contains("control_reply_timeout"), "{err}");
+-            assert!(is_transient_error(&err), "a missed reply deadline keeps the old retry behaviour");
++            assert!(
++                is_transient_error(&err),
++                "a missed reply deadline keeps the old retry behaviour"
++            );
+             assert!(
+                 elapsed >= Duration::from_millis(550) && elapsed <= Duration::from_millis(700),
+@@ -1874,5 +1886,7 @@ mod tests {
+         fn cli_exchange_refuses_a_reply_that_is_not_an_ab1_frame() {
+             let (addr, daemon) = fake_daemon(move |mut stream, _session| {
+-                stream.write_all(b"{\"id\":\"1\",\"success\":true}\n").unwrap();
++                stream
++                    .write_all(b"{\"id\":\"1\",\"success\":true}\n")
++                    .unwrap();
+             });
+             let stream = TcpStream::connect(addr).unwrap();
+@@ -1892,5 +1906,8 @@ mod tests {
+         #[test]
+         fn read_error_texts_keep_the_retry_substrings() {
+-            assert!(is_transient_error(&reply_error_text(ReadError::TimedOut, true)));
++            assert!(is_transient_error(&reply_error_text(
++                ReadError::TimedOut,
++                true
++            )));
+             assert!(is_transient_error(&reply_error_text(
+                 ReadError::Io(std::io::ErrorKind::BrokenPipe),
+@@ -1901,6 +1918,55 @@ mod tests {
+                 false
+             )));
+-            assert!(!is_transient_error(&reply_error_text(ReadError::TooLong, true)));
++            assert!(!is_transient_error(&reply_error_text(
++                ReadError::TooLong,
++                true
++            )));
+         }
+     }
+ }
++
++#[cfg(all(test, target_os = "linux"))]
++mod ownership_stale_tests {
++    use super::*;
++    #[test]
++    #[ignore]
++    fn ownership_e7_child_fixture() {
++        std::thread::sleep(Duration::from_secs(30));
++    }
++    #[test]
++    fn ownership_e7_same_image_different_start_is_never_signalled() {
++        let _guard = crate::test_utils::EnvGuard::new(&[
++            "AGENT_BROWSER_SOCKET_DIR",
++            "AGENT_BROWSER_LAUNCH_ID",
++        ]);
++        let dir = tempfile::tempdir().unwrap();
++        std::env::set_var("AGENT_BROWSER_SOCKET_DIR", dir.path());
++        std::env::remove_var("AGENT_BROWSER_LAUNCH_ID");
++        struct Fixture(std::process::Child);
++        impl Drop for Fixture {
++            fn drop(&mut self) {
++                let _ = self.0.kill();
++                let _ = self.0.wait();
++            }
++        }
++        let executable = std::env::current_exe().unwrap();
++        let mut child = Fixture(
++            Command::new(&executable)
++                .args([
++                    "--exact",
++                    "connection::ownership_stale_tests::ownership_e7_child_fixture",
++                    "--ignored",
++                ])
++                .stdout(Stdio::null())
++                .spawn()
++                .unwrap(),
++        );
++        fs::write(dir.path().join("fixture.pid"), child.0.id().to_string()).unwrap();
++        fs::write(dir.path().join("fixture.owner.json"), serde_json::to_vec(&json!({"daemon":{"pid":child.0.id(),"start":"another-start","exe":executable},"launchId":null})).unwrap()).unwrap();
++        let _ = kill_stale_daemon("fixture");
++        assert!(
++            child.0.try_wait().unwrap().is_none(),
++            "another start token must never authorize a signal"
++        );
++    }
++}
+diff --git a/cli/src/main.rs b/cli/src/main.rs
+index 80fdce2..516b6c8 100644
+--- a/cli/src/main.rs
++++ b/cli/src/main.rs
+@@ -28,13 +28,8 @@ use std::path::PathBuf;
+ use std::process::{exit, Command};
+ 
+-#[cfg(windows)]
+-use windows_sys::Win32::Foundation::CloseHandle;
+-#[cfg(windows)]
+-use windows_sys::Win32::System::Threading::OpenProcess;
+-
+ use commands::{attach_ca_cert_to_launch_command, gen_id, parse_command, ParseError};
+ use connection::{
+-    cleanup_stale_files, daemon_unreachable, ensure_daemon, get_socket_dir, is_pid_alive,
+-    send_command, walk_daemons, DaemonOptions, Response,
++    daemon_unreachable, ensure_daemon, get_socket_dir, is_pid_alive, send_command, walk_daemons,
++    DaemonOptions, Response,
+ };
+ use flags::{clean_args, parse_flags, Flags};
+@@ -1217,19 +1212,14 @@ fn run_dashboard_stop(json_mode: bool) {
+     };
+ 
+-    #[cfg(unix)]
+-    {
+-        unsafe {
+-            libc::kill(pid as i32, libc::SIGTERM);
+-        }
+-    }
+-    #[cfg(windows)]
+-    {
+-        unsafe {
+-            let handle = OpenProcess(1, 0, pid); // PROCESS_TERMINATE = 1
+-            if handle != 0 {
+-                windows_sys::Win32::System::Threading::TerminateProcess(handle, 0);
+-                CloseHandle(handle);
+-            }
++    // Standalone dashboards without an ownership record are observation-only.
++    // A pidfile cannot authorize termination on any platform.
++    let _ = pid;
++    if let Err(error) = native::ownership::stop_existing("dashboard") {
++        if json_mode {
++            print_json_value(json!({"success":false,"error":error}));
++        } else {
++            eprintln!("{error}");
+         }
++        exit(3);
+     }
+ 
+@@ -1269,31 +1259,8 @@ fn run_close_all(flags: &Flags) {
+     let mut failed: Vec<(String, String)> = Vec::new();
+ 
+-    for (session, pid) in &sessions {
+-        let cmd = json!({ "id": gen_id(), "action": "close" });
+-        match send_command(cmd, session) {
+-            Ok(resp) if resp.success => closed.push(session.clone()),
+-            Ok(resp) => {
+-                let err = resp.error.unwrap_or_else(|| "Unknown error".to_string());
+-                failed.push((session.clone(), err));
+-            }
+-            Err(_) => {
+-                // Daemon is unreachable despite its process existing.
+-                // Force-kill the process and clean up stale files so future
+-                // sessions are not poisoned.
+-                #[cfg(unix)]
+-                unsafe {
+-                    libc::kill(*pid as i32, libc::SIGKILL);
+-                }
+-                #[cfg(windows)]
+-                unsafe {
+-                    let handle = OpenProcess(1, 0, *pid); // PROCESS_TERMINATE = 1
+-                    if handle != 0 {
+-                        windows_sys::Win32::System::Threading::TerminateProcess(handle, 1);
+-                        CloseHandle(handle);
+-                    }
+-                }
+-                cleanup_stale_files(session);
+-                closed.push(session.clone());
+-            }
++    for (session, _) in &sessions {
++        match native::ownership::stop_existing(session) {
++            Ok(()) => closed.push(session.clone()),
++            Err(error) => failed.push((session.clone(), error)),
+         }
+     }
+@@ -1326,4 +1293,82 @@ fn run_close_all(flags: &Flags) {
+ 
+ fn main() {
++    // Modified by Ferrox Labs: maintenance close never starts a daemon.
++    let ownership_args: Vec<String> = env::args().skip(1).collect();
++    if ownership_args.first().map(String::as_str) == Some("launch-group") {
++        if ownership_args.iter().any(|a| a == "--help" || a == "-h") {
++            println!(
++                "Usage: agent-browser launch-group --owner-file PATH (--status | --stop [Windows])"
++            );
++            return;
++        }
++        let mut path = None;
++        let mut status = false;
++        let mut stop = false;
++        let mut args = ownership_args.iter().skip(1);
++        while let Some(arg) = args.next() {
++            match arg.as_str() {
++                "--owner-file" if path.is_none() => {
++                    path = args.next();
++                    if path.is_none() {
++                        exit(3);
++                    }
++                }
++                "--status" if !status && !stop => status = true,
++                "--stop" if !status && !stop => stop = true,
++                _ => exit(3),
++            }
++        }
++        let Some(path) = path.filter(|_| status || stop) else {
++            exit(3);
++        };
++        let result = if stop {
++            native::ownership::group_stop(std::path::Path::new(path))
++        } else {
++            native::ownership::group_status(std::path::Path::new(path)).map_err(|e| e.to_string())
++        };
++        match result {
++            Ok(status) => println!("{status}"),
++            Err(error) => {
++                eprintln!("{error}");
++                exit(3);
++            }
++        }
++        return;
++    }
++    if ownership_args.first().map(String::as_str) == Some("close-only") {
++        if ownership_args.iter().any(|a| a == "--help" || a == "-h") {
++            println!("Usage: agent-browser close-only --session NAME");
++            return;
++        }
++        let mut session = None;
++        let mut args = ownership_args.iter().skip(1);
++        while let Some(arg) = args.next() {
++            if arg != "--session" || session.is_some() {
++                exit(3);
++            }
++            session = args.next();
++            if session.is_none() {
++                exit(3);
++            }
++        }
++        let session = session.map(String::as_str).unwrap_or("default");
++        if !validation::is_valid_session_name(session) {
++            exit(3);
++        }
++        let cmd = serde_json::json!({"id":"close-only", "action":"close", "closeOnly":true, "launchId":env::var("AGENT_BROWSER_LAUNCH_ID").ok(), "requireSaved":false});
++        match connection::send_command(cmd, session) {
++            Ok(response) => {
++                println!("{}", serde_json::to_string(&response).unwrap());
++                let closed = response
++                    .data
++                    .as_ref()
++                    .and_then(|data| data.get("closed"))
++                    .and_then(serde_json::Value::as_bool)
++                    == Some(true);
++                exit(if response.success && closed { 0 } else { 3 });
++            }
++            Err(_) => exit(3),
++        }
++    }
+     // Rust ignores SIGPIPE by default, causing println! to panic on broken pipes.
+     // Reset to SIG_DFL so the OS terminates the process cleanly instead.
+@@ -1349,4 +1394,8 @@ fn main() {
+         }
+         let session = env::var("AGENT_BROWSER_SESSION").unwrap_or_else(|_| "default".to_string());
++        if let Err(error) = native::ownership::prepare(&session) {
++            eprintln!("launch_failed: {error}");
++            std::process::exit(78);
++        }
+         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+         rt.block_on(native::daemon::run_daemon(&session));
+@@ -1728,4 +1777,5 @@ fn main() {
+         Ok(result) => result,
+         Err(e) => {
++            let status = if e.contains("launch_used") { 3 } else { 1 };
+             if flags.json {
+                 print_json_error(e);
+@@ -1733,5 +1783,5 @@ fn main() {
+                 eprintln!("{} {}", color::error_indicator(), e);
+             }
+-            exit(1);
++            exit(status);
+         }
+     };
+diff --git a/cli/src/mcp.rs b/cli/src/mcp.rs
+index 60b3ced..0be9892 100644
+--- a/cli/src/mcp.rs
++++ b/cli/src/mcp.rs
+@@ -6,4 +6,9 @@
+ //! lifecycle settings, including the default idle timeout, use the same CLI
+ //! parser and daemon as direct commands.
++//!
++//! Modified by Ferrox Labs: `close-only` and `launch-group --status/--stop` are local
++//! ownership-maintenance commands intentionally omitted from MCP tools. They
++//! bypass launch configuration and must never be routed through auto-launch.
++//! Window daemons enforce their child-spawn restrictions below both surfaces.
+ 
+ use base64::{engine::general_purpose::STANDARD, Engine};
+diff --git a/cli/src/native/actions.rs b/cli/src/native/actions.rs
+index 188e94f..4c5c75b 100644
+--- a/cli/src/native/actions.rs
++++ b/cli/src/native/actions.rs
+@@ -2337,4 +2337,65 @@ pub async fn execute_command(cmd: &Value, state: &mut DaemonState) -> Value {
+         .to_string();
+ 
++    if cmd.get("closeOnly").and_then(Value::as_bool) == Some(true) {
++        if action != "close"
++            || cmd.get("launchId").and_then(Value::as_str)
++                != super::ownership::launch_id().as_deref()
++        {
++            return error_response(&id, "launch_mismatch");
++        }
++        return match handle_close_inner(
++            state,
++            cmd.get("requireSaved").and_then(Value::as_bool) == Some(true),
++        )
++        .await
++        {
++            Ok(data) => success_response(&id, data),
++            Err(error) => error_response(&id, &error),
++        };
++    }
++
++    // Modified by Ferrox Labs: a window daemon can only own local Chrome.
++    // Refuse before restore, confirmation, auto-launch, or any helper spawn.
++    if let Ok(launch_id) = env::var("AGENT_BROWSER_LAUNCH_ID") {
++        if cmd.get("closeOnly").and_then(Value::as_bool) == Some(true)
++            && cmd.get("launchId").and_then(Value::as_str) != Some(launch_id.as_str())
++        {
++            return error_response(&id, "launch_mismatch");
++        }
++        let local_launch = action == "launch"
++            && cmd.get("noXvfb").and_then(Value::as_bool) == Some(true)
++            && [
++                "provider", "cdpUrl", "cdpPort", "browser", "device", "caCert",
++            ]
++            .iter()
++            .all(|key| cmd.get(*key).is_none())
++            && cmd
++                .get("plugins")
++                .is_none_or(|plugins| plugins.as_array().is_some_and(Vec::is_empty))
++            && cmd.get("autoConnect").and_then(Value::as_bool) != Some(true)
++            && cmd
++                .get("engine")
++                .and_then(Value::as_str)
++                .unwrap_or("chrome")
++                == "chrome"
++            && env::var("AGENT_BROWSER_PROVIDER")
++                .unwrap_or_default()
++                .is_empty()
++            && env::var("AGENT_BROWSER_ENGINE").unwrap_or_else(|_| "chrome".into()) == "chrome";
++        if action == "status" {
++            return success_response(
++                &id,
++                json!({"launchId":launch_id, "browser":state.browser.is_some()}),
++            );
++        }
++        if !local_launch && action != "close" && !(action == "navigate" && state.browser.is_some())
++        {
++            return error_response(&id, "window_launch_only");
++        }
++        if action == "launch" && !local_launch {
++            return error_response(&id, "window_launch_only");
++        }
++    }
++
+     let cmd_start = std::time::Instant::now();
+ 
+@@ -5060,6 +5121,30 @@ async fn handle_evaluate(cmd: &Value, state: &DaemonState) -> Result<Value, Stri
+ 
+ async fn handle_close(state: &mut DaemonState) -> Result<Value, String> {
+-    let save_result = auto_save_restore_state(state).await;
++    handle_close_inner(state, false).await
++}
++
++async fn handle_close_inner(state: &mut DaemonState, require_saved: bool) -> Result<Value, String> {
++    let had_browser = state.browser.is_some();
++    let save_result = if had_browser {
++        auto_save_restore_state(state).await
++    } else {
++        state.restore_save_status = "no_browser".into();
++        Ok(None)
++    };
++    if require_saved
++        && had_browser
++        && state.restore_save != "never"
++        && state.restore_save_status != "saved"
++    {
++        return Ok(
++            json!({"closed":false, "saveStatus":state.restore_save_status, "saveError":save_result.err(), "launchId":super::ownership::launch_id()}),
++        );
++    }
++    let before = super::ownership::stop_count();
+     close_all_browser_backends(state).await?;
++    let exhaustion =
++        tokio::task::spawn_blocking(move || super::ownership::stop_after_close(before))
++            .await
++            .map_err(|e| e.to_string())?;
+ 
+     // Stop background Fetch handler
+@@ -5077,7 +5162,7 @@ async fn handle_close(state: &mut DaemonState) -> Result<Value, String> {
+ 
+     state.ref_map.clear();
+-    match save_result {
++    let response: Result<Value, String> = match save_result {
+         Ok(Some(path)) => Ok(json!({
+-            "closed": true,
++            "closed": exhaustion.closed(),
+             "restoreStatus": state.restore_status,
+             "saveStatus": state.restore_save_status,
+@@ -5085,15 +5170,23 @@ async fn handle_close(state: &mut DaemonState) -> Result<Value, String> {
+         })),
+         Ok(None) => Ok(json!({
+-            "closed": true,
++            "closed": exhaustion.closed(),
+             "restoreStatus": state.restore_status,
+             "saveStatus": state.restore_save_status
+         })),
+         Err(err) => Ok(json!({
+-            "closed": true,
++            "closed": exhaustion.closed(),
+             "restoreStatus": state.restore_status,
+             "saveStatus": state.restore_save_status,
+             "saveError": err
+         })),
++    };
++    let mut response = response?;
++    if let (Some(fields), Some(extra)) = (
++        response.as_object_mut(),
++        serde_json::to_value(exhaustion).unwrap().as_object(),
++    ) {
++        fields.extend(extra.clone());
+     }
++    Ok(response)
+ }
+ 
+diff --git a/cli/src/native/cdp/chrome.rs b/cli/src/native/cdp/chrome.rs
+index 63d1521..208ee1f 100644
+--- a/cli/src/native/cdp/chrome.rs
++++ b/cli/src/native/cdp/chrome.rs
+@@ -8,12 +8,15 @@ use super::discovery::discover_cdp_url;
+ use crate::ca_bundle::CaBundle;
+ 
++// Modified by Ferrox Labs: hold Chrome until group shutdown has been observed.
++#[cfg(unix)]
++use crate::native::ownership::exited_no_reap;
++use crate::native::ownership::{self, HeldChild};
++use std::sync::Mutex;
++
+ pub struct ChromeProcess {
+-    child: Child,
++    held: Arc<Mutex<HeldChild>>,
+     pub ws_url: String,
+     temp_user_data_dir: Option<PathBuf>,
+     temp_nss_home: Option<PreparedNssHome>,
+-    /// On Unix, the process group ID used to kill the entire Chrome process tree.
+-    #[cfg(unix)]
+-    pgid: Option<i32>,
+     /// Private Xvfb server auto-started for headed mode on displayless Linux
+     /// hosts. Dropped (and killed) after the Chrome tree is torn down.
+@@ -58,27 +61,29 @@ impl PreparedNssHome {
+ impl ChromeProcess {
+     pub fn kill(&mut self) {
+-        let _ = self.child.kill();
+-        // On Unix, kill the entire process group to ensure Chrome helper
+-        // processes (GPU, renderer, utility, crashpad) are also terminated.
+-        // This prevents orphaned Chrome processes from blocking the user's
+-        // normal Chrome (issue #1113).
+-        #[cfg(unix)]
+-        if let Some(pgid) = self.pgid {
+-            unsafe {
+-                libc::kill(-pgid, libc::SIGKILL);
+-            }
+-        }
+-        let _ = self.child.wait();
++        let _ = ownership::stop_held(&self.held);
+     }
+ 
+-    /// Returns the OS process ID of the Chrome child process.
+     pub fn id(&self) -> u32 {
+-        self.child.id()
++        self.held
++            .lock()
++            .unwrap_or_else(|poison| poison.into_inner())
++            .child
++            .id()
+     }
+ 
+-    /// Non-blocking check whether Chrome has exited.
+-    /// Returns `true` if the process has exited (and reaps it), `false` if still running.
++    /// Observes exit without reaping the leader that pins the process group.
+     pub fn has_exited(&mut self) -> bool {
+-        matches!(self.child.try_wait(), Ok(Some(_)) | Err(_))
++        #[allow(unused_mut)] // Windows observes through its Child handle.
++        let Ok(mut held) = ownership::lock_held(&self.held) else {
++            return false;
++        };
++        #[cfg(unix)]
++        {
++            held.pgid.is_none() || exited_no_reap(held.child.id()).unwrap_or(false)
++        }
++        #[cfg(windows)]
++        {
++            matches!(held.child.try_wait(), Ok(Some(_)) | Err(_))
++        }
+     }
+ 
+@@ -91,9 +96,8 @@ impl ChromeProcess {
+ 
+         while start.elapsed() < timeout {
+-            match self.child.try_wait() {
+-                Ok(Some(_)) => return,
+-                Ok(None) => std::thread::sleep(poll_interval),
+-                Err(_) => break,
++            if self.has_exited() {
++                break;
+             }
++            std::thread::sleep(poll_interval);
+         }
+ 
+@@ -104,5 +108,11 @@ impl ChromeProcess {
+ impl Drop for ChromeProcess {
+     fn drop(&mut self) {
+-        self.kill();
++        let Ok(mut held) = ownership::lock_held(&self.held) else {
++            return;
++        };
++        held.stop_on_drop();
++        if !held.is_exhausted() {
++            return;
++        }
+         if let Some(ref dir) = self.temp_user_data_dir {
+             for attempt in 0..3 {
+@@ -697,14 +707,14 @@ fn run_certutil(args: &[&str], action: &str) -> Result<(), String> {
+ }
+ 
+-fn terminate_launched_chrome(child: &mut Child) {
+-    let _ = child.kill();
+-    #[cfg(unix)]
+-    unsafe {
+-        libc::kill(-(child.id() as i32), libc::SIGKILL);
++pub fn launch_chrome(options: &LaunchOptions) -> Result<ChromeProcess, String> {
++    if ownership::launch_id().is_some()
++        && (!options.no_xvfb
++            || options.ca_cert.is_some()
++            || options.ca_bundle.is_some()
++            || options.prepared_nss_home.is_some())
++    {
++        return Err("window_launch_only".into());
+     }
+-    let _ = child.wait();
+-}
+ 
+-pub fn launch_chrome(options: &LaunchOptions) -> Result<ChromeProcess, String> {
+     let chrome_path = match &options.executable_path {
+         Some(p) => PathBuf::from(p),
+@@ -750,5 +760,9 @@ pub fn launch_chrome(options: &LaunchOptions) -> Result<ChromeProcess, String> {
+     let effective_options = resolved_options.as_ref().unwrap_or(options);
+ 
+-    let max_attempts = 3;
++    let max_attempts = if ownership::launch_id().is_some() {
++        1
++    } else {
++        3
++    };
+     let mut last_err = String::new();
+ 
+@@ -821,4 +835,8 @@ fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<Chro
+ 
+     let mut cmd = Command::new(chrome_path);
++    if ownership::launch_id().is_some() {
++        cmd.arg("--disable-breakpad");
++    }
++
+     cmd.args(&args)
+         .stdin(Stdio::null())
+@@ -853,9 +871,39 @@ fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<Chro
+     {
+         use std::os::unix::process::CommandExt;
+-        // SAFETY: pre_exec runs between fork() and exec() in the child.
+-        // setpgid is async-signal-safe.
++        #[cfg(test)]
++        let pause_pipes = std::env::var("OMB4_PREEXEC_READY_FD")
++            .ok()
++            .and_then(|value| value.parse::<i32>().ok())
++            .zip(
++                std::env::var("OMB4_PREEXEC_RELEASE_FD")
++                    .ok()
++                    .and_then(|value| value.parse::<i32>().ok()),
++            );
++        // SAFETY: every operation below is async-signal-safe. Test descriptors
++        // are parsed before fork and the pause hook is absent in vendor builds.
+         unsafe {
+-            cmd.pre_exec(|| {
+-                libc::setpgid(0, 0);
++            cmd.pre_exec(move || {
++                let mut signals: libc::sigset_t = std::mem::zeroed();
++                libc::sigemptyset(&mut signals);
++                if libc::sigprocmask(libc::SIG_SETMASK, &signals, std::ptr::null_mut()) != 0 {
++                    return Err(std::io::Error::last_os_error());
++                }
++                if libc::setpgid(0, 0) != 0 {
++                    return Err(std::io::Error::last_os_error());
++                }
++                #[cfg(test)]
++                if let Some((ready, release)) = pause_pipes {
++                    let pid = libc::getpid();
++                    let mut byte = 0u8;
++                    if libc::write(
++                        ready,
++                        &pid as *const _ as *const _,
++                        std::mem::size_of_val(&pid),
++                    ) != std::mem::size_of_val(&pid) as isize
++                        || libc::read(release, &mut byte as *mut _ as *mut _, 1) != 1
++                    {
++                        return Err(std::io::Error::last_os_error());
++                    }
++                }
+                 Ok(())
+             });
+@@ -863,9 +911,14 @@ fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<Chro
+     }
+ 
+-    let mut child = cmd.spawn().map_err(|e| {
++    let held = ownership::spawn_owned(&mut cmd, &user_data_dir).map_err(|e| {
+         cleanup_temp_dir(&temp_user_data_dir);
+         format!("Failed to launch Chrome at {:?}: {}", chrome_path, e)
+     })?;
+ 
++    let (pid, stderr) = {
++        let mut child = ownership::lock_held(&held).map_err(str::to_string)?;
++        (child.child.id(), child.child.stderr.take())
++    };
++
+     // Shared overall deadline so we don't double-wait (poll + stderr fallback).
+     let deadline = std::time::Instant::now() + Duration::from_secs(30);
+@@ -874,11 +927,12 @@ fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<Chro
+     // This is more reliable on Windows than scraping stderr for "DevTools listening on ...",
+     // which can be missing/empty depending on how Chrome is launched.
+-    let ws_url = match wait_for_devtools_active_port(&mut child, &user_data_dir, deadline) {
++    let ws_url = match wait_for_devtools_active_port(pid, &user_data_dir, deadline) {
+         Ok(url) => url,
+         Err(primary_err) => {
+             // Fallback: scrape stderr (legacy behavior) for better diagnostics.
+-            let stderr = child.stderr.take().ok_or_else(|| {
+-                terminate_launched_chrome(&mut child);
+-                cleanup_temp_dir(&temp_user_data_dir);
++            let stderr = stderr.ok_or_else(|| {
++                if ownership::stop_held(&held).closed() {
++                    cleanup_temp_dir(&temp_user_data_dir);
++                }
+                 "Failed to capture Chrome stderr".to_string()
+             })?;
+@@ -887,6 +941,7 @@ fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<Chro
+                 Ok(url) => url,
+                 Err(fallback_err) => {
+-                    terminate_launched_chrome(&mut child);
+-                    cleanup_temp_dir(&temp_user_data_dir);
++                    if ownership::stop_held(&held).closed() {
++                        cleanup_temp_dir(&temp_user_data_dir);
++                    }
+                     return Err(format!(
+                         "{}\n(also tried parsing stderr) {}",
+@@ -898,19 +953,16 @@ fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<Chro
+     };
+ 
+-    #[cfg(unix)]
+-    let pgid = {
+-        let pid = child.id() as i32;
+-        // The child called setpgid(0,0) via process_group(0), so its PGID
+-        // equals its own PID.
+-        Some(pid)
+-    };
++    if let Err(error) = ownership::publish_chrome(pid) {
++        let _ = ownership::stop_held(&held);
++        return Err(format!(
++            "launch_failed: Chrome identity publication: {error}"
++        ));
++    }
+ 
+     Ok(ChromeProcess {
+-        child,
++        held,
+         ws_url,
+         temp_user_data_dir,
+         temp_nss_home,
+-        #[cfg(unix)]
+-        pgid,
+         #[cfg(target_os = "linux")]
+         xvfb,
+@@ -919,5 +971,5 @@ fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<Chro
+ 
+ fn wait_for_devtools_active_port(
+-    child: &mut Child,
++    pid: u32,
+     user_data_dir: &Path,
+     deadline: std::time::Instant,
+@@ -926,15 +978,10 @@ fn wait_for_devtools_active_port(
+ 
+     while std::time::Instant::now() <= deadline {
+-        if let Ok(Some(status)) = child.try_wait() {
+-            // Chrome exited before writing DevToolsActivePort -- report the
+-            // exit code so the caller can surface it alongside stderr output.
+-            let code = status
+-                .code()
+-                .map(|c| format!("{}", c))
+-                .unwrap_or_else(|| "unknown".to_string());
+-            return Err(format!(
+-                "Chrome exited early (exit code: {}) without writing DevToolsActivePort",
+-                code
+-            ));
++        #[cfg(unix)]
++        let exited = exited_no_reap(pid).unwrap_or(false);
++        #[cfg(windows)]
++        let exited = ownership::process_exited(pid);
++        if exited {
++            return Err("Chrome exited before writing DevToolsActivePort".to_string());
+         }
+ 
+@@ -1080,11 +1127,15 @@ pub fn find_chrome() -> Option<PathBuf> {
+             "brave-browser-stable",
+         ];
++        // Resolve PATH without spawning a discovery helper: window daemons
++        // may spawn only the Chrome process held by ownership.
++        use std::os::unix::fs::PermissionsExt;
++        let path = std::env::var_os("PATH").unwrap_or_default();
+         for name in &candidates {
+-            if let Ok(output) = Command::new("which").arg(name).output() {
+-                if output.status.success() {
+-                    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+-                    if !path.is_empty() {
+-                        return Some(PathBuf::from(path));
+-                    }
++            for directory in std::env::split_paths(&path) {
++                let candidate = directory.join(name);
++                if std::fs::metadata(&candidate)
++                    .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
++                {
++                    return Some(candidate);
+                 }
+             }
+@@ -2331,10 +2382,8 @@ mod tests {
+             let child = spawn_noop_child();
+             let _process = ChromeProcess {
+-                child,
++                held: Arc::new(Mutex::new(HeldChild::new(child, false))),
+                 ws_url: String::new(),
+                 temp_user_data_dir: Some(dir.clone()),
+                 temp_nss_home: None,
+-                #[cfg(unix)]
+-                pgid: None,
+                 #[cfg(target_os = "linux")]
+                 xvfb: None,
+@@ -2774,2 +2823,227 @@ mod tests {
+     }
+ }
++
++#[cfg(all(test, unix))]
++mod ownership_lifetime_tests {
++    use super::*;
++    use std::os::unix::process::CommandExt;
++
++    #[test]
++    fn ownership_e12_exit_observation_keeps_leader_unreaped() {
++        let child = Command::new("/bin/sh")
++            .args(["-c", "exit 0"])
++            .process_group(0)
++            .spawn()
++            .unwrap();
++        let pid = child.id();
++        let mut chrome = ChromeProcess {
++            held: Arc::new(Mutex::new(HeldChild::new(child, false))),
++            ws_url: String::new(),
++            temp_user_data_dir: None,
++            temp_nss_home: None,
++            #[cfg(target_os = "linux")]
++            xvfb: None,
++        };
++        let until = std::time::Instant::now() + Duration::from_secs(2);
++        while !chrome.has_exited() {
++            assert!(std::time::Instant::now() < until);
++            std::thread::sleep(Duration::from_millis(10));
++        }
++        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
++        let result = unsafe {
++            libc::waitid(
++                libc::P_PID,
++                pid,
++                &mut info,
++                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
++            )
++        };
++        assert_eq!(
++            result, 0,
++            "observing exit must leave the process group pinned"
++        );
++        chrome.kill();
++        chrome.kill();
++    }
++}
++
++#[cfg(all(test, target_os = "linux"))]
++mod ownership_xvfb_tests {
++    use super::*;
++    #[test]
++    fn ownership_e25_refuses_xvfb_and_keeps_xvfb_none() {
++        let _guard = crate::test_utils::EnvGuard::new(&[
++            "AGENT_BROWSER_LAUNCH_ID",
++            "DISPLAY",
++            "WAYLAND_DISPLAY",
++        ]);
++        std::env::set_var("AGENT_BROWSER_LAUNCH_ID", "0123456789abcdef");
++        std::env::remove_var("DISPLAY");
++        std::env::remove_var("WAYLAND_DISPLAY");
++        let mut options = LaunchOptions::default();
++        options.executable_path = Some("/not-a-browser".into());
++        options.headless = false;
++        assert_eq!(launch_chrome(&options).err().unwrap(), "window_launch_only");
++        options.no_xvfb = true;
++        let xvfb = maybe_start_xvfb(&options);
++        assert!(
++            xvfb.is_none(),
++            "window launch must keep xvfb: None even with Xvfb installed"
++        );
++    }
++}
++
++#[cfg(all(test, target_os = "linux"))]
++mod ownership_discovery_tests {
++    use super::*;
++    #[test]
++    fn ownership_e25_chrome_discovery_spawns_no_helper() {
++        use std::os::unix::fs::PermissionsExt;
++        let _guard = crate::test_utils::EnvGuard::new(&["HOME", "PATH", "AGENT_BROWSER_LAUNCH_ID"]);
++        let dir = tempfile::tempdir().unwrap();
++        let chrome = dir.path().join("chromium");
++        let marker = dir.path().join("which-ran");
++        let which = dir.path().join("which");
++        std::fs::write(&chrome, "#!/bin/sh\nexit 0\n").unwrap();
++        std::fs::write(
++            &which,
++            format!(
++                "#!/bin/sh\n: > {}\nprintf '%s\\n' {}\n",
++                marker.display(),
++                chrome.display()
++            ),
++        )
++        .unwrap();
++        for path in [&chrome, &which] {
++            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
++        }
++        std::env::set_var("HOME", dir.path());
++        std::env::set_var("PATH", dir.path());
++        std::env::set_var("AGENT_BROWSER_LAUNCH_ID", "0123456789abcdef");
++        assert_eq!(find_chrome(), Some(chrome));
++        assert!(!marker.exists(), "window discovery must not spawn which");
++    }
++}
++
++#[cfg(all(test, target_os = "linux"))]
++mod ownership_fork_tests {
++    use super::*;
++    #[test]
++    #[ignore]
++    fn ownership_e5_preexec_fixture() {
++        let dir = tempfile::tempdir().unwrap();
++        std::env::set_var("AGENT_BROWSER_SOCKET_DIR", dir.path());
++        std::env::set_var("AGENT_BROWSER_LAUNCH_ID", "0123456789abcdef");
++        ownership::prepare("fixture").unwrap();
++        let mut ready = [0; 2];
++        let mut release = [0; 2];
++        assert_eq!(unsafe { libc::pipe(ready.as_mut_ptr()) }, 0);
++        assert_eq!(unsafe { libc::pipe(release.as_mut_ptr()) }, 0);
++        std::env::set_var("OMB4_PREEXEC_READY_FD", ready[1].to_string());
++        std::env::set_var("OMB4_PREEXEC_RELEASE_FD", release[0].to_string());
++        let launch = std::thread::spawn(|| {
++            let options = LaunchOptions {
++                executable_path: Some("/bin/true".into()),
++                headless: true,
++                no_xvfb: true,
++                ..Default::default()
++            };
++            assert!(launch_chrome(&options).is_err());
++        });
++        let mut poll = libc::pollfd {
++            fd: ready[0],
++            events: libc::POLLIN,
++            revents: 0,
++        };
++        let observed = unsafe { libc::poll(&mut poll, 1, 2000) };
++        if observed == 1 {
++            let mut pid = 0i32;
++            assert_eq!(
++                unsafe { libc::read(ready[0], &mut pid as *mut _ as *mut _, 4) },
++                4
++            );
++            let sid = unsafe { libc::getsid(pid) };
++            let pgid = unsafe { libc::getpgid(pid) };
++            let byte = 1u8;
++            assert_eq!(
++                unsafe { libc::write(release[1], &byte as *const _ as *const _, 1) },
++                1
++            );
++            launch.join().unwrap();
++            assert_eq!(
++                sid,
++                std::process::id() as i32,
++                "Chrome belongs to the daemon before exec"
++            );
++            assert_eq!(pgid, pid, "Chrome already leads the held group before exec");
++        } else {
++            launch.join().unwrap();
++        }
++        for fd in ready.into_iter().chain(release) {
++            unsafe {
++                libc::close(fd);
++            }
++        }
++        assert_eq!(
++            observed, 1,
++            "the pre-exec ownership boundary must be exercised"
++        );
++    }
++    #[test]
++    fn ownership_e5_chrome_is_owned_before_exec() {
++        let status = Command::new(std::env::current_exe().unwrap())
++            .args([
++                "--exact",
++                "native::cdp::chrome::ownership_fork_tests::ownership_e5_preexec_fixture",
++                "--ignored",
++            ])
++            .status()
++            .unwrap();
++        assert!(status.success());
++    }
++}
++
++#[cfg(all(test, unix))]
++mod ownership_fix_poison_tests {
++    use super::*;
++    #[test]
++    fn ownership_fix_poisoned_held_drop_subprocess() {
++        let result = Command::new(std::env::current_exe().unwrap())
++            .args(["--exact", "native::cdp::chrome::ownership_fix_poison_tests::ownership_fix_poisoned_held_fixture", "--ignored"])
++            .status().unwrap();
++        assert!(result.success());
++    }
++    #[test]
++    #[ignore]
++    fn ownership_fix_poisoned_held_fixture() {
++        let child = Command::new("sleep").arg("60").spawn().unwrap();
++        let held = Arc::new(Mutex::new(HeldChild::new(child, false)));
++        let profile = tempfile::tempdir().unwrap();
++        let chrome = ChromeProcess {
++            held: held.clone(),
++            ws_url: String::new(),
++            temp_user_data_dir: Some(profile.path().to_owned()),
++            temp_nss_home: None,
++            #[cfg(target_os = "linux")]
++            xvfb: None,
++        };
++        let _ = std::panic::catch_unwind(|| {
++            let _lock = held.lock().unwrap();
++            panic!("inject poison");
++        });
++        let result = std::panic::catch_unwind(|| drop(chrome));
++        let retained = profile.path().exists();
++        let mut guard = match held.lock() {
++            Err(e) => e.into_inner(),
++            Ok(_) => panic!("poison lost"),
++        };
++        let alive = guard.child.try_wait().unwrap().is_none();
++        let _ = guard.child.kill();
++        let _ = guard.child.wait();
++        assert!(result.is_ok(), "poison must not panic from Drop");
++        assert!(
++            retained && alive,
++            "unconfirmed teardown retains ownership and profile"
++        );
++    }
++}
+diff --git a/cli/src/native/daemon.rs b/cli/src/native/daemon.rs
+index d9d6bca..a6b0d96 100644
+--- a/cli/src/native/daemon.rs
++++ b/cli/src/native/daemon.rs
+@@ -22,4 +22,5 @@ use super::stream::{IdleActivity, StreamServer};
+ use crate::connection::INTERNAL_DAEMON_SHUTDOWN_ACTION;
+ 
++// Modified by Ferrox Labs: publish ownership before binding and retain incomplete stops.
+ pub async fn run_daemon(session: &str) {
+     let socket_dir = get_daemon_socket_dir();
+@@ -66,5 +67,5 @@ pub async fn run_daemon(session: &str) {
+ 
+     let pid_path = socket_dir.join(format!("{}.pid", session));
+-    let _ = fs::write(&pid_path, process::id().to_string());
++    // ownership::prepare published the mandatory identity before any bind.
+ 
+     let version_path = socket_dir.join(format!("{}.version", session));
+@@ -148,4 +149,5 @@ pub async fn run_daemon(session: &str) {
+     {
+         let _ = fs::remove_file(&socket_path);
++        let _ = fs::remove_file(socket_dir.join(format!("{}.stop", session)));
+     }
+     #[cfg(windows)]
+@@ -370,5 +372,11 @@ async fn run_socket_server(
+                 }
+                 let _ = auto_save_restore_state(&mut s).await;
++                let before = super::ownership::stop_count();
+                 let _ = close_all_browser_backends(&mut s).await;
++                let exhaustion = tokio::task::spawn_blocking(move || super::ownership::stop_after_close(before)).await;
++                if !exhaustion.is_ok_and(|result| result.closed()) {
++                    idle_sleep_pin = idle_timeout_ms.map(|ms| Box::pin(tokio::time::sleep(Duration::from_millis(ms.max(1000)))));
++                    continue;
++                }
+                 break;
+             }
+@@ -387,5 +395,11 @@ async fn run_socket_server(
+                 let mut s = state.lock().await;
+                 let _ = auto_save_restore_state(&mut s).await;
++                let before = super::ownership::stop_count();
+                 let _ = close_all_browser_backends(&mut s).await;
++                let exhaustion = tokio::task::spawn_blocking(move || super::ownership::stop_after_close(before)).await;
++                if !exhaustion.is_ok_and(|result| result.closed()) {
++                    idle_sleep_pin = idle_timeout_ms.map(|ms| Box::pin(tokio::time::sleep(Duration::from_millis(ms.max(1000)))));
++                    continue;
++                }
+                 break;
+             }
+@@ -1179,5 +1193,9 @@ mod control_tests {
+             .expect("daemon closed the connection")
+             .unwrap();
+-        assert!(out.is_empty(), "no reply: {:?}", String::from_utf8_lossy(&out));
++        assert!(
++            out.is_empty(),
++            "no reply: {:?}",
++            String::from_utf8_lossy(&out)
++        );
+         rig.task.await.unwrap();
+         assert!(rig.idle.elapsed() >= Duration::from_millis(80));
+@@ -1218,5 +1236,7 @@ mod control_tests {
+             .expect("reply")
+             .unwrap();
+-        let message = session.open(reply.as_bytes()).expect("an authentic framed reply");
++        let message = session
++            .open(reply.as_bytes())
++            .expect("an authentic framed reply");
+         let value: Value = serde_json::from_str(&message).unwrap();
+         assert_eq!(value.get("id").and_then(|v| v.as_str()), Some("7"));
+@@ -1316,13 +1336,25 @@ mod control_tests {
+         })
+         .await;
+-        assert!(guard.is_ok(), "the daemon stopped reading but kept the connection open");
+-        assert!(write_failed, "the daemon accepted {accepted} bytes of one unterminated line");
++        assert!(
++            guard.is_ok(),
++            "the daemon stopped reading but kept the connection open"
++        );
++        assert!(
++            write_failed,
++            "the daemon accepted {accepted} bytes of one unterminated line"
++        );
+         let limit = 86 + COMMAND_PAYLOAD_MAX + 1 + BUFREADER_CAP + DUPLEX_CAP;
+-        assert!(accepted <= limit, "accepted {accepted} bytes, more than {limit}");
++        assert!(
++            accepted <= limit,
++            "accepted {accepted} bytes, more than {limit}"
++        );
+         tokio::time::timeout(Duration::from_secs(2), rig.task)
+             .await
+             .expect("the connection task must end after the cut-off")
+             .unwrap();
+-        assert!(rig.idle.elapsed() >= Duration::from_millis(80), "nothing may mark activity");
++        assert!(
++            rig.idle.elapsed() >= Duration::from_millis(80),
++            "nothing may mark activity"
++        );
+     }
+ 
+@@ -1341,5 +1373,6 @@ mod control_tests {
+             let mut rest = Vec::new();
+             let closed =
+-                tokio::time::timeout(Duration::from_millis(500), reader.read_to_end(&mut rest)).await;
++                tokio::time::timeout(Duration::from_millis(500), reader.read_to_end(&mut rest))
++                    .await;
+             assert!(
+                 closed.is_ok(),
+diff --git a/cli/src/native/mod.rs b/cli/src/native/mod.rs
+index 59aafe6..aa9fc18 100644
+--- a/cli/src/native/mod.rs
++++ b/cli/src/native/mod.rs
+@@ -57,2 +57,7 @@ mod e2e_tests;
+ #[cfg(test)]
+ mod parity_tests;
++
++#[cfg(test)]
++mod ownership_tests;
++// Modified by Ferrox Labs: mandatory launch ownership and close-only maintenance.
++pub mod ownership;
+diff --git a/cli/src/native/ownership.rs b/cli/src/native/ownership.rs
+new file mode 100644
+index 0000000..c09f79a
+--- /dev/null
++++ b/cli/src/native/ownership.rs
+@@ -0,0 +1,1167 @@
++// Modified by Ferrox Labs: mandatory launch ownership and held-child shutdown (omb.4).
++// The CLI/status reader never signals a process selected by an on-disk identity.
++use serde::{Deserialize, Serialize};
++use serde_json::{json, Value};
++use std::{
++    fs,
++    io::{self, Write},
++    path::{Path, PathBuf},
++    process::{Child, Command},
++    sync::{Arc, Mutex, OnceLock},
++    time::{Duration, Instant},
++};
++
++#[derive(Clone, Debug, Serialize, Deserialize)]
++pub struct ProcId {
++    pub pid: u32,
++    pub start: String,
++    pub exe: String,
++}
++
++#[derive(Clone, Debug, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct Exhaustion {
++    pub launch_id: Option<String>,
++    pub group_exhausted: bool,
++    pub tree_exhausted: bool,
++    pub outside_seen: usize,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub live_children: Option<usize>,
++    pub unconfirmed: Option<String>,
++}
++impl Exhaustion {
++    fn pending(reason: &str) -> Self {
++        Self {
++            launch_id: launch_id(),
++            group_exhausted: false,
++            tree_exhausted: false,
++            outside_seen: 0,
++            live_children: None,
++            unconfirmed: Some(reason.into()),
++        }
++    }
++    pub fn closed(&self) -> bool {
++        self.group_exhausted
++            && self.unconfirmed.is_none()
++            && self.outside_seen == 0
++            && (!cfg!(target_os = "linux") || self.tree_exhausted || self.launch_id.is_none())
++    }
++}
++
++struct Runtime {
++    path: PathBuf,
++    owner: Mutex<Value>,
++}
++static RUNTIME: OnceLock<Runtime> = OnceLock::new();
++static CHILD: Mutex<Option<Arc<Mutex<HeldChild>>>> = Mutex::new(None);
++static STOPPING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
++static STOP_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++
++pub fn stop_count() -> u64 {
++    STOP_COUNT.load(std::sync::atomic::Ordering::Acquire)
++}
++
++/// A close transaction reports its completed attempt instead of retrying from
++/// Drop and again during proof collection. A later request still calls stop().
++pub fn stop_after_close(before: u64) -> Exhaustion {
++    if CHILD.is_poisoned()
++        || RUNTIME
++            .get()
++            .is_some_and(|runtime| runtime.owner.is_poisoned())
++    {
++        return Exhaustion::pending("ownership_poisoned");
++    }
++    STOPPING.store(true, std::sync::atomic::Ordering::Release);
++    if stop_count() != before {
++        if let Ok(slot) = CHILD.try_lock() {
++            if let Some(held) = slot.as_ref() {
++                if let Ok(held) = held.try_lock() {
++                    return held.result.clone();
++                }
++            }
++        }
++        return Exhaustion::pending("stop_in_progress");
++    }
++    stop()
++}
++pub fn launch_id() -> Option<String> {
++    std::env::var("AGENT_BROWSER_LAUNCH_ID").ok()
++}
++pub fn validate_launch_id(id: &str) -> io::Result<()> {
++    if id.len() == 16
++        && id
++            .bytes()
++            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
++    {
++        Ok(())
++    } else {
++        Err(io::Error::new(
++            io::ErrorKind::InvalidInput,
++            "invalid launch id",
++        ))
++    }
++}
++
++pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
++    let parent = path
++        .parent()
++        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing parent"))?;
++    let temporary = parent.join(format!(".ownership-{}.tmp", uuid::Uuid::new_v4()));
++    let mut options = fs::OpenOptions::new();
++    options.write(true).create_new(true);
++    #[cfg(unix)]
++    {
++        use std::os::unix::fs::OpenOptionsExt;
++        options.mode(0o600);
++    }
++    let mut file = options.open(&temporary)?;
++    file.write_all(bytes)?;
++    file.sync_all()?;
++    drop(file);
++    // Test-only crash boundary: never present in a vendor binary.
++    #[cfg(test)]
++    if let Some(marker) = std::env::var_os("OMB4_ATOMIC_PAUSE") {
++        fs::write(marker, b"ready")?;
++        loop {
++            std::thread::park();
++        }
++    }
++    #[cfg(unix)]
++    {
++        fs::rename(&temporary, path)?;
++        fs::File::open(parent)?.sync_all()?;
++    }
++    #[cfg(windows)]
++    windows::replace(&temporary, path)?;
++    Ok(())
++}
++
++#[cfg(target_os = "linux")]
++#[derive(Debug)]
++struct Stat {
++    state: char,
++    parent: u32,
++    group: i32,
++    session: i32,
++    start: String,
++}
++#[cfg(target_os = "linux")]
++fn proc_stat(pid: u32) -> io::Result<Stat> {
++    let text = fs::read_to_string(format!("/proc/{pid}/stat"))?;
++    let end = text
++        .rfind(')')
++        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "proc stat"))?;
++    let parts: Vec<_> = text[end + 1..].split_whitespace().collect();
++    let invalid = || io::Error::new(io::ErrorKind::InvalidData, "proc stat");
++    if parts.len() < 20 {
++        return Err(invalid());
++    }
++    Ok(Stat {
++        state: parts[0].chars().next().ok_or_else(invalid)?,
++        parent: parts[1].parse().map_err(|_| invalid())?,
++        group: parts[2].parse().map_err(|_| invalid())?,
++        session: parts[3].parse().map_err(|_| invalid())?,
++        start: parts[19].into(),
++    })
++}
++
++pub fn identity(pid: u32) -> io::Result<ProcId> {
++    #[cfg(target_os = "linux")]
++    {
++        let stat = proc_stat(pid)?;
++        let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id")?;
++        return Ok(ProcId {
++            pid,
++            start: format!("{}:{}", boot.trim(), stat.start),
++            exe: fs::read_link(format!("/proc/{pid}/exe"))?
++                .to_string_lossy()
++                .into_owned(),
++        });
++    }
++    #[cfg(target_os = "macos")]
++    {
++        return macos::identity(pid);
++    }
++    #[cfg(windows)]
++    {
++        return windows::identity(pid);
++    }
++    #[allow(unreachable_code)]
++    Err(io::Error::new(
++        io::ErrorKind::Unsupported,
++        "process identity unavailable",
++    ))
++}
++
++/// Called before creating the runtime: inherited SIGCHLD ignore must not reap children.
++pub fn prepare(session: &str) -> io::Result<()> {
++    if !crate::validation::is_valid_session_name(session) {
++        return Err(io::Error::new(
++            io::ErrorKind::InvalidInput,
++            "invalid session",
++        ));
++    }
++
++    if let Some(id) = launch_id() {
++        validate_launch_id(&id)?;
++    }
++    #[cfg(unix)]
++    unsafe {
++        let mut action: libc::sigaction = std::mem::zeroed();
++        action.sa_sigaction = libc::SIG_DFL;
++        action.sa_flags = 0;
++        libc::sigemptyset(&mut action.sa_mask);
++        if libc::sigaction(libc::SIGCHLD, &action, std::ptr::null_mut()) != 0 {
++            return Err(io::Error::last_os_error());
++        }
++        let mut signals: libc::sigset_t = std::mem::zeroed();
++        libc::sigemptyset(&mut signals);
++        for signal in [libc::SIGTERM, libc::SIGHUP, libc::SIGINT] {
++            libc::sigaddset(&mut signals, signal);
++        }
++        let error = libc::pthread_sigmask(libc::SIG_BLOCK, &signals, std::ptr::null_mut());
++        if error != 0 {
++            return Err(io::Error::from_raw_os_error(error));
++        }
++
++        if libc::getsid(0) != libc::getpid() && libc::setsid() == -1 {
++            return Err(io::Error::last_os_error());
++        }
++        if libc::getsid(0) != libc::getpid() {
++            return Err(io::Error::other("daemon session not owned"));
++        }
++    }
++    #[cfg(target_os = "linux")]
++    if launch_id().is_some()
++        && unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) } != 0
++    {
++        return Err(io::Error::other("launch_failed: subreaper unavailable"));
++    }
++    #[cfg(windows)]
++    windows::prepare(session)?;
++    let dir = crate::connection::get_socket_dir();
++    fs::create_dir_all(&dir)?;
++    #[cfg(unix)]
++    {
++        use std::os::unix::fs::PermissionsExt;
++        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
++    }
++    #[cfg(unix)]
++    {
++        let stop_path = dir.join(format!("{session}.stop"));
++        if stop_path.exists() {
++            let old: Value =
++                serde_json::from_slice(&fs::read(dir.join(format!("{session}.owner.json")))?)?;
++            let expected: ProcId = serde_json::from_value(old["daemon"].clone())?;
++            match identity(expected.pid) {
++                Ok(actual) if actual.start == expected.start && actual.exe == expected.exe => {
++                    return Err(io::Error::other("daemon_unresponsive"))
++                }
++                Ok(_) => {}
++                Err(error)
++                    if error.kind() == io::ErrorKind::NotFound
++                        || error.raw_os_error() == Some(libc::ESRCH) => {}
++                Err(error) => return Err(error),
++            }
++            fs::remove_file(stop_path)?;
++        }
++    }
++    let daemon = identity(std::process::id())?;
++    #[cfg(unix)]
++    let group = json!({"kind":"sid", "id":std::process::id()});
++    #[cfg(windows)]
++    let group = json!({"kind":"job", "name":windows::job_name(session)});
++    let owner = json!({"v":1, "launchId":launch_id(), "session":session, "daemon":daemon, "group":group, "chrome":null});
++    let path = dir.join(format!("{session}.owner.json"));
++    atomic_write(&path, &serde_json::to_vec(&owner)?)?;
++    atomic_write(
++        &dir.join(format!("{session}.pid")),
++        std::process::id().to_string().as_bytes(),
++    )?;
++    RUNTIME
++        .set(Runtime {
++            path,
++            owner: Mutex::new(owner),
++        })
++        .map_err(|_| io::Error::other("ownership already prepared"))?;
++    #[cfg(unix)]
++    start_stop_channel(&dir.join(format!("{session}.stop")))?;
++    Ok(())
++}
++
++pub fn publish_chrome(pid: u32) -> io::Result<()> {
++    let Some(runtime) = RUNTIME.get() else {
++        return Ok(());
++    };
++    let identity = identity(pid)?;
++    #[cfg(unix)]
++    if unsafe { libc::getpgid(pid as i32) } != pid as i32 {
++        return Err(io::Error::other("Chrome group not owned"));
++    }
++    let mut owner = runtime
++        .owner
++        .lock()
++        .map_err(|_| io::Error::other("ownership mutex"))?;
++    owner["chrome"] =
++        json!({"pid":identity.pid, "start":identity.start, "exe":identity.exe, "pgid":pid});
++    atomic_write(&runtime.path, &serde_json::to_vec(&*owner)?)
++}
++
++pub struct HeldChild {
++    pub child: Child,
++    pub pgid: Option<i32>,
++    window: bool,
++    launch_dir: Option<PathBuf>,
++    result: Exhaustion,
++    attempted: bool,
++}
++impl HeldChild {
++    pub fn new(child: Child, window: bool) -> Self {
++        let pgid = Some(child.id() as i32);
++        Self {
++            child,
++            pgid,
++            window,
++            launch_dir: None,
++            result: Exhaustion::pending("not_stopped"),
++            attempted: false,
++        }
++    }
++    pub fn is_exhausted(&self) -> bool {
++        self.result.closed()
++    }
++    pub fn stop_on_drop(&mut self) {
++        if !self.attempted {
++            let _ = self.stop();
++        }
++    }
++    pub fn stop(&mut self) -> Exhaustion {
++        self.attempted = true;
++        STOP_COUNT.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
++        if self.pgid.is_none() {
++            #[cfg(unix)]
++            if self.window && self.result.group_exhausted {
++                match observe_outside(self.launch_dir.as_deref()) {
++                    Ok(count) => {
++                        self.result.outside_seen = count;
++                        self.result.unconfirmed = if count == 0 {
++                            None
++                        } else {
++                            Some("helper_lingering".into())
++                        };
++                    }
++                    Err(_) => {
++                        self.result.unconfirmed = Some("enumeration_failed".into());
++                    }
++                }
++            }
++            return self.result.clone();
++        }
++        #[cfg(target_os = "linux")]
++        {
++            self.result = stop_linux(self, Instant::now() + Duration::from_secs(10));
++        }
++        #[cfg(target_os = "macos")]
++        {
++            self.result = macos::stop(self);
++        }
++        #[cfg(windows)]
++        {
++            self.result = windows::stop(self);
++        }
++        self.result.clone()
++    }
++}
++
++/// Poison never authorizes a stop or a profile deletion. Keep the held identity for diagnosis.
++pub fn lock_held(
++    held: &Mutex<HeldChild>,
++) -> Result<std::sync::MutexGuard<'_, HeldChild>, &'static str> {
++    if CHILD.is_poisoned()
++        || RUNTIME
++            .get()
++            .is_some_and(|runtime| runtime.owner.is_poisoned())
++    {
++        return Err("ownership_poisoned");
++    }
++    held.lock().map_err(|poison| {
++        let mut held = poison.into_inner();
++        held.attempted = true;
++        held.result = Exhaustion::pending("ownership_poisoned");
++        "ownership_poisoned"
++    })
++}
++pub fn stop_held(held: &Mutex<HeldChild>) -> Exhaustion {
++    match lock_held(held) {
++        Ok(mut held) => held.stop(),
++        Err(reason) => Exhaustion::pending(reason),
++    }
++}
++
++/// Register under the same mutex as stop, before the launch waiter can return.
++pub fn spawn_owned(command: &mut Command, profile: &Path) -> io::Result<Arc<Mutex<HeldChild>>> {
++    use std::sync::atomic::Ordering;
++    if RUNTIME
++        .get()
++        .is_some_and(|runtime| runtime.owner.is_poisoned())
++    {
++        return Err(io::Error::other("ownership_poisoned"));
++    }
++    let mut slot = CHILD
++        .lock()
++        .map_err(|_| io::Error::other("ownership mutex"))?;
++    if (launch_id().is_some() || RUNTIME.get().is_some()) && STOPPING.load(Ordering::Acquire) {
++        return Err(io::Error::other("launch_used"));
++    }
++    if let Some(previous) = slot.as_ref() {
++        if previous
++            .lock()
++            .map_err(|_| io::Error::other("ownership mutex"))?
++            .pgid
++            .is_some()
++        {
++            return Err(io::Error::other("previous browser still held"));
++        }
++        if launch_id().is_some() {
++            return Err(io::Error::other("launch_used"));
++        }
++    }
++    let child = command.spawn()?;
++    let mut child = HeldChild::new(child, launch_id().is_some());
++    if child.window {
++        // S2 places its temp profile under <launchDir>/tmp. Other callers use
++        // the exact profile as the conservative observation boundary.
++        child.launch_dir = Some(
++            if profile.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new("tmp"))
++                && profile
++                    .parent()
++                    .and_then(Path::parent)
++                    .and_then(Path::file_name)
++                    == launch_id().as_deref().map(std::ffi::OsStr::new)
++            {
++                profile
++                    .parent()
++                    .and_then(Path::parent)
++                    .unwrap_or(profile)
++                    .to_path_buf()
++            } else {
++                profile.to_path_buf()
++            },
++        );
++    }
++    let held = Arc::new(Mutex::new(child));
++    *slot = Some(held.clone());
++    Ok(held)
++}
++
++pub fn stop() -> Exhaustion {
++    if CHILD.is_poisoned()
++        || RUNTIME
++            .get()
++            .is_some_and(|runtime| runtime.owner.is_poisoned())
++    {
++        return Exhaustion::pending("ownership_poisoned");
++    }
++    STOPPING.store(true, std::sync::atomic::Ordering::Release);
++    let held = match CHILD.try_lock() {
++        Ok(slot) => slot.clone(),
++        Err(_) => return Exhaustion::pending("stop_in_progress"),
++    };
++    if let Some(held) = held {
++        return match held.try_lock() {
++            Ok(mut held) => held.stop(),
++            Err(std::sync::TryLockError::Poisoned(_)) => Exhaustion::pending("ownership_poisoned"),
++            Err(std::sync::TryLockError::WouldBlock) => Exhaustion::pending("stop_in_progress"),
++        };
++    }
++    let mut result = Exhaustion::pending("tree_lingering");
++    #[cfg(unix)]
++    if no_children() {
++        result.group_exhausted = true;
++        result.tree_exhausted = true;
++        result.unconfirmed = None;
++    }
++    #[cfg(windows)]
++    if windows::only_daemon_remains() {
++        result.group_exhausted = true;
++        result.tree_exhausted = true;
++        result.unconfirmed = None;
++    }
++    result
++}
++
++#[cfg(unix)]
++pub fn exited_no_reap(pid: u32) -> io::Result<bool> {
++    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
++    if unsafe {
++        libc::waitid(
++            libc::P_PID,
++            pid,
++            &mut info,
++            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
++        )
++    } != 0
++    {
++        return Err(io::Error::last_os_error());
++    }
++    Ok(unsafe { info.si_pid() } != 0)
++}
++
++#[cfg(unix)]
++fn no_children() -> bool {
++    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
++    (unsafe {
++        libc::waitid(
++            libc::P_ALL,
++            0,
++            &mut info,
++            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
++        )
++    }) == -1
++        && io::Error::last_os_error().raw_os_error() == Some(libc::ECHILD)
++}
++
++#[cfg(target_os = "linux")]
++fn direct_children() -> io::Result<Vec<u32>> {
++    #[cfg(test)]
++    if let Some(list) = behavior_tests::listed_children() {
++        return Ok(list);
++    }
++
++    let mut children = std::collections::BTreeSet::new();
++    let mut fallback = false;
++    for task in fs::read_dir("/proc/self/task")? {
++        let task = task?;
++        match fs::read_to_string(task.path().join("children")) {
++            Ok(list) => {
++                for pid in list.split_whitespace() {
++                    children.insert(
++                        pid.parse()
++                            .map_err(|_| io::Error::other("invalid child listing"))?,
++                    );
++                }
++            }
++            Err(error) if error.kind() == io::ErrorKind::NotFound => fallback = true,
++            Err(error) => return Err(error),
++        }
++    }
++    if fallback {
++        for entry in fs::read_dir("/proc")? {
++            let entry = entry?;
++            if let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() {
++                match proc_stat(pid) {
++                    Ok(stat) if stat.parent == std::process::id() => {
++                        children.insert(pid);
++                    }
++                    Ok(_) => {}
++                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
++                    Err(error) => return Err(error),
++                }
++            }
++        }
++    }
++    Ok(children.into_iter().collect())
++}
++
++#[cfg(target_os = "linux")]
++struct PidFd(std::os::fd::OwnedFd);
++#[cfg(target_os = "linux")]
++impl PidFd {
++    fn open(pid: u32) -> io::Result<Self> {
++        use std::os::fd::FromRawFd;
++        let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) } as i32;
++        if fd < 0 {
++            Err(io::Error::last_os_error())
++        } else {
++            Ok(Self(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) }))
++        }
++    }
++    fn alive(&self) -> io::Result<bool> {
++        #[cfg(test)]
++        if behavior_tests::report_exited() {
++            return Ok(false);
++        }
++
++        use std::os::fd::AsRawFd;
++        let mut poll = libc::pollfd {
++            fd: self.0.as_raw_fd(),
++            events: libc::POLLIN,
++            revents: 0,
++        };
++        match unsafe { libc::poll(&mut poll, 1, 0) } {
++            0 => Ok(true),
++            n if n > 0 => Ok(false),
++            _ => Err(io::Error::last_os_error()),
++        }
++    }
++    fn kill(&self) -> io::Result<()> {
++        #[cfg(test)]
++        behavior_tests::record_pidfd_signal();
++
++        use std::os::fd::AsRawFd;
++        if unsafe {
++            libc::syscall(
++                libc::SYS_pidfd_send_signal,
++                self.0.as_raw_fd(),
++                libc::SIGKILL,
++                std::ptr::null::<libc::siginfo_t>(),
++                0,
++            )
++        } == 0
++        {
++            Ok(())
++        } else {
++            Err(io::Error::last_os_error())
++        }
++    }
++}
++
++#[cfg(target_os = "linux")]
++fn reap_exited(pid: u32) {
++    if exited_no_reap(pid).unwrap_or(false) {
++        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
++        unsafe {
++            libc::waitid(libc::P_PID, pid, &mut info, libc::WEXITED | libc::WNOHANG);
++        }
++    }
++}
++
++#[cfg(target_os = "linux")]
++fn stop_linux(held: &mut HeldChild, deadline: Instant) -> Exhaustion {
++    let mut result = Exhaustion::pending("tree_lingering");
++    let chrome = held.child.id();
++    let pgid = held.pgid.unwrap();
++    // Confirm pidfd support before sending even a group signal for a window.
++    if held.window {
++        if let Err(error) = PidFd::open(chrome) {
++            if error.raw_os_error() == Some(libc::ENOSYS) {
++                return Exhaustion::pending("pidfd_unsupported");
++            }
++            return result;
++        }
++    }
++    while Instant::now() < deadline {
++        // This is the only numeric signal: Chrome remains our unreaped child.
++        if unsafe { libc::killpg(pgid, libc::SIGKILL) } != 0
++            && io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
++        {
++            return result;
++        }
++        if held.window {
++            let children = match direct_children() {
++                Ok(value) => value,
++                Err(_) => return Exhaustion::pending("enumeration_failed"),
++            };
++            for pid in children.iter().copied().filter(|p| *p != chrome) {
++                if Instant::now() >= deadline {
++                    break;
++                }
++                let fd = match PidFd::open(pid) {
++                    Ok(fd) => fd,
++                    Err(e) if e.raw_os_error() == Some(libc::ENOSYS) => {
++                        return Exhaustion::pending("pidfd_unsupported")
++                    }
++                    Err(_) => continue,
++                };
++                // Order is security-critical: open, direct-parent check, live check.
++                if !proc_stat(pid).is_ok_and(|stat| stat.parent == std::process::id()) {
++                    continue;
++                }
++                match fd.alive() {
++                    Ok(true) if Instant::now() < deadline => {
++                        let _ = fd.kill();
++                    }
++                    Ok(false) => reap_exited(pid),
++                    _ => {}
++                }
++            }
++            // Observe the leader's zombie FIRST: its orphans have then been
++            // handed to this subreaper. A listing taken before that observation
++            // can miss newly adopted children and must never authorize reaping.
++            if !exited_no_reap(chrome).unwrap_or(false) {
++                std::thread::sleep(Duration::from_millis(10));
++                continue;
++            }
++            let remaining = match direct_children() {
++                Ok(value) => value,
++                Err(_) => return result,
++            };
++            if remaining.iter().all(|pid| *pid == chrome) {
++                if held.child.wait().is_err() {
++                    return result;
++                }
++                held.pgid = None;
++                if no_children() {
++                    result.group_exhausted = true;
++                    result.tree_exhausted = true;
++                    match observe_outside(held.launch_dir.as_deref()) {
++                        Ok(count) => {
++                            result.outside_seen = count;
++                            result.unconfirmed = if count == 0 {
++                                None
++                            } else {
++                                Some("helper_lingering".into())
++                            };
++                        }
++                        Err(_) => {
++                            result.unconfirmed = Some("enumeration_failed".into());
++                        }
++                    }
++                }
++                return result;
++            }
++        } else {
++            // Panel daemons can also own Xvfb/recording. Only the held Chrome group is ours here.
++            let group_empty = fs::read_dir("/proc").ok().is_some_and(|entries| {
++                entries.filter_map(Result::ok).all(|entry| {
++                    let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
++                        return true;
++                    };
++                    pid == chrome || !proc_stat(pid).is_ok_and(|stat| stat.group == pgid)
++                })
++            });
++            if group_empty && exited_no_reap(chrome).unwrap_or(false) {
++                if held.child.wait().is_ok() {
++                    held.pgid = None;
++                    result.group_exhausted = true;
++                    result.unconfirmed = None;
++                }
++                return result;
++            }
++        }
++        std::thread::sleep(Duration::from_millis(10));
++    }
++    result.live_children = direct_children().ok().and_then(|children| {
++        children
++            .into_iter()
++            .map(proc_stat)
++            .collect::<io::Result<Vec<_>>>()
++            .ok()
++            .map(|children| children.iter().filter(|child| child.state != 'Z').count())
++    });
++    // Deadline never releases a live child or its pinned group. A retry owns the same handles.
++    if held.window {
++        if let Ok(children) = direct_children() {
++            for pid in children {
++                if pid != chrome {
++                    reap_exited(pid);
++                }
++            }
++        }
++    }
++    result
++}
++
++#[cfg(unix)]
++fn start_stop_channel(path: &Path) -> io::Result<()> {
++    use std::io::{BufRead, BufReader, Read};
++    use std::os::unix::{fs::PermissionsExt, net::UnixListener};
++    let listener = UnixListener::bind(path)?;
++    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
++    std::thread::Builder::new()
++        .name("ownership-signals".into())
++        .spawn(move || unsafe {
++            let mut signals: libc::sigset_t = std::mem::zeroed();
++            libc::sigemptyset(&mut signals);
++            for signal in [libc::SIGTERM, libc::SIGHUP, libc::SIGINT] {
++                libc::sigaddset(&mut signals, signal);
++            }
++            loop {
++                let mut signal = 0;
++                if libc::sigwait(&signals, &mut signal) == 0 && stop().closed() {
++                    libc::_exit(0);
++                }
++            }
++        })?;
++    let busy = Arc::new(std::sync::atomic::AtomicBool::new(false));
++    std::thread::Builder::new()
++        .name("ownership-stop".into())
++        .spawn(move || {
++            for connection in listener.incoming() {
++                let Ok(mut connection) = connection else {
++                    continue;
++                };
++                let _ = connection.set_read_timeout(Some(Duration::from_secs(2)));
++                let _ = connection.set_write_timeout(Some(Duration::from_secs(2)));
++                let mut line = String::new();
++                if BufReader::new((&connection).take(4097))
++                    .read_line(&mut line)
++                    .is_err()
++                    || line.len() > 4096
++                {
++                    continue;
++                }
++                let Ok(request) = serde_json::from_str::<Value>(&line) else {
++                    continue;
++                };
++                if request.get("launchId").and_then(Value::as_str) != launch_id().as_deref() {
++                    let _ = writeln!(connection, "{{\"error\":\"launch_mismatch\"}}");
++                    continue;
++                }
++                if request.get("action").and_then(Value::as_str) == Some("status") {
++                    let _ = writeln!(
++                        connection,
++                        "{{\"stopping\":{}}}",
++                        STOPPING.load(std::sync::atomic::Ordering::Acquire)
++                    );
++                    continue;
++                }
++                // One worker owns the routine; status and competing requests stay bounded.
++                if busy.swap(true, std::sync::atomic::Ordering::AcqRel) {
++                    let _ = writeln!(connection, "{{\"unconfirmed\":\"stop_in_progress\"}}");
++                    continue;
++                }
++                let busy = busy.clone();
++                std::thread::spawn(move || {
++                    let result = stop();
++                    let _ = writeln!(connection, "{}", serde_json::to_string(&result).unwrap());
++                    let _ = connection.flush();
++                    if result.closed() {
++                        unsafe {
++                            libc::_exit(0);
++                        }
++                    }
++                    busy.store(false, std::sync::atomic::Ordering::Release);
++                });
++            }
++        })?;
++    Ok(())
++}
++
++mod platform_contract;
++#[cfg(target_os = "macos")]
++mod macos;
++#[cfg(windows)]
++mod windows;
++
++#[cfg(windows)]
++pub fn process_exited(pid: u32) -> bool {
++    windows::exited(pid)
++}
++
++/// Only an existing authenticated/local endpoint is used; never launch configuration.
++pub fn stop_existing(session: &str) -> Result<(), String> {
++    let dir = crate::connection::get_socket_dir();
++    let owner: Value = serde_json::from_slice(
++        &fs::read(dir.join(format!("{session}.owner.json"))).map_err(|_| "daemon_unresponsive")?,
++    )
++    .map_err(|_| "daemon_unresponsive")?;
++    #[cfg(windows)]
++    return windows::stop_existing(&owner);
++    let expected: ProcId =
++        serde_json::from_value(owner["daemon"].clone()).map_err(|_| "daemon_unresponsive")?;
++    match identity(expected.pid) {
++        Ok(actual) if actual.start == expected.start && actual.exe == expected.exe => {}
++        Ok(_) => return Ok(()), // reused identity is observationally gone; never signal it
++        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
++        Err(_) => return Err("daemon_unresponsive".into()),
++    }
++    #[cfg(unix)]
++    {
++        use std::io::{BufRead, BufReader, Read};
++        use std::os::unix::net::UnixStream;
++        let mut socket = UnixStream::connect(dir.join(format!("{session}.stop")))
++            .map_err(|_| "daemon_unresponsive")?;
++        socket
++            .set_read_timeout(Some(Duration::from_secs(15)))
++            .map_err(|e| e.to_string())?;
++        socket
++            .set_write_timeout(Some(Duration::from_secs(2)))
++            .map_err(|e| e.to_string())?;
++        writeln!(socket, "{}", json!({"launchId":owner["launchId"]})).map_err(|e| e.to_string())?;
++        let mut line = String::new();
++        BufReader::new(socket.take(65537))
++            .read_line(&mut line)
++            .map_err(|_| "daemon_unresponsive")?;
++        if line.len() > 65536 {
++            return Err("daemon_unresponsive".into());
++        }
++        let reply: Exhaustion = serde_json::from_str(&line).map_err(|_| "daemon_unresponsive")?;
++        if reply.launch_id.as_deref() != owner["launchId"].as_str() || !reply.closed() {
++            return Err(reply.unconfirmed.unwrap_or_else(|| "tree_lingering".into()));
++        }
++        return Ok(());
++    }
++    #[cfg(windows)]
++    {
++        return windows::stop_existing(&owner);
++    }
++}
++
++#[cfg(windows)]
++fn validated_job_name(owner: &Value) -> Result<String, String> {
++    let session = owner["session"]
++        .as_str()
++        .filter(|s| crate::validation::is_valid_session_name(s))
++        .ok_or("invalid session")?;
++    let pid = owner["daemon"]["pid"]
++        .as_u64()
++        .filter(|p| *p > 0 && *p <= u32::MAX as u64)
++        .ok_or("invalid daemon")?;
++    let identity: ProcId =
++        serde_json::from_value(owner["daemon"].clone()).map_err(|_| "invalid daemon identity")?;
++    if identity.start.is_empty() || identity.exe.is_empty() || owner.get("launchId").is_none() {
++        return Err("invalid owner evidence".into());
++    }
++    let suffix = match &owner["launchId"] {
++        Value::Null => format!("{session}-{pid}"),
++        Value::String(id) => {
++            validate_launch_id(id).map_err(|e| e.to_string())?;
++            id.clone()
++        }
++        _ => return Err("invalid launch identity".into()),
++    };
++    let expected = format!("Local\\agent-browser-{suffix}");
++    if owner["v"] != 1 || owner["group"]["kind"] != "job" || owner["group"]["name"] != expected {
++        return Err("invalid job identity".into());
++    }
++    Ok(expected)
++}
++
++/// Windows external fallback pins the named job until its active count reaches zero.
++/// Unix refuses: a stored session or PID cannot authorize orphan termination.
++pub fn group_stop(path: &Path) -> Result<Value, String> {
++    let owner: Value = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
++        .map_err(|e| e.to_string())?;
++    platform_contract::external_stop(cfg!(windows), || {
++        #[cfg(windows)]
++        {
++            return windows::stop_existing(&owner);
++        }
++        #[cfg(not(windows))]
++        Err("external_stop_unavailable".into())
++    })?;
++    Ok(
++        json!({"launchId":owner["launchId"], "groupExhausted":true, "treeExhausted":true, "outsideSeen":0, "unconfirmed":null}),
++    )
++}
++
++/// Read-only status. A recorded SID/PGID never authorizes a signal.
++pub fn group_status(path: &Path) -> io::Result<Value> {
++    let owner: Value = serde_json::from_slice(&fs::read(path)?)?;
++    #[cfg(windows)]
++    {
++        return windows::status(
++            owner["group"]["name"]
++                .as_str()
++                .ok_or_else(|| io::Error::other("missing job name"))?,
++        );
++    }
++    let expected: ProcId = serde_json::from_value(owner["daemon"].clone())?;
++    let current = match identity(expected.pid) {
++        Ok(value) => Some(value),
++        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
++        Err(error) => return Err(error),
++    };
++    let daemon_alive = current
++        .as_ref()
++        .is_some_and(|actual| actual.start == expected.start && actual.exe == expected.exe);
++    let leader_reused = current.is_some() && !daemon_alive;
++    let mut members = Vec::new();
++    #[cfg(target_os = "linux")]
++    {
++        let group = owner["group"]["id"]
++            .as_i64()
++            .ok_or_else(|| io::Error::other("invalid session identity"))?
++            as i32;
++        for entry in fs::read_dir("/proc")? {
++            let entry = entry?;
++            let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
++                continue;
++            };
++            if let Ok(stat) = proc_stat(pid) {
++                if stat.session == group {
++                    if let Ok(identity) = identity(pid) {
++                        members.push(json!({"pid":pid,"start":identity.start,"exe":identity.exe,"pgid":stat.group}));
++                    } else if stat.state != 'Z' {
++                        return Err(io::Error::other("unreadable session member"));
++                    }
++                }
++            }
++        }
++    }
++    #[cfg(target_os = "macos")]
++    {
++        let group = owner["group"]["id"]
++            .as_i64()
++            .ok_or_else(|| io::Error::other("missing session id"))? as i32;
++        members = macos::status(group)?;
++    }
++    #[allow(unreachable_code)]
++    Ok(json!({"daemonAlive":daemon_alive,"members":members,"leaderReused":leader_reused}))
++}
++
++#[cfg(unix)]
++fn observe_outside(path: Option<&Path>) -> io::Result<usize> {
++    let Some(path) = path else {
++        return Ok(0);
++    };
++    #[cfg(target_os = "macos")]
++    {
++        return macos::outside(path);
++    }
++    #[cfg(target_os = "linux")]
++    {
++        use std::os::unix::ffi::OsStrExt;
++        let needle = path.as_os_str().as_bytes();
++        if needle.is_empty() {
++            return Err(io::Error::other("missing launch directory"));
++        }
++        let mut count = 0;
++        for entry in fs::read_dir("/proc")? {
++            let entry = entry?;
++            let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
++                continue;
++            };
++            if pid == std::process::id() {
++                continue;
++            }
++            let stat = match proc_stat(pid) {
++                Ok(stat) => stat,
++                Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
++                Err(e) => return Err(e),
++            };
++            if stat.state == 'Z' {
++                continue;
++            }
++            match fs::read(entry.path().join("cmdline")) {
++                Ok(args) if args.windows(needle.len()).any(|bytes| bytes == needle) => count += 1,
++                Ok(_) => {}
++                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
++                Err(e) => return Err(e),
++            }
++        }
++        Ok(count)
++    }
++}
++
++#[cfg(all(test, unix))]
++mod publication_tests {
++    use super::*;
++    #[test]
++    #[ignore]
++    fn ownership_e3_writer_fixture() {
++        let path = PathBuf::from(std::env::var_os("OMB4_ATOMIC_TARGET").unwrap());
++        atomic_write(&path, b"{\"v\":2}").unwrap();
++    }
++    #[test]
++    fn ownership_e3_crash_before_rename_retains_previous_complete_owner() {
++        let dir = tempfile::tempdir().unwrap();
++        let target = dir.path().join("owner.json");
++        let pause = dir.path().join("before-rename");
++        fs::write(&target, b"{\"v\":1}").unwrap();
++        let mut child = Command::new(std::env::current_exe().unwrap())
++            .args([
++                "--exact",
++                "native::ownership::publication_tests::ownership_e3_writer_fixture",
++                "--ignored",
++            ])
++            .env("OMB4_ATOMIC_TARGET", &target)
++            .env("OMB4_ATOMIC_PAUSE", &pause)
++            .stdout(std::process::Stdio::null())
++            .spawn()
++            .unwrap();
++        let deadline = Instant::now() + Duration::from_secs(3);
++        while !pause.exists() && Instant::now() < deadline {
++            if child.try_wait().unwrap().is_some() {
++                break;
++            }
++            std::thread::sleep(Duration::from_millis(10));
++        }
++        let _ = child.kill();
++        let _ = child.wait();
++        assert_eq!(
++            fs::read(&target).unwrap(),
++            b"{\"v\":1}",
++            "a pre-rename crash must preserve the previous owner"
++        );
++        assert!(pause.exists(), "the publication boundary must be exercised");
++        let temps: Vec<_> = fs::read_dir(dir.path())
++            .unwrap()
++            .map(Result::unwrap)
++            .filter(|entry| {
++                entry
++                    .file_name()
++                    .to_string_lossy()
++                    .starts_with(".ownership-")
++            })
++            .collect();
++        assert_eq!(temps.len(), 1);
++        assert_eq!(fs::read(temps[0].path()).unwrap(), b"{\"v\":2}");
++    }
++}
++
++#[cfg(all(test, target_os = "linux"))]
++mod proof_tests {
++    use super::*;
++    #[test]
++    fn ownership_window_proof_requires_tree_even_without_caller_launch_env() {
++        let guard = crate::test_utils::EnvGuard::new(&["AGENT_BROWSER_LAUNCH_ID"]);
++        guard.remove("AGENT_BROWSER_LAUNCH_ID");
++        let mut proof = Exhaustion {
++            launch_id: Some("0123456789abcdef".into()),
++            group_exhausted: true,
++            tree_exhausted: false,
++            outside_seen: 0,
++            live_children: Some(1),
++            unconfirmed: None,
++        };
++        assert!(
++            !proof.closed(),
++            "the reply's launch identity determines the required proof"
++        );
++        proof.tree_exhausted = true;
++        proof.live_children = Some(0);
++        assert!(proof.closed());
++    }
++}
++
++#[cfg(all(test, unix))]
++mod ownership_fix_poison_tests {
++    use super::*;
++    #[test]
++    fn ownership_fix_poisoned_child_registry_subprocess() {
++        poison_subprocess("child");
++    }
++    #[test]
++    fn ownership_fix_poisoned_owner_registry_subprocess() {
++        poison_subprocess("owner");
++    }
++    fn poison_subprocess(arm: &str) {
++        {
++            let result = Command::new(std::env::current_exe().unwrap())
++                .args(["--exact", "native::ownership::ownership_fix_poison_tests::ownership_fix_poisoned_registry_fixture", "--ignored"])
++                .env("OMB4_POISON_ARM", arm).status().unwrap();
++            assert!(result.success(), "{arm}");
++        }
++    }
++    #[test]
++    #[ignore]
++    fn ownership_fix_poisoned_registry_fixture() {
++        let dir = tempfile::tempdir().unwrap();
++        if std::env::var("OMB4_POISON_ARM").unwrap() == "child" {
++            let _ = std::panic::catch_unwind(|| {
++                let _lock = CHILD.lock().unwrap();
++                panic!("inject poison");
++            });
++        } else {
++            assert!(RUNTIME
++                .set(Runtime {
++                    path: dir.path().join("owner"),
++                    owner: Mutex::new(json!({}))
++                })
++                .is_ok());
++            let _ = std::panic::catch_unwind(|| {
++                let _lock = RUNTIME.get().unwrap().owner.lock().unwrap();
++                panic!("inject poison");
++            });
++        }
++        let result = stop();
++        assert!(!result.closed());
++        assert_eq!(result.unconfirmed.as_deref(), Some("ownership_poisoned"));
++    }
++}
++
++#[cfg(all(test, target_os = "linux"))]
++#[path = "ownership/behavior_tests.rs"]
++mod behavior_tests;
+diff --git a/cli/src/native/ownership/behavior_tests.rs b/cli/src/native/ownership/behavior_tests.rs
+new file mode 100644
+index 0000000..acc10cb
+--- /dev/null
++++ b/cli/src/native/ownership/behavior_tests.rs
+@@ -0,0 +1,157 @@
++// Modified by Ferrox Labs: behavioral mutant witnesses at the syscall boundary.
++// PID cycling and uninterruptible-sleep tracing remain native proof obligations.
++use super::*;
++use std::cell::RefCell;
++#[derive(Default)]
++struct Hooks {
++    children: Option<Vec<u32>>,
++    exited: bool,
++    signals: usize,
++}
++thread_local! { static HOOKS: RefCell<Hooks> = RefCell::new(Hooks::default()); }
++pub(super) fn listed_children() -> Option<Vec<u32>> {
++    HOOKS.with(|h| h.borrow().children.clone())
++}
++pub(super) fn report_exited() -> bool {
++    HOOKS.with(|h| h.borrow().exited)
++}
++pub(super) fn record_pidfd_signal() {
++    HOOKS.with(|h| h.borrow_mut().signals += 1);
++}
++fn signals() -> usize {
++    HOOKS.with(|h| h.borrow().signals)
++}
++fn child() -> Child {
++    use std::os::unix::process::CommandExt;
++    let mut cmd = Command::new("sleep");
++    cmd.arg("60");
++    unsafe {
++        cmd.pre_exec(|| {
++            if libc::setpgid(0, 0) != 0 {
++                return Err(io::Error::last_os_error());
++            }
++            Ok(())
++        });
++    }
++    cmd.spawn().unwrap()
++}
++struct Cleanup(Vec<Child>);
++impl Drop for Cleanup {
++    fn drop(&mut self) {
++        for child in &mut self.0 {
++            if exited_no_reap(child.id()).is_ok() {
++                let _ = child.kill();
++                let _ = child.wait();
++            }
++        }
++    }
++}
++fn run(arm: &str) {
++    let result = Command::new(std::env::current_exe().unwrap())
++        .args([
++            "--exact",
++            "native::ownership::behavior_tests::ownership_behavior_fixture",
++            "--ignored",
++        ])
++        .env("OMB4_BEHAVIOR_ARM", arm)
++        .status()
++        .unwrap();
++    assert!(result.success(), "behavioral mutant witness {arm}");
++}
++#[test]
++fn ownership_m_e1_pidfd_signal_reaches_owned_helper() {
++    run("e1");
++}
++#[test]
++fn ownership_m_e2_parent_refuses_nonchild() {
++    run("e2_parent");
++}
++#[test]
++fn ownership_m_e2_live_refuses_exited_descriptor() {
++    run("e2_live");
++}
++#[test]
++fn ownership_m_e3_kernel_child_blocks_exhaustion() {
++    run("e3");
++}
++#[test]
++fn ownership_m_e4_expired_deadline_retains_group() {
++    run("e4");
++}
++#[test]
++#[ignore]
++fn ownership_behavior_fixture() {
++    let arm = std::env::var("OMB4_BEHAVIOR_ARM").unwrap();
++    let mut held = HeldChild::new(child(), true);
++    let chrome = held.child.id();
++    let mut helpers = Cleanup(Vec::new());
++    let mut grandchild = None;
++    if arm == "e2_parent" {
++        use std::io::{BufRead, BufReader};
++        let mut parent = Command::new("sh")
++            .args(["-c", "sleep 60 & echo $!; wait"])
++            .stdout(std::process::Stdio::piped())
++            .spawn()
++            .unwrap();
++        let mut line = String::new();
++        BufReader::new(parent.stdout.take().unwrap())
++            .read_line(&mut line)
++            .unwrap();
++        let nominee: u32 = line.trim().parse().unwrap();
++        grandchild = Some(PidFd::open(nominee).unwrap());
++        helpers.0.push(parent);
++        HOOKS.with(|h| h.borrow_mut().children = Some(vec![chrome, nominee]));
++    } else if arm != "e4" {
++        helpers.0.push(child());
++        let helper = helpers.0[0].id();
++        HOOKS.with(|h| {
++            let mut h = h.borrow_mut();
++            h.children = if arm == "e3" {
++                Some(vec![chrome])
++            } else {
++                None
++            };
++            h.exited = arm == "e2_live";
++        });
++        assert!(helper > 0);
++    }
++    let deadline = if arm == "e4" {
++        Instant::now()
++    } else {
++        Instant::now() + Duration::from_millis(100)
++    };
++    let result = stop_linux(&mut held, deadline);
++    let count = signals();
++    let pinned = held.pgid.is_some();
++    if let Some(fd) = grandchild {
++        let _ = fd.kill();
++    }
++    // Cleanup uses only children this fixture still owns.
++    if pinned {
++        let _ = held.child.kill();
++        let _ = held.child.wait();
++    }
++    match arm.as_str() {
++        "e1" => {
++            assert!(count > 0, "helper termination must use its held pidfd");
++            assert!(result.tree_exhausted);
++        }
++        "e2_parent" | "e2_live" => {
++            assert_eq!(count, 0, "unverified descriptor must never be signalled");
++            assert!(!result.closed());
++        }
++        "e3" => {
++            assert!(
++                !result.tree_exhausted,
++                "a kernel child survives the incomplete listing"
++            );
++            assert!(!result.closed());
++        }
++        "e4" => {
++            assert!(!result.closed());
++            assert!(pinned, "deadline retains the leader pin");
++            assert_eq!(count, 0);
++        }
++        _ => panic!("unknown arm"),
++    }
++}
+diff --git a/cli/src/native/ownership/macos.rs b/cli/src/native/ownership/macos.rs
+new file mode 100644
+index 0000000..e6a4241
+--- /dev/null
++++ b/cli/src/native/ownership/macos.rs
+@@ -0,0 +1,210 @@
++// Modified by Ferrox Labs: macOS owns only the unreaped Chrome group.
++use super::*;
++
++fn info(pid: u32) -> io::Result<libc::proc_bsdinfo> {
++    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
++    let size = std::mem::size_of_val(&info) as i32;
++    if unsafe {
++        libc::proc_pidinfo(
++            pid as i32,
++            libc::PROC_PIDTBSDINFO,
++            0,
++            &mut info as *mut _ as *mut _,
++            size,
++        )
++    } != size
++    {
++        return Err(io::Error::last_os_error());
++    }
++    Ok(info)
++}
++
++pub(super) fn identity(pid: u32) -> io::Result<ProcId> {
++    let info = info(pid)?;
++    let mut path = vec![0u8; 4096];
++    let count =
++        unsafe { libc::proc_pidpath(pid as i32, path.as_mut_ptr().cast(), path.len() as u32) };
++    if count <= 0 {
++        return Err(io::Error::last_os_error());
++    }
++    let end = path.iter().position(|b| *b == 0).unwrap_or(count as usize);
++    let exe = fs::canonicalize(String::from_utf8_lossy(&path[..end]).as_ref())?;
++    Ok(ProcId {
++        pid,
++        start: format!("{}.{:06}", info.pbi_start_tvsec, info.pbi_start_tvusec),
++        exe: exe.to_string_lossy().into_owned(),
++    })
++}
++
++fn group_members(group: i32) -> io::Result<Vec<u32>> {
++    super::platform_contract::list_group(|pids, size| unsafe {
++        libc::proc_listpgrppids(group, pids.as_mut_ptr().cast(), size)
++    })
++}
++
++pub(super) fn stop(held: &mut HeldChild) -> Exhaustion {
++    let mut result = Exhaustion::pending("group_lingering");
++    let deadline = Instant::now() + Duration::from_secs(10);
++    let chrome = held.child.id();
++    let group = held.pgid.unwrap();
++    // No per-pid signals, even for helpers that escaped through setsid.
++    if unsafe { libc::killpg(group, libc::SIGKILL) } != 0
++        && io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
++    {
++        return result;
++    }
++    while Instant::now() < deadline {
++        let members = match group_members(group) {
++            Ok(members) => members,
++            Err(_) => return Exhaustion::pending("enumeration_failed"),
++        };
++        if members.iter().all(|pid| *pid == chrome) && exited_no_reap(chrome).unwrap_or(false) {
++            if held.child.wait().is_err() {
++                return result;
++            }
++            held.pgid = None;
++            result.group_exhausted = true;
++            let deadline = Instant::now() + Duration::from_secs(10);
++            loop {
++                match observe_outside(held.launch_dir.as_deref()) {
++                    Ok(count) => {
++                        result.outside_seen = count;
++                        result.unconfirmed = if count == 0 {
++                            None
++                        } else {
++                            Some("helper_lingering".into())
++                        };
++                        if count == 0 || Instant::now() >= deadline {
++                            break;
++                        }
++                    }
++                    Err(_) => {
++                        result.unconfirmed = Some("enumeration_failed".into());
++                        break;
++                    }
++                }
++                std::thread::sleep(Duration::from_millis(20));
++            }
++            return result;
++        }
++        std::thread::sleep(Duration::from_millis(10));
++    }
++    result
++}
++
++fn all_pids() -> io::Result<Vec<u32>> {
++    super::platform_contract::list_all(|pids, size| unsafe {
++        libc::proc_listpids(libc::PROC_ALL_PIDS, 0, pids.as_mut_ptr().cast(), size)
++    })
++}
++
++pub(super) fn status(group: i32) -> io::Result<Vec<Value>> {
++    let mut members = Vec::new();
++    for pid in all_pids()? {
++        if unsafe { libc::getsid(pid as i32) } == group {
++            let proc = info(pid)?;
++            // SZOMB is 5 on Darwin; zombies have no executable path to query.
++            if proc.pbi_status == 5 {
++                continue;
++            }
++            let identity = identity(pid)?;
++            members.push(
++                json!({"pid":pid,"start":identity.start,"exe":identity.exe,"pgid":proc.pbi_pgid}),
++            );
++        }
++    }
++    Ok(members)
++}
++
++pub(super) fn outside(path: &Path) -> io::Result<usize> {
++    use std::os::unix::ffi::OsStrExt;
++    let needle = path.as_os_str().as_bytes();
++    if needle.is_empty() {
++        return Err(io::Error::other("missing launch directory"));
++    }
++    let mut count = 0;
++    for pid in all_pids()? {
++        if pid == std::process::id() {
++            continue;
++        }
++        let proc = match info(pid) {
++            Ok(proc) => proc,
++            Err(e) if e.raw_os_error() == Some(libc::ESRCH) => continue,
++            Err(e) => return Err(e),
++        };
++        if proc.pbi_status == 5 {
++            continue;
++        }
++        let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as i32];
++        let mut size = 0usize;
++        if unsafe {
++            libc::sysctl(
++                mib.as_mut_ptr(),
++                3,
++                std::ptr::null_mut(),
++                &mut size,
++                std::ptr::null_mut(),
++                0,
++            )
++        } != 0
++        {
++            let error = io::Error::last_os_error();
++            if error.raw_os_error() == Some(libc::ESRCH) {
++                continue;
++            }
++            // An unreadable argv is not evidence that a helper is absent.
++            return Err(error);
++        }
++        if size > 16 * 1024 * 1024 || size < 4 {
++            return Err(io::Error::other("argument listing limit"));
++        }
++        let mut bytes = vec![0u8; size];
++        if unsafe {
++            libc::sysctl(
++                mib.as_mut_ptr(),
++                3,
++                bytes.as_mut_ptr().cast(),
++                &mut size,
++                std::ptr::null_mut(),
++                0,
++            )
++        } != 0
++        {
++            return Err(io::Error::last_os_error());
++        }
++        bytes.truncate(size);
++        let argc = i32::from_ne_bytes(bytes[..4].try_into().unwrap());
++        if argc < 0 {
++            return Err(io::Error::other("invalid argument count"));
++        }
++        // Skip the executable path and its padding; inspect argv, never environment.
++        let mut offset = 4 + bytes[4..]
++            .iter()
++            .position(|b| *b == 0)
++            .ok_or_else(|| io::Error::other("invalid process args"))?;
++        while offset < bytes.len() && bytes[offset] == 0 {
++            offset += 1;
++        }
++        let mut found = false;
++        for _ in 0..argc {
++            if offset >= bytes.len() {
++                return Err(io::Error::other("truncated process args"));
++            }
++            let length = bytes[offset..]
++                .iter()
++                .position(|b| *b == 0)
++                .ok_or_else(|| io::Error::other("truncated argument"))?;
++            if bytes[offset..offset + length]
++                .windows(needle.len())
++                .any(|value| value == needle)
++            {
++                found = true;
++            }
++            offset += length + 1;
++        }
++        if found {
++            count += 1;
++        }
++    }
++    Ok(count)
++}
+diff --git a/cli/src/native/ownership/platform_contract.rs b/cli/src/native/ownership/platform_contract.rs
+new file mode 100644
+index 0000000..f36e123
+--- /dev/null
++++ b/cli/src/native/ownership/platform_contract.rs
+@@ -0,0 +1,139 @@
++// Modified by Ferrox Labs: portable checks of platform enumeration contracts.
++#[cfg(any(test, windows, target_os = "macos"))]
++use std::io;
++#[cfg(any(test, target_os = "macos"))]
++pub(super) fn list_group(mut query: impl FnMut(&mut [i32], i32) -> i32) -> io::Result<Vec<u32>> {
++    let mut slots = 256;
++    loop {
++        let mut pids = vec![0i32; slots];
++        let size = (pids.len() * std::mem::size_of::<i32>()) as i32;
++        let count = query(&mut pids, size);
++        if count <= 0 {
++            return Err(io::Error::last_os_error());
++        }
++        if (count as usize) < pids.len() {
++            pids.truncate(count as usize);
++            return Ok(pids
++                .into_iter()
++                .filter(|pid| *pid > 0)
++                .map(|pid| pid as u32)
++                .collect());
++        }
++        slots *= 2;
++        if slots > 1_048_576 {
++            return Err(io::Error::other("group listing limit"));
++        }
++    }
++}
++
++// proc_listpids returns bytes; proc_listpgrppids returns a PID count.
++#[cfg(any(test, target_os = "macos"))]
++pub(super) fn list_all(mut query: impl FnMut(&mut [u32], i32) -> i32) -> io::Result<Vec<u32>> {
++    let mut count = 1024;
++    loop {
++        let mut pids = vec![0u32; count];
++        let size = (pids.len() * 4) as i32;
++        let bytes = query(&mut pids, size);
++        if bytes <= 0 {
++            return Err(io::Error::last_os_error());
++        }
++        if bytes < size {
++            pids.truncate(bytes as usize / 4);
++            return Ok(pids.into_iter().filter(|p| *p > 0).collect());
++        }
++        count *= 2;
++        if count > 1_048_576 {
++            return Err(io::Error::other("process listing limit"));
++        }
++    }
++}
++
++#[cfg(any(test, windows))]
++pub(super) fn decode_job(bytes: &[usize], actual: usize, offset: usize) -> io::Result<Vec<u32>> {
++    let width = std::mem::size_of::<usize>();
++    let end = actual
++        .checked_mul(width)
++        .and_then(|length| offset.checked_add(length))
++        .ok_or_else(|| io::Error::other("job listing overflow"))?;
++    if offset % width != 0 || end > std::mem::size_of_val(bytes) {
++        return Err(io::Error::other("job listing overflow"));
++    }
++    // The tail is derived from the complete allocation, never a [usize; 1] field.
++    // Slice bounds above cover the entire requested extent. No reference widening.
++    Ok(bytes[offset / width..end / width]
++        .iter()
++        .map(|pid| *pid as u32)
++        .collect())
++}
++pub(super) fn external_stop(
++    windows: bool,
++    stop: impl FnOnce() -> Result<(), String>,
++) -> Result<(), String> {
++    if windows {
++        stop()
++    } else {
++        Err("external_stop_unavailable".into())
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test]
++    fn ownership_fix_mac_small_groups_are_not_empty() {
++        for n in 1..=3 {
++            let got = list_group(|p, _| {
++                for i in 0..n {
++                    p[i] = 41 + i as i32;
++                }
++                n as i32
++            })
++            .unwrap();
++            assert_eq!(got.len(), n);
++        }
++    }
++    #[test]
++    fn ownership_fix_mac_full_buffer_retries() {
++        let mut calls = 0;
++        let got = list_group(|p, bytes| {
++            assert_eq!(bytes as usize, p.len() * 4);
++            calls += 1;
++            let n = 257.min(p.len());
++            for i in 0..n {
++                p[i] = 41 + i as i32;
++            }
++            n as i32
++        })
++        .unwrap();
++        assert_eq!(got.len(), 257);
++        assert_eq!(calls, 2);
++    }
++    #[test]
++    fn ownership_fix_mac_enumeration_error_is_unconfirmed() {
++        assert!(list_group(|_, _| 0).is_err());
++    }
++    #[test]
++    fn ownership_fix_mac_all_pids_error_is_unconfirmed() {
++        assert!(list_all(|_, _| 0).is_err());
++    }
++    #[test]
++    fn ownership_fix_job_decoder_checks_full_allocation() {
++        let offset = 8;
++        let mut words = vec![0usize; offset / std::mem::size_of::<usize>()];
++        words.extend([42, 43, 44]);
++        assert_eq!(decode_job(&words, 3, offset).unwrap(), vec![42, 43, 44]);
++        assert!(decode_job(&words, 4, offset).is_err());
++    }
++    #[test]
++    fn ownership_fix_windows_external_stop_uses_job_and_unix_refuses() {
++        let mut called = false;
++        assert!(external_stop(true, || {
++            called = true;
++            Ok(())
++        })
++        .is_ok());
++        assert!(called);
++        assert!(external_stop(true, || Err("access_denied".into())).is_err());
++        assert!(external_stop(false, || panic!("Unix must never stop an orphan")).is_err());
++    }
++}
+diff --git a/cli/src/native/ownership/windows.rs b/cli/src/native/ownership/windows.rs
+new file mode 100644
+index 0000000..90e0d09
+--- /dev/null
++++ b/cli/src/native/ownership/windows.rs
+@@ -0,0 +1,257 @@
++// Modified by Ferrox Labs: named, non-breakaway job ownership for every child.
++use super::*;
++use std::os::windows::ffi::OsStrExt;
++use windows_sys::Win32::{
++    Foundation::*,
++    Storage::FileSystem::*,
++    System::{
++        JobObjects::*,
++        SystemServices::{JOB_OBJECT_QUERY, JOB_OBJECT_TERMINATE},
++        Threading::*,
++    },
++};
++
++struct Handle(HANDLE);
++impl Drop for Handle {
++    fn drop(&mut self) {
++        unsafe {
++            CloseHandle(self.0);
++        }
++    }
++}
++static JOB: OnceLock<HANDLE> = OnceLock::new();
++fn wide(path: &std::ffi::OsStr) -> Vec<u16> {
++    path.encode_wide().chain(Some(0)).collect()
++}
++pub(super) fn job_name(session: &str) -> String {
++    format!(
++        "Local\\agent-browser-{}",
++        launch_id().unwrap_or_else(|| format!("{session}-{}", std::process::id()))
++    )
++}
++pub(super) fn replace(from: &Path, to: &Path) -> io::Result<()> {
++    if unsafe {
++        MoveFileExW(
++            wide(from.as_os_str()).as_ptr(),
++            wide(to.as_os_str()).as_ptr(),
++            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
++        )
++    } == 0
++    {
++        Err(io::Error::last_os_error())
++    } else {
++        Ok(())
++    }
++}
++pub(super) fn prepare(session: &str) -> io::Result<()> {
++    let name = wide(std::ffi::OsStr::new(&job_name(session)));
++    let raw = unsafe { CreateJobObjectW(std::ptr::null(), name.as_ptr()) };
++    if raw == 0 {
++        return Err(io::Error::last_os_error());
++    }
++    let job = Handle(raw);
++    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
++        return Err(io::Error::other("launch_used"));
++    }
++    let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
++    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
++    if unsafe {
++        SetInformationJobObject(
++            job.0,
++            JobObjectExtendedLimitInformation,
++            &limits as *const _ as *const _,
++            std::mem::size_of_val(&limits) as u32,
++        )
++    } == 0
++    {
++        return Err(io::Error::last_os_error());
++    }
++    if unsafe { AssignProcessToJobObject(job.0, GetCurrentProcess()) } == 0 {
++        return Err(io::Error::last_os_error());
++    }
++    JOB.set(job.0)
++        .map_err(|_| io::Error::other("job already held"))?;
++    std::mem::forget(job); // The OS closes this sole non-inheritable handle on daemon exit.
++    Ok(())
++}
++pub(super) fn identity(pid: u32) -> io::Result<ProcId> {
++    let raw = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
++    if raw == 0 {
++        return Err(io::Error::last_os_error());
++    }
++    let handle = Handle(raw);
++    let mut creation: FILETIME = unsafe { std::mem::zeroed() };
++    let mut exit = creation;
++    let mut kernel = creation;
++    let mut user = creation;
++    if unsafe { GetProcessTimes(handle.0, &mut creation, &mut exit, &mut kernel, &mut user) } == 0 {
++        return Err(io::Error::last_os_error());
++    }
++    let mut path = vec![0u16; 32768];
++    let mut size = path.len() as u32;
++    if unsafe { QueryFullProcessImageNameW(handle.0, 0, path.as_mut_ptr(), &mut size) } == 0 {
++        return Err(io::Error::last_os_error());
++    }
++    Ok(ProcId {
++        pid,
++        start: (((creation.dwHighDateTime as u64) << 32) | creation.dwLowDateTime as u64)
++            .to_string(),
++        exe: fs::canonicalize(String::from_utf16_lossy(&path[..size as usize]))?
++            .to_string_lossy()
++            .into_owned(),
++    })
++}
++fn members(job: HANDLE) -> io::Result<Vec<u32>> {
++    let mut count = 256usize;
++    loop {
++        // Pointer-sized allocation provides the alignment required by ULONG_PTR.
++        let mut bytes = vec![0usize; count + 2];
++        let list = bytes.as_mut_ptr() as *mut JOBOBJECT_BASIC_PROCESS_ID_LIST;
++        let ok = unsafe {
++            QueryInformationJobObject(
++                job,
++                JobObjectBasicProcessIdList,
++                list.cast(),
++                (bytes.len() * std::mem::size_of::<usize>()) as u32,
++                std::ptr::null_mut(),
++            )
++        };
++        if ok != 0 {
++            let actual = unsafe { (*list).NumberOfProcessIdsInList } as usize;
++            if actual > count {
++                return Err(io::Error::other("job listing overflow"));
++            }
++            return super::platform_contract::decode_job(
++                &bytes,
++                actual,
++                std::mem::offset_of!(JOBOBJECT_BASIC_PROCESS_ID_LIST, ProcessIdList),
++            );
++        }
++        if unsafe { GetLastError() } != ERROR_MORE_DATA || count >= 1_048_576 {
++            return Err(io::Error::last_os_error());
++        }
++        count *= 2;
++    }
++}
++pub(super) fn stop(held: &mut HeldChild) -> Exhaustion {
++    let mut result = Exhaustion::pending("tree_lingering");
++    let Some(job) = JOB.get() else {
++        return result;
++    };
++    let deadline = Instant::now() + Duration::from_secs(10);
++    while Instant::now() < deadline {
++        let pids = match members(*job) {
++            Ok(pids) => pids,
++            Err(_) => return result,
++        };
++        let others: Vec<_> = pids
++            .into_iter()
++            .filter(|pid| *pid != std::process::id())
++            .collect();
++        if others.is_empty() {
++            // Only the daemon remains in its own job; the last handle closes on exit.
++            let _ = held.child.wait();
++            held.pgid = None;
++            result.group_exhausted = true;
++            result.tree_exhausted = true;
++            result.unconfirmed = None;
++            return result;
++        }
++        for pid in others {
++            if Instant::now() >= deadline {
++                break;
++            }
++            let raw = unsafe {
++                OpenProcess(
++                    PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
++                    0,
++                    pid,
++                )
++            };
++            if raw == 0 {
++                continue;
++            }
++            let process = Handle(raw);
++            let mut member = 0;
++            // The opened handle pins the identity through membership check and termination.
++            if unsafe { IsProcessInJob(process.0, *job, &mut member) } != 0 && member != 0 {
++                unsafe {
++                    TerminateProcess(process.0, 1);
++                }
++            }
++        }
++        std::thread::sleep(Duration::from_millis(10));
++    }
++    result
++}
++pub(super) fn exited(pid: u32) -> bool {
++    let raw = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
++    if raw == 0 {
++        return true;
++    }
++    let handle = Handle(raw);
++    unsafe { WaitForSingleObject(handle.0, 0) == WAIT_OBJECT_0 }
++}
++
++pub(super) fn status(name: &str) -> io::Result<Value> {
++    let name = wide(std::ffi::OsStr::new(name));
++    let raw = unsafe { OpenJobObjectW(JOB_OBJECT_QUERY, 0, name.as_ptr()) };
++    if raw == 0 {
++        let error = io::Error::last_os_error();
++        if error.raw_os_error() == Some(ERROR_FILE_NOT_FOUND as i32) {
++            return Ok(json!({"jobGone":true}));
++        }
++        return Err(error);
++    }
++    let job = Handle(raw);
++    let mut processes = Vec::new();
++    for pid in members(job.0)? {
++        let process = identity(pid)?;
++        processes.push(json!({"pid":pid, "start":process.start, "exe":process.exe, "pgid":null}));
++    }
++    Ok(json!({"jobGone":false,"members":processes}))
++}
++
++pub(super) fn stop_existing(owner: &Value) -> Result<(), String> {
++    let name = super::validated_job_name(owner)?;
++    let name = wide(std::ffi::OsStr::new(&name));
++    let raw = unsafe { OpenJobObjectW(JOB_OBJECT_QUERY | JOB_OBJECT_TERMINATE, 0, name.as_ptr()) };
++    if raw == 0 {
++        let error = io::Error::last_os_error();
++        if error.raw_os_error() == Some(ERROR_FILE_NOT_FOUND as i32) {
++            return Ok(());
++        }
++        return Err(error.to_string());
++    }
++    let job = Handle(raw);
++    if unsafe { TerminateJobObject(job.0, 1) } == 0 {
++        return Err(io::Error::last_os_error().to_string());
++    }
++    let deadline = Instant::now() + Duration::from_secs(10);
++    while Instant::now() < deadline {
++        let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { std::mem::zeroed() };
++        if unsafe {
++            QueryInformationJobObject(
++                job.0,
++                JobObjectBasicAccountingInformation,
++                &mut accounting as *mut _ as *mut _,
++                std::mem::size_of_val(&accounting) as u32,
++                std::ptr::null_mut(),
++            )
++        } == 0
++        {
++            return Err(io::Error::last_os_error().to_string());
++        }
++        if accounting.ActiveProcesses == 0 {
++            return Ok(());
++        }
++        std::thread::sleep(Duration::from_millis(10));
++    }
++    Err("tree_lingering".into())
++}
++
++pub(super) fn only_daemon_remains() -> bool {
++    JOB.get().is_some_and(|job| {
++        members(*job).is_ok_and(|pids| pids.iter().all(|pid| *pid == std::process::id()))
++    })
++}
+diff --git a/cli/src/native/ownership_tests.rs b/cli/src/native/ownership_tests.rs
+new file mode 100644
+index 0000000..f1a2a04
+--- /dev/null
++++ b/cli/src/native/ownership_tests.rs
+@@ -0,0 +1,74 @@
++// Modified by Ferrox Labs: window daemon ownership contract tests (omb.4).
++use super::actions::{execute_command, DaemonState};
++use serde_json::json;
++
++// Each test is run serially: launch identity is a process environment input.
++#[tokio::test]
++async fn ownership_e25_recording_cannot_spawn() {
++    std::env::set_var("AGENT_BROWSER_LAUNCH_ID", "0123456789abcdef");
++    let mut state = DaemonState::new();
++    let reply = execute_command(
++        &json!({"id":"e25", "action":"recording_start", "path":"/tmp/record.mp4"}),
++        &mut state,
++    )
++    .await;
++    assert_eq!(reply["error"], "window_launch_only");
++    assert!(state.browser.is_none());
++    std::env::remove_var("AGENT_BROWSER_LAUNCH_ID");
++}
++
++#[tokio::test]
++async fn ownership_e25_webdriver_cannot_spawn() {
++    std::env::set_var("AGENT_BROWSER_LAUNCH_ID", "0123456789abcdef");
++    let mut state = DaemonState::new();
++    let reply = execute_command(
++        &json!({"id":"e25", "action":"launch", "browser":"safari", "noXvfb":true}),
++        &mut state,
++    )
++    .await;
++    assert_eq!(reply["error"], "window_launch_only");
++    assert!(state.webdriver_backend.is_none());
++    std::env::remove_var("AGENT_BROWSER_LAUNCH_ID");
++}
++
++#[tokio::test]
++async fn ownership_e25_missing_no_xvfb_is_refused() {
++    std::env::set_var("AGENT_BROWSER_LAUNCH_ID", "0123456789abcdef");
++    let mut state = DaemonState::new();
++    let reply = execute_command(
++        &json!({"id":"e25", "action":"launch", "executablePath":"/not-a-browser"}),
++        &mut state,
++    )
++    .await;
++    assert_eq!(reply["error"], "window_launch_only");
++    assert!(state.browser.is_none());
++    std::env::remove_var("AGENT_BROWSER_LAUNCH_ID");
++}
++
++#[tokio::test]
++async fn ownership_e6_close_only_mismatch_never_launches() {
++    std::env::set_var("AGENT_BROWSER_LAUNCH_ID", "0123456789abcdef");
++    let mut state = DaemonState::new();
++    let reply = execute_command(
++        &json!({"id":"e6", "action":"close", "closeOnly":true, "launchId":"ffffffffffffffff"}),
++        &mut state,
++    )
++    .await;
++    assert_eq!(reply["error"], "launch_mismatch");
++    assert!(state.browser.is_none());
++    std::env::remove_var("AGENT_BROWSER_LAUNCH_ID");
++}
++
++#[tokio::test]
++async fn ownership_e25_certificate_helper_is_refused_before_loading() {
++    std::env::set_var("AGENT_BROWSER_LAUNCH_ID", "0123456789abcdef");
++    let mut state = DaemonState::new();
++    let reply = execute_command(
++        &json!({"id":"e25", "action":"launch", "noXvfb":true, "caCert":"/not-a-certificate"}),
++        &mut state,
++    )
++    .await;
++    std::env::remove_var("AGENT_BROWSER_LAUNCH_ID");
++    assert_eq!(reply["error"], "window_launch_only");
++    assert!(state.browser.is_none());
++}
+diff --git a/cli/src/native/stream/chat.rs b/cli/src/native/stream/chat.rs
+index d68bc5d..82dae93 100644
+--- a/cli/src/native/stream/chat.rs
++++ b/cli/src/native/stream/chat.rs
+@@ -456,4 +456,9 @@ const ALLOWED_GLOBAL_FLAGS: &[&str] = &["--session", "--engine"];
+ 
+ pub(crate) async fn execute_chat_tool(session: &str, command: &str) -> String {
++    // Modified by Ferrox Labs: a window daemon cannot spawn a tool CLI.
++    if crate::native::ownership::launch_id().is_some() {
++        return "window_launch_only".into();
++    }
++
+     let exe = match std::env::current_exe() {
+         Ok(p) => p,
+@@ -970,2 +975,13 @@ pub(super) async fn handle_chat_request(
+     let _ = stream.write_all(done_ev.as_bytes()).await;
+ }
++
++#[cfg(test)]
++mod ownership_spawn_tests {
++    use super::*;
++    #[tokio::test]
++    async fn ownership_e25_stream_chat_cannot_spawn() {
++        let _guard = crate::test_utils::EnvGuard::new(&["AGENT_BROWSER_LAUNCH_ID"]);
++        std::env::set_var("AGENT_BROWSER_LAUNCH_ID", "0123456789abcdef");
++        assert_eq!(execute_chat_tool("fixture", "").await, "window_launch_only");
++    }
++}
+diff --git a/cli/src/native/stream/dashboard.rs b/cli/src/native/stream/dashboard.rs
+index adba88f..a0ec3e9 100644
+--- a/cli/src/native/stream/dashboard.rs
++++ b/cli/src/native/stream/dashboard.rs
+@@ -6,6 +6,4 @@ use tokio::net::TcpListener;
+ use tokio_tungstenite::tungstenite::Message;
+ 
+-use crate::connection::get_socket_dir;
+-
+ use super::chat::{chat_status_json, handle_chat_request, handle_models_request};
+ use super::discovery::discover_sessions;
+@@ -908,4 +906,8 @@ async fn read_post_body(stream: &mut tokio::net::TcpStream, initial: &[u8], n: u
+ 
+ async fn exec_cli(body: &str) -> Result<String, String> {
++    // Modified by Ferrox Labs: window daemons own only their Chrome child.
++    if crate::native::ownership::launch_id().is_some() {
++        return Err("window_launch_only".into());
++    }
+     let parsed: Value = serde_json::from_str(body).map_err(|e| format!("Invalid JSON: {}", e))?;
+     let args: Vec<String> = parsed
+@@ -958,43 +960,19 @@ async fn kill_session(body: &str) -> Result<String, String> {
+         .ok_or("Missing \"session\" field")?;
+ 
+-    if session.is_empty() || session.len() > 64 {
+-        return Err("Session name must be 1-64 characters".to_string());
+-    }
+-
+-    let dir = get_socket_dir();
+-    let pid_path = dir.join(format!("{}.pid", session));
+-
+-    let pid_str = std::fs::read_to_string(&pid_path)
+-        .map_err(|_| format!("No PID file for session '{}'", session))?;
+-    let pid: u32 = pid_str
+-        .trim()
+-        .parse()
+-        .map_err(|_| format!("Invalid PID in file: {}", pid_str.trim()))?;
+-
+-    #[cfg(unix)]
+-    {
+-        // SAFETY: The PID came from the daemon-managed pidfile and is only used
+-        // to send standard termination signals to that process.
+-        unsafe {
+-            libc::kill(pid as i32, libc::SIGTERM);
+-        }
+-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+-        // SAFETY: A signal value of 0 performs an existence check on the same pid.
+-        if unsafe { libc::kill(pid as i32, 0) } == 0 {
+-            // SAFETY: The process still exists after SIGTERM, so escalate to SIGKILL.
+-            unsafe {
+-                libc::kill(pid as i32, libc::SIGKILL);
+-            }
+-        }
+-    }
+-
+-    for ext in &["pid", "sock", "stream", "engine", "extensions"] {
+-        let _ = std::fs::remove_file(dir.join(format!("{}.{}", session, ext)));
++    if !crate::validation::is_valid_session_name(session) {
++        return Err("Invalid session name".into());
+     }
+-
+-    Ok(json!({ "success": true, "killed_pid": pid }).to_string())
++    let session = session.to_owned();
++    tokio::task::spawn_blocking(move || crate::native::ownership::stop_existing(&session))
++        .await
++        .map_err(|error| error.to_string())??;
++    Ok(json!({ "success": true }).to_string())
+ }
+ 
+ pub(super) async fn spawn_session(body: &str) -> Result<String, String> {
++    // Modified by Ferrox Labs: window daemons own only their Chrome child.
++    if crate::native::ownership::launch_id().is_some() {
++        return Err("window_launch_only".into());
++    }
+     let parsed: Value = serde_json::from_str(body).map_err(|e| format!("Invalid JSON: {}", e))?;
+     let session = parsed
+@@ -1644,2 +1622,37 @@ mod tests {
+     }
+ }
++
++#[cfg(test)]
++mod ownership_spawn_tests {
++    use super::*;
++    #[tokio::test]
++    async fn ownership_e25_stream_session_and_cli_cannot_spawn() {
++        let _guard = crate::test_utils::EnvGuard::new(&["AGENT_BROWSER_LAUNCH_ID"]);
++        std::env::set_var("AGENT_BROWSER_LAUNCH_ID", "0123456789abcdef");
++        assert_eq!(spawn_session("{}").await.unwrap_err(), "window_launch_only");
++        assert_eq!(exec_cli("{}").await.unwrap_err(), "window_launch_only");
++    }
++}
++
++#[cfg(all(test, unix))]
++mod ownership_fix_tests {
++    use super::*;
++    #[tokio::test]
++    async fn ownership_fix_dashboard_api_preserves_stale_pid() {
++        let guard = crate::test_utils::EnvGuard::new(&["AGENT_BROWSER_SOCKET_DIR"]);
++        let dir = tempfile::tempdir().unwrap();
++        guard.set("AGENT_BROWSER_SOCKET_DIR", dir.path().to_str().unwrap());
++        let mut child = std::process::Command::new("sleep")
++            .arg("60")
++            .spawn()
++            .unwrap();
++        std::fs::write(dir.path().join("sentinel.pid"), child.id().to_string()).unwrap();
++        let result = kill_session(r#"{"session":"sentinel"}"#).await;
++        std::thread::sleep(std::time::Duration::from_millis(50));
++        let alive = child.try_wait().unwrap().is_none();
++        let _ = child.kill();
++        let _ = child.wait();
++        assert!(alive, "stale PID must never authorize termination");
++        assert!(result.is_err(), "missing owner must remain unconfirmed");
++    }
++}
+diff --git a/cli/src/output.rs b/cli/src/output.rs
+index 6ff640c..e4d4c58 100644
+--- a/cli/src/output.rs
++++ b/cli/src/output.rs
+@@ -3578,4 +3578,5 @@ Examples:
+ }
+ 
++// Modified by Ferrox Labs: document the local ownership-maintenance commands.
+ pub fn print_help() {
+     println!(
+@@ -3627,4 +3628,7 @@ Core Commands:
+   connect <port|url>         Connect to browser via CDP
+   close [--all]              Close browser (--all closes every session)
++  close-only --session <s>   Close an existing daemon only (maintenance)
++  launch-group --owner-file <path> (--status | --stop [Windows])
++                            Read launch ownership without starting a daemon
+ 
+ Navigation:
+diff --git a/cli/tests/ownership.rs b/cli/tests/ownership.rs
+new file mode 100644
+index 0000000..4242cd4
+--- /dev/null
++++ b/cli/tests/ownership.rs
+@@ -0,0 +1,819 @@
++// Modified by Ferrox Labs: isolated daemon publication and close-only fixtures.
++use std::{
++    process::{Child, Command, Stdio},
++    time::{Duration, Instant},
++};
++
++struct Fixture {
++    dir: tempfile::TempDir,
++    child: Option<Child>,
++}
++impl Fixture {
++    fn new() -> Self {
++        Self {
++            dir: tempfile::tempdir().unwrap(),
++            child: None,
++        }
++    }
++    fn command(&self) -> Command {
++        let mut cmd = Command::new(env!("CARGO_BIN_EXE_agent-browser"));
++        cmd.env_clear()
++            .env("PATH", "/usr/bin:/bin")
++            .env("HOME", self.dir.path())
++            .env("AGENT_BROWSER_SOCKET_DIR", self.dir.path())
++            .env("AGENT_BROWSER_LAUNCH_ID", "0123456789abcdef")
++            .env("AGENT_BROWSER_SESSION", "fixture")
++            .stdout(Stdio::null())
++            .stderr(Stdio::null());
++        cmd
++    }
++    fn start(&mut self) {
++        self.child = Some(
++            self.command()
++                .env("AGENT_BROWSER_DAEMON", "1")
++                .spawn()
++                .unwrap(),
++        );
++    }
++    fn wait_ready(&mut self) {
++        let until = Instant::now() + Duration::from_secs(5);
++        while Instant::now() < until {
++            if self.dir.path().join("fixture.sock").exists() {
++                return;
++            }
++            assert!(
++                self.child.as_mut().unwrap().try_wait().unwrap().is_none(),
++                "daemon exited before ready"
++            );
++            std::thread::sleep(Duration::from_millis(10));
++        }
++        panic!("daemon did not bind");
++    }
++}
++impl Drop for Fixture {
++    fn drop(&mut self) {
++        if let Some(child) = self.child.as_mut() {
++            let _ = child.kill();
++            let _ = child.wait();
++        }
++    }
++}
++#[test]
++#[cfg(unix)]
++fn ownership_e1_owner_precedes_socket() {
++    let mut fixture = Fixture::new();
++    fixture.start();
++    fixture.wait_ready();
++    let owner: serde_json::Value = serde_json::from_slice(
++        &std::fs::read(fixture.dir.path().join("fixture.owner.json")).expect("owner before bind"),
++    )
++    .unwrap();
++    assert_eq!(owner["launchId"], "0123456789abcdef");
++    assert_eq!(owner["daemon"]["pid"], fixture.child.as_ref().unwrap().id());
++    assert_eq!(
++        unsafe { libc::getsid(fixture.child.as_ref().unwrap().id() as i32) },
++        fixture.child.as_ref().unwrap().id() as i32
++    );
++    assert!(fixture.dir.path().join("fixture.pid").exists());
++    assert!(fixture.dir.path().join("fixture.stop").exists());
++}
++#[test]
++fn ownership_e2_publication_failure_exits_78_without_bind() {
++    let mut fixture = Fixture::new();
++    std::fs::create_dir(fixture.dir.path().join("fixture.owner.json")).unwrap();
++    fixture.start();
++    let until = Instant::now() + Duration::from_secs(5);
++    loop {
++        if let Some(status) = fixture.child.as_mut().unwrap().try_wait().unwrap() {
++            assert_eq!(status.code(), Some(78));
++            break;
++        }
++        assert!(Instant::now() < until, "publication failure must exit");
++        std::thread::sleep(Duration::from_millis(10));
++    }
++    assert!(!fixture.dir.path().join("fixture.sock").exists());
++    assert!(!fixture.dir.path().join("fixture.port").exists());
++}
++#[test]
++fn ownership_e10_close_only_without_daemon_creates_nothing() {
++    let fixture = Fixture::new();
++    let result = fixture
++        .command()
++        .args(["close-only", "--session", "fixture"])
++        .status()
++        .unwrap();
++    assert_eq!(result.code(), Some(3));
++    assert_eq!(std::fs::read_dir(fixture.dir.path()).unwrap().count(), 0);
++}
++#[test]
++#[cfg(unix)]
++fn ownership_e23_inherited_sigchld_ignore_is_reset() {
++    use std::os::unix::process::CommandExt;
++    let mut fixture = Fixture::new();
++    let mut cmd = fixture.command();
++    cmd.env("AGENT_BROWSER_DAEMON", "1");
++    unsafe {
++        cmd.pre_exec(|| {
++            libc::signal(libc::SIGCHLD, libc::SIG_IGN);
++            Ok(())
++        });
++    }
++    fixture.child = Some(cmd.spawn().unwrap());
++    fixture.wait_ready();
++    let status = std::fs::read_to_string(format!(
++        "/proc/{}/status",
++        fixture.child.as_ref().unwrap().id()
++    ))
++    .unwrap();
++    let ignored = status
++        .lines()
++        .find(|l| l.starts_with("SigIgn:"))
++        .unwrap()
++        .split_whitespace()
++        .nth(1)
++        .unwrap();
++    assert_eq!(
++        u64::from_str_radix(ignored, 16).unwrap() & (1 << (libc::SIGCHLD - 1)),
++        0
++    );
++}
++
++#[test]
++fn ownership_e15_used_launch_never_spawns_again() {
++    let fixture = Fixture::new();
++    std::fs::write(fixture.dir.path().join("fixture.spawned"), "").unwrap();
++    let result = fixture
++        .command()
++        .args([
++            "open",
++            "about:blank",
++            "--session",
++            "fixture",
++            "--executable-path",
++            "/not-a-browser",
++        ])
++        .status()
++        .unwrap();
++    assert_eq!(result.code(), Some(3));
++    assert_eq!(std::fs::read_dir(fixture.dir.path()).unwrap().count(), 1);
++}
++
++#[test]
++#[cfg(target_os = "linux")]
++fn ownership_e21_failed_launch_exhausts_adopted_helpers() {
++    use std::io::{BufRead, BufReader, Write};
++    use std::os::unix::{fs::PermissionsExt, net::UnixStream};
++    let mut fixture = Fixture::new();
++    let script = fixture.dir.path().join("chrome-fixture");
++    let helper = fixture.dir.path().join("helper.pid");
++    std::fs::write(&script, format!("#!/bin/sh\nsetsid /bin/sh -c 'echo $$ > {}; sleep 45' &\nfor arg do case $arg in --user-data-dir=*) dir=${{arg#*=}};; esac; done\nwhile [ ! -f {} ]; do sleep 0.01; done\nprintf '9\\n/devtools/browser/fixture\\n' > \"$dir/DevToolsActivePort\"\nsleep 45\n", helper.display(), helper.display())).unwrap();
++    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
++    fixture.start();
++    fixture.wait_ready();
++    let mut stream = UnixStream::connect(fixture.dir.path().join("fixture.sock")).unwrap();
++    stream
++        .set_read_timeout(Some(Duration::from_secs(15)))
++        .unwrap();
++    let request = serde_json::json!({"id":"e21", "action":"launch", "noXvfb":true, "executablePath":script, "headless":true});
++    writeln!(stream, "{request}").unwrap();
++    let mut line = String::new();
++    BufReader::new(stream).read_line(&mut line).unwrap();
++    let response: serde_json::Value = serde_json::from_str(&line).unwrap();
++    assert_eq!(response["success"], false);
++    let pid = std::fs::read_to_string(helper).unwrap();
++    assert!(
++        !std::path::Path::new(&format!("/proc/{}", pid.trim())).exists(),
++        "failed launch must exhaust adopted helper"
++    );
++}
++
++#[test]
++#[cfg(target_os = "linux")]
++fn ownership_e24_subreaper_refusal_fails_before_bind() {
++    use std::os::unix::process::CommandExt;
++    let mut fixture = Fixture::new();
++    let mut command = fixture.command();
++    command.env("AGENT_BROWSER_DAEMON", "1");
++    unsafe {
++        command.pre_exec(|| {
++            // seccomp_data.nr then args[0]: deny only PR_SET_CHILD_SUBREAPER.
++            let mut filter = [
++                libc::sock_filter {
++                    code: 0x20,
++                    jt: 0,
++                    jf: 0,
++                    k: 0,
++                },
++                libc::sock_filter {
++                    code: 0x15,
++                    jt: 0,
++                    jf: 3,
++                    k: libc::SYS_prctl as u32,
++                },
++                libc::sock_filter {
++                    code: 0x20,
++                    jt: 0,
++                    jf: 0,
++                    k: 16,
++                },
++                libc::sock_filter {
++                    code: 0x15,
++                    jt: 0,
++                    jf: 1,
++                    k: libc::PR_SET_CHILD_SUBREAPER as u32,
++                },
++                libc::sock_filter {
++                    code: 0x06,
++                    jt: 0,
++                    jf: 0,
++                    k: 0x00050000 | libc::EPERM as u32,
++                },
++                libc::sock_filter {
++                    code: 0x06,
++                    jt: 0,
++                    jf: 0,
++                    k: 0x7fff0000,
++                },
++            ];
++            let program = libc::sock_fprog {
++                len: filter.len() as u16,
++                filter: filter.as_mut_ptr(),
++            };
++            if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0
++                || libc::prctl(libc::PR_SET_SECCOMP, 2, &program) != 0
++            {
++                return Err(std::io::Error::last_os_error());
++            }
++            Ok(())
++        });
++    }
++    fixture.child = Some(command.spawn().unwrap());
++    let until = Instant::now() + Duration::from_secs(5);
++    loop {
++        if let Some(status) = fixture.child.as_mut().unwrap().try_wait().unwrap() {
++            assert_eq!(status.code(), Some(78));
++            break;
++        }
++        assert!(Instant::now() < until, "subreaper refusal must exit");
++        std::thread::sleep(Duration::from_millis(10));
++    }
++    assert!(!fixture.dir.path().join("fixture.sock").exists());
++}
++
++#[cfg(unix)]
++impl Fixture {
++    fn request(&self, request: serde_json::Value) -> serde_json::Value {
++        use std::{
++            io::{BufRead, BufReader, Write},
++            os::unix::net::UnixStream,
++        };
++        let mut stream = UnixStream::connect(self.dir.path().join("fixture.sock")).unwrap();
++        stream
++            .set_read_timeout(Some(Duration::from_secs(25)))
++            .unwrap();
++        writeln!(stream, "{request}").unwrap();
++        let mut line = String::new();
++        BufReader::new(stream).read_line(&mut line).unwrap();
++        serde_json::from_str(&line).unwrap()
++    }
++    fn launch_chrome(&self) -> serde_json::Value {
++        self.request(serde_json::json!({"id":"launch", "action":"launch", "headless":true, "noXvfb":true, "executablePath":"/usr/bin/chromium", "restoreKey":"fixture", "restoreSave":"always", "args":["--no-sandbox"]}))
++    }
++    fn close(&self, require_saved: bool) -> serde_json::Value {
++        self.request(serde_json::json!({"id":"close", "action":"close", "closeOnly":true, "launchId":"0123456789abcdef", "requireSaved":require_saved}))
++    }
++}
++
++#[test]
++#[cfg(target_os = "linux")]
++fn ownership_browser_e4_identity_before_success_and_full_close() {
++    let mut fixture = Fixture::new();
++    fixture.start();
++    fixture.wait_ready();
++    let launch = fixture.launch_chrome();
++    assert_eq!(launch["success"], true, "{launch}");
++    let owner: serde_json::Value = serde_json::from_slice(
++        &std::fs::read(fixture.dir.path().join("fixture.owner.json")).unwrap(),
++    )
++    .unwrap();
++    let chrome = owner["chrome"]["pid"].as_u64().unwrap();
++    assert_eq!(owner["chrome"]["pgid"], chrome);
++    assert!(!owner["chrome"]["start"].as_str().unwrap().is_empty());
++    assert!(owner["chrome"]["exe"].as_str().unwrap().starts_with('/'));
++    let daemon_pid = fixture.child.as_ref().unwrap().id();
++    let mut children = String::new();
++    for task in std::fs::read_dir(format!("/proc/{daemon_pid}/task")).unwrap() {
++        if let Ok(list) = std::fs::read_to_string(task.unwrap().path().join("children")) {
++            children.push_str(&list);
++            children.push(' ');
++        }
++    }
++    assert!(children
++        .split_whitespace()
++        .any(|pid| pid == chrome.to_string()));
++    // Subreaped crash handlers are direct children too; they were spawned by Chrome.
++    for pid in children.split_whitespace() {
++        if let Ok(exe) = std::fs::read_link(format!("/proc/{pid}/exe")) {
++            assert_ne!(exe.file_name(), Some(std::ffi::OsStr::new("Xvfb")));
++        }
++    }
++    let close = fixture.close(false);
++    assert_eq!(close["data"]["closed"], true, "{close}");
++    assert_eq!(close["data"]["treeExhausted"], true, "{close}");
++    assert!(!std::path::Path::new(&format!("/proc/{chrome}")).exists());
++}
++
++#[test]
++#[cfg(target_os = "linux")]
++fn ownership_browser_e4_rewrite_failure_exhausts_chrome() {
++    let mut fixture = Fixture::new();
++    fixture.start();
++    fixture.wait_ready();
++    let owner = fixture.dir.path().join("fixture.owner.json");
++    std::fs::remove_file(&owner).unwrap();
++    std::fs::create_dir(&owner).unwrap();
++    let launch = fixture.launch_chrome();
++    assert_eq!(launch["success"], false, "{launch}");
++    assert!(
++        launch["error"]
++            .as_str()
++            .unwrap()
++            .contains("identity publication"),
++        "{launch}"
++    );
++    let close = fixture.close(false);
++    assert_eq!(close["data"]["treeExhausted"], true, "{close}");
++}
++
++#[test]
++#[cfg(target_os = "linux")]
++fn ownership_browser_e16_save_refusal_preserves_browser() {
++    use std::os::unix::{ffi::OsStrExt, fs::PermissionsExt, process::CommandExt};
++    let mut fixture = Fixture::new();
++    let path = std::ffi::CString::new(fixture.dir.path().as_os_str().as_bytes()).unwrap();
++    assert_eq!(unsafe { libc::chown(path.as_ptr(), 65534, 65534) }, 0);
++    fixture.child = Some(
++        fixture
++            .command()
++            .uid(65534)
++            .gid(65534)
++            .env("AGENT_BROWSER_DAEMON", "1")
++            .spawn()
++            .unwrap(),
++    );
++    fixture.wait_ready();
++    let launch = fixture.launch_chrome();
++    assert_eq!(launch["success"], true, "{launch}");
++    let sessions = fixture.dir.path().join(".agent-browser/sessions");
++    std::fs::create_dir_all(&sessions).unwrap();
++    let sessions_path = std::ffi::CString::new(sessions.as_os_str().as_bytes()).unwrap();
++    assert_eq!(
++        unsafe { libc::chown(sessions_path.as_ptr(), 65534, 65534) },
++        0
++    );
++    std::fs::set_permissions(&sessions, std::fs::Permissions::from_mode(0o500)).unwrap();
++    let close = fixture.close(true);
++    assert_eq!(close["data"]["closed"], false, "{close}");
++    assert_ne!(close["data"]["saveStatus"], "saved");
++    let owner: serde_json::Value = serde_json::from_slice(
++        &std::fs::read(fixture.dir.path().join("fixture.owner.json")).unwrap(),
++    )
++    .unwrap();
++    assert!(std::path::Path::new(&format!("/proc/{}", owner["chrome"]["pid"])).exists());
++    std::fs::set_permissions(&sessions, std::fs::Permissions::from_mode(0o700)).unwrap();
++    let close = fixture.close(true);
++    assert_eq!(close["data"]["saveStatus"], "saved", "{close}");
++    assert_eq!(close["data"]["closed"], true, "{close}");
++}
++
++#[test]
++#[cfg(target_os = "linux")]
++fn ownership_browser_e14_stop_channel_owns_existing_tree() {
++    use std::{
++        io::{BufRead, BufReader, Write},
++        os::unix::net::UnixStream,
++    };
++    let mut fixture = Fixture::new();
++    fixture.start();
++    fixture.wait_ready();
++    let launch = fixture.launch_chrome();
++    assert_eq!(launch["success"], true, "{launch}");
++    let mut channel = UnixStream::connect(fixture.dir.path().join("fixture.stop")).unwrap();
++    channel
++        .set_read_timeout(Some(Duration::from_secs(15)))
++        .unwrap();
++    writeln!(channel, "{{\"launchId\":\"0123456789abcdef\"}}").unwrap();
++    let mut line = String::new();
++    BufReader::new(channel).read_line(&mut line).unwrap();
++    let result: serde_json::Value = serde_json::from_str(&line).unwrap();
++    assert_eq!(result["treeExhausted"], true, "{result}");
++    assert!(result["unconfirmed"].is_null());
++}
++
++#[cfg(target_os = "linux")]
++fn deny_syscall(command: &mut Command, syscall: libc::c_long, error: i32) {
++    use std::os::unix::process::CommandExt;
++    unsafe {
++        command.pre_exec(move || {
++            let mut filter = [
++                libc::sock_filter {
++                    code: 0x20,
++                    jt: 0,
++                    jf: 0,
++                    k: 0,
++                },
++                libc::sock_filter {
++                    code: 0x15,
++                    jt: 0,
++                    jf: 1,
++                    k: syscall as u32,
++                },
++                libc::sock_filter {
++                    code: 0x06,
++                    jt: 0,
++                    jf: 0,
++                    k: 0x00050000 | error as u32,
++                },
++                libc::sock_filter {
++                    code: 0x06,
++                    jt: 0,
++                    jf: 0,
++                    k: 0x7fff0000,
++                },
++            ];
++            let program = libc::sock_fprog {
++                len: filter.len() as u16,
++                filter: filter.as_mut_ptr(),
++            };
++            if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0
++                || libc::prctl(libc::PR_SET_SECCOMP, 2, &program) != 0
++            {
++                return Err(std::io::Error::last_os_error());
++            }
++            Ok(())
++        });
++    }
++}
++
++#[test]
++#[cfg(target_os = "linux")]
++fn ownership_browser_e23_setpgid_refusal_fails_launch() {
++    let mut fixture = Fixture::new();
++    let mut command = fixture.command();
++    command.env("AGENT_BROWSER_DAEMON", "1");
++    deny_syscall(&mut command, libc::SYS_setpgid, libc::EPERM);
++    fixture.child = Some(command.spawn().unwrap());
++    fixture.wait_ready();
++    let launch = fixture.launch_chrome();
++    assert_eq!(launch["success"], false, "{launch}");
++    assert!(
++        launch["error"]
++            .as_str()
++            .unwrap()
++            .contains("Operation not permitted"),
++        "{launch}"
++    );
++    let close = fixture.close(false);
++    assert_eq!(close["data"]["treeExhausted"], true, "{close}");
++}
++
++#[test]
++#[cfg(target_os = "linux")]
++fn ownership_browser_e18_pidfd_unavailable_retains_unconfirmed() {
++    let mut fixture = Fixture::new();
++    let mut command = fixture.command();
++    command.env("AGENT_BROWSER_DAEMON", "1");
++    deny_syscall(&mut command, libc::SYS_pidfd_open, libc::ENOSYS);
++    fixture.child = Some(command.spawn().unwrap());
++    fixture.wait_ready();
++    let launch = fixture.launch_chrome();
++    assert_eq!(launch["success"], true, "{launch}");
++    let close = fixture.close(false);
++    assert_eq!(close["data"]["closed"], false, "{close}");
++    assert_eq!(close["data"]["unconfirmed"], "pidfd_unsupported", "{close}");
++}
++
++#[test]
++#[cfg(target_os = "linux")]
++fn ownership_browser_e25_nodisplay_and_wayland_only_failure_can_close() {
++    for wayland_only in [false, true] {
++        let mut fixture = Fixture::new();
++        let mut command = fixture.command();
++        command.env("AGENT_BROWSER_DAEMON", "1");
++        if wayland_only {
++            command.env("WAYLAND_DISPLAY", "wayland-omb4-fixture");
++        }
++        fixture.child = Some(command.spawn().unwrap());
++        fixture.wait_ready();
++        let launch = fixture.request(serde_json::json!({"id":"no-display", "action":"launch", "headless":false, "noXvfb":true, "executablePath":"/usr/bin/chromium", "args":["--no-sandbox"]}));
++        // This fixture deliberately supplies no display server. A real Wayland host has its own row.
++        assert_eq!(launch["success"], false, "{launch}");
++        let close = fixture.close(false);
++        assert_eq!(
++            close["data"]["closed"], true,
++            "wayland_only={wayland_only}: {close}"
++        );
++        assert_eq!(close["data"]["treeExhausted"], true, "{close}");
++    }
++}
++
++#[test]
++fn ownership_e8_group_stop_is_refused_without_any_spawn() {
++    let fixture = Fixture::new();
++    let result = fixture
++        .command()
++        .args(["launch-group", "--owner-file", "/no-owner", "--stop"])
++        .status()
++        .unwrap();
++    assert_eq!(result.code(), Some(3));
++    assert_eq!(std::fs::read_dir(fixture.dir.path()).unwrap().count(), 0);
++}
++
++#[test]
++#[cfg(unix)]
++fn ownership_panel_close_reopen_same_session() {
++    let mut fixture = Fixture::new();
++    fixture.child = Some(
++        fixture
++            .command()
++            .env_remove("AGENT_BROWSER_LAUNCH_ID")
++            .env("AGENT_BROWSER_DAEMON", "1")
++            .spawn()
++            .unwrap(),
++    );
++    fixture.wait_ready();
++    assert!(fixture.dir.path().join("fixture.owner.json").exists());
++    let close = fixture.request(serde_json::json!({"id":"panel-close", "action":"close", "closeOnly":true, "launchId":null}));
++    assert_eq!(close["data"]["closed"], true, "{close}");
++    let until = Instant::now() + Duration::from_secs(5);
++    loop {
++        if fixture
++            .child
++            .as_mut()
++            .unwrap()
++            .try_wait()
++            .unwrap()
++            .is_some()
++        {
++            break;
++        }
++        assert!(Instant::now() < until);
++        std::thread::sleep(Duration::from_millis(10));
++    }
++    fixture.child = Some(
++        fixture
++            .command()
++            .env_remove("AGENT_BROWSER_LAUNCH_ID")
++            .env("AGENT_BROWSER_DAEMON", "1")
++            .spawn()
++            .unwrap(),
++    );
++    fixture.wait_ready();
++}
++
++#[test]
++#[cfg(unix)]
++fn ownership_close_only_help_never_closes_a_session() {
++    let mut fixture = Fixture::new();
++    fixture.start();
++    fixture.wait_ready();
++    let result = fixture
++        .command()
++        .args(["close-only", "--session", "fixture", "--help"])
++        .status()
++        .unwrap();
++    assert!(result.success());
++    std::thread::sleep(Duration::from_millis(250));
++    assert!(
++        fixture
++            .child
++            .as_mut()
++            .unwrap()
++            .try_wait()
++            .unwrap()
++            .is_none(),
++        "help must never close an existing daemon"
++    );
++}
++
++#[test]
++#[cfg(unix)]
++fn ownership_close_only_unknown_option_never_closes_a_session() {
++    let mut fixture = Fixture::new();
++    fixture.start();
++    fixture.wait_ready();
++    let result = fixture
++        .command()
++        .args(["close-only", "--session", "fixture", "--unknown"])
++        .status()
++        .unwrap();
++    assert_eq!(result.code(), Some(3));
++    assert!(fixture
++        .child
++        .as_mut()
++        .unwrap()
++        .try_wait()
++        .unwrap()
++        .is_none());
++}
++
++#[test]
++#[cfg(unix)]
++fn ownership_e16_no_browser_required_save_closes_without_launch() {
++    let mut fixture = Fixture::new();
++    fixture.start();
++    fixture.wait_ready();
++    let close = fixture.close(true);
++    assert_eq!(close["data"]["closed"], true, "{close}");
++    assert_eq!(close["data"]["saveStatus"], "no_browser", "{close}");
++    assert_eq!(close["data"]["treeExhausted"], true, "{close}");
++    let owner: serde_json::Value = serde_json::from_slice(
++        &std::fs::read(fixture.dir.path().join("fixture.owner.json")).unwrap(),
++    )
++    .unwrap();
++    assert!(owner["chrome"].is_null());
++}
++
++// A syscall-denied stand-in exercises the bounded protocol without claiming
++// the native FUSE/uninterruptible-sleep row.
++#[test]
++#[cfg(target_os = "linux")]
++fn ownership_e22_denied_termination_keeps_hold_and_status_for_retry() {
++    use std::{
++        io::{BufRead, BufReader, Write},
++        os::unix::{fs::PermissionsExt, net::UnixStream},
++    };
++    let mut fixture = Fixture::new();
++    let script = fixture.dir.path().join("chrome-fixture");
++    std::fs::write(&script, "#!/bin/sh\nfor arg do case $arg in --user-data-dir=*) dir=${arg#*=};; esac; done\nprintf '9\\n/devtools/browser/fixture\\n' > \"$dir/DevToolsActivePort\"\nexec sleep 90\n").unwrap();
++    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
++    let mut command = fixture.command();
++    command.env("AGENT_BROWSER_DAEMON", "1");
++    deny_syscall(&mut command, libc::SYS_kill, libc::ESRCH);
++    deny_syscall(&mut command, libc::SYS_pidfd_send_signal, libc::EPERM);
++    fixture.child = Some(command.spawn().unwrap());
++    fixture.wait_ready();
++    let launch = fixture.request(serde_json::json!({"id":"e22", "action":"launch", "noXvfb":true, "headless":true, "executablePath":script}));
++    assert_eq!(launch["success"], false);
++    let owner: serde_json::Value = serde_json::from_slice(
++        &std::fs::read(fixture.dir.path().join("fixture.owner.json")).unwrap(),
++    )
++    .unwrap();
++    let chrome = owner["chrome"]["pid"].as_u64().unwrap() as u32;
++    let stop_path = fixture.dir.path().join("fixture.stop");
++    let start = Instant::now();
++    let mut stop = UnixStream::connect(&stop_path).unwrap();
++    stop.set_read_timeout(Some(Duration::from_secs(13)))
++        .unwrap();
++    writeln!(stop, "{{\"launchId\":\"0123456789abcdef\"}}").unwrap();
++    std::thread::sleep(Duration::from_millis(200));
++    let mut status = UnixStream::connect(&stop_path).unwrap();
++    status
++        .set_read_timeout(Some(Duration::from_secs(2)))
++        .unwrap();
++    writeln!(
++        status,
++        "{{\"launchId\":\"0123456789abcdef\",\"action\":\"status\"}}"
++    )
++    .unwrap();
++    let mut line = String::new();
++    BufReader::new(status).read_line(&mut line).unwrap();
++    assert!(
++        serde_json::from_str::<serde_json::Value>(&line).unwrap()["stopping"]
++            .as_bool()
++            .unwrap()
++    );
++    line.clear();
++    BufReader::new(stop).read_line(&mut line).unwrap();
++    let result: serde_json::Value = serde_json::from_str(&line).unwrap();
++    assert_eq!(result["treeExhausted"], false, "{result}");
++    assert_eq!(result["unconfirmed"], "tree_lingering", "{result}");
++    assert!(start.elapsed() < Duration::from_secs(13));
++    assert!(
++        std::path::Path::new(&format!("/proc/{chrome}")).exists(),
++        "deadline preserves the held child"
++    );
++    // This test owns the fixture: release its pinned child through a pidfd.
++    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, chrome, 0) } as i32;
++    assert!(fd >= 0);
++    assert_eq!(
++        unsafe {
++            libc::syscall(
++                libc::SYS_pidfd_send_signal,
++                fd,
++                libc::SIGKILL,
++                std::ptr::null::<libc::siginfo_t>(),
++                0,
++            )
++        },
++        0
++    );
++    unsafe {
++        libc::close(fd);
++    }
++    let mut retry = UnixStream::connect(stop_path).unwrap();
++    retry
++        .set_read_timeout(Some(Duration::from_secs(13)))
++        .unwrap();
++    writeln!(retry, "{{\"launchId\":\"0123456789abcdef\"}}").unwrap();
++    line.clear();
++    BufReader::new(retry).read_line(&mut line).unwrap();
++    let result: serde_json::Value = serde_json::from_str(&line).unwrap();
++    assert_eq!(result["treeExhausted"], true, "{result}");
++}
++
++#[test]
++#[cfg(target_os = "linux")]
++fn ownership_e22_close_transaction_attempts_one_bounded_stop() {
++    use std::os::unix::fs::PermissionsExt;
++    let mut fixture = Fixture::new();
++    let wrapper = fixture.dir.path().join("chrome-with-helper");
++    let helper = fixture.dir.path().join("escape.pid");
++    std::fs::write(&wrapper, format!("#!/bin/sh\nsetsid /bin/sh -c 'echo $$ > {}; exec sleep 90' </dev/null >/dev/null 2>&1 &\nexec /usr/bin/chromium \"$@\"\n", helper.display())).unwrap();
++    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
++    let mut command = fixture.command();
++    command.env("AGENT_BROWSER_DAEMON", "1");
++    deny_syscall(&mut command, libc::SYS_kill, libc::ESRCH);
++    deny_syscall(&mut command, libc::SYS_pidfd_send_signal, libc::EPERM);
++    fixture.child = Some(command.spawn().unwrap());
++    fixture.wait_ready();
++    let launch = fixture.request(serde_json::json!({"id":"e22", "action":"launch", "noXvfb":true, "headless":true, "executablePath":wrapper, "args":["--no-sandbox"]}));
++    assert_eq!(launch["success"], true, "{launch}");
++    // 25-second fixture request timeout is longer than the allowed one-attempt
++    // bound but shorter than repeated stops from close, Drop and final proof.
++    let started = Instant::now();
++    let close = fixture.close(false);
++    assert!(
++        started.elapsed() < Duration::from_secs(15),
++        "one close must not retry its own ten-second stop"
++    );
++    assert_eq!(close["data"]["closed"], false, "{close}");
++    assert_eq!(close["data"]["unconfirmed"], "tree_lingering", "{close}");
++    let pid: u32 = std::fs::read_to_string(helper)
++        .unwrap()
++        .trim()
++        .parse()
++        .unwrap();
++    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) } as i32;
++    assert!(fd >= 0);
++    assert_eq!(
++        unsafe {
++            libc::syscall(
++                libc::SYS_pidfd_send_signal,
++                fd,
++                libc::SIGKILL,
++                std::ptr::null::<libc::siginfo_t>(),
++                0,
++            )
++        },
++        0
++    );
++    unsafe {
++        libc::close(fd);
++    }
++    let retry = fixture.close(false);
++    assert_eq!(retry["data"]["treeExhausted"], true, "{retry}");
++}
++
++#[test]
++#[cfg(unix)]
++fn ownership_fix_close_all_stale_pid_preserves_sentinel() {
++    maintenance_stale_pid(vec!["--json", "close", "--all"]);
++}
++#[test]
++#[cfg(unix)]
++fn ownership_fix_dashboard_stop_stale_pid_preserves_sentinel() {
++    maintenance_stale_pid(vec!["--json", "dashboard", "stop"]);
++}
++#[cfg(unix)]
++fn maintenance_stale_pid(args: Vec<&str>) {
++    {
++        let fixture = Fixture::new();
++        let mut sentinel = Command::new("sleep").arg("60").spawn().unwrap();
++        let name = if args.contains(&"dashboard") {
++            "dashboard"
++        } else {
++            "fixture"
++        };
++        std::fs::write(
++            fixture.dir.path().join(format!("{name}.pid")),
++            sentinel.id().to_string(),
++        )
++        .unwrap();
++        let output = fixture
++            .command()
++            .env_remove("AGENT_BROWSER_LAUNCH_ID")
++            .args(&args)
++            .output()
++            .unwrap();
++        std::thread::sleep(Duration::from_millis(50));
++        let alive = sentinel.try_wait().unwrap().is_none();
++        let _ = sentinel.kill();
++        let _ = sentinel.wait();
++        assert!(
++            alive,
++            "maintenance {:?} signalled a stale pid: {:?}",
++            args, output
++        );
++    }
++}
+diff --git a/docs/src/app/dashboard/page.mdx b/docs/src/app/dashboard/page.mdx
+index 777591c..f79f24a 100644
+--- a/docs/src/app/dashboard/page.mdx
++++ b/docs/src/app/dashboard/page.mdx
+@@ -163,2 +163,8 @@ The Rust server proxies chat requests from the dashboard to the Vercel AI Gatewa
+   </tbody>
+ </table>
++
++## Ownership maintenance in the Murage vendor build
++
++`close-only --session NAME` connects to an existing daemon. `launch-group --owner-file PATH --status` reads ownership without starting a browser. On Windows, `launch-group --owner-file PATH --stop` opens the recorded named job and confirms zero active processes before reporting exhaustion. Unix external stop is refused; only the owning daemon may stop its held children. Maintenance commands are intentionally absent from browser-automation MCP tools.
++
++`close --all`, `dashboard stop`, and the dashboard stop endpoint require an owned stop channel or job. A standalone dashboard without an ownership record remains available for its owner to close; a PID file alone never authorizes a signal.
+diff --git a/skill-data/core/references/session-management.md b/skill-data/core/references/session-management.md
+index 6049792..4ca95f1 100644
+--- a/skill-data/core/references/session-management.md
++++ b/skill-data/core/references/session-management.md
+@@ -202,2 +202,8 @@ rm /tmp/auth-state.json
+ timeout 60 agent-browser --session long-task get text body
+ ```
++
++## Ownership maintenance in the Murage vendor build
++
++`close-only --session NAME` connects to an existing daemon. `launch-group --owner-file PATH --status` reads ownership without starting a browser. On Windows, `launch-group --owner-file PATH --stop` opens the recorded named job and confirms zero active processes before reporting exhaustion. Unix external stop is refused; only the owning daemon may stop its held children. Maintenance commands are intentionally absent from browser-automation MCP tools.
++
++`close --all`, `dashboard stop`, and the dashboard stop endpoint require an owned stop channel or job. A standalone dashboard without an ownership record remains available for its owner to close; a PID file alone never authorizes a signal.
