@@ -7,7 +7,7 @@
 import { t } from "@/lib/i18n";
 import { useCopyFeedback } from "@/lib/copy-text";
 import { botRole, type RoleBot } from "@/lib/bot-role";
-import { SETTINGS_CARDS, cardLabel } from "@/lib/settings-card-registry";
+import { MERGED_CARD_ANCHORS, SETTINGS_CARDS, cardLabel } from "@/lib/settings-card-registry";
 import { cardForAnchor } from "@/lib/settings-cards";
 import { settingsPageLabel } from "@/lib/settings-sections";
 import { Card } from "./SettingsPrimitives";
@@ -50,7 +50,7 @@ export function chiefName(bots: readonly (RoleBot & { name?: string })[] | undef
 
 /** "General > Advanced > Start at login and run in the background" for a registered card anchor. */
 export function settingsCardPath(anchor: string): { title: string; path: string } | null {
-  const card = cardForAnchor(SETTINGS_CARDS, anchor);
+  const card = cardForAnchor(SETTINGS_CARDS, MERGED_CARD_ANCHORS[anchor] ?? anchor);
   if (!card) return null;
   const title = cardLabel(card);
   return { title, path: [settingsPageLabel(card.section), ...(card.advanced ? [t("settings.l1.advancedPath")] : []), title].join(" > ") };
@@ -58,26 +58,25 @@ export function settingsCardPath(anchor: string): { title: string; path: string 
 
 const actionButton = "min-h-9 rounded-lg bg-control px-3 text-[13px] font-medium text-ink hover:bg-raised focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus";
 
-export function SettingsStub({ title, state, line, action, testId }: {
-  title: string; state: SettingsStubState | "checking" | "could-not-check"; line: string; action?: { label: string; onClick: () => void }; testId?: string;
+export function SettingsStub({ title, state, line, action, testId, inline = false }: {
+  title: string; state: SettingsStubState | "checking" | "could-not-check"; line: string; action?: { label: string; onClick: () => void }; testId?: string; inline?: boolean;
 }) {
-  return (
-    <Card title={title}>
-      <div data-settings-stub={state} data-testid={testId}>
-        <p className="text-[13px] leading-relaxed text-ink-secondary opacity-80">{line}</p>
-        {action && <button type="button" className={`${actionButton} mt-3`} onClick={action.onClick}>{action.label}</button>}
-      </div>
-    </Card>
+  const content = (
+    <div data-settings-stub={state} data-testid={testId}>
+      <p className="text-[13px] leading-relaxed text-ink-secondary opacity-80">{line}</p>
+      {action && <button type="button" className={`${actionButton} mt-3`} onClick={action.onClick}>{action.label}</button>}
+    </div>
   );
+  return inline ? <section aria-label={title}>{content}</section> : <Card title={title}>{content}</Card>;
 }
 
 /** A card that needs this computer, in a window that is not this computer (the Cloud window): its title, where to set
  *  it, and a copy of that path. */
-export function ComputerOnlyStub({ anchor }: { anchor: string }) {
+export function ComputerOnlyStub({ anchor, inline = false }: { anchor: string; inline?: boolean }) {
   const { mark, copy } = useCopyFeedback();
   const found = settingsCardPath(anchor);
   const title = found?.title ?? t("settings.title");
   const path = found?.path ?? title;
-  return <SettingsStub title={title} state="other-surface" line={SETTINGS_STUB_COPY.otherSurface(path)} testId={`settings-stub-${anchor}`}
+  return <SettingsStub title={title} state="other-surface" line={SETTINGS_STUB_COPY.otherSurface(path)} testId={`settings-stub-${anchor}`} inline={inline}
     action={{ label: mark === "copied" ? t("copy.copied") : mark === "failed" ? t("copy.failed") : SETTINGS_STUB_COPY.copyPath, onClick: () => void copy(`${t("settings.title")} > ${path}`) }} />;
 }

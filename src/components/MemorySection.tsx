@@ -3,14 +3,14 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, useStore } from "@/state/store";
 import { t } from "@/lib/i18n";
-import { learningStillPaused } from "@/lib/learning-limit";
+import { LEARNING_LIMIT_ANCHOR, learningStillPaused } from "@/lib/learning-limit";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { useAction } from "@/lib/use-action";
 import { openDeepLink } from "@/lib/deep-link";
 import { useMemoryWaiting } from "@/lib/use-memory-waiting";
 import type { SettingsPage } from "@/lib/settings-pages";
 import {
-  formatTokens, learnAsWeTalk, learnAsWeTalkPatch, learningConnectionLabel, raisedCeiling, requestLearningAction, skippedSliceRetry,
+  learnAsWeTalk, learnAsWeTalkPatch, learningConnectionLabel, raisedCeiling, requestLearningAction, skippedSliceRetry,
   type LearningAction, type LearningEvent, type LearningPage, type LearningSource, type MemoryLearning,
 } from "@/lib/memory-learning";
 import { ceilingStatusLine, learningEventLabel, learningRequestError, memoryStatusLine, skippedSliceMessage } from "@/lib/memory-learning-text";
@@ -53,26 +53,8 @@ function ConnectionSelect({ value, options, run }: { value: string; options: Rea
     <ActionStatus action={action} />
   </div>;
 }
-const millions = (tokens: number) => String(Math.round(tokens / 100_000) / 10);
-const parseMillions = (text: string): number | null => { const n = Number(text); return text.trim() !== "" && Number.isFinite(n) && n >= 0 && n <= 1_000_000 ? Math.round(n * 1_000_000) : null; };
-/** Change the monthly limit: two numbers in millions of tokens, saved with the learning revision. */
-function CeilingEditor({ ceiling, onSave, onCancel }: { ceiling: { input: number; output: number }; onSave: (next: { input: number; output: number }) => Promise<unknown> | unknown; onCancel: () => void }) {
-  const [read, setRead] = useState(millions(ceiling.input)), [written, setWritten] = useState(millions(ceiling.output));
-  const input = parseMillions(read), output = parseMillions(written), valid = input !== null && output !== null;
-  return <div className="mt-3 space-y-3 rounded-lg border border-hairline/40 p-3 text-[13px]">
-    <label className="block space-y-1">{t("memoryPage.ceiling.readLabel")}<input className={`${memoryInputClass} min-h-11`} inputMode="decimal" value={read} onChange={event => setRead(event.target.value)} /></label>
-    <label className="block space-y-1">{t("memoryPage.ceiling.writtenLabel")}<input className={`${memoryInputClass} min-h-11`} inputMode="decimal" value={written} onChange={event => setWritten(event.target.value)} /></label>
-    {!valid && <p role="status" className="text-[12px] text-ink-secondary">{t("memoryPage.ceiling.invalid")}</p>}
-    {valid && (input === 0 || output === 0) && <p role="status" className="text-[12px] text-ink-secondary">{t("memoryPage.ceiling.zero")}</p>}
-    <div className="flex flex-wrap items-start gap-2">
-      <ActionBtn label={t("memoryPage.ceiling.save")} pending={t("memoryPage.saving")} blocked={!valid} success={t("memoryPage.ceiling.saved")} run={() => onSave({ input: input!, output: output! })} />
-      <button type="button" className={buttonClass} onClick={onCancel}>{t("memoryPage.cancel")}</button>
-    </div>
-  </div>;
-}
 /** A retry the server no longer knows (404, MEMORY_SKIPPED_SLICE_UNKNOWN) was retried already. */
 const isAlreadyRetried = (cause: unknown) => (cause as { status?: number } | null)?.status === 404 || (cause instanceof Error && cause.message.includes("MEMORY_SKIPPED_SLICE_UNKNOWN"));
-const percentOf = (used: number, limit: number) => limit > 0 ? Math.min(100, Math.round(100 * used / limit)) : 100;
 const modeSentence = (mode: MemoryStatus["mode"]): string => ({
   active: t("memoryPage.modeSentence.active"),
   capture: t("memoryPage.modeSentence.capture"),
@@ -173,7 +155,6 @@ export function MemorySectionContent({ status, bots, events, cursor, filter, bus
           <ActionSwitch id="memory-procedures-label" label={t("memoryPage.mode.procedures")} checked={settings.automaticProcedures} disabled={busy} run={configure({ automaticProcedures: !settings.automaticProcedures })} success={settings.automaticProcedures ? t("memoryPage.mode.proceduresOff") : t("memoryPage.mode.proceduresOn")} />
         </div>
       </section>
-      <LimitCard ceiling={ceiling} busy={busy} onSave={next => onAction({ action: "configure", ceiling: next, learningRevision: learning.revision })} />
       <section aria-label={t("memoryPage.connection.title")} className="rounded-lg border border-hairline/40 p-3 text-[13px]">
         <h3 id="memory-connection-heading" className="text-[14px] font-medium">{t("memoryPage.connection.title")}</h3>
         <div className="mt-2 space-y-2">
@@ -190,22 +171,6 @@ export function MemorySectionContent({ status, bots, events, cursor, filter, bus
     {workspace}
   </div>;
 }
-function LimitCard({ ceiling, busy, onSave }: { ceiling: NonNullable<MemoryLearning["ceiling"]>; busy: boolean; onSave: (next: { input: number; output: number }) => Promise<unknown> | unknown }) {
-  const [editing, setEditing] = useState(false);
-  const rows = [[t("memoryPage.limit.read"), ceiling.inputUsed, ceiling.input], [t("memoryPage.limit.written"), ceiling.outputUsed, ceiling.output]] as const;
-  return <section aria-label={t("memoryPage.limit.title")} className="rounded-lg border border-hairline/40 p-3 text-[13px]">
-    <h3 id="memory-limit-heading" className="text-[14px] font-medium">{t("memoryPage.limit.title")}</h3>
-    <p className="mt-1 text-[12px] text-ink-secondary">{t("memoryPage.limit.note")}</p>
-    <div className="mt-3 space-y-2">{rows.map(([name, used, limit]) => <div key={name}>
-      <p>{t("memoryPage.limit.row", { name, used: formatTokens(used), limit: formatTokens(limit) })}{" "}<span className="text-ink-secondary">{percentOf(used, limit)}%</span></p>
-      <progress aria-label={t("memoryPage.limit.thisMonth", { name })} className="h-2 w-full accent-accent" max={100} value={percentOf(used, limit)} />
-    </div>)}</div>
-    <p className="mt-2 text-[12px] text-ink-secondary">{t("memoryPage.limit.reset")}</p>
-    {!editing ? <button type="button" data-setting-control="memory-limit-heading" className={`${buttonClass} mt-2`} disabled={busy} onClick={() => setEditing(true)}>{t("memoryPage.limit.change")}</button>
-      : <CeilingEditor ceiling={ceiling} onCancel={() => setEditing(false)} onSave={async next => { await onSave(next); setEditing(false); }} />}
-  </section>;
-}
-
 export default function MemorySection({ advanced }: { advanced?: { section: SettingsPage; open: boolean; onOpenChange: (open: boolean) => void } } = {}) {
   const desktop = useDesktopSurface(), { state, dispatch } = useStore();
   const waiting = useMemoryWaiting();
@@ -280,10 +245,8 @@ export default function MemorySection({ advanced }: { advanced?: { section: Sett
     if (!mounted.current) return;
     void loadHistory(filter, undefined, true).catch(() => { if (mounted.current) setError(t("memoryPage.historyFailed")); });
   };
-  const openAdvanced = () => {
-    adv.onOpenChange(true);
-    window.setTimeout(() => document.getElementById("memory-limit-heading")?.scrollIntoView?.({ block: "center" }), 60);
-  };
+  // The monthly learning limit lives on Usage now (it keeps its id, memory.limit): the way out of a paused or off month goes there.
+  const openAdvanced = () => dispatch({ type: "toggleAppSettings", open: true, section: "usage", anchor: LEARNING_LIMIT_ANCHOR });
   if (desktop !== true) return <p role="status" className="text-[13px] text-ink-secondary">{t("memoryPage.desktopOnly")}</p>;
   return <AdvancedHost><div className="space-y-4">
     {error && <p role="alert" className="break-words text-[13px] text-danger">{error}</p>}
