@@ -12,7 +12,7 @@ export const WINDOWS_BROWSER_PUBLISHER = "Ferrox Labs, LLC";
 export type UnsignedPePin = { bytes: number; sha256: string; checksum: number };
 const bundle = browserBundleSpec("win32-x64");
 export const WINDOWS_BROWSER_IMAGE_PINS = {
-  engine: { bytes: bundle.engine.bytes, sha256: bundle.engine.sha256, checksum: 13824246 },
+  engine: { bytes: bundle.engine.bytes, sha256: bundle.engine.sha256, checksum: 13896884 },
   chrome: { bytes: 209473024, sha256: bundle.chrome.executableSha256, checksum: 0 },
 } satisfies Record<string, UnsignedPePin>;
 
