@@ -25,7 +25,7 @@ describe("optional browser resolver and installation", () => {
     writeFileSync(join(bundle, "chrome/chrome-headless-shell-mac-arm64/chrome-headless-shell"), "signed Chrome", { mode: 0o700 });
     const options = { platform: "darwin" as const, arch: "arm64", env: { MURAGE_RESOURCES_PATH: resources, PATH: bundle } };
     macAdmission.mockReturnValue(true);
-    expect(browserEngineStatus(options)).toMatchObject({ kind: "ready", version: AGENT_BROWSER_VERSION, runtimeVerified: false });
+    expect(browserEngineStatus(options)).toMatchObject({ kind: "ready", version: `${AGENT_BROWSER_VERSION}-omb.2`, runtimeVerified: false });
     expect(macAdmission).toHaveBeenCalledWith(resources, expect.any(String), true);
     macAdmission.mockReturnValue(false);
     expect(resolveAgentBrowserBinary(options)).toBeNull();
@@ -333,9 +333,9 @@ describe("optional browser resolver and installation", () => {
       const asset = resolveAgentBrowserReleaseAsset(platform, arch, musl)!;
       expect(asset.sha256).toMatch(/^[a-f0-9]{64}$/u);
       expect(asset.bytes).toBeGreaterThan(12_000_000);
-      expect(agentBrowserReleaseUrl(asset)).toBe(platform === "win32"
-        ? "https://github.com/milind-soni/OpenMausBot/releases/download/browser-engine-v0.36.0-omb.1/agent-browser-win32-x64-0.36.0-omb.1.exe"
-        : `https://github.com/vercel-labs/agent-browser/releases/download/v0.36.0/${asset.asset}`);
+      expect(asset.version).toBe("0.36.0-omb.2");
+      expect(agentBrowserReleaseUrl(asset)).toBe(`https://github.com/FerroxLabs/murage/releases/download/browser-engine-v0.36.0-omb.2/${asset.asset}`);
+      expect(asset.asset).toBe(`agent-browser-${asset.target}-0.36.0-omb.2${platform === "win32" ? ".exe" : ""}`);
     }
   });
   it("promotes only exact size/digest downloads, preserving an existing binary on rejection", async () => {

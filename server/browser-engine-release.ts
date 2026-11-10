@@ -1,7 +1,7 @@
 // The pinned agent-browser release the harness downloads for the bots'
 // browser (docs/plans/browser-engine.md). Digests were computed from the
-// official GitHub assets on 2026-09-06, except the explicitly versioned Windows
-// vendor build below. Update pins through a reviewed native end-to-end run.
+// official GitHub assets on 2026-09-06; the pins below are now all the Murage
+// vendor build (omb.2) with the control-token patch, hashed from its release assets. Update pins through a reviewed native end-to-end run.
 // The Dockerfile retains the official Linux version.
 import { CLOUD_BROWSER_PINS } from "./cloud-home/browser-pins.ts";
 export const AGENT_BROWSER_VERSION = "0.36.0";
@@ -19,39 +19,42 @@ export interface AgentBrowserReleaseAsset {
   url?: string;
 }
 
+/** The Murage vendor build of the pinned engine: agent-browser 0.36.0 plus the control-token patch (release browser-engine-v0.36.0-omb.2 on FerroxLabs/murage). */
+const VENDOR_REVISION = `${AGENT_BROWSER_VERSION}-omb.2`;
+function vendorAsset(target: string, bytes: number, sha256: string): AgentBrowserReleaseAsset {
+  const asset = `agent-browser-${target}-${VENDOR_REVISION}${target.startsWith("win32") ? ".exe" : ""}`;
+  return { target, asset, version: VENDOR_REVISION, bytes, sha256,
+    url: `https://github.com/FerroxLabs/murage/releases/download/browser-engine-v${VENDOR_REVISION}/${asset}` };
+}
+
 const RELEASES = new Map<string, AgentBrowserReleaseAsset>([
   [
     "darwin-arm64",
-    { target: "darwin-arm64", asset: "agent-browser-darwin-arm64", sha256: "b2106ab39db0838e7b1772f7f26f760518de56d09053150c56f9dddf15af997d", bytes: 12363200 },
+    vendorAsset("darwin-arm64", 12462368, "0807f4251c7488d6cf3eb00e60d18e9aac5f5024442d6985af84be2b67a39f08"),
   ],
   [
     "darwin-x64",
-    { target: "darwin-x64", asset: "agent-browser-darwin-x64", sha256: "45d9ac061a7d72e61eaff905326e2e19365f4dadb12142ea2f2d76d84689c708", bytes: 13510280 },
+    vendorAsset("darwin-x64", 13578480, "9e222c1dc7dc5ab8f939430e3d4fbb103bb85571cf6774ec249341af6f8a8f75"),
   ],
   [
     "linux-arm64",
-    { target: "linux-arm64", asset: "agent-browser-linux-arm64", sha256: "aeb556addca3903601a433de1acad3ace1c9c61d170084bf58d875884599a990", bytes: 12442720 },
+    vendorAsset("linux-arm64", 12510368, "641db91fd1ce133962bd3aba9ab2e19d347a4e73da7bed7fc43c6c525ae24267"),
   ],
   [
     "linux-musl-arm64",
-    { target: "linux-musl-arm64", asset: "agent-browser-linux-musl-arm64", sha256: "1ca7e003c9cb185f174fc81e51a609db27c77e3bfe00a0edff60688f8cd14f88", bytes: 12297000 },
+    vendorAsset("linux-musl-arm64", 12411528, "b0094f4149da76cbc79a3270933ec196c8dd6b4dbc5993455ab5c098a8cf7ed8"),
   ],
   [
     "linux-musl-x64",
-    { target: "linux-musl-x64", asset: "agent-browser-linux-musl-x64", sha256: "a20cc2a5202a48f5820372803dedbcd5f556dff7a89421f1b0f2612962b10718", bytes: 13995728 },
+    vendorAsset("linux-musl-x64", 14415056, "c00fd67eb2d08500835f9c64db743949eee0151bd0817ac00121bc2aaa2bcc7e"),
   ],
   [
     "linux-x64",
-    { target: "linux-x64", asset: "agent-browser-linux-x64", sha256: "56d15181e51e00213f907fcf39707cfc76bfa804ff20f5a9373661c73f96de5e", bytes: 14156776 },
+    vendorAsset("linux-x64", 14276928, "bdf134261a5310c008f763871ddc01f0110018f94a5af9a689f152fde3b53d0f"),
   ],
   [
     "win32-x64",
-    {
-      target: "win32-x64", version: "0.36.0-omb.1",
-      asset: "agent-browser-win32-x64-0.36.0-omb.1.exe",
-      url: "https://github.com/milind-soni/OpenMausBot/releases/download/browser-engine-v0.36.0-omb.1/agent-browser-win32-x64-0.36.0-omb.1.exe",
-      sha256: "33bee834f6a6072ec8688b0914726e0262874d758f69f27e8baf7eaac6b5ed15", bytes: 13806080,
-    },
+    vendorAsset("win32-x64", 13874176, "85512d1c06068910d6fe5ab59d59bc2320ad786fc07861fb1036ee32ad25d21c"),
   ],
 ]);
 
@@ -61,6 +64,13 @@ export function agentBrowserReleaseUrl(asset: AgentBrowserReleaseAsset): string 
 
 export function agentBrowserReleaseVersion(asset: AgentBrowserReleaseAsset | null): string {
   return asset?.version ?? AGENT_BROWSER_VERSION;
+}
+
+/** THE rule for what `agent-browser --version` may print for an asset: the upstream version or that asset's own
+ * reviewed vendor version, and nothing else (an older vendor revision must not pass). The launch check and the
+ * vendor smoke both call this one function, so they cannot drift apart. */
+export function agentBrowserVersionOutputAccepted(output: string, asset: AgentBrowserReleaseAsset | null): boolean {
+  return output === `agent-browser ${AGENT_BROWSER_VERSION}` || output === `agent-browser ${agentBrowserReleaseVersion(asset)}`;
 }
 
 /** The asset for this machine, or null where Vercel publishes none. */
