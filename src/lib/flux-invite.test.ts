@@ -225,6 +225,8 @@ describe("nothing in the app is gated on a Flux key", () => {
     // same bar: bot email is work the key performs (the mail account lives in Flux), the card and the section render with
     // or without a key, and nothing is hidden or removed; the key only changes the explanation (SETTINGS-UX-1011 S1).
     "components/BotEmailSettings.tsx",
+    // settings/pages/BotEmailReadout.tsx (1.0.19) is the phone and Cloud readout of the same Bot email card: it words one line from the saved state and hides nothing.
+    "components/settings/pages/BotEmailReadout.tsx",
     // bot-email.ts signInFluxAgain reads the /api/flux-connection answer's `configured` only to pick the sign-in action
     // ("replace" the saved key or "connect" a first one) for the Bot email stub's Sign in with Flux (1.0.11
     // FLUX-SIGNIN-DEFAULT). It gates nothing: the stub and the section render either way.

@@ -12,6 +12,7 @@ import { syncBuiltinESMExports } from "node:module";
 import test from "node:test";
 import { acquireDataDirLease, acquireDataDirLeaseForProcess, dataDirLeasePaths, inspectDataDirLease } from "./data-dir-lease.mjs";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
+import { WINDOWS_NATIVE_VERSION } from "./windows-native.mjs";
 
 const MODULE = new URL("./data-dir-lease.mjs", import.meta.url).href;
 const PRIVATE_ENV = "MURAGE_INTERNAL_DATA_DIR_LEASE";
@@ -88,7 +89,7 @@ const WORKER = `
   if (process.env.LEASE_TEST_PS !== undefined) {
     const table = JSON.parse(process.env.LEASE_TEST_PS);
     const native = {
-      version: () => 10,
+      version: () => ${WINDOWS_NATIVE_VERSION},
       processStart(pid) {
         probes.push({ mode: 'sync', pid });
         const entry = pid === process.pid && table.self !== undefined ? table.self.replace('SELF_PID', String(process.pid)) : table[String(pid)];
