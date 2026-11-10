@@ -79,7 +79,8 @@ export function validateEngineExclusionResource(resources, platform, arch = proc
  * whose addon lacks one is refused (ENGINE_EXCLUSION_RESOURCE_FUNCTIONS): a missing call must fail the build, never degrade the app.
  * Kept equal to server/engine-exclusion.ts's HANDLE_FUNCTIONS + WINDOWS_NATIVE_FUNCTIONS, plus environment and cwdOf (engine-closed.ts) (engine-exclusion-r20.test.ts). */
 export const WINDOWS_ADDON_FUNCTIONS = ["openFile", "handleRead", "handleWrite", "handleSync", "handleLock", "handleMarkDelete", "handleId", "handleSize", "handleClose", "removeTree",
-  "authenticode", "jobCreate", "jobAssign", "jobClose", "jobStop", "processStart", "driveInfo", "fileOwnerSid", "accountSid", "machineSid", "domainSids", "dropShutdownPrivileges", "speechVoices", "speechToWave", "environment", "cwdOf"];
+  "authenticode", "jobCreate", "jobAssign", "jobClose", "jobStop", "processStart", "driveInfo", "fileOwnerSid", "accountSid", "machineSid", "domainSids", "dropShutdownPrivileges", "speechVoices", "speechToWave", "environment", "cwdOf",
+  "anchorBegin", "anchorOpen", "anchorList", "anchorRead", "anchorStat", "anchorClose", "anchorEnd"];
 
 /** macOS and Linux: the calls the server makes on top of lock / processes / renameNoReplace (engine-exec.ts writers, engine-fs.ts fullSync,
  * engine-redo.ts bootId, engine-closed.ts environment). A package whose addon lacks one is refused too. Every export the code calls is on this list or on
@@ -99,7 +100,7 @@ export const requiredAddonFunctions = (platform) => (platform === "win32" ? WIND
  * the output; it throws when the process fails. Returns "loaded". Throws ENGINE_EXCLUSION_RESOURCE_UNLOADABLE / _VERSION / _UNTESTED. */
 export function loadEngineExclusionResource(file, platform, arch, expectedVersion, run, binary, host = { platform: process.platform, arch: process.arch }) {
   if (!binary || typeof run !== "function") throw new Error("ENGINE_EXCLUSION_RESOURCE_UNTESTED");
-  const code = "const a=require(process.argv[1]);const l=a.processes();const w=" + JSON.stringify(requiredAddonFunctions(platform)) + ";process.stdout.write(JSON.stringify([a.version(),typeof a.processes,typeof a.lock,typeof a.renameNoReplace,Array.isArray(l)&&l.some(p=>p&&p.pid===process.pid),w.filter(n=>typeof a[n]!==\"function\")]))";
+  const code = "const a=require(process.argv[1]);const l=a.processes();const w=" + JSON.stringify(requiredAddonFunctions(platform)) + ";process.stdout.write(JSON.stringify([a.version(),typeof a.processes,typeof a.lock,typeof a.renameNoReplace,Array.isArray(l)&&l.some(p=>p&&p.pid===process.pid),w.filter(n=>typeof a[n]!==\"function\"),[\"anchorTestStall\",\"anchorTestFail\"].filter(n=>typeof a[n]!==\"undefined\")]))";
   let command = binary, args = ["-e", code, file];
   if (platform !== host.platform) throw new Error("ENGINE_EXCLUSION_RESOURCE_UNTESTED");
   if (arch !== host.arch) {
@@ -112,5 +113,7 @@ export function loadEngineExclusionResource(file, platform, arch, expectedVersio
   try { answer = JSON.parse(String(out)); } catch { console.error("engine-exclusion answer unreadable:", JSON.stringify(String(out).slice(0, 4000))); throw new Error("ENGINE_EXCLUSION_RESOURCE_UNLOADABLE"); }
   if (answer[0] !== expectedVersion || answer[1] !== "function" || answer[2] !== "function" || answer[3] !== "function" || answer[4] !== true) throw new Error("ENGINE_EXCLUSION_RESOURCE_VERSION");
   if (!(Array.isArray(answer[5]) && answer[5].length === 0)) { console.error("engine-exclusion addon lacks:", JSON.stringify(answer[5])); throw new Error("ENGINE_EXCLUSION_RESOURCE_FUNCTIONS"); }
+  // R16: the test-hooks build (anchorTestStall / anchorTestFail) is never packaged.
+  if (Array.isArray(answer[6]) && answer[6].length > 0) { console.error("engine-exclusion addon exports test hooks:", JSON.stringify(answer[6])); throw new Error("ENGINE_EXCLUSION_RESOURCE_TEST_HOOKS"); }
   return "loaded";
 }
