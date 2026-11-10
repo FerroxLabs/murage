@@ -2269,3 +2269,5 @@ server/nl-win-1018.test.ts	all	on Windows a bot command inside its own folder ru
 server/routines-fence-race.test.ts	all	a channel run that follows a refused turn rebuild settles once by token; no false task-failed notice and no duplicate answer
 server/win-pwsh-1018.test.ts	all	a PowerShell command is checked on the shell that will run it; a shell found by a path that is not the trusted one is refused
 server/win-pwsh-env-1018.test.ts	all	the PowerShell check reads the same environment the bot shell gets
+server/browser-native-relay.ownership.test.ts	linux	browser shutdown checks launch ownership and preserves unrelated processes after close refusal
+server/browser-owned-close.windows.test.ts	all	browser job fallback uses the ownership-checked engine command and requires exhaustion proof

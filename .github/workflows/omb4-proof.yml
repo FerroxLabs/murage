@@ -1,0 +1,680 @@
+name: OMB4 real OS ownership receipts
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['ci/try-*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: omb4-proof-${{ github.ref }}
+  cancel-in-progress: false
+
+# Artifact-only: never publishes, updates engine pins, or certifies S2/UI promotion.
+# The six matrix expansions each build and execute the CLI on their named OS.
+# Alpine uses an explicit Docker container so checkout/upload's glibc Node runtime
+# does not masquerade as a musl test. No Rust command runs outside that container.
+jobs:
+  proof:
+    name: OMB4 / ${{ matrix.lane }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 29
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {lane: macos-arm64, runner: macos-15}
+          - {lane: macos-x64, runner: macos-15-intel}
+          - {lane: windows-x64, runner: windows-latest}
+          - {lane: ubuntu-glibc, runner: ubuntu-latest}
+          - {lane: alpine-musl, runner: ubuntu-latest}
+          - {lane: linux-pid-reuse-fuse, runner: ubuntu-latest}
+    defaults:
+      run:
+        shell: bash
+    env:
+      LANE: ${{ matrix.lane }}
+      CARGO_BUILD_JOBS: '3'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      RUST_BACKTRACE: '1'
+      # Pinned Alpine userspace, including Node 24. This is not an action.
+      ALPINE_IMAGE: node:24-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Prepare exact candidate, portable fixture adapters, and receipt driver
+        run: |
+          set -euo pipefail
+          mkdir -p proof/logs proof/bin proof/fixtures
+          git merge-base --is-ancestor 12267021fe8eb530d48511b2d54f5e3bbf184e52 HEAD
+          git rev-parse HEAD > proof/logs/workflow-source.txt
+          git diff 12267021fe8eb530d48511b2d54f5e3bbf184e52 -- third_party/browser > proof/logs/candidate-diff.txt
+          test ! -s proof/logs/candidate-diff.txt
+          cat > proof/prepare.py <<'PY'
+          import hashlib, io, os, pathlib, platform, subprocess, tarfile, urllib.request
+          root = pathlib.Path.cwd()
+          out = root / 'proof'
+          src = out / 'engine'
+          src.mkdir()
+          def digest(data): return hashlib.sha256(data).hexdigest()
+          url = 'https://codeload.github.com/vercel-labs/agent-browser/tar.gz/eb05921bad874cd2a1b4fa5d1149f1ed26576cae'
+          data = urllib.request.urlopen(url, timeout=90).read()
+          assert len(data) == 1904718
+          assert digest(data) == 'ed24a72a5260d9c1ea454cd849c44159bac570a6939ac645e4c5bdb98a421646'
+          with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as archive:
+              # Pinned archive; strip only the common source root.
+              for item in archive.getmembers():
+                  parts = pathlib.PurePosixPath(item.name).parts[1:]
+                  if not parts: continue
+                  assert '..' not in parts and not item.issym() and not item.islnk()
+                  item.name = str(pathlib.PurePosixPath(*parts))
+                  archive.extract(item, src)
+          # Nested source needs its own root: otherwise git apply discovers the
+          # Murage checkout above it and silently skips paths outside this prefix.
+          subprocess.run(['git', 'init', '--quiet', str(src)], check=True)
+          patches = [
+              ('agent-browser-windows-stdio.patch', '27a268a90de47603a473daefb5679ef9ddde3fad9152d52b04e563b3e192c9a9'),
+              ('patches/murage-control-token.fix1.patch', 'e3ee2f219962306361d31e42fc3da3e83bc4a98e4b25fecd9445ae3cb2d015f7'),  # gitleaks:allow (sha256 of a patch file, not a secret)
+              ('patches/murage-windows-no-console.patch', '39455501865c2794c3ceb41cfba6bfde452cbdbb758ac6b370b84004733d65c0'),
+              ('patches/murage-window-ownership.patch', 'ccd8b3d6a9a46ab30642f4ddb324047b29378938a6dbe8e2734e25f5a6f9fd47')]
+          if platform.system() != 'Windows': patches = [patches[1], patches[3]]
+          with (out / 'logs/source-sha256.txt').open('w') as receipt:
+              receipt.write(digest(data) + ' upstream.tar.gz\n')
+              for name, expected in patches:
+                  patch = root / 'third_party/browser' / name
+                  assert digest(patch.read_bytes()) == expected, name
+                  receipt.write(expected + ' ' + name + '\n')
+                  subprocess.run(['git', 'apply', '--check', str(patch)], cwd=src, check=True)
+                  subprocess.run(['git', 'apply', '--whitespace=error-all', str(patch)], cwd=src, check=True)
+          # Stamp only this disposable CI source. Keep both Cargo files consistent.
+          old = '0.36.0-omb.1' if platform.system() == 'Windows' else '0.36.0'
+          for name in ['Cargo.toml', 'Cargo.lock']:
+              path = src / 'cli' / name
+              text = path.read_text()
+              needle = 'name = "agent-browser"\nversion = "' + old + '"'
+              assert text.count(needle) == 1
+              path.write_text(text.replace(needle, 'name = "agent-browser"\nversion = "0.36.0-omb4-proof"'))
+          # Archive the exact unadapted candidate before modifying TESTS ONLY.
+          with tarfile.open(out / 'candidate-source.tar.gz', 'w:gz') as archive:
+              archive.add(src, arcname='engine')
+          def edit(name, before, after):
+              path = src / 'cli' / name
+              text = path.read_text()
+              assert before in text, (name, before)
+              path.write_text(text.replace(before, after))
+          # DONE2's stale-pid and poison tests are Unix-gated solely for sleep.
+          # Enable identical assertions on Windows with a native sentinel process.
+          if platform.system() == 'Windows':
+              for name, module in [
+                  ('src/native/cdp/chrome.rs', 'ownership_fix_poison_tests'),
+                  ('src/native/ownership.rs', 'ownership_fix_poison_tests'),
+                  ('src/native/stream/dashboard.rs', 'ownership_fix_tests')]:
+                  edit(name, '#[cfg(all(test, unix))]\nmod ' + module,
+                       '#[cfg(test)]\nmod ' + module)
+              name = 'tests/ownership.rs'
+              for test in ['ownership_fix_close_all_stale_pid_preserves_sentinel',
+                           'ownership_fix_dashboard_stop_stale_pid_preserves_sentinel']:
+                  edit(name, '#[cfg(unix)]\nfn ' + test, 'fn ' + test)
+              edit(name, '#[cfg(unix)]\nfn maintenance_stale_pid', 'fn maintenance_stale_pid')
+              edit(name, '.env("PATH", "/usr/bin:/bin")',
+                   '.env("PATH", std::env::var_os("PATH").unwrap())\n'
+                   '            .env("SystemRoot", std::env::var_os("SystemRoot").unwrap())\n'
+                   '            .env("USERPROFILE", self.dir.path())')
+              for name in ['tests/ownership.rs', 'src/native/cdp/chrome.rs', 'src/native/stream/dashboard.rs']:
+                  path = src / 'cli' / name
+                  text = path.read_text()
+                  # Restrict replacement to the appended ownership-fix fixtures.
+                  at = text.index('fn maintenance_stale_pid') if name.startswith('tests/') else text.index('mod ownership_fix_')
+                  tail = text[at:]
+                  import re
+                  tail, count = re.subn(r'Command::new\("sleep"\)\s*\.arg\("60"\)',
+                      'Command::new("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 60"])', tail)
+                  assert count == 1, (name, count)
+                  path.write_text(text[:at] + tail)
+          # A Unix-gated fixture reads /proc: keep it Linux-only, visibly.
+          edit('tests/ownership.rs', '#[cfg(unix)]\nfn ownership_e23_inherited_sigchld_ignore_is_reset',
+               '#[cfg(target_os = "linux")]\nfn ownership_e23_inherited_sigchld_ignore_is_reset')
+          # Extra real-kernel fixtures, compiled only into the test binary.
+          extra = out / 'kernel-tests.rs'
+          with (src / 'cli/src/native/ownership/behavior_tests.rs').open('a') as target:
+              target.write(extra.read_text())
+          for os_name, module, fixture in [('Darwin', 'macos', 'mac-tests.rs'), ('Windows', 'windows', 'windows-tests.rs')]:
+              if platform.system() == os_name:
+                  with (src / ('cli/src/native/ownership/' + module + '.rs')).open('a') as target:
+                      target.write((out / fixture).read_text())
+          with (out / 'logs/prepared-source-sha256.txt').open('w') as receipt:
+              for path in sorted((src / 'cli').rglob('*')):
+                  if path.is_file(): receipt.write(digest(path.read_bytes()) + ' ' + str(path.relative_to(src)) + '\n')
+          with tarfile.open(out / 'prepared-source.tar.gz', 'w:gz') as archive:
+              archive.add(src, arcname='engine')
+          print('Prepared', platform.platform(), platform.machine(), os.environ['LANE'])
+          PY
+          cat > proof/mac-tests.rs <<'RS'
+
+          #[cfg(test)]
+          mod native_proof_tests {
+              use super::*;
+              use std::os::unix::process::CommandExt;
+              struct Children(Vec<Child>);
+              impl Drop for Children {
+                  fn drop(&mut self) {
+                      for child in &mut self.0 { let _ = child.kill(); let _ = child.wait(); }
+                  }
+              }
+              #[test]
+              fn ownership_native_mac_libproc_small_and_saturated_group() {
+                  let mut children = Children(Vec::new());
+                  let mut group = 0;
+                  for count in 1..=257 {
+                      let child = Command::new("/bin/sleep").arg("60").process_group(group).spawn().unwrap();
+                      if group == 0 { group = child.id() as i32; }
+                      children.0.push(child);
+                      if count <= 3 || count == 256 || count == 257 {
+                          let members = group_members(group).unwrap();
+                          assert_eq!(members.len(), count, "native libproc must not truncate at {count}");
+                          for child in &children.0 { assert!(members.contains(&child.id())); }
+                          eprintln!("LIBPROC group={group} held={count} enumerated={}", members.len());
+                      }
+                  }
+              }
+          }
+          RS
+          cat > proof/windows-tests.rs <<'RS'
+
+          #[cfg(test)]
+          mod native_proof_tests {
+              use super::*;
+              use std::os::windows::io::AsRawHandle;
+              struct Children(Vec<Child>);
+              impl Drop for Children {
+                  fn drop(&mut self) {
+                      for child in &mut self.0 { let _ = child.kill(); let _ = child.wait(); }
+                  }
+              }
+              fn sentinel() -> Child {
+                  Command::new("powershell.exe")
+                      .args(["-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 60"])
+                      .spawn().unwrap()
+              }
+              #[test]
+              fn ownership_native_windows_job_members_and_external_fallback() {
+                  let id = uuid::Uuid::new_v4().simple().to_string()[..16].to_owned();
+                  let name = format!("Local\\agent-browser-{id}");
+                  let wide_name = wide(std::ffi::OsStr::new(&name));
+                  let raw = unsafe { CreateJobObjectW(std::ptr::null(), wide_name.as_ptr()) };
+                  assert_ne!(raw, 0);
+                  let job = Handle(raw);
+                  let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+                  limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                  assert_ne!(unsafe { SetInformationJobObject(job.0, JobObjectExtendedLimitInformation,
+                      &limits as *const _ as *const _, std::mem::size_of_val(&limits) as u32) }, 0);
+                  let mut children = Children(vec![sentinel()]); // unrelated, never assigned
+                  for _ in 0..3 {
+                      children.0.push(sentinel());
+                      let child = children.0.last().unwrap();
+                      assert_ne!(unsafe { AssignProcessToJobObject(job.0, child.as_raw_handle() as HANDLE) }, 0);
+                  }
+                  let listed = members(job.0).unwrap();
+                  assert_eq!(listed.len(), 3, "decode the actual multi-entry Windows job buffer");
+                  assert!(!listed.contains(&children.0[0].id()));
+                  for child in &children.0[1..] { assert!(listed.contains(&child.id())); }
+                  let daemon = identity(children.0[1].id()).unwrap();
+                  let dir = tempfile::tempdir().unwrap();
+                  let owner = dir.path().join("owner.json");
+                  fs::write(&owner, serde_json::to_vec(&json!({"v":1, "session":"fixture", "launchId":id,
+                      "daemon":daemon, "chrome":null, "group":{"kind":"job", "name":name}})).unwrap()).unwrap();
+                  let output = Command::new(std::env::var_os("OMB4_CLI").unwrap())
+                      .args(["--json", "launch-group", "--stop", "--owner-file"])
+                      .arg(&owner).output().unwrap();
+                  eprintln!("JOB members={listed:?} fallback={} stdout={} stderr={}", output.status,
+                      String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+                  assert!(output.status.success());
+                  assert!(members(job.0).unwrap().is_empty(), "named-job fallback must observe exhaustion");
+                  for child in &mut children.0[1..] { assert!(child.try_wait().unwrap().is_some()); }
+                  assert!(children.0[0].try_wait().unwrap().is_none(), "unrelated sentinel survives");
+                  drop(job);
+                  assert_eq!(status(&name).unwrap()["jobGone"], true);
+              }
+          }
+          RS
+          cat > proof/kernel-tests.rs <<'RS'
+
+          // CI-only real-kernel witnesses. No production syscall replacement.
+          #[test]
+          fn ownership_native_pid_reuse_refuses_sentinel() {
+              if std::env::var_os("OMB4_PID_NAMESPACE").is_none() {
+                  panic!("requires private PID namespace and namespace-local ns_last_pid");
+              }
+              use std::io::{BufRead, BufReader, Write};
+              // Parent stays alive so its reused child is NOT our direct child.
+              // All coordination uses held pipes, never a numeric kill for cleanup.
+              let script = r#"
+          import os, sys
+          def spawn():
+              pid = os.fork()
+              if pid == 0:
+                  sys.stdin.close()
+                  while True: __import__('time').sleep(1)
+              print(pid, flush=True)
+              return pid
+          first = spawn()
+          sys.stdin.readline()
+          fd = os.pidfd_open(first)
+          __import__('signal').pidfd_send_signal(fd, 9)
+          os.waitpid(first, 0)
+          os.close(fd)
+          # Cross the allocator boundary, then force reuse of the stale nominee.
+          maximum = int(open('/proc/sys/kernel/pid_max').read())
+          open('/proc/sys/kernel/ns_last_pid', 'w').write(str(maximum - 2))
+          high = os.fork()
+          if high == 0: os._exit(0)
+          os.waitpid(high, 0)
+          low = os.fork()
+          if low == 0: os._exit(0)
+          os.waitpid(low, 0)
+          assert high >= maximum - 1 and low < high, (maximum, high, low)
+          print('WRAP %s %s %s' % (maximum, high, low), flush=True)
+          open('/proc/sys/kernel/ns_last_pid', 'w').write(str(first - 1))
+          second = spawn()
+          assert first == second, (first, second)
+          sys.stdin.readline()
+          fd = os.pidfd_open(second)
+          __import__('signal').pidfd_send_signal(fd, 9)
+          os.waitpid(second, 0)
+          os.close(fd)
+          "#;
+              let mut parent = Command::new("python3").args(["-u", "-c", script])
+                  .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().unwrap();
+              let mut input = parent.stdin.take().unwrap();
+              let mut output = BufReader::new(parent.stdout.take().unwrap());
+              let mut line = String::new();
+              output.read_line(&mut line).unwrap();
+              let old: u32 = line.trim().parse().unwrap();
+              let stale = PidFd::open(old).unwrap();
+              let old_start = proc_stat(old).unwrap().start;
+              // Start tokens must differ even on a coarse clock.
+              std::thread::sleep(Duration::from_millis(50));
+              writeln!(input, "recycle").unwrap();
+              line.clear(); output.read_line(&mut line).unwrap();
+              assert!(line.starts_with("WRAP "), "{line}");
+              eprintln!("{line}");
+              line.clear(); output.read_line(&mut line).unwrap();
+              let reused: u32 = line.trim().parse().unwrap();
+              assert_eq!(old, reused, "actual kernel reuse is mandatory");
+              assert_ne!(old_start, proc_stat(reused).unwrap().start);
+              assert!(!stale.alive().unwrap(), "old descriptor must stay exited");
+              let sentinel = PidFd::open(reused).unwrap();
+              assert!(sentinel.alive().unwrap());
+              let mut held = HeldChild::new(child(), true);
+              let chrome = held.child.id();
+              HOOKS.with(|h| h.borrow_mut().children = Some(vec![chrome, reused]));
+              let result = stop_linux(&mut held, Instant::now() + Duration::from_millis(200));
+              assert!(!result.closed(), "live kernel child prevents exhaustion");
+              assert_eq!(signals(), 0, "reused nonchild must not be signalled");
+              assert!(sentinel.alive().unwrap(), "reused unrelated sentinel survived");
+              eprintln!("REUSE pid={reused} old_start={old_start} new_start={} signals={} sentinel_alive=true",
+                  proc_stat(reused).unwrap().start, signals());
+              // Cleanup through the parent's owned pidfd and our held Child.
+              writeln!(input, "finish").unwrap();
+              assert!(parent.wait().unwrap().success());
+              let _ = held.child.kill(); let _ = held.child.wait(); held.pgid = None;
+          }
+
+          #[test]
+          fn ownership_native_fuse_d_state_retains_pin_and_retries() {
+              use std::os::unix::process::CommandExt;
+              let base = PathBuf::from(std::env::var_os("OMB4_FUSE_ROOT").expect("FUSE mount required"));
+              let mut command = Command::new("sh");
+              command.args(["-c", "exec 3<\"$1/stall\"; exec 3<&-", "fuse-child"])
+                  .arg(base.join("mount"));
+              unsafe { command.pre_exec(|| {
+                  if libc::setpgid(0, 0) != 0 { return Err(io::Error::last_os_error()); }
+                  Ok(())
+              }); }
+              let mut held = HeldChild::new(command.spawn().unwrap(), true);
+              let pid = held.child.id();
+              let until = Instant::now() + Duration::from_secs(10);
+              while !base.join("entered").exists() {
+                  assert!(Instant::now() < until, "FUSE flush was not entered");
+                  std::thread::sleep(Duration::from_millis(10));
+              }
+              for attempt in 0..2 {
+                  let start = Instant::now();
+                  let result = stop_linux(&mut held, start + Duration::from_millis(250));
+                  assert!(start.elapsed() < Duration::from_secs(2));
+                  assert!(!result.closed());
+                  assert_eq!(result.unconfirmed.as_deref(), Some("tree_lingering"));
+                  assert!(held.pgid.is_some(), "same leader pin retained");
+                  assert_eq!(proc_stat(pid).unwrap().state, 'D', "ordinary stalled FUSE is insufficient");
+                  let status = fs::read_to_string(format!("/proc/{pid}/status")).unwrap();
+                  let pending = status.lines().filter(|s| s.starts_with("SigPnd:") || s.starts_with("ShdPnd:"))
+                      .map(|s| u64::from_str_radix(s.split_whitespace().nth(1).unwrap(), 16).unwrap())
+                      .fold(0, |a, b| a | b);
+                  assert_ne!(pending & (1 << (libc::SIGKILL - 1)), 0, "SIGKILL must be pending in D state");
+                  eprintln!("FUSE attempt={attempt} pid={pid} result={result:?} wchan={}\n{status}",
+                      fs::read_to_string(format!("/proc/{pid}/wchan")).unwrap());
+              }
+              fs::write(base.join("release"), b"release").unwrap();
+              let result = stop_linux(&mut held, Instant::now() + Duration::from_secs(5));
+              assert!(result.tree_exhausted && result.closed(), "release must reach kernel ECHILD: {result:?}");
+          }
+          RS
+          cat > proof/run.py <<'PY'
+          import hashlib, json, os, pathlib, platform, re, shutil, subprocess, sys, tarfile, tempfile, time
+          root = pathlib.Path(__file__).resolve().parent
+          src = root / 'engine'
+          logs = root / 'logs'
+          cli = src / 'cli'
+          # AF_UNIX paths on macOS/Linux are short. Test names beneath the long
+          # checkout path can exceed sun_path before the daemon ever binds.
+          fixtures = pathlib.Path(tempfile.mkdtemp(prefix='o4-', dir='/tmp' if os.name != 'nt' else None))
+          # rustup must keep its installed toolchain when fixtures get a private HOME.
+          os.environ.setdefault('RUSTUP_HOME', str(pathlib.Path.home() / '.rustup'))
+          os.environ.setdefault('CARGO_HOME', str(pathlib.Path.home() / '.cargo'))
+          def run(args, name, cwd=cli, timeout=900, env=None):
+              args = [shutil.which(str(args[0])) or str(args[0]), *args[1:]]
+              print('+', ' '.join(map(str, args)), flush=True)
+              with (logs / (name + '.log')).open('w') as log:
+                  log.write('+ ' + ' '.join(map(str, args)) + '\n'); log.flush()
+                  result = subprocess.run(args, cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=timeout)
+              print((logs / (name + '.log')).read_text(errors='replace')[-6000:], flush=True)
+              if result.returncode: raise RuntimeError((name, result.returncode))
+              return (logs / (name + '.log')).read_text(errors='replace')
+          lane = os.environ['LANE']
+          receipts = {'lane': lane, 'os': platform.platform(), 'arch': platform.machine(),
+                      'image': os.environ.get('ImageVersion'), 'passed': [], 'failed': [], 'open': []}
+          receipts['open'] = [
+              'No integrated S2/S134 owner/hold/orphan UX; no native promotion claim',
+              'E9 upstream panel baseline/candidate and public-site suite not certified',
+              'E14 all-runtime-worker wedge, E16 exact save counter, E2 literal read-only filesystem',
+              'E25 full creation-event census, alias-profile failed-launch cleanup',
+              'GROUP heavy Chrome census/ESCAPE and SID reservation not established by contract tests',
+              'Miri decoder remains separate from native cargo test',
+              'Native trace requirements are OPEN unless retained traces cover the required syscalls']
+          if platform.system() == 'Windows':
+              receipts['open'] += ['MSVC proof build is not the distributed GNU artifact',
+                  'E17 error injection, census growth and no-console desktop proof need additional fixtures',
+                  'Logged-on packaged Murage desktop needs a verified interactive self-hosted runner']
+          if platform.system() == 'Darwin':
+              receipts['open'] += ['A1 live small/saturated libproc groups covered; heavy Chrome escape tracing still OPEN',
+                  'DTrace capability/control and native SID allocator wrap remain OPEN']
+          if lane not in ['linux-pid-reuse-fuse', 'alpine-musl']:
+              receipts['open'] += ['E21 forced PID reuse and E22 real FUSE D-state are in the glibc/musl stress lanes only']
+          else:
+              receipts['open'] += ['E21 after-open/stat/live barrier variants and behavioral mutant reruns remain OPEN',
+                  'E22 FUSE proves stop routine retention/retry, not concurrent daemon status or integrated UX',
+                  'PID namespaces share the hosted kernel; these are not separate guest-kernel results']
+          try:
+              if lane == 'macos-arm64': assert platform.machine().lower() == 'arm64'
+              if lane in ['macos-x64', 'windows-x64']: assert platform.machine().lower() in ['x86_64', 'amd64']
+              run(['rustc', '--version', '--verbose'], 'rustc')
+              assert 'rustc 1.97.1 ' in (logs / 'rustc.log').read_text()
+              run(['cargo', '--version'], 'cargo')
+              if platform.system() == 'Linux':
+                  # Capability control: known child, held pidfd signal, observed reap.
+                  control = 'import os,signal; p=os.fork();\nif p == 0: signal.pause(); os._exit(0)\nf=os.pidfd_open(p); signal.pidfd_send_signal(f,9); assert os.waitpid(p,0)[0]==p; os.close(f)'
+                  run(['strace', '-ff', '-ttt', '-yy', '-o', str(logs / 'trace-control'),
+                       'python3', '-c', control], 'trace-control', timeout=20)
+                  traces = ''.join(p.read_text() for p in logs.glob('trace-control.*') if p.suffix != '.log')
+                  assert 'pidfd_open(' in traces and 'pidfd_send_signal(' in traces and 'wait4(' in traces
+              assert re.search(r'^v24\.', run(['node', '--version'], 'node', cwd=src), re.M)
+              assert re.search(r'^11\.1\.3$', run(['pnpm', '--version'], 'pnpm', cwd=src), re.M)
+              run(['pnpm', 'install', '--frozen-lockfile', '--ignore-scripts'], 'dashboard-install', cwd=src, timeout=240)
+              run(['pnpm', '--filter', 'dashboard', 'build'], 'dashboard-build', cwd=src, timeout=240)
+              assert (src / 'packages/dashboard/out/index.html').is_file()
+              run(['cargo', 'build', '--locked', '--bin', 'agent-browser'], 'build', timeout=720)
+              exe = cli / 'target/debug' / ('agent-browser.exe' if os.name == 'nt' else 'agent-browser')
+              run([str(exe), '--version'], 'version')
+              shutil.copy2(exe, root / 'bin' / exe.name)
+              (logs / 'binary-sha256.txt').write_text(hashlib.sha256(exe.read_bytes()).hexdigest() + ' ' + exe.name + '\n')
+              common = ['cargo', 'test', '--locked']
+              listings = {}
+              for target in ['unit', 'integration']:
+                  selector = ['--bin', 'agent-browser'] if target == 'unit' else ['--test', 'ownership']
+                  text = run(common + selector + ['--', '--list'], target + '-list', timeout=720)
+                  listings[target] = (selector, sorted(set(re.findall(r'^([^\s]+): test$', text, re.M))))
+              # Explicit DONE2 names: fail if a fixture was compiled out or renamed.
+              required = [
+                  'ownership_fix_mac_small_groups_are_not_empty', 'ownership_fix_mac_full_buffer_retries',
+                  'ownership_fix_mac_enumeration_error_is_unconfirmed', 'ownership_fix_mac_all_pids_error_is_unconfirmed',
+                  'ownership_fix_job_decoder_checks_full_allocation',
+                  'ownership_fix_windows_external_stop_uses_job_and_unix_refuses',
+                  'ownership_fix_poisoned_held_drop_subprocess', 'ownership_fix_poisoned_child_registry_subprocess',
+                  'ownership_fix_poisoned_owner_registry_subprocess', 'ownership_fix_dashboard_api_preserves_stale_pid',
+                  'ownership_fix_close_all_stale_pid_preserves_sentinel', 'ownership_fix_dashboard_stop_stale_pid_preserves_sentinel']
+              names = [n.rsplit('::', 1)[-1] for _, ns in listings.values() for n in ns]
+              assert set(required) <= set(names), sorted(set(required) - set(names))
+              for target, (selector, names) in listings.items():
+                  for name in names:
+                      short = name.rsplit('::', 1)[-1]
+                      if not short.startswith('ownership_'): continue
+                      if short.endswith('_fixture'): continue  # outer tests invoke these with --ignored
+                      if short in ['ownership_native_pid_reuse_refuses_sentinel',
+                                   'ownership_native_fuse_d_state_retains_pin_and_retries']: continue
+                      if os.name == 'nt' and short == 'ownership_e8_group_stop_is_refused_without_any_spawn':
+                          receipts['open'].append(short + ': Unix-only refusal; Windows supports external stop')
+                          continue
+                      # Each exact invocation has a private fixture namespace and a bounded process.
+                      isolated = fixtures / str(len(receipts['passed']) + len(receipts['failed']))
+                      isolated.mkdir()
+                      env = dict(os.environ)
+                      env['OMB4_CLI'] = str(exe)
+                      env.update(HOME=str(isolated), USERPROFILE=str(isolated), TMPDIR=str(isolated),
+                                 TMP=str(isolated), TEMP=str(isolated), XDG_DATA_HOME=str(isolated / 'data'),
+                                 XDG_CONFIG_HOME=str(isolated / 'config'))
+                      try:
+                          command = common + selector + [name, '--', '--exact', '--nocapture', '--test-threads=1']
+                          if platform.system() == 'Linux' and (short.startswith('ownership_m_e') or short in [
+                              'ownership_e21_failed_launch_exhausts_adopted_helpers',
+                              'ownership_e12_exit_observation_keeps_leader_unreaped']):
+                              command = ['strace', '-ff', '-ttt', '-yy', '-o', str(logs / (short + '.strace'))] + command
+                          output = run(command,
+                                       target + '-' + short, timeout=100, env=env)
+                          assert re.search(r'test result: ok\. 1 passed; 0 failed; 0 ignored;', output), 'zero/ignored tests are not proof'
+                          receipts['passed'].append(name)
+                      except Exception as error:
+                          receipts['failed'].append([name, str(error)])
+              if receipts['failed']: raise RuntimeError('ownership tests failed; see receipts.json')
+          finally:
+              (logs / 'receipts.json').write_text(json.dumps(receipts, indent=2) + '\n')
+              (logs / 'OPEN.txt').write_text('\n'.join(receipts['open']) + '\n')
+              with tarfile.open(root / 'fixtures.tar.gz', 'w:gz') as archive:
+                  archive.add(fixtures, arcname='fixtures')
+          PY
+          cat > proof/fuse.py <<'PY'
+          # The forced flush request (not an ordinary read) must remain in D state
+          # with SIGKILL pending. The Rust witness rejects other observations.
+          import errno, os, pathlib, stat, sys, time
+          try:
+              from fusepy import FUSE, FuseOSError, Operations  # Debian/Ubuntu package
+          except ImportError:
+              from fuse import FUSE, FuseOSError, Operations
+          base = pathlib.Path(sys.argv[1])
+          class Stall(Operations):
+              def getattr(self, path, fh=None):
+                  if path == '/': return dict(st_mode=stat.S_IFDIR | 0o755, st_nlink=2)
+                  if path == '/stall': return dict(st_mode=stat.S_IFREG | 0o444, st_nlink=1, st_size=1)
+                  raise FuseOSError(errno.ENOENT)
+              def open(self, path, flags): return 0
+              def read(self, path, size, offset, fh): return b'x'[offset:offset+size]
+              def flush(self, path, fh):
+                  (base / 'entered').write_text('flush entered\n')
+                  # Watchdog guarantees eventual release even after a failed assertion.
+                  until = time.monotonic() + 45
+                  while not (base / 'release').exists() and time.monotonic() < until: time.sleep(0.02)
+                  return 0
+              def release(self, path, fh): return 0
+          FUSE(Stall(), str(base / 'mount'), foreground=True, nothreads=False)
+          PY
+          cat > proof/namespace.sh <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          cd "$(dirname "$0")/engine/cli"
+          test "$(readlink /proc/self/ns/pid)" != "$OMB4_OUTER_PID_NS"
+          export OMB4_PID_NAMESPACE=1
+          # ns_last_pid is per PID namespace. NEVER write kernel.pid_max.
+          cat /proc/sys/kernel/pid_max
+          cat /proc/sys/kernel/ns_last_pid
+          cargo test --locked --bin agent-browser \
+            native::ownership::behavior_tests::ownership_native_pid_reuse_refuses_sentinel \
+            -- --exact --nocapture --test-threads=1
+          SH
+          cat > proof/stress.sh <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          cd "$(dirname "$0")/.."
+          export OMB4_OUTER_PID_NS
+          OMB4_OUTER_PID_NS=$(readlink /proc/self/ns/pid)
+          # CAP_CHECKPOINT_RESTORE/CAP_SYS_ADMIN is confined to the child user namespace.
+          # New proc mount follows the child PID namespace, not the hosted runner's.
+          timeout 90s strace -ff -ttt -yy -o proof/logs/reuse.strace \
+            unshare --user --map-root-user --mount --pid --fork --mount-proc \
+            bash proof/namespace.sh 2>&1 | tee proof/logs/pid-reuse.log
+          grep -q 'WRAP ' proof/logs/pid-reuse.log
+          grep -q 'sentinel_alive=true' proof/logs/pid-reuse.log
+          grep -q '1 passed; 0 failed; 0 ignored' proof/logs/pid-reuse.log
+          export OMB4_FUSE_ROOT="$PWD/proof/fuse-fixture"
+          mkdir -p "$OMB4_FUSE_ROOT/mount"
+          "${OMB4_FUSE_PYTHON:-/usr/bin/python3}" proof/fuse.py "$OMB4_FUSE_ROOT" > proof/logs/fuse-server.log 2>&1 &
+          fuse_pid=$!
+          cleanup() {
+            touch "$OMB4_FUSE_ROOT/release"
+            fusermount -u "$OMB4_FUSE_ROOT/mount" || true
+            wait "$fuse_pid" || true
+          }
+          trap cleanup EXIT
+          for attempt in $(seq 1 100); do
+            mountpoint -q "$OMB4_FUSE_ROOT/mount" && break
+            sleep 0.05
+          done
+          mountpoint -q "$OMB4_FUSE_ROOT/mount"
+          cd proof/engine/cli
+          timeout 90s strace -ff -ttt -yy -o ../../logs/fuse.strace \
+            cargo test --locked --bin agent-browser \
+            native::ownership::behavior_tests::ownership_native_fuse_d_state_retains_pin_and_retries \
+            -- --exact --nocapture --test-threads=1 2>&1 | tee ../../logs/fuse-d-state.log
+          grep -q 'FUSE attempt=1' ../../logs/fuse-d-state.log
+          grep -q '1 passed; 0 failed; 0 ignored' ../../logs/fuse-d-state.log
+          SH
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: matrix.lane != 'alpine-musl'
+        with:
+          node-version: '24'
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        if: matrix.lane != 'alpine-musl'
+        with:
+          toolchain: '1.97.1'
+
+      - name: Native prerequisites
+        if: matrix.lane != 'alpine-musl'
+        run: |
+          set -euo pipefail
+          npm install --global pnpm@11.1.3 2>&1 | tee proof/logs/pnpm-install.log
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update
+            sudo apt-get install -y strace fuse libfuse2 python3-fusepy
+            # Hosted Chrome is reused, with its exact identity recorded.
+            chrome=$(command -v google-chrome)
+            "$chrome" --version | tee proof/logs/chrome-version.txt
+            sha256sum "$(readlink -f "$chrome")" > proof/logs/chrome-launcher-sha256.txt
+            sha256sum "$(dirname "$(readlink -f "$chrome")")/chrome" > proof/logs/chrome-binary-sha256.txt
+            if [ ! -e /usr/bin/chromium ]; then sudo ln -s "$chrome" /usr/bin/chromium; fi
+            if [ "$LANE" = linux-pid-reuse-fuse ]; then
+              sudo modprobe fuse
+              test -c /dev/fuse
+              # Ubuntu's AppArmor userns restriction can block unshare even for
+              # an unconfined test. Use root to enter the disposable namespace;
+              # no host PID allocator setting is changed.
+              sudo chmod a+rw /dev/fuse
+            fi
+          fi
+          python3 proof/prepare.py 2>&1 | tee proof/logs/prepare.log
+
+      - name: Build and run exact native ownership tests
+        if: matrix.lane != 'alpine-musl'
+        timeout-minutes: 23
+        run: |
+          set -euo pipefail
+          python3 proof/run.py 2>&1 | tee proof/logs/native-driver.log
+
+      - name: Actual PID allocator wrap, stale nominee refusal, and FUSE D-state
+        if: matrix.lane == 'linux-pid-reuse-fuse'
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          # sudo preserves the pinned toolchain and runs only on this disposable
+          # hosted runner. Namespace.sh checks that it is not in the outer PID ns.
+          sudo env "PATH=$PATH" "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" \
+            bash proof/stress.sh
+
+      - name: Build and run inside pinned Alpine musl container
+        if: matrix.lane == 'alpine-musl'
+        timeout-minutes: 25
+        run: |
+          set -euo pipefail
+          sudo modprobe fuse
+          test -c /dev/fuse
+          docker pull "$ALPINE_IMAGE"
+          docker image inspect "$ALPINE_IMAGE" > proof/logs/alpine-image.json
+          docker run --rm --init --cap-add SYS_PTRACE --cap-add SYS_ADMIN --device /dev/fuse \
+            --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
+            -e LANE -e CARGO_BUILD_JOBS -e CARGO_INCREMENTAL -e CARGO_PROFILE_DEV_DEBUG \
+            -e CARGO_PROFILE_TEST_DEBUG -e RUST_BACKTRACE \
+            -v "$PWD:/work" -w /work "$ALPINE_IMAGE" sh -ec '
+              apk add --no-cache bash build-base git python3 curl chromium strace rustup \
+                fuse util-linux coreutils py3-virtualenv
+              export RUSTUP_HOME=/work/proof/rustup CARGO_HOME=/work/proof/cargo
+              export PATH="$CARGO_HOME/bin:$PATH"
+              rustup-init -y --no-modify-path --default-toolchain 1.97.1 --profile minimal
+              python3 -m virtualenv /work/proof/fuse-env
+              /work/proof/fuse-env/bin/pip install fusepy==3.0.1
+              export OMB4_FUSE_PYTHON=/work/proof/fuse-env/bin/python
+              npm install --global pnpm@11.1.3
+              chromium --version > proof/logs/chrome-version.txt
+              sha256sum /usr/bin/chromium > proof/logs/chrome-launcher-sha256.txt
+              sha256sum /usr/lib/chromium/chromium > proof/logs/chrome-binary-sha256.txt
+              python3 proof/prepare.py
+              python3 proof/run.py
+              bash proof/stress.sh
+            ' 2>&1 | tee proof/logs/alpine-driver.log
+
+      - name: Final receipt and fixture inventory
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p proof/logs
+          git rev-parse HEAD > proof/logs/workflow-source.txt
+          uname -a > proof/logs/runner-kernel.txt
+          printf 'lane=%s\nrunner_os=%s\nrunner_arch=%s\nimage=%s\n' \
+            "$LANE" "$RUNNER_OS" "$RUNNER_ARCH" "${ImageVersion:-unknown}" > proof/logs/runner.txt
+          # Do not upload private HOME/Rust caches; only these isolated fixtures.
+          if [ ! -f proof/fixtures.tar.gz ] && [ -d proof/fixtures ]; then
+            tar -czf proof/fixtures.tar.gz -C proof fixtures
+          fi
+          if [ ! -f proof/logs/receipts.json ]; then
+            echo 'OPEN: setup/build did not reach the receipt driver; no native proof claimed.' > proof/logs/OPEN.txt
+          fi
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: omb4-proof-${{ matrix.lane }}-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            proof/logs/
+            proof/bin/
+            proof/*.py
+            proof/*.sh
+            proof/*.rs
+            proof/*source.tar.gz
+            proof/fixtures.tar.gz
