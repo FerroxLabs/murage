@@ -57,6 +57,7 @@ export function SpendLimitCard() {
             <input
               type="text"
               inputMode="decimal"
+              data-setting-control="spend-limit-heading"
               aria-label={t("ux.l2c.usage.field")}
               aria-invalid={parsed === undefined}
               value={text}
