@@ -1201,7 +1201,7 @@ export async function createBrowserExtensionService(options: {
   /** SABLE-B 4.1: wouldCard false => under the same live scope the admission's decision is pass, a refusal, the floor or a pause, never a card. */
   const wouldCard = async (entry: Entry, action: ExtensionAction, inputs: StepInputs, scope: Scope) => (await decideFor(entry, action, inputs, scope.fence, { predict: true })).outcome !== 'pass';
   const makeExecutor = (entry: Entry) => {
-    const transport={document:(tabId?:number)=>documentFor(entry,tabId),send:(method:string,params:Record<string,unknown>,document:ExtensionDocument)=>send(entry,method,params,document)};
+    const transport={document:(tabId?:number)=>documentFor(entry,tabId),send:(method:string,params:Record<string,unknown>,document:ExtensionDocument)=>send(entry,method,params,document),frames:(document:ExtensionDocument)=>send(entry,'Murage.getAllFrames',{},document)};
     const site=activitySite;
     const record=(action:{name:string;document:ExtensionDocument;mutation:boolean;target?:string;fromPage?:boolean;textLength?:number},decision:BrowserActivityDecision,decidedBy:BrowserActivityDecider,outcome:BrowserActivityOutcome,level?:1|2|3,extra?:Pick<BrowserActivityInput,'recipientScanReason'|'checker'>,id?:string)=>{
       recordBrowserActivity({...(id?{id}:{}),botId:entry.context.botId,bindingId:entry.context.bindingId,taskId:entry.context.threadId,site:site(action.document,(action as {arguments?:Record<string,unknown>}).arguments?.url),action:action.name.replace(/^agent_browser_/,''),...(action.target?{target:action.target,fromPage:action.fromPage===true}:{}),level:level??(action.mutation?2:1),decision,decidedBy,outcome,...(action.textLength!==undefined?{textLength:action.textLength}:{}),...extra});

@@ -80,26 +80,13 @@ export async function installFirstRunCrew(request: CrewRequest): Promise<FirstRu
   if (!profile) throw new Error("That crew is not available on this computer.");
   const reading = crewReading(profile);
 
-  // EVERYTHING IN THE PACKAGE, EXPLICITLY. The importer refuses an implicit
-  // selection on purpose, and the screen that follows names every bot and the
-  // review, so a partial selection would produce a screen describing things
-  // the person did not get.
-  const selection = {
-    agents: profile.agents.map((agent) => agent.key),
-    skills: [],
-    instructions: [],
-    routines: profile.routines.map((routine) => routine.key),
-  };
-
+  // EVERY SOLO BUSINESS AGENT, THROUGH THE SAME ROUTE THE HIRE CARD USES (FIRSTRUN-1019 1.11). The server ENSURES the
+  // agents exist: ones already hired are skipped, the routine travels with the agent that owns it, and a zero-agent
+  // import never happens. A repeat is therefore a plain success and nothing is installed twice.
   try {
-    const preview = await post(request, { action: "preview", profileId: FIRST_RUN_CREW_PROFILE, selection });
-    if (preview?.scan?.blocked) throw new Error("That crew did not pass this computer's content checks.");
-    await post(request, {
-      action: "import",
-      profileId: FIRST_RUN_CREW_PROFILE,
-      selection,
-      archiveSha256: preview.archiveSha256,
-      reviewHash: preview.reviewHash,
+    await request("/api/setup/hire", {
+      method: "POST",
+      body: JSON.stringify({ agents: profile.agents.map((agent) => ({ profileId: FIRST_RUN_CREW_PROFILE, key: agent.key })) }),
     });
   } catch (cause) {
     if (!alreadyInstalled(cause)) throw cause;

@@ -52,6 +52,7 @@ files:
   - shared/backup-max-bytes.mjs
   - shared/setup-backup-record.mjs
   - shared/upgrade-wait.mjs
+  - shared/murage-lockup.mjs
   - shared/upgrade-contract.mjs
   - shared/boot-proof.mjs
   - shared/spawned-proxies.mjs

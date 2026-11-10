@@ -4,6 +4,7 @@ import { test, expect, type Page } from './page-error-guard';
 import { PullbackFixture, BOT, THREAD } from './pullback-layers.fixture';
 import type { Action } from '../state/store';
 import type { PullbackProbe } from './pullback-layers.observer';
+import { openSidebar } from './fixtures';
 
 let fixture: PullbackFixture;
 test.beforeEach(async ({ page }, testInfo) => {
@@ -69,7 +70,8 @@ async function hold(page: Page, file: string, reject = false) {
   })();
 }
 
-test('B1: actual Settings search clears, closes, and returns to its opener', async ({ page }) => {
+test('B1: actual Settings search clears, closes, and returns to its opener', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === 'mobile', 'phone drawer: on a 390px phone App settings lives in the sidebar drawer and selecting Settings closes it, so the opener cannot hold focus; desktop keeps the focus-return contract');
   const opener = page.getByRole('button', { name: 'App settings', exact: true });
   for (const temperature of ['cold', 'warm']) {
     await opener.click();
@@ -279,7 +281,8 @@ test('D18 / R22-TURN / BF-4: concurrent streamed, finished and restarted turn pr
   await unchanged(page, before);
 });
 
-test('B10 / R22-RESTART / BF-4: document reload and application restart discard old owners and capture a fresh opener', async ({ page }) => {
+test('B10 / R22-RESTART / BF-4: document reload and application restart discard old owners and capture a fresh opener', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === 'mobile', 'phone drawer: on a 390px phone App settings lives in the sidebar drawer and selecting Settings closes it, so the opener cannot hold focus; desktop keeps the focus-return contract');
   await settings(page); await palette(page);
   await page.reload();
   await expect.poll(() => page.evaluate(() => window.pullback?.state.hydrated)).toBe(true);
@@ -297,7 +300,8 @@ test('B10 / R22-RESTART / BF-4: document reload and application restart discard 
   await page.keyboard.press('Escape'); await expect(opener).toBeFocused();
 });
 
-test('BF-23 / H1 / D2: full App app-to-bot-to-app Settings remount retains the original opener', async ({ page }) => {
+test('BF-23 / H1 / D2: full App app-to-bot-to-app Settings remount retains the original opener', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === 'mobile', 'phone drawer: on a 390px phone App settings lives in the sidebar drawer and selecting Settings closes it, so the opener cannot hold focus; desktop keeps the focus-return contract');
   const opener = page.getByRole('button', { name: 'App settings', exact: true });
   for (const temperature of ['cold', 'warm']) {
     await opener.click(); await expect(page.getByRole('textbox', { name: 'Search settings', exact: true })).toBeVisible();
@@ -314,7 +318,8 @@ test('BF-23 / H1 / D2: full App app-to-bot-to-app Settings remount retains the o
   }
 });
 
-test('B10 retry: chunk retry calls the reload seam once, real reload reconstructs without ghosts', async ({ page }) => {
+test('B10 retry: chunk retry calls the reload seam once, real reload reconstructs without ghosts', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === 'mobile', 'phone drawer: on a 390px phone App settings lives in the sidebar drawer and selecting Settings closes it, so the opener cannot hold focus; desktop keeps the focus-return contract');
   const release = await hold(page, 'SettingsModal.tsx', true);
   try {
     await page.keyboard.press('Control+,'); await expect.poll(() => names(page)).toEqual(['settings']);
@@ -374,6 +379,7 @@ const nullCallers = [
   { caller: 'Hire template', file: 'NewFromTemplateDialog.tsx', name: 'hire-bot-templates', loaded: 'new-from-template-dialog' },
 ] as const;
 async function openNullCaller(page: Page, caller: typeof nullCallers[number]['caller']) {
+  await openSidebar(page);
   if (caller === 'Hire template') {
     await page.getByRole('button', { name: 'App settings', exact: true }).focus();
     await auxiliary(page, 'hire');
@@ -436,7 +442,8 @@ for (const query of ['', 'keep query']) test(`R23-H1 / R22-H2: actual search und
   } finally { await release(); }
 });
 
-test('B10 late completion: application restart invalidates old loading owner and callbacks', async ({ page }) => {
+test('B10 late completion: application restart invalidates old loading owner and callbacks', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === 'mobile', 'phone drawer: on a 390px phone App settings lives in the sidebar drawer and selecting Settings closes it, so the opener cannot hold focus; desktop keeps the focus-return contract');
   const release = await hold(page, 'SettingsModal.tsx');
   try {
     await page.keyboard.press('Control+,'); await expect.poll(() => names(page)).toEqual(['settings']);

@@ -85,6 +85,8 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   "android-device:frame",
   "android-device:input",
   "android-device:status",
+  // app-readiness (main probes the main window; the ack comes back from its top frame only)
+  "app-readiness:alive",
   // assemblyai
   "assemblyai:set-key",
   "assemblyai:status",
@@ -235,6 +237,11 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   // startup-background
   "startup-background:status",
   "startup-background:update",
+  // start-up screens: the cached picture, and the What's new request (startup:whats-new, main to renderer, is a send and needs no class)
+  "startup-picture:save",
+  "startup-picture:session-tip",
+  "startup:ack-whats-new",
+  "startup:pending-whats-new",
   // update
   "update:check",
   "update:download",

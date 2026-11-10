@@ -19,7 +19,7 @@ import { isCloudOrigin } from "./cloud-workspace";
 import { SECTION_ALIASES, SECTION_PAGES } from "./settings-pages";
 import { cardsForSurface, type SettingsCard } from "./settings-cards";
 import { SETTINGS_CARDS, cardLabel, cardNameWords } from "./settings-card-registry";
-import { SETTINGS_INDEX, type SettingsIndexEntry } from "./settings-index";
+import { SETTINGS_EXPLAINERS, SETTINGS_INDEX, type ExplainerIndexEntry, type SettingsIndexEntry } from "./settings-index";
 import { findStem, findTokens, queryTokens, withinOneEdit } from "./palette-rank";
 import { t } from "./i18n";
 import { BOT_SETTINGS_SECTIONS, botSettingsSectionLabel } from "@/components/bot-settings-sections";
@@ -66,19 +66,101 @@ export interface SettingsSearchHit {
   advanced: boolean;
 }
 
+/** A synonym family: `core` members admit an entry, `also` members are plain words other cards say for their own
+ *  meaning, so they are matched once an entry has joined and never admit one (SETTINGS-SEARCH-RANKER-1019 R3). */
+export interface SynonymFamily {
+  core: readonly string[];
+  also?: readonly string[];
+}
+
+/** SETTINGS-LOCKED-1019 section 6, from settings-model.json: word families matched, never shown. An entry joins a
+ *  family by a core member in its words or a one-word core member in its label; an also-member is matched once joined
+ *  and never admits. A joined entry is found by every member, a tier below its own words. "advanced" finds every card
+ *  under an Advanced fold. */
+export const SETTINGS_SYNONYMS: readonly SynonymFamily[] = [
+  { core: ["approve all", "bulk approve"] }, { core: ["no limits", "full access", "yolo", "unlimited"] },
+  { core: ["ollama", "lm studio", "lmstudio", "offline"], also: ["local"] },
+  { core: ["login item", "autostart", "launch at startup", "start at login"] }, { core: ["advanced"] },
+  { core: ["link", "deep link"], also: ["address"] }, { core: ["balance", "credits", "top up", "add money", "credit"] },
+  { core: ["secret", "api"], also: ["key", "token"] }, { core: ["model", "engine", "provider", "llm"], also: ["ai"] },
+  { core: ["approval", "approve", "permission", "autonomy"], also: ["ask", "level", "trust"] },
+  { core: ["folder", "directory", "workspace", "cwd"], also: ["files", "path"] },
+  { core: ["email", "mail", "inbox"], also: ["address"] }, { core: ["notify", "alert", "sound", "ping", "badge"] },
+  { core: ["phone", "mobile", "iphone", "android"], also: ["pair"] }, { core: ["backup", "restore", "recovery"], also: ["export"] },
+  { core: ["computer", "vm", "vps", "sandbox"], also: ["server", "box"] }, { core: ["search", "internet", "lookup"], also: ["web"] },
+  { core: ["picture", "image", "photo", "draw"] }, { core: ["voice", "speech", "transcribe", "dictate"], also: ["talk"] },
+  { core: ["dark", "light", "theme", "skin"] }, { core: ["cost", "spend", "usage", "billing"], also: ["tokens", "limit"] },
+  { core: ["delete", "forget", "erase", "wipe"], also: ["remove"] }, { core: ["wifi", "tailscale", "remote access"] },
+  { core: ["mcp"], also: ["tools", "servers"] }, { core: ["ring", "phone call"], also: ["call"] },
+];
+
+/** An entry's own words (plus "advanced" under a fold), and apart from them the members of every family it joins. */
+export function withSynonyms(words: readonly string[], label: string, advanced: boolean): { words: readonly string[]; synonyms: readonly string[] } {
+  const said = new Set(words.map((word) => word.toLowerCase()));
+  const labelTokens = new Set(label.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+  const own = advanced ? [...words, "advanced"] : [...words];
+  const synonyms: string[] = [];
+  for (const family of SETTINGS_SYNONYMS) {
+    const members = [...family.core, ...(family.also ?? [])];
+    // A one-member family ("advanced") adds nothing.
+    if (members.length < 2) continue;
+    if (family.core.some((member) => said.has(member) || (!member.includes(" ") && labelTokens.has(member)))) synonyms.push(...members.filter((member) => !said.has(member)));
+  }
+  return { words: own, synonyms };
+}
+
+/** The query tokens that name a listed bot (a whole name token, or the start of one at 3+ letters), when at least one
+ *  other token remains: they keep that bot's rows only and are not scored (SETTINGS-SEARCH-RANKER-1019 R1). A query that
+ *  is nothing but a bot's name has no scope: every token is scored, the name against the page field. */
+export function scopeTokens(tokens: readonly string[], bots: readonly FindBot[]): { bots: Set<string>; rest: string[]; nameOnly: boolean } {
+  const named = bots.map((bot) => ({ id: bot.id, tokens: findTokens(bot.name) }));
+  const scoped = new Set<string>(), claimed = new Set<number>(), rest: string[] = [];
+  // A whole multi-word name said in the query wins, the longest first: "nova prime calls" with a Nova and a Nova Prime
+  // scopes to Nova Prime alone, because its name tokens are claimed before the bare word "nova" can name both. A
+  // one-word name claims nothing: "nova calls" still scopes to every bot whose name has a "nova" token.
+  // The name is read like the query (queryTokens drops filler words), so "Nova The Prime" is said by "nova the prime".
+  const phrases: Array<{ id: string; at: number; length: number }> = [];
+  for (const bot of bots) {
+    const words = queryTokens(bot.name);
+    for (let at = 0; words.length > 1 && at + words.length <= tokens.length; at += 1) {
+      if (words.every((word, i) => tokens[at + i] === word)) phrases.push({ id: bot.id, at, length: words.length });
+    }
+  }
+  // Bots that share the same span (equal names, in any roster order) are all scoped; a different span that overlaps is not.
+  const spanOf = new Map<number, string>(), crossed = new Set<string>();
+  for (const phrase of phrases.sort((a, b) => b.length - a.length)) {
+    const span = Array.from({ length: phrase.length }, (_, i) => phrase.at + i), key = `${phrase.at}:${phrase.length}`;
+    if (span.some((i) => claimed.has(i) && spanOf.get(i) !== key)) { crossed.add(phrase.id); continue; }
+    span.forEach((i) => { claimed.add(i); spanOf.set(i, key); });
+    scoped.add(phrase.id);
+  }
+  // A bot whose whole name crossed a longer name's span stays out: its leftover word must not bring it back by prefix.
+  tokens.forEach((token, i) => {
+    if (claimed.has(i)) return;
+    const hits = named.filter((bot) => !crossed.has(bot.id) && bot.tokens.some((word) => word === token || (token.length >= 3 && word.startsWith(token))));
+    if (hits.length) hits.forEach((bot) => scoped.add(bot.id));
+    else rest.push(token);
+  });
+  // Nothing but names: every token is scored, the name against the page field (the only place a name is scored).
+  return rest.length ? { bots: scoped, rest, nameOnly: false } : { bots: new Set(), rest: [...tokens], nameOnly: scoped.size > 0 };
+}
+
 /** Results shown before "More results" (section 4). */
 export const SETTINGS_RESULT_CAP = 12;
 
 /** Rank bands, best first (section 4, the ordering rule in the 40-query table): a label token with the query's stem,
- *  a label token the query starts, then the words, the section, the page (a bot's name for a bot row), the group or
- *  gate line; a one-typo match on the label or the words ranks last. An entry's band is its weakest token's. */
-export const FIND_TIER = { label: 1, labelPrefix: 2, words: 3, section: 4, page: 5, group: 6, fuzzy: 7 } as const;
+ *  a label token the query starts, then the words, the words a synonym family adds, the section, the page (a bot's
+ *  name, only when the query is nothing but that name), the group or gate line; a one-typo match on the label or the
+ *  words ranks last. An entry's band is its weakest token's. */
+export const FIND_TIER = { label: 1, labelPrefix: 2, words: 3, synonym: 4, section: 5, page: 6, group: 7, fuzzy: 8 } as const;
 
 interface FindFields {
   label: string;
   /** The name a plain label stands for (cardNameWords): counts as the label. */
   nameWords?: readonly string[];
   words: readonly string[];
+  /** Members of the synonym families the entry joins (withSynonyms): a tier below its own words. */
+  synonyms: readonly string[];
   section: string;
   page: string;
   group: readonly string[];
@@ -88,6 +170,7 @@ interface FindFields {
 interface TokenFields {
   label: string[];
   words: string[];
+  synonyms: string[];
   section: string[];
   page: string[];
   group: string[];
@@ -97,6 +180,7 @@ function tokenFields(fields: FindFields): TokenFields {
   return {
     label: [...findTokens(fields.label), ...(fields.nameWords ?? []).flatMap(findTokens)],
     words: fields.words.flatMap(findTokens),
+    synonyms: fields.synonyms.flatMap(findTokens),
     section: findTokens(fields.section),
     page: findTokens(fields.page),
     group: fields.group.flatMap(findTokens),
@@ -140,6 +224,7 @@ export function findScore(tokens: readonly string[], fields: TokenFields): FindS
     });
     if (best === -1) {
       if (fieldHas(token, fields.words)) best = FIND_TIER.words;
+      else if (fieldHas(token, fields.synonyms)) best = FIND_TIER.synonym;
       else if (fieldHas(token, fields.section)) best = FIND_TIER.section;
       else if (fieldHas(token, fields.page)) best = FIND_TIER.page;
       else if (fieldHas(token, fields.group)) best = FIND_TIER.group;
@@ -169,7 +254,8 @@ export interface SettingsFindContext {
 }
 
 export interface SettingsIndexHit {
-  entry: SettingsIndexEntry;
+  /** A control (app card or bot row) or an explainer row (Approve all). Open goes by the entry's existing anchor. */
+  entry: SettingsIndexEntry | ExplainerIndexEntry;
   /** The bot a bot row belongs to. */
   bot?: FindBot;
   label: string;
@@ -192,29 +278,45 @@ const sectionEntry = (id: string) => BOT_SETTINGS_SECTIONS.find((section) => sec
 /** The window's own rows lead inside a band: the app's in the app window (and on a phone), the open bot's in a bot
  *  window, then the app's, then other bots'. */
 function scopeBand(hit: SettingsIndexHit, context: SettingsFindContext): number {
-  if (context.currentBotId) return hit.bot?.id === context.currentBotId ? 0 : hit.entry.scope === "app" ? 1 : 2;
-  return hit.entry.scope === "app" ? 0 : 1;
+  if (context.currentBotId) return hit.bot?.id === context.currentBotId ? 0 : hit.entry.scope !== "bot" ? 1 : 2;
+  return hit.entry.scope !== "bot" ? 0 : 1;
 }
 
 /** Settings search over the whole index: app cards and every bot's rows (SETTINGS-UX-1011 sections 4 and 8.2).
  *  Sort key: band, then top-level before Advanced, then the window's own rows, then query words the label says as typed
  *  (a plural or other stem after), then label coverage (more first), then registry order (the same control across bots
  *  stays together, the Chief first). */
-export function searchSettingsIndex(query: string, context: SettingsFindContext, entries: readonly SettingsIndexEntry[] = SETTINGS_INDEX): SettingsFindResult {
-  const tokens = queryTokens(query);
-  if (!tokens.length) return { hits: [], more: [] };
+export function searchSettingsIndex(query: string, context: SettingsFindContext, entries: readonly SettingsIndexEntry[] = SETTINGS_INDEX, explainers: readonly ExplainerIndexEntry[] = SETTINGS_EXPLAINERS): SettingsFindResult {
+  const queried = queryTokens(query);
+  if (!queried.length) return { hits: [], more: [] };
+  // R1: "nova no limits" keeps Nova's rows and scores "no limits"; the bot's name is a scope, not a match.
+  const scope = scopeTokens(queried, context.bots ?? []);
+  const scoped = scope.bots.size > 0;
+  const tokens = scope.rest;
+  const bots = scoped ? (context.bots ?? []).filter((bot) => scope.bots.has(bot.id)) : context.bots ?? [];
   const cloud = context.cloud ?? isCloudOrigin();
   const ranked: Array<{ hit: SettingsIndexHit; band: number; exact: number; coverage: number; at: number }> = [];
   let at = 0;
-  for (const entry of entries) {
+  for (const entry of [...entries, ...explainers]) {
     if (entry.surface === "desktop" && context.desktop !== true) continue;
+    if (scoped && entry.scope !== "bot") continue;
     const label = entry.label();
     const gate = entry.gate ? [entry.gate.reason()] : [];
+    const { words, synonyms } = withSynonyms(entry.words, label, entry.advanced);
+    if (entry.scope === "explainer") {
+      const path = entry.path();
+      const score = findScore(tokens, tokenFields({ label, words, synonyms, section: path.join(" "), page: "", group: [] }));
+      if (score) {
+        const hit: SettingsIndexHit = { entry, label, path: [...path, label], tier: score.tier };
+        ranked.push({ hit, band: scopeBand(hit, context), exact: score.exact, coverage: score.coverage, at: at++ });
+      }
+      continue;
+    }
     if (entry.scope === "app") {
       // A Cloud window leaves out a card on a page it cannot use, and keeps a computer-only card: it renders a stub there.
       if (cloudCardBlocked(entry.card, cloud) && !cloudCardHidden(entry.anchor, cloud)) continue;
       const page = settingsPageLabel(entry.section);
-      const score = findScore(tokens, tokenFields({ label, nameWords: cardNameWords(entry.id), words: entry.words, section: page, page: "", group: gate }));
+      const score = findScore(tokens, tokenFields({ label, nameWords: cardNameWords(entry.id), words, synonyms, section: page, page: "", group: gate }));
       if (score) {
         const hit: SettingsIndexHit = { entry, label, path: [page, ...(entry.advanced ? [t("settings.l1.advancedPath")] : []), label], tier: score.tier };
         ranked.push({ hit, band: scopeBand(hit, context), exact: score.exact, coverage: score.coverage, at: at++ });
@@ -222,8 +324,9 @@ export function searchSettingsIndex(query: string, context: SettingsFindContext,
       continue;
     }
     const section = sectionEntry(entry.section);
-    for (const bot of context.bots ?? []) {
-      const score = findScore(tokens, tokenFields({ label, words: entry.words, section: section.label, page: bot.name, group: [BOTS_GROUP(), ...gate] }));
+    for (const bot of bots) {
+      // The bot's name is a page match only for a query that is nothing but a name (R1); a mixed query never scores it.
+      const score = findScore(tokens, tokenFields({ label, words, synonyms, section: section.label, page: scope.nameOnly ? bot.name : "", group: [BOTS_GROUP(), ...gate] }));
       if (!score) continue;
       const named = botSettingsSectionLabel(section, bot.name);
       const path = label === named ? [bot.name, label] : [bot.name, named, label];
@@ -255,7 +358,7 @@ export function searchSettingsCards(
   const ranked: Array<{ hit: SettingsSearchHit; score: FindScore; at: number }> = [];
   cardsForSurface(cards, desktop).filter((card) => !cloudCardBlocked(card, cloud)).forEach((card, at) => {
     const label = labelOf(card), page = pageLabelOf(card.section);
-    const score = findScore(tokens, tokenFields({ label, nameWords: cardNameWords(card.id), words: card.words, section: page, page: "", group: [] }));
+    const score = findScore(tokens, tokenFields({ label, nameWords: cardNameWords(card.id), words: card.words, synonyms: [], section: page, page: "", group: [] }));
     if (score) ranked.push({ hit: { card, label, page, advanced: card.advanced }, score, at });
   });
   return ranked

@@ -61,8 +61,12 @@ import { packagedResticPath } from "./backup-restic-attestation.mjs";
 import { execFile, spawn } from "node:child_process";
 import { createBackgroundLifecycle, linuxTrayHostAvailable } from "./background-lifecycle.mjs";
 import { watchInboxChanges } from "./inbox-watch.mjs";
+import { createAppReadiness } from "./app-readiness.mjs";
+import { attachLoadFailureRecovery } from "./load-failure-recovery.mjs";
 import { applyLoginProfileArguments, createBackgroundLogin } from "./background-login.mjs";
-import { createStartupSplash, splashPage, firstStartOfVersion, noteVersionStarted, FIRST_AFTER_UPDATE_NOTE } from "./startup-splash.mjs";
+import { createStartupSplash, splashPage, splashMode, noteVersionStarted } from "./startup-splash.mjs";
+import { readStartupPicture } from "./startup-picture.mjs";
+import { registerStartupIpc } from "./startup-ipc.mjs";
 import { createRequire } from "node:module";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createServer as createLoopbackServer } from "node:http";
@@ -129,6 +133,7 @@ import { createServerStopReason } from "./server-stop-reason.mjs";
 import { desktopViewerPermissionAllowed } from "./desktop-viewer-permissions.mjs";
 import {
   createMainWindowOpenHandler,
+  OPEN_LOG_URL,
   createOpenExternalHandler,
   mainAppPermissionCheckAllowed,
   mainAppPermissionRequestAllowed,
@@ -389,6 +394,8 @@ const ipcMain = createOwnedMainIpc({
 // B3 WP5: the Cloud engine sign-in terminal relay, main window only. Registered at every start (MURAGE_DESKTOP_CLOUD=0 registers nothing); refuses every call until Cloud is live.
 if (cloudHome?.client) registerEngineLoginIpc({ ipcMain, active: () => cloudHome.active(), relay: createEngineLoginRelay({ client: cloudHome.client,
   createSocket: (url, options) => new EngineLoginWebSocket(url, options), openExternal: (url) => shell.openExternal(url), log: slog }) });
+// Start-up screens (FIRSTRUN-1019): the cached picture the splash reads, and the What's new request from the update screen.
+const startupIpc = registerStartupIpc({ gate: ipcMain, userData: () => app.getPath("userData"), getMainContents: () => ownedMainContents() });
 let backgroundLifecycle=null;
 let backupScheduleHost=null;
 // 1.0.9 Sentinel host (electron/sentinel-host.mjs): the health/ producer root, the desktop producer and the OS schedule.
@@ -937,6 +944,7 @@ if (!app.requestSingleInstanceLock()) {
 }
 function deliverPackageInstall(win) {
   if (!pendingPackageInstallUrl || !win || win.isDestroyed()) return;
+  if (!appReadiness.ready(win.webContents)) return;
   if (win.webContents.isLoadingMainFrame()) return;
   win.webContents.send("package:install", pendingPackageInstallUrl);
   pendingPackageInstallUrl = null;
@@ -952,14 +960,67 @@ function queuePackageInstall(rawLink) {
   return true;
 }
 
+// Which windows are showing the app (a 200 on the trusted origin) right now. The server answers a page it cannot serve with its
+// own setup page (503), and a package install or Cloud link sent there would be swallowed, so both wait, queued, until the app loads.
+// A navigation that never committed (a cancelled link, a download) gives readiness back with no did-finish-load, so the queues drain here too.
+// The live main document, read in one try/catch (a throw gives null): the committed URL, the main frame's URL and origin ("null" for an
+// error document) and the active navigation entry's URL (for an error page, the URL that failed). Load recovery and readiness both decide from it.
+function inspectMainDocument(contents) {
+  try {
+    const history = contents.navigationHistory;
+    return {
+      committedUrl: contents.getURL(),
+      frameUrl: contents.mainFrame.url,
+      frameOrigin: contents.mainFrame.origin,
+      entryUrl: history.getEntryAtIndex(history.getActiveIndex())?.url,
+    };
+  } catch { return null; }
+}
+
+const appReadiness = createAppReadiness({
+  origin: () => trustedRendererOrigin(),
+  // A navigation that ended without committing asks the renderer to prove it is alive (A14); only its ack drains the queues.
+  probe: (contents, token) => {
+    try { contents.send("app-readiness:probe", token); } catch { /* the renderer is gone: no ack, the window stays not ready */ }
+  },
+  onRestored: (contents) => {
+    const win = BrowserWindow.fromWebContents(contents);
+    if (!win || win.isDestroyed()) return;
+    deliverPackageInstall(win);
+    cloudLinks.drain();
+    flushCloudLinkEvent(win);
+    appReadiness.flush(contents);
+  },
+  inspect: inspectMainDocument,
+});
+
+// The renderer answers an app-readiness probe from its top frame; the owned-IPC gate has already refused any other sender.
+ipcMain.on("app-readiness:alive", (event, token) => {
+  appReadiness.alive(event.sender, token, { top: event.senderFrame?.parent === null, url: event.senderFrame?.url, frameOrigin: event.senderFrame?.origin });
+});
+
 // Cloud links: murage://open-cloud?h=, murage://connect-cloud and murage://door?h=&o=#t=. Every source (open-url before
 // or after ready, argv on a Windows or Linux cold start, second-instance, the sealed handoff, "Use copied link") goes into
 // ONE slot (cloud-link-queue.mjs); it drains once the app is ready, Cloud is live and the main window has loaded. A door
 // link carries a ticket, so nothing here logs a link: only `[cloud] door: <reason>`. The window hears the kind, never the link.
 let cloudLinkReady = false;
-const cloudLinkWindowLoaded = () => Boolean(mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoadingMainFrame());
+const cloudLinkWindowLoaded = () => Boolean(mainWindow && !mainWindow.isDestroyed() && appReadiness.ready(mainWindow.webContents) && !mainWindow.webContents.isLoadingMainFrame());
+// A link event the window could not take (it was on the setup page) waits here and is sent once, when the app has loaded.
+let pendingCloudLinkEvent = null;
 function tellCloudLinkWindow(event) {
-  try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("cloud-home:link-event", event); } catch { /* the window went away */ }
+  try {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (appReadiness.ready(mainWindow.webContents)) mainWindow.webContents.send("cloud-home:link-event", event);
+    else pendingCloudLinkEvent = event;
+  } catch { /* the window went away */ }
+}
+function flushCloudLinkEvent(win) {
+  try {
+    if (!pendingCloudLinkEvent || win !== mainWindow || win.isDestroyed() || !appReadiness.ready(win.webContents)) return;
+    const event = pendingCloudLinkEvent;
+    pendingCloudLinkEvent = null;
+    win.webContents.send("cloud-home:link-event", event);
+  } catch { /* the window went away */ }
 }
 function focusConnectCard(kind) {
   if (mainWindow && !mainWindow.isDestroyed()) activateExistingWindow([mainWindow]);
@@ -1130,6 +1191,7 @@ let serverReady = true;
 const serverSupervisor = createServerSupervisor();
 /** One restart in flight at a time, and none once we are quitting. */
 let serverRestarting = false;
+const loadFailureRecoveries = new WeakMap();
 /** What the renderer is told, so a dead engine can never again pass for a
  *  dozen broken features. */
 let serverLifecycleState = { state: "running", since: null, attempt: 0 };
@@ -1139,6 +1201,8 @@ function publishServerLifecycle(next) {
   const win = mainWindow;
   if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
   try { win.webContents.send("server-lifecycle:state", next); } catch { /* the window is going away */ }
+  // A window parked on Chromium's error page (the setup page's refresh met a dead server) reloads as soon as the engine is back.
+  if (next.state === "running") loadFailureRecoveries.get(win.webContents)?.kick();
 }
 
 /** Watch the child that actually became the engine. Boot attempts that lose a
@@ -2700,18 +2764,20 @@ function escapeHtml(value) {
   return value.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 }
 
+// The exact data: URL buildErrorPage last made: the one page besides the app's own origin the log link is trusted from.
+let lastErrorPageUrl = null;
 function buildErrorPage({ allPortsOccupied }) {
   const serverLogPath = path.join(LOG_DIR, "server.log");
-  const serverLogHref = pathToFileURL(serverLogPath).href;
   const reason = allPortsOccupied
     ? "Another program is using every port Murage can use (8799, 18799 and 28799). It is most likely a second copy of Murage. Quit that program, then quit and reopen Murage."
     : "Murage's background server didn't start in time. This is usually a slow start, not a problem with your data. Quit and reopen Murage.";
-  return (
+  // The log link is the private OPEN_LOG_URL (a file: address is never offered from a data: page); the open handler maps it to server.log.
+  lastErrorPageUrl =
     "data:text/html;charset=utf-8," +
     encodeURIComponent(
-      `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🔥</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#fcfcfc99;line-height:1.5">${escapeHtml(reason)} If it keeps happening, check <a target="_blank" rel="noopener" href="${serverLogHref}" style="color:#fcfcfc">${escapeHtml(serverLogPath)}</a>.</p></div></body>`,
-    )
-  );
+      `<body style="margin:0;display:flex;align-items:center;justify-content:center;height:100vh;background:#070707;color:#fcfcfc;font:15px -apple-system,system-ui"><div style="text-align:center;max-width:360px"><div style="font-size:40px">🔥</div><h2 style="font-weight:600;margin:12px 0 6px">Couldn't start the bot server</h2><p style="color:#fcfcfc99;line-height:1.5">${escapeHtml(reason)} If it keeps happening, check <a target="_blank" rel="noopener" href="${OPEN_LOG_URL}" style="color:#fcfcfc">${escapeHtml(serverLogPath)}</a>.</p></div></body>`,
+    );
+  return lastErrorPageUrl;
 }
 
 // How long one packaged-server child gets to answer /api/health before the
@@ -3454,7 +3520,8 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
 function sendWhenLoaded(channel,...args){
   const win=mainWindow;if(!win||win.isDestroyed())return;
   const send=()=>{if(!win.isDestroyed())win.webContents.send(channel,...args);};
-  if(win.webContents.isLoadingMainFrame())win.webContents.once("did-finish-load",send);else send();
+  // Tray and inbox events wait, queued, until the window is showing the app (a 503 setup page would swallow them).
+  if(appReadiness.ready(win.webContents)&&!win.webContents.isLoadingMainFrame())send();else appReadiness.defer(win.webContents,send);
 }
 /** The tray menu's reads and answers: the desktop surface, like the app. */
 async function harnessJson(route,body){
@@ -3563,6 +3630,7 @@ function createWindow({quiet=false}={}) {
   });
   mainWindow = win;
   win.on("focus", () => cloudLive.probeOnFocus());
+  win.webContents.on("did-finish-load", () => startupIpc.deliver());
   desktopMark("window.created");
   win.once("ready-to-show", () => { desktopMark("window.ready-to-show"); noteVersionStarted({ userData: () => app.getPath("userData"), appVersion: () => app.getVersion() }); });
   // The bar reaches 100% when the real window exists; the window appears, and
@@ -3580,9 +3648,15 @@ function createWindow({quiet=false}={}) {
       pendingRevealWindows.delete(win);
       if (restored.maximized) win.maximize();
       win.show();
+      desktopMark("splash.handoff");
       closeStartupSplash();
     };
-    win.once("ready-to-show", reveal);
+    // The splash decides when: at once if it was never drawn (a fast start), else after its minimum dwell and any fade in progress.
+    // A window that is closed or swapped while that is pending is dropped by reveal's own checks above.
+    win.once("ready-to-show", () => {
+      const splash = startupSplash;
+      if (splash && typeof splash.whenRevealable === "function") splash.whenRevealable(reveal); else reveal();
+    });
   }
   win.on("close",event=>backgroundLifecycle?.handleClose(event));
   attachUpdaterWindow(win);
@@ -3608,7 +3682,8 @@ function createWindow({quiet=false}={}) {
       if (error) throw new Error("DIAGNOSTICS_UNAVAILABLE");
     },
     currentUrl: () => (win.isDestroyed() ? "" : win.webContents.getURL()),
-    diagnosticsLogHref: () => (app.isPackaged ? pathToFileURL(path.join(LOG_DIR, "server.log")).href : null),
+    trustedOrigin: () => trustedRendererOrigin(),
+    errorPageUrl: () => lastErrorPageUrl,
     warn: (message) => console.warn(`[external-link] ${message}`),
   }));
   // The privileged preload must never end up on another origin (B6). A link
@@ -3622,7 +3697,25 @@ function createWindow({quiet=false}={}) {
   });
   win.webContents.on("will-navigate", navigationGuard.willNavigate);
   win.webContents.on("will-redirect", navigationGuard.willRedirect);
-  win.webContents.on("did-finish-load", () => { deliverPackageInstall(win); cloudLinks.drain(); });
+  appReadiness.track(win.webContents);
+  // A window left on Chromium's error document (the setup page's refresh met a dead server) reloads once the server answers: decided
+  // level-triggered from the live committed document, never from failure events (WIN-NOROUTE-1019 S7, A15).
+  loadFailureRecoveries.set(win.webContents, attachLoadFailureRecovery(win.webContents, {
+    origin: () => trustedRendererOrigin(),
+    inspect: () => inspectMainDocument(win.webContents),
+    readiness: () => appReadiness.stateOf(win.webContents),
+    busy: () => mainRendererRecovering,
+    quitting: () => desktopShutdownStarted || win.isDestroyed(),
+    documentHref: () => win.webContents.mainFrame.executeJavaScript("location.href", false),
+    healthy: async () => {
+      const res = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/health`, { signal: AbortSignal.timeout(2000) });
+      return res.ok;
+    },
+    reload: (target) => { if (!win.isDestroyed()) void win.loadURL(target).catch(() => {}); },
+    log: slog,
+  }));
+  win.webContents.on("did-finish-load", () => { deliverPackageInstall(win); cloudLinks.drain(); appReadiness.flush(win.webContents); });
+  win.webContents.on("did-finish-load", () => flushCloudLinkEvent(win));
 
   // A renderer crash used to leave NO trace anywhere. RootErrorBoundary logs
   // "Murage failed to render" to the renderer console, and the renderer
@@ -3643,6 +3736,7 @@ function createWindow({quiet=false}={}) {
   const rendererRecovery = createRendererRecovery({
     quitting: () => desktopShutdownStarted || win.isDestroyed(),
     serverState: () => (app.isPackaged ? serverLifecycleState.state : "running"),
+    documentHref: () => win.webContents.mainFrame.executeJavaScript("location.href", false),
     healthy: async () => {
       if (!app.isPackaged) return true;
       const res = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/health`, { signal: AbortSignal.timeout(2000) });
@@ -3666,7 +3760,7 @@ function createWindow({quiet=false}={}) {
   win.webContents.on("render-process-gone", (_event, details) => {
     console.error(`[renderer] process gone: ${details.reason} (exitCode ${details.exitCode})`);
     if (win === mainWindow) mainRendererRecovering = true;
-    void rendererRecovery.onGone(details).catch((error) => slog(`renderer recovery threw ${error?.message ?? error}`));
+    void rendererRecovery.onGone(details).catch((error) => slog(`renderer recovery threw ${error?.message ?? error}`)).finally(() => { mainRendererRecovering = false; });
   });
   // The dev server being down is the other black-window cause, and it is the
   // one that has actually bitten: Electron loads DEV_URL once and never
@@ -5023,7 +5117,16 @@ const desktopStartup = app.whenReady().then(async () => {
   if (app.isPackaged && !process.argv.includes(BACKUP_MODE_ARGUMENT) && !process.argv.includes("--murage-login")) {
     let wasOpenedAtLogin = false;
     try { wasOpenedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin === true; } catch { /* unsupported platform */ }
-    if (!wasOpenedAtLogin) { startupSplash = createStartupSplash({ BrowserWindow, dark: nativeTheme.shouldUseDarkColors, icon: APP_ICON, language: app.getLocale?.(), onUserClose: requestOwnerQuit, note: firstStartOfVersion({ userData: () => app.getPath("userData"), appVersion: () => app.getVersion() }) ? FIRST_AFTER_UPDATE_NOTE : "" }); desktopMark("splash.shown"); }
+    if (!wasOpenedAtLogin) {
+      const splashUserData = () => app.getPath("userData"), splashVersion = () => app.getVersion();
+      const picture = readStartupPicture({ userData: splashUserData });
+      const mode = splashMode({ userData: splashUserData, appVersion: splashVersion, picture });
+      let reducedMotion = false;
+      try { reducedMotion = systemPreferences.getAnimationSettings?.().prefersReducedMotion === true; } catch { /* not supported here */ }
+      // created hidden: it is drawn after the grace, and only if the window is not ready by then (splash.shown, splash.fade come from its own clock)
+      startupSplash = createStartupSplash({ BrowserWindow, dark: nativeTheme.shouldUseDarkColors, icon: APP_ICON, language: app.getLocale?.(), onUserClose: requestOwnerQuit, mode, picture, version: splashVersion, reducedMotion, sinceLaunchMs: () => process.uptime() * 1000, onWhatsNew: () => startupIpc.requestWhatsNew(), onMark: desktopMark });
+      desktopMark("splash.created");
+    }
   }
   const connectionError = error => dialog.showErrorBox("Murage server connection", error.message);
   const serverConnections = createServerConnections({ BrowserWindow, session, onError: connectionError });

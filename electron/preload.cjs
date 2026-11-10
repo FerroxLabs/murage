@@ -69,6 +69,9 @@ ipcRenderer.on("tray:open",(_event,target)=>{
   for(const listener of trayListeners)listener(target);
 });
 
+// Main probes after a navigation that never committed; one reply proves this renderer is alive (app-readiness.mjs).
+ipcRenderer.on("app-readiness:probe", (_event, t) => { if (Number.isInteger(t)) ipcRenderer.send("app-readiness:alive", t); });
+
 let pendingPackageInstallUrl = null;
 const packageInstallListeners = new Set();
 ipcRenderer.on("package:install", (_event, url) => {
@@ -193,6 +196,13 @@ contextBridge.exposeInMainWorld("muragebox", {
     update:patch=>ipcRenderer.invoke("startup-background:update",patch),
     onChange:cb=>{const handler=(_event,state)=>cb(state);ipcRenderer.on("startup-background:changed",handler);return()=>ipcRenderer.removeListener("startup-background:changed",handler);},
     onOpenInbox:cb=>{startupInboxListeners.add(cb);if(pendingStartupInbox){pendingStartupInbox=false;queueMicrotask(cb);}return()=>startupInboxListeners.delete(cb);},
+    pendingWhatsNew:()=>ipcRenderer.invoke("startup:pending-whats-new"),
+    ackWhatsNew:()=>ipcRenderer.invoke("startup:ack-whats-new"),
+    onWhatsNew:cb=>{const handler=()=>cb();ipcRenderer.on("startup:whats-new",handler);return()=>ipcRenderer.removeListener("startup:whats-new",handler);},
+  },
+  startupPicture: {
+    save:payload=>ipcRenderer.invoke("startup-picture:save",payload),
+    sessionTip:()=>ipcRenderer.invoke("startup-picture:session-tip"),
   },
   tray: {
     onOpen:cb=>{trayListeners.add(cb);if(pendingTrayTarget){const target=pendingTrayTarget;pendingTrayTarget=null;queueMicrotask(()=>cb(target));}return()=>trayListeners.delete(cb);},

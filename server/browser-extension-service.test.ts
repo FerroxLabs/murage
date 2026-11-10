@@ -42,6 +42,7 @@ async function fixture(extraOptions: Record<string, unknown> = {}) {
       if (command.operation === 'cdp') {
         const { method, params } = command.params as any; let value: any = {};
         if (method === 'Page.getFrameTree') value = { frameTree: { frame: { id: 'frame', loaderId: 'L' } } };
+        if (method === "Murage.getAllFrames") value = { frames: [{ frameId: 0, parentFrameId: -1 }] };
         if (method === 'Page.createIsolatedWorld') value = { executionContextId: 7 };
         if (method === 'DOM.getDocument') value = { root: { nodeType: 9, children: [] } };
         if (method === 'DOM.getDocument') value = { root: { nodeId: 1 } };
@@ -407,6 +408,7 @@ describe('SABLE-B test 23: wouldCard false => no card, no site card, no action c
         if (command.operation === 'cdp') {
           const { method, params } = command.params as any; let value: any = {};
           if (method === 'Page.getFrameTree') value = { frameTree: { frame: { id: 'frame', loaderId: 'L' } } };
+          if (method === "Murage.getAllFrames") value = { frames: [{ frameId: 0, parentFrameId: -1 }] };
           if (method === 'Page.createIsolatedWorld') value = { executionContextId: 7 };
           if (method === 'DOM.getDocument') value = { root: { nodeType: 9, children: [] } };
           if (method === 'DOM.describeNode') value = { node: { backendNodeId: 12 } };

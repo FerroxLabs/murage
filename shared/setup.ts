@@ -298,6 +298,9 @@ export interface SetupLiveState {
    * defect. These are offered instead: see `setupSignedOutReading`.
    */
   signedOutAgents: readonly SetupAgentReading[];
+  /** Grok Bot data found on this computer (slice F), read live, never
+   *  persisted. Absent or malformed reads as 0; a failing finder is 0. */
+  moveIn?: { grok: number };
   /** The Flux Router connection as the app's own credential policy reports
    *  it, plus whether the saved key is shaped like a key at all. The key
    *  itself never leaves the server. */
@@ -872,6 +875,8 @@ export interface SetupView {
    *  offer the sign-in instead of claiming them or pretending they are not
    *  there. Never counted as an agent: see `SetupLiveState.signedOutAgents`. */
   signedOutAgents: readonly SetupAgentReading[];
+  /** Grok Bot data found on this computer, in memory only (slice F). */
+  moveIn: { grok: number };
   /** Routines, and the morning brief's own state. */
   routines: SetupRoutineReading;
   /** Visible bots other than the Chief, for the "hire your first teammate"
@@ -973,6 +978,7 @@ export function setupView(state: SetupState, live: SetupLiveState): SetupView {
     engine: live.bundledEngine,
     agents: live.agents,
     signedOutAgents: live.signedOutAgents,
+    moveIn: { grok: Number.isInteger(live.moveIn?.grok) && (live.moveIn?.grok ?? 0) > 0 ? (live.moveIn?.grok ?? 0) : 0 },
     routines: live.routines,
     crewSize: live.crewSize,
     fluxReady: fluxUsable(live),

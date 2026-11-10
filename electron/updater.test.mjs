@@ -186,9 +186,9 @@ it("the actual main createWindow and activate wiring retargets the process updat
     closeStartupSplash: vi.fn(), startupSplash: null, desktopMark: vi.fn(), noteVersionStarted: vi.fn(),
     shell: { openExternal: vi.fn(), openPath: vi.fn() }, LOG_DIR: "/unused-log-dir", pathToFileURL: (value) => new URL(`file://${value}`),
     createMainWindowOpenHandler: () => vi.fn(), createMainNavigationGuard: () => ({ willNavigate: vi.fn(), willRedirect: vi.fn() }),
-    trustedRendererOrigin: () => "http://127.0.0.1:18888", rendererOriginArguments: () => [], deliverPackageInstall: vi.fn(),
+    trustedRendererOrigin: () => "http://127.0.0.1:18888", rendererOriginArguments: () => [], deliverPackageInstall: vi.fn(), appReadiness: { track: vi.fn() }, lastErrorPageUrl: null,
     console: { warn: vi.fn(), error: vi.fn(), log: vi.fn() },
-    createRendererRecovery: () => ({ onGone: async () => "ignored" }), splashPage: () => "data:,", RECONNECTING_LINE: "Reconnecting",
+    createRendererRecovery: () => ({ onGone: async () => "ignored" }), attachLoadFailureRecovery: () => ({}), loadFailureRecoveries: new WeakMap(), splashPage: () => "data:,", RECONNECTING_LINE: "Reconnecting",
     // Module state the lane's startup reveal (pendingRevealWindows, 15 s fallback) reads.
     pendingSwap: null, replacingMainWindow: false, pendingRevealWindows: new WeakSet(), maximizeOnShow: new WeakSet(), WINDOW_REVEAL_FALLBACK_MS: 15000, setTimeout: () => ({ unref() {} }),
     serverLifecycleState: { state: "running" }, startupSplash: null, closeStartupSplash: vi.fn(), slog: vi.fn(), showDesktopRecovery: vi.fn(), desktopMark: vi.fn(),

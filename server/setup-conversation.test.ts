@@ -79,15 +79,22 @@ function walk(rows: Array<[SetupLiveState, Partial<Record<SetupStep, { skipped?:
   let recorded = emptySetupState(1_000);
   const seen: string[] = [];
   const present = new Set<string>();
+  // The three 1.0.19 cards settle by their own record, which the person does the moment they see one.
+  const settled = new Set<string>();
   for (const [machine, answered] of rows) {
     const steps = { ...recorded.steps };
     for (const [step, patch] of Object.entries(answered)) {
       steps[step as SetupStep] = { ...steps[step as SetupStep], ...patch };
     }
     recorded = deriveSetupState({ ...recorded, steps }, machine, 2_000);
-    for (const card of setupConversationPlan(setupView(recorded, machine), present).append) {
-      seen.push(card.key);
-      present.add(card.key);
+    for (let pass = 0; pass < 5; pass += 1) {
+      const cards = setupConversationPlan(setupView(recorded, machine), present, settled).append;
+      if (cards.length === 0) break;
+      for (const card of cards) {
+        seen.push(card.key);
+        present.add(card.key);
+        if (card.variant === "notify" || card.variant === "hire" || card.variant === "move-grok") settled.add(card.key);
+      }
     }
   }
   return seen;
@@ -207,7 +214,7 @@ describe("what the Chief says on a machine with nothing to think with", () => {
     for (const variant of ["found", "bare", "signed-out"] as const) {
       expect(keys(after.append), variant).not.toContain(setupCardKey("detect", variant));
     }
-    expect(keys(after.append)).toEqual([setupCardKey("chat", "jobs")]);
+    expect(keys(after.append)).toEqual([setupCardKey("flux", "notify")]);
   });
 
   // THE PEOPLE WHO ARE ALREADY STUCK IN IT.
@@ -329,7 +336,7 @@ describe("the not-now branch on the key", () => {
     );
     expect(keys(passedOver.append)).toEqual([
       setupCardKey("flux", "no-key"),
-      setupCardKey("chat", "jobs"),
+      setupCardKey("flux", "notify"),
     ]);
     // Passed over is not done, and the card that asked stops being live either
     // way: the checklist still says plainly that the step is outstanding.
@@ -360,7 +367,8 @@ describe("the two steps that end the flow", () => {
 
   it("asks what to take off their plate once there is something to think with", () => {
     const asked = plan(keyed, opened, state({ detect: DETECTED }));
-    expect(keys(asked.append)).toEqual([setupCardKey("chat", "jobs")]);
+    // 1.0.19: the notification chooser and the hire card come first; the jobs card is withheld until both are settled.
+    expect(keys(asked.append)).toEqual([setupCardKey("flux", "notify")]);
     expect(asked.settle).toContain(setupCardKey("flux", "key"));
   });
 
@@ -422,6 +430,8 @@ describe("called on every read, so it must be idempotent", () => {
       setupCardKey("hello", "welcome"),
       setupCardKey("detect", "bare"),
       setupCardKey("flux", "key"),
+      setupCardKey("flux", "notify"),
+      setupCardKey("chat", "hire"),
       setupCardKey("chat", "jobs"),
       setupCardKey("flow", "do-it"),
       setupCardKey("flow", "next"),
@@ -463,6 +473,8 @@ describe("called on every read, so it must be idempotent", () => {
       // saved key that nothing on screen could have produced. Two tests
       // agreeing about a flow neither of them could walk.
       setupCardKey("flux", "key"),
+      setupCardKey("flux", "notify"),
+      setupCardKey("chat", "hire"),
       setupCardKey("chat", "jobs"),
       setupCardKey("flow", "do-it"),
     ]);
@@ -586,6 +598,10 @@ const LIVE_VARIANTS = [
   "no-key",
   "jobs",
   "do-it",
+  // 1.0.19: the three cards that settle by their own record.
+  "notify",
+  "hire",
+  "move-grok",
   // The closing card: it turns on the local backup and shows the checked receipt.
   "next",
 ] as const;
@@ -614,6 +630,7 @@ function plannedVariants(): Set<string> {
     ["nothing to think with", named({ agents: [], signedOutAgents: [] })],
     ["signed out and nothing else", named({ agents: [], signedOutAgents: [CLAUDE_SIGNED_OUT] })],
     ["something they installed", named({ agents: [{ ...BUNDLED, installed: true }] })],
+    ["Grok Bot data found", named({ moveIn: { grok: 2 } })],
     ["a key in the keychain", named({ flux: FLUX_SAVED })],
     ["apps already connected", named({ flux: FLUX_SAVED, connectedAppIds: ["gmail", "googlecalendar"], connectedApps: 2 })],
     ["a brief that has already run", named({ flux: FLUX_SAVED, routines: BRIEF_RAN })],
@@ -653,14 +670,16 @@ function plannedVariants(): Set<string> {
       // `view.firstRun`, and an unseeded run there would plan nothing and
       // prove nothing.
       const present = new Set<string>([setupCardKey("hello", "welcome")]);
+      const settledOwn = new Set<string>();
       for (let round = 0; round < 8; round++) {
-        const next = setupConversationPlan(view(machine, recorded), present).append;
+        const next = setupConversationPlan(view(machine, recorded), present, settledOwn).append;
         if (!next.length) break;
         for (const card of next) {
           expect(PARKED_VARIANTS, `${where} planned the parked card ${card.variant}`)
             .not.toContain(card.variant);
           everyVariant.add(card.variant);
           present.add(card.key);
+          if (card.variant === "notify" || card.variant === "hire" || card.variant === "move-grok") settledOwn.add(card.key);
         }
       }
     }

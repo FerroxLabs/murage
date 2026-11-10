@@ -283,6 +283,17 @@ type SkillRecordingPayload = {
         update(patch:{keepRunning?:boolean;startAtLogin?:boolean}):Promise<StartupBackgroundState>;
         onChange(callback:(state:StartupBackgroundState)=>void):()=>void;
         onOpenInbox(callback:()=>void):()=>void;
+        /** Has the person pressed What's new on the update screen and not yet had it shown. */
+        pendingWhatsNew():Promise<boolean>;
+        /** The renderer has shown What's new: clear the request. */
+        ackWhatsNew():Promise<boolean>;
+        onWhatsNew(callback:()=>void):()=>void;
+      };
+      /** The cached start-up picture (two faces and the next tip); main validates it and the next splash reads it. */
+      startupPicture?: {
+        save(payload:unknown):Promise<boolean>;
+        /** The tip index this start showed (null when no picture was saved): the point the daily tip rotates from. */
+        sessionTip():Promise<number|null>;
       };
       /** Engine sign-in on this computer (main runs it; see src/lib/local-engine-login.ts). Main window only. */
       localEngineLogin?: import("@/lib/local-engine-login").LocalEngineLoginBridge;

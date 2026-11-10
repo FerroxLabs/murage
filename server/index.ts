@@ -34,6 +34,8 @@ import { verifiedDoorTicket, verifiedRecoveryHold } from "./cloud-home/b1b-ident
 import { doorRefusal } from "./cloud-home/door-log.ts";
 import { withCloudOpening } from "./cloud-home/opening-screen.ts";
 import { resolveStaticFile } from "./static-files.ts";
+import { createStaticUiDiagnostics } from "./static-ui-reason.ts";
+import { createSetupPageResponder } from "./static-ui-setup-page.ts";
 import { CloudSessions } from "./cloud-sessions.ts";
 import { listenCloudProxy } from "./cloud-home/proxy-socket.ts";
 import { createCloudRequestAuth } from "./cloud-request-auth.ts";
@@ -302,7 +304,10 @@ import { driverMountsPhoneJobs } from "./phone-jobs-engines.ts";
 import { aiProviderName } from "../shared/phone-ai-provider.ts";
 import { chatsReader, companionAuthorized, doorAuthorized, launchProofPresent, ownerActs } from "./companion-authority.ts";
 import { ownerAppSurface } from "./owner-app.ts";
-import { readOwnerPrefs, todayViewRoute, writeOwnerPrefs } from "./owner-prefs.ts";
+import { firstRunJobsRoute, readOwnerPrefs, todayViewRoute, writeOwnerPrefs } from "./owner-prefs.ts";
+import { ensureHired, parseHireBody, type HireDeps, type HirePackageId } from "./setup-hire.ts";
+import { convertGrokExports, findMoveIn, forgetGrokCount, grokCountForSetup } from "./move-in-found.ts";
+import { parseBotPackageManifest } from "./bot-package-manifest.ts";
 import { replayEarlyParentMessages } from "./launch-secret.ts";
 import { createMcpAccessCheck, readOrCreateMcpAccessKey, removeMcpAccessKey } from "./mcp-access.ts";
 import { McpGrants, mcpGrantAdmits, type McpGrant } from "./mcp-grants.ts";
@@ -957,7 +962,7 @@ import { type SetupTiming, createSetupTiming, pressWaitOf, readSideBySide } from
 import { type EngineChoice, bootEngineChoice, nativeTurnModel, defaultModel, fuigoBirthModel, fuigoUsable, pickDefaultEngine } from "./default-engine.ts";
 import { hiddenEngineRows, hideEngineRefusal, isHiddenEngine, withoutHiddenEngines } from "./hidden-engines.ts";
 import { couldMoveEngine, createEngineRepick, targetCheck } from "./engine-repick.ts";
-import { type SetupCardData, readSetupCard, setupCardKey } from "../shared/setup-card.ts";
+import { type SetupCardData, SETUP_OWN_RECORD_KEYS, isOwnRecordVariant, readSetupCard, setupCardKey } from "../shared/setup-card.ts";
 import { plainConnectedAppText } from "../shared/connected-app-tools.ts";
 import { resumesLegacySession, withLegacyNames } from "../shared/connected-app-names.ts";
 import { chiefConfirmation, chiefConfirmationsFor } from "../shared/first-run-chief.ts";
@@ -1229,6 +1234,8 @@ const USER_CHROME_ALLOW_PANEL_MESSAGE = "Chrome did not let Murage connect. When
 const PORT = Number(process.env.MURAGE_PORT || process.env.MURAGEBOX_PORT || 8799);
 const WEBHOOK_PORT = Number(process.env.MURAGE_WEBHOOK_PORT || PORT + 1);
 const STATIC_DIR = process.env.MURAGE_STATIC_DIR || null;
+/** Says why the app page could not be served (a missing or locked ui folder), once per reason, and checks the folder at boot. Never logs file contents. */
+const staticUiDiagnostics = STATIC_DIR ? createStaticUiDiagnostics(STATIC_DIR) : null;
 /** A Cloud home tells its own app which home it is (the "Continue from murage.ai" link): MURAGE_CLOUD_MACHINE_ID (equals cloud_homes.id), else the pinned control-plane binding. Never taken from the URL. */
 let cloudHomeIdSource: (() => string | undefined) | undefined;
 function withCloudHomeId(html: Buffer): Buffer {
@@ -1678,6 +1685,9 @@ type UtilityParentPort = {
 // SAFETY: Electron's utility-process runtime is the only environment that
 // supplies parentPort; plain Node intentionally leaves it absent.
 const cloudHome = process.env.MURAGE_CLOUD_ROLE === "home";
+/** A page load the packaged server cannot serve (files missing or locked) gets a self-contained HTML setup page, never JSON (WIN-NOROUTE-1019). The log link is the desktop child's only. */
+const setupResponder = STATIC_DIR ? createSetupPageResponder({ logLink: !cloudHome }) : null;
+const staticUiTrace = process.env.MURAGE_STATIC_UI_TRACE === "1";
 installCloudProcessHooks(); // no-op unless this is a Cloud home; the desktop is unchanged
 const homeSessions = (() => {
   if (!cloudHome) return undefined;
@@ -4750,6 +4760,7 @@ async function setupLiveState({ seat = true, timing }: { seat?: boolean; timing?
     agents: setupAgentsReading(described),
     // Who runs on each one: Needs you names only an engine a bot uses (setupEngineUsers).
     signedOutAgents: setupEngineUsers(setupSignedOutReading(described), store.bots, routines?.listRoutines() ?? []),
+    moveIn: { grok: await grokCountForSetup().catch(() => 0) },
     flux: { configured: flux.configured, conflict: flux.conflict, looksValid: fluxKeyLooksValid(fluxKey()) },
     bundledEngine: bundledEngineStatus(),
     connectedApps: connected.count,
@@ -4952,6 +4963,87 @@ function chiefConfirms(step: SetupStep, answer: string): void {
   }
 }
 
+/** The commit step of a package import: one place, used by the package routes and by hiring (POST /api/setup/hire). */
+function packageImportAtomicCommit(refuseRepeatedImport: () => void): Parameters<typeof importBotPackageArchive>[0]["atomicCommit"] {
+  return ({ prepared }) => {
+    if (dataWritersStopped || !routines) throw new Error("Installation is closing");
+    for (const bot of prepared.bots) store.botIdGuard?.(bot.id);
+    refuseRepeatedImport();
+    if(cloudHome && [...prepared.bots,...prepared.routines].some(record=>record.alwaysAllow?.length)) throw Object.assign(new Error(cloudHomeCopy.alwaysAllowUnavailable),{status:403});
+    for (const bot of prepared.bots) bot.packageImportReceipt = { reviewHash: prepared.reviewHash, archiveSha256: prepared.archiveSha256, importId: prepared.id, selectionHash: prepared.selectionHash, ...(prepared.agentKeys[bot.id] ? { agentKey: prepared.agentKeys[bot.id] } : {}) };
+    prepared.bots[0].packageImportReceipt!.baseline = prepared.baseline;
+    const botBatch = store.preparePackageAddition(prepared.bots, prepared.groups, { born: new Set(prepared.bornBotIds) });
+    // Leads are decided here, on each lead's final engine (born or the starter's pick), with nothing awaited since the birth.
+    const admitted = prepared.leadBotIds.filter(id => { const selection = prepared.bots.find(bot => bot.id === id)?.modelSelection; return !!selection && leadershipAdmissionError(registry.get(selection.instanceId), selection.instanceId) === null; });
+    prepared.leadBotIds.splice(0, prepared.leadBotIds.length, ...admitted);
+    const routineBatch = routines.preparePackageAddition(prepared.routines);
+    const replacements = new Map([...botBatch.files, ["routines.json", routineBatch.bytes] as const,
+      ...prepared.files.map(file => [file.path, file.content] as const)]);
+    const expected = new Map<string, string | null>();
+    for (const relative of replacements.keys()) {
+      try { expected.set(relative, createHash("sha256").update(readFileSync(join(DATA_DIR, relative))).digest("hex")); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; expected.set(relative, null); }
+    }
+    const assertOwned = () => { if (dataWritersStopped) throw new Error("Installation is closing"); };
+    try {
+      commitPackageImportFiles(DATA_DIR, replacements, expected, { allowedNewBotIds: prepared.bots.map(bot => bot.id), assertOwned });
+    } catch (error) {
+      // Settle a recoverable write failure before the event loop admits
+      // another writer. A durable commit must still publish its state.
+      let recovered: ReturnType<typeof recoverPackageImportTransaction>;
+      try { recovered = recoverPackageImportTransaction(DATA_DIR, { assertOwned }); }
+      catch {
+        // Memory may no longer describe disk. Stop synchronously so no
+        // timer/provider callback writes over retained recovery evidence.
+        // Leave dataWritersStopped false: the stale lease and journal
+        // must survive for explicit recovery at the next startup.
+        process.stderr.write("Package import recovery could not establish a consistent installation. Murage stopped; the recovery journal and original copies were retained.\n");
+        process.exit(1);
+      }
+      if (recovered.status !== "committed") throw error;
+    }
+    routineBatch.publish();
+    botBatch.publish();
+  };
+}
+
+/**
+ * The shipped starter import for one package with an explicit selection, run inside the server for POST
+ * /api/setup/hire: preview, then import, with the same commit the package routes use. Never `firstRun`, and never a
+ * lead: a hired bot starts on Ask and reports to the Chief, who is never replaced.
+ */
+async function importStarterAgents(profileId: HirePackageId, selection: { agents: string[]; skills: string[]; instructions: string[]; routines: string[] }): Promise<void> {
+  return importReviewedContents(starterProfileContents(profileId), selection);
+}
+
+async function importReviewedContents(contents: ReturnType<typeof starterProfileContents>, selection: { agents: string[]; skills: string[]; instructions: string[]; routines: string[] }): Promise<void> {
+  const preview = await previewBotPackageContents(contents, { selection, existingBots: store.bots });
+  if (preview.scan.blocked) throw new Error("That package did not pass this computer's content checks.");
+  const selectionHash = packageImportSelectionHash(selection);
+  const refuseRepeatedImport = () => {
+    if (store.bots.some(bot => bot.packageImportReceipt?.archiveSha256 === preview.archiveSha256 && bot.packageImportReceipt?.selectionHash === selectionHash)) {
+      throw Object.assign(new Error("This reviewed package was already imported"), { status: 409 });
+    }
+  };
+  refuseRepeatedImport();
+  await importBotPackageContents({
+    contents, dataDir: DATA_DIR, selection, expectedArchiveSha256: preview.archiveSha256, expectedReviewHash: preview.reviewHash,
+    acknowledgeWarnings: false, existingBots: store.bots, modelSelection: "birth",
+    existingSections: [...store.bots, ...store.groups].flatMap(record => record.section?.trim() ? [record.section.trim()] : []),
+    starterLeads: false, assertFreshBotId: assertCloudBotIdNotTombstoned,
+    atomicCommit: packageImportAtomicCommit(refuseRepeatedImport),
+  });
+}
+
+const setupHireDeps: HireDeps = {
+  bots: () => store.bots,
+  shape: (profileId) => {
+    const pkg = starterProfileContents(profileId).manifest.definition.package;
+    return { agents: pkg.agents.map(agent => agent.key), routines: (pkg.routines ?? []).map(routine => ({ key: routine.key, agent: routine.agent })) };
+  },
+  importAgents: importStarterAgents,
+};
+
 function driveSetupConversation(view: SetupView): void {
   if (!view.chiefBotId) return;
   const chief = store.bot(view.chiefBotId);
@@ -4965,7 +5057,8 @@ function driveSetupConversation(view: SetupView): void {
       const parsed = card ? readSetupCard(card) : null;
       if (card && parsed) present.set(parsed.key, { id: message.id, card, setup: parsed });
     }
-    const plan = setupConversationPlan(view, new Set(present.keys()));
+    const settledKeys = new Set([...present].filter(([, entry]) => entry.setup.settled === true).map(([key]) => key));
+    const plan = setupConversationPlan(view, new Set(present.keys()), settledKeys);
     // A card whose step went BACK has to come back live, which is the half
     // this early return used to be blind to: "Something else" reopened `chat`
     // and the plan had nothing to append, so the driver returned here and the
@@ -5017,6 +5110,9 @@ function driveSetupConversation(view: SetupView): void {
           title: card.title,
           subtitle: card.subtitle,
           options: [],
+          // The three 1.0.19 cards carry a non-empty `answered` so a 1.0.18 renderer, which cannot read their variant,
+          // hides them instead of showing the generic onboarding card; 1.0.19 reads `setup.settled`, never `answered`.
+          ...(isOwnRecordVariant(card.variant) ? { answered: "setup" } : {}),
           setup: { step: card.step, variant: card.variant, key: card.key },
         },
       }));
@@ -27135,46 +27231,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         // A shipped starter crew names its lead; whether the lead's engine can coordinate bots is decided in the commit, on its final engine.
         starterLeads: starter,
         assertFreshBotId: assertCloudBotIdNotTombstoned,
-        atomicCommit: ({ prepared }) => {
-          if (dataWritersStopped || !routines) throw new Error("Installation is closing");
-          for (const bot of prepared.bots) store.botIdGuard?.(bot.id);
-          refuseRepeatedImport();
-          if(cloudHome && [...prepared.bots,...prepared.routines].some(record=>record.alwaysAllow?.length)) throw Object.assign(new Error(cloudHomeCopy.alwaysAllowUnavailable),{status:403});
-          for (const bot of prepared.bots) bot.packageImportReceipt = { reviewHash: prepared.reviewHash, archiveSha256: prepared.archiveSha256, importId: prepared.id, selectionHash: prepared.selectionHash };
-          prepared.bots[0].packageImportReceipt!.baseline = prepared.baseline;
-          const botBatch = store.preparePackageAddition(prepared.bots, prepared.groups, { born: new Set(prepared.bornBotIds) });
-          // Leads are decided here, on each lead's final engine (born or the starter's pick), with nothing awaited since the birth.
-          const admitted = prepared.leadBotIds.filter(id => { const selection = prepared.bots.find(bot => bot.id === id)?.modelSelection; return !!selection && leadershipAdmissionError(registry.get(selection.instanceId), selection.instanceId) === null; });
-          prepared.leadBotIds.splice(0, prepared.leadBotIds.length, ...admitted);
-          const routineBatch = routines.preparePackageAddition(prepared.routines);
-          const replacements = new Map([...botBatch.files, ["routines.json", routineBatch.bytes] as const,
-            ...prepared.files.map(file => [file.path, file.content] as const)]);
-          const expected = new Map<string, string | null>();
-          for (const relative of replacements.keys()) {
-            try { expected.set(relative, createHash("sha256").update(readFileSync(join(DATA_DIR, relative))).digest("hex")); }
-            catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; expected.set(relative, null); }
-          }
-          const assertOwned = () => { if (dataWritersStopped) throw new Error("Installation is closing"); };
-          try {
-            commitPackageImportFiles(DATA_DIR, replacements, expected, { allowedNewBotIds: prepared.bots.map(bot => bot.id), assertOwned });
-          } catch (error) {
-            // Settle a recoverable write failure before the event loop admits
-            // another writer. A durable commit must still publish its state.
-            let recovered: ReturnType<typeof recoverPackageImportTransaction>;
-            try { recovered = recoverPackageImportTransaction(DATA_DIR, { assertOwned }); }
-            catch {
-              // Memory may no longer describe disk. Stop synchronously so no
-              // timer/provider callback writes over retained recovery evidence.
-              // Leave dataWritersStopped false: the stale lease and journal
-              // must survive for explicit recovery at the next startup.
-              process.stderr.write("Package import recovery could not establish a consistent installation. Murage stopped; the recovery journal and original copies were retained.\n");
-              process.exit(1);
-            }
-            if (recovered.status !== "committed") throw error;
-          }
-          routineBatch.publish();
-          botBatch.publish();
-        },
+        atomicCommit: packageImportAtomicCommit(refuseRepeatedImport),
       });
       // A shipped starter crew is led from the start: the import wrote every
       // bot with no access, and its lead is appointed here, the way the
@@ -30732,6 +30789,12 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
     }
     // Today design 2b: the Calm | Detailed choice, one owner pref on the server so the desktop and the phone app share
     // it. Read anywhere Today renders; saved only where the same owner-app check as the caution route admits.
+    // FIRSTRUN-1019 D2: the first run's queue of ticked jobs, owner surfaces only.
+    if ((method === "GET" || method === "POST") && path === "/api/owner/first-run-jobs") {
+      const owner = ownerAppSurface(req.headers, url.searchParams);
+      const result = firstRunJobsRoute(DATA_DIR, method, owner, method === "POST" && owner.ok ? await readBody(req) : undefined);
+      return json(res, result.status, result.body);
+    }
     if ((method === "GET" || method === "POST") && path === "/api/owner-prefs/today-view") {
       const owner = ownerAppSurface(req.headers, url.searchParams);
       const result = todayViewRoute(DATA_DIR, method, owner, method === "POST" && owner.ok ? await readBody(req) : undefined);
@@ -31891,6 +31954,80 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const view = setupView(setup.read(live), live);
       if (!peek) await driveSetup(view);
       return json(res, 200, view);
+    }
+
+    // POST /api/setup/card: the three 1.0.19 cards (notify, hire, move from Grok Bot) settle by their own record.
+    // A finished step never settles them and a reopened step never unsettles them; only this does, and it runs the
+    // driver so the next card is appended in the same response. Idempotent.
+    if (method === "POST" && path === "/api/setup/card") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 404, { error: "no such route" });
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      const body = await readBody(req);
+      const key = typeof body?.key === "string" ? body.key : "";
+      if (body?.action !== "settle" || !(SETUP_OWN_RECORD_KEYS as readonly string[]).includes(key)) return json(res, 400, { error: "That card cannot be settled this way." });
+      await setupLiveState();
+      const chiefId = setup.chiefBotId();
+      const chief = chiefId ? store.bot(chiefId) : null;
+      if (!chief) return json(res, 409, { error: "There is nobody here to own this yet." });
+      const message = store.keyedCards(chief.threadId, "setup").find(candidate => (candidate.card ? readSetupCard(candidate.card) : null)?.key === key);
+      const parsedCard = message?.card ? readSetupCard(message.card) : null;
+      if (!message || !message.card || !parsedCard) return json(res, 409, { error: "That card is not in the conversation yet." });
+      if (parsedCard.settled !== true) store.patchMessage(chief.threadId, message.id, { card: { ...message.card, setup: { ...parsedCard, settled: true } } });
+      const live = await setupLiveState();
+      const view = setupView(setup.read(live), live);
+      await driveSetup(view);
+      return json(res, 200, view);
+    }
+
+    // GET /api/move-in/found (slice F): what can be moved in from this computer. Label and count, never a path.
+    // 403 for anything but the desktop app (paired phones and service callers included).
+    if (method === "GET" && path === "/api/move-in/found") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 403, { error: "This is shown on the computer." });
+      return json(res, 200, await findMoveIn().catch(() => ({ grok: { label: "Grok Bot", count: 0 } })));
+    }
+    // POST /api/move-in/grok: move the Grok Bot exports found in Downloads in, as bots with their skills and paused
+    // routines on the default engine, through the shipped importer and the package guards. Desktop only.
+    if (method === "POST" && path === "/api/move-in/grok") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 403, { error: "This is done on the computer." });
+      try {
+        const moved: string[] = [];
+        const notes: string[] = [];
+        // Every export is tried. One already imported (409) counts as moved, so a retry after a partial success or a lost
+        // answer carries on with the ones still missing; any other failure is raised once all have been tried.
+        let failure: unknown = null;
+        for (const result of await convertGrokExports()) {
+          const definition = parseBotPackage(result.document);
+          const pkg = definition.package;
+          try {
+            const contents = { manifest: parseBotPackageManifest({ format: "murage.package.bundle", version: 1, definition, skills: [], instructions: [], entries: [] }), payloads: new Map<string, Buffer>() };
+            await importReviewedContents(contents, { agents: pkg.agents.map(agent => agent.key), skills: [], instructions: [], routines: (pkg.routines ?? []).map(routine => routine.key) });
+          } catch (error) {
+            if ((error as { status?: number }).status !== 409) { failure ??= error; continue; }
+          }
+          moved.push(...pkg.agents.map(agent => agent.name));
+          notes.push(...result.notes);
+        }
+        if (failure) throw failure;
+        forgetGrokCount();
+        return json(res, 200, { moved, notes });
+      } catch (error) {
+        const status = (error as { status?: number }).status;
+        return json(res, status === 409 ? 409 : 500, { error: "That did not work. Try again." });
+      }
+    }
+
+    // POST /api/setup/hire: ensure the ticked starter teammates exist (FIRSTRUN-1019 1.11). Desktop only, JSON only.
+    if (method === "POST" && path === "/api/setup/hire") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 404, { error: "no such route" });
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      const parsedHire = parseHireBody(await readBody(req));
+      if (!parsedHire.ok) return json(res, 400, { error: parsedHire.error });
+      try {
+        return json(res, 200, { hired: await ensureHired(parsedHire.agents, setupHireDeps) });
+      } catch (error) {
+        const status = (error as { status?: number }).status;
+        return json(res, status === 400 ? 400 : 500, { error: status === 400 ? (error as Error).message : "That did not work. Try again." });
+      }
     }
 
     // POST /api/setup/routine — the brief, and the couple more after it.
@@ -33653,6 +33790,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
     // packaged app: the server serves the built UI too (window → :8799 for
     // everything, no dev proxy to die). MURAGE_STATIC_DIR is set by Electron.
     if ((method === "GET" || method === "HEAD") && !path.startsWith("/api/") && STATIC_DIR) {
+      // Repro-box debug only (MURAGE_STATIC_UI_TRACE=1): one server.log line per document response, with its content type.
+      if (staticUiTrace) setupResponder?.trace(req, res);
       const resolved = resolveStaticFile(STATIC_DIR, path);
       if (resolved.kind === "refused") return json(res, 404, { error: `no route: ${method} ${path}` });
       const file = resolved.file, safe = resolved.rel;
@@ -33676,14 +33815,19 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         if (/^\/mermaid-frame(?:-[0-9a-f]{16})?\.html$/.test(safe)) headers["content-security-policy"] = mermaidFrameCsp(data);
         const cacheControl = staticCacheControl(safe);
         if (cacheControl) headers["cache-control"] = cacheControl;
-        if (safe === "/index.html") data = withCloudHomeId(data);
+        if (safe === "/index.html") { data = withCloudHomeId(data); setupResponder?.served(); }
         return send(200, headers, data);
       } catch {
         // SPA fallback
         try {
-          return send(200, { "content-type": "text/html" }, withCloudHomeId(readFileSync(join(STATIC_DIR, "index.html"))));
-        } catch {
-          /* fall through to 404 */
+          const indexHtml = withCloudHomeId(readFileSync(join(STATIC_DIR, "index.html")));
+          setupResponder?.served();
+          return send(200, { "content-type": "text/html" }, indexHtml);
+        } catch (indexError) {
+          // Neither the file nor index.html could be read: say why in server.log. A page load gets the setup page
+          // (it refreshes itself until the app is back); every other request falls through to the JSON 404 unchanged.
+          staticUiDiagnostics?.unreadable(indexError);
+          if (setupResponder?.respond(req, res, indexError)) return;
         }
       }
     }
@@ -33829,6 +33973,7 @@ if (process.platform === "linux" && !cloudHome) { void startHostPowerStub(); voi
 void releasePreListenHealth().catch(() => undefined).then(() => { startLoopLagMonitor(); server.listen(PORT, "127.0.0.1", () => {
   if (cloudHome) listenCloudProxy(server, process.env.MURAGE_TRUSTED_PROXY?.slice(5) ?? "/data/proxy/murage.sock");
   console.log(`murage server on http://127.0.0.1:${PORT}`);
+  staticUiDiagnostics?.boot();
   startupMark("listen");
   listenTickWitness();
   // the listen tick only listens and gates (one SELECT: unfinished forgets)

@@ -23,6 +23,10 @@ export type CloudSettingsClass = "home" | "mixed" | "computer-only";
 export const CLOUD_SETTINGS_CLASS: Readonly<Record<AppSettingsSection, CloudSettingsClass>> = Object.freeze({
   // Startup (login item) and Set up again are this computer's; profile, appearance, language, notifications are not.
   general: "mixed",
+  // Calls moved off General's notifications card; it is the same card, so the same class (desktop-only content, renders its own stub).
+  calls: "mixed",
+  // The list of bots is the home's own; opening one is the bot window.
+  browseBots: "home",
   aboutMe: "home",
   botDefaults: "home",
   houseRules: "home",

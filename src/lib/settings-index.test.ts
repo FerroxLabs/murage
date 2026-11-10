@@ -13,6 +13,7 @@ import { searchSettingsIndex, type SettingsFindContext } from "./settings-search
 const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
 const PANEL = read("../components/SettingsPanel.tsx");
 const MODAL = read("../components/SettingsModal.tsx");
+const CALLS = read("../components/BotCallsSettings.tsx");
 const BOTS = [{ id: "b-nova", name: "Nova" }, { id: "b-rex", name: "Rex" }, { id: "b-ivy", name: "Ivy" }];
 const APP: SettingsFindContext = { desktop: true, cloud: false, bots: BOTS };
 const firstId = (query: string, context: SettingsFindContext = APP) => {
@@ -34,13 +35,14 @@ describe("the settings index", () => {
 
   it("renders every bot entry on its own row in the bot window", () => {
     for (const entry of BOT_SETTINGS_CARDS) {
-      expect(PANEL, entry.id).toContain(`id="${entry.anchor}" data-setting="${entry.id}"`);
+      const row = `id="${entry.anchor}" data-setting="${entry.id}"`;
+      expect(PANEL.includes(row) || CALLS.includes(row), entry.id).toBe(true);
     }
   });
 
   it("registers every data-setting row and every Settings anchor", () => {
     const ids = new Set(SETTINGS_INDEX.map((entry) => entry.id));
-    for (const source of [PANEL, MODAL]) {
+    for (const source of [PANEL, MODAL, CALLS]) {
       for (const [, id] of source.matchAll(/data-setting="([^"]+)"/g)) expect(ids.has(id), `${id} is rendered but not in the index`).toBe(true);
     }
     const anchors = new Set(SETTINGS_CARDS.map((card) => card.anchor));

@@ -56,7 +56,7 @@ function bootstrapWiring({ menu = [], selectionActive = false } = {}) {
   const inert = () => { throw new Error("backup branch must stay inert in an ordinary launch"); };
   return {
     backupStartupDispatch, createServerConnections, openServerPrompt, dialog: { showErrorBox() {} }, BrowserWindow: null, session: null, Menu, mainWindow: null, desktopSelectionActive: selectionActive,
-    createStartupSplash: () => ({ close() {} }), desktopMark: () => {}, firstStartOfVersion: () => false, FIRST_AFTER_UPDATE_NOTE: "", noteVersionStarted: () => {},  nativeTheme: { shouldUseDarkColors: false }, closedBackupRequested: false, initializeBackupScheduleHost: async () => {}, backupScheduleHost: null,
+    createStartupSplash: () => ({ close() {} }), desktopMark: () => {}, readStartupPicture: () => null, splashMode: () => "tip", startupIpc: { requestWhatsNew() {} }, noteVersionStarted: () => {},  nativeTheme: { shouldUseDarkColors: false }, closedBackupRequested: false, initializeBackupScheduleHost: async () => {}, backupScheduleHost: null,
     // The Sentinel host (sentinel-host.mjs) starts right after ownership; tests that care about its order override it.
     initializeSentinelHost: async () => {}, sentinelHost: null, desktopRecoveryMode: false, desktopShutdownStarted: false,
     // The live gate is a top-level const in main.mjs, declared before app.whenReady; the startup block only schedules its probe.
