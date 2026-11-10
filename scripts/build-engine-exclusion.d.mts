@@ -1,0 +1,1 @@
+export function buildEngineExclusion(options?: { platform?: string; testHooks?: boolean; allArch?: boolean; clFlags?: string[]; environmentFile?: string; headerDirectory?: string; outputRoot?: string; env?: NodeJS.ProcessEnv; exec?: unknown }): unknown;

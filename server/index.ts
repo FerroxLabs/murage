@@ -340,7 +340,7 @@ import { basename, extname, isAbsolute, join, parse, relative, sep } from "node:
 
 import { z } from "zod";
 import { oversizedScreenNotice, SSE_MAX_CLIENTS, SSE_MAX_FRAME_BYTES, SSE_MAX_PENDING_BYTES, SSE_MAX_PENDING_FRAMES, SSE_REPLAY_MAX_BYTES, SSE_REPLAY_MAX_ENTRIES, SseReplay, SseWriter } from "./sse-buffer.ts";
-import { conversationSubject, routeAdmits, routeClass, routeRefusal } from "./route-policy.ts";
+import { DESKTOP_ONLY_SENTENCE, conversationSubject, routeAdmits, routeClass, routeRefusal } from "./route-policy.ts";
 import { planUsageService } from "./plan-usage.ts";
 import { planCursor, planUsageReport, refreshPlanUsage } from "./plan-usage-report.ts";
 import { assertBrowserProfilePrecondition } from "./browser-profile-precondition.ts";
@@ -626,7 +626,11 @@ import {
   NATIVE_DIR,
   fluxKeyEpoch,
   onFluxKeySaved,
+  defaultComputerForNewBots,
 } from "./config.ts";
+import { resolveNewBotComputerForCreation } from "./default-computer.ts";
+import { CLAUDE_CODE_IMPORT_PATH, claudeCodeImportStatus, handleClaudeCodeImport } from "./claude-code-import.ts";
+import { deleteCollectionSkill as deleteImportedCollectionSkill, importCollectionSkill as importCollectionSkillFromClaudeCode, listCollection as listSkillCollection } from "./skill-collection.ts";
 import { customIntegrations } from "./custom-mcp-mounts.ts";
 import { ComputerControl } from "./computer-control.ts";
 import { buildEngineSigninRecipe } from "./engine-signin-recipe.ts";
@@ -21743,6 +21747,9 @@ function configStatus() {
     rooms: { turnTimeoutMinutes: roomTurnTimeoutMinutes(cfg) },
     // absent effort = no level is sent, so a client tells it from any level
     newBots: cfg.newBots?.effort ? { effort: cfg.newBots.effort } : {},
+    // not `computer`: GET /api/config already answers that with whether this is the owner's computer
+    newBotComputer: defaultComputerForNewBots(cfg),
+    claudeCodeImport: claudeCodeImportStatus(cfg),
     localVm: {
       mode: localVmMode(cfg),
       maxInstances: localVmMaxInstances(cfg),
@@ -23816,6 +23823,15 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const threadId=url.searchParams.get("threadId");
       const last=threadId?fluxMemoryReportFor(threadId):latestFluxMemoryReport();
       return json(res,200,{...fluxMemorySettingState(fluxConfigured()),...(last?{last:{source:last.source,...(last.reason?{reason:last.reason}:{}),text:describeFluxMemorySource(last)}}:{})});
+    }
+    if(method==="GET" && path==="/api/memory/learning-usage") {
+      try {
+        return json(res,200,await memoryOwnerRoute(path,undefined,ownerMemoryTicket(),{bots:store.bots,groups:store.groups},{learningConnection:resolvedLearning}));
+      } catch(error) {
+        if(isDatabaseBusy(error))return busyJson(res,"memory-action");
+        const status=error && typeof error==="object" && "status" in error && typeof error.status==="number"?error.status:400;
+        return json(res,status,{error:error instanceof Error?error.message:"MEMORY_ACTION_FAILED"});
+      }
     }
     if((method==="GET" && path==="/api/memory/status") || (method==="POST" && path==="/api/memory/action")) {
       try {
@@ -28776,6 +28792,14 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         if (!checked.ok) return json(res, checked.status, { error: checked.error });
         selection = checked.selection;
       }
+      // Only the owner's surfaces inherit defaults. Probe the same VM status as Computer settings before the final writer gate
+      // and capacity check: neither may be separated from createBot by an asynchronous availability read.
+      const proven = requestSurface(req.headers, url.searchParams) === "desktop" || companionAuthorized(req.headers);
+      const startComputer = await resolveNewBotComputerForCreation(proven ? defaultComputerForNewBots(cfg) : "off", {
+        cloudHome: isCloudHome(),
+        boxAvailable: isCloudHome() ? cloudBoxComputersAllowed(cfg) : Boolean(cfg.box?.token),
+        vmMode: localVmMode(cfg),
+      }, () => containerComputerStatus());
       // The request gate ran before the body and the engine list were read: a writer hold that began during those waits (an index
       // build at start) is waited out here, or the write below takes the hold's 50 ms budget and answers busy at once.
       await awaitWriterGateForeground();
@@ -28786,9 +28810,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       }
       // A caller that proved nothing (a script, a bot's own shell) gets a bot
       // with no access and in no team; the owner's surfaces keep the defaults.
-      const proven = requestSurface(req.headers, url.searchParams) === "desktop" || companionAuthorized(req.headers);
-      const bot = store.createBot({ ...profile.patch, section: proven ? section : undefined, ...(selection ? { modelSelection: selection } : {}) }, { noAccess: !proven });
+      const bot = store.createBot({ ...profile.patch, section: proven ? section : undefined, ...(selection ? { modelSelection: selection } : {}) }, { noAccess: !proven, ...(proven && startComputer.computer ? { computer: startComputer.computer } : {}) });
       return json(res, 201, {
+        ...(proven && startComputer.fellBack ? { computerNotice: "That computer is not available here, so this assistant started on this computer." } : {}),
         bot: {
           ...wireBot(bot),
           ...wireThread(store, bot.threadId, { messages: store.messagesFor(bot.threadId) }, { slim: false }),
@@ -32237,6 +32261,106 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
     // attacking; a phone has no MCP settings UI, so nothing legitimate loses
     // anything by the closed door. Upstream gates these through the scope
     // table we rejected (79b0ff55), so a port of theirs arrives ungated here.
+    // Claude Code copy import (CONTRACTS-B 1, 1.1): the owner's desktop only. The route policy and this check run before any file is opened;
+    // a phone, a paired browser and a Cloud window all stop here. The same non-simple-request gate as the other routes that change what runs.
+    if (path === CLAUDE_CODE_IMPORT_PATH && method === "POST") {
+      if (requestSurface(req.headers, url.searchParams) !== "desktop" || isCloudHome()) {
+        return json(res, 403, { error: DESKTOP_ONLY_SENTENCE });
+      }
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return json(res, 415, { error: "content-type must be application/json" });
+      }
+      const importBody = await readBody(req);
+      // the import adds servers to the same map the MCP routes edit, so it takes the same lock
+      if (mcpConfigBusy) return json(res, 409, { error: "Connected tools are already being updated. Wait a moment, then try again." });
+      mcpConfigBusy = true;
+      let answer: ReturnType<typeof handleClaudeCodeImport>;
+      try {
+        const { writeFileAtomic } = await import("./atomic.ts");
+        const { readdirSync } = await import("node:fs");
+        const beforeReceipt = cfg.claudeCodeImport;
+        // No await during the synchronous transaction: an exact config snapshot also
+        // covers a save that throws after replacing the file.
+        const configPath = join(DATA_DIR, "config.json");
+        let beforeConfig: Buffer | null | undefined;
+        const snapshotConfig = () => {
+          if (beforeConfig !== undefined) return;
+          try { beforeConfig = readFileSync(configPath); }
+          catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") beforeConfig = null; else throw error; }
+        };
+        const skillRoot = join(DATA_DIR, "skill-collection");
+        const collectionPath = join(skillRoot, "collection.json");
+        let beforeSkillEntries: Set<string> | undefined;
+        let beforeCollection: Buffer | null = null;
+        let pendingSkillUndos = 0;
+        answer = handleClaudeCodeImport({
+          body: importBody,
+          enabled: cfg.claudeCodeImport?.enabled === true,
+          home: homedir(),
+          ownerToken: desktopSurfaceSecret(), // requestSurface already proved this per-launch owner token
+          previous: cfg.claudeCodeImport,
+          deps: {
+            existingSkillNames: () => new Set(listSkillCollection().map((skill) => skill.name.toLowerCase())),
+            skillPathExists: (name) => {
+              try { lstatSync(join(DATA_DIR, "skill-collection", name)); return true; }
+              catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error; }
+            },
+            addSkill: (files, label) => {
+              if (!beforeSkillEntries) {
+                let entries: string[];
+                try { entries = readdirSync(skillRoot); }
+                catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") entries = []; else throw error; }
+                try { beforeCollection = readFileSync(collectionPath); }
+                catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+                beforeSkillEntries = new Set(entries);
+              }
+              pendingSkillUndos++;
+              const imported = importCollectionSkillFromClaudeCode(files, { kind: "folder", label });
+              return "error" in imported ? { error: imported.error, code: imported.code } : { name: imported.name };
+            },
+            removeSkill: (name) => {
+              if (!isSkillName(name)) throw new Error("Invalid imported skill name");
+              if (!beforeSkillEntries) throw new Error("No skill snapshot");
+              deleteImportedCollectionSkill(name);
+              // A failed import may have renamed its folder before saving its record.
+              rmSync(join(skillRoot, name), { recursive: true, force: true });
+              let entries: string[];
+              try { entries = readdirSync(skillRoot); }
+              catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") entries = []; else throw error; }
+              // Also remove staging artifacts from a failed folder or collection write.
+              for (const entry of entries) {
+                if (!beforeSkillEntries.has(entry) && /^\.(?:incoming|collection)-[0-9a-f-]+(?:\.json)?$/.test(entry)) {
+                  rmSync(join(skillRoot, entry), { recursive: true, force: true });
+                }
+              }
+              if (--pendingSkillUndos === 0) {
+                if (beforeCollection === null) rmSync(collectionPath, { force: true });
+                else writeFileAtomic(collectionPath, beforeCollection, { mode: 0o600 });
+              }
+            },
+            mcpCurrent: () => ({ ...(cfg.mcpServers ?? {}) }),
+            persistMcp: (next) => { snapshotConfig(); persistMcpServers(next); },
+            writeReceipt: (receipt) => {
+              snapshotConfig();
+              saveConfig({ claudeCodeImport: { ...(cfg.claudeCodeImport ?? {}), enabled: true, ...receipt } });
+              cfg.claudeCodeImport = { ...(cfg.claudeCodeImport ?? {}), enabled: true, ...receipt };
+            },
+            restoreReceipt: () => {
+              if (beforeConfig === undefined) throw new Error("No receipt snapshot");
+              if (beforeConfig === null) rmSync(configPath, { force: true });
+              else writeFileAtomic(configPath, beforeConfig, { mode: 0o600 });
+              cfg.claudeCodeImport = beforeReceipt;
+            },
+          },
+        });
+      } finally {
+        mcpConfigBusy = false;
+      }
+      // after the MCP lock is released: the response goes out only once every folder the import held is released (R23', 1.4 route)
+      if (answer.settled) await answer.settled;
+      return json(res, answer.status, answer.body);
+    }
+
     const mcpTest = /^\/api\/mcp\/servers\/([a-z][a-z0-9_-]{0,31})\/test$/.exec(path);
     const mcpServerRoute = /^\/api\/mcp\/servers\/([a-z][a-z0-9_-]{0,31})$/.exec(path);
     const mcpSecretsRoute = /^\/api\/mcp\/servers\/([a-z][a-z0-9_-]{0,31})\/secrets$/.exec(path);

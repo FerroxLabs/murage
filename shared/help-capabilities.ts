@@ -356,8 +356,14 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "settings-page",
+    "name": "calls",
+    "term": "Calls",
+    "source": "src/lib/settings-pages.ts"
+  },
+  {
+    "kind": "settings-page",
     "name": "botDefaults",
-    "term": "Bots",
+    "term": "How every bot behaves",
     "alt": "Bot defaults",
     "source": "src/lib/settings-pages.ts"
   },
@@ -383,7 +389,7 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   {
     "kind": "settings-page",
     "name": "webSearch",
-    "term": "Tools",
+    "term": "Search, images and dictation",
     "alt": "Web search",
     "source": "src/lib/settings-pages.ts"
   },
@@ -401,9 +407,14 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "settings-page",
+    "name": "computer",
+    "term": "Computer & browser",
+    "source": "src/lib/settings-pages.ts"
+  },
+  {
+    "kind": "settings-page",
     "name": "companion",
-    "term": "Devices",
-    "alt": "Phone and other devices",
+    "term": "Phone and other devices",
     "source": "src/lib/settings-pages.ts"
   },
   {
@@ -421,7 +432,8 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   {
     "kind": "settings-page",
     "name": "about",
-    "term": "About & updates",
+    "term": "About & help",
+    "alt": "About & updates",
     "source": "src/lib/settings-pages.ts"
   },
   {
@@ -452,12 +464,6 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
     "kind": "settings-page",
     "name": "voice",
     "term": "Voice",
-    "source": "src/lib/settings-pages.ts"
-  },
-  {
-    "kind": "settings-page",
-    "name": "computer",
-    "term": "Computer & browser",
     "source": "src/lib/settings-pages.ts"
   },
   {

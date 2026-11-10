@@ -23,6 +23,10 @@ export type CloudSettingsClass = "home" | "mixed" | "computer-only";
 export const CLOUD_SETTINGS_CLASS: Readonly<Record<AppSettingsSection, CloudSettingsClass>> = Object.freeze({
   // Startup (login item) and Set up again are this computer's; profile, appearance, language, notifications are not.
   general: "mixed",
+  // Calls moved off General's notifications card; it is the same card, so the same class (desktop-only content, renders its own stub).
+  calls: "mixed",
+  // The list of bots is the home's own; opening one is the bot window.
+  browseBots: "home",
   aboutMe: "home",
   botDefaults: "home",
   houseRules: "home",
@@ -38,7 +42,7 @@ export const CLOUD_SETTINGS_CLASS: Readonly<Record<AppSettingsSection, CloudSett
   // The Apps card works; the local MCP servers button (mcp-servers:*) does not.
   connections: "mixed",
   computer: "computer-only",
-  channels: "computer-only",
+  channels: "mixed", // Legacy Apps > Messaging route; the tab guards each computer action.
   companion: "computer-only",
   backups: "computer-only",
   // The free space and attachments of this computer's data folder (1.0.3).
@@ -68,6 +72,7 @@ export const CLOUD_COMPUTER_ONLY_CARDS: ReadonlySet<string> = new Set([
   "diagnostics-heading", // About: the diagnostics export is this computer's.
   "skill-recorder-heading", // Skills: the recorder runs on this computer.
   "mcp-servers-heading", // Connected apps: this computer's MCP servers (mcp-servers:*).
+  "claude-code-import-heading", // Connected apps: copies Claude Code's files from this computer's home folder.
 ]);
 
 /** True when the card rendering `anchor` needs this computer and this is a Cloud window. */

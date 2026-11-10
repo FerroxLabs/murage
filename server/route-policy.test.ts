@@ -163,6 +163,19 @@ describe("route policy (strict)", () => {
     expect(routeAdmits(routeClass("POST", "/api/terms/accept"), { ...nobody, companion: true })).toBe(true);
   });
 
+  it("learning usage needs owner proof and leaves memory writes desktop-only", () => {
+    const path = "/api/memory/learning-usage";
+    const nobody = { desktop: false, companion: false, door: false, bot: false };
+    expect(ROUTE_POLICY.filter(entry => matches(entry, "GET", path))).toHaveLength(1);
+    expect(routeClass("GET", path)).toBe("companion");
+    for (const who of [nobody, { ...nobody, door: true }, { ...nobody, bot: true }]) expect(routeAdmits(routeClass("GET", path), who)).toBe(false);
+    for (const who of [{ ...nobody, desktop: true }, { ...nobody, companion: true }]) expect(routeAdmits(routeClass("GET", path), who)).toBe(true);
+    for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD"]) expect(routeClass(method, path)).toBe("desktop");
+    expect(routeClass("GET", "/api/memory/status")).toBe("desktop");
+    expect(routeClass("POST", "/api/memory/action")).toBe("desktop");
+    expect(routeClass("GET", `${path}/extra`)).toBe("desktop");
+  });
+
   it("refuses with the sentence only a caller that proved who it is", () => {
     const nobody = { desktop: false, companion: false, door: false, bot: false };
     expect(routeAdmits("desktop", nobody)).toBe(false);
