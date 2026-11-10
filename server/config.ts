@@ -48,6 +48,10 @@ export const DEFAULT_ROOM_TURN_TIMEOUT_MINUTES = 20;
 export const MIN_ROOM_TURN_TIMEOUT_MINUTES = 20;
 export const MAX_ROOM_TURN_TIMEOUT_MINUTES = 1_440;
 const LEGACY_MIN_ROOM_TURN_TIMEOUT_MINUTES = 1;
+/** Where a new bot's computer starts (config computer.defaultForNewBots). "this" is this computer. */
+export const DEFAULT_COMPUTER_CHOICES = ["off", "this", "vm", "cloud"] as const;
+export type DefaultComputerChoice = (typeof DEFAULT_COMPUTER_CHOICES)[number];
+export const DEFAULT_COMPUTER_FOR_NEW_BOTS: DefaultComputerChoice = "this";
 export const DEFAULT_LOCAL_VM_MODE = "shared" as const;
 export const DEFAULT_LOCAL_VM_MAX_INSTANCES = 2;
 export const MIN_LOCAL_VM_MAX_INSTANCES = 1;
@@ -394,6 +398,16 @@ const appConfigSchema = z.object({
   /** Workspace defaults a new bot starts with (upstream #1728, triage row
    *  23). `effort: null` in a patch clears it; the section is written whole. */
   newBots: z.object({ effort: z.enum(EFFORT_LEVELS).nullable().optional() }).strict().optional(),
+  /** Which computer a NEW bot starts on (CONTRACTS-B 2). Read at creation only; a bot's own Access > Computer choice wins after. */
+  computer: z.object({ defaultForNewBots: z.enum(DEFAULT_COMPUTER_CHOICES).optional() }).strict().optional(),
+  /** Claude Code copy import (CONTRACTS-B 1). `enabled` is the owner's switch; the rest is a receipt written only by the import route. */
+  claudeCodeImport: z.object({
+    enabled: z.boolean().optional(),
+    lastImportedAt: z.number().int().nonnegative().nullable().optional(),
+    skills: z.number().int().nonnegative().max(100000).optional(),
+    servers: z.number().int().nonnegative().max(100000).optional(),
+    needsKey: z.number().int().nonnegative().max(100000).optional(),
+  }).strict().optional(),
   /** User-configured MCP servers, mounted into every capable engine. Kept
    * loosely typed HERE on purpose: parseStoredConfig throws away the whole
    * file on a schema error, and one bad server entry must degrade to a
@@ -413,7 +427,8 @@ const notificationPreferencesPatchSchema = notificationPreferencesSchema.extend(
   memories: notificationPreferencesSchema.shape.memories.removeDefault().optional(),
   previewContent: notificationPreferencesSchema.shape.previewContent.removeDefault().optional(),
 });
-const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers: true, hermesProfilesPinned: true, noLimitsTermsVersion: true }).extend({ notifications: notificationPreferencesPatchSchema.optional() });
+// The Claude Code receipt (time and counts) is written only by the import route, so a patch may carry nothing but the switch.
+const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers: true, hermesProfilesPinned: true, noLimitsTermsVersion: true }).extend({ notifications: notificationPreferencesPatchSchema.optional(), claudeCodeImport: z.object({ enabled: z.boolean() }).strict().optional() });
 const jsonObjectSchema = z.record(z.string(), z.json());
 
 export interface AppConfig {
@@ -434,6 +449,8 @@ export interface AppConfig {
   hermesProfilesPinned?: boolean;
   /** Effort for a new bot whose selection names none; absent sends none. */
   newBots?: { effort?: EffortLevel | null };
+  computer?: { defaultForNewBots?: DefaultComputerChoice };
+  claudeCodeImport?: { enabled?: boolean; lastImportedAt?: number | null; skills?: number; servers?: number; needsKey?: number };
   mcpServers?: Record<string, unknown>;
   language?: string;
   xai?: { key?: string; url?: string };
@@ -629,6 +646,11 @@ export function localVmMaxInstances(cfg: AppConfig): number {
  * window that shows its switch, so there it stays off until the owner turns it on. */
 export function skillRecorderEnabled(cfg: AppConfig, env: NodeJS.ProcessEnv = process.env): boolean {
   return isCloudHome(env) ? cfg.features?.skillRecorder === true : cfg.features?.skillRecorder !== false;
+}
+
+/** The computer a new bot starts on; "this" unless the owner chose otherwise. Read at creation only. */
+export function defaultComputerForNewBots(cfg: AppConfig): DefaultComputerChoice {
+  return cfg.computer?.defaultForNewBots ?? DEFAULT_COMPUTER_FOR_NEW_BOTS;
 }
 
 export function fluxDesktopSigninEnabled(cfg: AppConfig): boolean {
@@ -1028,7 +1050,7 @@ function writeConfigPatch(patch: ConfigWritePatch): void {
   // back after we have successfully recognized the legacy list.
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["modelProviders", "xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "telegram", "slack", "discord", "whatsapp", "webSearch", "highlevel", "notifications", "spend", "flux", "profile", "rooms", "localVm", "features", "decider"] as const) {
+  for (const key of ["modelProviders", "xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "telegram", "slack", "discord", "whatsapp", "webSearch", "highlevel", "notifications", "spend", "flux", "profile", "rooms", "localVm", "features", "decider", "computer", "claudeCodeImport"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);
