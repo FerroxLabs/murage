@@ -299,6 +299,7 @@ export function PendingApprovalActions({
   // Rule 81c: each recipient is its own choice, unticked until the owner ticks it
   const [stopKeys, setStopKeys] = useState<string[]>([]);
   const [foldOpen, setFoldOpen] = useState(false);
+  const caretRef = useRef<HTMLButtonElement>(null), foldLinkRef = useRef<HTMLButtonElement>(null);
   // APPROVAL-ONE-CARD: the phone's Details sheet; closing it hands focus back to Details
   const [sheetOpen, setSheetOpen] = useState(false);
   const detailsButton = useRef<HTMLButtonElement>(null);
@@ -405,7 +406,7 @@ export function PendingApprovalActions({
     </button>
   );
   const foldChunk = (variant: "menu" | "sheet", onClose: () => void, autoFocus = true) => (
-    <LazyBoundary inline onRetry={GrantFoldChunk.retry} onDismiss={onClose}>
+    <LazyBoundary inline onRetry={GrantFoldChunk.retry} onDismiss={() => { onClose(); requestAnimationFrame(() => (caretRef.current ?? foldLinkRef.current)?.focus()); }}>
       <Suspense fallback={null}>
         <GrantFoldChunk.Component
           id={foldId}
@@ -454,6 +455,7 @@ export function PendingApprovalActions({
           {runButton(undefined, hasFold && !phoneSheet && !bar)}
           {hasFold && !phoneSheet && !bar && (
             <button
+              ref={caretRef}
               type="button"
               data-fold-caret
               aria-haspopup="true"
@@ -469,7 +471,7 @@ export function PendingApprovalActions({
         </span>
       )}
       {hasFold && phoneSheet && !bar && (
-        <button type="button" data-fold-link onClick={() => setFoldOpen(true)} className={cn(base, "w-full justify-end rounded-md px-1 text-[13px] text-accent underline-offset-2 hover:underline")}>
+        <button ref={foldLinkRef} type="button" data-fold-link onClick={() => setFoldOpen(true)} className={cn(base, "w-full justify-end rounded-md px-1 text-[13px] text-accent underline-offset-2 hover:underline")}>
           {t("ux.l1.card.foldLink", { verb: verbLabel })}
         </button>
       )}

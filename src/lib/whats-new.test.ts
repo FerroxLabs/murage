@@ -103,8 +103,11 @@ describe("what the menu item opens", () => {
     const hook = readFileSync(new URL("./whats-new.ts", import.meta.url), "utf8");
     expect(hook).toContain("available: desktop === true }");
     expect(hook).not.toMatch(/available: [^}]*whatsNewPage/);
-    const settings = readFileSync(new URL("../components/SettingsModal.tsx", import.meta.url), "utf8");
-    expect(settings).toMatch(/function WhatsNewRow\(\) \{[\s\S]*?if \(desktop !== true\) return null;/);
+    const settings = readFileSync(new URL("../components/settings/pages/about-rows.tsx", import.meta.url), "utf8");
+    const row = settings.slice(settings.indexOf("export function WhatsNewRow()"), settings.indexOf("export function SourceCodeRow()"));
+    expect(row).toContain("openWhatsNew();");
+    expect(row).toContain("href={changelogUrl()}");
+    expect(row).not.toContain("if (desktop !== true) return null;");
   });
 });
 
