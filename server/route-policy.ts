@@ -97,6 +97,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["GET"], path: "/api/data-dir/roots", class: "desktop", why: "S5 DR7: the data roots' states for Settings > Data folder; the owner's own computer only (isOwnersComputer), anyone else 404 with no body." },
   { methods: ["POST"], path: "/api/data-dir/confirm-root", class: "desktop", cloudWrite: "step-up", why: "S5 DR7: the owner confirms a linked data root that now points somewhere else; the owner's own computer only, a Cloud home answers 404." },
   { methods: ["GET"], path: "/api/spend", class: "desktop", why: "UX-L2C: the owner's Flux spend figure for Today, Usage and Needs you; the owner's own computer only, a Cloud home answers 404." },
+  { methods: ["POST"], path: "/api/claude-code-import", class: "desktop", cloudWrite: "step-up", why: "CONTRACTS-B 1: a one-time, opt-in copy of Claude Code's user skills and MCP servers, on the owner's press (server/claude-code-import.ts); the owner's own computer only, a phone, a paired browser and a Cloud window get 403, and no file is opened before that check." },
   { methods: ["GET"], path: "/api/plan-usage", class: "desktop", why: "The owner reads each engine account's reported plan usage (server/plan-usage-report.ts); no credential or home path is sent." },
   { methods: ["POST"], path: "/api/plan-usage/refresh", class: "desktop", cloudWrite: "ordinary", why: "The owner asks running engine accounts for a fresh usage report; bounded, never starts an engine or a turn." },
   { methods: ["GET"], path: "/api/projects/new-options", class: "desktop", why: "The owner chooses available project members." },
@@ -312,7 +313,9 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: "/api/deletions/retry", class: "desktop", cloudWrite: "ordinary", why: "Try again now for an engine copy still owed" },
   { methods: ["POST"], path: "/api/deletions/dismiss", class: "desktop", cloudWrite: "ordinary", why: "Dismiss the lines for engine copies still owed (saved, so it lasts)" },
   { methods: ["GET"], path: "/api/desktop/tray", class: "desktop", why: "the menu bar and tray menu" },
-  { methods: "*", path: /^\/api\/memory(?:\/|$)/, class: "desktop", cloudWrite: "step-up", why: "memory authority, sharing, retention and configuration" },
+  // Like GET /api/groups/:id/usage, this owner summary needs the companion's launch proof, not just a conversation door marker.
+  { methods: ["GET"], path: "/api/memory/learning-usage", class: "companion", why: "learning token totals and connection label only, for the desktop or paired phone" },
+  { methods: "*", path: /^\/api\/memory(?:\/(?!learning-usage$)|$)/, class: "desktop", cloudWrite: "step-up", why: "memory authority, sharing, retention and configuration" },
   { methods: ["GET", "POST"], path: "/api/images/settings", class: "desktop", cloudWrite: "ordinary", why: "image provider and model selection" },
   { methods: ["GET", "POST", "DELETE"], path: /^\/api\/images\/(?:probe|library|prompt-blocks|reference-packs)(?:\/|$)/, class: "desktop", cloudWrite: "ordinary", why: "image model checks, which send a real render, and every bot's saved prompt blocks and reference packs" },
   { methods: ["PATCH", "PUT"], path: "/api/config", class: "desktop", cloudWrite: "credential", why: "application, credentials, browser and computer configuration" },

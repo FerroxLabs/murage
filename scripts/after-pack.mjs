@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { chmod, lstat, open, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { validateEngineExclusionResource, loadEngineExclusionResource } from "./engine-exclusion-resource.mjs";
 import { ADDON_VERSION as ENGINE_EXCLUSION_ADDON_VERSION } from "../server/engine-exclusion.ts";
 import { validateNotificationAuthorizationResource } from "./notification-authorization-resource.mjs";
@@ -22,6 +23,9 @@ import { browserBundlePaths } from "../server/browser-bundle-release.ts";
 import { nativeAuthenticodeIn, verifyWindowsBrowserImage, verifyWindowsBrowserSignatures, WINDOWS_BROWSER_IMAGE_PINS } from "../server/browser-windows-identity.ts";
 import { verifyWindowsBackupTools } from "./prepare-windows-backup-tools.mjs";
 import { verifyGepaBundle } from "../server/gepa-resource.ts";
+
+/** Where scripts/build-engine-exclusion.mjs writes each target's addon and its build.json receipt (the folders electron-builder copies from). */
+const EXCLUSION_BUILD_ROOT = fileURLToPath(new URL("../dist-native/engine-exclusion/", import.meta.url));
 
 /** Intel Macs ship without a local semantic runtime (README "Current
  * boundaries"): native/gepa/build-mac.py builds only the runner's own arch and
@@ -378,7 +382,9 @@ export default async function afterPack(context) {
   // Without the engine-exclusion addon Murage cannot clean a deleted conversation out of the engines' files; refuse a package that lacks it.
   if (context.packager) {
     const exclusionArch = typeof context.arch === "string" ? context.arch : ({ 1: "x64", 3: "arm64" })[context.arch];
-    const exclusionFile = validateEngineExclusionResource(resources, context.electronPlatformName, exclusionArch);
+    // R16/R25: a Windows package must carry the release-CRT addon; the build script's own receipt for this target is mandatory here.
+    const exclusionReceipt = path.join(EXCLUSION_BUILD_ROOT, `${context.electronPlatformName}-${exclusionArch}`, "build.json");
+    const exclusionFile = validateEngineExclusionResource(resources, context.electronPlatformName, exclusionArch, exclusionReceipt);
     await requireRegularFile(exclusionFile, context.electronPlatformName === "win32" ? undefined : 0o755);
     // Loads it for real with the TARGET package's own Electron binary (run as Node); a package this machine cannot run is refused.
     console.log(`engine-exclusion addon: ${loadEngineExclusionResource(exclusionFile, context.electronPlatformName, exclusionArch, ENGINE_EXCLUSION_ADDON_VERSION, (command, args, env) => execFileSync(command, args, { timeout: 240000, env: { ...process.env, ...env } }), packagedElectronBinary(context))}`);

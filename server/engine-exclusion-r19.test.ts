@@ -461,8 +461,12 @@ describe("r18-9: the packaged addon is checked for what it is", () => {
     expect(validateEngineExclusionResource(put(elf(0x3e)), "linux", "x64")).toMatch(/engine-exclusion\.node$/);
     expect(() => validateEngineExclusionResource(put(elf(0xb7)), "linux", "x64")).toThrow(/MISMATCH/);
     const pe = (machine: number) => { const b = Buffer.alloc(4096); b[0] = 0x4d; b[1] = 0x5a; b.writeUInt32LE(0x80, 0x3c); b.writeUInt32BE(0x50450000, 0x80); b.writeUInt16LE(machine, 0x84); b.writeUInt16LE(0x2000, 0x80 + 22); return b; };
-    expect(validateEngineExclusionResource(put(pe(0x8664)), "win32", "x64")).toMatch(/engine-exclusion\.node$/);
-    expect(() => validateEngineExclusionResource(put(pe(0xaa64)), "win32", "x64")).toThrow(/MISMATCH/);
+    const mt = join(dir, "build.json");
+    writeFileSync(mt, JSON.stringify({ crt: "MT" }));
+    expect(validateEngineExclusionResource(put(pe(0x8664)), "win32", "x64", mt)).toMatch(/engine-exclusion\.node$/);
+    expect(() => validateEngineExclusionResource(put(pe(0xaa64)), "win32", "x64", mt)).toThrow(/MISMATCH/);
+    // R16/R25: on Windows the receipt is mandatory, never skipped
+    expect(() => validateEngineExclusionResource(put(pe(0x8664)), "win32", "x64")).toThrow("ENGINE_EXCLUSION_RECEIPT_MISSING");
     // an addon that answers with another version does not load
     const file = join(dir, "other-version.cjs");
     writeFileSync(file, "module.exports={lock:()=>true,processes:()=>[],renameNoReplace:()=>0,version:()=>2};");

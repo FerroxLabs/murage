@@ -1,0 +1,1377 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "sonnet-b3",
+  "date": "2026-11-09",
+  "base": "070edae98",
+  "scope": "setpages-b3-strings",
+  "strings": {
+    "en:ux.l2c.usage.title": {
+      "text": "Monthly spending notice",
+      "en": "Monthly spending notice",
+      "verdict": "pass"
+    },
+    "en:settings.l1.card.connections.claude-code": {
+      "text": "Claude Code setup",
+      "en": "Claude Code setup",
+      "verdict": "pass"
+    },
+    "en:settings.usage.noRoutine": {
+      "text": "No routine activity this month.",
+      "en": "No routine activity this month.",
+      "verdict": "pass"
+    },
+    "en:settings.channels.allowEmpty": {
+      "text": "To choose who can message your bots, link WhatsApp and pick Me and chosen contacts.",
+      "en": "To choose who can message your bots, link WhatsApp and pick Me and chosen contacts.",
+      "verdict": "pass"
+    },
+    "en:settings.channels.groupsEmpty": {
+      "text": "To choose the groups your bots answer in, link WhatsApp first.",
+      "en": "To choose the groups your bots answer in, link WhatsApp first.",
+      "verdict": "pass"
+    },
+    "en:settings.computer.defaultTitle": {
+      "text": "Default computer for new bots",
+      "en": "Default computer for new bots",
+      "verdict": "pass"
+    },
+    "en:settings.computer.defaultNote": {
+      "text": "The computer a new bot starts on. Bots you already have keep theirs. If the computer you pick is not here, a new bot starts on this computer.",
+      "en": "The computer a new bot starts on. Bots you already have keep theirs. If the computer you pick is not here, a new bot starts on this computer.",
+      "verdict": "pass"
+    },
+    "en:settings.computer.defaultOff": {
+      "text": "Off",
+      "en": "Off",
+      "verdict": "pass"
+    },
+    "en:settings.computer.defaultThis": {
+      "text": "This computer",
+      "en": "This computer",
+      "verdict": "pass"
+    },
+    "en:settings.computer.defaultVm": {
+      "text": "Local VM",
+      "en": "Local VM",
+      "verdict": "pass"
+    },
+    "en:settings.computer.defaultCloud": {
+      "text": "Cloud",
+      "en": "Cloud",
+      "verdict": "pass"
+    },
+    "en:settings.computer.defaultPerBot": {
+      "text": "Set it per bot under {bot} > Access > Computer",
+      "en": "Set it per bot under {bot} > Access > Computer",
+      "verdict": "pass"
+    },
+    "en:settings.computer.defaultBotFallback": {
+      "text": "a bot",
+      "en": "a bot",
+      "verdict": "pass"
+    },
+    "en:settings.computer.defaultError": {
+      "text": "Could not save the default computer. Try again.",
+      "en": "Could not save the default computer. Try again.",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.title": {
+      "text": "Also use my Claude Code setup",
+      "en": "Also use my Claude Code setup",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.note": {
+      "text": "Copy your Claude Code skills and tools into Murage, once. Murage reads them only when you press Review, and does not look again until you press it.",
+      "en": "Copy your Claude Code skills and tools into Murage, once. Murage reads them only when you press Review, and does not look again until you press it.",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.switch": {
+      "text": "Show Review and Import",
+      "en": "Show Review and Import",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.scope": {
+      "text": "What to copy",
+      "en": "What to copy",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.scopeBoth": {
+      "text": "Skills and tools",
+      "en": "Skills and tools",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.scopeSkills": {
+      "text": "Skills only",
+      "en": "Skills only",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.scopeMcp": {
+      "text": "Tools only",
+      "en": "Tools only",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.review": {
+      "text": "Review what will be copied",
+      "en": "Review what will be copied",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.reviewAgain": {
+      "text": "Sync again",
+      "en": "Sync again",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.import": {
+      "text": "Import",
+      "en": "Import",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.skillsHeading": {
+      "text": "Skills",
+      "en": "Skills",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.toolsHeading": {
+      "text": "Tools",
+      "en": "Tools",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.skillsOff": {
+      "text": "Skills are added turned off. Turn each one on after you look at it.",
+      "en": "Skills are added turned off. Turn each one on after you look at it.",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.toolsOff": {
+      "text": "Tools are added turned off. Turn each one on and test it first. Keys are never copied.",
+      "en": "Tools are added turned off. Turn each one on and test it first. Keys are never copied.",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.needsKey": {
+      "text": "Needs your key",
+      "en": "Needs your key",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.nothingNew": {
+      "text": "Nothing new to copy.",
+      "en": "Nothing new to copy.",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.skipped": {
+      "text": "{count} skipped because they are already here or cannot be used.",
+      "en": "{count} skipped because they are already here or cannot be used.",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.done": {
+      "text": "Added {skills} skills and {servers} tools. {needsKey} need your key.",
+      "en": "Added {skills} skills and {servers} tools. {needsKey} need your key.",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.last": {
+      "text": "Last copy: {skills} skills and {servers} tools in all. {needsKey} need your key.",
+      "en": "Last copy: {skills} skills and {servers} tools in all. {needsKey} need your key.",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.error": {
+      "text": "Could not read Claude Code files. Nothing was changed.",
+      "en": "Could not read Claude Code files. Nothing was changed.",
+      "verdict": "pass"
+    },
+    "de:ux.l2c.usage.title": {
+      "text": "Hinweis zu monatlichen Ausgaben",
+      "en": "Monthly spending notice",
+      "verdict": "pass"
+    },
+    "de:settings.channels.allowEmpty": {
+      "text": "Um auszuwählen, wer deinen Bots Nachrichten senden kann, verknüpfe WhatsApp und wähle „Ich und ausgewählte Kontakte“.",
+      "en": "To choose who can message your bots, link WhatsApp and pick Me and chosen contacts.",
+      "verdict": "pass"
+    },
+    "de:settings.channels.groupsEmpty": {
+      "text": "Um auszuwählen, in welchen Gruppen deine Bots antworten, verknüpfe zuerst WhatsApp.",
+      "en": "To choose the groups your bots answer in, link WhatsApp first.",
+      "verdict": "pass"
+    },
+    "de:settings.usage.noRoutine": {
+      "text": "Diesen Monat wurden keine Routinen ausgeführt.",
+      "en": "No routine activity this month.",
+      "verdict": "pass"
+    },
+    "de:settings.computer.defaultTitle": {
+      "text": "Standardcomputer für neue Bots",
+      "en": "Default computer for new bots",
+      "verdict": "pass"
+    },
+    "de:settings.computer.defaultNote": {
+      "text": "Ein neuer Bot startet auf dem Computer, den du hier auswählst. Bestehende Bots behalten ihren bisherigen Computer. Wenn der ausgewählte Computer nicht verfügbar ist, startet ein neuer Bot auf diesem Computer.",
+      "en": "The computer a new bot starts on. Bots you already have keep theirs. If the computer you pick is not here, a new bot starts on this computer.",
+      "verdict": "pass"
+    },
+    "de:settings.computer.defaultOff": {
+      "text": "Aus",
+      "en": "Off",
+      "verdict": "pass"
+    },
+    "de:settings.computer.defaultThis": {
+      "text": "Dieser Computer",
+      "en": "This computer",
+      "verdict": "pass"
+    },
+    "de:settings.computer.defaultVm": {
+      "text": "Lokale VM",
+      "en": "Local VM",
+      "verdict": "pass"
+    },
+    "de:settings.computer.defaultCloud": {
+      "text": "Cloud",
+      "en": "Cloud",
+      "verdict": "pass"
+    },
+    "de:settings.computer.defaultPerBot": {
+      "text": "Lege den Computer für jeden Bot unter {bot} > Zugriff > Computer fest",
+      "en": "Set it per bot under {bot} > Access > Computer",
+      "verdict": "pass"
+    },
+    "de:settings.computer.defaultBotFallback": {
+      "text": "einem Bot",
+      "en": "a bot",
+      "verdict": "pass"
+    },
+    "de:settings.computer.defaultError": {
+      "text": "Der Standardcomputer konnte nicht gespeichert werden. Versuche es erneut.",
+      "en": "Could not save the default computer. Try again.",
+      "verdict": "pass"
+    },
+    "de:settings.l1.card.connections.claude-code": {
+      "text": "Claude Code-Konfiguration",
+      "en": "Claude Code setup",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.title": {
+      "text": "Meine Claude Code-Konfiguration auch hier nutzen",
+      "en": "Also use my Claude Code setup",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.note": {
+      "text": "Kopiere deine Fähigkeiten und Werkzeuge aus Claude Code einmalig nach Murage. Murage liest sie nur ein, wenn du auf „Zu kopierende Inhalte prüfen“ klickst. Erst beim nächsten Klick auf diese Schaltfläche werden sie erneut eingelesen.",
+      "en": "Copy your Claude Code skills and tools into Murage, once. Murage reads them only when you press Review, and does not look again until you press it.",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.switch": {
+      "text": "„Zu kopierende Inhalte prüfen“ und „Importieren“ anzeigen",
+      "en": "Show Review and Import",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.scope": {
+      "text": "Was kopiert werden soll",
+      "en": "What to copy",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.scopeBoth": {
+      "text": "Fähigkeiten und Werkzeuge",
+      "en": "Skills and tools",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.scopeSkills": {
+      "text": "Nur Fähigkeiten",
+      "en": "Skills only",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.scopeMcp": {
+      "text": "Nur Werkzeuge",
+      "en": "Tools only",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.review": {
+      "text": "Zu kopierende Inhalte prüfen",
+      "en": "Review what will be copied",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.reviewAgain": {
+      "text": "Erneut synchronisieren",
+      "en": "Sync again",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.import": {
+      "text": "Importieren",
+      "en": "Import",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.skillsHeading": {
+      "text": "Fähigkeiten",
+      "en": "Skills",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.toolsHeading": {
+      "text": "Werkzeuge",
+      "en": "Tools",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.skillsOff": {
+      "text": "Fähigkeiten werden deaktiviert hinzugefügt. Sieh dir jede einzeln an, bevor du sie aktivierst.",
+      "en": "Skills are added turned off. Turn each one on after you look at it.",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.toolsOff": {
+      "text": "Werkzeuge werden deaktiviert hinzugefügt. Aktiviere jedes einzeln und teste es zuerst. Schlüssel werden nie kopiert.",
+      "en": "Tools are added turned off. Turn each one on and test it first. Keys are never copied.",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.needsKey": {
+      "text": "Benötigt deinen Schlüssel",
+      "en": "Needs your key",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.nothingNew": {
+      "text": "Keine neuen Inhalte zum Kopieren.",
+      "en": "Nothing new to copy.",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.skipped": {
+      "text": "{count} übersprungen, da sie bereits vorhanden sind oder nicht verwendet werden können.",
+      "en": "{count} skipped because they are already here or cannot be used.",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.done": {
+      "text": "{skills} Fähigkeiten und {servers} Werkzeuge hinzugefügt. {needsKey} benötigen deinen Schlüssel.",
+      "en": "Added {skills} skills and {servers} tools. {needsKey} need your key.",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.last": {
+      "text": "Zuletzt kopiert: insgesamt {skills} Fähigkeiten und {servers} Werkzeuge. {needsKey} benötigen deinen Schlüssel.",
+      "en": "Last copy: {skills} skills and {servers} tools in all. {needsKey} need your key.",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.error": {
+      "text": "Die Claude Code-Dateien konnten nicht gelesen werden. Es wurde nichts geändert.",
+      "en": "Could not read Claude Code files. Nothing was changed.",
+      "verdict": "pass"
+    },
+    "es:ux.l2c.usage.title": {
+      "text": "Aviso de gasto mensual",
+      "en": "Monthly spending notice",
+      "verdict": "pass"
+    },
+    "es:settings.channels.allowEmpty": {
+      "text": "Para elegir quién puede enviar mensajes a tus bots, vincula WhatsApp y selecciona Yo y contactos seleccionados.",
+      "en": "To choose who can message your bots, link WhatsApp and pick Me and chosen contacts.",
+      "verdict": "pass"
+    },
+    "es:settings.channels.groupsEmpty": {
+      "text": "Para elegir en qué grupos responden tus bots, vincula WhatsApp primero.",
+      "en": "To choose the groups your bots answer in, link WhatsApp first.",
+      "verdict": "pass"
+    },
+    "es:settings.usage.noRoutine": {
+      "text": "No hay actividad de rutinas este mes.",
+      "en": "No routine activity this month.",
+      "verdict": "pass"
+    },
+    "es:settings.computer.defaultTitle": {
+      "text": "Computadora predeterminada para nuevos bots",
+      "en": "Default computer for new bots",
+      "verdict": "pass"
+    },
+    "es:settings.computer.defaultNote": {
+      "text": "Cada nuevo bot se inicia en la computadora que elijas aquí. Los bots que ya tienes conservan su computadora. Si la computadora elegida no está disponible aquí, el nuevo bot se inicia en esta computadora.",
+      "en": "The computer a new bot starts on. Bots you already have keep theirs. If the computer you pick is not here, a new bot starts on this computer.",
+      "verdict": "pass"
+    },
+    "es:settings.computer.defaultOff": {
+      "text": "Desactivado",
+      "en": "Off",
+      "verdict": "pass"
+    },
+    "es:settings.computer.defaultThis": {
+      "text": "Esta computadora",
+      "en": "This computer",
+      "verdict": "pass"
+    },
+    "es:settings.computer.defaultVm": {
+      "text": "VM local",
+      "en": "Local VM",
+      "verdict": "pass"
+    },
+    "es:settings.computer.defaultCloud": {
+      "text": "Nube",
+      "en": "Cloud",
+      "verdict": "pass"
+    },
+    "es:settings.computer.defaultPerBot": {
+      "text": "Configura la computadora de cada bot en {bot} > Acceso > Computadora",
+      "en": "Set it per bot under {bot} > Access > Computer",
+      "verdict": "pass"
+    },
+    "es:settings.computer.defaultBotFallback": {
+      "text": "un bot",
+      "en": "a bot",
+      "verdict": "pass"
+    },
+    "es:settings.computer.defaultError": {
+      "text": "No se pudo guardar la computadora predeterminada. Inténtalo de nuevo.",
+      "en": "Could not save the default computer. Try again.",
+      "verdict": "pass"
+    },
+    "es:settings.l1.card.connections.claude-code": {
+      "text": "Configuración de Claude Code",
+      "en": "Claude Code setup",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.title": {
+      "text": "Usar también mi configuración de Claude Code",
+      "en": "Also use my Claude Code setup",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.note": {
+      "text": "Copia tus Habilidades y herramientas de Claude Code en Murage una sola vez. Murage las lee únicamente cuando pulsas «Revisar lo que se copiará» y no vuelve a consultarlas hasta que pulses ese botón de nuevo.",
+      "en": "Copy your Claude Code skills and tools into Murage, once. Murage reads them only when you press Review, and does not look again until you press it.",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.switch": {
+      "text": "Mostrar «Revisar lo que se copiará» e «Importar»",
+      "en": "Show Review and Import",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.scope": {
+      "text": "Qué copiar",
+      "en": "What to copy",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.scopeBoth": {
+      "text": "Habilidades y herramientas",
+      "en": "Skills and tools",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.scopeSkills": {
+      "text": "Solo Habilidades",
+      "en": "Skills only",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.scopeMcp": {
+      "text": "Solo herramientas",
+      "en": "Tools only",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.review": {
+      "text": "Revisar lo que se copiará",
+      "en": "Review what will be copied",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.reviewAgain": {
+      "text": "Sincronizar de nuevo",
+      "en": "Sync again",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.import": {
+      "text": "Importar",
+      "en": "Import",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.skillsHeading": {
+      "text": "Habilidades",
+      "en": "Skills",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.toolsHeading": {
+      "text": "Herramientas",
+      "en": "Tools",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.skillsOff": {
+      "text": "Las Habilidades se añaden desactivadas. Revisa cada una antes de activarla.",
+      "en": "Skills are added turned off. Turn each one on after you look at it.",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.toolsOff": {
+      "text": "Las herramientas se añaden desactivadas. Activa cada una y pruébala antes de usarla. Las claves nunca se copian.",
+      "en": "Tools are added turned off. Turn each one on and test it first. Keys are never copied.",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.needsKey": {
+      "text": "Necesita tu clave",
+      "en": "Needs your key",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.nothingNew": {
+      "text": "No hay nada nuevo que copiar.",
+      "en": "Nothing new to copy.",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.skipped": {
+      "text": "Se omitieron {count} porque ya están aquí o no se pueden usar.",
+      "en": "{count} skipped because they are already here or cannot be used.",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.done": {
+      "text": "Se añadieron {skills} Habilidades y {servers} herramientas. {needsKey} necesitan tu clave.",
+      "en": "Added {skills} skills and {servers} tools. {needsKey} need your key.",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.last": {
+      "text": "Última copia: {skills} Habilidades y {servers} herramientas en total. {needsKey} necesitan tu clave.",
+      "en": "Last copy: {skills} skills and {servers} tools in all. {needsKey} need your key.",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.error": {
+      "text": "No se pudieron leer los archivos de Claude Code. No se cambió nada.",
+      "en": "Could not read Claude Code files. Nothing was changed.",
+      "verdict": "pass"
+    },
+    "fr:ux.l2c.usage.title": {
+      "text": "Notification sur les dépenses mensuelles",
+      "en": "Monthly spending notice",
+      "verdict": "pass",
+      "note": "sol acct6 2026-11-10"
+    },
+    "fr:settings.channels.allowEmpty": {
+      "text": "Pour choisir qui peut envoyer des messages à tes bots, connecte WhatsApp et sélectionne « Moi et les contacts choisis ».",
+      "en": "To choose who can message your bots, link WhatsApp and pick Me and chosen contacts.",
+      "verdict": "pass"
+    },
+    "fr:settings.channels.groupsEmpty": {
+      "text": "Pour choisir les groupes dans lesquels tes bots répondent, connecte d’abord WhatsApp.",
+      "en": "To choose the groups your bots answer in, link WhatsApp first.",
+      "verdict": "pass"
+    },
+    "fr:settings.usage.noRoutine": {
+      "text": "Aucune activité de routine ce mois-ci.",
+      "en": "No routine activity this month.",
+      "verdict": "pass"
+    },
+    "fr:settings.computer.defaultTitle": {
+      "text": "Ordinateur par défaut pour les nouveaux bots",
+      "en": "Default computer for new bots",
+      "verdict": "pass"
+    },
+    "fr:settings.computer.defaultNote": {
+      "text": "Un nouveau bot démarre sur l’ordinateur que tu choisis ici. Tes bots existants gardent leur ordinateur. Si l’ordinateur choisi n’est pas présent, un nouveau bot démarre sur cet ordinateur.",
+      "en": "The computer a new bot starts on. Bots you already have keep theirs. If the computer you pick is not here, a new bot starts on this computer.",
+      "verdict": "pass"
+    },
+    "fr:settings.computer.defaultOff": {
+      "text": "Désactivé",
+      "en": "Off",
+      "verdict": "pass"
+    },
+    "fr:settings.computer.defaultThis": {
+      "text": "Cet ordinateur",
+      "en": "This computer",
+      "verdict": "pass"
+    },
+    "fr:settings.computer.defaultVm": {
+      "text": "VM locale",
+      "en": "Local VM",
+      "verdict": "pass"
+    },
+    "fr:settings.computer.defaultCloud": {
+      "text": "Cloud",
+      "en": "Cloud",
+      "verdict": "pass"
+    },
+    "fr:settings.computer.defaultPerBot": {
+      "text": "Choisis l’ordinateur de chaque bot dans {bot} > Accès > Ordinateur",
+      "en": "Set it per bot under {bot} > Access > Computer",
+      "verdict": "pass"
+    },
+    "fr:settings.computer.defaultBotFallback": {
+      "text": "un bot",
+      "en": "a bot",
+      "verdict": "pass"
+    },
+    "fr:settings.computer.defaultError": {
+      "text": "Impossible d’enregistrer l’ordinateur par défaut. Réessaie.",
+      "en": "Could not save the default computer. Try again.",
+      "verdict": "pass"
+    },
+    "fr:settings.l1.card.connections.claude-code": {
+      "text": "Configuration de Claude Code",
+      "en": "Claude Code setup",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.title": {
+      "text": "Utiliser aussi ma configuration de Claude Code",
+      "en": "Also use my Claude Code setup",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.note": {
+      "text": "Copie tes Compétences et tes outils de Claude Code dans Murage en une seule fois. Murage les lit uniquement quand tu cliques sur « Examiner ce qui sera copié », puis attend que tu cliques à nouveau sur ce bouton pour les relire.",
+      "en": "Copy your Claude Code skills and tools into Murage, once. Murage reads them only when you press Review, and does not look again until you press it.",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.switch": {
+      "text": "Afficher « Examiner ce qui sera copié » et « Importer »",
+      "en": "Show Review and Import",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.scope": {
+      "text": "Éléments à copier",
+      "en": "What to copy",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.scopeBoth": {
+      "text": "Compétences et outils",
+      "en": "Skills and tools",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.scopeSkills": {
+      "text": "Compétences uniquement",
+      "en": "Skills only",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.scopeMcp": {
+      "text": "Outils uniquement",
+      "en": "Tools only",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.review": {
+      "text": "Examiner ce qui sera copié",
+      "en": "Review what will be copied",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.reviewAgain": {
+      "text": "Synchroniser à nouveau",
+      "en": "Sync again",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.import": {
+      "text": "Importer",
+      "en": "Import",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.skillsHeading": {
+      "text": "Compétences",
+      "en": "Skills",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.toolsHeading": {
+      "text": "Outils",
+      "en": "Tools",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.skillsOff": {
+      "text": "Les Compétences sont désactivées à leur ajout. Examine chacune avant de l’activer.",
+      "en": "Skills are added turned off. Turn each one on after you look at it.",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.toolsOff": {
+      "text": "Les outils sont désactivés à leur ajout. Active chacun et teste-le avant de l’utiliser. Les clés ne sont jamais copiées.",
+      "en": "Tools are added turned off. Turn each one on and test it first. Keys are never copied.",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.needsKey": {
+      "text": "Ta clé est nécessaire",
+      "en": "Needs your key",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.nothingNew": {
+      "text": "Aucun nouvel élément à copier.",
+      "en": "Nothing new to copy.",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.skipped": {
+      "text": "{count} éléments ignorés, car ils sont déjà présents ou ne peuvent pas être utilisés.",
+      "en": "{count} skipped because they are already here or cannot be used.",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.done": {
+      "text": "Ajout de {skills} Compétences et de {servers} outils. Ta clé est nécessaire pour {needsKey} de ces éléments.",
+      "en": "Added {skills} skills and {servers} tools. {needsKey} need your key.",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.last": {
+      "text": "Dernière copie : {skills} Compétences et {servers} outils au total. Ta clé est nécessaire pour {needsKey} de ces éléments.",
+      "en": "Last copy: {skills} skills and {servers} tools in all. {needsKey} need your key.",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.error": {
+      "text": "Impossible de lire les fichiers de Claude Code. Aucun changement n’a été effectué.",
+      "en": "Could not read Claude Code files. Nothing was changed.",
+      "verdict": "pass"
+    },
+    "hi:ux.l2c.usage.title": {
+      "text": "मासिक खर्च की सूचना",
+      "en": "Monthly spending notice",
+      "verdict": "pass"
+    },
+    "hi:settings.channels.allowEmpty": {
+      "text": "कौन आपके बॉट को मैसेज भेज सकता है, यह चुनने के लिए WhatsApp जोड़ें और “मैं और चुने हुए संपर्क” चुनें।",
+      "en": "To choose who can message your bots, link WhatsApp and pick Me and chosen contacts.",
+      "verdict": "pass"
+    },
+    "hi:settings.channels.groupsEmpty": {
+      "text": "आपके बॉट किन ग्रुप में जवाब दें, यह चुनने के लिए पहले WhatsApp जोड़ें।",
+      "en": "To choose the groups your bots answer in, link WhatsApp first.",
+      "verdict": "pass"
+    },
+    "hi:settings.usage.noRoutine": {
+      "text": "इस महीने किसी रूटीन की कोई गतिविधि नहीं हुई।",
+      "en": "No routine activity this month.",
+      "verdict": "pass",
+      "note": "sol acct6 2026-11-10"
+    },
+    "hi:settings.computer.defaultTitle": {
+      "text": "नए बॉट के लिए डिफ़ॉल्ट कंप्यूटर",
+      "en": "Default computer for new bots",
+      "verdict": "pass"
+    },
+    "hi:settings.computer.defaultNote": {
+      "text": "नया बॉट उस कंप्यूटर पर शुरू होता है जिसे आप यहाँ चुनते हैं। आपके मौजूदा बॉट अपने कंप्यूटर पर ही रहते हैं। अगर आपका चुना हुआ कंप्यूटर यहाँ उपलब्ध नहीं है, तो नया बॉट इस कंप्यूटर पर शुरू होता है।",
+      "en": "The computer a new bot starts on. Bots you already have keep theirs. If the computer you pick is not here, a new bot starts on this computer.",
+      "verdict": "pass"
+    },
+    "hi:settings.computer.defaultOff": {
+      "text": "बंद",
+      "en": "Off",
+      "verdict": "pass"
+    },
+    "hi:settings.computer.defaultThis": {
+      "text": "यह कंप्यूटर",
+      "en": "This computer",
+      "verdict": "pass"
+    },
+    "hi:settings.computer.defaultVm": {
+      "text": "स्थानीय VM",
+      "en": "Local VM",
+      "verdict": "pass"
+    },
+    "hi:settings.computer.defaultCloud": {
+      "text": "क्लाउड",
+      "en": "Cloud",
+      "verdict": "pass"
+    },
+    "hi:settings.computer.defaultPerBot": {
+      "text": "हर बॉट के लिए इसे {bot} > पहुँच > कंप्यूटर में सेट करें",
+      "en": "Set it per bot under {bot} > Access > Computer",
+      "verdict": "pass"
+    },
+    "hi:settings.computer.defaultBotFallback": {
+      "text": "कोई बॉट",
+      "en": "a bot",
+      "verdict": "pass"
+    },
+    "hi:settings.computer.defaultError": {
+      "text": "डिफ़ॉल्ट कंप्यूटर सेव नहीं हो पाया। फिर से कोशिश करें।",
+      "en": "Could not save the default computer. Try again.",
+      "verdict": "pass"
+    },
+    "hi:settings.l1.card.connections.claude-code": {
+      "text": "Claude Code सेटअप",
+      "en": "Claude Code setup",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.title": {
+      "text": "मेरा Claude Code सेटअप भी इस्तेमाल करें",
+      "en": "Also use my Claude Code setup",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.note": {
+      "text": "अपने Claude Code के स्किल और टूल एक बार Murage में कॉपी करें। Murage इन्हें तभी पढ़ता है जब आप “कॉपी होने वाली चीज़ें देखें” दबाते हैं। जब तक आप यह बटन फिर से नहीं दबाते, Murage इन्हें दोबारा नहीं पढ़ता।",
+      "en": "Copy your Claude Code skills and tools into Murage, once. Murage reads them only when you press Review, and does not look again until you press it.",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.switch": {
+      "text": "“कॉपी होने वाली चीज़ें देखें” और “इम्पोर्ट करें” बटन दिखाएँ",
+      "en": "Show Review and Import",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.scope": {
+      "text": "क्या कॉपी करना है",
+      "en": "What to copy",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.scopeBoth": {
+      "text": "स्किल और टूल",
+      "en": "Skills and tools",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.scopeSkills": {
+      "text": "सिर्फ़ स्किल",
+      "en": "Skills only",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.scopeMcp": {
+      "text": "सिर्फ़ टूल",
+      "en": "Tools only",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.review": {
+      "text": "कॉपी होने वाली चीज़ें देखें",
+      "en": "Review what will be copied",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.reviewAgain": {
+      "text": "फिर से सिंक करें",
+      "en": "Sync again",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.import": {
+      "text": "इम्पोर्ट करें",
+      "en": "Import",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.skillsHeading": {
+      "text": "स्किल",
+      "en": "Skills",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.toolsHeading": {
+      "text": "टूल",
+      "en": "Tools",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.skillsOff": {
+      "text": "स्किल बंद स्थिति में जोड़े जाते हैं। हर स्किल को देखने के बाद चालू करें।",
+      "en": "Skills are added turned off. Turn each one on after you look at it.",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.toolsOff": {
+      "text": "टूल बंद स्थिति में जोड़े जाते हैं। हर टूल को चालू करके पहले जाँच लें। कुंजियाँ कभी कॉपी नहीं की जातीं।",
+      "en": "Tools are added turned off. Turn each one on and test it first. Keys are never copied.",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.needsKey": {
+      "text": "आपकी कुंजी चाहिए",
+      "en": "Needs your key",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.nothingNew": {
+      "text": "कॉपी करने के लिए कुछ नया नहीं है।",
+      "en": "Nothing new to copy.",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.skipped": {
+      "text": "{count} को छोड़ दिया गया क्योंकि वे पहले से यहाँ हैं या उनका इस्तेमाल नहीं हो सकता।",
+      "en": "{count} skipped because they are already here or cannot be used.",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.done": {
+      "text": "{skills} स्किल और {servers} टूल जोड़े गए। {needsKey} के लिए आपकी कुंजी चाहिए।",
+      "en": "Added {skills} skills and {servers} tools. {needsKey} need your key.",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.last": {
+      "text": "पिछली बार कुल {skills} स्किल और {servers} टूल कॉपी किए गए। {needsKey} के लिए आपकी कुंजी चाहिए।",
+      "en": "Last copy: {skills} skills and {servers} tools in all. {needsKey} need your key.",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.error": {
+      "text": "Claude Code की फ़ाइलें पढ़ी नहीं जा सकीं। कुछ भी बदला नहीं गया।",
+      "en": "Could not read Claude Code files. Nothing was changed.",
+      "verdict": "pass"
+    },
+    "ja:ux.l2c.usage.title": {
+      "text": "月間利用額のお知らせ",
+      "en": "Monthly spending notice",
+      "verdict": "pass"
+    },
+    "ja:settings.channels.allowEmpty": {
+      "text": "ボットにメッセージを送れる人を選ぶには、WhatsAppを連携し、「自分と選択した連絡先」を選んでください。",
+      "en": "To choose who can message your bots, link WhatsApp and pick Me and chosen contacts.",
+      "verdict": "pass"
+    },
+    "ja:settings.channels.groupsEmpty": {
+      "text": "ボットが返信するグループを選ぶには、まずWhatsAppを連携してください。",
+      "en": "To choose the groups your bots answer in, link WhatsApp first.",
+      "verdict": "pass"
+    },
+    "ja:settings.usage.noRoutine": {
+      "text": "今月はルーティンの実行履歴がありません。",
+      "en": "No routine activity this month.",
+      "verdict": "pass"
+    },
+    "ja:settings.computer.defaultTitle": {
+      "text": "新しいボットの既定のコンピューター",
+      "en": "Default computer for new bots",
+      "verdict": "pass"
+    },
+    "ja:settings.computer.defaultNote": {
+      "text": "新しいボットは、ここで選んだコンピューターで起動します。既存のボットは、現在のコンピューターを引き続き使用します。選んだコンピューターが見つからない場合、新しいボットはこのコンピューターで起動します。",
+      "en": "The computer a new bot starts on. Bots you already have keep theirs. If the computer you pick is not here, a new bot starts on this computer.",
+      "verdict": "pass"
+    },
+    "ja:settings.computer.defaultOff": {
+      "text": "オフ",
+      "en": "Off",
+      "verdict": "pass"
+    },
+    "ja:settings.computer.defaultThis": {
+      "text": "このコンピューター",
+      "en": "This computer",
+      "verdict": "pass"
+    },
+    "ja:settings.computer.defaultVm": {
+      "text": "ローカルVM",
+      "en": "Local VM",
+      "verdict": "pass"
+    },
+    "ja:settings.computer.defaultCloud": {
+      "text": "クラウド",
+      "en": "Cloud",
+      "verdict": "pass"
+    },
+    "ja:settings.computer.defaultPerBot": {
+      "text": "{bot} > アクセス > コンピューターで、ボットごとに設定できます",
+      "en": "Set it per bot under {bot} > Access > Computer",
+      "verdict": "pass"
+    },
+    "ja:settings.computer.defaultBotFallback": {
+      "text": "ボット",
+      "en": "a bot",
+      "verdict": "pass"
+    },
+    "ja:settings.computer.defaultError": {
+      "text": "既定のコンピューターを保存できませんでした。もう一度お試しください。",
+      "en": "Could not save the default computer. Try again.",
+      "verdict": "pass"
+    },
+    "ja:settings.l1.card.connections.claude-code": {
+      "text": "Claude Codeの設定",
+      "en": "Claude Code setup",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.title": {
+      "text": "Claude Codeの設定も使う",
+      "en": "Also use my Claude Code setup",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.note": {
+      "text": "Claude CodeのスキルとツールをMurageに一度だけコピーします。Murageは「コピーする内容を確認」を押したときだけ読み取り、もう一度押すまで再び読み取ることはありません。",
+      "en": "Copy your Claude Code skills and tools into Murage, once. Murage reads them only when you press Review, and does not look again until you press it.",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.switch": {
+      "text": "「コピーする内容を確認」と「インポート」を表示",
+      "en": "Show Review and Import",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.scope": {
+      "text": "コピーする対象",
+      "en": "What to copy",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.scopeBoth": {
+      "text": "スキルとツール",
+      "en": "Skills and tools",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.scopeSkills": {
+      "text": "スキルのみ",
+      "en": "Skills only",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.scopeMcp": {
+      "text": "ツールのみ",
+      "en": "Tools only",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.review": {
+      "text": "コピーする内容を確認",
+      "en": "Review what will be copied",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.reviewAgain": {
+      "text": "再同期",
+      "en": "Sync again",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.import": {
+      "text": "インポート",
+      "en": "Import",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.skillsHeading": {
+      "text": "スキル",
+      "en": "Skills",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.toolsHeading": {
+      "text": "ツール",
+      "en": "Tools",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.skillsOff": {
+      "text": "スキルはオフの状態で追加されます。それぞれの内容を確認してからオンにしてください。",
+      "en": "Skills are added turned off. Turn each one on after you look at it.",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.toolsOff": {
+      "text": "ツールはオフの状態で追加されます。それぞれオンにして、まず動作を確認してください。キーはコピーされません。",
+      "en": "Tools are added turned off. Turn each one on and test it first. Keys are never copied.",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.needsKey": {
+      "text": "ご自身のキーが必要です",
+      "en": "Needs your key",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.nothingNew": {
+      "text": "新しくコピーする項目はありません。",
+      "en": "Nothing new to copy.",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.skipped": {
+      "text": "すでに追加されているか、使用できないため、{count}件をスキップしました。",
+      "en": "{count} skipped because they are already here or cannot be used.",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.done": {
+      "text": "スキルを{skills}件、ツールを{servers}件追加しました。{needsKey}件にご自身のキーが必要です。",
+      "en": "Added {skills} skills and {servers} tools. {needsKey} need your key.",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.last": {
+      "text": "前回のコピー：スキル{skills}件、ツール{servers}件。{needsKey}件にご自身のキーが必要です。",
+      "en": "Last copy: {skills} skills and {servers} tools in all. {needsKey} need your key.",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.error": {
+      "text": "Claude Codeのファイルを読み取れませんでした。変更はありません。",
+      "en": "Could not read Claude Code files. Nothing was changed.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2c.usage.title": {
+      "text": "Aviso de gastos mensais",
+      "en": "Monthly spending notice",
+      "verdict": "pass"
+    },
+    "pt-br:settings.channels.allowEmpty": {
+      "text": "Para escolher quem pode enviar mensagens aos seus bots, conecte o WhatsApp e selecione Eu e contatos escolhidos.",
+      "en": "To choose who can message your bots, link WhatsApp and pick Me and chosen contacts.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.channels.groupsEmpty": {
+      "text": "Para escolher em quais grupos seus bots respondem, conecte o WhatsApp primeiro.",
+      "en": "To choose the groups your bots answer in, link WhatsApp first.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.usage.noRoutine": {
+      "text": "Nenhuma atividade de rotina neste mês.",
+      "en": "No routine activity this month.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.computer.defaultTitle": {
+      "text": "Computador padrão para novos bots",
+      "en": "Default computer for new bots",
+      "verdict": "pass"
+    },
+    "pt-br:settings.computer.defaultNote": {
+      "text": "Um novo bot inicia no computador que você escolher aqui. Os bots que você já tem continuam nos computadores atuais. Se o computador escolhido não estiver disponível, o novo bot inicia neste computador.",
+      "en": "The computer a new bot starts on. Bots you already have keep theirs. If the computer you pick is not here, a new bot starts on this computer.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.computer.defaultOff": {
+      "text": "Desativado",
+      "en": "Off",
+      "verdict": "pass"
+    },
+    "pt-br:settings.computer.defaultThis": {
+      "text": "Este computador",
+      "en": "This computer",
+      "verdict": "pass"
+    },
+    "pt-br:settings.computer.defaultVm": {
+      "text": "VM local",
+      "en": "Local VM",
+      "verdict": "pass"
+    },
+    "pt-br:settings.computer.defaultCloud": {
+      "text": "Nuvem",
+      "en": "Cloud",
+      "verdict": "pass"
+    },
+    "pt-br:settings.computer.defaultPerBot": {
+      "text": "Defina o computador de cada bot em {bot} > Acesso > Computador",
+      "en": "Set it per bot under {bot} > Access > Computer",
+      "verdict": "pass"
+    },
+    "pt-br:settings.computer.defaultBotFallback": {
+      "text": "um bot",
+      "en": "a bot",
+      "verdict": "pass"
+    },
+    "pt-br:settings.computer.defaultError": {
+      "text": "Não foi possível salvar o computador padrão. Tente novamente.",
+      "en": "Could not save the default computer. Try again.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l1.card.connections.claude-code": {
+      "text": "Configuração do Claude Code",
+      "en": "Claude Code setup",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.title": {
+      "text": "Usar também minha configuração do Claude Code",
+      "en": "Also use my Claude Code setup",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.note": {
+      "text": "Copie suas Habilidades e ferramentas do Claude Code para o Murage uma única vez. O Murage só lê esses itens quando você clica em \"Revisar o que será copiado\" e só volta a ler quando você clica nesse botão novamente.",
+      "en": "Copy your Claude Code skills and tools into Murage, once. Murage reads them only when you press Review, and does not look again until you press it.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.switch": {
+      "text": "Mostrar \"Revisar o que será copiado\" e \"Importar\"",
+      "en": "Show Review and Import",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.scope": {
+      "text": "O que copiar",
+      "en": "What to copy",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.scopeBoth": {
+      "text": "Habilidades e ferramentas",
+      "en": "Skills and tools",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.scopeSkills": {
+      "text": "Apenas Habilidades",
+      "en": "Skills only",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.scopeMcp": {
+      "text": "Apenas ferramentas",
+      "en": "Tools only",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.review": {
+      "text": "Revisar o que será copiado",
+      "en": "Review what will be copied",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.reviewAgain": {
+      "text": "Sincronizar novamente",
+      "en": "Sync again",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.import": {
+      "text": "Importar",
+      "en": "Import",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.skillsHeading": {
+      "text": "Habilidades",
+      "en": "Skills",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.toolsHeading": {
+      "text": "Ferramentas",
+      "en": "Tools",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.skillsOff": {
+      "text": "As Habilidades são adicionadas desativadas. Revise cada uma antes de ativar.",
+      "en": "Skills are added turned off. Turn each one on after you look at it.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.toolsOff": {
+      "text": "As ferramentas são adicionadas desativadas. Ative cada uma e teste antes de usar. As chaves nunca são copiadas.",
+      "en": "Tools are added turned off. Turn each one on and test it first. Keys are never copied.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.needsKey": {
+      "text": "Precisa da sua chave",
+      "en": "Needs your key",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.nothingNew": {
+      "text": "Nada de novo para copiar.",
+      "en": "Nothing new to copy.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.skipped": {
+      "text": "{count} itens ignorados porque já estão aqui ou não podem ser usados.",
+      "en": "{count} skipped because they are already here or cannot be used.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.done": {
+      "text": "Foram adicionadas {skills} Habilidades e {servers} ferramentas. {needsKey} precisam da sua chave.",
+      "en": "Added {skills} skills and {servers} tools. {needsKey} need your key.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.last": {
+      "text": "Última cópia: {skills} Habilidades e {servers} ferramentas no total. {needsKey} precisam da sua chave.",
+      "en": "Last copy: {skills} skills and {servers} tools in all. {needsKey} need your key.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.error": {
+      "text": "Não foi possível ler os arquivos do Claude Code. Nada foi alterado.",
+      "en": "Could not read Claude Code files. Nothing was changed.",
+      "verdict": "pass"
+    },
+    "zh:ux.l2c.usage.title": {
+      "text": "每月支出提醒",
+      "en": "Monthly spending notice",
+      "verdict": "pass"
+    },
+    "zh:settings.channels.allowEmpty": {
+      "text": "要选择哪些人可以向你的机器人发消息，请连接 WhatsApp，然后选择“我和指定联系人”。",
+      "en": "To choose who can message your bots, link WhatsApp and pick Me and chosen contacts.",
+      "verdict": "pass"
+    },
+    "zh:settings.channels.groupsEmpty": {
+      "text": "要选择机器人在哪些群组中回复，请先连接 WhatsApp。",
+      "en": "To choose the groups your bots answer in, link WhatsApp first.",
+      "verdict": "pass"
+    },
+    "zh:settings.usage.noRoutine": {
+      "text": "本月暂无例行任务活动。",
+      "en": "No routine activity this month.",
+      "verdict": "pass"
+    },
+    "zh:settings.computer.defaultTitle": {
+      "text": "新机器人的默认电脑",
+      "en": "Default computer for new bots",
+      "verdict": "pass"
+    },
+    "zh:settings.computer.defaultNote": {
+      "text": "新机器人会在你在此选择的电脑上启动。现有机器人会继续使用各自的电脑。如果所选电脑不在这里，新机器人会在这台电脑上启动。",
+      "en": "The computer a new bot starts on. Bots you already have keep theirs. If the computer you pick is not here, a new bot starts on this computer.",
+      "verdict": "pass"
+    },
+    "zh:settings.computer.defaultOff": {
+      "text": "关闭",
+      "en": "Off",
+      "verdict": "pass"
+    },
+    "zh:settings.computer.defaultThis": {
+      "text": "这台电脑",
+      "en": "This computer",
+      "verdict": "pass"
+    },
+    "zh:settings.computer.defaultVm": {
+      "text": "本地 VM",
+      "en": "Local VM",
+      "verdict": "pass"
+    },
+    "zh:settings.computer.defaultCloud": {
+      "text": "云端",
+      "en": "Cloud",
+      "verdict": "pass"
+    },
+    "zh:settings.computer.defaultPerBot": {
+      "text": "在 {bot} > 访问权限 > 电脑中为每个机器人单独设置",
+      "en": "Set it per bot under {bot} > Access > Computer",
+      "verdict": "pass"
+    },
+    "zh:settings.computer.defaultBotFallback": {
+      "text": "某个机器人",
+      "en": "a bot",
+      "verdict": "pass"
+    },
+    "zh:settings.computer.defaultError": {
+      "text": "无法保存默认电脑设置，请重试。",
+      "en": "Could not save the default computer. Try again.",
+      "verdict": "pass"
+    },
+    "zh:settings.l1.card.connections.claude-code": {
+      "text": "Claude Code 配置",
+      "en": "Claude Code setup",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.title": {
+      "text": "同时使用我的 Claude Code 配置",
+      "en": "Also use my Claude Code setup",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.note": {
+      "text": "将你的 Claude Code 技能和工具一次性复制到 Murage。Murage 仅在你点击“查看将复制的内容”时读取它们，直到你再次点击该按钮才会重新读取。",
+      "en": "Copy your Claude Code skills and tools into Murage, once. Murage reads them only when you press Review, and does not look again until you press it.",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.switch": {
+      "text": "显示“查看将复制的内容”和“导入”按钮",
+      "en": "Show Review and Import",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.scope": {
+      "text": "要复制的内容",
+      "en": "What to copy",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.scopeBoth": {
+      "text": "技能和工具",
+      "en": "Skills and tools",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.scopeSkills": {
+      "text": "仅技能",
+      "en": "Skills only",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.scopeMcp": {
+      "text": "仅工具",
+      "en": "Tools only",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.review": {
+      "text": "查看将复制的内容",
+      "en": "Review what will be copied",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.reviewAgain": {
+      "text": "再次同步",
+      "en": "Sync again",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.import": {
+      "text": "导入",
+      "en": "Import",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.skillsHeading": {
+      "text": "技能",
+      "en": "Skills",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.toolsHeading": {
+      "text": "工具",
+      "en": "Tools",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.skillsOff": {
+      "text": "技能添加后默认关闭。请查看后逐一开启。",
+      "en": "Skills are added turned off. Turn each one on after you look at it.",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.toolsOff": {
+      "text": "工具添加后默认关闭。请逐一开启并先进行测试。密钥不会被复制。",
+      "en": "Tools are added turned off. Turn each one on and test it first. Keys are never copied.",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.needsKey": {
+      "text": "需要你的密钥",
+      "en": "Needs your key",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.nothingNew": {
+      "text": "没有可复制的新内容。",
+      "en": "Nothing new to copy.",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.skipped": {
+      "text": "已跳过 {count} 项，因为它们已存在或无法使用。",
+      "en": "{count} skipped because they are already here or cannot be used.",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.done": {
+      "text": "已添加 {skills} 个技能和 {servers} 个工具。其中 {needsKey} 项需要你的密钥。",
+      "en": "Added {skills} skills and {servers} tools. {needsKey} need your key.",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.last": {
+      "text": "上次复制：共 {skills} 个技能和 {servers} 个工具。其中 {needsKey} 项需要你的密钥。",
+      "en": "Last copy: {skills} skills and {servers} tools in all. {needsKey} need your key.",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.error": {
+      "text": "无法读取 Claude Code 文件。未做任何更改。",
+      "en": "Could not read Claude Code files. Nothing was changed.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}
