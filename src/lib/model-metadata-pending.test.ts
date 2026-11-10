@@ -9,7 +9,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { PickerPriceNote, PickerRowMeta, pickerRowTitle } from "../components/ModelPicker";
+import { PickerPriceNote, PickerRowMeta, pickerRowTitle } from "../components/ModelPickerDialog";
 import { lookupModelMetadata, modelMetadataLoads, modelMetadataReady, preloadModelMetadata, subscribeModelMetadata } from "./model-metadata.ts";
 import { PRICE_UNKNOWN, isPricePending, pickerModels, type PickerEngine } from "./provider-model-picker.ts";
 

@@ -20,6 +20,7 @@ vi.mock("react", async original => ({
     return hooks.values[i] ??= { current: initial };
   },
   useCallback: (fn: unknown) => fn,
+  useId: () => "plugins-feedback-fixture",
   useEffect: (fn: () => unknown) => { hooks.effects.push(fn); },
 }));
 vi.mock("@/state/store", () => ({ api: hooks.api, useStore: () => ({ state: { config: { flux: { configured: true } } }, dispatch: vi.fn() }) }));
