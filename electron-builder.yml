@@ -319,7 +319,7 @@ win:
       to: fuigo-probe/launcher.exe
     - from: dist-native/fuigo-probe/win32-x64/manifest.json
       to: fuigo-probe/manifest.json
-    - from: dist-native/engine-exclusion/win32-x64/engine-exclusion.node
+    - from: dist-native/engine-exclusion/win32-${arch}/engine-exclusion.node
       to: engine-exclusion.node
     - from: dist-native/cloudflared/win32-x64/cloudflared.exe
       to: cloudflared/cloudflared.exe

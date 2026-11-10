@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "SETTINGS19b",
+  "date": "2026-11-09",
+  "base": "40b87b6ef",
+  "scope": "settings A review strings (Calls, Approvals)",
+  "strings": {
+    "en:settings.search.approveAll.path": {
+      "text": "Approvals",
+      "en": "Approvals",
+      "verdict": "pass"
+    },
+    "en:settings.index.calls.label": {
+      "text": "Calls",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "de:settings.search.approveAll.path": {
+      "text": "Genehmigungen",
+      "en": "Approvals",
+      "verdict": "pass"
+    },
+    "de:settings.index.calls.label": {
+      "text": "Anrufe",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "es:settings.search.approveAll.path": {
+      "text": "Aprobaciones",
+      "en": "Approvals",
+      "verdict": "pass"
+    },
+    "es:settings.index.calls.label": {
+      "text": "Llamadas",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "fr:settings.search.approveAll.path": {
+      "text": "Approbations",
+      "en": "Approvals",
+      "verdict": "pass"
+    },
+    "fr:settings.index.calls.label": {
+      "text": "Appels",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "hi:settings.search.approveAll.path": {
+      "text": "मंज़ूरियाँ",
+      "en": "Approvals",
+      "verdict": "pass"
+    },
+    "hi:settings.index.calls.label": {
+      "text": "कॉल",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "ja:settings.search.approveAll.path": {
+      "text": "承認",
+      "en": "Approvals",
+      "verdict": "pass"
+    },
+    "ja:settings.index.calls.label": {
+      "text": "通話",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "pt-br:settings.search.approveAll.path": {
+      "text": "Aprovações",
+      "en": "Approvals",
+      "verdict": "pass"
+    },
+    "pt-br:settings.index.calls.label": {
+      "text": "Ligações",
+      "en": "Calls",
+      "verdict": "pass"
+    },
+    "zh:settings.search.approveAll.path": {
+      "text": "批准",
+      "en": "Approvals",
+      "verdict": "pass"
+    },
+    "zh:settings.index.calls.label": {
+      "text": "通话",
+      "en": "Calls",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}
