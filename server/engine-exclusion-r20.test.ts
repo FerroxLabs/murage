@@ -252,7 +252,9 @@ describe("T10: the packaging gate loads the real addon for the target and refuse
     writeFileSync(join(target, "engine-exclusion.node"), readFileSync(built));
     const platform = process.platform as "linux" | "darwin" | "win32";
     const host = process.arch as "x64" | "arm64";
-    expect(validateEngineExclusionResource(target, platform, host)).toMatch(/engine-exclusion\.node$/);
+    const receipt = join(target, "build.json");
+    writeFileSync(receipt, JSON.stringify({ crt: "MT" })); // Windows requires the build's /MT receipt (R16/R25); this case is about the image's machine
+    expect(validateEngineExclusionResource(target, platform, host, platform === "win32" ? receipt : undefined)).toMatch(/engine-exclusion\.node$/);
     if (platform === "linux") expect(() => validateEngineExclusionResource(target, platform, host === "x64" ? "arm64" : "x64")).toThrow(/MISMATCH/);
   });
 

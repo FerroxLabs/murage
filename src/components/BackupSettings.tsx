@@ -2,6 +2,7 @@
 // old General-section panels made, with the same revision checks, consent
 // resets, locks and credential clearing; the views only arrange them.
 import { useEffect, useMemo, useRef, useState } from "react";
+import { setSettingsMode, type SettingsMode } from "@/lib/settings-mode";
 import { AdvancedSection, Switch } from "./SettingsPrimitives";
 import { OffsiteCleanup, OffsiteDetails, OffsiteRecover, OffsiteRefresh, OffsiteStatus, useBackupRemote } from "./BackupRemoteSettings";
 import { enabledSchedule, scheduleCardNotice, scheduleDraft, scheduleError, scheduleNeedsReview, schedulePhase, closedJobLabel, closedResultLabel, type ScheduleDraft } from "./backup-schedule-ui";
@@ -471,10 +472,10 @@ function WaitingActions({held,onChanged}:{held:NonNullable<BackupScheduleStatus[
 export function BackupHeadline({summary,s}:{summary:BackupSummary;s:ScheduleController}) {
   const head=backupHeadline(s.status);
   const pending=Boolean(s.status?.pending);
-  return <section aria-labelledby="backups-heading" className={card}>
+  return <section aria-labelledby="backups-title" className={card}>
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="min-w-0 space-y-1">
-        <h3 id="backups-heading" className="text-[16px] font-semibold text-ink">{head.title}</h3>
+        <h3 id="backups-title" className="text-[16px] font-semibold text-ink">{head.title}</h3>
         {head.lines.map((line,index)=><p key={line} role={index===0?"status":undefined} className="break-words text-[13px] text-ink-secondary">{index===0&&head.verified&&<span aria-hidden="true" className="mr-1 text-success">●</span>}{line}</p>)}
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -517,14 +518,19 @@ export function LocalRestore({lastChecked,supported,busy,onRestart}:{lastChecked
 }
 
 /** Settings → Backups. */
-export function BackupSettings() {
+/** `mode` is the page's Simple or Advanced (settings/pages/BackupsPage). Without it the card keeps its own Advanced fold. In Simple the
+ *  schedule, limits, off-site details and cleanup stay out and the "Set limits" and "Set up" buttons turn Advanced mode on. */
+export function BackupSettings({ mode: pageMode }: { mode?: SettingsMode } = {}) {
   const mode=useBackupMode(),s=useBackupSchedule(),r=useBackupRemote();
-  const [advancedOpen,setAdvancedOpen]=useState(false);
+  const [foldOpen,setFoldOpen]=useState(false);
+  const advancedOpen=pageMode?pageMode==="advanced":foldOpen;
+  const setAdvancedOpen=(open:boolean)=>{ if(pageMode){ if(open)setSettingsMode("advanced"); } else setFoldOpen(open); };
   const [focus,setFocus]=useState<string|null>(null);
   useEffect(()=>{
     if(!focus)return;const target=document.getElementById(focus);
-    target?.scrollIntoView?.({block:"start"});target?.focus();setFocus(null);
-  },[focus]);
+    if(!target)return;
+    target.scrollIntoView?.({block:"start"});target.focus();setFocus(null);
+  },[focus,advancedOpen]);
   const summary=backupSummary({scheduleBridge:Boolean(s.bridge),schedule:s.status,scheduleStale:s.stale,scheduleFailure:s.error,closed:s.closed,closedStale:s.closedStale,remoteBridge:Boolean(r.bridge),remote:r.status,remoteStale:r.stale,remoteFailure:r.error});
   const stale=s.stale||s.closedStale||r.stale;
   const lastChecked=s.status?.lastVerified;
@@ -551,7 +557,7 @@ export function BackupSettings() {
       </div>
       <OffsiteStatus r={r}/>
     </section>
-    <AdvancedSection section="backups" summary="How often, how long to keep, size limits, backup folder" open={advancedOpen} onOpenChange={setAdvancedOpen}>
+    {pageMode&&!advancedOpen?null:<AdvancedBody pageMode={pageMode} open={advancedOpen} onOpenChange={setAdvancedOpen}>
       {s.status?.enabled&&<ScheduleCard s={s} attention={summary.attention} keepsafe={false}/>}
       <ScheduleAdvanced s={s}/>
       <section id="backup-offsite-details" tabIndex={-1} aria-label="Off-site copy details" className="min-w-0 space-y-3"><h4 className="text-[13px] font-medium text-ink">Off-site copy details</h4><OffsiteDetails r={r}/></section>
@@ -561,6 +567,12 @@ export function BackupSettings() {
         <OffsiteRefresh r={r}/>
       </div>
       <ScheduleMessages s={s} area="advanced"/>
-    </AdvancedSection>
+    </AdvancedBody>}
   </div>;
+}
+
+/** The fold on its own; the page's Advanced mode shows the same content open and with no fold. */
+function AdvancedBody({pageMode,open,onOpenChange,children}:{pageMode?:SettingsMode;open:boolean;onOpenChange:(open:boolean)=>void;children:React.ReactNode}){
+  if(pageMode)return <div className="min-w-0 space-y-4">{children}</div>;
+  return <AdvancedSection section="backups" summary="How often, how long to keep, size limits, backup folder" open={open} onOpenChange={onOpenChange}>{children}</AdvancedSection>;
 }
