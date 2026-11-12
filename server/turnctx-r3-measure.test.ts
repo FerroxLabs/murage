@@ -38,12 +38,19 @@ it("storage: the derived tables as bytes per message and as a share of the messa
   const bot = store.createBot({ name: "Measured" });
   const count = Number(process.env.MEASURE_WRITTEN ?? 12_000);
   const began = performance.now();
+  const db = database();
   for (let v = 1; v <= count; v++) {
     const s = shape(v);
     store.appendMessage(bot.threadId, { role: s.role, kind: s.kind, text: s.text ?? undefined, ...s.extra } as never);
+    // 5d5a791f19 bounds synchronous, uncheckpointed commit bursts. This
+    // fixture still measures every real per-message commit; bound its seed
+    // WAL explicitly instead of depending on worker scheduling during a loop.
+    if (v % 128 === 0) {
+      db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      await new Promise<void>(resolve => setImmediate(resolve));
+    }
   }
   const wrote = performance.now() - began;
-  const db = database();
   db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   let bytes: (name: string) => number;
   try {

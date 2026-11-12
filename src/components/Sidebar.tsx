@@ -1,6 +1,7 @@
 import { canHandleLayerEscape, useFocusTrap } from "@/lib/focus-trap";
 import { LayerSurface } from "@/components/LayerSurface";
 import { LazyOverlay } from "@/components/LazyOverlay";
+import { toolBudgetLabel } from "@/lib/tool-budget-copy";
 import { Suspense } from "react";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 const NewProject = retryableLazy(() => import("./NewProjectDialog"));
@@ -40,6 +41,7 @@ import {
   FolderMinus,
   FolderPlus,
   Info,
+  CircleHelp,
   Keyboard,
   Laptop,
   LayoutTemplate,
@@ -66,6 +68,8 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { openHelp } from "./help/HelpHost";
+
 import { SectionContextDialog } from "./SectionContextDialog";
 import { sidebarBotRowTone, sidebarGroupRowTone } from "@/lib/sidebar-row-tone";
 import { SIDEBAR_BOT_DRAG_TYPE, moveSidebarBot, planSidebarBotDrop, sidebarBotDraggable } from "@/lib/sidebar-bot-drop";
@@ -78,6 +82,7 @@ import { formatRelativeListTime, formatTaskMoment } from "@/lib/task-list";
 import { useRelativeNow } from "@/lib/relative-now";
 
 import { BotAvatar } from "./Avatar";
+import { PinToEdgeMenuItem } from "./PinToEdgeMenuItem";
 import { SidebarNewChatPanel } from "./SidebarNewChatPanel";
 import { UpdateIndicator } from "./UpdateIndicator";
 import { UpdateDot } from "./UpdateDot";
@@ -205,6 +210,11 @@ import { hasRoutineAttention } from "@/lib/routine-attention";
 import { copyOrReport } from "@/lib/copy-text";
 import { preloadGroupView } from "@/lib/group-view-preload";
 import { raiseTransientError } from "@/state/chat-error";
+
+/** Help opens once the drawer's close has handed focus back (two frames), so help remembers a control that is still there. */
+function openHelpAfterDrawer() {
+  requestAnimationFrame(() => requestAnimationFrame(() => openHelp()));
+}
 
 /** Shown when a dragged section order was kept on this device but did not reach the computer. */
 export const SECTION_ORDER_NOT_SYNCED = "Couldn't sync the order to your computer. It is kept on this device for now.";
@@ -502,7 +512,7 @@ export function SidebarUpdateControl({ density }: { density: SidebarDensity }) {
 
 /** The one-line reading of an activity line: a host stop, a send notice, a folder trust note, a failed turn's plain sentence, else the tool. */
 function activityLineText(tool: NonNullable<SidebarLine["tool"]>): string {
-  return hostStoppedLabel(tool.name) ?? sendNoticeLabel(tool.name) ?? folderTrustLabel(tool.name) ?? errorPreview(tool) ?? tool.name;
+  return toolBudgetLabel(tool.name.replace(/^error:\s*/, "")) ?? hostStoppedLabel(tool.name) ?? sendNoticeLabel(tool.name) ?? folderTrustLabel(tool.name) ?? errorPreview(tool) ?? tool.name;
 }
 
 /** A connection card's row: "<app> · <state>", in the reader's language. */
@@ -1410,6 +1420,8 @@ export function BotContextMenu({
       className="fixed z-40 w-[228px] overflow-y-auto overflow-x-hidden overscroll-contain rounded-xl border border-hairline/50 bg-card py-1.5 shadow-2xl shadow-black/60"
     >
       {[
+        <PinToEdgeMenuItem key="pin-to-edge" botId={bot.id} onPinned={onClose}
+          onError={message => dispatch({ type: "error", message })} />,
         item(
           bot.pinned ? <PinOff size={16} className="text-ink-secondary" /> : <Pin size={16} className="text-ink-secondary" />,
           bot.pinned ? "Unpin" : "Pin",
@@ -1561,7 +1573,8 @@ export const BotListItem = memo(function BotListItem({
       ? "justify-center px-1 py-1.5"
       : density === "compact"
         ? "gap-2 px-2 py-1.5"
-        : "gap-2 px-3 py-2",
+        // Give wide Linux system-font names 4px more room; keep touch insets.
+        : "gap-2 px-3 py-2 md:[@media(hover:hover)]:pl-2",
     !iconOnly && "group-hover:pr-[5.25rem] group-focus-within:pr-[5.25rem] max-md:pr-[5.25rem] [@media(hover:none)]:pr-[5.25rem]",
     // Role colour at rest (Chief orange, leader blue); the open row gets the
     // gold selected edge from sidebar-row-tone whatever its role.
@@ -2269,6 +2282,14 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
   useEffect(()=>{const open=()=>dispatch({ type: "showNeedsYou" });window.addEventListener("murage:open-inbox",open);return()=>window.removeEventListener("murage:open-inbox",open);},[dispatch]);
   useTrayIntents();
   const [teamFeedback, setTeamFeedback] = useState<TeamFeedback | null>(null);
+  const shownComputerNotices = useRef(new Set<string>());
+  useEffect(() => {
+    for (const [botId, text] of Object.entries(state.botComputerNotices ?? {})) {
+      if (shownComputerNotices.current.has(botId) || !state.bots.some((bot) => bot.id === botId && !bot.hidden)) continue;
+      shownComputerNotices.current.add(botId);
+      setTeamFeedback({ error: false, text });
+    }
+  }, [state.botComputerNotices, state.bots]);
   const [query, setQuery] = useState("");
   // The chosen density is shared with Settings > General > Appearance. On a
   // window 768 to 1100px wide the sidebar folds to the rail by itself, until
@@ -2833,6 +2854,8 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
     { key: "map", label: t("nav.mapName"), icon: <Network size={17} />, onSelect: () => { dispatch({ type: "showTeamMap" }); onNavigate(); } },
     ...(whatsNew.available ? [{ key: "whats-new", label: t("settings.about.whatsNewTitle"), icon: <Megaphone size={17} />, onSelect: whatsNew.reopen }] : []),
     { key: "version", label: t("nav.versionItem", { version: APP_VERSION }), icon: <Info size={17} />, onSelect: () => openSettings("about") },
+    // Phones have no floating "?" tab (it covered the transcript): Help opens from here.
+    ...(narrow ? [{ key: "help", label: t("ux.l4a.panel.label"), icon: <CircleHelp size={17} />, onSelect: () => { onNavigate(); openHelpAfterDrawer(); } }] : []),
     { key: "keyboard-shortcuts", label: t("settings.about.shortcutsTitle"), icon: <Keyboard size={17} />, onSelect: () => setShortcutsOpen(true) },
     ...(skillRecorderAvailable(state.config, desktop, isCloudOrigin(), capabilities.host.platform)
       ? [{ key: "skill-recorder", label: t("nav.teachSkill"), icon: <Sparkles size={17} />, onSelect: () => { dispatch({ type: "showSkillRecorder" }); onNavigate(); } }]
@@ -3425,8 +3448,8 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
               : "Every message in this conversation is removed. The bots themselves are not deleted. This cannot be undone."
           }
           onCancel={() => setPendingDelete(null)}
-          onConfirm={() => {
-            if (pendingDelete.kind === "bot") dispatch({ type: "deleteBot", source: "local", botId: pendingDelete.id, attempt: newDeleteAttempt() });
+          onConfirm={(options) => {
+            if (pendingDelete.kind === "bot") dispatch({ type: "deleteBot", source: "local", botId: pendingDelete.id, attempt: newDeleteAttempt(), ...(options?.emailConfirm ? { emailConfirm: options.emailConfirm } : {}) });
             else dispatch({ type: "deleteGroup", groupId: pendingDelete.id });
             setPendingDelete(null);
           }}

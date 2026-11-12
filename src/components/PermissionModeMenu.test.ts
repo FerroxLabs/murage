@@ -16,6 +16,14 @@ const item = (markup: string, label: string) => {
 };
 
 describe("composer approval-level menu", () => {
+  it("H8 No limits explains native request coverage when the engine cannot ask", () => {
+    const noLimits = item(render(true, "Antigravity"), "No limits");
+    expect(noLimits).not.toContain("works without commands");
+    expect(noLimits).toContain("At No limits, Murage adds no permission cards except for a likely wipe or catastrophe in requests it receives.");
+    expect(noLimits).toContain("Only a likely wipe or catastrophe asks first.");
+    for (const label of [">Ask<", ">Auto<", "Full access"])
+      expect(item(render(true, "Antigravity"), label)).toContain("works without commands");
+  });
   it("Astra r1 item 8: names the levels exactly Ask, Auto, Full access, No limits", () => {
     expect(PERMISSION_MODES.map((entry) => entry.label)).toEqual(["Ask", "Auto", "Full access", "No limits"]);
     expect(PERMISSION_MODES.map((entry) => entry.chip)).toEqual(["Ask", "Auto", "Full access", "No limits"]);
@@ -34,7 +42,7 @@ describe("composer approval-level menu", () => {
   });
 
   it("offers No limits with its plain description, on the desktop only", () => {
-    expect(item(render(true), "No limits")).toContain("In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before it changes files Murage protects, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread.");
+    expect(item(render(true), "No limits")).toContain("Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A setting carried over from 1.0.18 does not count.".replace(/'/g, "&#x27;"));
     // 3.4: greyed on the phone, with where it is set
     const remote = item(render(false), "No limits");
     expect(remote).toContain(' aria-disabled="true"');
@@ -50,12 +58,10 @@ describe("composer approval-level menu", () => {
     for (const desktop of [true, undefined]) expect(item(render(desktop), "Full access")).not.toContain(' aria-disabled="true"');
   });
 
-  // Antigravity's print mode cannot ask, so at every level Murage runs it
-  // with file edits only: no shell, teammates, memory or connected apps. The
-  // menu has to say so on every level, Ask and Auto included.
-  it("says when this bot's engine cannot ask, on every level", () => {
+  // Lower levels retain the file-edit restriction; No limits runs commands.
+  it("says when this bot's engine cannot ask at lower levels", () => {
     const markup = render(true, "Antigravity");
-    for (const label of [">Ask<", ">Auto<", "Full access", "No limits"])
+    for (const label of [">Ask<", ">Auto<", "Full access"])
       expect(item(markup, label)).toContain("Antigravity can&#x27;t stop to ask, so it works without commands, teammates, memory or connected apps.");
     expect(render(true)).not.toContain("stop to ask");
   });
@@ -75,7 +81,7 @@ describe("composer approval-level menu", () => {
 describe("an engine that runs on its own tools and approvals", () => {
   it("says so once, as what it is, and leaves the Antigravity note alone", () => {
     const markup = render(true, undefined, "OpenClaw");
-    expect(markup).toContain("OpenClaw runs on its own tools. At Ask it reads and answers only: it runs no commands and changes no files. At Auto, Full access and No limits it follows your own OpenClaw command settings.");
+    expect(markup).toContain("OpenClaw uses its own tools. At Ask, it only reads and answers. At other levels, your OpenClaw settings still apply. At No limits, Murage asks only about a likely wipe or catastrophe in requests it receives. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on.");
     // U45: the old note said the levels change nothing, which is wrong at Ask.
     expect(markup).not.toContain("these levels do not change what it does");
     expect(markup).not.toContain("cannot ask first");

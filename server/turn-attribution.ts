@@ -62,7 +62,7 @@ export function createTurnAttribution(deps: TurnAttributionDeps) {
       settle(attempt);
     },
     /** The write the fence released did not happen (a pre-write failure: the process never started, the connection failed before any
-     * answer, the MCP wait failed, a later fence refused): I14 means "released to the engine's write", so a stamp made on the strength
+     * answer, or an explicit adapter report that its write failed whole): I14 means "released to the engine's write", so a stamp made on the strength
      * of that fence is withdrawn and the attempt waits for a fence that precedes a real write. A relaunch passes the fence again. */
     notWritten(attemptId: string): void {
       const attempt = attempts.get(attemptId);

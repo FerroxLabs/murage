@@ -194,6 +194,8 @@ export interface MatchOptions {
   searched?: boolean;
   /** step 2c: the engine's PATH folders (at most 64, lexical and realpath, known at turn start) */
   pathFolders?: readonly string[];
+  /** Startup-only: do not treat a folder merely holding an entry as a read. */
+  holds?: boolean;
 }
 
 const labelOf = (e: RegistryEntry): DlLabel => (e.cloned || e.kind === "repo" ? "cloned folder" : "downloaded file");
@@ -230,6 +232,11 @@ export class DownloadRegistry {
   /** A copy, for tests and the store. */
   list(): RegistryEntry[] { return [...this.entries, ...this.spans].map((e) => ({ ...e })); }
   empty(): boolean { return this.entries.length === 0 && this.spans.length === 0; }
+
+  entriesUnder(folder: string): RegistryEntry[] {
+    const key = registryKey(folder), prefix = key.endsWith('/') ? key : key + '/';
+    return [...this.entries, ...this.spans].filter(e => e.path === key || e.path.startsWith(prefix)).map(e => ({ ...e, path: folder.replace(/\/$/, '') + e.path.slice(key.length) }));
+  }
 
   private countBase(entry: RegistryEntry, by: 1 | -1): void {
     const base = baseOf(entry.path);
@@ -405,12 +412,12 @@ export class DownloadRegistry {
     if (this.empty()) return null;
     const { budget } = options;
     const pKey = registryKey(p);
-    const lexical = this.byEntries(pKey);
+    const lexical = this.byEntries(pKey, options.holds !== false);
     if (lexical.label) return lexical.label;
     const q = budget.deepestReal(p);
     if (q === "hit") return "downloaded file";
     const qKey = registryKey(q);
-    const real = qKey === pKey ? lexical : this.byEntries(qKey);
+    const real = qKey === pKey ? lexical : this.byEntries(qKey, options.holds !== false);
     if (real.label) return real.label;
     const window = lexical.window ?? real.window;
     if (window || this.spans.length) {
@@ -445,7 +452,7 @@ export class DownloadRegistry {
 
   /** The entry checks of step 2 with no syscall: a file equal to it, a tree or repo at or above it, a folder holding an entry;
    *  and the window at or above it that needs the lstat. */
-  private byEntries(key: string): { label: DlLabel | null; window?: RegistryEntry } {
+  private byEntries(key: string, holds = true): { label: DlLabel | null; window?: RegistryEntry } {
     let window: RegistryEntry | undefined;
     for (const entry of this.at(key)) {
       if (entry.kind === "file" || entry.kind === "tree" || entry.kind === "repo") return { label: labelOf(entry) };
@@ -453,7 +460,7 @@ export class DownloadRegistry {
     }
     const prefix = key.endsWith("/") ? key : key + "/";
     const below = this.entries[this.lowerBound(prefix)];
-    if (below && below.path.startsWith(prefix)) return { label: labelOf(below) };
+    if (holds && below && below.path.startsWith(prefix)) return { label: labelOf(below) };
     for (let up = parentKey(key); up !== null; up = parentKey(up)) {
       for (const entry of this.at(up)) {
         if (entry.kind === "tree" || entry.kind === "repo") return { label: labelOf(entry) };

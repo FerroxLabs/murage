@@ -197,7 +197,7 @@ print(json.dumps(info))`;
       const credential = Buffer.alloc(32, 7).toString("base64");
       writeFileSync(join(state, "credential"), credential + "\n", { mode: 0o600 }); writeFileSync(join(state, "generation"), "1\n", { mode: 0o600 });
       writeFileSync(join(config, "home.env"), "MURAGE_CLOUD_ROLE=home\nMURAGE_CLOUD_MACHINE_ID=home-1\nMURAGE_CLOUD_ADMIN_URL=http://127.0.0.1:1\nMURAGE_PUBLIC_ORIGIN=https://abc.homes.example.dev\n", { mode: 0o600 });
-      const result = spawnSync("python3", ["-I", "-c", driver, program, state, config, runtime, scenario], { encoding: "utf8", timeout: 20000 });
+      const result = spawnSync("python3", ["-I", "-c", driver, program, state, config, runtime, scenario], { windowsHide: true, encoding: "utf8", timeout: 20000 });
       expect(result.status).toBe(0);
       return { info: JSON.parse(result.stdout), credential, stdout: result.stdout + result.stderr, runtime };
     } finally { removeTempDirSync(root); }

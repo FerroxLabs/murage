@@ -125,7 +125,7 @@ out.append(current("codex")); out.append(m.signin_status(ER+"/codex"))
 `);
     expect(names).toEqual(["3", "4", "current"]);
     expect(record).toEqual({ mode: "apikey", kind: "enroll", enrolledAt: 3, expiresAt: null, unit: null, files: { key: { keys: [] } } });
-    expect(query).toEqual({ mode: "apikey", signedIn: true, expiresAt: null });
+    expect(query).toEqual({ mode: "apikey", signedIn: true, expiresAt: null, source: "home" });
     expect(missing).toEqual({ g: 9, record: null, files: {} });
     expect(status).toEqual([null, false, null]);
     expect(rig.plan(rig.request("codex")).ok!.files[`${rig.home("codex")}/.codex/auth.json`]).toBeUndefined();
@@ -258,7 +258,7 @@ out.append([shown, events]); out.append(len(listing("claudeAgent")) == publish_c
     expect(r).toMatchObject({ mode: "oauth-token", kind: "signin", unit: "murage-turn-0123456789abcdef.scope", files: { token: { keys: [] } } });
     expect(r.expiresAt - r.enrolledAt).toBe(365 * 24 * 60 * 60);
     expect(token).toBe(true);
-    expect(query).toEqual({ mode: "oauth-token", signedIn: true, expiresAt: r.expiresAt * 1000 });
+    expect(query).toEqual({ mode: "oauth-token", signedIn: true, expiresAt: r.expiresAt * 1000, source: "home" });
     expect(noneShown).toEqual(["Error: login cancelled\r\nClaude is not signed in on this Cloud home: no sign-in token was received.\r\n", [["capture", false], ["collect", true]]]);
     expect(noneStore).toBe(true);
   });
@@ -315,8 +315,7 @@ describe("B mode per bot (r8 R4, fixture 21)", () => {
 out.append(login_request(engine="codex", action="login", bot="alpha", pty=True, unit="murage-turn-0123456789abcdef.scope"))
 out.append(login_request(engine="opencodeGo", action="login", bot="alpha")["args"])
 out.append(login_request(engine="claudeAgent", action="login")["args"])
-for kw in [dict(engine="codex", action="login"), dict(engine="grokAgent", action="login"), dict(engine="claudeAgent", action="login", bot="alpha"),
-           dict(engine="codex", action="enroll-key", secret="${KEY}", bot="alpha"), dict(engine="codex", action="enroll-key"), dict(engine="codex", action="enroll-key", secret="short"),
+for kw in [dict(engine="codex", action="login"), dict(engine="grokAgent", action="login"), dict(engine="codex", action="enroll-key", secret="${KEY}", bot="alpha"), dict(engine="codex", action="enroll-key"), dict(engine="codex", action="enroll-key", secret="short"),
            dict(engine="codex", action="enroll-key", secret="${KEY}", provider="openai"), dict(engine="opencodeGo", action="enroll-key", secret="${OC_KEY}"),
            dict(engine="opencodeGo", action="enroll-key", secret="${OC_KEY}", provider="Bad/Provider"), dict(engine="grokAgent", action="enroll-key", secret="${KEY}"),
            dict(engine="codex", action="login", bot="../x"), dict(engine="codex", action="logout", secret="${KEY}"), dict(engine="codex", action="status")]:
@@ -328,11 +327,11 @@ out.append(hasattr(m, "LOCAL_LOGOUT") or hasattr(m, "local_logout") or any("logo
 `);
     expect(out[0]).toEqual({ engine: "codex", command: "/opt/murage/bin/codex", args: ["login", "--device-auth"], cwd: "/data/engine-homes/codex", env: expect.any(Object), bot: "alpha", unit: "murage-turn-0123456789abcdef.scope", pty: true });
     expect(out.slice(1, 3)).toEqual([["auth", "login"], ["setup-token"]]);
-    expect(out.slice(3, 16)).toEqual(["Cloud sign-in names no bot", "Cloud sign-in names no bot", "Cloud sign-in takes no bot", "Cloud sign-in takes no bot", "Cloud sign-in key is not allowed",
+    expect(out.slice(3, 15)).toEqual(["Cloud sign-in names no bot", "Cloud sign-in names no bot", "Cloud sign-in takes no bot", "Cloud sign-in key is not allowed",
       "Cloud sign-in key is not allowed", "Cloud sign-in provider is not allowed", "Cloud sign-in provider is not allowed", "Cloud sign-in provider is not allowed", "Invalid cloud login action",
       "Cloud turn bot is not allowed", "Cloud sign-in key is not allowed", "Invalid cloud login action"]);
-    expect(out.slice(16, 18)).toEqual([{ engine: "kimiAgent", publish: "logout" }, { engine: "kimiAgent", publish: "logout", bot: "alpha" }]);
-    expect(out.slice(18)).toEqual(["Cloud bot was deleted", "Cloud bot was deleted", false]);
+    expect(out.slice(15, 17)).toEqual([{ engine: "kimiAgent", publish: "logout" }, { engine: "kimiAgent", publish: "logout", bot: "alpha" }]);
+    expect(out.slice(17)).toEqual(["Cloud bot was deleted", "Cloud bot was deleted", false]);
   });
   it("a Codex ChatGPT login publishes under bots/<bot>/signin; another bot never stages it; a planted legacy file never reaches a turn", () => {
     const [login, published, other, legacy, again, loggedOut, query] = result(`
@@ -351,7 +350,7 @@ out.append(m.bot_state_query({"mode": "bot-state-query", "bot": "alpha"}, engine
     expect(legacy).toEqual({ ".codex/auth.json": '{"tokens":{"access_token":"new","account_id":"acct"}}' });
     expect(again).toEqual({ changed: [], err: "" });
     expect(loggedOut).toBe("Signed out of Codex for this bot on this Cloud home.\r\n");
-    expect(query).toEqual({ mode: null, signedIn: false, expiresAt: null });
+    expect(query).toEqual({ mode: null, signedIn: false, expiresAt: null, source: "bot" });
     expect(existsSync(join(rig.home("codex"), "bots", "beta", "signin"))).toBe(false);
   });
   it("a sign-in turn's set is taken whole; a non-login turn that deletes a file publishes a sign-out", () => {
@@ -377,7 +376,7 @@ out.append(m.cleanup_engine_signins({"mode": "engine-signin-cleanup"}, root=ER, 
 rels=[os.path.relpath(os.path.join(d, n), ER) for d, dirs, files in os.walk(ER) for n in dirs + files]
 out.append(sorted(r for r in rels if "signin" in r or "/bots/" in r))
 `);
-    expect(cleaned).toEqual({ claudeAgent: "ok", codex: "ok", grokAgent: "ok", opencodeGo: "ok", kimiAgent: "ok" });
+    expect(cleaned).toEqual({ claudeAgent: "ok", codex: "ok", antigravity: "ok", grokAgent: "ok", opencodeGo: "ok", kimiAgent: "ok" });
     expect(left).toEqual(["codex/bots/alpha", "codex/bots/alpha/.codex", "codex/bots/alpha/.codex/sessions", "kimiAgent/bots/beta"]);
   });
 });
@@ -413,5 +412,34 @@ t=stage("opencodeGo", "alpha"); put(t, ".local/share/opencode/auth.json", '{"goo
 out.append(collect(t, login=True)); out.append(current("opencodeGo", "alpha"))`);
     expect(login).toEqual({ changed: [".local/share/opencode/auth.json"], err: "" });
     expect(JSON.parse((store as { files: Record<string, string> }).files[".local/share/opencode/auth.json"])).toEqual({ google: { type: "oauth", refresh: "g", access: "h", expires: 2 } });
+  });
+});
+
+describe("Claude per bot (F4 C2): one sign-in for the home, an optional one of the bot's own", () => {
+  it("a bot's own Claude token wins for that bot only; signing it out falls back to the home's; the query says which one answers", () => {
+    const out = result(`
+home=ER+"/claudeAgent"
+publish("claudeAgent", {"token": "${TOKEN}"}, {"mode": "oauth-token", "kind": "signin", "enrolledAt": 1, "expiresAt": 2})
+out.append([m.c_credentials(home, "claudeAgent", "alpha"), m.c_credentials(home, "claudeAgent"), m.c_credentials(home, "claudeAgent", None)])
+publish("claudeAgent", {"token": "${TOKEN2}"}, {"mode": "oauth-token", "kind": "signin", "enrolledAt": 1, "expiresAt": 2}, bot="alpha")
+out.append([m.c_credentials(home, "claudeAgent", "alpha"), m.c_credentials(home, "claudeAgent", "beta"), m.c_credentials(home, "claudeAgent")])
+q=lambda b: m.bot_state_query({"mode": "bot-state-query", **({"bot": b} if b else {})}, engine_root=ER)["engines"]["claudeAgent"]
+out.append([q("alpha")["source"], q("beta")["source"], q(None)["source"]])
+logout("claudeAgent", "alpha")
+out.append([m.c_credentials(home, "claudeAgent", "alpha"), q("alpha")["source"]])
+`);
+    expect(out[0]).toEqual([{ token: TOKEN }, { token: TOKEN }, { token: TOKEN }]);
+    expect(out[1]).toEqual([{ token: TOKEN2 }, { token: TOKEN }, { token: TOKEN }]);
+    expect(out[2]).toEqual(["bot", "home", "home"]);
+    expect(out[3]).toEqual([{ token: TOKEN }, "home"]);
+  });
+  it("the sign-in capture publishes to the bot's own store under its own lock, and the home's store is untouched", () => {
+    const out = result(`
+publish("claudeAgent", {"token": "${TOKEN}"}, {"mode": "oauth-token", "kind": "signin", "enrolledAt": 1, "expiresAt": 2})
+before=current("claudeAgent")["files"]["token"]
+line=m.claude_token_publisher("murage-turn-0123456789abcdef.scope", engine_root=ER, bot="alpha")("${TOKEN2}")
+out.append(line.decode()); out.append(current("claudeAgent", "alpha")["files"]["token"] == "${TOKEN2}"); out.append(current("claudeAgent")["files"]["token"] == before)
+`);
+    expect(out).toEqual(["Signed in to Claude for this bot on this Cloud home.\r\n", true, true]);
   });
 });

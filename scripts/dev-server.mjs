@@ -1,3 +1,5 @@
+import "../shared/win-hide-child-process.mjs";
+import { withHideInherit } from '../shared/win-hide-child-process.mjs';
 // `pnpm dev:server` — the harness server, started the way development needs it.
 //
 // This exists for one reason: MURAGE_STATIC_DIR. In a packaged build Electron
@@ -67,7 +69,7 @@ export function startDevServer(argv = [], { prepare = prepareSourceCage, spawnCh
   const child = spawnChild(
     process.execPath,
     ["--experimental-strip-types", path.join(REPO_ROOT, SERVER_ENTRY), ...argv],
-    { cwd: REPO_ROOT, env: devServerEnvironment(), stdio: "inherit" },
+    withHideInherit({ cwd: REPO_ROOT, env: devServerEnvironment(), stdio: "inherit" }),
   );
   // Ctrl-C in the terminal reaches the whole process group already; this is
   // for a parent that signals this process alone.

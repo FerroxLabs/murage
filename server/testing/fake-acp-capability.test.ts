@@ -17,6 +17,7 @@ it.skipIf(process.platform === "win32")("replaces a stale link or file at the ca
   writeFileSync(target, "UNTOUCHED", { mode: 0o644 });
   symlinkSync(target, capability);
   const child = spawn(process.execPath, [fileURLToPath(new URL("./fake-acp-cli.ts", import.meta.url))], {
+    windowsHide: true,
     env: { PATH: process.env.PATH, HOME: root, USERPROFILE: root, FAKE_ACP_AGENTS_CAPABILITY: capability },
     stdio: ["pipe", "pipe", "pipe"],
   });

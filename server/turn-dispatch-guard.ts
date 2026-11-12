@@ -1,42 +1,69 @@
+export type SubmissionRefusalContext = Readonly<{ priorSubmissionReleased: boolean }>;
 /** Only a trusted callback refusal proves an invoked adapter did not submit. */
 export class TurnSubmissionBoundary {
+  private readonly inert?: () => boolean;
+  constructor(inert?: () => boolean) { this.inert = inert; }
   private state: "not-started" | "unknown" | "refused" = "not-started";
   private refusal: unknown;
   private checks: Array<() => void> = [];
   private accepted = false;
-  private onLateRefusal?: (refusal: unknown) => void;
+  private onLateRefusal?: (refusal: unknown, context: SubmissionRefusalContext) => void;
   private passed?: () => void;
   private notWrittenListener?: () => void;
   /** Writes a passed `beforeSubmit` released to the adapter. Never reset: a write that was released may have happened. */
   private released = 0;
-  /** Set by `sealUnwritten`: every later `beforeSubmit` of this turn refuses before it validates or releases anything. */
+  private confirmedWrite = false;
+  noteEngineWrite() { this.confirmedWrite = true; }
+  get hasConfirmedSubmission() { return this.confirmedWrite; }
+  get hasReleasedSubmission() { return this.released > 0; }
+  private refusalContext(): SubmissionRefusalContext { return Object.freeze({ priorSubmissionReleased: this.hasReleasedSubmission }); }
+  /** Set by `sealUnwritten` or `sealForReplay`: every later `beforeSubmit` of this turn refuses before it validates or releases anything. */
   private sealed = false;
   started() { this.state = "unknown"; }
   /** A further check run on every submission, after the caller's own. */
   alsoCheck(check: () => void) { this.checks.push(check); }
   /** The server accepted the provider turn. An adapter that writes after
    * handing its id back (ACP, Codex) can still be refused at that write;
-   * `onLateRefusal` hears of it (nothing was written, so it may re-run). */
-  acceptedBy(onLateRefusal?: (refusal: unknown) => void) { this.accepted = true; this.onLateRefusal = onLateRefusal; }
+   * `onLateRefusal` carries prior release classification. Only verified unwritten
+   * dispatches may rebuild automatically; a refused resend preserves any earlier
+   * released or confirmed submission. */
+  acceptedBy(onLateRefusal?: (refusal: unknown, context: SubmissionRefusalContext) => void) { this.accepted = true; this.onLateRefusal = onLateRefusal; }
   /** Heard after every submission whose checks all passed: the prompt is released to the adapter's write. */
   onPassed(passed: () => void) { this.passed = passed; }
-  /** Heard when the write a passed submission released did not happen (an adapter's `notWritten`, or a later check refusing). */
+  /** Heard on explicit unwritten evidence, or a refusal before any write was released. A later refusal cannot withdraw an earlier release. */
   onNotWritten(listener: () => void) { this.notWrittenListener = listener; }
   /** The adapter says the write its last passed `beforeSubmit` released did not happen. */
   notWritten() { try { this.notWrittenListener?.(); } catch { /* a listener never decides the submission */ } }
+  private preparing = false;
+  /** Run the same synchronous checks before process setup without classifying
+   * them as prompt release. A subsequent actual write must check again. */
+  prepare(validate: () => void) {
+    const previous = this.preparing;
+    this.preparing = true;
+    try { validate(); } finally { this.preparing = previous; }
+  }
   /** Every adapter write calls this, every time: validation is never skipped
    * because an earlier write or acceptance passed. */
   beforeSubmit(validate: () => void) {
-    if (this.sealed) { this.notWritten(); throw this.refusal; }
-    try { validate(); for (const check of this.checks) check(); }
-    catch (error) {
-      this.state = "refused"; this.refusal = error;
-      if (this.accepted) { try { this.onLateRefusal?.(error); } catch { /* the refusal itself still stands */ } }
-      this.notWritten();
-      throw error;
-    }
+    this.beforePrepare(validate);
+    // A compatibility preparation scope validates but cannot release a prompt.
+    if (this.preparing) return;
     this.released++;
     try { this.passed?.(); } catch { /* a listener never decides the submission */ }
+  }
+  /** Setup validation is not a prompt release. Every write must still call beforeSubmit after setup awaits. */
+  beforePrepare(validate: () => void) {
+    if (this.sealed) { if (!this.hasReleasedSubmission) this.notWritten(); throw this.refusal; }
+    try {
+      if (this.inert?.()) throw Object.assign(new Error("This bot starts when the reply finishes or after your review."), { status: 409, code: "bot_staged" });
+      validate(); for (const check of this.checks) check();
+    }
+    catch (error) {
+      this.state = "refused"; this.refusal = error;
+      if (this.accepted) { try { this.onLateRefusal?.(error, this.refusalContext()); } catch { /* the refusal itself still stands */ } }
+      if (!this.hasReleasedSubmission) this.notWritten();
+      throw error;
+    }
   }
   /** DELETE-REVOKE-SCOPE (a): a refusal at acceptance (the adapter handed its id back, the server refused the turn) on an adapter that
    * declares `fencedWrites` (every write carrying the turn goes through beforeSubmit) while no write was ever released is positive proof
@@ -48,15 +75,27 @@ export class TurnSubmissionBoundary {
     this.state = "refused"; this.refusal = error; this.sealed = true;
     return true;
   }
+  /** Writes released to the adapter, even if it later reports notWritten. */
+  get releasedWrites(): number { return this.released; }
+  /** Prove retryability and seal the old prompt in one synchronous step. Sealing alone is never proof. */
+  sealForReplay(error: unknown, opts: { requireNoRelease: boolean }): "sealed" | "unproven" {
+    // The newer submission contract forbids replay after any released or confirmed write.
+    // requireNoRelease=false cannot relax that protection.
+    if (!this.canRetry || this.hasConfirmedSubmission || (opts.requireNoRelease && this.released !== 0)) return "unproven";
+    // A refusal can itself be undefined or null. State and the shared seal record its presence.
+    if (this.state !== "refused" && !this.sealed) this.refusal = error;
+    this.sealed = true;
+    return "sealed";
+  }
   /** A refusal that happened before the adapter wrote (the send fence runs ahead of beforeSubmit): the same state beforeSubmit leaves. */
   refuse(error: unknown) {
     this.state = "refused"; this.refusal = error;
-    if (this.accepted) { try { this.onLateRefusal?.(error); } catch { /* the refusal itself still stands */ } }
+    if (this.accepted) { try { this.onLateRefusal?.(error, this.refusalContext()); } catch { /* the refusal itself still stands */ } }
   }
   assertNotRefused() { if (this.state === "refused") throw this.refusal; }
   /** What refused the submission, if anything did: a late settlement reads its own line from it (U22 G20 backup refusals). */
   get refusedWith(): unknown { return this.state === "refused" ? this.refusal : undefined; }
-  get canRetry() { return this.state !== "unknown"; }
+  get canRetry() { return this.state !== "unknown" && !this.hasReleasedSubmission; }
 }
 
 /** Close the Stop-vs-provider-handshake race shared by direct and room turns.

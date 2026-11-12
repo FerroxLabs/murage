@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -86,7 +86,13 @@ it("drops a verified verdict when a file is replaced, falling back and reporting
   const bundled = join(root, "bundled"), dataDir = join(root, "data"); write(bundled); write(join(dataDir, "memory-model"));
   expect((await resolveMemoryModelDirectory(manifest, { dataDir, bundled })).source).toBe("bundled");
   expect(bundledModelState(manifest, bundled)).toBe("verified");
-  rmSync(join(bundled, "onnx/model.onnx")); writeFileSync(join(bundled, "onnx/model.onnx"), "weights-WEIGHTS");
+  const target = join(bundled, "onnx/model.onnx"), replacement = join(root, "replacement.onnx");
+  const originalInode = statSync(target).ino;
+  // Keep the old inode allocated until replacement, so a fast filesystem cannot recycle it with the same timestamps.
+  writeFileSync(replacement, "weights-WEIGHTS");
+  expect(statSync(replacement).ino).not.toBe(originalInode);
+  renameSync(replacement, target);
+  expect(readFileSync(target, "utf8")).toBe("weights-WEIGHTS");
   expect(bundledModelState(manifest, bundled)).toBe("checking");
   expect((await resolveMemoryModelDirectory(manifest, { dataDir, bundled })).source).toBe("downloaded");
   await new Promise((resolve) => setTimeout(resolve, 100));

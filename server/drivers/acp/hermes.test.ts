@@ -301,12 +301,26 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
   });
 
   // Gap 4: Hermes must hand an enforced turn's permission request to Murage.
+  // Request-only fixture: no unrelated, unapproved tool executes before that request.
   it("routeAsks overrides only Hermes skip-all permission answers", async () => {
     for (const fullAuto of [false, true]) {
       if (fullAuto) { recorder!.stop(); await instance!.dispose(); }
+      const wire = join(home, `permissions-${fullAuto}.jsonl`);
       instance = await HermesAgentDriver.create({
         instanceId: "hermes-enforce", displayName: "Hermes", enabled: true,
-        environment: { ...scopedEnv(), FAKE_ACP_MODE: "permission", FAKE_ACP_VERSION: "Hermes Agent v0.21.3 (2026.9.14)" },
+        environment: { ...scopedEnv(), FAKE_ACP_MODE: "fuigo-script", FAKE_ACP_VERSION: "Hermes Agent v0.21.3 (2026.9.14)",
+          FAKE_ACP_SCRIPT_LOG: wire,
+          // The generic permission fixture completes an unapproved tool before
+          // asking. Hermes must stop that. This peer asks before any execution.
+          FAKE_ACP_SCRIPT: JSON.stringify([
+            { at: 1, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'working' } } },
+            { at: 5, request: { id: 71, method: 'session/request_permission', params: {
+              toolCall: { toolCallId: 'command', title: 'echo hi', kind: 'execute', status: 'pending', rawInput: { command: 'echo hi' } },
+              options: [{ optionId: 'yes', kind: 'allow_once' }, { optionId: 'no', kind: 'reject_once' }],
+            } } },
+            { after: 71, at: 5, result: { stopReason: 'end_turn' } },
+          ]),
+        },
         config: { cli: FAKE_ACP, fullAuto },
       });
       recorder = recordEvents(instance.adapter);
@@ -317,12 +331,17 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
         });
         const event = await recorder.until((event) => event.turnId === sent.turnId &&
           (event.type === "request.opened" || event.type === "turn.completed"));
-        expect(event.type).toBe(!fullAuto || enforced ? "request.opened" : "turn.completed");
+        expect(event.type, JSON.stringify(recorder.events.filter(e => e.turnId === sent.turnId))).toBe(!fullAuto || enforced ? "request.opened" : "turn.completed");
+        if (event.type === "turn.completed") expect(event).toMatchObject({ ok: true });
+        expect(recorder.events.filter(e => e.turnId === sent.turnId && e.type === "runtime.error")).toEqual([]);
         if (event.type === "request.opened") {
           expect(event).toMatchObject({ requestType: "permission", toolCall: { name: "shell", input: { command: "echo hi" } } });
           await instance.adapter.respondToRequest(threadId, event.requestId!, { behavior: "deny" });
           await recorder.until((event) => event.type === "turn.completed" && event.turnId === sent.turnId);
         }
+        const replies = readFileSync(wire, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+        expect(replies).toHaveLength(turn + 1);
+        expect(replies.at(-1).result).toEqual({ outcome: { outcome: 'selected', optionId: fullAuto && !enforced ? 'yes' : 'no' } });
       }
     }
   });
@@ -785,7 +804,7 @@ describe("hermes ask hook: every action asks at Ask (real hermes 0.22.2: an ordi
   it("the hook program answers approve with the command, whatever it is told", async () => {
     const { HERMES_ASK_HOOK_SOURCE } = await import("./hermes.ts");
     const { spawnSync } = await import("node:child_process");
-    const run = (stdin: string) => JSON.parse(spawnSync(process.execPath, ["-e", HERMES_ASK_HOOK_SOURCE], { input: stdin, encoding: "utf8" }).stdout);
+    const run = (stdin: string) => JSON.parse(spawnSync(process.execPath, ["-e", HERMES_ASK_HOOK_SOURCE], { windowsHide: true, input: stdin, encoding: "utf8" }).stdout);
     expect(run(JSON.stringify({ tool_name: "terminal", tool_input: { command: "echo PROBE > ran.txt" } }))).toEqual({ action: "approve",
       message: JSON.stringify({ murage: 1, v: 1, tool: "terminal", input: { command: "echo PROBE > ran.txt" }, truncated: false }) });
     expect(run("not json").action).toBe("approve");

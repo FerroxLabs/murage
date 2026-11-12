@@ -53,12 +53,13 @@ posixOnly("owner Stop during a quiet tool (fake ACP CLI through the server)", ()
       instances: {
         quietTool: {
           driver: "customAcp",
-          environment: { FAKE_ACP_RPC_LOG: rpcLog(), FAKE_ACP_MODE: "stall-after-tool", FAKE_ACP_TOOL_NEVER_FINISHES: "1" },
+          environment: { FAKE_ACP_RPC_LOG: rpcLog(), FAKE_ACP_MODE: "stall-after-tool", FAKE_ACP_TOOL_NEVER_FINISHES: "1", FAKE_ACP_MODELS: "fake-acp-model" },
           config: { cli: FAKE_ACP, fullAuto: false },
         },
       },
     }));
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

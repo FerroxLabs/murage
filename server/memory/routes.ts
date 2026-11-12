@@ -1,3 +1,5 @@
+import { openMemoryRequest, finishMemoryRequest, presentMemoryRequest, memoryApprovalQueue } from "./authority.ts";
+import type { ServiceAuthority } from "./service-approval.ts";
 import { learningDeletionEpoch } from "./deny.ts";
 import { isProjectCloseLesson, isCloseTurnRequest } from "../project-close.ts";
 import { roomRequest } from "../room-requests.ts";
@@ -58,7 +60,7 @@ function bounded<T>(result:T):T {
 }
 
 /** Called only after the harness binds a live memory capability to this context. */
-export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAccess,bridge:MemorySearchBridge,handles?:MemoryHandleResolver,extractor:TextOnlyExtractor|null=null,options:{budgetGate?:(scopeId:string)=>boolean;executingRequestId?:string;
+export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAccess,bridge:MemorySearchBridge,handles?:MemoryHandleResolver,extractor:TextOnlyExtractor|null=null,options:{authority?:ServiceAuthority;budgetGate?:(scopeId:string)=>boolean;executingRequestId?:string;
   /** The captured sources whose text a read hands the turn (every record's evidence): they join the calling turn's sources (server/steer-lineage.ts). */
   onRead?:(sourceIds:string[])=>void}={}) {
   const executingRequestId=options.executingRequestId;
@@ -115,7 +117,7 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
       // (a Reopen while the body was read); it never falls back to an ordinary grounded save.
       const candidateId=executing && (isProjectCloseLesson(database(),executing) || isCloseTurnRequest(database(),executing))
         ? saveProjectCloseLesson(input.text,input.evidence,input.idempotencyKey,access,executing.id)
-        : await saveGroundedMemory(input.text,input.evidence,input.idempotencyKey,access,input.claimType,extractor,input.ownerInvitation,{budgetGate:options.budgetGate});
+        : await saveGroundedMemory(input.text,input.evidence,input.idempotencyKey,access,input.claimType,extractor,input.ownerInvitation,{budgetGate:options.budgetGate,authority:options.authority});
       const state=String(database().prepare("SELECT state FROM memory_records WHERE id=? AND version=1").get(candidateId)!.state);
       // A held save says so, and why, so the bot does not search for it and conclude it was lost.
       if(state!=="candidate")return {candidateId,state,pendingReview:false};
@@ -140,14 +142,25 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
       const proposalId=transaction(db=>{
         const candidateId=saveMemoryCandidate(input.replacement,input.evidence,input.idempotencyKey,access);
         const previous=db.prepare("SELECT state,supersedes_id FROM memory_records WHERE id=? AND version=1").get(candidateId);
-        if(previous?.state!=="candidate"||(previous.supersedes_id&&previous.supersedes_id!==target.id))throw new Error("MEMORY_IDEMPOTENCY_CONFLICT");
+        if(!previous||!["candidate",...(options.authority?["active"]:[])].includes(String(previous.state))||(previous.supersedes_id&&previous.supersedes_id!==target.id))throw new Error("MEMORY_IDEMPOTENCY_CONFLICT");
         const recorded=db.prepare("SELECT parent_id,parent_version FROM memory_derivations WHERE child_id=? AND child_version=1").all(candidateId);
         if(recorded.some(row=>row.parent_id!==target.id||Number(row.parent_version)!==target.version))throw new Error("MEMORY_IDEMPOTENCY_CONFLICT");
+        if(previous.state==='active'){
+          if(previous.supersedes_id!==target.id||recorded.length!==1)throw new Error("MEMORY_IDEMPOTENCY_CONFLICT");
+          return candidateId;
+        }
         db.prepare("UPDATE memory_records SET supersedes_id=? WHERE id=? AND version=1").run(target.id,candidateId);
         db.prepare("INSERT OR IGNORE INTO memory_derivations VALUES(?,?,?,1)").run(target.id,target.version,candidateId);
         inheritEdge(db,{kind:"record",id:candidateId,version:1},{kind:"record",id:target.id,version:target.version});
         return candidateId;
       });
+      const request=options.authority?openMemoryRequest(options.authority,access,proposalId,1,'correction'):undefined;
+      if(request && !(request.baseBranch && request.outcome.kind==='card')) {
+        finishMemoryRequest(request,access,proposalId,1);
+        const state=String(db.prepare("SELECT state FROM memory_records WHERE id=? AND version=1").get(proposalId)!.state);
+        return {candidateId:proposalId,state,pendingReview:state==='candidate',record:{id:target.id,version:target.version}};
+      }
+      if(db.prepare("SELECT state FROM memory_records WHERE id=? AND version=1").get(proposalId)?.state === "active") return {candidateId:proposalId,state:"active",pendingReview:false,record:{id:target.id,version:target.version}};
       let refusal=ownerLearningRefusal(db,input.evidence);
       let support={supported:false,reason:"correction-grounding-unavailable"};
       if(!refusal&&input.evidence.length===1&&targetBefore.state==="active"&&targetBefore.owner_pinned===0){
@@ -160,7 +173,7 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
         }
       }
       if(refusal)transaction(()=>holdMemoryCandidate(db,proposalId,refusal!));
-      return transaction(db=>{
+      const result=transaction(db=>{
         assertMemoryAccess(access);assertGenericMemoryTarget(db,target.id,target.version);
         const policyAfter=db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta").get()!;
         if(learningDeletionEpoch(db)!==deletionFence||policyAfter.policy_revision!==policyBefore.policy_revision||policyAfter.deletion_epoch!==policyBefore.deletion_epoch||readMemoryLearning(db).revision!==learningBefore)throw new Error("MEMORY_CONSOLIDATION_REVOKED");
@@ -187,6 +200,8 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
         const savedState=String(db.prepare("SELECT state FROM memory_records WHERE id=? AND version=1").get(candidateId)!.state);
         return {candidateId,state:savedState,pendingReview:savedState==="candidate",record:{id:target.id,version:target.version},...("handle" in input?{handle:input.handle}:{})};
       });
+      if(request && request.outcome.kind==='card' && result.state==='candidate')presentMemoryRequest(request,request.outcome.ref,access,proposalId,1);
+      return result;
     }
     throw Object.assign(new Error("MEMORY_ROUTE_UNAVAILABLE"),{status:404});
   }catch(error){
@@ -194,3 +209,5 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
     throw error;
   }
 }
+
+export function pendingMemoryApprovals(){return memoryApprovalQueue().pendingApprovals();}

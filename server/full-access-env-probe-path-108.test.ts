@@ -11,7 +11,14 @@ import { envGeneration, invalidateEnvCapture } from "./env-path.ts";
 import { gitBashPath } from "./tool-discovery.ts";
 import { piCheckForm, piPinnedBashExtension, piShellForm } from "./drivers/pi.ts";
 import { execCli } from "./procs.ts";
-import { autoVerdict } from "./auto-approve.ts";
+import { autoVerdict, type AutoVerdict } from "./auto-approve.ts";
+
+// NOLIM 1.0.19 (N1): an environment that could not be read cards at every level but the owner's No limits turn, which runs it (the prompt
+// guard is run there; the unread environment is not a wipe).
+const heldBelowNoLimits = (bot: { noLimits?: boolean }, verdict: AutoVerdict): void => {
+  if (bot.noLimits === true) expect(verdict.approve).toBeTruthy();
+  else expect(verdict.approve).toBeNull();
+};
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const transport = vi.hoisted(() => ({ spawn: vi.fn() }));
@@ -72,7 +79,7 @@ describe("108 environment probes never search handed PATH for a shell", () => {
       expect(record.unread?.code).toBe("U20");
       expect(transport.spawn).not.toHaveBeenCalled();
       for (const bot of [{}, { autoApprove: true }, { autoApprove: true, fullAccess: true }, { autoApprove: true, fullAccess: true, noLimits: true }]) {
-        expect(autoVerdict(bot, "Bash", "echo fixture", { commandText: "echo fixture", fullAccessOrigin: "owner", envUnread: record.unread?.cause }).approve).toBeNull();
+        heldBelowNoLimits(bot, autoVerdict(bot, "Bash", "echo fixture", { commandText: "echo fixture", fullAccessOrigin: "owner", envUnread: record.unread?.cause }));
       }
     }
   });
@@ -85,7 +92,7 @@ describe("108 environment probes never search handed PATH for a shell", () => {
     expect(record.unchecked).toBeUndefined();
     expect(transport.spawn).not.toHaveBeenCalled();
     for (const bot of [{}, { autoApprove: true }, { autoApprove: true, fullAccess: true }, { autoApprove: true, fullAccess: true, noLimits: true }]) {
-      expect(autoVerdict(bot, "PowerShell", "Get-ChildItem", { commandText: "Get-ChildItem", fullAccessOrigin: "owner", envUnread: record.unread?.cause }).approve).toBeNull();
+      heldBelowNoLimits(bot, autoVerdict(bot, "PowerShell", "Get-ChildItem", { commandText: "Get-ChildItem", fullAccessOrigin: "owner", envUnread: record.unread?.cause }));
     }
   });
   // A Linux launch needs a POSIX absolute shell path, and a Windows temp folder
@@ -108,7 +115,7 @@ describe("108 environment probes never search handed PATH for a shell", () => {
         if (attempt === 0) expect(record.unread?.cause).toContain("requested folder");
         expect(record.unchecked).toBeUndefined();
         for (const bot of [{}, { autoApprove: true }, { autoApprove: true, fullAccess: true }, { autoApprove: true, fullAccess: true, noLimits: true }]) {
-          expect(autoVerdict(bot, "shell", "echo fixture", { commandText: "echo fixture", fullAccessOrigin: "owner", envUnread: record.unread?.cause }).approve).toBeNull();
+          heldBelowNoLimits(bot, autoVerdict(bot, "shell", "echo fixture", { commandText: "echo fixture", fullAccessOrigin: "owner", envUnread: record.unread?.cause }));
         }
       } else {
         expect(record).toMatchObject({ env: hand().env, unchecked: { reason: "launch-failed" } });
@@ -170,7 +177,7 @@ describe("108 environment probes never search handed PATH for a shell", () => {
       const record = await execEnvNow("unresolved", form, hand(), "C:\\work");
       expect(record.unchecked).toBeUndefined(); expect(record.unread?.code).toBe("U20");
       for (const bot of [{}, { autoApprove: true }, { autoApprove: true, fullAccess: true }, { autoApprove: true, fullAccess: true, noLimits: true }]) {
-        expect(autoVerdict(bot, "shell", "echo fixture", { commandText: "echo fixture", fullAccessOrigin: "owner", envUnread: record.unread?.cause }).approve).toBeNull();
+        heldBelowNoLimits(bot, autoVerdict(bot, "shell", "echo fixture", { commandText: "echo fixture", fullAccessOrigin: "owner", envUnread: record.unread?.cause }));
       }
     }
     expect(transport.spawn).not.toHaveBeenCalled();

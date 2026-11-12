@@ -1,10 +1,12 @@
+import { readTurnPolicy } from "./decision/index.ts";
+import { hasNoLimits } from "./auto-approve.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // VENUE-POST-1017 r3 cut-down: a bot posts into a project or channel it belongs to, when the owner picked that room with Post in… in the
-// bot's own chat. The only thing that mounts venue_post is the structured `postTo` the owner's own app wrote on the owner's own proven line
+// bot's own chat. Below No limits, venue_post mounts from the structured `postTo` on the owner's own proven line
 // (store.ts dropUnprovenPostTo); no text the bot read and no text the owner typed is parsed for intent. Every call is decided from the
-// generation's record and current state (Q1 to Q5); the write carries the 1:1's lineage as the post's provenance (Q7), so a forget in the
+// generation's record and current state (Q1 to Q5). Verified No limits resolves the requested destination without a picker grant; the write carries the 1:1's lineage as the post's provenance (Q7), so a forget in the
 // 1:1 reaches the post through the existing marker and the door withholds it from every bot audience.
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
@@ -61,6 +63,11 @@ type MountInput = Parameters<typeof venueReadMounts>[0] & { botId: string; messa
  * holds (the same predicate venue_read mounts on, plus not draft-only). Returns the record to keep for the generation, or null. */
 export function venuePostMounts(input: MountInput): Omit<VenuePostRecord, "attempts"> | null {
   const message = input.message;
+  if (input.agentsMcp && hasNoLimits(input.bot as BotRecord) && input.notOwnerAudience !== true && !input.chainNotOwner
+    && isWorkspaceOwner(threadHumanPrincipal(input.threadId))) {
+    return { noLimits: true, botId: input.botId, threadId: input.threadId, origin: input.origin === "companion" ? "companion" : "desktop",
+      request: { messageId: message?.id ?? "", textHash: textHash(message?.text ?? ""), postTo: { venueId: "" } } };
+  }
   if (!message?.postTo || message.role !== "user" || message.kind !== "text" || input.draftOnly === true) return null;
   if (message.origin !== input.origin) return null;
   if (!venueReadMounts(input)) return null;
@@ -82,6 +89,8 @@ const BODY_KEYS = new Set(["venueId", "venueThreadId", "text"]);
 /** Q5a: the request line still exists, hashes to the record, and the bot reader's verdict on it is `shown` now (an edit, a forget, a
  * tombstone or the owner's flag each revoke). Read at the mount, at the call, and when a held card is answered. */
 export function requestStillShown(db: DatabaseSync, record: Pick<VenuePostRecord, "threadId" | "request">, message: Message | null): boolean {
+  // An unselected No limits mount is presentation; authorizeVenuePost rechecks the live policy.
+  if (record.request.postTo.venueId === "") return true;
   if (!message || message.id !== record.request.messageId || message.role !== "user") return false;
   if (textHash(message.text ?? "") !== record.request.textHash) return false;
   const verdict = denyLookup(db, { threadId: record.threadId, lines: [{ messageId: message.id, author: "owner", ...(message.withheldFromBots ? { withheldFromBots: true } : {}) }] },
@@ -91,9 +100,13 @@ export function requestStillShown(db: DatabaseSync, record: Pick<VenuePostRecord
 
 /** Q4: venueAccess (shared with the reader) plus roomPeople empty on BOTH the room thread and the target thread. */
 export function venuePostable(db: DatabaseSync, roster: { bots: BotRecord[]; groups: GroupRecord[] }, bot: BotRecord, threadId: string,
-  venueId: unknown, venueThreadId: unknown): { group: GroupRecord; target: string } | null {
-  const access = venueAccess(db, roster, bot, threadId, venueId, venueThreadId);
+  venueId: unknown, venueThreadId: unknown, noLimits = false): { group: GroupRecord; target: string } | null {
+  const group = noLimits && typeof venueId === "string" ? roster.groups.find(group => group.id === venueId && !group.dm) : undefined;
+  const target = group && (venueThreadId === undefined ? group.threadId : typeof venueThreadId === "string"
+    && (venueThreadId === group.threadId || group.tasks?.some(task => task.threadId === venueThreadId)) ? venueThreadId : undefined);
+  const access = noLimits ? (group && target ? { group, target } : null) : venueAccess(db, roster, bot, threadId, venueId, venueThreadId);
   if (!access) return null;
+  if (noLimits) return { group: access.group, target: access.target };
   if (roomPeople(db, access.group, access.group.threadId, roster).length) return null;
   if (access.target !== access.group.threadId && roomPeople(db, access.group, access.target, roster).length) return null;
   return { group: access.group, target: access.target };
@@ -114,31 +127,40 @@ export function authorizeVenuePost(db: DatabaseSync, claim: { botId: string; thr
   try {
     if (!live) return P1();
     // Q1: the generation's record, written only from a proven owner line that carried postTo
-    const record = venuePostTurns.get(claim.generation);
-    if (!record || record.botId !== claim.botId || record.threadId !== claim.threadId) return P1();
+    const noLimits = readTurnPolicy({ threadId: claim.threadId, generation: claim.generation })?.permission.noLimits === true;
+    let record = venuePostTurns.get(claim.generation);
+    if (noLimits) {
+      record = { noLimits: true, botId: claim.botId, threadId: claim.threadId, origin: record?.origin ?? "desktop", attempts: record?.attempts ?? 0,
+        request: { messageId: record?.request.messageId ?? "", textHash: record?.request.textHash ?? textHash(""),
+          postTo: { venueId: body.venueId as string, ...(body.venueThreadId !== undefined ? { venueThreadId: body.venueThreadId as string } : {}) } } };
+      venuePostTurns.set(claim.generation, record);
+    }
+    if (!record || (!noLimits && record.noLimits) || record.botId !== claim.botId || record.threadId !== claim.threadId) return P1();
     // Q2: every attempt counts, before anything else is read
     record.attempts++;
-    if (record.attempts > VENUE_POST_ATTEMPTS) return P1();
+    if (!noLimits && record.attempts > VENUE_POST_ATTEMPTS) return P1();
     const { botId, threadId } = record;
-    // Q3: the audience now
-    if (record.origin !== "desktop" && record.origin !== "companion") return P1();
-    if (live.ownerSurface(threadId) !== true || live.notOwnerAudience(threadId)) return P1();
-    if (!turnAudienceIsOwner(threadId, { origin: record.origin, ...(record.rootThreadId ? { rootThreadId: record.rootThreadId } : {}) }, db)) return P1();
-    if (!isWorkspaceOwner(threadHumanPrincipal(threadId, db))) return P1();
+    // Q3: the audience now; No limits was authenticated by the live decision policy.
+    if (!noLimits) {
+      if (record.origin !== "desktop" && record.origin !== "companion") return P1();
+      if (live.ownerSurface(threadId) !== true || live.notOwnerAudience(threadId)) return P1();
+      if (!turnAudienceIsOwner(threadId, { origin: record.origin, ...(record.rootThreadId ? { rootThreadId: record.rootThreadId } : {}) }, db)) return P1();
+      if (!isWorkspaceOwner(threadHumanPrincipal(threadId, db))) return P1();
+    }
     const roster = live.roster();
     const bot = roster.bots.find(entry => entry.id === botId);
-    if (!bot || bot.draftOnly === true) return P1();
+    if (!bot || (!noLimits && bot.draftOnly === true)) return P1();
     if (Object.keys(body).some(key => !BODY_KEYS.has(key))) return P2();
     const text = body.text;
     if (typeof text !== "string" || !text.trim() || text.length > VENUE_POST_TEXT_MAX) return refuse(400, "Give the post's words as text, 1 to 4,000 characters.");
     // Q5a: the request line, unchanged and shown
-    if (!requestStillShown(db, record, live.message(threadId, record.request.messageId))) return P3();
+    if (!noLimits && !requestStillShown(db, record, live.message(threadId, record.request.messageId))) return P3();
     // Q5b: equality with the owner's pick, nothing else
     const picked = record.request.postTo;
     if (body.venueId !== picked.venueId) return P3();
     if ((body.venueThreadId ?? undefined) !== (picked.venueThreadId ?? undefined)) return P3();
     // Q4: postable now
-    const postable = venuePostable(db, roster, bot, threadId, picked.venueId, picked.venueThreadId);
+    const postable = venuePostable(db, roster, bot, threadId, picked.venueId, picked.venueThreadId, noLimits);
     if (!postable) return P2();
     return { ok: true, record, group: postable.group, target: postable.target, text };
   } catch {
@@ -177,15 +199,17 @@ export function answerHeldVenuePost(host: HeldAnswerHost, id: string, choice: "p
     const unavailable = (): HeldAnswer => { moveVenuePost(db, id, "posting", "unavailable"); return { state: "unavailable", row: { ...row, state: "unavailable" } }; };
     const roster = host.roster();
     const bot = roster.bots.find(entry => entry.id === row.botId);
-    if (!bot || bot.draftOnly === true) return unavailable();
+    const noLimits = [...venuePostTurns].some(([generation, record]) => record.botId === row.botId && record.threadId === row.threadId
+      && readTurnPolicy({ threadId: row.threadId, generation })?.permission.noLimits === true);
+    if (!bot || (!noLimits && bot.draftOnly === true)) return unavailable();
     if (!isWorkspaceOwner(threadHumanPrincipal(row.threadId, db))) return unavailable();
     const record = { threadId: row.threadId, request: { messageId: row.requestMessageId, textHash: row.requestHash, postTo: { venueId: row.venueId } } };
-    if (!requestStillShown(db, record, host.message(row.threadId, row.requestMessageId))) return unavailable();
-    const postable = venuePostable(db, roster, bot, row.threadId, row.venueId, row.venueThreadId);
+    if (!noLimits && !requestStillShown(db, record, host.message(row.threadId, row.requestMessageId))) return unavailable();
+    const postable = venuePostable(db, roster, bot, row.threadId, row.venueId, row.venueThreadId, noLimits);
     if (!postable || postable.target !== row.targetThreadId) return unavailable();
     let lineage: LineageRef[];
     try { lineage = JSON.parse(row.lineage) as LineageRef[]; } catch { return unavailable(); }
-    if (refsLookup(db, lineage, { audience: { owner: true, scopeIds: [] } }).state !== "shown") return unavailable();
+    if (!noLimits && refsLookup(db, lineage, { audience: { owner: true, scopeIds: [] } }).state !== "shown") return unavailable();
     if (host.lineExists(row.targetThreadId, row.stableId)) { moveVenuePost(db, id, "posting", "posted"); return { state: "posted", row: { ...row, state: "posted" }, group: postable.group, messageId: row.stableId }; }
     const line = host.append(row.targetThreadId, venuePostRow(bot, row.threadId, row.text), row.stableId, () => { moveVenuePost(db, id, "posting", "posted"); }, lineage);
     return { state: "posted", row: { ...row, state: "posted" }, group: postable.group, messageId: line.id };

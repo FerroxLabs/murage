@@ -19,7 +19,7 @@ afterEach(async () => {
 const posixOnly = describe.skipIf(process.platform === "win32");
 
 posixOnly("Local VM Cua MCP bridge", () => {
-  it("passes MCP bytes unchanged to cua-driver mcp over the container runtime", async () => {
+  it("preserves MCP fields with an isolated request id to cua-driver mcp over the container runtime", async () => {
     const bin = await mkdtemp(join(tmpdir(), "murage-container-mcp-"));
     temporary.push(bin);
     const fakeDocker = join(bin, "docker");
@@ -36,6 +36,7 @@ posixOnly("Local VM Cua MCP bridge", () => {
         process.execPath,
         [fileURLToPath(new URL("./container-mcp.ts", import.meta.url)), "docker", CONTAINER, CUA_SOCKET],
         {
+          windowsHide: true,
           env: { ...process.env, MURAGE_EXTRA_PATH: bin, NODE_NO_WARNINGS: "1" },
           stdio: ["pipe", "pipe", "pipe"],
         },
@@ -50,7 +51,10 @@ posixOnly("Local VM Cua MCP bridge", () => {
     });
 
     expect(result.code).toBe(0);
-    expect(result.stdout).toBe(input);
+    // C11 6.1 I1: the child sees a bridge id; every other byte remains the caller's.
+    const wireId = JSON.parse(result.stdout).id;
+    expect(wireId).toMatch(/^mb\.[0-9a-f]{12}\.1$/);
+    expect(result.stdout).toBe(input.replace('"id":1', `"id":${JSON.stringify(wireId)}`));
     expect(result.stderr).toContain(
       `ARGS:exec -i -u cua -e HOME=/home/cua -e DISPLAY=:1 -e CUA_DRIVER_INSTALL_CHANNEL=python_package ` +
         `-e CUA_DRIVER_RS_TELEMETRY_ENABLED=0 ${CONTAINER} ` +

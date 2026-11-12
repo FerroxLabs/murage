@@ -35,7 +35,7 @@ afterEach(() => { for (const child of children.splice(0)) stop(child); });
 /** A second process that prints `ready` once it holds what it was asked to hold, and then waits. */
 function holder(script: string, env: Record<string, string> = {}): Promise<ChildProcess> {
   return new Promise((resolve, reject) => {
-    const child = spawn("sh", ["-c", script], { stdio: ["ignore", "pipe", "ignore"], detached: true, env: { ...process.env, ...env } });
+    const child = spawn("sh", ["-c", script], { windowsHide: true, stdio: ["ignore", "pipe", "ignore"], detached: true, env: { ...process.env, ...env } });
     children.push(child);
     child.on("error", reject);
     child.stdout!.once("data", () => resolve(child));
@@ -47,7 +47,7 @@ function holder(script: string, env: Record<string, string> = {}): Promise<Child
 function lockHolder(file: string): Promise<ChildProcess> {
   const code = `const fs=require("fs");const a=require(process.argv[1]);const fd=fs.openSync(process.argv[2],"r+");if(!a.lock(fd))process.exit(2);console.log("ready");setInterval(()=>{},1000);`;
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["-e", code, built!, file], { stdio: ["ignore", "pipe", "ignore"], detached: true });
+    const child = spawn(process.execPath, ["-e", code, built!, file], { windowsHide: true, stdio: ["ignore", "pipe", "ignore"], detached: true });
     children.push(child);
     child.on("error", reject);
     child.stdout!.once("data", () => resolve(child));
@@ -65,7 +65,7 @@ describe.skipIf(!built || !posix)("the real addon, with real second processes", 
 
   it("loads, and says what it is", () => {
     const addon = loadExclusionAddon()!;
-    expect(addon.version()).toBe(10);
+    expect(addon.version()).toBe(11);
     expect(Object.keys(addon).sort()).toEqual(["bootId", "environment", "fullSync", "lock", "processes", "renameNoReplace", "version", "writers"]);
   });
 
@@ -125,12 +125,12 @@ describe.skipIf(!built || !posix)("the real addon, with real second processes", 
   }, 20_000);
 
   // PR_SET_DUMPABLE (prctl) is Linux's; the process that cannot be looked into is made that way there
-const python = process.platform === "linux" && spawnSync("python3", ["-V"]).status === 0;
+const python = process.platform === "linux" && spawnSync("python3", ["-V"], { windowsHide: true }).status === 0;
   it.skipIf(!python)("processes: a process of this user that cannot be looked into is listed with null, never left out", async () => {
     const addon = loadExclusionAddon()!;
     // PR_SET_DUMPABLE 0: its /proc/<pid>/exe answers EACCES to other processes of this user
     const closed = await holder("exec python3 -c \"import ctypes,sys,time; ctypes.CDLL(None).prctl(4,0,0,0,0); print('ready'); sys.stdout.flush(); time.sleep(30)\"");
-    const opaque = spawnSync("sh", ["-c", `readlink /proc/${closed.pid}/exe >/dev/null 2>&1`]).status !== 0;
+    const opaque = spawnSync("sh", ["-c", `readlink /proc/${closed.pid}/exe >/dev/null 2>&1`], { windowsHide: true }).status !== 0;
     const item = addon.processes().find((entry) => entry.pid === closed.pid);
     expect(item).toBeDefined();
     if (opaque) {

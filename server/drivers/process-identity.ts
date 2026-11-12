@@ -1,3 +1,4 @@
+import { withHideInherit } from "../../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -25,9 +26,9 @@ export function processIdentity(pid: number): string | null {
       return /^\d+$/.test(rest[19] ?? "") ? `proc:${rest[19]}` : null;
     }
     if (process.platform === "win32") return null;
-    const out = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+    const out = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], withHideInherit({
       encoding: "utf8", timeout: 3_000, stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, LC_ALL: "C", LANG: "C" },
-    });
+    }));
     const id = out.trim().replace(/\s+/g, " ");
     return id || null;
   } catch {

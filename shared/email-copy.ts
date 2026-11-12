@@ -143,6 +143,7 @@ export function headerChip(state: string | null, waiting: number, address: strin
     case "provisioning": return EMAIL_SETUP_COPY.provisioning;
     case "failed": return EMAIL_SETUP_COPY.failed;
     case "removing": case "remove_requested": return EMAIL_SETUP_COPY.removing;
+    case "removal_parked": return "Removal paused";
     case "restored_unverified": return EMAIL_SETUP_COPY.reconnect;
     default: return null;
   }
@@ -154,8 +155,10 @@ export type EmailCardAction = "send" | "edit" | "dont_send" | "retry";
 export interface EmailCardPayload {
   sendId: string; revision: number; payloadHash: string; heldIds: string[]; state: string; phase: EmailCardPhase;
   ref: string; botId: string; note?: string; siblingRequestId?: string; actions: EmailCardAction[];
-  /** The frozen draft the Edit box opens with. */
-  draft: { to: string[]; cc: string[]; subject: string; text: string };
+  /** Frozen draft metadata; newer approval actions keep the body only in presentation. */
+  draft: { to: string[]; cc: string[]; subject: string; text: string;
+    /** Body boundaries in the presentation, measured from the end so changing trust headers is harmless. */
+    presentation?: { textLength: number; trailingLength: number } };
   links: { manage: string; checkSent?: string };
 }
 
@@ -198,6 +201,19 @@ export const EMAIL_OWNER_COPY = {
   neverEmailHint: "Addresses or whole domains this bot never emails.",
   removingLine: (address: string, until: string | null = null) => { const day = until ? until.slice(0, 10) : null; return day && /^\d{4}-\d{2}-\d{2}$/.test(day) ? `${address} stays yours until ${day}. Choose Keep address to bring it back.` : `Removing ${address}`; },
   keepAddress: "Keep address",
+  /** Restore park (r3.1 section 11). Approved wording for the first seven; N1 is the fallback when an address cannot be named. */
+  deleteAlsoRemoves: (address: string) => `This also removes ${address}.`,
+  parkedTitle: "Email addresses waiting for your choice",
+  parkedOrphanLine: (address: string) => `${address} came back with your restore, and its bot is gone. Keep it or remove it.`,
+  keepingLine: (address: string) => `Keeping ${address}`,
+  goneLine: (address: string) => `${address} is already gone.`,
+  parkedUnknownAddress: "An address from before your restore",
+  /** Restore check row and the two bot-row buttons (MurageMain approved 2026-11-11). */
+  restoreCheckLine: "Check your email setup after the restore.",
+  confirmInventoryButton: "Everything looks right",
+  tryAgainNowButton: "Try again now",
+  /** A removal that was under way when the backup was taken waits after a restore until the owner chooses. */
+  parkedLine: (address: string) => `Removing ${address} was paused when your data was restored. Choose Keep address to keep it, or Remove to finish removing it.`,
   otherSetupsTitle: "Email addresses from another setup",
   otherSetupRemoveConfirm: (address: string) => `Remove ${address}? Mail is deleted after 30 days and this address can't be used again.`,
   pausedLine: (bot: string) => `${bot}'s email is paused. Mail still arrives. Resume asks for a short note about what changed.`,
@@ -211,9 +227,13 @@ export const EMAIL_OWNER_COPY = {
   ownerSignIn: "Murage could not confirm your Flux account for this step. Sign in to Flux again in Settings, then try again.",
 } as const;
 
+/** The owner line when Flux did not answer the other-setup listing. English source for the locale key emailPark.otherSetupUnavailable. */
+export const OTHER_SETUP_UNAVAILABLE_EN = "Murage's email service did not respond just now. Nothing was removed. Try again in a minute.";
+
 /** Owner-route refusal and outcome lines for a Flux code (owner routes only). */
 export function ownerRouteLine(code: string | null | undefined): string {
   switch (code) {
+    case "restore_finishing": return "A restore is finishing. Try again in a minute.";
     case "domain_allow_not_available": return "Add each person's address.";
     case "pause_cooloff": return "This pause can be resumed 72 hours after it started.";
     case "bot_pause_requires_support": case "account_email_paused": return EMAIL_OWNER_COPY.supportPausedLine;
@@ -233,6 +253,12 @@ export function ownerRouteLine(code: string | null | undefined): string {
     case "rotation_expired": return "Reconnect took too long to finish. Press Reconnect again.";
     case "revoke_pending": return "The new key is saved. Murage finishes retiring the old one shortly.";
     case "email_dark": return EMAIL_OWNER_COPY.notAvailable;
+    case "inbox_gone": return "This address has already been removed.";
+    case "keep_pending": return "A Keep is still finishing. Try again in a moment.";
+    case "removal_sending": return "Remove is still finishing. Try Keep address again in a moment.";
+    case "confirm_expired": return "This confirmation is out of date. Open it again to see the current address.";
+    case "other_setup_unavailable": return OTHER_SETUP_UNAVAILABLE_EN;
+    case "restore_not_ready": return "Checking your email setup after the restore is not ready yet. Try again after the next update.";
     // r2.5 closing (activation D3, #37)
     case "inbox_closing": return "This address is closing, so changes wait. Choose Keep address to bring it back first.";
     case "not_closing": return "This address is already open.";
@@ -284,9 +310,14 @@ export function eligibilityLine(reason: string | null | undefined): string | nul
 
 /** A phone owner act on bot email is signed with a fresh device proof over this card (the same digest on both sides). */
 export type EmailOwnerAction = "setup" | "retry" | "pause" | "resume" | "remove" | "keep" | "reconnect" | "policy" | "trust_add" | "trust_remove" | "block_add" | "block_remove";
-export function emailOwnerActionRequestId(action: EmailOwnerAction, botId: string): string { return `email-owner-${action}-${botId}`.slice(0, 256); }
+/** The owner routes the Keep/Remove screen adds (contract round 4, item 4): each is signed with the same fresh device proof. The id is the
+ *  path's own id (a bot, an inbox, or "restore" for the inventory confirm). */
+export type EmailKeepRemoveProofAction = "try_again" | "parked_keep" | "parked_remove" | "other_setup_remove" | "confirm_inventory";
+/** Contract round 5: the thread a phone proof is signed against when the act belongs to no bot (parked, other setup, restore check). */
+export const EMAIL_OWNER_PROOF_THREAD = "email-owner";
+export function emailOwnerActionRequestId(action: EmailOwnerAction | EmailKeepRemoveProofAction, botId: string): string { return `email-owner-${action}-${botId}`.slice(0, 256); }
 /** Every string field of the act's body is bound (sorted by name); anything else (the proof itself) is not. */
-export function emailOwnerActionCard(action: EmailOwnerAction, botId: string, body: Record<string, unknown>): { tool: string; title: string; subtitle: string } {
+export function emailOwnerActionCard(action: EmailOwnerAction | EmailKeepRemoveProofAction, botId: string, body: Record<string, unknown>): { tool: string; title: string; subtitle: string } {
   const keys = Object.keys(body).filter(key => typeof body[key] === "string").sort();
   return { tool: "bot_email", title: `Bot email: ${action.replace(/_/g, " ")}`, subtitle: JSON.stringify([botId, ...keys.map(key => [key, body[key]])]) };
 }
@@ -313,6 +344,15 @@ export interface EmailStatusView {
   readAt?: number;
   /** Rule 5: present (EMAIL_STATUS_COPY.staleNote) while a read after `readAt` gave no definitive answer. */
   staleNote?: string;
+  /** Restore park (contract OWNER-VIEW-WIRE-CONTRACT rounds 1 to 5): the owner Keep/Remove rows the phone and desktop render. */
+  rows?: EmailOwnerRow[];
+}
+export type EmailOwnerSection = "bot" | "parked" | "kept" | "key_only" | "other_setup" | "removing" | "restore_check" | "home";
+export type EmailOwnerActionKind = "keep" | "remove" | "try_again_now" | "confirm_inventory";
+export interface EmailOwnerRowAction { kind: EmailOwnerActionKind; tokenId: string | null; enabled: boolean; path: string }
+export interface EmailOwnerRow {
+  rowId: string; section: EmailOwnerSection; botId: string | null; inboxId: string | null; keyIds: string[]; target: string | null; line: string;
+  address: string | null; botName: string | null; threadId: string; actions: EmailOwnerRowAction[];
 }
 /** EMAIL-CAPS-CACHE-1011 rule 4: no definitive answer yet for the saved key (never shown as off). `note` replaces the word "Checking" once
  *  a read gave no definitive answer, so the card never waits in silence. */

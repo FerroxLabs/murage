@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 
+import { skillActDigest } from "./cloud-home/owner-code.ts";
 import { deleteCollectionSkill, duplicateIntoCollection, getCollectionSkill, importCollectionSkill, listCollection, updateCollectionSkill, type CollectionSkill } from "./skill-collection.ts";
 import { fetchSkillFromLink, readSkillZip } from "./skill-import-sources.ts";
 import { attachedSkillOn, isChiefForAttached, loadBundledSkills, type BundledSkill } from "./skill-library.ts";
@@ -33,6 +34,10 @@ export interface SkillsApiRequest {
   path: string;
   url: URL;
   readBody: () => Promise<unknown>;
+  /** Set only for an owner's browser on a home: the code gate for one act. Null when the request carries a code for exactly that act. */
+  ownerCode?: (act: string) => Promise<SkillsApiResponse | null>;
+  /** The route's act string (routeActDigest of method, path and body); the switch-on act binds the scanned content to it. */
+  routeAct?: string;
   bots: () => SkillsApiBot[];
   /** Persist a built-in's switch on a bot record. */
   setBuiltinSkill?: (botId: string, id: string, on: boolean) => void;
@@ -343,6 +348,11 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
       if (!skill) return { status: 404, body: { error: "No such skill." } };
       if (skill.scan.verdict === "blocked") return { status: 409, body: { error: "This skill was blocked by the skill check and can't be switched on.", code: "blocked", scan: skill.scan } };
       if (skill.scan.verdict === "review" && acknowledged !== skill.scan.contentHash) return { status: 409, body: { error: "This skill needs a look before it can be switched on.", code: "needs-review", scan: skill.scan } };
+      // A browser owner's yes binds the content that was scanned: a skill changed between the code and the retry needs a new code.
+      if (request.ownerCode) {
+        const refusal = await request.ownerCode(skillActDigest(request.routeAct ?? "", skill.scan.contentHash));
+        if (refusal) return refusal;
+      }
       if (!existing) {
         const installed = installSkill(bot.id, ref.ref, skill.contents);
         if ("error" in installed) return { status: 409, body: installed };

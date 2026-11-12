@@ -47,20 +47,20 @@ describe("cloud sealed credential store", () => {
   });
   it("rejects every plaintext config credential on a home and overlays only pipe-held credentials", async () => {
     const dir = directory(), path = join(dir, "boot-pipe");
-    writeFileSync(path, JSON.stringify({ version: 1, bootstrapSecret: "b".repeat(64), credentials: { fluxApiKey: "fixture-sealed-key" } }), { mode: 0o600 });
+    writeFileSync(path, JSON.stringify({ version: 1, bootstrapSecret: "b".repeat(64), credentials: { fluxApiKey: "sk-flux-home-fixture-sealed-key-0000000" } }), { mode: 0o600 });  // secret-scan: fixture
     vi.stubEnv("MURAGE_CLOUD_ROLE", "home"); vi.stubEnv("MURAGE_DATA_DIR", dir); vi.stubEnv("MURAGE_CLOUD_SECRETS_FD", String(openSync(path, "r")));
     const { saveConfig, loadConfig, syncCredentialEnv } = await import("../config.ts");
     for (const row of CLOUD_CREDENTIAL_FIELDS) {
       const patch = { [row.section]: { [row.field]: "fixture-secret" } };
       expect(() => saveConfig(patch)).toThrow("encrypted supervisor store");
     }
-    saveConfig(withoutCloudCredentials({ flux: { apiKey: "fixture-sealed-key" } }));
-    expect(readFileSync(join(dir, "config.json"), "utf8")).not.toContain("fixture-sealed-key");
-    expect(loadConfig().flux?.apiKey).toBe("fixture-sealed-key");
+    saveConfig(withoutCloudCredentials({ flux: { apiKey: "sk-flux-home-fixture-sealed-key-0000000" } }));  // secret-scan: fixture
+    expect(readFileSync(join(dir, "config.json"), "utf8")).not.toContain("sk-flux-home-fixture-sealed-key-0000000");  // secret-scan: fixture
+    expect(loadConfig().flux?.apiKey).toBe("sk-flux-home-fixture-sealed-key-0000000");  // secret-scan: fixture
     const priorEnv = process.env.FLUX_API_KEY;
-    syncCredentialEnv({ flux: { apiKey: "next-fixture-key" } });
+    syncCredentialEnv({ flux: { apiKey: "sk-flux-home-next-fixture-key-0000000" } });  // secret-scan: fixture
     expect(process.env.FLUX_API_KEY).toBe(priorEnv);
-    expect(loadConfig().flux?.apiKey).toBe("next-fixture-key");
+    expect(loadConfig().flux?.apiKey).toBe("sk-flux-home-next-fixture-key-0000000");  // secret-scan: fixture
   });
   it("keeps Flux memory off across a cloud home restart (1.0.4 audit 11-3)", async () => {
     const dir = directory(), path = join(dir, "boot-pipe");

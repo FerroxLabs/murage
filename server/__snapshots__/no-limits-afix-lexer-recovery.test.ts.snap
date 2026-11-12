@@ -1,0 +1,1361 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`lexer recovery: owner > fallback quote > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > fallback quote > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > fallback quoted literal > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > fallback quoted literal > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > fallback syntax > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > fallback syntax > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer case body > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer case body > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer comma limit > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer comma limit > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer earlier operand > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer earlier operand > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer fixed prefix > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer fixed prefix > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer for body > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer for body > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer function body > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer function body > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer later command > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer later command > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer later operand > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer later operand > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer nested brace > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer nested brace > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer nested shell > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer nested shell > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer option expansion > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer option expansion > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer parameter expansion > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer parameter expansion > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer quoted parameter > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer quoted parameter > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer redirect > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer redirect > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer stepped range > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer stepped range > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer until body > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer until body > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer while body > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: owner > lexer while body > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > fallback quote > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > fallback quote > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > fallback quoted literal > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > fallback quoted literal > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > fallback syntax > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > fallback syntax > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer case body > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer case body > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer comma limit > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer comma limit > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer earlier operand > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer earlier operand > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer fixed prefix > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer fixed prefix > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer for body > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer for body > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer function body > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer function body > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer later command > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer later command > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer later operand > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer later operand > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer nested brace > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer nested brace > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer nested shell > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer nested shell > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer option expansion > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer option expansion > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer parameter expansion > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer parameter expansion > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer quoted parameter > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer quoted parameter > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer redirect > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer redirect > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer stepped range > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer stepped range > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer until body > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer until body > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer while body > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`lexer recovery: routine > lexer while body > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;

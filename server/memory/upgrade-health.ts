@@ -1,3 +1,4 @@
+import { windowsHidePrelude } from "../../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -134,7 +135,7 @@ export function startPreListenHealth(port: number, board: ProgressBoard = create
   const ready = new Promise<boolean>(resolve => { resolveReady = resolve; });
   const closed = new Promise<void>(resolve => { resolveClosed = resolve; });
   try {
-    worker = new Worker(RESPONDER_SOURCE, { eval: true, workerData: { port, shared: board.shared, counts: board.counts, launch: bootLaunchId(), cap: AWAKE_GAP_CAP_MS, proofKey: bootProofKey(), challengeHeader: PROOF_CHALLENGE_HEADER, challengePattern: CHALLENGE_PATTERN } });
+    worker = new Worker(windowsHidePrelude + RESPONDER_SOURCE, { eval: true, workerData: { port, shared: board.shared, counts: board.counts, launch: bootLaunchId(), cap: AWAKE_GAP_CAP_MS, proofKey: bootProofKey(), challengeHeader: PROOF_CHALLENGE_HEADER, challengePattern: CHALLENGE_PATTERN } });
     worker.on("message", (message: { type?: string }) => {
       if (message.type === "listening") { listening = true; resolveReady(true); }
       else if (message.type === "error") { resolveReady(false); if (!listening) resolveClosed(); }

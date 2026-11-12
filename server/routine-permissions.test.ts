@@ -39,12 +39,18 @@ describe("a routine's level", () => {
   it("uses the lower of the routine ceiling and the current bot level", () => {
     expect(effectiveRoutinePermissionMode({}, unlimited)).toBe("unlimited");
     expect(effectiveRoutinePermissionMode({}, auto)).toBe("auto");
-    expect(effectiveRoutinePermissionMode({ permissionMode: "ask" }, unlimited)).toBe("ask");
+    expect(effectiveRoutinePermissionMode({ permissionMode: "ask" }, full)).toBe("ask");
     expect(effectiveRoutinePermissionMode({ permissionMode: "full" }, ask)).toBe("ask");
     expect(effectiveRoutinePermissionMode({ permissionMode: "unlimited" }, auto)).toBe("auto");
     expect(effectiveRoutinePermissionMode({ permissionMode: "unlimited" }, full)).toBe("full");
     expect(effectiveRoutinePermissionMode({ permissionMode: "auto" }, full)).toBe("auto");
     expect(effectiveRoutinePermissionMode({ permissionMode: "unlimited" }, null)).toBe("ask");
+  });
+
+
+  it("No limits ignores both saved and explicitly chosen routine ceilings", () => {
+    expect(effectiveRoutinePermissionMode({permissionMode:"ask"},unlimited)).toBe("unlimited");
+    expect(effectiveRoutinePermissionMode({permissionMode:"ask",permissionExplicit:true},unlimited)).toBe("unlimited");
   });
 
   it("applies a level as the flags the verdict reads, keeping the grants", () => {
@@ -72,7 +78,7 @@ describe("a routine's level", () => {
 });
 
 describe("a routine run's verdict at each level", () => {
-  const routine: AutoContext = { automated: true, routineLevel: true, stopLine: null };
+  const routine: AutoContext = { noLimitsOrigin:"routine", automated: true, routineLevel: true, stopLine: null };
   const outside = { kind: "delete" as const, place: "/Users/ada/Documents", what: "Delete 1 item outside its folder: ~/Documents/x" };
   const at = (mode: RoutinePermissionMode) => applyRoutinePermissionMode(ask, mode);
 
@@ -80,41 +86,40 @@ describe("a routine run's verdict at each level", () => {
     expect(fullAccessCovers(full, "routine")).toBe(true);
     expect(fullAccessCovers(auto, "routine")).toBe(false);
     expect(autoVerdict(at("full"), "Bash", "rm -rf build", routine)).toMatchObject({ source: "full-access" });
-    // MARKS r12 re-baseline (M-R7-level): a routine keeps the strict read, so with no fixed folder a relative write
-    // cards (unreadable, value-path); with the routine's folder known it runs at No limits as before
+    // Sean 2026-11-12 02:05Z: unreadability alone never holds No limits.
     expect(autoVerdict(at("unlimited"), "Bash", "rm -rf build", { ...routine, commandCwd: "/w" })).toMatchObject({ source: "no-limits" });
-    expect(autoVerdict(at("unlimited"), "Bash", "rm -rf build", routine)).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
+    expect(autoVerdict(at("unlimited"), "Bash", "rm -rf build", routine).approve).toBeTruthy();
     expect(autoVerdict(at("auto"), "Bash", "rm -rf build", routine).source).toBe("destructive-guard");
     expect(autoVerdict(at("auto"), "Bash", "ls", routine).source).toBe("auto-mode");
     expect(autoVerdict(at("ask"), "Bash", "ls", routine).source).toBe("no-grant");
   });
 
-  it("the key guard holds at every level", () => {
-    for (const mode of ["ask", "auto", "full", "unlimited"] as const) {
+  it("the key guard holds below No limits", () => {
+    for (const mode of ["ask", "auto", "full"] as const) {
       expect(autoVerdict(at(mode), "Bash", "cat ~/.zshrc", routine).source).toBe("sensitive-guard");
       expect(autoVerdict(at(mode), "Bash", "cat ~/.ssh/id_rsa", { ...routine, stopLine: outside }).source).toBe("sensitive-guard");
     }
   });
 
-  it("the stop line holds at every routine level", () => {
-    for (const mode of ["ask", "auto", "full", "unlimited"] as const) {
+  it("the stop line holds below No limits", () => {
+    for (const mode of ["ask", "auto", "full"] as const) {
       expect(autoVerdict(at(mode), "Bash", "rm -rf ~/Documents/x", { ...routine, stopLine: outside })).toMatchObject({ approve: null, source: "stop-line" });
     }
   });
 
-  it("No limits keeps payment approval for routines and the owner's existing authority", () => {
+  it("No limits routine payments run without requiring or consuming a grant", () => {
     const payment = { kind: "pay" as const, place: "stripe:cus_1", what: "Pay the named recipient" };
     const verdict = autoVerdict(unlimited, "mcp__stripe__create_charge", "Create charge", { ...routine, stopLine: payment });
-    expect(verdict).toMatchObject({ approve: null, source: "stop-line", rule: "pay" });
-    expect(autoVerdict(unlimited, "mcp__stripe__create_charge", "Create charge", { stopLine: payment })).toMatchObject({
+    expect(verdict).toMatchObject({approve:expect.any(String),source:"no-limits"});
+    expect(autoVerdict(unlimited, "mcp__stripe__create_charge", "Create charge", { noLimitsOrigin: "owner", stopLine: payment })).toMatchObject({
       approve: expect.any(String), source: "no-limits",
     });
     expect(autoVerdict(unlimited, "mcp__stripe__create_charge", "Create charge", {
       ...routine, stopLine: payment, routineAllow: ["stop:pay:stripe:cus_1"],
-    })).toMatchObject({ approve: expect.any(String), source: "routine-allow", rule: "stop:pay:stripe:cus_1" });
+    })).toMatchObject({ approve: expect.any(String), source: "no-limits" });
     expect(autoVerdict(unlimited, "mcp__stripe__create_charge", "Create charge", {
       ...routine, unattended: true, stopLine: payment, routineAllow: ["stop:pay:stripe:cus_1"],
-    }).approve).toBeNull();
+    }).approve).toBeTruthy();
   });
 
   it("setup requests (a new routine, skill or trusted folder) still ask in a routine run", () => {
@@ -131,12 +136,19 @@ describe("a routine run's verdict at each level", () => {
     expect(autoVerdict(unlimited, "Bash", "x", { automated: true, stopLine: outside }).source).toBe("stop-line");
   });
 
-  it("an unattended turn keeps the unattended rules even with a routine's level", () => {
-    const webhookish: AutoContext = { ...routine, unattended: true };
+  it("No limits admits webhooks while Full access retains unattended rules", () => {
+    const webhookish: AutoContext = { ...routine, noLimitsOrigin:"webhook", unattended: true };
     expect(autoVerdict(at("full"), "Bash", "ls", webhookish)).toMatchObject({ approve: null, source: "unattended-block" });
-    expect(autoVerdict(at("unlimited"), "Bash", "x", { ...webhookish, stopLine: outside }).approve).toBeNull();
-    expect(autoVerdict(at("unlimited"), "Bash", "ls", webhookish).approve).toBeNull();
+    expect(autoVerdict(at("unlimited"), "Bash", "x", { ...webhookish, stopLine: outside }).approve).toBeTruthy();
+    expect(autoVerdict(at("unlimited"), "Bash", "ls", webhookish).approve).toBeTruthy();
   });
+});
+
+// Positive No limits controls alongside the unchanged Ask/Auto/Full assertions above.
+it('Sean 2026-11-12: a No limits routine runs key and stop-line work, but a visible wipe cards',()=>{
+ const context:AutoContext={noLimitsOrigin:'routine',fullAccessOrigin:'routine',routineLevel:true,automated:true,unattended:true};
+ for(const command of ['cat ~/.zshrc','rm ~/.ssh/id_rsa','rm ~/Documents/fixture'])expect(autoVerdict(unlimited,'Bash',command,{...context,commandText:command}).approve).toBeTruthy();
+ expect(autoVerdict(unlimited,'Bash','rm -rf ~',{...context,commandText:'rm -rf ~'}).approve).toBeNull();
 });
 
 describe("Always allow for this routine", () => {
@@ -247,4 +259,10 @@ describe("Always allow for this routine", () => {
     expect(routineGrantKeys(["Bash", "Bash:git", exactKey, "stop:delete:/x", "stop:pay:stripe:cus_1", 3, "exact:nonsense"])).toEqual([exactKey, "stop:delete:/x"]);
     expect(isRoutineGrantKey("Bash:git")).toBe(false);
   });
+});
+
+
+it("an unproven payment origin stays at Ask regardless of the bot flags", () => {
+  const stopLine={kind:"pay" as const,place:"stripe:cus_1",what:"Pay the named recipient"};
+  expect(autoVerdict(unlimited,"mcp__stripe__create_charge","Create charge",{stopLine})).toMatchObject({approve:null,source:"stop-line"});
 });

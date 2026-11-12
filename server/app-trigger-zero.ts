@@ -1,21 +1,14 @@
+import { serviceNoLimits, serviceThreadNoLimits } from './service-no-limits.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The hard zero for child automation (design GAP-APP-TRIGGERS-109 section 7.1, R3-H2; never-list entry (a)):
-// "A routine started by a connected-app event never starts or hands work to other bots, because someone outside your
-// control chose when it runs."
-//
-// App-origin create, ask-bot and delegate attempts return `app_child_not_allowed` BEFORE any approval card, budget
-// admission, bot creation, queue write or child submission. This guard is independent of the legacy EventActionBudget:
-// an app run never has one, and runEventAction (server/event-limit.ts) must never be reached for app context, because
-// with no event id it runs the step directly. App context is resolved from host lineage (the app run that owns the
-// thread and generation), never from a caller's label. There is no transition from zero to positive capacity: Full
-// access, a stale Allow-more reply, an approval or a restart cannot widen it.
-//
-// The first refusal in a run leaves exactly one explanation card, built from the persisted refusal receipt after the
-// refusal has returned, with ordinary navigation only (Open routine, Ask my bot): no Allow, Approve, Retry or Allow
-// more, no pending call, nothing that can enqueue, extend or resume the refused step. A restart rebuilds an owed card
-// from the receipt without running anything.
+// Below No limits, never-list entry (a) still applies: a routine started by a
+// connected-app event never starts or hands work to other bots. MAIN ruling
+// 2026-11-12: Sean's wipe-only No limits rule explicitly includes app events.
+// Below No limits, app-origin child work retains the 1.0.18 hard zero and its
+// persisted refusal card. Authenticated No limits turns and recovered runs use
+// live owner policy at every entry, queue and card-recovery seam. Tool bodies
+// cannot choose that policy or their app lineage.
 import type { AppChildCard, AppChildRefusalReceipt, AppEventRun } from "./app-trigger-store.ts";
 
 export const APP_CHILD_NOT_ALLOWED = "app_child_not_allowed" as const;
@@ -47,13 +40,13 @@ export class AppChildNotAllowed extends Error {
   constructor(runId: string) { super(APP_CHILD_CARD_TEXT); this.runId = runId; this.name = "AppChildNotAllowed"; }
 }
 
-interface Wiring { lineage: AppChildLineage; now: () => number; onCard?: (card: AppChildCard) => void; defer: (work: () => void) => void }
+interface Wiring { noLimits?: (run: AppEventRun) => boolean; lineage: AppChildLineage; now: () => number; onCard?: (card: AppChildCard) => void; defer: (work: () => void) => void }
 let wiring: Wiring | null = null;
 
 /** The host wires the store once at start-up (server/index.ts). Before that no app run can exist: the store is the only
  * place one is created. `onCard` shows a written card in the run thread; the persisted card is the record. */
-export function wireAppChildGuard(options: { lineage: AppChildLineage; now?: () => number; onCard?: (card: AppChildCard) => void; defer?: (work: () => void) => void } | null): void {
-  wiring = options ? { lineage: options.lineage, now: options.now ?? Date.now, onCard: options.onCard, defer: options.defer ?? queueMicrotask } : null;
+export function wireAppChildGuard(options: { noLimits?: (run: AppEventRun) => boolean; lineage: AppChildLineage; now?: () => number; onCard?: (card: AppChildCard) => void; defer?: (work: () => void) => void } | null): void {
+  wiring = options ? { noLimits: options.noLimits, lineage: options.lineage, now: options.now ?? Date.now, onCard: options.onCard, defer: options.defer ?? queueMicrotask } : null;
 }
 
 /** The app run behind a turn, from host lineage. A lookup that fails is treated as app context (fail closed).
@@ -62,7 +55,7 @@ export function wireAppChildGuard(options: { lineage: AppChildLineage; now?: () 
  * recorded before its first turn starts (AppTriggerDelivery.start), so no turn of the run precedes its lineage. */
 function appRunFor(threadId: string): AppEventRun | null | "unknown" {
   if (!wiring || !threadId) return null;
-  try { return wiring.lineage.findByThread(threadId); }
+  try { const run = wiring.lineage.findByThread(threadId); return run && wiring.noLimits?.(run) ? null : run; }
   catch { return "unknown"; }
 }
 
@@ -72,6 +65,7 @@ function appRunFor(threadId: string): AppEventRun | null | "unknown" {
  * the explanation card is written after the caller has returned it.
  */
 export function refuseAppChild(context: { threadId: string; generation?: string }, kind: AppChildKind): AppChildRefusal | null {
+  if (context.generation ? serviceNoLimits(context.generation, context.threadId) : serviceThreadNoLimits(context.threadId)) return null;
   const run = appRunFor(context.threadId);
   if (run === null) return null;
   if (run === "unknown") return { code: APP_CHILD_NOT_ALLOWED, runId: "", first: false };
@@ -90,6 +84,7 @@ export function assertNotAppChild(threadId: string, kind: AppChildKind, generati
 
 /** Whether a turn is app-origin, with no side effect (the event-action wrapper's own check). */
 export function isAppChildContext(threadId: string, _generation?: string): boolean {
+  if (_generation ? serviceNoLimits(_generation, threadId) : serviceThreadNoLimits(threadId)) return false;
   return appRunFor(threadId) !== null;
 }
 
@@ -102,7 +97,7 @@ export function explanationCard(run: Pick<AppEventRun, "runId" | "routineId">): 
 export function writeOwedCard(runId: string): AppChildCard | null {
   if (!wiring) return null;
   const run = wiring.lineage.findById(runId);
-  if (!run?.childRefusal || run.childCardWritten) return null;
+  if (!run?.childRefusal || run.childCardWritten || wiring.noLimits?.(run) || run.threadId && serviceThreadNoLimits(run.threadId, run.botId)) return null;
   const card = explanationCard(run);
   if (!wiring.lineage.markCardWritten(runId, card)) return null;
   try { wiring.onCard?.(card); } catch { /* the card is recorded; showing it again is the thread's job */ }

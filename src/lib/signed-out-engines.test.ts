@@ -5,9 +5,9 @@
 // card. So on day two, when a Claude Code login expires, the product said
 // nothing at all. The engine is present, enabled and "available", and the
 // first thing asked of it fails.
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { inboxTabCounts, signedOutEngineRows, withSignedOutEngines } from "./signed-out-engines";
+import { inboxTabCounts, signedOutCopy, signedOutEngineRows, withSignedOutEngines } from "./signed-out-engines";
 import type { SetupView } from "../../shared/setup";
 
 /** A signed-out engine a bot runs on: the only kind Needs you reports (FUIGO-FIRST-SIGNIN-PLACEMENT). */
@@ -108,3 +108,33 @@ describe("the Inbox tab counts (D9)", () => {
   });
 });
 
+
+describe("on a Cloud home a signed-out engine is only owed when a bot truly has no route", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+  const onHome = () => vi.stubGlobal("document", { querySelector: (q: string) => (q.includes("murage-home-id") ? { getAttribute: () => "home_1" } : null) });
+  const page = { decisions: 0, connections: 0 };
+  const idle = (extra: object = {}) => view({ signedOutAgents: ["claudeAgent", "codex", "grokAgent", "kimiAgent"].map(id => ({ ...(agent(id, id) as object), ...extra })) as never } as never);
+
+  it("false alarm: four engines signed out, no visible bot on them (Flux fine), no count and no section", () => {
+    onHome();
+    expect(signedOutEngineRows(idle())).toEqual([]);
+    expect(inboxTabCounts(page, idle(), new Set())).toEqual({ decisions: 0, connections: 0 });
+  });
+  it("owed: a visible bot runs on unsigned Codex (Flux fine, it does not route the CLI), it is shown and counted", () => {
+    onHome();
+    const owed = view({ signedOutAgents: [{ ...(agent("codex", "Codex") as object), owedOnCloud: true }] as never } as never);
+    expect(signedOutEngineRows(owed).map(row => row.id)).toEqual(["codex"]);
+    expect(inboxTabCounts(page, owed, new Set())).toEqual({ decisions: 1, connections: 1 });
+  });
+  it("owed words are plain: what is wrong, the one thing to do, no dashes, no safety words, no 'will fail'", () => {
+    const { title, body } = signedOutCopy("Codex", true, true);
+    expect(title).toBe("A bot of yours uses Codex, and Codex is not signed in.");
+    expect(body).toBe("That bot cannot answer until you sign in to Codex. Use the button below.");
+    expect(`${title} ${body}`).not.toMatch(/[\u2013\u2014]|safe|unsafe|safety|will fail/i);
+  });
+  it("desktop is unchanged: every signed-out engine counts, in use or not, Flux or not", () => {
+    expect(signedOutEngineRows(idle())).toHaveLength(4);
+    expect(inboxTabCounts(page, idle(), new Set())).toEqual({ decisions: 4, connections: 4 });
+    expect(signedOutCopy("Codex", false, true).body).toBe("Anything you ask it to do will fail until you sign in. Run this in a terminal:");
+  });
+});

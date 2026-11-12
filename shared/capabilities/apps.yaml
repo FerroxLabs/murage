@@ -15,7 +15,7 @@ entries:
     limits: >
       On Telegram a stop-line card also offers Allow for this task. A card about controlling a
       computer offers Deny only; approve it in Murage. WhatsApp approvals stay in Murage.
-    settings_path: Settings → Messaging apps
+    settings_path: Settings → Connected apps
     platforms: [mac, windows, linux]
     engines: [all]
     anchors:
@@ -62,15 +62,15 @@ entries:
     answer: >
       Yes. A bot can open and read pages in its own built-in browser tab, with its own sign-ins, and
       you can watch it and take over at any time. It is on by default. Switch it off for every bot
-      under Settings, Devices, Built-in browser, or for one bot in its Bot settings.
+      under Settings, Computer & browser, Built-in browser, or for one bot in its Bot settings.
     limits: >
       It works on the engines that take Murage's browser: Fuigo, Claude, Codex and the agent engines
       without tools of their own. OpenClaw, Pi, Antigravity and OpenAI-compatible engines do not get it.
-    settings_path: Settings → Devices → Built-in browser
+    settings_path: Settings → Computer & browser → Built-in browser
     platforms: [mac, windows, linux]
     engines: [fuigo, claude, codex, grok, cursor, kimi, droid, opencode, qwen, hermes, gemini, cline]
     anchors:
-      - settings-card:companion/browser
+      - settings-card:computer/browser
       - tool:request_browser_connection
       - file:server/config.ts#export function builtInBrowserEnabled
       - "file:server/drivers/acp/core.ts#browserMcp: !support.ownTools"

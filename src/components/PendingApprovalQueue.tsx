@@ -155,7 +155,7 @@ export function PendingApprovalQueue({
   if (!selected) return null;
   const entries = approvalQueueEntries(approvals, { whoFor, routineFor, statusFor: (id) => statuses[id] ?? "waiting" });
   return (
-    <div data-approval-queue={bar ? "bar" : "panel"} className={cn("mb-2 flex flex-col overflow-hidden rounded-2xl border border-accent/40 bg-card", !bar && "max-h-[70dvh]")}>
+    <div data-approval-queue={bar ? "bar" : "panel"} className={cn("mb-2 flex flex-col overflow-hidden rounded-2xl border border-accent/40 bg-card max-md:-mx-2", !bar && "max-h-[70dvh]")}>
       {approvals.length > 1 ? (
         <ApprovalQueueList
           entries={entries}

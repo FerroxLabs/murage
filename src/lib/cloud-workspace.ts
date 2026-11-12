@@ -7,11 +7,21 @@
 //     proxy, has no local features, and keeps no write queue: a write while the home is down fails at once.
 // Everything here is pure or takes the bridge as an argument, so it is testable without Electron.
 
+import { homeMeta } from "./cloud-home-meta";
+
 export const CLOUD_PROTOCOL = "murage-home:";
 
 /** True when this renderer is served from the Cloud-home scheme. The one signal every "no queue" decision reads. */
 export function isCloudOrigin(location: { protocol: string } | undefined = typeof globalThis.location === "undefined" ? undefined : globalThis.location): boolean {
   return location?.protocol === CLOUD_PROTOCOL;
+}
+
+/**
+ * The one "this is a Cloud home" check for the first run: the Cloud window (`murage-home:`) or an owner's browser on a page a
+ * Cloud home served (it writes the murage-home-id meta tag). Off a home both are false, so nothing changes on the desktop.
+ */
+export function isCloudHome(doc: Pick<Document, "querySelector"> | undefined = typeof document === "undefined" ? undefined : document): boolean {
+  return isCloudOrigin() || (doc !== undefined && homeMeta(doc).homeId !== null);
 }
 
 type MuragecloudWindow = Window & typeof globalThis;
@@ -53,7 +63,7 @@ export function cloudChoiceAction(workspace: CloudWorkspace): { kind: "open"; ho
 }
 
 /** The bridge for badge and native notifications: the desktop's in the main window, the Cloud window's own in a Cloud window. */
-export function notificationBridge(): { platform?: string; setUnreadCount?: (count: number) => void; approvalNotifications?: NonNullable<Muragebox["approvalNotifications"]> } | undefined {
+export function notificationBridge(): { platform?: string; setUnreadCount?: (count: number) => void; approvalNotifications?: NonNullable<Muragebox["approvalNotifications"]>; attention?: import("./attention-offer").AttentionBridge } | undefined {
   if (typeof window === "undefined") return undefined;
   return isCloudOrigin() ? window.muragecloud : window.muragebox;
 }

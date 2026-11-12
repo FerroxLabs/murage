@@ -69,6 +69,7 @@ export function customMountEntries(
 export interface RemoteMountContext {
   execPath: string;
   proxyPath: string;
+  wipeProxyPath?: string;
   harnessUrl: string;
   /** This turn's "mcp" capability token. Called once per turn, and only when a link server is mounted. */
   token: () => string;
@@ -83,7 +84,7 @@ export function buildRemoteMount(name: string, context: RemoteMountContext, toke
     command: context.execPath,
     args: [context.proxyPath, "--server", name],
     env: {},
-    harnessEnv: { ELECTRON_RUN_AS_NODE: "1", MURAGE_HARNESS_URL: context.harnessUrl, MURAGE_MCP_TOKEN: token },
+    harnessEnv: { ELECTRON_RUN_AS_NODE: "1", MURAGE_HARNESS_URL: context.harnessUrl, MURAGE_MCP_TOKEN: token, ...(context.wipeProxyPath?{MURAGE_MCP_WIPE_METADATA:"1"}:{}) },
   };
 }
 
@@ -92,7 +93,10 @@ export function buildRemoteMount(name: string, context: RemoteMountContext, toke
 export function customIntegrations(cfg: AppConfig, context: RemoteMountContext): Record<string, CustomMountInput> | undefined {
   const { stdio, remote } = customMcpServerDescriptors(cfg);
   const out: Record<string, CustomMountInput> = {};
-  for (const [name, server] of Object.entries(stdio)) out[name] = server;
+  for (const [name, server] of Object.entries(stdio)) out[name] = context.wipeProxyPath ? {
+    command:context.execPath,args:[context.wipeProxyPath,name,JSON.stringify({command:server.command,args:server.args})],env:server.env,
+    harnessEnv:{ELECTRON_RUN_AS_NODE:"1",MURAGE_HARNESS_URL:context.harnessUrl,MURAGE_MCP_TOKEN:context.token(),MURAGE_MCP_WIPE_METADATA:"1"},
+  } : server;
   const remoteNames = Object.keys(remote);
   if (remoteNames.length > 0) {
     const token = context.token();

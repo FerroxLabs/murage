@@ -123,8 +123,13 @@ async function currentProviderPrompt(text:string) {
 }
 async function fitsViewport(page:Page) {
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
-  const panel=page.getByRole("heading",{name:"Workspace memory",exact:true});
-  await expect(panel).toBeVisible();
+}
+async function openWorkspaceMemoryBrowser(page:Page) {
+  const open=page.getByRole("button",{name:"Open memory",exact:true});
+  await expect(open).toBeVisible();
+  if(await open.getAttribute("aria-expanded")!=="true")await open.click();
+  await expect(open).toHaveAttribute("aria-expanded","true");
+  await expect(page.getByRole("textbox",{name:"Search memory",exact:true})).toBeVisible();
 }
 async function clickAction(page:Page,label:string,action:string,within?:Locator) {
   const response=page.waitForResponse(response=>response.url().endsWith("/api/memory/action")&&response.request().method()==="POST"&&response.request().postDataJSON()?.action===action);
@@ -132,6 +137,7 @@ async function clickAction(page:Page,label:string,action:string,within?:Locator)
   expect((await response).ok(),`${action} owner action failed`).toBe(true);
 }
 async function inspectActive(page:Page,id:string) {
+  await openWorkspaceMemoryBrowser(page);
   await page.getByRole("combobox",{name:"Audience",exact:true}).selectOption(botScope);
   await page.getByRole("combobox",{name:"Show",exact:true}).selectOption("active");
   await clickAction(page,"Search","list");
@@ -144,7 +150,7 @@ test("reviewed memory survives sharing and correction, then forgetting excludes 
     const path=info.outputPath(`${name}-${info.project.name}.png`);
     await page.screenshot({path,fullPage:true});console.log(JSON.stringify({memoryScreenshot:path}));
   };
-  await page.addInitScript(()=>localStorage.setItem("murage-email-gate","skipped"));
+  await page.addInitScript(()=>{localStorage.setItem("murage-email-gate","skipped");localStorage.setItem("murage.settings.mode","advanced");});
   await page.goto(origin);
   await expectChatHeader(page);
   // The Flux key banner that used to sit here went with the 0.1.58 first run
@@ -153,7 +159,7 @@ test("reviewed memory survives sharing and correction, then forgetting excludes 
   const sidebar=await openSidebar(page);
   await openSidebarPlace(sidebar,"map"); // the strip (0.1.62), or the "Tools" menu before it
   await page.getByRole("button",{name:"Manage memory",exact:true}).click();
-  await expect(page.getByRole("heading",{name:"Workspace memory",exact:true})).toBeVisible();
+  await openWorkspaceMemoryBrowser(page);
   const audience=page.getByRole("combobox",{name:"Audience",exact:true});
   const status=page.getByRole("combobox",{name:"Show",exact:true});
   const search=page.getByRole("textbox",{name:"Search memory",exact:true});
@@ -214,7 +220,7 @@ test("reviewed memory survives sharing and correction, then forgetting excludes 
 test("bot memory keeps workspace settings out of the narrow profile panel", async ({page}, info) => {
   await action({action:"configure",mode:"off"});
   await page.addInitScript(()=>localStorage.setItem("murage-flux-invite-dismissed","1"));
-  await page.addInitScript(()=>localStorage.setItem("murage-email-gate","skipped"));
+  await page.addInitScript(()=>{localStorage.setItem("murage-email-gate","skipped");localStorage.setItem("murage.settings.mode","advanced");});
   await page.goto(origin);
   const invitation=page.getByRole("complementary",{name:"Let your bots pick the right model",exact:true});
   if(await invitation.count())await invitation.getByRole("button",{name:"Not now",exact:true}).last().click();
@@ -229,6 +235,8 @@ test("bot memory keeps workspace settings out of the narrow profile panel", asyn
   else await settings.getByRole("navigation",{name:"Bot settings sections"}).getByRole("button",{name:"Memory",exact:true}).click();
   await settings.getByRole("button",{name:"Open memory for Memory browser fixture",exact:true}).click();
   const memory=page.getByRole("region",{name:"Bot memory",exact:true});
+  await expect(memory).toBeVisible();
+  // Bot launchers expose the compact browser directly, without the workspace fold.
   // The compact bot panel folds its filters away and states the workspace mode in a sentence.
   await memory.getByText("Filters",{exact:true}).click();
   await expect(memory.getByRole("combobox",{name:"Audience",exact:true})).toBeVisible();
@@ -238,9 +246,14 @@ test("bot memory keeps workspace settings out of the narrow profile panel", asyn
   await memory.scrollIntoViewIfNeeded();
   await page.screenshot({path:info.outputPath("bot-memory-profile.png")});
   await memory.getByRole("button",{name:"Open workspace memory settings",exact:true}).click();
-  await expect(page.getByRole("heading",{name:"Workspace memory",exact:true})).toBeVisible();
+  await expect(page.locator("#memory-status-heading")).toBeVisible();
+  const open=page.getByRole("button",{name:"Open memory",exact:true});
+  await expect(open).toHaveAttribute("aria-expanded","false");
+  await expect(page.getByRole("textbox",{name:"Search memory",exact:true})).toBeHidden();
+  // Enabling memory must be reachable from the overview while the browser is closed.
   await page.getByRole("button",{name:"Enable and import notebooks",exact:true}).click();
   await expect(page.getByText("Capture and recall enabled. Detected bot notebooks are being imported; originals are preserved.",{exact:true})).toBeVisible();
+  await expect(open).toHaveAttribute("aria-expanded","false");
   expect((await api("GET","/api/memory/status")).mode).toBe("active");
   // Dynamic defaults never overwrite the owner selection.
   expect((await api("GET","/api/memory/status")).configuration.extractorInstanceId).toBeNull();
@@ -262,18 +275,22 @@ test("owner imports full notebooks, tracks changes, and selects existing Flux ex
   const defaults=await api("GET","/api/memory/status");
   expect(defaults.configuration.extractorInstanceId).toBeNull();
   expect(defaults.learning.connection).toMatchObject({instanceId:"@murage/flux-fast",source:"default"});
-  await page.addInitScript(()=>localStorage.setItem("murage-email-gate","skipped"));
+  await page.addInitScript(()=>{localStorage.setItem("murage-email-gate","skipped");localStorage.setItem("murage.settings.mode","advanced");});
   await page.goto(origin);
   await expectChatHeader(page);
   const sidebar=await openSidebar(page);
   // Connection selection moved to the visible Learning card in Settings > Memory.
   await sidebar.getByRole("button",{name:"App settings",exact:true}).click();
   const appSettings=page.getByRole("dialog",{name:"Settings",exact:true});
-  await appSettings.getByRole("navigation").getByRole("button",{name:"Memory",exact:true}).click();
-  // The learning connection lives under the Memory page's Advanced section.
-  const advancedToggle=appSettings.getByRole("button",{name:/^Advanced · /});
-  if((await advancedToggle.getAttribute("aria-expanded"))!=="true")await advancedToggle.click();
-  await expect(advancedToggle).toHaveAttribute("aria-expanded","true");
+  const sectionSelect=appSettings.getByRole("combobox",{name:"Settings page",exact:true});
+  if(await phoneLayout(page)){
+    await expect(sectionSelect).toBeVisible();
+    await sectionSelect.selectOption("memory");
+    await expect(sectionSelect).toHaveValue("memory");
+  }else await appSettings.getByRole("navigation").getByRole("button",{name:"Memory",exact:true}).click();
+  await openWorkspaceMemoryBrowser(page);
+  // Memory upkeep is visible on the Memory page; it has no separate Advanced fold.
+  await expect(appSettings.getByRole("combobox",{name:"Connection",exact:true})).toBeVisible();
   const selected=page.waitForResponse(response=>response.url().endsWith("/api/memory/action")&&response.request().postDataJSON()?.action==="configure");
   await appSettings.getByRole("combobox",{name:"Connection",exact:true}).selectOption("@murage/flux-standard");
   expect((await selected).ok()).toBe(true);
@@ -325,7 +342,7 @@ test("paged bot memory handles 3000 records in both skins without accumulating c
     .run(`paged-${String(n).padStart(4,"0")}`,botScope,`PAGEDMEMORY: useful note ${n}`,n===2999?1:0,Date.UTC(2026,8,1)+n,Date.UTC(2026,8,1)+n);database.prepare("INSERT INTO memory_projection_receipts VALUES(?,1,0,'pending','pending',NULL)").run(`paged-${String(n).padStart(4,"0")}`);}
   seed("paged-candidate",botScope,"PAGEDMEMORY: proposed detail",bot.threadId);
   database.exec("UPDATE memory_meta SET data_revision=data_revision+1; COMMIT");
-  await page.addInitScript(()=>localStorage.setItem("murage-email-gate","skipped"));
+  await page.addInitScript(()=>{localStorage.setItem("murage-email-gate","skipped");localStorage.setItem("murage.settings.mode","advanced");});
   await page.goto(origin);
   const invitation=page.getByRole("complementary",{name:"Let your bots pick the right model",exact:true});
   if(await invitation.count())await invitation.getByRole("button",{name:"Not now",exact:true}).last().click();
@@ -335,6 +352,8 @@ test("paged bot memory handles 3000 records in both skins without accumulating c
   if(await phoneLayout(page))await chooseFromHeaderMenu(page,"Memory");
   else await page.getByRole("button",{name:"Open memory for Memory browser fixture",exact:true}).first().click();
   const panel=page.getByRole("region",{name:"Bot memory",exact:true});
+  await expect(panel).toBeVisible();
+  // The bot-specific launcher above opens these records directly, including paging and review.
   await panel.getByRole("textbox",{name:"Search memory",exact:true}).fill("PAGEDMEMORY");
   await panel.getByRole("button",{name:"Search",exact:true}).click();
   await expect(panel.locator("[data-memory-id]")).toHaveCount(50);

@@ -1,0 +1,429 @@
+[
+  {
+    "scenario": "terminal",
+    "tool": "terminal",
+    "title": "terminal: printf s0-terminal",
+    "kind": "execute",
+    "hasRawInput": false,
+    "status": "completed",
+    "startWireLine": 12,
+    "endWireLine": 13,
+    "askWireLines": [
+      9
+    ]
+  },
+  {
+    "scenario": "execute-code",
+    "tool": "execute_code",
+    "title": "execute_code: print(sum(range(10)))",
+    "kind": "execute",
+    "hasRawInput": false,
+    "status": "completed",
+    "startWireLine": 22,
+    "endWireLine": 23,
+    "askWireLines": [
+      19
+    ]
+  },
+  {
+    "scenario": "execute-code-long",
+    "tool": "execute_code",
+    "title": "execute_code: # harmless padding harmless padding harmless padding harmless padding harmles...",
+    "kind": "execute",
+    "hasRawInput": false,
+    "status": "completed",
+    "startWireLine": 31,
+    "endWireLine": 32,
+    "askWireLines": [
+      28
+    ]
+  },
+  {
+    "scenario": "write-file",
+    "tool": "write_file",
+    "title": "write_file: /tmp/s0-work/edit.txt",
+    "kind": "edit",
+    "hasRawInput": false,
+    "status": "completed",
+    "startWireLine": 37,
+    "endWireLine": 41,
+    "askWireLines": [
+      38
+    ]
+  },
+  {
+    "scenario": "patch",
+    "tool": "patch",
+    "title": "patch: /tmp/s0-work/edit.txt",
+    "kind": "edit",
+    "hasRawInput": false,
+    "status": "completed",
+    "startWireLine": 46,
+    "endWireLine": 50,
+    "askWireLines": [
+      47
+    ]
+  },
+  {
+    "scenario": "read-before-repeat",
+    "tool": "read_file",
+    "title": "read_file: edit.txt",
+    "kind": "read",
+    "hasRawInput": false,
+    "status": "completed",
+    "startWireLine": 55,
+    "endWireLine": 56,
+    "askWireLines": []
+  },
+  {
+    "scenario": "write-repeat",
+    "tool": "write_file",
+    "title": "write_file: /tmp/s0-work/edit.txt",
+    "kind": "edit",
+    "hasRawInput": false,
+    "status": "failed",
+    "startWireLine": 61,
+    "endWireLine": 65,
+    "askWireLines": [
+      62
+    ]
+  },
+  {
+    "scenario": "patch-v4a",
+    "tool": "patch",
+    "title": "patch",
+    "kind": "edit",
+    "hasRawInput": false,
+    "status": "completed",
+    "startWireLine": 70,
+    "endWireLine": 74,
+    "askWireLines": [
+      71
+    ]
+  },
+  {
+    "scenario": "shell-python-c",
+    "tool": "terminal",
+    "title": "terminal: python3 -c \"print(42)\"",
+    "kind": "execute",
+    "hasRawInput": false,
+    "status": "completed",
+    "startWireLine": 82,
+    "endWireLine": 86,
+    "askWireLines": [
+      79,
+      83
+    ]
+  },
+  {
+    "scenario": "shell-python-heredoc",
+    "tool": "terminal",
+    "title": "terminal: python3 - <<'S0PY' print('heredoc') S0PY",
+    "kind": "execute",
+    "hasRawInput": false,
+    "status": "completed",
+    "startWireLine": 94,
+    "endWireLine": 98,
+    "askWireLines": [
+      91,
+      95
+    ]
+  },
+  {
+    "scenario": "shell-bash-c",
+    "tool": "terminal",
+    "title": "terminal: bash -c 'printf s0-nested'",
+    "kind": "execute",
+    "hasRawInput": false,
+    "status": "completed",
+    "startWireLine": 106,
+    "endWireLine": 110,
+    "askWireLines": [
+      103,
+      107
+    ]
+  },
+  {
+    "scenario": "mcp",
+    "tool": "mcp__s0__echo",
+    "title": "mcp__s0__echo: s0-mcp",
+    "kind": "other",
+    "hasRawInput": true,
+    "status": "completed",
+    "startWireLine": 118,
+    "endWireLine": 119,
+    "askWireLines": [
+      115
+    ]
+  },
+  {
+    "scenario": "read_file",
+    "tool": "read_file",
+    "title": "read_file: seed.txt",
+    "kind": "read",
+    "hasRawInput": false,
+    "status": "completed",
+    "startWireLine": 124,
+    "endWireLine": 125,
+    "askWireLines": []
+  },
+  {
+    "scenario": "search_files",
+    "tool": "search_files",
+    "title": "search_files: alpha",
+    "kind": "search",
+    "hasRawInput": false,
+    "status": "completed",
+    "startWireLine": 130,
+    "endWireLine": 131,
+    "askWireLines": []
+  },
+  {
+    "scenario": "tool_describe",
+    "tool": "tool_describe",
+    "title": "tool_describe: Reading tool details · 1 tool",
+    "kind": "other",
+    "hasRawInput": true,
+    "status": "completed",
+    "startWireLine": 136,
+    "endWireLine": 137,
+    "askWireLines": []
+  },
+  {
+    "scenario": "skills_list",
+    "tool": "skills_list",
+    "title": "skills_list",
+    "kind": "read",
+    "hasRawInput": false,
+    "status": "completed",
+    "startWireLine": 142,
+    "endWireLine": 143,
+    "askWireLines": []
+  },
+  {
+    "scenario": "skill_view",
+    "tool": "skill_view",
+    "title": "skill_view: s0-missing",
+    "kind": "read",
+    "hasRawInput": false,
+    "status": "failed",
+    "startWireLine": 148,
+    "endWireLine": 149,
+    "askWireLines": []
+  },
+  {
+    "scenario": "session_search",
+    "tool": "session_search",
+    "title": "session_search: recall: \"s0-missing\"",
+    "kind": "other",
+    "hasRawInput": false,
+    "status": "completed",
+    "startWireLine": 154,
+    "endWireLine": 155,
+    "askWireLines": []
+  },
+  {
+    "scenario": "todo_list",
+    "tool": "todo_list",
+    "title": "todo_list",
+    "kind": "other",
+    "hasRawInput": false,
+    "status": "completed",
+    "startWireLine": 160,
+    "endWireLine": 161,
+    "askWireLines": []
+  },
+  {
+    "scenario": "clarify",
+    "tool": "clarify",
+    "title": "clarify: S0 fixture?",
+    "kind": "other",
+    "hasRawInput": false,
+    "status": "failed",
+    "startWireLine": 166,
+    "endWireLine": 167,
+    "askWireLines": []
+  },
+  {
+    "scenario": "web_search",
+    "tool": "web_search",
+    "title": "web_search: s0-no-network",
+    "kind": "fetch",
+    "hasRawInput": false,
+    "status": "failed",
+    "startWireLine": 172,
+    "endWireLine": 173,
+    "askWireLines": []
+  },
+  {
+    "scenario": "web_extract",
+    "tool": "web_extract",
+    "title": "web_extract: http://127.0.0.1:18080/page",
+    "kind": "fetch",
+    "hasRawInput": false,
+    "status": "failed",
+    "startWireLine": 178,
+    "endWireLine": 179,
+    "askWireLines": []
+  },
+  {
+    "scenario": "vision_analyze",
+    "tool": "vision_analyze",
+    "title": "vision_analyze: s0",
+    "kind": "read",
+    "hasRawInput": false,
+    "status": "failed",
+    "startWireLine": 184,
+    "endWireLine": 185,
+    "askWireLines": []
+  },
+  {
+    "scenario": "video_analyze",
+    "tool": "video_analyze",
+    "title": "video_analyze",
+    "kind": "other",
+    "hasRawInput": true,
+    "status": "failed",
+    "startWireLine": 190,
+    "endWireLine": 191,
+    "askWireLines": []
+  },
+  {
+    "scenario": "show_tip",
+    "tool": "show_tip",
+    "title": "show_tip: s0",
+    "kind": "other",
+    "hasRawInput": true,
+    "status": "failed",
+    "startWireLine": 196,
+    "endWireLine": 197,
+    "askWireLines": []
+  },
+  {
+    "scenario": "read_terminal",
+    "tool": "read_terminal",
+    "title": "read_terminal",
+    "kind": "other",
+    "hasRawInput": false,
+    "status": "failed",
+    "startWireLine": 202,
+    "endWireLine": 203,
+    "askWireLines": []
+  },
+  {
+    "scenario": "read_window_below",
+    "tool": "read_window_below",
+    "title": "read_window_below",
+    "kind": "other",
+    "hasRawInput": false,
+    "status": "failed",
+    "startWireLine": 208,
+    "endWireLine": 209,
+    "askWireLines": []
+  },
+  {
+    "scenario": "x_search",
+    "tool": "x_search",
+    "title": "x_search",
+    "kind": "other",
+    "hasRawInput": true,
+    "status": "failed",
+    "startWireLine": 214,
+    "endWireLine": 215,
+    "askWireLines": []
+  },
+  {
+    "scenario": "memory",
+    "tool": "memory",
+    "title": "memory: +memory: \"S0 isolated fixture note.\"",
+    "kind": "other",
+    "hasRawInput": false,
+    "status": "completed",
+    "startWireLine": 220,
+    "endWireLine": 221,
+    "askWireLines": []
+  },
+  {
+    "scenario": "write-accept_edits",
+    "tool": "write_file",
+    "title": "write_file: /tmp/s0-work/accept_edits.txt",
+    "kind": "edit",
+    "hasRawInput": false,
+    "status": "completed",
+    "startWireLine": 228,
+    "endWireLine": 229,
+    "askWireLines": []
+  },
+  {
+    "scenario": "patch-accept_edits",
+    "tool": "patch",
+    "title": "patch: /tmp/s0-work/accept_edits.txt",
+    "kind": "edit",
+    "hasRawInput": false,
+    "status": "completed",
+    "startWireLine": 234,
+    "endWireLine": 235,
+    "askWireLines": []
+  },
+  {
+    "scenario": "write-dont_ask",
+    "tool": "write_file",
+    "title": "write_file: /tmp/s0-work/dont_ask.txt",
+    "kind": "edit",
+    "hasRawInput": false,
+    "status": "completed",
+    "startWireLine": 242,
+    "endWireLine": 243,
+    "askWireLines": []
+  },
+  {
+    "scenario": "patch-dont_ask",
+    "tool": "patch",
+    "title": "patch: /tmp/s0-work/dont_ask.txt",
+    "kind": "edit",
+    "hasRawInput": false,
+    "status": "completed",
+    "startWireLine": 248,
+    "endWireLine": 249,
+    "askWireLines": []
+  },
+  {
+    "scenario": "write-default",
+    "tool": "write_file",
+    "title": "write_file: /tmp/s0-work/default.txt",
+    "kind": "edit",
+    "hasRawInput": false,
+    "status": "completed",
+    "startWireLine": 256,
+    "endWireLine": 260,
+    "askWireLines": [
+      257
+    ]
+  },
+  {
+    "scenario": "patch-default",
+    "tool": "patch",
+    "title": "patch: /tmp/s0-work/default.txt",
+    "kind": "edit",
+    "hasRawInput": false,
+    "status": "completed",
+    "startWireLine": 265,
+    "endWireLine": 269,
+    "askWireLines": [
+      266
+    ]
+  },
+  {
+    "scenario": "write-denied",
+    "tool": "write_file",
+    "title": "write_file: /tmp/s0-work/denied.txt",
+    "kind": "edit",
+    "hasRawInput": false,
+    "status": "failed",
+    "startWireLine": 274,
+    "endWireLine": 278,
+    "askWireLines": [
+      275
+    ]
+  }
+]

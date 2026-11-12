@@ -1,3 +1,4 @@
+import { readTurnPolicy } from "../decision/index.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -186,12 +187,13 @@ export class EmailTools {
     const refusal = argumentRefusal(tool, args);
     if (refusal) return fail(refusal);
     const body = args as Record<string, unknown>;
+    const noLimits = readTurnPolicy({ threadId: record.threadId, generation })?.permission.noLimits === true;
     switch (tool) {
-      case "email_list": return this.list(record, body);
-      case "email_read": return this.read(record, body);
-      case "email_send": return this.sendNew(record, generation, body);
-      case "email_reply": return this.reply(record, generation, body);
-      case "email_trust_offer": return this.trustOffer(record, body);
+      case "email_list": return this.list(record, body, noLimits);
+      case "email_read": return this.read(record, body, noLimits);
+      case "email_send": return this.sendNew(record, generation, body, noLimits);
+      case "email_reply": return this.reply(record, generation, body, noLimits);
+      case "email_trust_offer": return this.trustOffer(record, body, noLimits);
     }
   }
 
@@ -213,7 +215,7 @@ export class EmailTools {
   }
 
   /** One message's envelope: Murage's own facts outside, every sender-written field in its own fence. */
-  private envelope(message: Message, botId: string): string[] {
+  private envelope(message: Message, botId: string, noLimits = false): string[] {
     const from = addrSpec(message.from) ?? (typeof message.from === "string" ? message.from : "");
     const fence = (value: unknown) => fenceEmail(value, from);
     const scan = isRecord(message.injection_scan) ? message.injection_scan : {};
@@ -235,7 +237,7 @@ export class EmailTools {
     const cc = list(message.cc).filter(item => typeof item === "string");
     if (cc.length) lines.push(`Cc: ${fence(cc.join(", "))}`);
     // 5.2: mail held for the owner reaches the bot as its envelope only (who, when, the verdicts), never its subject, preview or files
-    if (isHeldForOwner(message)) return lines;
+    if (!noLimits && isHeldForOwner(message)) return lines;
     if (typeof message.subject === "string") lines.push(`Subject: ${fence(message.subject)}`);
     if (typeof message.preview === "string" && message.preview) lines.push(`Preview: ${fence(message.preview.slice(0, PREVIEW_CHARS))}`);
     for (const item of list(message.attachments)) {
@@ -253,7 +255,7 @@ export class EmailTools {
     return lines;
   }
 
-  private async list(record: EmailTurnRecord, args: Record<string, unknown>): Promise<EmailToolResult> {
+  private async list(record: EmailTurnRecord, args: Record<string, unknown>, noLimits = false): Promise<EmailToolResult> {
     const inboxId = this.readInbox(record.botId);
     if (!inboxId) return fail(EMAIL_UNAVAILABLE);
     const limit = optInt(args.limit, 1, 25, 10);
@@ -267,7 +269,7 @@ export class EmailTools {
     const outcome = await this.deps.client.listMessages({ kind: "bot", botId: record.botId }, inboxId, { direction, since, thread_id: threadId, limit });
     if (outcome.kind !== "ok") return outcome.kind === "held" ? fail(EMAIL_LINES.couldNotRead) : this.failure(outcome, true);
     // 5.2: spam, blocked and unauthenticated mail is hidden from the bot (the owner sees it under Filtered)
-    const messages = list((outcome.body as { data?: unknown }).data).filter(isRecord).filter(message => !isFilteredMail(message));
+    const messages = list((outcome.body as { data?: unknown }).data).filter(isRecord).filter(message => noLimits || !isFilteredMail(message));
     const lines: string[] = [EMAIL_RULE];
     // the emails Murage holds for the owner never reached Flux: they are listed from Murage's own record, with no text
     if (direction !== "inbound" && !threadId) {
@@ -278,7 +280,7 @@ export class EmailTools {
     if (!messages.length) lines.push(EMAIL_LINES.noMatch);
     let shown = 0;
     for (const message of messages) {
-      const next = [...lines, "", ...this.envelope(message, record.botId)];
+      const next = [...lines, "", ...this.envelope(message, record.botId, noLimits)];
       // leave room for the "more emails" line; never a partial envelope
       if (next.filter(line => line !== "").join("\n").length > EMAIL_RESULT_CAP - 200) break;
       lines.splice(0, lines.length, ...next);
@@ -288,7 +290,7 @@ export class EmailTools {
     return ok(bounded(lines));
   }
 
-  private async read(record: EmailTurnRecord, args: Record<string, unknown>): Promise<EmailToolResult> {
+  private async read(record: EmailTurnRecord, args: Record<string, unknown>, noLimits = false): Promise<EmailToolResult> {
     const inboxId = this.readInbox(record.botId);
     if (!inboxId) return fail(EMAIL_UNAVAILABLE);
     const messageId = args.message_id === undefined ? undefined : token(args.message_id);
@@ -301,9 +303,9 @@ export class EmailTools {
       const outcome = await this.deps.client.getMessage(bot, inboxId, messageId);
       if (outcome.kind !== "ok") return outcome.kind === "held" ? fail(EMAIL_LINES.couldNotRead) : this.failure(outcome, true);
       const message = outcome.body as Message;
-      if (isFilteredMail(message)) return fail(EMAIL_LINES.noMatch);
-      const lines = [EMAIL_RULE, ...this.envelope(message, record.botId)];
-      if (message.held_for_owner === true) return ok(bounded([...lines, EMAIL_LINES.heldForOwner]));
+      if (!noLimits && isFilteredMail(message)) return fail(EMAIL_LINES.noMatch);
+      const lines = [EMAIL_RULE, ...this.envelope(message, record.botId, noLimits)];
+      if (!noLimits && message.held_for_owner === true) return ok(bounded([...lines, EMAIL_LINES.heldForOwner]));
       const from = addrSpec(message.from) ?? "";
       const parts = bodyParts(messageText(message));
       if (part > parts.length) return fail(`That part does not exist; this email has ${parts.length} part${parts.length === 1 ? "" : "s"}.`);
@@ -314,7 +316,7 @@ export class EmailTools {
     const outcome = await this.deps.client.getThread(bot, inboxId, threadId!);
     if (outcome.kind !== "ok") return outcome.kind === "held" ? fail(EMAIL_LINES.couldNotRead) : this.failure(outcome, true);
     const thread = outcome.body as Message;
-    const messages = list(thread.messages).filter(isRecord).filter(message => !isFilteredMail(message));
+    const messages = list(thread.messages).filter(isRecord).filter(message => noLimits || !isFilteredMail(message));
     const pages = Math.max(1, Math.ceil(messages.length / THREAD_PAGE));
     if (part > pages) return fail(`That part does not exist; this thread has ${pages} part${pages === 1 ? "" : "s"}.`);
     const firstFrom = addrSpec(messages[0]?.from) ?? "";
@@ -323,8 +325,8 @@ export class EmailTools {
     const participants = list(thread.participants).filter(item => typeof item === "string");
     if (participants.length) lines.push(`Participants: ${fenceEmail(participants.join(", "), firstFrom)}`);
     for (const message of messages.slice((part - 1) * THREAD_PAGE, part * THREAD_PAGE)) {
-      lines.push("", ...this.envelope(message, record.botId));
-      if (message.held_for_owner === true) { lines.push(EMAIL_LINES.heldForOwner); continue; }
+      lines.push("", ...this.envelope(message, record.botId, noLimits));
+      if (!noLimits && message.held_for_owner === true) { lines.push(EMAIL_LINES.heldForOwner); continue; }
       const text = messageText(message);
       const cut = text.length > THREAD_MESSAGE_CHARS ? bodyParts(text, THREAD_MESSAGE_CHARS)[0]! : text;
       lines.push("Text:", fenceEmail(cut, addrSpec(message.from) ?? ""));
@@ -334,8 +336,8 @@ export class EmailTools {
     return ok(bounded(lines));
   }
 
-  private attachments(record: EmailTurnRecord, paths: unknown) {
-    return readEmailAttachments({ root: this.deps.workspaceRoot(record.botId, record.threadId), bot: this.deps.bot(record.botId), threadId: record.threadId, paths });
+  private attachments(record: EmailTurnRecord, paths: unknown, noLimits = false) {
+    return readEmailAttachments({ root: this.deps.workspaceRoot(record.botId, record.threadId), bot: this.deps.bot(record.botId), threadId: record.threadId, paths, noLimits });
   }
 
   private async submit(record: EmailTurnRecord, generation: string, draft: EmailDraft, replySource: Parameters<EmailSendService["submit"]>[0]["replySource"] = null): Promise<EmailToolResult> {
@@ -351,7 +353,7 @@ export class EmailTools {
     return result.row.state === "refused" ? fail(line) : ok(line);
   }
 
-  private async sendNew(record: EmailTurnRecord, generation: string, args: Record<string, unknown>): Promise<EmailToolResult> {
+  private async sendNew(record: EmailTurnRecord, generation: string, args: Record<string, unknown>, noLimits = false): Promise<EmailToolResult> {
     const to = addresses(args.to, 10, true);
     if (typeof to === "string") return fail(to);
     const cc = addresses(args.cc, 10, false);
@@ -362,13 +364,13 @@ export class EmailTools {
     const text = str(args.text, 100_000);
     if (!text?.trim()) return fail("text is the plain-text body.");
     const state = sendStateRefusal(this.deps.store.getBinding(record.botId));
-    if (state) return fail(state);
-    const files = this.attachments(record, args.attachments);
+    if (state && !noLimits) return fail(state);
+    const files = this.attachments(record, args.attachments, noLimits);
     if (!files.ok) return fail(files.line);
     return this.submit(record, generation, { kind: "send", to, cc, subject, text, attachments: files.files, replyTo: null });
   }
 
-  private async reply(record: EmailTurnRecord, generation: string, args: Record<string, unknown>): Promise<EmailToolResult> {
+  private async reply(record: EmailTurnRecord, generation: string, args: Record<string, unknown>, noLimits = false): Promise<EmailToolResult> {
     if (args.reply_all !== undefined && args.reply_all !== false) return fail(EMAIL_LINES.replyAll);
     const messageId = token(args.message_id);
     if (!messageId || messageId !== args.message_id) return fail("message_id is an email id from email_list.");
@@ -378,16 +380,16 @@ export class EmailTools {
     if (!text?.trim()) return fail("text is the plain-text body.");
     const binding = this.deps.store.getBinding(record.botId);
     const state = sendStateRefusal(binding);
-    if (state) return fail(state);
-    const files = this.attachments(record, args.attachments);
+    if (state && !noLimits) return fail(state);
+    const files = this.attachments(record, args.attachments, noLimits);
     if (!files.ok) return fail(files.line);
     // what the reply answers, read with the bot's own key (3.3 judges the source; the only recipient is its stored From)
     const outcome = await this.deps.client.getMessage({ kind: "bot", botId: record.botId }, binding!.inboxId!, messageId);
     if (outcome.kind !== "ok") return outcome.kind === "held" ? fail(EMAIL_LINES.couldNotSend) : this.failure(outcome, false);
     const message = outcome.body as Message;
     if (message.direction === "outbound") return fail(EMAIL_LINES.outboundReply);
-    if (isFilteredMail(message)) return fail(EMAIL_LINES.noMatch);
-    if (message.held_for_owner === true) return fail(EMAIL_LINES.heldNoReply);
+    if (!noLimits && isFilteredMail(message)) return fail(EMAIL_LINES.noMatch);
+    if (!noLimits && message.held_for_owner === true) return fail(EMAIL_LINES.heldNoReply);
     const from = addrSpec(message.from);
     if (!from) return fail(EMAIL_LINES.noSender);
     const scan = isRecord(message.injection_scan) ? message.injection_scan : {};
@@ -401,15 +403,16 @@ export class EmailTools {
     });
   }
 
-  private trustOffer(record: EmailTurnRecord, args: Record<string, unknown>): EmailToolResult {
+  private trustOffer(record: EmailTurnRecord, args: Record<string, unknown>, noLimits = false): EmailToolResult {
     const address = addrSpec(args.address);
     if (!address || typeof args.address !== "string" || args.address.trim().toLowerCase() !== address) return fail(EMAIL_LINES.badAddress);
     const reason = str(args.reason, 500);
     if (!reason?.trim()) return fail("reason is one line on why, for the owner.");
     if (!this.readInbox(record.botId)) return fail(EMAIL_UNAVAILABLE);
     const now = this.now();
-    if (this.deps.store.pendingTrustOffers(record.botId).some(offer => offer.address === address)) return ok(EMAIL_LINES.alreadyOffered);
-    if (!this.deps.store.trustOfferEligible(record.botId, address, now)) return fail(EMAIL_LINES.offerNotEligible);
+    const offered = this.deps.store.pendingTrustOffers(record.botId).find(offer => offer.address === address);
+    if (offered && (!noLimits || offered.threadId === record.threadId)) return ok(EMAIL_LINES.alreadyOffered);
+    if (!noLimits && !this.deps.store.trustOfferEligible(record.botId, address, now)) return fail(EMAIL_LINES.offerNotEligible);
     this.deps.store.recordTrustOffer(record.botId, address, record.threadId, reason.replace(/[\r\n\0]+/g, " ").trim(), now);
     return ok(EMAIL_LINES.offered);
   }

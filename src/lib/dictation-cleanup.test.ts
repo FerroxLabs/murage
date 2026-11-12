@@ -52,9 +52,9 @@ describe("the Clean up dictation setting", () => {
     expect(voice).toContain("setCleanupEnabled");
   });
 
-  it("says it applies on this device, for every bot", () => {
+  it("says the words go to the model before sending", () => {
     const voice = read("../components/VoiceSettings.tsx");
-    expect(voice).toContain("Clean up dictation on this device: removes ums, fixes punctuation and corrections. Undo anytime.");
+    expect(voice).toContain("Tidy dictation with your AI model before you send (removes ums, fixes punctuation). Your words go to that model.");
     expect(voice).not.toContain("\u2014");
   });
 });
@@ -91,6 +91,18 @@ describe("undo", () => {
 });
 
 describe("requestCleanup", () => {
+  it("off sends nothing, with no fetch at all", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ text: "Tidied.", cleaned: true })));
+    vi.stubGlobal("localStorage", memory({ [CLEANUP_PREF_KEY]: "off" }));
+    try {
+      const raw = "um these words stay here please";
+      expect(await requestCleanup(raw, {}, fetchImpl as never)).toEqual({ text: raw, cleaned: false });
+      expect(fetchImpl).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   const ctx = { botId: "bot_1" };
 
   it("posts the text and returns the cleaned version", async () => {

@@ -15,6 +15,8 @@ import { localEngineSupport } from "../../shared/local-models";
 import { opensPurchasePages } from "@/lib/native-shell";
 import { copyTextOrThrow } from "@/lib/copy-text";
 import { EngineSignInButton } from "./EngineSignInButton";
+import { isCloudHome } from "@/lib/cloud-workspace";
+import { InboxEngineSignIn } from "./cloud/InboxEngineSignIn";
 
 type Platform = "darwin" | "win32" | "linux";
 
@@ -203,7 +205,7 @@ export function EngineSetup({
 }) {
   const { dispatch } = useStore();
   const openLocalModels = () => {
-    dispatch({ type: "toggleAppSettings", open: true, section: "models" });
+    dispatch({ type: "toggleAppSettings", open: true, section: "models", anchor: "local-models-heading" });
     setTimeout(() => window.dispatchEvent(new Event(OPEN_LOCAL_MODELS_EVENT)), 0);
   };
   const [checking, setChecking] = useState(false);
@@ -217,7 +219,7 @@ export function EngineSetup({
     checkGate.current = true;
     setChecking(true); setCheckError(null); setCheckMessage(null);
     try {
-      const { instances }: { instances: InstanceInfo[] } = await probeInstances("/api/instances", api);
+      const { instances }: { instances: InstanceInfo[] } = await probeInstances("/api/instances?fresh=1", api);
       const current = instances.find((item) => item.instanceId === instance.instanceId);
       if (!current) throw new Error("This engine was not returned. Refresh Settings and try again.");
       dispatch({ type: "instances", instances });
@@ -260,6 +262,16 @@ export function EngineSetup({
       {checkMessage && <p role="status" className="mt-2 text-[12px] text-ink-secondary">{checkMessage}</p>}
       {checkError && <p role="alert" className="mt-2 text-[12px] text-danger">{checkError}</p>}
       <button type="button" disabled={checking} onClick={() => void checkAgain()} className="mt-2 rounded-lg border border-hairline/40 px-3 py-2 text-[12px] text-ink">{t("setup.checkConnection")}</button>
+    </div>;
+  }
+
+  // A Cloud customer has no terminal and nothing to install: the home brings its engines. A signed-out one gets the same
+  // button as the Inbox row; an install or a repair is not theirs to do, so nothing is drawn for it.
+  if (isCloudHome()) {
+    if (!signInOnly) return null;
+    return <div className={cn("rounded-xl border border-hairline/40 bg-control/30 p-3", className)}>
+      <div className="text-[13px] font-semibold text-ink">{title}</div>
+      <InboxEngineSignIn row={{ id: instance.instanceId, name: instance.displayName, driverKind: instance.driverKind, usedBy: [] }} onDone={() => void checkAgain()} />
     </div>;
   }
 

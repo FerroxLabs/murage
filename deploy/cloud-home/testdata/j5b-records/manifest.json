@@ -1,0 +1,65 @@
+{
+ "flipped-byte.txt": {
+  "clean": false,
+  "ids_after_bad_line": [
+   "0000000000000004",
+   "0000000000000005"
+  ],
+  "ids_in_prefix": [
+   "0000000000000001",
+   "0000000000000002",
+   "0000000000000003"
+  ],
+  "valid_prefix_bytes": 370,
+  "valid_prefix_lines": 3
+ },
+ "half-line.txt": {
+  "clean": false,
+  "ids_after_bad_line": [
+   "0000000000000004"
+  ],
+  "ids_in_prefix": [
+   "0000000000000001",
+   "0000000000000002",
+   "0000000000000003"
+  ],
+  "valid_prefix_bytes": 288,
+  "valid_prefix_lines": 2
+ },
+ "missing-newline.txt": {
+  "clean": false,
+  "ids_after_bad_line": [
+   "0000000000000004"
+  ],
+  "ids_in_prefix": [
+   "0000000000000001",
+   "0000000000000002",
+   "0000000000000003"
+  ],
+  "valid_prefix_bytes": 288,
+  "valid_prefix_lines": 2
+ },
+ "short-then-glued.txt": {
+  "clean": false,
+  "ids_after_bad_line": [
+   "0000000000000005"
+  ],
+  "ids_in_prefix": [
+   "0000000000000001",
+   "0000000000000002"
+  ],
+  "valid_prefix_bytes": 183,
+  "valid_prefix_lines": 1
+ },
+ "valid.txt": {
+  "clean": true,
+  "ids_after_bad_line": [],
+  "ids_in_prefix": [
+   "0000000000000001",
+   "0000000000000002",
+   "0000000000000003"
+  ],
+  "valid_prefix_bytes": 370,
+  "valid_prefix_lines": 3
+ }
+}

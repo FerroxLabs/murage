@@ -14,7 +14,7 @@ export interface GateRow { id: string; re: RegExp }
 const MURAGE_EXEC = /murage-exec(-[0-9A-Za-z]+)?([\\/]|$|["'\s])/i;
 
 const GATE_PATH_IDS = [
-  "murage-exec", "murage-engine-hooks", "agy-workspace-hooks", "fuigo-engine-config", "project-tooling", "project-git",
+  "murage-copilot-mcp", "murage-exec", "murage-engine-hooks", "agy-workspace-hooks", "fuigo-engine-config", "project-tooling", "project-git",
   "gitconfig", "envrc", "shell-rc", "shell-startup", "system-startup", "ssh", "harness-keys", "keys-and-cluster-configs",
 ] as const;
 const GATE_TEXT_IDS = ["cmd-autorun"] as const;
@@ -35,7 +35,7 @@ const LOCAL_TOOLS = /node_modules[\\/]\.bin(?=[\\/]|$|[\s"'])/gi;
 
 /** A copy with `./`, empty and `seg/../` segments collapsed, for either separator. A segment starts only after a
  * separator, a space or a quote, so the walk over a long word stays linear. */
-function collapsedPaths(text: string): string {
+export function collapsedPaths(text: string): string {
   let copy = text.replace(/[\\/]\.(?=[\\/])/g, "").replace(/([\\/])[\\/]+/g, "$1");
   for (let pass = 0; pass < 16; pass++) {
     const next = copy.replace(/(?<![^\\/\s"'])(?!\.\.?[\\/])[^\\/\s"']+[\\/]\.\.[\\/]/g, "");

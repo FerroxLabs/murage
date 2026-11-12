@@ -39,6 +39,7 @@ it("a heavy v6 history is usable within the budget, with a health answer from th
     const port = await freePort();
     const spawnedAt = performance.now();
     const child = spawn(process.execPath, [join(import.meta.dirname, "testing", "upgrade-fast-child.ts")], {
+      windowsHide: true,
       env: { ...process.env, MURAGE_DATA_DIR: dir, PORT: String(port), HOME: dir, MURAGE_TURN_TRACE: "1" }, stdio: ["ignore", "pipe", "pipe"],
     });
     const events: Array<{ event: string; ms: number; at: number }> = [];
@@ -107,7 +108,7 @@ it("a heavy v6 history is usable within the budget, with a health answer from th
     await get(port, "/exit"); await sleep(1_000); child.kill();
     // An ordinary start on the already upgraded file: the same child again. Nothing is left to upgrade, so nothing blocks and nothing is pending.
     const port2 = await freePort(), spawned2 = performance.now();
-    const second = spawn(process.execPath, [join(import.meta.dirname, "testing", "upgrade-fast-child.ts")], { env: { ...process.env, MURAGE_DATA_DIR: dir, PORT: String(port2), HOME: dir, MURAGE_TURN_TRACE: "1" }, stdio: ["ignore", "pipe", "pipe"] });
+    const second = spawn(process.execPath, [join(import.meta.dirname, "testing", "upgrade-fast-child.ts")], { windowsHide: true, env: { ...process.env, MURAGE_DATA_DIR: dir, PORT: String(port2), HOME: dir, MURAGE_TURN_TRACE: "1" }, stdio: ["ignore", "pipe", "pipe"] });
     let secondOpenMs: number | null = null; let secondOut = "";
     second.stdout.on("data", chunk => { secondOut += String(chunk); const m = /"event":"database-open","ms":(\d+)/.exec(secondOut); if (m) secondOpenMs = Number(m[1]); });
     let secondAnswer: Record<string, any> | null = null, secondAt: number | null = null;

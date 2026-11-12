@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "krfix",
+  "date": "2026-11-11",
+  "base": "6eaf6bfc14",
+  "scope": "strings and lint files without a valid review",
+  "strings": {
+    "en:emailPark.otherSetupUnavailable": {
+      "text": "Murage's email service did not respond just now. Nothing was removed. Try again in a minute.",
+      "en": "Murage's email service did not respond just now. Nothing was removed. Try again in a minute.",
+      "verdict": "pass",
+      "note": "Matches the round 1 fix. Plain, calm and clear about Murage's service, what happened and when to retry."
+    },
+    "de:emailPark.otherSetupUnavailable": {
+      "text": "Der E-Mail-Dienst von Murage hat gerade nicht geantwortet. Es wurde nichts entfernt. Versuche es in einer Minute noch einmal.",
+      "en": "Murage's email service did not respond just now. Nothing was removed. Try again in a minute.",
+      "verdict": "pass",
+      "note": "Matches the round 1 fix and current English; natural, plain wording with informal du address."
+    },
+    "es:emailPark.otherSetupUnavailable": {
+      "text": "El servicio de correo de Murage no respondió en este momento. No se ha eliminado nada. Inténtalo de nuevo en un minuto.",
+      "en": "Murage's email service did not respond just now. Nothing was removed. Try again in a minute.",
+      "verdict": "pass",
+      "note": "Matches the round 1 fix and current English; clear, plain wording with informal tú address."
+    },
+    "fr:emailPark.otherSetupUnavailable": {
+      "text": "Le service e-mail de Murage n'a pas répondu à l'instant. Rien n'a été supprimé. Réessaie dans une minute.",
+      "en": "Murage's email service did not respond just now. Nothing was removed. Try again in a minute.",
+      "verdict": "pass",
+      "note": "Matches the round 1 fix and current English; natural, plain wording with informal tu address."
+    },
+    "hi:emailPark.otherSetupUnavailable": {
+      "text": "Murage की ईमेल सेवा ने अभी जवाब नहीं दिया। कुछ भी हटाया नहीं गया है। एक मिनट बाद फिर कोशिश करें।",
+      "en": "Murage's email service did not respond just now. Nothing was removed. Try again in a minute.",
+      "verdict": "pass",
+      "note": "Matches the round 1 fix and current English; clear, natural wording with appropriate polite address."
+    },
+    "ja:emailPark.otherSetupUnavailable": {
+      "text": "Murageのメールサービスから先ほど応答がありませんでした。何も削除されていません。1分ほど待ってからもう一度お試しください。",
+      "en": "Murage's email service did not respond just now. Nothing was removed. Try again in a minute.",
+      "verdict": "pass",
+      "note": "Matches the round 1 fix and current English; natural, polite wording with a clear retry instruction."
+    },
+    "pt-br:emailPark.otherSetupUnavailable": {
+      "text": "O serviço de e-mail do Murage não respondeu agora. Nada foi removido. Tente novamente em um minuto.",
+      "en": "Murage's email service did not respond just now. Nothing was removed. Try again in a minute.",
+      "verdict": "pass",
+      "note": "Matches the round 1 fix and current English; plain wording with address consistent with você."
+    },
+    "zh:emailPark.otherSetupUnavailable": {
+      "text": "Murage 的邮件服务刚才没有响应。没有删除任何内容。请一分钟后再试。",
+      "en": "Murage's email service did not respond just now. Nothing was removed. Try again in a minute.",
+      "verdict": "pass",
+      "note": "Matches the round 1 fix and current English; clear, natural wording identifying Murage's service."
+    }
+  },
+  "files": {}
+}

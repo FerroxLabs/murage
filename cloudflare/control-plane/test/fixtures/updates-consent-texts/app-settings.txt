@@ -1,0 +1,4 @@
+# cloud monorepo 833c3a3c5 (1.0.7; NEWS_COPY unchanged through 1.0.17 f28a6bad8) src/lib/news-consent.ts:16-18; newsConsentText('settings') = title + a newline + subtitle
+export const NEWS_COPY = {
+  title: "Get the setup guide and every new release",
+  subtitle: "Insights, how-tos and tutorials so you always know the newest things Murage can do for you.",

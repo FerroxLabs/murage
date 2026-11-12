@@ -1,0 +1,11 @@
+
+ RUN  v4.1.12 /work
+
+ ✓ server/connector-reconnect-r2-workflow.test.ts > R2 scheduled Gmail work preflights an ACTIVE lapse and fails visibly even when the engine reports success 54219ms
+ ✓ server/connector-reconnect-r2-reactive-workflow.test.ts > R2 scheduled GitHub work discovers a lapse on use and fails visibly even when the engine reports success 34396ms
+
+ Test Files  2 passed (2)
+      Tests  2 passed (2)
+   Start at  05:05:16
+   Duration  98.85s (transform 7.24s, setup 9.60s, import 339ms, tests 88.62s, environment 0ms)
+

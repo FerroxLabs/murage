@@ -97,9 +97,19 @@ for pair in "${args[@]}"; do
   if [[ "${pair%%=*}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then murage_exec_names+=("$pair"); else murage_exec_others+=("$pair"); fi
 done
 exec 3< <(printf '%s\0' "${murage_exec_names[@]}" "${murage_exec_kept[@]}")
+murage_exec_writer=$!
+# Keep the writer's parent until it has been reaped. Execing this shell into
+# the server would hand that server an unknown child, which can remain a
+# zombie and keep Claude's process group present after the session closes.
+(
 exec env -i "${murage_exec_others[@]}" "$BASH" --norc -c 'unset SHLVL PWD OLDPWD
 while IFS= read -r -d "" murage_exec_pair <&3; do export "$murage_exec_pair" 2>/dev/null || :; done
 exec 3<&-
 unset murage_exec_pair
 case "${0##*/}" in bash|bash.exe) exec "$0" --norc -c "$1" ;; esac
 exec "$0" -c "$1"' "$shell" "$1"
+)
+murage_exec_status=$?
+exec 3<&-
+wait "$murage_exec_writer"
+exit "$murage_exec_status"

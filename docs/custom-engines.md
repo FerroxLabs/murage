@@ -215,3 +215,32 @@ the owner's own account or key.
   shown again after you save them.
 - A typo'd `driver` or invalid `config` never breaks the app: the instance
   shows as unavailable with the reason, and the rest of the fleet loads.
+
+
+## OpenCode tool limits
+
+Some models accept fewer tools than a conversation has available. When OpenCode reports a supported tool-count rejection, Murage remembers that limit for the same engine version, model and account route. Before retrying, it keeps the required Murage controls, then prioritizes the remaining agent tools, memory, connected apps, browser, computer, phone jobs and custom tools in that order.
+
+Murage can replace the engine once to correct a known budget before sending a message, and can resend once after a tool-count rejection if the engine has produced no live output. The notice says which limit applied, and the model receives a bounded list of the omitted tools. The original message may already be in the engine's history; a resend is labelled accordingly. Reasoning, plans, images, text and tool activity prevent automatic recovery after a rejection.
+
+A current, complete tool list is required to verify the budget. Unknown optional catalogs are disabled as a whole. Unknown required controls, insufficient room for those controls, or another unsafe catalog change stop the turn with an explanation. A second rejection ends recovery. Stop prevents further submission, and a failed submission check after the original write never starts an automatic new dispatch.
+
+The limit store uses atomic writes and directory synchronization where supported. Windows and filesystems that do not support directory synchronization do not provide the same power-loss durability guarantee.
+
+The engine CI gate runs `node scripts/ci-opencode-pinned.mjs` with `MURAGE_OPENCODE_PINNED_BIN` set to the verified 1.19.5 executable. The gate fails if the variable is missing. Running the test file directly without the variable explicitly skips its real-binary cases. All provider captures use isolated loopback fixtures.
+## Choose models per bot with a custom ACP engine
+
+Sign in to your own CLI in a terminal first. Open a bot's model picker and
+choose **Refresh models** to read the models advertised by that engine.
+Select a model and, when offered, its **Thinking** choice. Bot defaults and
+individual conversation overrides are saved independently. Changing models
+clears the old thinking choice. **Agent default** leaves the native session's
+model unchanged, including agents that advertise no model catalog.
+
+Discovery opens a temporary ACP session without sending a prompt. It grants
+no file access, terminal access, tools, MCP servers or permissions. Thinking
+choices belong to the model that confirmed them. A failed refresh keeps the
+last catalog. Cached choices survive a restart; opening the picker refreshes
+them. No discovery process runs merely because the instance was created.
+
+See [the isolated verification recipe](verification/custom-acp-models.md).

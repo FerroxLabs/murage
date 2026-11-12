@@ -1,0 +1,27 @@
+it-remote: bld-toolid-s4a on murage-vt5 (load here 16)
+
+ RUN  v4.1.12 /work
+
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/executable-payloads.test.ts [ server/executable-payloads.test.ts ]
+Error: Cannot find module './executable-payloads.ts' imported from /work/server/executable-payloads.test.ts
+ ❯ server/executable-payloads.test.ts:5:1
+      3| // All programs below are inert strings. No Python, Node or shell prog…
+      4| import { describe, expect, it } from "vitest";
+      5| import { executablePayloads, payloadsFrom, type PayloadLanguage } from…
+       | ^
+      6| import { codeEffects } from "./code-effects.ts";
+      7| import { autoVerdict } from "./auto-approve.ts";
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { code: 'ERR_MODULE_NOT_FOUND' }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  no tests
+   Start at  20:56:56
+   Duration  10.70s (transform 8.37s, setup 10.40s, import 0ms, tests 0ms, environment 0ms)
+

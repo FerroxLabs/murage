@@ -72,7 +72,8 @@ posixOnly("R6 the Chief proposal on every engine that can call Murage tools", ()
       // N2: Claude's one-shot answers with the block, the nonce read from its prompt
       cfg.instances.verification.environment={FAKE_CLAUDE_ONE_SHOT_TEXT:'Draft below.\\n<murage-project-proposal nonce="{{PROPOSAL_NONCE}}">\\n'+JSON.stringify({members:[],leadBotId:null,mode:'chat',brief:{summary:'Claude one-shot',doneMeans:'',rules:''},budget:{minutes:60,tokens:1000},planOutline:[]})+'\\n</murage-project-proposal>'};
       // N2: every ACP engine kind answering with the block; Fuigo's tool path above stays too
-      for (const kind of ${JSON.stringify(ACP_BLOCK_ENGINES)}) cfg.instances['block-'+kind]={driver:kind,displayName:'Block '+kind,environment:{FAKE_ACP_MODE:'text-propose',FAKE_ACP_MCP_READY:'1',FAKE_PROPOSE_LOG:log,FAKE_PROPOSE_ENGINE:kind,GEMINI_API_KEY:'fixture',FAKE_ACP_AUTH:'1',...(kind==='opencodeGo'?{FAKE_ACP_MODELS:'opencode/x-preview-f-free'}:{})},config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:true}};
+      for (const kind of ${JSON.stringify(ACP_BLOCK_ENGINES)}) cfg.instances['block-'+kind]={driver:kind,displayName:'Block '+kind,environment:{FAKE_ACP_MODE:'text-propose',FAKE_ACP_MCP_READY:'1',FAKE_PROPOSE_LOG:log,FAKE_PROPOSE_ENGINE:kind,GEMINI_API_KEY:'fixture',FAKE_ACP_AUTH:'1',...(kind==='hermesAgent'?{FAKE_ACP_PROPOSE_NO_UNASKED:'1'}:{}),...(kind==='opencodeGo'?{FAKE_ACP_MODELS:'opencode/x-preview-f-free'}:{})},config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:true}};
+      cfg.instances.hermesUnasked={...cfg.instances['block-hermesAgent'],environment:{...cfg.instances['block-hermesAgent'].environment,FAKE_ACP_PROPOSE_NO_UNASKED:'0'}};
       cfg.instances['block-codex']={driver:'codex',displayName:'Block Codex',environment:{FAKE_CODEX_MODE:'text-propose',FAKE_PROPOSE_LOG:log,FAKE_CODEX_DUMP:path.join(process.env.MURAGE_DATA_DIR,'codex-block-dump.json')},config:{cli:${JSON.stringify(FAKE_CODEX)},fullAuto:true}};
       cfg.instances['block-piAgent']={driver:'piAgent',displayName:'Block pi',environment:{FAKE_PI_MODE:'text-propose',FAKE_PROPOSE_LOG:log},config:{cli:${JSON.stringify(FAKE_PI)},fullAuto:true}};
       // N2: engines with no Murage delegation, which the leadership rule keeps from holding a Chief
@@ -289,10 +290,22 @@ posixOnly("R6 the Chief proposal on every engine that can call Murage tools", ()
     // nothing of the owner's words or the Chief's reply reaches the server log, only which way it came back
     const log = readFileSync(fixture.info.logPath, "utf8");
     expect(log).toContain(`Chief proposal: the draft came back in the reply (engine ${kind}).`);
-    // review: a tool the engine ran on its own on a block-only turn runs (the owner's own bot), but never unseen
-    if (ACP_BLOCK_ENGINES.includes(kind) && !toolEngine) expect(log).toContain(`Chief proposal: the engine ran a tool without asking (engine ${kind}, tool kind search).`);
+    // Block-only engines without a native tripwire still report an unasked tool; Hermes rejects it in the separate case below.
+    if (ACP_BLOCK_ENGINES.includes(kind) && !toolEngine && kind !== "hermesAgent") expect(log).toContain(`Chief proposal: the engine ran a tool without asking (engine ${kind}, tool kind search).`);
     for (const secret of ["quarterly report", "Fixture proposal", "Forged", "Ada leads"]) expect(log).not.toContain(secret);
   }, 90000);
+
+  it("N2 Hermes rejects an unapproved tool before accepting the proposal block", async () => {
+    await onEngine("hermesUnasked");
+    const before = { ...counts(), ...(await workspace()) };
+    const result = await api("POST", "/api/projects/proposal", { purpose: "Write the quarterly report" });
+    expect(result.status).toBe(200);
+    expect(result.body).toEqual({ reason: "The Chief could not return a usable proposal. Fill in the project below." });
+    expect({ ...counts(), ...(await workspace()) }).toEqual(before);
+    await expect.poll(leftovers, { timeout: 10000 }).toEqual([]);
+    const log = readFileSync(fixture.info.logPath, "utf8");
+    for (const secret of ["quarterly report", "Fixture proposal"]) expect(log).not.toContain(secret);
+  }, 60000);
 
   // OPENAI-TOOLS-109: the OpenAI-chat engines (openai-compat, grok, minimax) now mount Murage's agents tools, so they can hold a Chief
   it("N2 the Box engine cannot hold a Chief at all (no Murage delegation), so it never reaches the proposal", async () => {

@@ -92,6 +92,7 @@ posixOnly("reply habits reach the engine after House Rules, 1:1 and rooms (U24 S
       },
     }));
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

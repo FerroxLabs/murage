@@ -1,6 +1,13 @@
+import { HOOK_LOADER, type CanonSet } from "../../hook-canon.ts";
+import { shellArg } from "../../hook-shell-arg.ts";
+import { canonFile, prepareHookCanon } from "../../hook-safety.ts";
+import { highlevelHandlerTools } from "../../highlevel/engine-policy.ts";
+import { NotModelRequest } from "../../../shared/engine-transport.ts";
+import { registerBusyloopPayloadSite } from "../../../shared/flux-route.ts";
 import { probeFolder } from "../../probe-folder.ts";
 import { cloudEngineHome } from "../../cloud-home/turn-process.ts";
 import { cloudHomeCopy } from "../../cloud-home/copy.ts";
+import { assertFluxNotPaused } from "../../cloud-home/flux-home-gate.ts";
 // Hermes Agent — Nous Research's `hermes acp` CLI. Custom-only: Hermes is
 // a BYOK/local harness. ACP ignores `hermes -m` (cmd_acp does not forward
 // it), and setting OPENAI_API_KEY makes provider:auto resolve to OpenRouter
@@ -101,6 +108,7 @@ export const HERMES_ASK_FREE_TOOLS = [
  *  names Hermes gives them: `mcp__<server, - as _>__<tool>`. Each is one whole name, so a third-party server
  *  whose name only starts like an own one (`murage_memory_evil`) still asks, and so does every OWN_ALWAYS_ASK tool. */
 export const HERMES_OWN_UNASKED_TOOLS: readonly string[] = OWN_UNASKED.flatMap((row) => {
+  if (row.mount === "own:highlevel") return highlevelHandlerTools.map(tool => `mcp__highlevel__${tool}`);
   const server = OWN_BUILTINS[row.mount.slice("own:".length) as OwnBuiltin].replace(/-/g, "_");
   return row.tools.map((tool) => `mcp__${server}__${tool}`);
 });
@@ -157,7 +165,7 @@ const plainObject = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
 
 export type HermesAskNormal =
-  | { ok: true; tool: string; rawInput: Record<string, unknown>; summary: string }
+  | { ok: true; tool: string; rawInput: Record<string, unknown>; summary: string; execution: { identity: string; input: Record<string, unknown> } }
   | { ok: false; why: "hermes-hook"; summary: string; cut?: true };
 
 /**
@@ -181,7 +189,7 @@ export function normalizeHermesAsk(rawInput: unknown): HermesAskNormal | undefin
   const bad = { ok: false, why: "hermes-hook", summary: `${tool}: ${typeof rawInput.description === "string" ? rawInput.description : "(no description)"}` } as const;
   if (typeof rawInput.description !== "string") return bad;
   let message: unknown;
-  try { message = JSON.parse(rawInput.description); } catch { return bad; }
+  try { message = registerBusyloopPayloadSite("read", JSON.parse(rawInput.description)); } catch { return bad; }
   if (!plainObject(message) || message.murage !== 1 || message.v !== 1 || message.tool !== tool) return bad;
   // the hook cut a message past its cap: the call did not arrive whole
   if (message.truncated === true) return { ...bad, cut: true };
@@ -191,16 +199,17 @@ export function normalizeHermesAsk(rawInput: unknown): HermesAskNormal | undefin
   if (tool === "terminal" && (typeof input.command !== "string" || !input.command.trim())) return bad;
   // The request's own fields stay, and the decoded arguments beside them, so a scan of every string sees all.
   const kept = { description: rawInput.description, hermesAsk: { tool, placeholder: rawInput.command, input } };
+  const execution = { identity: tool, input };
   if (tool === "terminal") {
     // Only the fields Hermes's terminal tool runs by (terminal_tool.py, the handler's args) are read at the top:
     // a `cwd` the model added would be ignored by Hermes but taken as the command's folder by Murage.
     const workdir = input.workdir;
-    return { ok: true, tool, rawInput: { command: input.command, ...(workdir !== undefined && workdir !== null ? { workdir } : {}), ...kept }, summary: input.command as string };
+    return { ok: true, tool, rawInput: { command: input.command, ...(workdir !== undefined && workdir !== null ? { workdir } : {}), ...kept }, summary: input.command as string, execution };
   }
   // Another tool (execute_code, an MCP tool): its arguments are kept and shown, but nothing of them is read as a
   // shell command or a folder, so the placeholder stays the command and the call is judged as before.
   const detail = typeof input.code === "string" ? input.code : JSON.stringify(input);
-  return { ok: true, tool, rawInput: { command: rawInput.command, ...kept }, summary: `${tool}: ${detail}` };
+  return { ok: true, tool, rawInput: { command: rawInput.command, ...kept }, summary: `${tool}: ${detail}`, execution };
 }
 
 function hermesAskDir(env: Record<string, string | undefined>): string {
@@ -218,15 +227,11 @@ function hermesAskDir(env: Record<string, string | undefined>): string {
  *  HERMES_ACP_AUTO_APPROVE). An owner's shell export of one would skip the hook gate, so the child never sees them. */
 export const HERMES_AUTO_APPROVE_ENV = ["HERMES_YOLO_MODE", "HERMES_ACP_AUTO_APPROVE"] as const;
 
-export function applyHermesAskHook(env: Record<string, string | undefined>, opts: { hostComputer: boolean; phoneJobs?: boolean; emailMode?: string; highlevel?: boolean }): void {
+export function applyHermesAskHook(env: Record<string, string | undefined>, opts: { hostComputer: boolean; phoneJobs?: boolean; emailMode?: string; highlevel?: boolean; webRead?: boolean }): CanonSet {
   for (const name of HERMES_AUTO_APPROVE_ENV) delete env[name];
   const dir = hermesAskDir(env);
   const hash = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 16);
   const script = join(dir, `ask-hook-${hash(HERMES_ASK_HOOK_SOURCE)}.cjs`);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  let existing: string | null = null;
-  try { existing = readFileSync(script, "utf8"); } catch { existing = null; }
-  if (existing !== HERMES_ASK_HOOK_SOURCE) writeFileAtomic(script, HERMES_ASK_HOOK_SOURCE, { mode: 0o600 });
   const named = (env.HERMES_MANAGED_DIR ?? "").trim();
   const baseDir = named || (process.platform === "win32" ? "" : HERMES_DEFAULT_MANAGED_DIR);
   let base: Record<string, unknown> = {};
@@ -237,28 +242,30 @@ export function applyHermesAskHook(env: Record<string, string | undefined>, opts
     } catch { base = {}; }
   }
   const held = base.hooks && typeof base.hooks === "object" && !Array.isArray(base.hooks) ? base.hooks as Record<string, unknown> : {};
-  const forward = (p: string) => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
-  const command = `"${forward(process.execPath)}" "${forward(script)}"`;
+  const layer = process.platform === "win32" ? "cmd" : "posix";
+  const command = `${shellArg(process.execPath, layer, "Hermes")} -e "${HOOK_LOADER.hermes}" ${shellArg(script, layer, "Hermes")} ${createHash("sha256").update(HERMES_ASK_HOOK_SOURCE).digest("hex")}`;
   const hooks = {
     ...held,
     ...Object.fromEntries(HERMES_OWNER_HOOK_EVENTS.map((event) => [event, []])),
-    // an administrator's own pre_tool_call hooks stay, after this one
-    pre_tool_call: [{ matcher: hermesAskMatcher(opts.hostComputer, opts.phoneJobs === true, opts.emailMode, opts.highlevel === true), command, timeout: 10, fail_closed: true }, ...(Array.isArray(held.pre_tool_call) ? held.pre_tool_call as unknown[] : [])],
+    // an administrator's own pre_tool_call hooks stay, after this one; a second application on the same env (argv is rebuilt for a retried spawn) finds its own earlier hook and replaces it
+    pre_tool_call: [{ matcher: hermesAskMatcher(opts.hostComputer, opts.phoneJobs === true, opts.emailMode, opts.highlevel === true), command, timeout: 10, fail_closed: true }, ...(Array.isArray(held.pre_tool_call) ? (held.pre_tool_call as unknown[]).filter((hook) => (hook as { command?: unknown } | null)?.command !== command) : [])],
   };
-  const overlay = stringifyYaml({ ...base, hooks });
+  // Page readers use the saved Murage transport; the managed config wins over
+  // platform toolsets, including ACP. Keep hook/card policy exactly as before.
+  const agent = asRecord(base.agent);
+  const disabled = Array.isArray(agent.disabled_toolsets) ? agent.disabled_toolsets : [];
+  const overlay = stringifyYaml({ ...base, ...(opts.webRead ? { agent: { ...agent, disabled_toolsets: [...new Set([...disabled, "web", "browser"])] } } : {}), hooks });
   const overlayDir = join(dir, `overlay-${hash(overlay)}`);
   const file = join(overlayDir, "config.yaml");
-  let current: string | null = null;
-  try { current = readFileSync(file, "utf8"); } catch { current = null; }
-  if (current !== overlay) {
-    mkdirSync(overlayDir, { recursive: true, mode: 0o700 });
-    try { chmodSync(overlayDir, 0o700); } catch { /* Windows ignores POSIX modes */ }
-    writeFileAtomic(file, overlay, { mode: 0o600 });
-  }
+  const canon = prepareHookCanon([
+    canonFile(script, HERMES_ASK_HOOK_SOURCE, "script", "hermes", join(env.MURAGE_DATA_DIR || DATA_DIR, "native")),
+    canonFile(file, overlay, "config", "hermes", join(env.MURAGE_DATA_DIR || DATA_DIR, "native")),
+  ], "V-H1", "Hermes");
   env.HERMES_MANAGED_DIR = overlayDir;
   env.HERMES_ACCEPT_HOOKS = "1";
   // the hook runs as `<this program> <script>`; a packaged app is its own node only with this set
   env.ELECTRON_RUN_AS_NODE = "1";
+  return canon;
 }
 
 /** argv for a Hermes child: every spawn names its profile, so a sticky
@@ -369,6 +376,7 @@ export function applyHermesFluxHome(
   // No key degrades to native rather than to a half-written home that 401s —
   // the same choice `applyFluxSurface` makes for the env engines.
   if (!key) return null;
+  assertFluxNotPaused();
   // Wayland accepts "a profile spawn silently stays native"
   // (AcpAgentManager.ts:707-713). We refuse instead. The persona lives in
   // `<HERMES_HOME>/profiles/<name>` and the scoped home has none, so the
@@ -832,9 +840,9 @@ export async function fetchHermesAcpModels(
           done([]);
           return 0;
         }
-        child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`, (error) => {
+        NotModelRequest("ACP catalog probe or session configuration; no session/prompt is submitted", child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`, (error) => {
           if (error) done([]);
-        });
+        }));
       } catch {
         done([]);
         return 0;
@@ -851,13 +859,13 @@ export async function fetchHermesAcpModels(
         buf = buf.slice(nl + 1);
         let msg: any;
         try {
-          msg = JSON.parse(line);
+          msg = registerBusyloopPayloadSite("read", JSON.parse(line));
         } catch {
           continue;
         }
         if (msg?.id === initId) {
           if (!msg.result) return done([]);
-          sessionId = send("session/new", { cwd: probeFolder(), mcpServers: [] });
+          sessionId = NotModelRequest("ACP catalog probe or session configuration; no session/prompt is submitted", send("session/new", { cwd: probeFolder(), mcpServers: [] }));
         } else if (sessionId && msg?.id === sessionId) {
           const list = Array.isArray(msg.result?.models?.availableModels)
             ? msg.result.models.availableModels
@@ -875,10 +883,10 @@ export async function fetchHermesAcpModels(
         }
       }
     });
-    initId = send("initialize", {
+    initId = NotModelRequest("ACP catalog probe or session configuration; no session/prompt is submitted", send("initialize", {
       protocolVersion: 1,
       clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
-    });
+    }));
   });
 }
 
@@ -923,7 +931,7 @@ async function applySetting(
   what: string,
 ) {
   try {
-    await request(method, params);
+    await NotModelRequest("ACP catalog probe or session configuration; no session/prompt is submitted", request(method, params));
   } catch (e) {
     throw new Error(`Hermes rejected ${what} via ${method}: ${(e as Error).message}`);
   }
@@ -956,6 +964,7 @@ const support: AcpSupport = {
     ...(raw.profileOrigin === "sticky" ? { profileOrigin: "sticky" as const } : {}),
   }),
   boundProfile: (config) => (hermesProfileOwnsIdentity(config) ? hermesProfileOf(config) : null),
+  requestBaseUrl: (_model, env) => murageRoutedHome(env) ? FLUX_OPENAI_BASE : undefined,
   resolveTurnModel: (model, env, config) => {
     // Never inherit a broad or stale compatibility grant from the parent.
     // Only this Murage driver binds one concrete local model; Hermes still
@@ -986,16 +995,18 @@ const support: AcpSupport = {
   // turn only (localComputer.scope === "local-computer", as core.ts controlsHost); Murage's computer service asks per
   // action instead. A Local VM or VPS computer carries no scope, so its tools stay on the ask hook and get a card.
   hostComputerAskedByMurage: true,
+  toolTripwire: true,
+  toolTripwireMatcher: (turn) => hermesAskMatcher(turn.integrations?.localComputer?.scope === "local-computer", Boolean(turn.integrations?.phoneJobs), turn.integrations?.agents?.env?.[EMAIL_TOOLS_ENV], Boolean(turn.integrations?.highlevel)),
   // An ask the ask hook escalated is read from the hook's message: the real command, whole (normalizeHermesAsk).
   normalizeAsk: (rawInput) => {
     const normal = normalizeHermesAsk(rawInput);
-    return normal?.ok ? { ok: true, rawInput: normal.rawInput, summary: normal.summary } : normal && { ok: false, why: normal.why, summary: normal.summary, ...(normal.cut ? { cut: true } : {}) };
+    return normal?.ok ? { ok: true, rawInput: normal.rawInput, summary: normal.summary, execution: normal.execution } : normal && { ok: false, why: normal.why, summary: normal.summary, ...(normal.cut ? { cut: true } : {}) };
   },
   // U2 C7: with reasoning on, Hermes re-sends its streamed reply whole under the same messageId, after its
   // reasoning block; that chunk is dropped so the reply shows once (upstream 40deb33ce).
   resendsReasoningReply: true,
   spawnArgs: (config, turn, ctx) => {
-    if (ctx?.env) applyHermesAskHook(ctx.env, { hostComputer: turn?.integrations?.localComputer?.scope === "local-computer", phoneJobs: Boolean(turn?.integrations?.phoneJobs), highlevel: Boolean(turn?.integrations?.highlevel), emailMode: turn?.integrations?.agents?.env?.[EMAIL_TOOLS_ENV] });
+    if (ctx?.env) ctx.hookCanon = applyHermesAskHook(ctx.env, { webRead: Boolean(turn?.integrations?.agents), hostComputer: turn?.integrations?.localComputer?.scope === "local-computer", phoneJobs: Boolean(turn?.integrations?.phoneJobs), highlevel: Boolean(turn?.integrations?.highlevel), emailMode: turn?.integrations?.agents?.env?.[EMAIL_TOOLS_ENV] });
     return hermesSpawnArgs(config, ctx?.env);
   },
   /**

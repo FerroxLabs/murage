@@ -144,6 +144,20 @@ describe("copy final lint (blocking, all 8 languages, main and Help)", () => {
     expect(problems, ledgerFailureMessage(problems)).toEqual([]);
   });
 
+  it("busyloop: all 32 recovery strings and their English fallback file have accepted review records", () => {
+    const keys = ["gatewayBusy.repeated.title", "gatewayBusy.tryAgain", "gatewayBusy.useAnotherAI", "gatewayBusy.getHelp"];
+    const ids = LANGS.flatMap(locale => keys.map(key => `${locale}:${key}`));
+    const inputs = readReviewInputs(DIR);
+    const ledger = JSON.parse(inputs.ledgerText ?? "{}");
+    // Pending-review entries do not count as acceptance for this release fix.
+    expect(ids.filter(id => !ledger.strings?.[id]), "recovery strings awaiting accepted copy review").toEqual([]);
+    expect(ledger.files?.["same-as-english.json"]).toBeDefined();
+    const problems = ledgerProblems({ ...inputs, shipped: shippedMap(copy), english: copy.english });
+    const reviewIds = [...ids.map(id => ledger.strings[id].review), ledger.files["same-as-english.json"].review] as string[];
+    const relevant = problems.filter(problem => ids.some(id => problem.includes(id)) || problem.includes("same-as-english.json") || reviewIds.some(id => problem.startsWith(`reviews/${id}.json:`)));
+    expect(relevant).toEqual([]);
+  });
+
   it("section 2: the records alone give a valid ledger, so a reviewed.json merge conflict can always be rebuilt", () => {
     const rebuilt = JSON.stringify(ledgerFromRecords({ dir: DIR }));
     const problems = ledgerProblems({ ...readReviewInputs(DIR), ledgerText: rebuilt, shipped: shippedMap(copy), english: copy.english });
@@ -166,7 +180,7 @@ const listed = (token: string) => () => ({ links: [{ token, reason: "fixture" }]
 describe("copy rules: negative fixtures in every language", () => {
   const bad = [
     ...per("em-dash", { en: "Working — now", de: "Läuft — jetzt", es: "Trabajando – ahora", fr: "En cours — maintenant", hi: "चल रहा है — अभी", ja: "作業中—今", "pt-br": "Trabalhando — agora", zh: "正在工作—现在" }),
-    ...per("forge", { en: "Open the Forge", de: "Öffne die FORGE", es: "Abre Forge", fr: "Ouvre Forge", hi: "Forge खोलें", ja: "Forgeを開く", "pt-br": "Abra o forge", zh: "打开Forge" }),
+    ...per("forge", { en: "Forge a path", de: "Öffne die FORGE", es: "Abre Forge", fr: "Ouvre Forge", hi: "Forge खोलें", ja: "Forgeを開く", "pt-br": "Abra o forge", zh: "打开Forge" }),
     ...per("english-level-name", {
       de: "Wähle Auto für diesen Bot", es: "Elige Ask primero", fr: "Passe en Full access", hi: "No limits चुनें",
       ja: "autoで実行します", "pt-br": "Use o modo Аsk", zh: "ASK模式",
@@ -193,7 +207,7 @@ describe("copy rules: negative fixtures in every language", () => {
     ...per("four-part-version", { de: "Version: 1.234.567.890.123", es: "Versión : 1.234.567.890" }),
     ...per("four-part-version", {
       en: "Update to Murage 1.0.18.1", de: "Version 1.234.567.8", es: "Versión 100.0.0.1", fr: "Murage 10.0.0.1 est prêt",
-      hi: "Murage 1.0.18.2 उपलब्ध है", ja: "Fuigo 1.0.40.2 に更新", "pt-br": "Versão 2.0.0.0", zh: "版本 1.0.18.1",
+      hi: "Murage 1.0.18.2 उपलब्ध है", ja: "Fuigo 1.0.42.2 に更新", "pt-br": "Versão 2.0.0.0", zh: "版本 1.0.18.1",
     }),
     ...per("four-part-version", { en: "Build 1.2.3.4.5 is ready", de: "Paket 1.0.18.1 bereit" }),
     ...per("price", {
@@ -236,7 +250,7 @@ describe("copy rules: positive fixtures", () => {
     { locale: "en", value: "Waiting for a free slot. Jargon-free." },
     { locale: "en", value: "Fuigo, Flux and Codex keep working. Claude needs a sign-in." },
     { locale: "en", value: "Claude Code runs Claude models. Pick Fuigo or Codex." },
-    { locale: "en", value: "Fuigo 1.0.40 and Murage 1.0.18 are ready." },
+    { locale: "en", value: "Fuigo 1.0.42 and Murage 1.0.18 are ready." },
     { locale: "en", value: "Murage now opens straight to Today." },
     { locale: "en", value: "Fuigo / Flux / Codex" },
     { locale: "en", value: "Every bot on Fuigo stops answering until this is fixed." },

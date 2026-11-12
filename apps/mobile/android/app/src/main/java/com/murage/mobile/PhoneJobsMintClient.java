@@ -113,7 +113,11 @@ final class PhoneJobsMintClient {
                         JSONObject json = object(a, answer);
                         if (json == null) return;
                         Object token = json.opt("token");
-                        if (json.length() != 1 || !(token instanceof String) || !(ask ? com.murage.mobile.shell.PhoneAskContract.tokenValid((String) token) : PhoneJobsContract.tokenValid((String) token))) { fail(a, Failure.INVALID_RESPONSE); return; }
+                        Object deviceId = json.opt("deviceId");
+                        // D8-4 R3 brief item 2 and fix item 4: the decoder accepts {token} or {token, deviceId:string} for forward compatibility only.
+                        // Android never opts in (it has no ask-proof path), so no re-pair hint exists on Android by design: it could never be cleared.
+                        boolean shapeOk = json.length() == 1 || (json.length() == 2 && deviceId instanceof String);
+                        if (!shapeOk || !(token instanceof String) || !(ask ? com.murage.mobile.shell.PhoneAskContract.tokenValid((String) token) : PhoneJobsContract.tokenValid((String) token))) { fail(a, Failure.INVALID_RESPONSE); return; }
                         if (!a.keyId.equals(signer.keyId(a.origin))) { fail(a, Failure.NO_APPROVAL_KEY); return; }
                         if (!store.save((String) token, a.origin)) { fail(a, Failure.STORAGE); return; }
                         active = null;

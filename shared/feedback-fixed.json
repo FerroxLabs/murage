@@ -65,7 +65,9 @@
     "skill-recorder": "Teach a skill",
     "computer": "Computer",
     "inspector": "Inspector",
-    "no-engines": "Nothing to think with yet"
+    "no-engines": "Nothing to think with yet",
+    "settings:calls": "Settings · Calls",
+    "settings:computer": "Settings · Computer & browser"
   },
   "pages": [
     "general",
@@ -79,7 +81,9 @@
     "companion",
     "backups",
     "usage",
-    "about"
+    "about",
+    "calls",
+    "computer"
   ],
   "gates": {
     "offline": "Not connected to the computer running Murage",

@@ -1,3 +1,4 @@
+import { inertBot } from "./store.ts";
 import type { GroupDefaultResponder } from "./store.ts";
 import { scanMurageFences } from "../shared/murage-fences.ts";
 
@@ -123,7 +124,7 @@ export function selectGroupGoalCoordinator<Member extends GoalRunMember>(
   members: Member[],
   responder: GroupDefaultResponder,
 ): Member | null {
-  const active = members.filter((member) => !member.hidden);
+  const active = members.filter((member) => !inertBot(member));
   if (responder.kind === "member") {
     const explicit = active.find((member) => member.id === responder.botId);
     if (explicit) return explicit;
@@ -136,7 +137,7 @@ export function selectGroupGoalCoordinator<Member extends GoalRunMember>(
 export function resolveGroupGoalMember(reference: string, members: GoalRunMember[]): GoalRunMember | null {
   const wanted = reference.trim().replace(/^@/, "").toLocaleLowerCase();
   if (!wanted) return null;
-  const active = members.filter((member) => !member.hidden);
+  const active = members.filter((member) => !inertBot(member));
   const idMatch = active.find((member) => member.id.toLocaleLowerCase() === wanted);
   if (idMatch) return idMatch;
   const nameMatches = active.filter((member) => member.name.toLocaleLowerCase() === wanted);
@@ -155,7 +156,7 @@ export function groupGoalCoordinatorInstructions(args: {
   note?: string;
 }): string {
   const roster = args.members
-    .filter((member) => !member.hidden)
+    .filter((member) => !inertBot(member))
     .map((member) => `${member.name} (${member.id})`)
     .join(", ");
   return [

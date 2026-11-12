@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 import { probeFolder } from "./probe-folder.ts";
 // BYO Linux VPS computer. The agent process stays local; Docker's own SSH
 // transport reaches the user's daemon and the official Cua MCP server stays
@@ -26,7 +27,7 @@ import {
 } from "./container-computer.ts";
 import { isValidSshAlias, vpsSshAlias, type AppConfig } from "./config.ts";
 import { augmentedPath } from "./env-path.ts";
-import { ownServerChildEnv } from "./cloud-home/own-server.ts";
+import { INTERNAL_VIEWER_PORT, isPrivateDockerIpv4, ownServerChildEnv } from "./cloud-home/own-server.ts";
 import { awaitCliTreeStopped, spawnCli } from "./procs.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import { EngineStderrCapture, engineStderrRedacted, engineStderrTailRedacted, ENGINE_STDERR_CAPTURE_CHARS } from "./drivers/acp/core.ts";
@@ -53,7 +54,6 @@ const CONTAINER_ID = /^[a-f0-9]{12,64}$/i;
 const IMAGE_ID = /^sha256:[a-f0-9]{64}$/i;
 const PIDS_LIMIT = 512;
 const SCREENSHOT_PATH = "/tmp/murage-vps-preview.png";
-const INTERNAL_VIEWER_PORT = 6901;
 const VIEWER_VERSION = "1";
 const lifecycleLocks = new Map<string, Promise<void>>();
 // A held lock means a lifecycle mutation (worst case: a 10-minute image
@@ -361,14 +361,7 @@ function transportFailure(message: string): string {
 }
 
 function privateDockerIpv4(value: string | undefined): boolean {
-  if (!value) return false;
-  const parts = value.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
-  return (
-    parts[0] === 10 ||
-    (parts[0] === 172 && parts[1]! >= 16 && parts[1]! <= 31) ||
-    (parts[0] === 192 && parts[1] === 168)
-  );
+  return isPrivateDockerIpv4(value);
 }
 
 function viewerPassword(env: string[] | undefined): string | null {
@@ -937,12 +930,12 @@ export async function vpsComputerJoin(
   }
 
   const localPort = await unusedLoopbackPort();
-  const child = spawn("ssh", vpsSshTunnelArgs(alias, localPort, connection.privateIp), {
+  const child = spawn("ssh", [...vpsSshTunnelArgs(alias, localPort, connection.privateIp)], withHideInherit({
     shell: false,
     env: ownServerChildEnv({ ...process.env, PATH: augmentedPath() }),
     stdio: ["ignore", "ignore", "pipe"],
     windowsHide: true,
-  });
+  }));
   let failure: string | null = null;
   // kept from its start and redacted whole before the shown 1,000 are cut (acp/core.ts EngineStderrCapture)
   const stderr = new EngineStderrCapture();

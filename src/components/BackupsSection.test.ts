@@ -10,13 +10,9 @@ import { SETTINGS_KEYWORDS } from "@/lib/settings-search";
 const read = (name: string) => readFileSync(fileURLToPath(new URL(name, import.meta.url)), "utf8");
 const modal = read("./SettingsModal.tsx");
 
-function generalPane(source: string) {
-  const start = source.indexOf('{section === "general" && (');
-  expect(start, "General pane not found").toBeGreaterThan(0);
-  // The General block closes at its first top-level `)}`.
-  const end = source.indexOf("\n            )}", start);
-  expect(end).toBeGreaterThan(start);
-  return source.slice(start, end);
+function generalPane() {
+  expect(read("./settings/page-registry.tsx")).toContain('general: () => import("./pages/GeneralPage")');
+  return read("./settings/pages/GeneralPage.tsx") + read("./settings/rows/GeneralRows.tsx");
 }
 
 describe("Backups settings section", () => {
@@ -30,10 +26,13 @@ describe("Backups settings section", () => {
   });
 
   it("General no longer renders backups, and the Backups pane is surface-gated", () => {
-    expect(generalPane(modal)).not.toContain("BackupSettings");
+    expect(generalPane()).not.toContain("BackupSettings");
     // 1.0.3 attachment-cap: the Backups page also carries the Storage card; S5 DR7 puts the Data folder card first; all sit behind the same desktop gate
-    expect(modal).toMatch(/desktop === true && section === "backups" && <div className="space-y-4"><DataFolderSettings \/><BackupSettings \/><div id="storage-heading"><StorageSettings \/><\/div><\/div>/);
-    expect(modal.match(/<BackupSettings \/>/g)).toHaveLength(1);
+    // 1.0.19: the Backups page lives in settings/pages/BackupsPage.tsx; the shell hides the page from a phone (desktopOnly).
+    const page = readFileSync(fileURLToPath(new URL("./settings/pages/BackupsPage.tsx", import.meta.url)), "utf8");
+    expect(page).toContain("<DataFolderSettings /><BackupSettings mode={mode} />");
+    expect(page).toContain("<StorageSettings />");
+    expect(modal).not.toContain("<BackupSettings");
   });
 
   it("deep link: opening settings on Backups selects the Backups pane", () => {
@@ -293,7 +292,7 @@ describe("setup collapses into a schedule card", () => {
   // packaged 0.1.60 app, 2026-09-26: no way to save a copy after setup).
   it("while on, after the window reopened: still offers a copy of the recovery key", () => {
     const html = renderToStaticMarkup(createElement(ScheduleCard, { s: controller({ status: on, createdKey: null }) }));
-    expect(html).toContain(`Your recovery key is ${refs.recoveryLabel}.`);
+    expect(html).toContain(`Your recovery key is <span data-copy-value="path">${refs.recoveryLabel}</span>.`);
     expect(html).toMatch(/<button[^>]*>Save a copy…</);
   });
   it("while on: settings summary and Turn off, no setup controls", () => {

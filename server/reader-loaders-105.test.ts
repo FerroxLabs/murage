@@ -38,8 +38,14 @@ const verdict = (level: Level, cmd: string, cwd = CWD, proof: object = OWNER_TUR
   autoVerdict(LEVELS[level], "Bash", cmd, { ...proof, commandText: cmd, commandCwd: cwd, stopLine: classifyStopLine("Bash", { command: cmd }, "", nix(cwd)), unseen: { fs: STUB, platform: "posix" } });
 const pwshVerdict = (level: Level, cmd: string) =>
   autoVerdict(LEVELS[level], "PowerShell", cmd, { commandText: cmd, commandCwd: "C:\\work" });
+const { expectNoLimitsOwnerOutcome } = await import("./testing/no-limits-1019.ts");
+/** Ask, Auto and Full access card the text. NOLIM 1.0.19 (Sean 2026-11-10): the owner's No limits turn (OWNER_TURN) runs a loader or
+ * unseen-script finding unless it is a wipe row, so its cell asserts on the reader's own rule through the shared helper. */
 const everywhere = (cmd: string, cwd = CWD) => {
-  for (const level of Object.keys(LEVELS) as Level[]) expect(verdict(level, cmd, cwd), `${level}: ${cmd}`).toMatchObject({ approve: null });
+  for (const level of Object.keys(LEVELS) as Level[]) {
+    if (level === "No limits") { expectNoLimitsOwnerOutcome(verdict(level, cmd, cwd), cmd, alwaysAskCommand(cmd, cwd)?.rule, `${level}: ${cmd}`); continue; }
+    expect(verdict(level, cmd, cwd), `${level}: ${cmd}`).toMatchObject({ approve: null });
+  }
 };
 
 // MARKS r14: the dummy script operand is ./noop, not /dev/null: a system device named as a script is a protected path now (D2-b), and these rows test the loader finding
@@ -201,10 +207,13 @@ describe("what stays as it was", () => {
 });
 
 describe("MARKS r13 owner-started proof (fail-closed)", () => {
-  it("an unseen script runs at No limits on an owner-started turn and asks without the proof", () => {
+  it("an unseen script runs at No limits on a turn with the stored owner origin and asks without a proven origin (NOLIM 1.0.19: ownerStarted and outsideRead are not read)", () => {
     expect(verdict("No limits", "bash ./build.sh").approve).toBeTruthy();
-    for (const missing of [{}, { fullAccessOrigin: "owner", ownerStarted: true }, { ownerStarted: false, fullAccessOrigin: "owner" }, { ownerStarted: true, fullAccessOrigin: "other" }]) {
-      expect(verdict("No limits", "bash ./build.sh", CWD, missing).approve).toBeNull();
+    for (const unproven of [{}, { ownerStarted: true, fullAccessOrigin: "other" }]) {
+      expect(verdict("No limits", "bash ./build.sh", CWD, unproven).approve).toBeNull();
+    }
+    for (const stored of [{ fullAccessOrigin: "owner", ownerStarted: true }, { ownerStarted: false, fullAccessOrigin: "owner" }]) {
+      expect(verdict("No limits", "bash ./build.sh", CWD, stored).approve).toBeTruthy();
     }
   });
 });

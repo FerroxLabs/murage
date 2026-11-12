@@ -1,0 +1,127 @@
+id	kind	endpoint	status	headers	body	reason	action	wait	why
+01.chat	leaf	chat	fixture	-	-	fluxStop	STOP	-	402 chat rewrite: free_tier_exhausted with no hold header names no cause
+02.chat	leaf	chat	fixture	-	-	fluxStop	STOP	-	402 chat rewrite: free_tier_exhausted with no hold header names no cause
+03.chat	leaf	chat	fixture	-	-	fluxStop	STOP	-	402 chat rewrite: free_tier_exhausted with no hold header names no cause
+04.chat	leaf	chat	fixture	-	-	fluxStop	STOP	-	402 chat rewrite: free_tier_exhausted with no hold header names no cause
+05.chat	leaf	chat	fixture	-	-	fluxStop	STOP	-	402 chat rewrite: free_tier_exhausted with no hold header names no cause
+08.chat	leaf	chat	fixture	-	-	fluxStop	STOP	-	402 chat rewrite: free_tier_exhausted with no hold header names no cause
+01.msg	leaf	msg	fixture	-	-	freeCap	STOP	-	429 but terminal text 'monthly free-tier token allowance' (P1-1)
+01.resp	leaf	resp	fixture	-	-	freeCap	STOP	-	state free_cap_reached is FLUX_FINAL
+02.msg	leaf	msg	fixture	-	-	requestCap	STOP	-	429 but terminal text '10M request cap reached'
+02.resp	leaf	resp	fixture	-	-	requestCap	STOP	-	state builder_auto_bump_eligible
+03.msg	leaf	msg	fixture	-	-	planCap	STOP	-	429 but terminal text 'Monthly cap reached'
+03.resp	leaf	resp	fixture	-	-	planCap	STOP	-	state cap_reached
+04.msg	leaf	msg	fixture	-	-	keyRevoked	STOP	-	429 but terminal text 'API key has been revoked'
+04.resp	leaf	resp	fixture	-	-	keyRevoked	STOP	-	state key_revoked
+05.msg	leaf	msg	fixture	-	-	unknownLimit	PAUSE	-	429 'upstream error (status 429)': no cause, no wait; same bytes as 10.msg
+05.resp	leaf	resp	fixture	-	-	busy	BACKOFF	60	429, no code, body retry_after 60 is a known wait (P2-4)
+06.chat	leaf	chat	fixture	-	-	busy	BACKOFF	30	p_s_f.error.type billing_system_degraded, retry_after 30
+06.msg	leaf	msg	fixture	-	-	busy	BACKOFF	ladder	'retry shortly' with no seconds
+06.resp	leaf	resp	fixture	-	-	busy	BACKOFF	30	type billing_system_degraded, retry_after 30
+07.chat	leaf	chat	fixture	-	-	busy	BACKOFF	60	'Limit resets at' 20:08:21 minus frozen now 20:07:21
+07.msg	leaf	msg	fixture	-	-	busy	BACKOFF	60	'Limit resets at' minus now
+07.resp	leaf	resp	fixture	-	-	busy	BACKOFF	60	'Limit resets at' minus now
+08.msg	leaf	msg	fixture	-	-	busy	BACKOFF	60	same bytes as 07.msg
+08.resp	leaf	resp	fixture	-	-	busy	BACKOFF	60	same bytes as 07.resp
+09.chat	leaf	chat	fixture	-	-	busy	BACKOFF	1	Retry-After 1, p_s_f state batch_concurrency
+09.msg	leaf	msg	fixture	-	-	busy	BACKOFF	1	429, text 'Retry after 1 second' is a known wait (P2-4)
+09.resp	leaf	resp	fixture	-	-	busy	BACKOFF	1	state batch_concurrency, retry_after 1
+10.chat	leaf	chat	fixture	-	-	hourly	STOP	reset+1800	p_s_f.error hourly_burn_limit (FLUX_FINAL), retry_after 1800 feeds the card
+10.msg	leaf	msg	fixture	-	-	unknownLimit	PAUSE	-	same bytes as 05.msg
+10.resp	leaf	resp	fixture	-	-	hourly	STOP	reset+1800	error.error hourly_burn_limit, retry_after 1800
+11.chat	leaf	chat	fixture	-	-	hold	RETRY_ONCE	2	hold header concurrency, Retry-After 2
+11.msg	leaf	msg	fixture	-	-	hold	RETRY_ONCE	2	'temporarily reserved', 'Retry in 2s'
+11.resp	leaf	resp	fixture	-	-	hold	RETRY_ONCE	2	'temporarily reserved', 'Retry in 2s'
+12.chat	leaf	chat	fixture	-	-	keyBudget	STOP	-	402; key_budget_reached with limit monthly_spend
+12.resp	leaf	resp	fixture	-	-	keyBudget	STOP	-	402; key_budget_reached with limit monthly_spend
+12.msg	leaf	msg	fixture	-	-	keyBudget	STOP	-	402; text '$5.00 monthly budget'
+12.tokens_variant_chat	leaf	chat	fixture	-	-	keyTokens	STOP	-	402; key_budget_reached with limit monthly_tokens
+13.chat	leaf	chat	fixture	-	-	freeCredit	STOP	-	402; text '$1 free credit is used up'
+13.msg	leaf	msg	fixture	-	-	freeCredit	STOP	-	402; text '$1 free credit is used up'
+13.resp	leaf	resp	fixture	-	-	freeCredit	STOP	-	402; text '$1 free credit is used up'
+14.chat	leaf	chat	fixture	-	-	fluxStop	STOP	-	402; repr body holds only the rewrite sentence
+14.msg	leaf	msg	fixture	-	-	keyRefused	STOP	-	bare 401, no code, no terminal text
+14.resp	leaf	resp	fixture	-	-	keyRefused	STOP	-	bare 401, no code, no terminal text
+15.chat	leaf	chat	fixture	-	-	accountCeiling	STOP	-	402; account_monthly_budget_exhausted / 'monthly spend ceiling'
+15.msg	leaf	msg	fixture	-	-	accountCeiling	STOP	-	402; account_monthly_budget_exhausted / 'monthly spend ceiling'
+15.resp	leaf	resp	fixture	-	-	accountCeiling	STOP	-	402; account_monthly_budget_exhausted / 'monthly spend ceiling'
+16.chat	leaf	chat	fixture	-	-	credit	STOP	-	402; hold header credit_exhausted
+16.msg	leaf	msg	fixture	-	-	credit	STOP	-	402; text 'credit balance is exhausted'
+16.resp	leaf	resp	fixture	-	-	credit	STOP	-	402; text 'credit balance is exhausted'
+16.monthly_cap_variant_chat	leaf	chat	fixture	-	-	spendCap	STOP	-	402; hold header monthly_cap
+17.chat	leaf	chat	fixture	-	-	planAllowance	STOP	-	402; 'plan allowance ... paused until' beats the credit_exhausted header
+17.msg	leaf	msg	fixture	-	-	planAllowance	STOP	-	402; 'plan allowance ... paused until' beats the credit_exhausted header
+17.resp	leaf	resp	fixture	-	-	planAllowance	STOP	-	402; 'plan allowance ... paused until' beats the credit_exhausted header
+18.chat	leaf	chat	fixture	-	-	keyLifetime	STOP	-	402; key_lifetime_cap_exhausted / 'lifetime spend cap'
+18.msg	leaf	msg	fixture	-	-	keyLifetime	STOP	-	402; key_lifetime_cap_exhausted / 'lifetime spend cap'
+18.resp	leaf	resp	fixture	-	-	keyLifetime	STOP	-	402; key_lifetime_cap_exhausted / 'lifetime spend cap'
+19.chat	leaf	chat	fixture	-	-	busy	BACKOFF	20	'RateLimitError ... try again in 20s'
+19.msg	leaf	msg	fixture	-	-	busy	BACKOFF	20	'RateLimitError ... try again in 20s'
+19.resp	leaf	resp	fixture	-	-	busy	BACKOFF	20	502 carrying the rate text and 20s
+19.free_key/chat	leaf	chat	fixture	-	-	fluxStop	STOP	-	402 chat rewrite: free_tier_exhausted with no hold header names no cause
+19.free_key/msg	leaf	msg	fixture	-	-	fluxStop	STOP	-	402; the rewrite sentence alone names no cause
+19.free_key/resp	leaf	resp	fixture	-	-	busy	BACKOFF	20	502 carrying the rate text and 20s
+20.chat	leaf	chat	fixture	-	-	busy	BACKOFF	60	'No deployments available ... Try again in 60 seconds'
+20.msg	leaf	msg	fixture	-	-	busy	BACKOFF	60	500 with the same rate text
+20.resp	leaf	resp	fixture	-	-	busy	BACKOFF	60	502 with the same rate text
+D04a.resp	sibling	resp	fixture	-	-	keyAccess	STOP	-	state entitlement_missing is FLUX_FINAL (defensive: prod data cannot produce it today)
+D04a.msg	sibling	msg	fixture	-	-	keyAccess	STOP	-	429 but terminal text names keyAccess (P1-1) (defensive: prod data cannot produce it today)
+D04b.resp	sibling	resp	fixture	-	-	keyAccess	STOP	-	state subscription_account_mismatch is FLUX_FINAL
+D04b.msg	sibling	msg	fixture	-	-	keyAccess	STOP	-	429 but terminal text names keyAccess (P1-1)
+D04c.resp	sibling	resp	fixture	-	-	keyNotFound	STOP	-	state key_not_found is FLUX_FINAL (defensive: prod data cannot produce it today)
+D04c.msg	sibling	msg	fixture	-	-	keyNotFound	STOP	-	429 but terminal text names keyNotFound (P1-1) (defensive: prod data cannot produce it today)
+D04d.resp	sibling	resp	fixture	-	-	accessUnknown	STOP	-	state authorization_state_unknown is FLUX_FINAL
+D04d.msg	sibling	msg	fixture	-	-	accessUnknown	STOP	-	429 but terminal text names accessUnknown (P1-1)
+D07.chat	sibling	chat	fixture	-	-	busy	BACKOFF	60	tokens variant of 07: 'Limit resets at' minus frozen now
+D07.resp	sibling	resp	fixture	-	-	busy	BACKOFF	60	tokens variant of 07: 'Limit resets at' minus frozen now
+D07.msg	sibling	msg	fixture	-	-	busy	BACKOFF	60	tokens variant of 07: 'Limit resets at' minus frozen now
+D09.chat	sibling	chat	fixture	-	-	busy	BACKOFF	1	Retry-After 1, p_s_f state batch_rate (transient)
+D09.resp	sibling	resp	fixture	-	-	busy	BACKOFF	1	state batch_rate, retry_after 1
+D09.msg	sibling	msg	fixture	-	-	busy	BACKOFF	1	429 with known wait 'Retry after 1 second' (P2-4)
+D12.chat	sibling	chat	fixture	-	-	botBudget	STOP	-	402; key_budget_reached, limit bot_monthly_spend
+D12.resp	sibling	resp	fixture	-	-	botBudget	STOP	-	402; key_budget_reached, limit bot_monthly_spend
+D12.msg	sibling	msg	fixture	-	-	botBudget	STOP	-	402; text has 'bot has reached its' and 'monthly budget': bot wins (P1-2)
+D16a.chat	sibling	chat	fixture	-	-	spendCap	STOP	-	402; hold header daily_cap
+D16a.resp	sibling	resp	fixture	-	-	spendCap	STOP	-	402; text 'spend cap is reached'
+D16a.msg	sibling	msg	fixture	-	-	spendCap	STOP	-	402; text 'spend cap is reached'
+D16b.resp	sibling	resp	fixture	-	-	spendCap	STOP	-	402; text 'spend cap is reached'
+D16b.msg	sibling	msg	fixture	-	-	spendCap	STOP	-	402; text 'spend cap is reached'
+D16d.chat	sibling	chat	fixture	-	-	unresolved	STOP	-	402 + hold header credit_unresolved; 'retry shortly' cannot lift a 402
+D16d.resp	sibling	resp	fixture	-	-	unresolved	STOP	-	402; text 'could not be verified'; 'retry shortly' cannot lift a 402
+D16d.msg	sibling	msg	fixture	-	-	unresolved	STOP	-	402; text 'could not be verified'; 'retry shortly' cannot lift a 402
+D17.chat	sibling	chat	fixture	-	-	spendCap	STOP	-	'overage cap' beats the coarse credit_exhausted header
+D17.resp	sibling	resp	fixture	-	-	spendCap	STOP	-	402; text 'overage cap'
+D17.msg	sibling	msg	fixture	-	-	spendCap	STOP	-	402; text 'overage cap'
+D16c.chat	homegate	chat	402	{"x-flux-hold-reason":"credit_hold"}	{"error":{"message":"Your credit is on hold. Please contact support. Top up at https://fluxrouter.ai/home/billing","type":"None","param":"None","code":"402"}}	creditHold	STOP	-	home gate only (FIXTURE_FEATURE=false today), sentence from 00000000; 402; hold header credit_hold
+D16c.resp	homegate	resp	402	{}	{"error":{"message":"Your credit is on hold. Please contact support.","type":"api_error","param":null,"code":"402"}}	creditHold	STOP	-	home gate only (FIXTURE_FEATURE=false today), sentence from 00000000; 402; text names creditHold
+D16c.msg	homegate	msg	402	{}	{"type":"error","error":{"type":"invalid_request_error","message":"Your credit is on hold. Please contact support."}}	creditHold	STOP	-	home gate only (FIXTURE_FEATURE=false today), sentence from 00000000; 402; text names creditHold
+D16e.chat	homegate	chat	402	{"x-flux-hold-reason":"credit_exhausted"}	{"error":{"message":"Your Murage Cloud credit is exhausted. Top up to keep going. Top up at https://fluxrouter.ai/home/billing","type":"None","param":"None","code":"402"}}	credit	STOP	-	home gate only (FIXTURE_FEATURE=false today), sentence from 00000000; 402; hold header credit_exhausted
+D16e.resp	homegate	resp	402	{}	{"error":{"message":"Your Murage Cloud credit is exhausted. Top up to keep going.","type":"api_error","param":null,"code":"402"}}	credit	STOP	-	home gate only (FIXTURE_FEATURE=false today), sentence from 00000000; 402; text names credit
+D16e.msg	homegate	msg	402	{}	{"type":"error","error":{"type":"invalid_request_error","message":"Your Murage Cloud credit is exhausted. Top up to keep going."}}	credit	STOP	-	home gate only (FIXTURE_FEATURE=false today), sentence from 00000000; 402; text names credit
+X1	synthetic	chat	402	{"retry-after":"2","x-flux-hold-reason":"concurrency"}	{"error":{"message":"Available credit is low because other requests have temporarily reserved it. Retry in 2s.","type":"None","param":"None","code":"402"}}	fluxStop	STOP	-	402 is terminal; a hold code never names a STOP reason (P1-2)
+X2	synthetic	resp	401	{}	{"error":{"type":"authentication_error","state":"credit_unresolved"}}	unresolved	STOP	-	401 with a FLUX_FINAL code: not bare, no refresh exception
+X3	synthetic	chat	402	{}	{"error":{"message":"This key is limited to 1 concurrent requests (batch traffic class). Retry after 1 second.","type":"None","param":"None","code":"402","provider_specific_fields":{"error":{"type":"rate_limit_exceeded","state":"batch_concurrency","retry_after":1}}}}	fluxStop	STOP	-	402 terminal; batch code never names a STOP reason (P1-2)
+X4	synthetic	resp	403	{}	{"error":{"type":"permission_error","state":"authorization_state_unknown"}}	accessUnknown	STOP	-	403 terminal, code names the reason
+X5	synthetic	resp	429	{}	{"error":{"type":"rate_limit_exceeded","state":"credit_unresolved"}}	unresolved	STOP	-	credit_unresolved is FLUX_FINAL on 429; code only, no text
+X6	synthetic	msg	401	{}	{"type":"error","error":{"type":"authentication_error","message":"The key my-key has reached its $5.00 monthly budget."}}	keyBudget	STOP	-	401 with budget text: reason from text, no key mark, not bare
+X7	synthetic	msg	429	{}	{"type":"error","error":{"type":"rate_limit_error","message":"Your credit balance could not be verified. Please retry shortly."}}	unresolved	STOP	-	terminal text beats 'retry shortly' (P1-1 order)
+X8	synthetic	resp	402	{}	{"error":{"error":"key_budget_reached","message":"This bot has reached its $5.00 monthly budget across all of its keys."}}	botBudget	STOP	-	key_budget_reached without limit: subtype from text (limit optional)
+X9	synthetic	resp	402	{}	{"error":{"error":"key_budget_reached"}}	keyBudget	STOP	-	key_budget_reached, no limit, no text: keyBudget
+X10	synthetic	chat	402	{}	{"error":{"message":"key_budget_reached","type":"None","param":"None","code":"402","provider_specific_fields":{"error":"key_budget_reached","limit":"monthly_tokens"}}}	keyTokens	STOP	-	limit field decides with no text
+X11	synthetic	resp	429	{}	{"error":{"type":"rate_limit_exceeded","retry_after":true}}	unknownLimit	PAUSE	-	JSON true is not an integer wait (P2-7)
+X12a	synthetic	msg	429	{}	null	unknownLimit	PAUSE	-	CLI status-only 429 (P2-5)
+X12b	synthetic	msg	402	{}	null	fluxStop	STOP	-	CLI status-only 402
+X12c	synthetic	msg	401	{}	null	keyRefused	STOP	-	CLI status-only 401
+X12d	synthetic	msg	403	{}	null	keyRefused	STOP	-	CLI status-only 403
+X12e	synthetic	msg	503	{}	null	busy	RETRY_ONCE	2	CLI status-only 5xx
+X13	synthetic	resp	429	{}	{"error":{"type":"rate_limit_exceeded","retry_after":7201}}	unknownLimit	PAUSE	-	wait above 7200 is dropped
+X14	synthetic	resp	429	{}	{"error":{"type":"rate_limit_exceeded","retry_after":"60"}}	unknownLimit	PAUSE	-	string wait in a body is not an integer
+X15	synthetic	resp	403	{}	{"error":{"type":"permission_error","message":"Forbidden"}}	keyRefused	STOP	-	bare 403: terminal, never refresh-eligible
+X16	synthetic	chat	402	{"x-flux-hold-reason":"free_tier_exhausted"}	{"error":{"message":"free_tier_exhausted","type":"None","param":"None","code":"402","provider_specific_fields":{"error":"free_tier_exhausted"}}}	freeCredit	STOP	-	#654 shape: hold header present, so no mislabel
+X17	synthetic	resp	429	{"retry-after":"5"}	{"error":{"type":"rate_limit_exceeded","state":"key_revoked"}}	keyRevoked	STOP	-	FLUX_FINAL code beats a Retry-After
+X18	synthetic	resp	429	{}	{"error":{"type":"rate_limit_exceeded","state":"concurrency"}}	hold	RETRY_ONCE	2	hold code with no wait: default 2
+X19	synthetic	resp	400	{}	{"error":{"type":"invalid_request_error","message":"bad"}}	other	PASS	-	not a refusal: existing error path
+X20	synthetic	chat	402	{}	{"error":{"message":"free_tier_exhausted","type":"None","param":"None","code":"402","provider_specific_fields":{"error":"free_tier_exhausted"}}}	fluxStop	STOP	-	chat free_tier_exhausted with no hold header and no sentence: the rewrite marker alone names no cause
+X21	synthetic	resp	402	{}	{"error":{"error":"key_budget_reached","limit":"monthly_tokens"}}	keyTokens	STOP	-	resp limit field decides with no text: Fuigo must forward upstream.limit
+X22	synthetic	resp	429	{}	{"error":{"error":"concurrency","code":"key_revoked"}}	keyRevoked	STOP	-	conflicting codes: transient/hold code plus a FLUX_FINAL code, terminal wins; Fuigo must forward both (data.upstream.codes)
+X23	synthetic	resp	429	{}	{"error":{"error":"tier_rpm_limit","provider_specific_fields":{"error":{"state":"daily_cap"}}}}	spendCap	STOP	-	conflicting codes across sources (error.error vs nested state): terminal wins

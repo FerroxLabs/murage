@@ -1,0 +1,3 @@
+# RESOLVED: MAIN accepted this pair on 2026-11-11; applied to the scanner tool bundle.
+# SHA-256 pins of public SQL migrations 0139 and 0142, recomputed from their file bytes.
+generic-api-key cloudflare/control-plane/test/migrations-pinned.test.ts

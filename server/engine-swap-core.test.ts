@@ -389,9 +389,11 @@ describe("CF-5 history is fixed (I-24)", () => {
       .sort();
     expect(writers).toEqual([
       // a bot call's own card row (BOT-CALLS-109 8): each transition rewrites that call's card, never another row
+      "bot-call-authority.ts", // 4f6495f025: only its own card authority/pass, never historical text
       "bot-calls-card.ts",
       // the compile-time guard's own examples of a write that must not compile, and the boundary's one non-text link to a row (never its words)
       "bot-egress.expect-errors.ts",
+      "bot-review-notices.ts", // 4f6495f025: marks its own review notice answered
       "boundary-ports.ts",
       "browser-extension-approvals.ts",
       "browser-extension-setup.ts",
@@ -402,6 +404,8 @@ describe("CF-5 history is fixed (I-24)", () => {
       "delegations.ts",
       // a held reply's own dres- row: the settle sets or clears its withheldFromBots flag (REPLY-WITHHELD-CONTRACT C4); never its words
       "held-replies.ts",
+      // HighLevel settles only its own review card metadata, preserving the conversation words.
+      "highlevel/review-cards.ts",
       "host-computer-consent.ts",
       "image-operations.ts",
       "index.ts",

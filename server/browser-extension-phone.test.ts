@@ -38,7 +38,9 @@ registerHooks({load(url,context,next){
    if(command.operation==='cdp'){
     const {method,params}=command.params;let r={};const tab=b.tabs[0];
     if(method==='Page.navigate'){tab.url=params.url;tab.origin=new URL(params.url).origin;tab.navigationEpoch++}
+    if(method==='Murage.getAllFrames')r={frames:[{frameId:0,parentFrameId:-1,url:tab.url}]};
     if(method==='Page.getFrameTree')r={frameTree:{frame:{id:'frame',loaderId:'L'}}};
+    if(method==='Murage.getAllFrames')r={frames:[{frameId:0,parentFrameId:-1}]};
     if(method==='Page.createIsolatedWorld')r={executionContextId:7};
     if(method==='DOM.getDocument')r={root:{nodeId:1}};
     if(method==='DOM.describeNode')r={node:{backendNodeId:1}};
@@ -62,6 +64,10 @@ let registry: import("../companion/src/devices.ts").DeviceRegistry;
 let owner: Record<string,string> = {}, client: Record<string,string> = {}, cookie = "";
 let threadId: string, clientId: string, registryRoot: string, pairedDeviceId: string;
 async function request(path: string, body?: unknown, headers = owner, base?: string) {
+  if(path==='/api/browser-extension/clients'&&body&&typeof body==='object'&&'action' in body&&body.action==='pair'&&!('disclosureKey' in body)){
+    const preview=await request(path,{...body,action:'preview'},headers);
+    body={...body,disclosureKey:preview.body.disclosure.disclosureKey};
+  }
   const res = await fetch((base ?? fixture.info.url) + path, {method: body === undefined ? "GET" : "POST", headers: {...headers,"content-type":"application/json"}, body: body === undefined ? undefined : JSON.stringify(body)});
   return {status:res.status,body:await res.json() as any,headers:res.headers};
 }

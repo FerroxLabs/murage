@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MINIMAL_ARGV, fixtureEngineBytes } from "./engine-launch-fixture.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { applyOpenCodeTurnPermission, openCodeTurnPermission } from "../drivers/acp/opencode-go.ts";
 
 const launcher = fileURLToPath(new URL("../../deploy/cloud-home/murage-turn-launch.py", import.meta.url));
 const ENGINES = ["claudeAgent", "codex", "grokAgent", "kimiAgent", "opencodeGo"] as const;
@@ -23,6 +24,7 @@ const harness = `import importlib.util,json,os,sys
 spec=importlib.util.spec_from_file_location("launcher_fixture",sys.argv[1])
 module=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
+module.EGRESS_ALLOW_PATH=os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])),"egress-allow.json")
 request=json.loads(sys.argv[2])
 engine,home,cwd,command,args,env,render,bot=module.validate_request(request,manifest_path=sys.argv[3],manifest_uid=os.getuid(),engine_root=sys.argv[4],cache_root=sys.argv[5])
 argv,blobs=module.turn_mount_args(engine,([("/fixture/anchor/cwd",cwd)] if cwd!=home else []),home,cwd,command,args,render,request.get("scratch",[]))
@@ -43,6 +45,7 @@ const login = `import importlib.util,json,os,sys
 spec=importlib.util.spec_from_file_location("launcher_fixture",sys.argv[1])
 module=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
+module.EGRESS_ALLOW_PATH=os.path.join(os.path.dirname(os.path.abspath(sys.argv[1])),"egress-allow.json")
 request={"mode":"login","engine":sys.argv[2],"action":"login"}
 if sys.argv[2]!="claudeAgent": request["bot"]="fixture-bot"  # B sign-ins name their bot (r9)
 turn=module.validate_login_request(request,engine_root=sys.argv[4])
@@ -78,7 +81,7 @@ function hostile(h: string): Record<string, string> {
 }
 const HOSTILE_NAMES = Object.keys(hostile("/fixture/home"));
 function run(request: object): { env: Record<string, string>; configPaths: string[]; staged: string[] } {
-  return JSON.parse(execFileSync("python3", ["-I", "-c", harness, launcher, JSON.stringify(request), manifest, engineRoot, join(root, "digest-cache")], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  return JSON.parse(execFileSync("python3", ["-I", "-c", harness, launcher, JSON.stringify(request), manifest, engineRoot, join(root, "digest-cache")], { windowsHide: true, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
 }
 function request(engine: string, env: Record<string, string>, extra: object = {}) {
   return { engine, bot: "fixture-bot", command, args: MINIMAL_ARGV[engine as keyof typeof MINIMAL_ARGV], cwd: home(engine), env, ...extra };
@@ -145,7 +148,7 @@ it("drops a path-shaped value in an allowed non-credential variable", () => {
 // (ENGINE_ENV_VALUE), tested in "Flux memory header overlays" below.
 it("refuses a path-shaped name in the allowlist at load and the shape covers every known override", () => {
   const names = ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "OPENCODE_TEST_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_PLUGIN_DIRS", "CLAUDE_ENV_FILE", "CLAUDE_CODE_TMPDIR", "GROK_HOME", "GROK_AUTH_PATH", "GROK_CONFIG_PATH", "GROK_TEST_PROMPT_BLACKHOLE", "KIMI_CODE_HOME", "KIMI_SHARE_DIR", "KIMI_PLUGIN_ROOT", "FUIGO_HOME", "EVIL_CONFIG_DIR", "HOME", "PATH", "TMPDIR"];
-  const result = JSON.parse(execFileSync("python3", ["-I", "-c", shape, launcher, JSON.stringify(names)], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  const result = JSON.parse(execFileSync("python3", ["-I", "-c", shape, launcher, JSON.stringify(names)], { windowsHide: true, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
   expect(result.refused).toBe(true);
   expect(result.matched).toEqual(names);
   for (const name of result.allowed) expect(names, name).not.toContain(name);
@@ -153,7 +156,7 @@ it("refuses a path-shaped name in the allowlist at load and the shape covers eve
 
 it("logs dropped names to stderr without their values", () => {
   const input = request("claudeAgent", { EVIL_CONFIG_DIR: "/fixture/secret-value", LANG: "C.UTF-8" });
-  const child = spawnSync("python3", ["-I", "-c", harness, launcher, JSON.stringify(input), manifest, engineRoot, join(root, "digest-cache")], { encoding: "utf8" });
+  const child = spawnSync("python3", ["-I", "-c", harness, launcher, JSON.stringify(input), manifest, engineRoot, join(root, "digest-cache")], { windowsHide: true, encoding: "utf8" });
   expect(child.status).toBe(0);
   expect(child.stderr).toContain("Cloud turn environment dropped: EVIL_CONFIG_DIR");
   expect(child.stderr).not.toContain("secret-value");
@@ -161,9 +164,11 @@ it("logs dropped names to stderr without their values", () => {
 
 it("gives a routed Fuigo turn the launcher's own scratch home, never the request's", () => {
   const h = home("fuigoAgent"); const relative = "native/provider-turns/fuigoAgent-0123456789ab";
-  const env = { FUIGO_HOME: `${h}/tmp/evil`, FUIGO_API_KEY: "fixture-key", FUIGO_API_BASE_URL: "https://fixture.example/v1", FUIGO_CLAUDE_MCPS_ENABLED: "0", XDG_CONFIG_HOME: `${h}/tmp/evil` };
+  const env = { FUIGO_HOME: `${h}/tmp/evil`, FUIGO_API_KEY: "fixture-key", FUIGO_API_BASE_URL: "https://api.fluxrouter.ai/v1", FUIGO_CLAUDE_MCPS_ENABLED: "0", XDG_CONFIG_HOME: `${h}/tmp/evil` };
   const routed = run(request("fuigoAgent", env, { scratch: [relative] })).env;
-  expect(routed).toMatchObject({ FUIGO_HOME: `${h}/${relative}`, FUIGO_API_KEY: "fixture-key", FUIGO_API_BASE_URL: "https://fixture.example/v1", FUIGO_CLAUDE_MCPS_ENABLED: "0", XDG_CONFIG_HOME: `${h}/.config` });
+  expect(routed).toMatchObject({ FUIGO_HOME: `${h}/${relative}`, FUIGO_API_KEY: "fixture-key", FUIGO_API_BASE_URL: "https://api.fluxrouter.ai/v1", FUIGO_CLAUDE_MCPS_ENABLED: "0", XDG_CONFIG_HOME: `${h}/.config` });
+  // A Flux turn's base must be the image's one fuigoAgent egress host (CLOUD-FLUX-ROUTER-BASE): anything else refuses the turn.
+  expect(() => run(request("fuigoAgent", { ...env, FUIGO_API_BASE_URL: "https://fixture.example/v1" }))).toThrow(/FUIGO_API_BASE_URL is not allowed/);
   // The 19 compat gates are pinned to "0" (CLOUD-ENGINES-DESIGN.md 5.1): a request "1" is ignored.
   expect(run(request("fuigoAgent", { FUIGO_CLAUDE_MCPS_ENABLED: "1", FUIGO_CODEX_HOOKS_ENABLED: "1" })).env).toMatchObject({ FUIGO_CLAUDE_MCPS_ENABLED: "0", FUIGO_CODEX_HOOKS_ENABLED: "0", FUIGO_AGENTS_SKILLS_ENABLED: "0" });
   expect(run(request("fuigoAgent", env)).env.FUIGO_HOME).toBe(`${h}/.fuigo`);
@@ -171,7 +176,7 @@ it("gives a routed Fuigo turn the launcher's own scratch home, never the request
 
 it.each(["codex", "claudeAgent", "grokAgent", "kimiAgent"])("keeps a %s sign-in on its pinned home", engine => {
   const h = home(engine);
-  const { env } = JSON.parse(execFileSync("python3", ["-I", "-c", login, launcher, engine, manifest, engineRoot, join(root, "digest-cache"), command], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  const { env } = JSON.parse(execFileSync("python3", ["-I", "-c", login, launcher, engine, manifest, engineRoot, join(root, "digest-cache"), command], { windowsHide: true, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
   expect(env).toMatchObject({ [CONFIG_VAR[engine]]: `${h}/${{ codex: ".codex", claudeAgent: ".claude", grokAgent: ".grok", kimiAgent: ".kimi-code" }[engine]}`, XDG_CONFIG_HOME: `${h}/.config`, LANG: "C.UTF-8", TERM: "xterm-256color" });
 });
 
@@ -184,11 +189,15 @@ describe("Flux memory header overlays (11-2)", () => {
   const opencode = JSON.stringify({ provider: { flux: { options: { headers } } } });
   const opencodeMcp = JSON.stringify({ provider: { flux: { options: { headers: { ...headers, "x-flux-memory-read": "a1,b2" } } } }, mcp: { composio: { enabled: false } } });
   const envOf = (engine: string, env: Record<string, string>) => run(request(engine, env)).env;
+  // applyOpenCodeTurnPermission's output for a base document: the bytes the launcher must reproduce.
+  const driverTurn = (base?: string): string => { const env: Record<string, string | undefined> = base ? { OPENCODE_CONFIG_CONTENT: base } : {}; applyOpenCodeTurnPermission(env); return env.OPENCODE_CONFIG_CONTENT!; };
+  const opencodeOf = (env: Record<string, string>, extra: object = {}) => run(request("opencodeGo", env, extra)).env.OPENCODE_CONFIG_CONTENT;
 
   it("passes each overlay for its own engine and drops it for every other", () => {
     expect(envOf("fuigoAgent", { FUIGO_CONFIG: fuigo }).FUIGO_CONFIG).toBe(fuigo);
-    expect(envOf("opencodeGo", { OPENCODE_CONFIG_CONTENT: opencode }).OPENCODE_CONFIG_CONTENT).toBe(opencode);
-    expect(envOf("opencodeGo", { OPENCODE_CONFIG_CONTENT: opencodeMcp }).OPENCODE_CONFIG_CONTENT).toBe(opencodeMcp);
+    // A bot turn gets the launcher's own document: the overlay's provider and mcp, then its permission sections.
+    expect(envOf("opencodeGo", { OPENCODE_CONFIG_CONTENT: opencode }).OPENCODE_CONFIG_CONTENT).toBe(driverTurn(opencode));
+    expect(envOf("opencodeGo", { OPENCODE_CONFIG_CONTENT: opencodeMcp }).OPENCODE_CONFIG_CONTENT).toBe(driverTurn(opencodeMcp));
     for (const engine of ENGINES) {
       if (engine !== "opencodeGo") expect(envOf(engine, { OPENCODE_CONFIG_CONTENT: opencode, FUIGO_CONFIG: fuigo }), engine).not.toHaveProperty("OPENCODE_CONFIG_CONTENT");
       expect(envOf(engine, { FUIGO_CONFIG: fuigo }), engine).not.toHaveProperty("FUIGO_CONFIG");
@@ -203,7 +212,7 @@ describe("Flux memory header overlays (11-2)", () => {
   // Fable follow-up 2: a config var that is present but malformed refuses the turn (the driver meant an overlay;
   // dropping it would silently lose the memory opt-out). The refusal names the var, never the value.
   const refusal = (engine: string, name: string, value: string) =>
-    spawnSync("python3", ["-I", "-c", harness, launcher, JSON.stringify(request(engine, { [name]: value })), manifest, engineRoot, join(root, "digest-cache")], { encoding: "utf8" });
+    spawnSync("python3", ["-I", "-c", harness, launcher, JSON.stringify(request(engine, { [name]: value })), manifest, engineRoot, join(root, "digest-cache")], { windowsHide: true, encoding: "utf8" });
   it.each([["fuigoAgent", "FUIGO_CONFIG"], ["grokAgent", "GROK_CONFIG"], ["opencodeGo", "OPENCODE_CONFIG_CONTENT"]])("%s refuses a malformed %s without echoing it", (engine, name) => {
     const secret = "sk-fixture-leak-check";
     for (const value of ["/fixture/evil.json", `{"apiKey":"${secret}"}`, `{not json ${secret}`]) {
@@ -240,6 +249,130 @@ describe("Flux memory header overlays (11-2)", () => {
     expect(child.status).not.toBe(0);
     expect(child.stderr).toContain("FUIGO_CONFIG is malformed");
     expect(child.stderr).not.toContain(SECRET);
+  });
+
+  // The driver's own output (applyOpenCodeTurnPermission) still runs a turn, and comes back byte for byte.
+  it("runs a turn with the real driver output, alone and beside the memory overlay and the mcp switch-off, byte for byte", () => {
+    for (const base of [undefined, opencode, opencodeMcp]) {
+      const driver = driverTurn(base);
+      expect(opencodeOf({ OPENCODE_CONFIG_CONTENT: driver })).toBe(driver);
+      // and the launcher builds the same bytes from the pre-permission document, or from none at all
+      expect(opencodeOf(base ? { OPENCODE_CONFIG_CONTENT: base } : {})).toBe(driver);
+    }
+  });
+
+  // The launcher spells the driver's permission set out; this keeps the two from drifting.
+  it("holds the launcher's spelled-out permission set equal to the driver's", () => {
+    const out = execFileSync("python3", ["-I", "-c", `import importlib.util,json,sys
+spec=importlib.util.spec_from_file_location("launcher_fixture",sys.argv[1])
+module=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+print(json.dumps({"permission":module.OPENCODE_PERMISSION,"agents":list(module.OPENCODE_AGENTS)}))`, launcher], { encoding: "utf8" });
+    const spelled = JSON.parse(out) as { permission: unknown; agents: string[] };
+    expect(spelled.permission).toEqual(openCodeTurnPermission());
+    expect(Object.keys((spelled.permission as { read: object }).read)).toEqual(Object.keys(openCodeTurnPermission().read as object));
+    expect(spelled.agents).toEqual(["build", "plan", "general", "explore"]);
+  });
+
+  // The launcher's serialized sections (what a bot turn is handed) equal the driver's, byte for byte, order included.
+  it("serializes the launcher's permission and agent sections exactly as openCodeTurnPermission() does", () => {
+    const out = execFileSync("python3", ["-I", "-c", `import importlib.util,json,sys
+spec=importlib.util.spec_from_file_location("launcher_fixture",sys.argv[1])
+module=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+print(json.dumps(list(module.opencode_turn_sections())))`, launcher], { encoding: "utf8" });
+    const [perm, agent] = JSON.parse(out) as [string, string];
+    const permission = openCodeTurnPermission();
+    expect(perm).toBe(JSON.stringify(permission));
+    expect(agent).toBe(JSON.stringify(Object.fromEntries(["build", "plan", "general", "explore"].map(name => [name, { permission }]))));
+    expect(driverTurn()).toBe(`{"permission":${perm},"agent":${agent},"default_agent":"build"}`);
+  });
+
+  const permission = openCodeTurnPermission();
+  const agents = (perm: unknown) => Object.fromEntries(["build", "plan", "general", "explore"].map(name => [name, { permission: perm }]));
+  const withReadStarLast = (perm: Record<string, unknown>) => { const { "*": star, ...rest } = perm.read as Record<string, string>; return { ...perm, read: { ...rest, "*": star } }; };
+  const turn = (perm: unknown, extra: Record<string, unknown> = {}) => JSON.stringify({ permission: perm, agent: agents(perm), default_agent: "build", ...extra });
+  it.each([
+    ["a permission that allows everything", turn({ ...permission, "*": "allow" })],
+    ["a permission value other than ask or allow", turn({ ...permission, bash: "deny" })],
+    ["a permission for an unknown tool", turn({ ...permission, evil: "ask" })],
+    ["a read rule with a command in it", turn({ ...permission, read: { "*": "allow", "$(id)": "ask" } })],
+    ["a permission without its agents", JSON.stringify({ permission })],
+    ["agents that differ from the permission", turn(permission, { agent: agents({ ...permission, bash: "allow" }) })],
+    ["an agent that runs a command", turn(permission, { agent: { build: { permission, command: ["/bin/sh"] } } })],
+    ["another default agent", turn(permission, { default_agent: "evil" })],
+    // Grok r4: the validator once accepted each of these widenings; the permission set must be exactly the driver's.
+    ...["bash", "edit", "write", "webfetch", "external_directory"].flatMap(tool => [
+      [`${tool} set to allow`, turn({ ...permission, [tool]: "allow" })],
+      [`${tool} left out`, turn(Object.fromEntries(Object.entries(permission).filter(([k]) => k !== tool)))],
+    ] as [string, string][]),
+    ["read without the *.ssh/* rule", turn({ ...permission, read: Object.fromEntries(Object.entries(permission.read as object).filter(([k]) => k !== "*.ssh/*")) })],
+    ["read with the *.ssh/* rule set to allow", turn({ ...permission, read: { ...(permission.read as object), "*.ssh/*": "allow" } })],
+    ["read with an extra pattern", turn({ ...permission, read: { ...(permission.read as object), "*.extra": "ask" } })],
+    ["read whose * is ask", turn({ ...permission, read: { ...(permission.read as object), "*": "ask" } })],
+    ["read that is not an object", turn({ ...permission, read: "allow" })],
+    ["a read-only tool set to ask", turn({ ...permission, grep: "ask" })],
+    ["a read-only tool left out", turn(Object.fromEntries(Object.entries(permission).filter(([k]) => k !== "todowrite")))],
+    ["an empty agent map", JSON.stringify({ permission, agent: {}, default_agent: "build" })],
+    ["agents with build missing", JSON.stringify({ permission, agent: Object.fromEntries(Object.entries(agents(permission)).filter(([k]) => k !== "build")), default_agent: "build" })],
+    ["an unknown extra agent", JSON.stringify({ permission, agent: { ...agents(permission), evil: { permission } }, default_agent: "build" })],
+    ["one agent with a widened permission", turn(permission, { agent: { ...agents(permission), plan: { permission: { ...permission, bash: "allow" } } } })],
+    ["a permission value of the wrong type", turn({ ...permission, bash: true })],
+    // r5 HIGH 2: the same set with read["*"] moved last (the last matching glob wins), at the top level and in every agent.
+    ["read[\"*\"] moved last", turn(withReadStarLast(permission))],
+    ["read[\"*\"] moved last in the permission only", turn(withReadStarLast(permission), { agent: agents(permission) })],
+    ["read[\"*\"] moved last in the agents only", turn(permission, { agent: agents(withReadStarLast(permission)) })],
+    ["a top-level key order that puts * last", turn(Object.fromEntries(Object.entries(permission).filter(([k]) => k !== "*").concat([["*", "ask"]])))],
+  ])("gives a bot turn the launcher's own permission sections whatever the proposal's permission, agent or default_agent holds: %s", (_, value) => {
+    // A bot turn never forwards the string: the proposed permission, agent and default_agent have no effect at all.
+    expect(opencodeOf({ OPENCODE_CONFIG_CONTENT: value })).toBe(driverTurn());
+  });
+  it.each([
+    ["a permission that is a list and nothing else", turn([])],
+    ["a duplicate permission key", JSON.stringify({ permission, agent: agents(permission), default_agent: "build" }).replace('"default_agent":"build"', '"default_agent":"build","permission":{"*":"allow"}')],
+    ["a duplicate bash key", JSON.stringify({ permission, agent: agents(permission), default_agent: "build" }).replace('"bash":"ask"', '"bash":"allow","bash":"ask"')],
+    ["a duplicate read * key", JSON.stringify({ permission, agent: agents(permission), default_agent: "build" }).replace('"read":{"*":"allow"', '"read":{"*":"allow","*":"allow"')],
+    ["an escaped duplicate key", JSON.stringify({ permission, agent: agents(permission), default_agent: "build" }).replace('"bash":"ask"', '"\\u0062ash":"allow","bash":"ask"')],
+  ])("still refuses an OPENCODE_CONFIG_CONTENT with %s", (_, value) => {
+    const child = refusal("opencodeGo", "OPENCODE_CONFIG_CONTENT", value);
+    expect(child.status).not.toBe(0);
+    expect(child.stderr).toContain("OPENCODE_CONFIG_CONTENT is malformed");
+  });
+
+  // r5 HIGH 1: a bot turn is never left on OpenCode's allow-all defaults, whatever (or nothing) the proposal carries.
+  it("synthesizes the permission sections for a bot turn with no document, a provider-only one and an mcp-only one", () => {
+    expect(opencodeOf({})).toBe(driverTurn());
+    expect(opencodeOf({ OPENCODE_CONFIG_CONTENT: opencode })).toBe(driverTurn(opencode));
+    const mcpOnly = JSON.stringify({ mcp: { composio: { enabled: false } } });
+    expect(opencodeOf({ OPENCODE_CONFIG_CONTENT: mcpOnly })).toBe(driverTurn(mcpOnly));
+    for (const value of [undefined, opencode, mcpOnly]) {
+      const doc = JSON.parse(opencodeOf(value ? { OPENCODE_CONFIG_CONTENT: value } : {})) as { permission: Record<string, unknown>; agent: Record<string, { permission: unknown }>; default_agent: string };
+      expect(doc.permission["*"]).toBe("ask");
+      expect(doc.permission.bash).toBe("ask");
+      expect(Object.keys(doc.agent)).toEqual(["build", "plan", "general", "explore"]);
+      expect(doc.default_agent).toBe("build");
+      expect(Object.keys(doc.permission.read as object)[0]).toBe("*");
+      for (const entry of Object.values(doc.agent)) expect(Object.keys((entry.permission as { read: object }).read)[0]).toBe("*");
+    }
+  });
+  it("keeps the proposal's validated provider and mcp but never its permission, whatever else it carries", () => {
+    const evil = JSON.stringify({ provider: { flux: { options: { headers } } }, mcp: { composio: { enabled: false } }, permission: { "*": "allow", bash: "allow" }, agent: { build: { permission: { bash: "allow" } } }, default_agent: "plan" });
+    const out = JSON.parse(opencodeOf({ OPENCODE_CONFIG_CONTENT: evil })) as Record<string, any>;
+    expect(Object.keys(out)).toEqual(["provider", "mcp", "permission", "agent", "default_agent"]);
+    expect(out.provider).toEqual({ flux: { options: { headers } } });
+    expect(out.permission.bash).toBe("ask");
+    expect(out.agent.build.permission.bash).toBe("ask");
+    expect(out.default_agent).toBe("build");
+  });
+  // Probe turns (no bot) keep the exact-shape check on the forwarded string.
+  it("keeps the strict check for a probe turn, which has no bot", () => {
+    const probe = { bot: undefined, args: ["--version"] };
+    expect(opencodeOf({ OPENCODE_CONFIG_CONTENT: opencode }, probe)).toBe(opencode);
+    expect(opencodeOf({}, probe)).toBeUndefined();
+    const widened = turn({ ...permission, bash: "allow" });
+    const child = spawnSync("python3", ["-I", "-c", harness, launcher, JSON.stringify(request("opencodeGo", { OPENCODE_CONFIG_CONTENT: widened }, probe)), manifest, engineRoot, join(root, "digest-cache")], { encoding: "utf8" });
+    expect(child.status).not.toBe(0);
+    expect(child.stderr).toContain("OPENCODE_CONFIG_CONTENT is malformed");
   });
 
   it.each([

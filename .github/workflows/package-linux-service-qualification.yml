@@ -129,7 +129,7 @@ jobs:
           cp dist-server/memory-runtime-manifest.json qualification-evidence/linux-service/
           archive="release-service/murage-${SOURCE_REF}-linux-x64-service.tar"
           tar -cf "$archive" \
-            package.json installer/bin installer/lib dist dist-server dist-companion \
+            package.json installer/bin installer/lib shared/win-hide-child-process.mjs shared/win-hide-child-process.cjs dist dist-server dist-companion \
             skills skills-library library bot-library LICENSE NOTICE \
             third_party/fuigo third_party/installation-archive \
             dist-native/fuigo/linux-x64 dist-native/backup-age-linux

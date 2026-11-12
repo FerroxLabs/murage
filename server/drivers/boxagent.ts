@@ -1,3 +1,6 @@
+import { fluxTurnDecision } from "../flux-memory-headers.ts";
+import { registerBusyloopRequestSite, fluxRouteFor } from "../../shared/flux-route.ts";
+import { withRequestDelivery } from "./request-delivery.ts";
 import { NO_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
 // Box agent driver — the purest form of the idea: the turn runs ON the
 // bot's own cloud computer (box.ascii.dev), not on this machine. Uses the
@@ -91,11 +94,11 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
     const gate = createStopGate({ engineName: "the Cloud computer", emit: (event) => emit(event as unknown as RuntimeEvent), base });
 
     const api = async (path: string, opts: RequestInit = {}) => {
-      const res = await fetch(`${BOX_API}${path}`, {
+      const res = await registerBusyloopRequestSite(fluxRouteFor(`${BOX_API}${path}`), fetch(`${BOX_API}${path}`, {
         ...opts,
-        headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...opts.headers },
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...opts.headers, ...(fluxRouteFor(`${BOX_API}${path}`).routed ? fluxTurnDecision({ background: true }).headers : {}) },
         signal: (opts as any).signal ?? AbortSignal.timeout(30_000),
-      });
+      }));
       const body: any = await res.json().catch(() => null);
       if (!res.ok || body?.ok === false) {
         throw new Error(body?.code ?? body?.error ?? `box HTTP ${res.status}`);
@@ -172,12 +175,12 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
         // the irreversible call: the entry is live once the box ACCEPTED the prompt (liveWhen: a refused POST, an HTTP error status or a body
         // saying ok:false, never goes live; a mark that landed during the POST is read by the step below)
         post: () => gate.launch(entry, async () => {
-          const res = await fetch(`${BOX_API}/boxes/${boxId}/prompt`, {
+          const res = await registerBusyloopRequestSite(fluxRouteFor(`${BOX_API}/boxes/${boxId}/prompt`), fetch(`${BOX_API}/boxes/${boxId}/prompt`, {
             method: "POST",
-            headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+            headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...(fluxRouteFor(`${BOX_API}/boxes/${boxId}/prompt`).routed ? fluxTurnDecision(turn).headers : {}) },
             body: JSON.stringify({ provider: providerFor(model), model, prompt }),
             signal: AbortSignal.timeout(30_000),
-          });
+          }));
           return { status: res.status, body: await res.json().catch(() => null) };
         }, { liveOn: "resolve", liveWhen: (res) => res.status >= 200 && res.status < 300 && (res.body as { ok?: unknown } | null)?.ok !== false }),
       }), {
@@ -381,7 +384,7 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
       }
     };
 
-    return {
+    return withRequestDelivery({
       instanceId,
       driverKind: DRIVER_KIND,
       displayName: input.displayName,
@@ -411,6 +414,6 @@ export const BoxAgentDriver: ProviderDriver<BoxAgentConfig> = {
         gate.settleOutstanding(open);
         listeners.clear();
       },
-    };
+    });
   },
 };

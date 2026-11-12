@@ -1,3 +1,10 @@
+import { explicitNoLimits, explicitPermission, inheritedPermissions } from "./permission-inheritance.ts";
+import { BrowserModeStorage } from './browser-mode-storage.ts';
+import type { BrowserChoiceBot, DirectReservation } from './browser-mode-transition.ts';
+/** Typed inventory marker for a persistence boundary accepting whole permission-bearing records. */
+export type BotPermissionWrite<T> = T;
+import { canEmit, assertCardPatch, readRecord } from './decision/records.ts';
+import type { ApprovalRef, ApprovalView, PermissionCard, InfoCard } from './decision/types.ts';
 import { bumpChatsGen } from "./thread-summary.ts";
 import type { HeldContinuation } from "./external-context-delivery.ts";
 import type { AskerWakeSnapshot } from "./asker-wake.ts";
@@ -34,7 +41,7 @@ import { join } from "node:path";
 import { cancelCoalesced, flushCoalesced, scheduleCoalesced, tightenOwnerOnlyFile, writeFileAtomic } from "./atomic.ts";
 import { readPersistedRecords } from "./persisted-state.ts";
 import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
-import { DATA_DIR, loadBrowserProfileIdAliases } from "./config.ts";
+import { DATA_DIR, loadBrowserProfileIdAliases, loadConfig } from "./config.ts";
 import { clearFollowingPins, followCleanupDone, markFollowCleanupDone } from "./thread-follow-model.ts";
 import * as mdb from "./message-db.ts";
 import type { LineageRef } from "./memory/lineage-types.ts";
@@ -51,6 +58,7 @@ import { persistMemoryRoster, reconcileMemoryRoster } from "./memory/policy.ts";
 import { parseContinuityOptions, type ContinuityOptions } from "./memory/pip-types.ts";
 import { setMemoryCaptureRoster } from "./memory/capture-scope.ts";
 import { database, transaction } from "./database.ts";
+import { highLevelThreadMarked, markHighLevelThread, type HighLevelThreadMarkState } from "./highlevel/thread-marks.ts";
 import { afterCommit, inTxScope, onRollback } from "./tx-scope.ts";
 import { deleteProjectRows } from "./project-tables.ts";
 import { botDeletionKey, groupDeletionKey, recordOwnerDeletion, withdrawOwnerDeletion } from "./owner-deletions.ts";
@@ -106,6 +114,11 @@ export type EmberColor =
 export type EmberExpression = string;
 
 export interface OptionCardData {
+  botReviewId?: string;
+  botAuthority?: import('./bot-call-authority.ts').BotCardAuthority;
+  taskAllowSuggested?: { ownerWords: string };
+  approvalId?: string; requestRef?: string; actionHash?: string;
+  detail?: string; answeredAt?: number;
   /** Optional owner-approved browser connection with one explicit continuation. */
   browserSetup?: import("../shared/browser-setup-card.ts").BrowserSetupCardData;
   /** A publish approval card (server/publish): never auto-approved, in any access mode. */
@@ -375,7 +388,7 @@ export interface Message {
   /** On a hand-off's prompt: the sender's "Messaged" row it was handed over by (LINEAGE-DESIGN-S6 rules 6 and 7). The prompt's lineage is that one
    * line; a prompt without it (written before 1.0.3) keeps the asking conversation's prefix. */
   handoffOf?: { threadId: string; messageId: string };
-  automation?: { kind: "schedule"|"manual"|"webhook"|"channel"|"delegation"|"card"|"ask"|"message"|"room"; channel?: "telegram"|"slack"|"discord"|"whatsapp"; connectionId?: string; webhookId?: string; routineId?: string };
+  automation?: { kind: "schedule"|"manual"|"webhook"|"channel"|"delegation"|"card"|"ask"|"message"|"room"; channel?: "telegram"|"slack"|"discord"|"whatsapp"|"signal"; connectionId?: string; webhookId?: string; routineId?: string };
   id: string;
   /** Verified durable deliverable identities; raw paths never become download links. */
   artifactIds?: string[];
@@ -389,6 +402,8 @@ export interface Message {
    * Murage's private attachment directory; renderers receive only the
    * existing allowlisted /api/attachments URL. */
   attachments?: Array<{ kind: "image"; path: string; mime: string }>;
+  // Stored history includes legacy cards. The decision PermissionCard type is
+  // strict at creation; the database guard validates every actionable write.
   card?: OptionCardData;
   connector?: ConnectorCardData;
   mcpSignIn?: McpSignInCardData;
@@ -406,7 +421,7 @@ export interface Message {
    * something — the UI offers setup instead of a retry that cannot work. */
   /** `summary` is a short read of what the call was for — the only thing that
    * tells two chips apart on engines that route every tool through a wrapper. */
-  tool?: { name: string; action?: ReturnType<typeof import("./reply-action-guard.ts").toolAction>; ok?: boolean; /** An engine notice shown in the conversation; never an action or a tool outcome. */ notice?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; claudeUpdate?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; /** 1.0.18: a Fuigo / Flux refusal that is not a limit (limit-continuation.ts gatewayBusy): the one card's copy. */ busy?: { engine: string; reason: import("./limit-continuation.ts").GatewayBusyReason; /** the hourly gate's reset time Flux sent (epoch ms) */ resetsAt?: number }; localFailure?: LocalSetupFailure; /** The engine a local failure is about (an engine-folder failure), for the localized line. */ localFailureEngine?: string; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number;
+  tool?: { name: string; action?: ReturnType<typeof import("./reply-action-guard.ts").toolAction>; ok?: boolean; /** An engine notice shown in the conversation; never an action or a tool outcome. */ notice?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; claudeUpdate?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; /** 1.0.18: a Fuigo / Flux refusal that is not a limit (limit-continuation.ts gatewayBusy): the one card's copy. */ busy?: import("./limit-continuation.ts").GatewayBusyFacts; localFailure?: LocalSetupFailure; /** The engine a local failure is about (an engine-folder failure), for the localized line. */ localFailureEngine?: string; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number;
     /** 1.0.18 U6 E15: the turn ended with this step still open, so it has no recorded end ("No result"). A late real completion replaces the tool and clears it. */
     unrecorded?: boolean;
     /** An image made without an approval card (server/image-approval.ts): what was asked for and the whole prompt, shown folded like the card's. */
@@ -786,6 +801,8 @@ export interface TaskRecord {
    * while fullAccess is on. Absent on every older record, which stays at
    * guarded Full access. */
   noLimits?: boolean;
+  /** Owner level choice; false/absent defaults can follow global No limits. */
+  permissionExplicit?: boolean;
   alwaysAllow?: string[];
   unread?: boolean;
   rewound?: boolean;
@@ -1021,7 +1038,7 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
         warnings: card.skillRequest.warnings.map((warning) => redactSecretsInText(warning)),
       };
     }
-    out.card = card;
+    out.card = card as Message['card'];
   }
   if (out.connector) {
     out.connector = {
@@ -1099,7 +1116,12 @@ function firstLineTitle(text: string): string {
   return line.length > 48 ? `${line.slice(0, 47)}…` : line;
 }
 
+export function inertBot(bot: { hidden?: boolean; staged?: unknown }): boolean { return bot.hidden === true || bot.staged !== undefined; }
+
 export interface BotRecord {
+  staged?: import('./bot-staging-types.ts').StagedBot;
+  pendingHeldWork?: import('./bot-staging-types.ts').HeldBotWork[];
+  pendingRevision?: import('./bot-staging-types.ts').PendingBotRevision;
   sharedWith?: { mode: "none" | "list" | "all"; teams: Array<{ id: string; name: string }> };
   partitionedAt?: number;
   /** What this bot used per local calendar month (Settings, Usage). Upserted with each settled turn; bounded to a year. Months before 1.0.3 have no bucket. */
@@ -1150,6 +1172,8 @@ export interface BotRecord {
   sidebarHidden?: boolean;
   /** Durable replay refusal for the exact reviewed package import. */
   packageImportReceipt?: { reviewHash: string; archiveSha256: string; importId: string; selectionHash?: string;
+    /** The source agent's key in the package (1.0.19): how "already hired" is told from a rename. Optional; 1.0.18 keeps it. */
+    agentKey?: string;
     baseline?: ReturnType<typeof import("./package-import-comparison.ts").createPackageImportBaseline> };
   /** which computer the bot acts on: its cloud box, this Mac (local CUA),
    * or none. Unset = auto (box when it exists, else local when available). */
@@ -1199,6 +1223,8 @@ export interface BotRecord {
    * still asks, on a turn the owner started only for its gate files. Counts only while fullAccess is on. Set only from the
    * desktop app, after its own one-time warning. Absent = guarded. */
   noLimits?: boolean;
+  /** Owner level choice; false/absent defaults can follow global No limits. */
+  permissionExplicit?: boolean;
   /** When the owner confirmed this bot's one-time No limits warning. */
   noLimitsAcknowledgedAt?: number;
   /** Full access also covers the owner's own Telegram, Slack and Discord
@@ -1336,6 +1362,14 @@ export interface BotRecord {
   /** Id of a named browser profile from config.browserProfiles; absent = the
    * bot's own private session. */
   browserProfile?: string;
+  /** Owner browser-selection fence; an absent revision is zero. */
+  selectionRevision?: number;
+  browserMode?: import('./browser-mode-policy.ts').BrowserMode;
+  browserSelectionRevision?: number;
+  browserSetupRevision?: number;
+  pendingBrowserChoice?: import('./browser-mode-transition.ts').BrowserChoice;
+  previousBrowserChoice?: import('./browser-mode-policy.ts').BrowserSelection;
+  browserRelease?: import('./browser-mode-transition.ts').BrowserRelease;
   /** Owner opt-in: this bot's browser attaches to the owner's own running
    * Chrome (signed in as them) instead of an isolated profile. Absent = off.
    * At most one bot holds the legacy inspect route; extension bindings are isolated. */
@@ -1405,8 +1439,8 @@ export type { ReachableBot };
  * "@New Bot 2" never half-matches "New Bot"), hidden bots skipped, results
  * deduped. The rule lives in shared/mention-boundary.ts so the composer's
  * preview routes the same way. Callers pre-filter the sender out of `peers`. */
-export function mentionedBots<T extends { name: string; hidden?: boolean }>(text: string, peers: T[]): T[] {
-  return mentionedPeers(text, peers);
+export function mentionedBots<T extends { name: string; hidden?: boolean; staged?: unknown }>(text: string, peers: T[]): T[] {
+  return mentionedPeers(text, peers.filter(peer => !inertBot(peer)));
 }
 
 /** Normalize persisted or API-provided routing. Old rooms did not have this
@@ -1448,7 +1482,7 @@ export function normalizeGroupDefaultResponder(
  * is a reference, not an address. Names match whole words, case-insensitively,
  * longest first; a multi-word name's first word also works as a short name
  * when no other member shares it. Hidden members are never addressed. */
-export function addressedMembers<T extends { name: string; hidden?: boolean }>(text: string, members: T[], onMatch?: (member: T, at: number) => void): T[] {
+export function addressedMembers<T extends { name: string; hidden?: boolean; staged?: unknown }>(text: string, members: T[], onMatch?: (member: T, at: number) => void): T[] {
   // A message can carry a part for each bot: "Moss: check the sensor" on one
   // line and "Sable, write it up" in a later sentence. Each part uses the
   // same vocative rule; "Sable wrote it" stays a reference.
@@ -1520,8 +1554,8 @@ function statementAboutMember(after: string, relative = false): boolean {
 /** Imperatives that end in -ed, not past tenses ("embed it", "shred them"). */
 const IMPERATIVE_ED = /^(?:embed|imbed|shed|shred|wed|bed|sled)$/;
 
-function addressedInPart<T extends { name: string; hidden?: boolean }>(text: string, members: T[], options: { trailing: boolean }): T[] {
-  const available = members.filter((member) => !member.hidden && member.name.trim());
+function addressedInPart<T extends { name: string; hidden?: boolean; staged?: unknown }>(text: string, members: T[], options: { trailing: boolean }): T[] {
+  const available = members.filter((member) => !inertBot(member) && member.name.trim());
   const spoken = (name: string) => name.trim().toLowerCase().replace(/\s+/g, " ");
   const firstWord = (member: T) => spoken(member.name).split(" ")[0];
   const aliases: Array<{ alias: string; member: T }> = available.map((member) => ({ alias: spoken(member.name), member }));
@@ -1578,14 +1612,14 @@ function addressedInPart<T extends { name: string; hidden?: boolean }>(text: str
  * room policy chooses one member, everyone, or nobody. A bot's reply never
  * routes by plain name: bots are told to use their teammates' plain names to
  * refer to them and @Name only to summon them. */
-export function roomResponders<T extends { id: string; name: string; hidden?: boolean }>(
+export function roomResponders<T extends { id: string; name: string; hidden?: boolean; staged?: unknown }>(
   text: string,
   members: T[],
   defaultResponder: GroupDefaultResponder,
   replyToBotId?: string,
   options: { byName?: boolean; leadFirstBotId?: string } = {},
 ): T[] {
-  const available = members.filter((member) => !member.hidden);
+  const available = members.filter((member) => !inertBot(member));
   const ordered = (list: T[]) => options.leadFirstBotId
     ? [...list.filter(m => m.id === options.leadFirstBotId), ...list.filter(m => m.id !== options.leadFirstBotId)] : list;
   if (mentionsEveryone(text)) return ordered(available);
@@ -1791,6 +1825,9 @@ export interface BirthDeps {
   /** r3 (MurageMain 11-02): desktop only. The first-launch engine probe's reading (pickDefaultEngine, which already leaves out a keyless
    * Fuigo), used for the FIRST bot when no Fuigo is usable, so a machine with Claude found and no key still has a Chief that answers. */
   firstBot?: () => ModelSelection;
+  /** Cloud home only: when no Fuigo is usable, the home-wide engine reading (an available engine signed in home-wide), as before the
+   * 1.0.15 merge; empty when nothing qualifies. Absent on a desktop, whose births are unchanged. */
+  homeFallback?: () => ModelSelection;
 }
 
 export interface SpeechStoreHooks {
@@ -1800,6 +1837,18 @@ export interface SpeechStoreHooks {
   deleted(threadId: string): void;
 }
 export class Store {
+  /** Persist before exposing HighLevel tools. A failed write refuses the mount. */
+  markThreadHighLevel(_threadId: string): boolean {
+    const threadId = _threadId;
+    if (!this.botByThread(threadId) && !this.groupByThread(threadId)) return false;
+    try { return markHighLevelThread(database(), threadId); } catch { return false; }
+  }
+  /** A real, durable mark, not the F0 placeholder that marked every conversation. */
+  threadHighLevelMarked(_threadId: string): HighLevelThreadMarkState {
+    const threadId = _threadId;
+    try { return highLevelThreadMarked(database(), threadId); } catch { return "unreadable"; }
+  }
+
   private speechHooks?: SpeechStoreHooks;
   setSpeechHooks(hooks: SpeechStoreHooks): void { this.speechHooks = hooks; }
   private speechAttribute(threadId: string, message: Message): void {
@@ -1876,12 +1925,40 @@ export class Store {
   /** Workspace new-bot defaults (config newBots), applied by createBot. */
   private completeNewBotSelection: (selection: ModelSelection) => ModelSelection;
 
+  private readonly browserModes = new BrowserModeStorage(join(DATA_DIR, 'browser-modes.json'));
+  get chromeDirectReservation() { return this.browserModes.reservation; }
+  commitBrowserChoice(id: string, patch: Partial<BrowserChoiceBot>, reservation: DirectReservation | undefined): void {
+    const bot = this.bot(id); if (!bot) throw new Error('No such bot');
+    this.browserModes.commit(bot, patch, reservation);
+    this.emit({ type: 'bot', botId: id });
+  }
+  /** Profile deletion has already committed in config. Clear the authoritative
+   * selection before acknowledging its cleanup journal or allowing id reuse. */
+  clearBrowserProfile(id: string, profile: string): void {
+    const bot = this.bot(id); if (!bot) return;
+    const selected = bot.browserProfile === profile;
+    const pending = bot.pendingBrowserChoice?.mode === 'builtin' && bot.pendingBrowserChoice.profile === profile;
+    const previous = bot.previousBrowserChoice?.mode === 'builtin' && bot.previousBrowserChoice.profile === profile;
+    if (!selected && !pending && !previous) return;
+    const revision = (bot.selectionRevision ?? 0) + 1;
+    const patch: Partial<BrowserChoiceBot> = {
+      browserProfile: selected ? undefined : bot.browserProfile,
+      selectionRevision: revision, browserSelectionRevision: revision,
+      pendingBrowserChoice: undefined,
+      previousBrowserChoice: previous ? undefined : bot.previousBrowserChoice,
+    };
+    this.browserModes.commit(bot, patch, this.chromeDirectReservation);
+    this.saveBots();
+    this.emit({ type: 'bot', botId: id });
+  }
+  private ownerPermissionDefault: () => PermissionHolder;
   private memoryReady = true;
   finishSharingBoot(): void { this.memoryReady = true; reconcileMemoryRoster(this, { unlessUnchanged: true }); }
 
   // Standalone callers can load records and supply explicit selections without a
   // live engine registry. With no birth dependencies, automatic births stay empty.
-  constructor(birth: (() => ModelSelection) | BirthDeps = () => ({ instanceId: "", model: "" }), completeNewBotSelection: (selection: ModelSelection) => ModelSelection = (selection) => selection, deferMemoryReconcile = false) {
+  constructor(birth: (() => ModelSelection) | BirthDeps = () => ({ instanceId: "", model: "" }), completeNewBotSelection: (selection: ModelSelection) => ModelSelection = (selection) => selection, deferMemoryReconcile = false, ownerPermissionDefault: () => PermissionHolder = () => ({})) {
+    this.ownerPermissionDefault = ownerPermissionDefault;
     // A load reads the files: any deferred write from an earlier instance lands first.
     flushCoalesced();
     this.memoryReady = !deferMemoryReconcile;
@@ -1898,13 +1975,13 @@ export class Store {
     // Only an absent file is a fresh install; damaged state needs recovery.
     this.bots = readPersistedRecords<BotRecord>(BOTS_FILE);
     this.groups = readPersistedRecords<GroupRecord>(GROUPS_FILE);
+    const browserModesMigrated = this.browserModes.load(this.bots);
     for (const bot of this.bots) this.accessRoles.set(bot.id, accessRoleBinding({ ...bot, accessRoleEpoch: 0 }));
     // busy never survives a restart — no turn does either. Rooms saved
     // before default responders existed adopt their first member as lead.
-    let botsMigrated = false;
+    let botsMigrated = browserModesMigrated;
     const browserProfileAliases = loadBrowserProfileIdAliases();
     const chiefSectionsSeen = new Set<string>();
-    let userChromeSeen = false;
     let groupsMigrated = false;
     for (const b of this.bots) {
       // transient state never survives a restart — and if a previous
@@ -1920,28 +1997,9 @@ export class Store {
           botsMigrated = true;
         }
       }
-      // Malformed extension state must never become a legacy inspect opt-in.
-      if (b.browserTransport !== undefined && b.browserTransport !== "extension") {
-        delete b.browserTransport;
-        delete b.useMyChrome;
-        botsMigrated = true;
-      }
-      if (b.browserExtensionBrowser !== undefined && (b.browserTransport !== "extension" || !["chrome", "edge", "brave"].includes(b.browserExtensionBrowser))) {
-        delete b.browserExtensionBrowser;
-        botsMigrated = true;
-      }
-      if (b.browserExtensionProfileId !== undefined && (b.browserTransport !== "extension" || typeof b.browserExtensionProfileId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(b.browserExtensionProfileId))) {
-        delete b.browserExtensionProfileId;
-        delete b.useMyChrome;
-        botsMigrated = true;
-      }
-      // Only legacy inspect shares one browser-wide connection. Extension bots
-      // retain separate explicit tab grants across restart.
-      if (b.useMyChrome !== undefined && (b.useMyChrome !== true || (b.browserTransport !== "extension" && userChromeSeen))) {
-        delete b.useMyChrome;
-        botsMigrated = true;
-      }
-      if (b.useMyChrome && b.browserTransport !== "extension") userChromeSeen = true;
+      // BrowserModeStorage maps valid legacy records atomically before this
+      // sanitizer. Invalid opt-ins are removed; unknown modes and transports
+      // stay unchanged rather than being reclassified by transport.
       // "task" is the default and is stored as absent; anything unknown is dropped, never read as "full".
       if (b.browserApproval !== undefined && b.browserApproval !== "step" && b.browserApproval !== "full") {
         delete b.browserApproval;
@@ -1972,7 +2030,13 @@ export class Store {
       }
       // Keep the well-formed site records only.
       if (b.publishedSites !== undefined) {
-        const sites = readPublishedSites(b.publishedSites);
+        const permission = inheritedPermissions(b);
+        // At boot the live inheritance reader is installed after Store loads.
+        // Preserve followers' records from the saved default as well; this is
+        // data normalization, never authority to publish a site.
+        const startupDefault = !b.draftOnly && !explicitPermission(b) && (loadConfig().newBots?.permissionLevel === "no-limits"
+          || this.bots.some(bot => isWorkspaceChief(bot) && bot.autoApprove === true && bot.fullAccess === true && bot.noLimits === true));
+        const sites = readPublishedSites(b.publishedSites, startupDefault || !permission.draftOnly && permission.autoApprove === true && permission.fullAccess === true && permission.noLimits === true);
         if (JSON.stringify(sites) !== JSON.stringify(b.publishedSites)) {
           if (sites.length === 0) delete b.publishedSites; else b.publishedSites = sites;
           botsMigrated = true;
@@ -2208,6 +2272,11 @@ export class Store {
     // 1.0.4 SL-K K1: once, drop every chat model that only copied its bot's (marker written after the save lands).
     const followCleanup = !followCleanupDone(DATA_DIR);
     if (followCleanup && clearFollowingPins(this.bots) > 0) botsMigrated = true;
+    for (const bot of this.bots) {
+      for (const pending of [bot.staged, bot.pendingRevision]) {
+        if (pending?.reason === 'turn-open') { pending.reason = 'unsettled'; botsMigrated = true; }
+      }
+    }
     if (botsMigrated) this.saveBots();
     if (followCleanup) markFollowCleanupDone(DATA_DIR);
     // Search reads SQLite directly, so migrate every known legacy transcript
@@ -2255,14 +2324,14 @@ export class Store {
    * the last-engine marker, or one turn's usage tally and its idempotency key
    * (banked in the same write, so they stay consistent). Messages live in
    * SQLite and are never in this file. */
-  private saveBots(bots: BotRecord[] = this.bots, options: { defer?: boolean } = {}) {
+  private saveBots(bots: BotPermissionWrite<BotRecord[]> = this.bots, options: { defer?: boolean } = {}) {
     this.recordRevision++;
     if (options.defer && bots === this.bots) { scheduleCoalesced(BOTS_FILE, () => this.saveBotsNow()); return; }
     this.saveBotsNow(bots);
     if (bots === this.bots) cancelCoalesced(BOTS_FILE);
   }
 
-  private saveBotsNow(bots: BotRecord[] = this.bots) {
+  private saveBotsNow(bots: BotPermissionWrite<BotRecord[]> = this.bots) {
     // Role/config changes permanently revoke scoped grants. Write the revoked
     // candidate before publishing it so changing a role back cannot resurrect access.
     const { normalized, json } = this.rosterJson(bots);
@@ -2317,7 +2386,7 @@ export class Store {
 
   /** Prepare an additive import without changing memory or emitting events.
    * The caller durably commits all returned files before calling publish. */
-  preparePackageAddition(bots: BotRecord[], groups: GroupRecord[], options: { born?: ReadonlySet<string> } = {}) {
+  preparePackageAddition(bots: BotPermissionWrite<BotRecord[]>, groups: GroupRecord[], options: { born?: ReadonlySet<string> } = {}) {
     // 1.0.15 BIRTH-FUIGO P5: the import's bots with no owner pick are born here, once, inside the caller's synchronous commit: every one
     // gets a value copy of the one birth selection and the mark, in the records staged below (no later write).
     if (bots.some(bot => options.born?.has(bot.id))) {
@@ -2359,14 +2428,14 @@ export class Store {
   markPartitions(): void { if (!teamChangeOpen() && markPartitions(this)) this.saveGroups(); }
 
   /** Persist groups.json; same contract as saveBots (immediate unless `defer`). */
-  private saveGroups(bots: BotRecord[] = this.bots, options: { defer?: boolean } = {}) {
+  private saveGroups(bots: BotPermissionWrite<BotRecord[]> = this.bots, options: { defer?: boolean } = {}) {
     this.recordRevision++; // a channel's tasks and members are records too (task-window.ts, shared-wire.ts)
     if (options.defer && bots === this.bots) { scheduleCoalesced(GROUPS_FILE, () => this.saveGroupsNow()); return; }
     this.saveGroupsNow(bots);
     if (bots === this.bots) cancelCoalesced(GROUPS_FILE);
   }
 
-  private saveGroupsNow(bots: BotRecord[] = this.bots) {
+  private saveGroupsNow(bots: BotPermissionWrite<BotRecord[]> = this.bots) {
     if (!teamChangeOpen()) markPartitions({ bots, groups: this.groups });
     const write = () => writeFileAtomic(GROUPS_FILE, JSON.stringify(this.groups.map(({ busyBotId: _busyBotId, turnStartedAt: _turnStartedAt, ...g }) => g), null, 2), { mode: 0o600 });
     if (!this.memoryReady || teamChangeOpen()) write(); else persistMemoryRoster({ bots, groups: this.groups }, write);
@@ -2392,6 +2461,9 @@ export class Store {
     // Inside an open transaction nothing is announced until the outermost one commits; a rolled-back
     // write must never reach a listener or a client (see tx-scope.ts).
     if (inTxScope()) { afterCommit(() => this.emit(change)); return; }
+    if ((change.type === 'message' || change.type === 'message.patch') && !canEmit(database(), change.threadId, change.message, change.type === 'message.patch')) {
+      console.warn('card-emit-dropped', change.type); return;
+    }
     // every message write passes here (append, insert before or after, resend): the thread's last activity moves with it
     if (change.type === "message") { const was = this.lastActivity.get(change.threadId); if (was === undefined || was === null || change.message.at > was) this.lastActivity.set(change.threadId, change.message.at); }
     // A bot, task or room going idle releases its thread's pin (threadInFlight):
@@ -2824,6 +2896,7 @@ export class Store {
   private patchMessageRow(threadId: string, current: Message, patch: Partial<Message>): Message | null {
     if (this.threads.has(threadId)) return this.patchMessage(threadId, current.id, patch);
     const next = checkStoredRow({ ...current, ...boundRemovedText(patch), card: patch.card ?? current.card });
+    assertCardPatch(current, next);
     mdb.updateMessage(threadId, next);
     this.emit({ type: "message.patch", threadId, message: next, before: current });
     return next;
@@ -3890,6 +3963,15 @@ export class Store {
     });
   }
 
+  /** Decision core is the sole producer of action-bearing permission fields. */
+  appendApprovalCard(threadId: string, ref: ApprovalRef, view: ApprovalView): Message {
+    const record = readRecord(database(), ref.approvalId);
+    if (!record || record.thread_id !== threadId) throw new Error('approval-record-missing');
+    const action = JSON.parse(record.evidence).action;
+    const card = { ...action, title: view.title, subtitle: view.subtitle, ...(view.detail ? {detail:view.detail} : {}) } as PermissionCard;
+    return this.appendMessage(threadId, {role:'bot',kind:'options',card},record.chat_message_id);
+  }
+
   /** appendMessage for a thread that is not loaded: the same row, leaf, events
    * and owner-message follow-up, from the stored branch head and the newest
    * APPEND_TAIL_ROWS rows, never the transcript. Null for a thread with no
@@ -4203,6 +4285,7 @@ export class Store {
         const before = checkStoredRow({ ...step.message, parentId: step.parent });
         const next = checkStoredRow({ ...before, ...boundRemovedText(patch), card: patch.card ?? before.card });
         // `within` joins this write too: a card settled with the send it became (QW Q1) is one transaction on an unloaded thread as well
+        assertCardPatch(before, next);
         mdb.updateMessage(threadId, next, within);
         this.emit({ type: "message.patch", threadId, message: next, before });
         return next;
@@ -4211,6 +4294,7 @@ export class Store {
       const idx = t.messages.findIndex((m) => m.id === messageId);
       if (idx === -1) { if (within) transaction(() => within()); return null; }
       const next = checkStoredRow({ ...t.messages[idx], ...boundRemovedText(patch), card: patch.card ?? t.messages[idx].card });
+      assertCardPatch(t.messages[idx], next);
       // SQLite is the durable source of truth. Persist before changing memory so
       // a failed write cannot make this process believe a card was answered
       // while a restart would still show it as pending.
@@ -4222,6 +4306,9 @@ export class Store {
       return next;
     });
   }
+
+  activeBot(id: string): BotRecord | null { const bot = this.bot(id); return bot && !inertBot(bot) ? bot : null; }
+  activeBots(): BotRecord[] { return this.bots.filter(bot => !inertBot(bot)); }
 
   bot(id: string) {
     return this.bots.find((b) => b.id === id) ?? null;
@@ -4242,9 +4329,12 @@ export class Store {
        * with a first-person greeting the user never asked for. */
       seedMessages?: boolean;
       beforeCreate?: (id: string) => void;
+      staged?: BotRecord["staged"];
       /** A bot made by a caller that proved nothing (route-policy.ts): no
        *  computer, browser or connected apps until the owner turns them on. */
       noAccess?: boolean;
+      /** The computer the new bot starts on (config computer.defaultForNewBots, resolved by the caller). Never beats noAccess. */
+      computer?: BotRecord["computer"];
       /** 1.0.14 FIRST-ENGINE-REPICK: Murage chose the engine (no owner selection). Trusted callers only, never from a request body. */
       engineAutoPicked?: true;
     } = {},
@@ -4257,7 +4347,7 @@ export class Store {
     // bot's released state) must never come back, so the guard may throw and nothing is created.
     const id = newId();
     this.botIdGuard?.(id);
-    opts.beforeCreate?.(id);
+    if (!opts.staged) opts.beforeCreate?.(id);
     const bot: BotRecord = {
       id,
       threadId: newId(),
@@ -4270,19 +4360,28 @@ export class Store {
       ...(profile.mascotBody ? { mascotBody: profile.mascotBody } : {}),
       unread: false,
       // 1.0.15 BIRTH-FUIGO: no owner pick means birth decides, here, in the same tick as the write (section 5: one condition, one place).
-      modelSelection: this.completeNewBotSelection(born ? this.birthSelection() : profile.modelSelection!),
+      modelSelection: this.completeNewBotSelection(born || opts.staged ? this.birthSelection() : profile.modelSelection!),
       resumeCursors: {}, resumePolicies: undefined, replayPending: undefined,
       createdAt: Date.now(),
       // a new bot has done nothing yet: Auto asks before it first uses this computer
       hostComputerConsent: "ask",
+      ...(!opts.noAccess ? this.ownerPermissionDefault() : {}),
     };
     if (section) bot.section = section;
     bot.voice = pickDefaultVoice(this.bots);
     bot.voiceAssigned = true;
+    if (opts.computer && !opts.noAccess) bot.computer = opts.computer;
     if (opts.noAccess) { bot.computer = "off"; bot.browser = false; bot.composio = false; }
     // The one mark write (BIRTH-FUIGO section 5): a born bot, or a trusted caller's explicit mark (R3b), in the record saved below.
     if (born || opts.engineAutoPicked === true) bot.engineAutoPicked = true;
-    bot.tasks = [{ threadId: bot.threadId, title: UNTITLED_TASK, createdAt: bot.createdAt, resumeCursors: {}, resumePolicies: undefined, replayPending: undefined,autoApprove:false,alwaysAllow:[],unread:false }];
+    bot.tasks = [{ permissionExplicit:false, threadId: bot.threadId, title: UNTITLED_TASK, createdAt: bot.createdAt, resumeCursors: {}, resumePolicies: undefined, replayPending: undefined,autoApprove:bot.autoApprove===true,fullAccess:bot.fullAccess===true,noLimits:bot.noLimits===true,alwaysAllow:[],unread:false }];
+    if (opts.staged) {
+      bot.staged = structuredClone(opts.staged);
+      if (profile.modelSelection) bot.staged.intended.modelSelection = structuredClone(profile.modelSelection);
+      bot.autoApprove = false; bot.fullAccess = false; bot.noLimits = false; bot.alwaysAllow = [];
+      bot.approvePeerComms = false; bot.computer = "off"; bot.composio = false;
+      for (const task of bot.tasks) { task.autoApprove = false; task.fullAccess = false; task.noLimits = false; task.alwaysAllow = []; }
+    }
     // All or nothing: the roster (bots.json and its memory binding), the announcement and the opening lines land together. The write lock
     // is taken first (BEGIN IMMEDIATE), so a busy database refuses before anything changes; any later failure rolls the rows back, the
     // announcements never go out (tx-scope.ts), and the roster is written again without the bot. A caller that retries after an error
@@ -4291,12 +4390,13 @@ export class Store {
       this.bots.unshift(bot);
       onRollback(() => this.withdrawCreatedBot(bot.id));
       this.saveBots();
+      if (opts.staged) opts.beforeCreate?.(id);
       // Announce the owner before its onboarding transcript. SSE clients need
       // the bot/thread mapping before they can place either message.
       this.emit({ type: "bot", botId: bot.id });
       if (opts.seedMessages !== false) {
         this.appendMessage(bot.threadId, murageLine({ role: "bot", kind: "text", text: openingLine(name) }));
-        this.appendMessage(bot.threadId, murageLine({ role: "bot", kind: "options", card: intakeOpeningQuestion() }));
+        this.appendMessage(bot.threadId, murageLine({ role: "bot", kind: "options", card: intakeOpeningQuestion() as InfoCard }));
       }
     }, { op: "createBot" });
     return bot;
@@ -4382,9 +4482,10 @@ export class Store {
   releaseBotState?: (id: string) => void;
   /** Bot email (BOT-EMAIL-MURAGE-109 2.6): the email removal intent rides the deletion proof's transaction (record), is withdrawn in the
    * rollback when saveBots fails (withdraw), and is committed once saveBots returned (commit). Never waits on the network. */
-  emailDeletion?: { record: (id: string) => void; withdraw: (id: string) => void; commit: (id: string) => void };
+  emailDeletion?: { record: (id: string) => void; withdraw: (id: string) => void; commit: (id: string, emailConfirm?: string) => void };
 
-  deleteBot(id: string): boolean {
+  /** `emailConfirm` (r3.1 section 6) is the confirmation token the owner saw with the address text; only the single-bot DELETE route passes it. */
+  deleteBot(id: string, options: { emailConfirm?: string } = {}): boolean {
     const bot = this.bot(id);
     if (!bot) return false;
     // Before any change: if the launcher still holds this bot's state the error propagates and the bot stays.
@@ -4408,8 +4509,9 @@ export class Store {
       try { transaction((db) => { for (const threadId of botThreadIds) withdrawOwnerDeletion(db, threadId); withdrawOwnerDeletion(db, botDeletionKey(id)); this.emailDeletion?.withdraw(id); }); } catch (e) { console.error("store: could not withdraw deletion record", e); }
       throw error;
     }
-    try { this.emailDeletion?.commit(id); } catch (e) { console.error("store: email removal intent stays for boot", e); }
+    try { this.emailDeletion?.commit(id, options.emailConfirm); } catch (e) { console.error("store: email removal intent stays for boot", e); }
     this.bots = nextBots;
+    this.browserModes.remove(id);
     this.refreshPendingThreads(botThreadIds);
     this.pruneMessageAllow(id);
     transaction(db => captureBotDeletion(db, id));
@@ -4457,7 +4559,15 @@ export class Store {
   patchBot(id: string, patch: Partial<BotRecord>, options: {preserveTaskSettings?:boolean} = {}): BotRecord | null {
     const bot = this.bot(id);
     if (!bot) return null;
+    if (bot.staged) {
+      // Review alone can activate this record or assign its intended privileges.
+      patch = { ...patch, staged: bot.staged, autoApprove: false, fullAccess: false, noLimits: false, alwaysAllow: [], chiefOfStaff: false,
+        ...(patch.tasks ? { tasks: patch.tasks.map(t => ({ ...t, autoApprove: false, fullAccess: false, noLimits: false, alwaysAllow: [] })) } : {}) };
+    }
     // 1.0.14 FIRST-ENGINE-REPICK section 3: the mark and the engine revision are never written through a patch.
+    // Cloud home only (server/cloud-home/engine-repick.ts): Murage's own move onto Fuigo carries the mark with the selection, so the
+    // bot stays Murage-picked. The mark itself is still stripped below and only re-set after the owner-write clear.
+    const cloudMurageMove = process.env.MURAGE_CLOUD_ROLE === "home" && patch.engineAutoPicked === true && Object.hasOwn(patch, "modelSelection");
     if (Object.hasOwn(patch, "engineAutoPicked") || Object.hasOwn(patch, "engineRev")) { const { engineAutoPicked: _m, engineRev: _r, ...kept } = patch; patch = kept; }
     // An owner engine write (the bot's selection, or a task's own pick in a tasks array) clears the mark and moves engineRev.
     // Astra 1015 H1: an explicit selection write is the owner's choice even when the value is the same one.
@@ -4486,6 +4596,7 @@ export class Store {
       next.resumePolicies = undefined; next.replayPending = undefined;
     }
     if (engineWrite) { delete next.engineAutoPicked; Object.assign(next, ownerEngineWrite(next)); }
+    if (cloudMurageMove) next.engineAutoPicked = true;
     // an internal caller's level move counts like any other (the routes' level writes use setPermissionLevel)
     if (permissionLevel(next) !== levelBefore) Object.assign(next, levelMove(next, levelBefore));
     if (continuityChanged) next.continuityGeneration = continuityGeneration + 1;
@@ -4504,6 +4615,14 @@ export class Store {
       if(permissionLevel(task)!==taskLevel)Object.assign(task,levelMove(task,taskLevel));
       next.tasks=[task];
     }
+    if ((bot.staged || bot.pendingRevision) && ['name', 'title', 'description', 'section', 'chiefOfStaff', 'hidden', 'modelSelection', 'autoApprove', 'fullAccess', 'noLimits', 'alwaysAllow', 'tasks'].some(key => Object.hasOwn(patch, key))) {
+      if (next.staged) next.staged = { ...next.staged, rev: next.staged.rev + 1 };
+      if (next.pendingRevision) next.pendingRevision = { ...next.pendingRevision, rev: next.pendingRevision.rev + 1 };
+    }
+    if (next.staged) {
+      Object.assign(next, { autoApprove: false, fullAccess: false, noLimits: false, alwaysAllow: [] }); delete next.chiefOfStaff;
+      next.tasks = next.tasks?.map(task => ({ ...task, autoApprove: false, fullAccess: false, noLimits: false, alwaysAllow: [] }));
+    }
     this.commitStagedBots(new Map([[bot, next]]));
     this.emit({ type: "bot", botId: id });
     return bot;
@@ -4512,7 +4631,28 @@ export class Store {
   /** 1.0.15 Astra M2, section 8's commit boundary for a staged roster write: bots.json is written first. A failure before the commit
    * restores recordRevision and leaves every live record as it was. Once committed, each live record takes its staged record, or after
    * a RosterPostCommitError the normalized record bots.json holds (with its event), and the error is rethrown. */
-  private commitStagedBots(staged: Map<BotRecord, BotRecord>): void {
+  commitBotReview(candidates: BotPermissionWrite<ReadonlyMap<string, BotRecord>>): void {
+    const staged = new Map<BotRecord, BotRecord>();
+    for (const [id, candidate] of candidates) {
+      const current = this.bot(id);
+      if (!current || candidate.id !== id) throw new Error("This bot changed. Read it again and retry.");
+      const next = structuredClone(candidate);
+      if (permissionLevel(next) !== permissionLevel(current)) Object.assign(next, levelMove(next, permissionLevel(current)));
+      for (const task of next.tasks ?? []) {
+        const old = current.tasks?.find(t => t.threadId === task.threadId);
+        if (old && permissionLevel(old) !== permissionLevel(task)) Object.assign(task, levelMove(task, permissionLevel(old)));
+      }
+      if (selectionChanged(next.modelSelection, current.modelSelection)) {
+        delete next.engineAutoPicked; Object.assign(next, ownerEngineWrite(current));
+      }
+      staged.set(current, next);
+    }
+    if (!staged.size) return;
+    this.commitStagedBots(staged);
+    for (const bot of staged.keys()) this.emit({ type: "bot", botId: bot.id });
+  }
+
+  private commitStagedBots(staged: BotPermissionWrite<Map<BotRecord, BotRecord>>): void {
     const revision = this.recordRevision;
     try { this.saveBots(this.bots.map(current => staged.get(current) ?? current)); }
     catch (error) {
@@ -4525,25 +4665,36 @@ export class Store {
 
   /** 1.0.13 UX-TRUST-L1B: a level change. The next file is written first and the live record moves only once that returned, so a failed
    * write leaves the old level, revision and no event. Level flags, acknowledgements and the revision travel in one write. With `ifRev`
-   * a different revision answers null and writes nothing. `mirrorSoleTask` keeps a legacy PATCH's one-conversation mirror in this write;
-   * a PATCH of the default alone never sets it, so the conversation stays out of the change. */
-  setPermissionLevel(botId: string, change: { flags: Pick<BotRecord, "autoApprove" | "fullAccess" | "noLimits">; acknowledgements?: Pick<BotRecord, "fullAccessAcknowledgedAt" | "noLimitsAcknowledgedAt">; ifRev?: number; routinesId?: string; mirrorSoleTask?: boolean }): BotRecord | null {
+   * a different revision answers null and writes nothing. Owner conversations move in the same write so the next tool call sees
+   * the chosen level, including in a live engine session. Non-owner conversations retain their existing permission. */
+  setPermissionLevel(botId: string, change: BotPermissionWrite<{ flags: Pick<BotRecord, "autoApprove" | "fullAccess" | "noLimits">; acknowledgements?: Pick<BotRecord, "fullAccessAcknowledgedAt" | "noLimitsAcknowledgedAt">; ifRev?: number; routinesId?: string; mirrorSoleTask?: boolean }>): BotRecord | null {
     const bot = this.bot(botId);
-    if (!bot || (change.ifRev !== undefined && change.ifRev !== (bot.permissionRev ?? 0))) return null;
-    const next = { ...change.acknowledgements, ...change.flags, ...levelMove(bot, permissionLevel(bot), change.routinesId) };
+    if (!bot || bot.staged || (change.ifRev !== undefined && change.ifRev !== (bot.permissionRev ?? 0))) return null;
+    const next = { permissionExplicit: true, ...change.acknowledgements, ...change.flags, ...levelMove(bot, permissionLevel(bot), change.routinesId) };
     const sole = change.mirrorSoleTask && bot.tasks?.length === 1 ? bot.tasks[0] : undefined;
-    const soleNext = sole && { ...change.flags, ...(permissionLevel({ ...sole, ...change.flags }) !== permissionLevel(sole) ? levelMove(sole, permissionLevel(sole)) : {}) };
+    const soleNext = sole && { permissionExplicit: true, ...change.flags, ...(permissionLevel({ ...sole, ...change.flags }) !== permissionLevel(sole) ? levelMove(sole, permissionLevel(sole)) : {}) };
+    const from = permissionLevel(bot), to = permissionLevel({...bot,...change.flags});
+    const involvesNoLimits = from !== to && (from === 'no-limits' || to === 'no-limits');
+    const tasks = (bot.tasks ?? []).map(task => involvesNoLimits && isWorkspaceOwner(threadHumanPrincipal(task.threadId))
+      ? {...task, ...change.flags, ...levelMove(task, permissionLevel(task))} : task === sole ? {...task,...soleNext} : task);
     const revision = this.recordRevision;
-    try { this.saveBots(this.bots.map(current => current === bot ? { ...bot, ...next, ...(sole ? { tasks: [{ ...sole, ...soleNext }] } : {}) } : current)); }
+    try { this.saveBots(this.bots.map(current => current === bot ? { ...bot, ...next, tasks } : current)); }
     catch (error) {
       // 1.0.14 section 8 (GrokBuild R2b M3): bots.json holds the new level, so the live record shows it too; the caller still sees the throw.
       if (error instanceof RosterPostCommitError) { this.publishCommitted(bot, error.normalized); this.emit({ type: "bot", botId }); throw error; }
       this.recordRevision = revision; throw error;
     }
     Object.assign(bot, next);
-    if (sole) Object.assign(sole, soleNext);
+    bot.tasks = tasks;
     this.emit({ type: "bot", botId });
     return bot;
+  }
+
+  /** Owner action from Settings: all records follow the current default. */
+  inheritAllPermissions(): void {
+    this.saveBots(this.bots.map(bot => ({...bot, permissionExplicit:false,
+      tasks:bot.tasks?.map(task=>({...task,permissionExplicit:false}))})));
+    for(const bot of this.bots){bot.permissionExplicit=false;for(const task of bot.tasks??[])task.permissionExplicit=false;this.emit({type:"bot",botId:bot.id});}
   }
 
   /** A13-FIX-DESIGN C1 (Rule 81b): remember an approved set on the bot's
@@ -4553,7 +4704,7 @@ export class Store {
    * not added twice; past the cap nothing is saved. Returns the keys it
    * added to each, so the caller can take back exactly those. Called only by
    * the approval choke point (server/index.ts rememberAndAnswer). */
-  rememberBotGrants(botId: string, taskThreadId: string | undefined, keys: readonly string[], options: { grantSchema?: 2 } = {}): { bot: BotRecord; added: { bot: string[]; task: string[] } } {
+  rememberBotGrants(botId: string, taskThreadId: string | undefined, keys: BotPermissionWrite<readonly string[]>, options: { grantSchema?: 2 } = {}): { bot: BotRecord; added: { bot: string[]; task: string[] } } {
     const { bot, task, added } = this.planBotGrants(botId, taskThreadId, keys);
     return this.stageBotGrants(bot, task, [...(bot.alwaysAllow ?? []), ...added.bot], task ? [...(task.alwaysAllow ?? []), ...added.task] : undefined, options.grantSchema, added);
   }
@@ -4565,6 +4716,7 @@ export class Store {
   planBotGrants(botId: string, taskThreadId: string | undefined, keys: readonly string[]): { bot: BotRecord; task: TaskRecord | undefined; added: { bot: string[]; task: string[] } } {
     const bot = this.bot(botId);
     if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
+    if (bot.staged) throw Object.assign(new Error("Review this bot before adding approvals."), { status: 409 });
     const task = taskThreadId === undefined ? undefined : bot.tasks?.find((item) => item.threadId === taskThreadId);
     if (taskThreadId !== undefined && !task) throw Object.assign(new Error("No such thread for this bot."), { status: 404 });
     // UX-TRUST-MOMENTS-1012 2.3.3: a key durableGrantAllowed refuses (a payment) is never saved, whoever asks
@@ -4582,9 +4734,10 @@ export class Store {
    * exactly what that save added, by holder: `bot` from the bot's defaults,
    * `task` from the one task it was saved on, nothing anywhere else. One
    * durable write, staged like rememberBotGrants. Returns what it removed. */
-  removeBotGrants(botId: string, taskThreadId: string | undefined, keys: { bot: readonly string[]; task: readonly string[] }): { bot: BotRecord; removed: { bot: string[]; task: string[] } } {
+  removeBotGrants(botId: string, taskThreadId: string | undefined, keys: BotPermissionWrite<{ bot: readonly string[]; task: readonly string[] }>): { bot: BotRecord; removed: { bot: string[]; task: string[] } } {
     const bot = this.bot(botId);
     if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
+    if (bot.staged) throw Object.assign(new Error("Review this bot before adding approvals."), { status: 409 });
     const task = taskThreadId === undefined ? undefined : bot.tasks?.find((item) => item.threadId === taskThreadId);
     if (keys.task.length && !task) throw Object.assign(new Error("No such thread for this bot."), { status: 404 });
     const fromBot = (bot.alwaysAllow ?? []).filter((key) => keys.bot.includes(key));
@@ -4623,7 +4776,7 @@ export class Store {
   ): { ok: true; bots: BotRecord[] } | { ok: false; reason: "unavailable" | "chief-conflict" } {
     const ids = [...new Set(botIds)];
     const targets = ids.map((id) => this.bot(id));
-    if (targets.some((bot) => !bot || bot.hidden)) return { ok: false, reason: "unavailable" };
+    if (targets.some((bot) => !bot || inertBot(bot))) return { ok: false, reason: "unavailable" };
 
     assertSectionUnlocked();
     for (const bot of targets) if (bot) assertHomeMove(bot, section);
@@ -4784,7 +4937,7 @@ export class Store {
    * The injected dependency owns login evidence and native catalogue selection. */
   birthSelection(): ModelSelection {
     if (typeof this.birth === "function") return this.birth();
-    const visible = this.bots.filter(bot => !bot.hidden);
+    const visible = this.activeBots();
     // the oldest visible bot by createdAt (createBot unshifts, a package import appends: array order is not age; Astra lane M1)
     const oldest = visible.reduce<BotRecord | null>((best, bot) => (best === null || bot.createdAt <= best.createdAt ? bot : best), null);
     const source = this.workspaceChief() ?? oldest;
@@ -4803,11 +4956,15 @@ export class Store {
       const allFuigo = this.birth.fuigo().map(instance => instance.instanceId);
       if (probed.instanceId !== "" && probed.model !== "" && !allFuigo.includes(probed.instanceId) && this.birth.eligible(probed.instanceId)) return structuredClone(probed);
     }
+    if (this.birth.homeFallback) {
+      const home = this.birth.homeFallback();
+      if (home.instanceId !== "" && home.model !== "") return structuredClone(home);
+    }
     return { instanceId: "", model: "" };
   }
 
   workspaceChief(): BotRecord | null {
-    return this.bots.find((bot) => !bot.hidden && isWorkspaceChief(bot)) ?? null;
+    return this.bots.find((bot) => !inertBot(bot) && isWorkspaceChief(bot)) ?? null;
   }
 
   setChiefOfStaff(
@@ -4820,7 +4977,7 @@ export class Store {
     canLead?: (bot: BotRecord) => boolean,
   ): BotRecord[] | null {
     const selected = id ? this.bot(id) : null;
-    if (id && !selected) return null;
+    if (id && (!selected || selected.staged)) return null;
     const formerChief = scope === "workspace" && id
       ? this.bots.find((bot) => bot.id !== id && bot.chiefOfStaff === true && bot.chiefScope === "workspace")
       : undefined;
@@ -5496,7 +5653,12 @@ export class Store {
     const bot=this.bot(botId),task=this.taskByThread(botId,threadId);if(!bot||!task)return null;
     // the thread's human, read once for the whole projection (it was asked five times)
     const owner=withBindingScope(()=>isWorkspaceOwner(threadHumanPrincipal(threadId)));
-    return {...bot,...(!owner?{computer:"off" as const,browser:false,composio:false}:{}),threadId,modelSelection:structuredClone(task.modelSelection??bot.modelSelection),resumeCursors:structuredClone(task.resumeCursors),resumePolicies:structuredClone(task.resumePolicies),replayPending:structuredClone(task.replayPending),autoApprove:owner&&(task.autoApprove??false),fullAccess:owner&&task.autoApprove===true&&task.fullAccess===true,noLimits:owner&&task.autoApprove===true&&task.fullAccess===true&&task.noLimits===true,alwaysAllow:owner?structuredClone(task.alwaysAllow??[]):[],unread:task.unread??false,rewound:task.rewound,pinnedMessageId:task.pinnedMessageId,busy:task.busy??false,activity:task.activity??"idle"};
+    const guestLevel = explicitNoLimits(bot)?bot:{autoApprove:false,fullAccess:false,noLimits:false};
+    const taskExplicit=explicitPermission(task),effectiveBot=inheritedPermissions(bot);
+    const botNoLimits=effectiveBot.autoApprove===true&&effectiveBot.fullAccess===true&&effectiveBot.noLimits===true;
+    const copiedNoLimits=task.autoApprove===true&&task.fullAccess===true&&task.noLimits===true;
+    const level=owner?(!taskExplicit&&(botNoLimits||copiedNoLimits)?effectiveBot:task):guestLevel;
+    return {...bot,permissionExplicit:owner?(taskExplicit||explicitPermission(bot)):true,permissionRev:task.permissionRev??bot.permissionRev,...(!owner&&!explicitNoLimits(bot)?{computer:"off" as const,browser:false,composio:false}:{}),threadId,modelSelection:structuredClone(task.modelSelection??bot.modelSelection),resumeCursors:structuredClone(task.resumeCursors),resumePolicies:structuredClone(task.resumePolicies),replayPending:structuredClone(task.replayPending),autoApprove:level.autoApprove===true,fullAccess:level.autoApprove===true&&level.fullAccess===true,noLimits:level.autoApprove===true&&level.fullAccess===true&&level.noLimits===true,alwaysAllow:owner?structuredClone(task.alwaysAllow??[]):[],unread:task.unread??false,rewound:task.rewound,pinnedMessageId:task.pinnedMessageId,busy:task.busy??false,activity:task.activity??"idle"};
   }
   /** Host-only, write-once procedural admission. Never accepted in API patches. */
   pinTaskProcedures(botId:string, threadId:string, pin:ProcedurePin):ProcedurePin {
@@ -5540,10 +5702,12 @@ export class Store {
 
   patchTask(botId:string,threadId:string,patch:Partial<Pick<TaskRecord,"title"|"modelSelection"|"autoApprove"|"fullAccess"|"noLimits"|"alwaysAllow"|"unread"|"rewound"|"pinnedMessageId"|"resumeCursors"|"cwd"|"cwdOwnerSet"|"link"|"linkAuto"|"effortSent"|"limitFailover">>&{pinned?:boolean}):TaskRecord|null {
     const bot=this.bot(botId),task=this.taskByThread(botId,threadId);if(!bot||!task)return null;
+    if (bot.staged) patch = { ...patch, autoApprove: false, fullAccess: false, noLimits: false, alwaysAllow: [] };
     const {pinned,...rest}=patch;
     // UX-TRUST-MOMENTS-1012 2.3.3: never a payment kept for good, whoever writes the list
     if(rest.alwaysAllow)rest.alwaysAllow=withoutRefusedGrants(rest.alwaysAllow).kept;
     const next:TaskRecord={...task,...structuredClone(rest)};
+    if (["autoApprove","fullAccess","noLimits"].some(key => Object.hasOwn(patch,key))) next.permissionExplicit = true;
     if(permissionLevel(next)!==permissionLevel(task))Object.assign(next,levelMove(task,permissionLevel(task)));
     // 1.0.4 SL-K: an explicit undefined removes the field (a chat returns to following its bot; a failover marker or effort record ends)
     for(const key of ["modelSelection","effortSent","limitFailover","cwdOwnerSet"] as const)if(Object.hasOwn(patch,key)&&patch[key]===undefined)delete next[key];
@@ -5577,7 +5741,10 @@ export class Store {
     // 1.0.14 FIRST-ENGINE-REPICK: a task's own pick set or removed (adoption included) is an owner engine write: mark cleared, engineRev moved.
     const engineWrite=Object.hasOwn(patch,"modelSelection");
     const candidate:BotRecord={...bot,...mirrors,...adopted,tasks,unread:tasks.some(task=>task.unread),...(engineWrite?ownerEngineWrite(bot):{})};
-    if(engineWrite)delete candidate.engineAutoPicked;
+    // Cloud home: a chat's own pick is not the bot's engine, so the Murage-picked mark stays and the Fuigo repick still moves an untouched
+    // default; the first pick (adoption) still clears it. A desktop clears the mark on any owner engine write.
+    const keepCloudMark=process.env.MURAGE_CLOUD_ROLE==="home"&&!adopts;
+    if(engineWrite&&!keepCloudMark)delete candidate.engineAutoPicked;
     // Only cosmetic keys may be deferred. Approval, access and model keys are
     // security or routing state and keep their immediate, throwing write, and
     // so does `rewound`: lost on a crash, the next turn would resume a provider
@@ -5596,7 +5763,7 @@ export class Store {
     catch(error){if(!(error instanceof RosterPostCommitError)){this.recordRevision=revision;throw error;}this.publishCommitted(bot, error.normalized);this.emit({type:"bot",botId});throw error;}
     // Astra 1015 M3: a removed key (a chat back to following its bot, an ended failover) leaves the live task too (dropRemoved).
     Object.assign(task,next);dropRemoved();Object.assign(bot,mirrors,adopted,{unread:candidate.unread});
-    if(engineWrite){delete bot.engineAutoPicked;bot.engineRev=candidate.engineRev;}
+    if(engineWrite){if(!keepCloudMark)delete bot.engineAutoPicked;bot.engineRev=candidate.engineRev;}
     }
     this.emit({type:"bot",botId});return task;
   }
@@ -5668,7 +5835,7 @@ export class Store {
    * detached routine tasks use the owner's defaults. */
   createTask(botId: string, title?: string, activate = true, channelProjectDesk?: TaskRecord["channelProjectDesk"], preparedThreadId?: string, sharedWork?: TaskRecord["sharedWork"]): TaskRecord | null {
     const bot = this.bot(botId);
-    if (!bot) return null;
+    if (!bot || inertBot(bot)) return null;
     const task: TaskRecord = {
       threadId: preparedThreadId ?? newId(),
       title: title?.trim().slice(0,80) || UNTITLED_TASK,
@@ -5677,7 +5844,7 @@ export class Store {
       createdAt: Date.now(),
       resumeCursors: {}, resumePolicies: undefined, replayPending: undefined,
       // 1.0.4 SL-K K1: born following the bot's model (no copy)
-      autoApprove:bot.autoApprove===true,fullAccess:bot.autoApprove===true&&bot.fullAccess===true,noLimits:bot.autoApprove===true&&bot.fullAccess===true&&bot.noLimits===true,alwaysAllow:structuredClone(bot.alwaysAllow??[]),unread:false,activity:"idle",busy:false,
+      permissionExplicit:false,autoApprove:bot.autoApprove===true,fullAccess:bot.autoApprove===true&&bot.fullAccess===true,noLimits:bot.autoApprove===true&&bot.fullAccess===true&&bot.noLimits===true,alwaysAllow:structuredClone(bot.alwaysAllow??[]),unread:false,activity:"idle",busy:false,
     };
     bot.tasks = [task, ...(bot.tasks ?? [])];
     if (activate) {

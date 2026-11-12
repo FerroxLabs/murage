@@ -14,8 +14,8 @@ const source = (path: string) => readFileSync(new URL(path, import.meta.url), "u
 describe("0.1.60 copy flags", () => {
   it("Settings, General follows the system without an em dash", () => {
     const skin = source("./components/SkinPicker.tsx");
-    expect(skin).toContain("Following your system, now {resolved");
-    expect(skin).not.toContain("Following your system —");
+    expect(skin).toContain('themeStatusLabel("auto", resolved)');
+    expect(skin).not.toContain("Following your system");
   });
 
   it("Settings, Engines reports a CLI test without an em dash", () => {
@@ -60,11 +60,11 @@ describe("0.1.60 copy flags", () => {
     for (const key of ["ux.lcopyb.level.unlimitedHere", "ux.lcopyb.level.unlimited", "ux.lcopyb.level.fullHere", "ux.lcopyb.level.full"] as const) {
       expect(source("./components/BotPermissionDefault.tsx")).toContain(`t("${key}")`);
       expect(en[key]).toContain(key.includes("unlimited")
-        ? "other bots, trigger links from other apps and your channel messages keep the cards they have now. A routine runs at this level or its own, whichever is lower, and keeps its cards."
+        ? "Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A setting carried over from 1.0.18 does not count."
         : "Work started by another app's trigger link still asks. Routines keep their own level and never run above this one.");
     }
     const hint = peerContactHint({ autoApprove: true, fullAccess: true, approvePeerComms: true });
-    expect(hint).toContain("in routines at that level; work started by another app's trigger link still stops and asks");
+    expect(hint).toBe("On, but Full access skips this in your own chats and in routines at that level. Trigger links from other apps still ask at Full access. At No limits, trigger links from other apps and routines use the bot's level. Switch to Auto to be asked each time.");
   });
 
   // Linux and Windows pass copy flags

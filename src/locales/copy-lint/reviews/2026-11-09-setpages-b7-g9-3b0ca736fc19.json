@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "sonnet-b7",
+  "date": "2026-11-09",
+  "base": "59121e1bb",
+  "scope": "setpages-b7-g9",
+  "strings": {
+    "en:settings.connections.noteManaged": {
+      "text": "Let bots use Gmail, Slack, Notion and more. Pick an app below to connect it.",
+      "en": "Let bots use Gmail, Slack, Notion and more. Pick an app below to connect it.",
+      "verdict": "pass"
+    },
+    "en:settings.l6.usage.byBotHint": {
+      "text": "What each bot used this month.",
+      "en": "What each bot used this month.",
+      "verdict": "pass"
+    },
+    "en:settings.usage.learningUnavailable": {
+      "text": "Nothing has been counted yet, because your bots have not started learning from your chats.",
+      "en": "Nothing has been counted yet, because your bots have not started learning from your chats.",
+      "verdict": "pass"
+    },
+    "de:settings.connections.noteManaged": {
+      "text": "Bots können Gmail, Slack, Notion und mehr nutzen. Wähle unten eine App aus, um sie zu verbinden.",
+      "en": "Let bots use Gmail, Slack, Notion and more. Pick an app below to connect it.",
+      "verdict": "pass"
+    },
+    "de:settings.l6.usage.byBotHint": {
+      "text": "Das hat jeder Bot in diesem Monat verbraucht.",
+      "en": "What each bot used this month.",
+      "verdict": "pass"
+    },
+    "de:settings.usage.learningUnavailable": {
+      "text": "Es wurde noch nichts gezählt, weil deine Bots noch nicht begonnen haben, aus deinen Chats zu lernen.",
+      "en": "Nothing has been counted yet, because your bots have not started learning from your chats.",
+      "verdict": "pass"
+    },
+    "es:settings.connections.noteManaged": {
+      "text": "Los bots pueden usar Gmail, Slack, Notion y más. Elige una app de abajo para conectarla.",
+      "en": "Let bots use Gmail, Slack, Notion and more. Pick an app below to connect it.",
+      "verdict": "pass"
+    },
+    "es:settings.l6.usage.byBotHint": {
+      "text": "Lo que ha usado cada bot este mes.",
+      "en": "What each bot used this month.",
+      "verdict": "pass"
+    },
+    "es:settings.usage.learningUnavailable": {
+      "text": "Todavía no se ha contado nada, porque tus bots aún no han empezado a aprender de tus chats.",
+      "en": "Nothing has been counted yet, because your bots have not started learning from your chats.",
+      "verdict": "pass"
+    },
+    "fr:settings.connections.noteManaged": {
+      "text": "Les bots peuvent utiliser Gmail, Slack, Notion et plus encore. Choisissez une app ci-dessous pour la connecter.",
+      "en": "Let bots use Gmail, Slack, Notion and more. Pick an app below to connect it.",
+      "verdict": "pass"
+    },
+    "fr:settings.l6.usage.byBotHint": {
+      "text": "Ce que chaque bot a utilisé ce mois-ci.",
+      "en": "What each bot used this month.",
+      "verdict": "pass"
+    },
+    "fr:settings.usage.learningUnavailable": {
+      "text": "Rien n’a encore été compté, car vos bots n’ont pas encore commencé à apprendre de vos discussions.",
+      "en": "Nothing has been counted yet, because your bots have not started learning from your chats.",
+      "verdict": "pass"
+    },
+    "hi:settings.connections.noteManaged": {
+      "text": "बॉट Gmail, Slack, Notion और बहुत कुछ इस्तेमाल कर सकते हैं। जोड़ने के लिए नीचे से कोई ऐप चुनें।",
+      "en": "Let bots use Gmail, Slack, Notion and more. Pick an app below to connect it.",
+      "verdict": "pass"
+    },
+    "hi:settings.l6.usage.byBotHint": {
+      "text": "इस महीने हर बॉट ने कितना इस्तेमाल किया।",
+      "en": "What each bot used this month.",
+      "verdict": "pass"
+    },
+    "hi:settings.usage.learningUnavailable": {
+      "text": "अभी तक कुछ गिना नहीं गया है, क्योंकि आपके बॉट्स ने आपकी चैट से सीखना अभी शुरू नहीं किया है।",
+      "en": "Nothing has been counted yet, because your bots have not started learning from your chats.",
+      "verdict": "pass"
+    },
+    "ja:settings.connections.noteManaged": {
+      "text": "ボットが Gmail、Slack、Notion などを使えるようにします。下からアプリを選んで接続してください。",
+      "en": "Let bots use Gmail, Slack, Notion and more. Pick an app below to connect it.",
+      "verdict": "pass"
+    },
+    "ja:settings.l6.usage.byBotHint": {
+      "text": "今月、各ボットが使った量です。",
+      "en": "What each bot used this month.",
+      "verdict": "pass"
+    },
+    "ja:settings.usage.learningUnavailable": {
+      "text": "ボットがまだチャットから学び始めていないため、まだ何も集計されていません。",
+      "en": "Nothing has been counted yet, because your bots have not started learning from your chats.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.connections.noteManaged": {
+      "text": "Os bots podem usar Gmail, Slack, Notion e mais. Escolha um app abaixo para conectá-lo.",
+      "en": "Let bots use Gmail, Slack, Notion and more. Pick an app below to connect it.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l6.usage.byBotHint": {
+      "text": "O que cada bot usou neste mês.",
+      "en": "What each bot used this month.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.usage.learningUnavailable": {
+      "text": "Ainda não foi contado nada, porque seus bots ainda não começaram a aprender com suas conversas.",
+      "en": "Nothing has been counted yet, because your bots have not started learning from your chats.",
+      "verdict": "pass"
+    },
+    "zh:settings.connections.noteManaged": {
+      "text": "让机器人使用 Gmail、Slack、Notion 等。在下方选择一个应用来连接。",
+      "en": "Let bots use Gmail, Slack, Notion and more. Pick an app below to connect it.",
+      "verdict": "pass"
+    },
+    "zh:settings.l6.usage.byBotHint": {
+      "text": "每个机器人本月的用量。",
+      "en": "What each bot used this month.",
+      "verdict": "pass"
+    },
+    "zh:settings.usage.learningUnavailable": {
+      "text": "目前还没有统计数据，因为你的机器人还没有开始从聊天中学习。",
+      "en": "Nothing has been counted yet, because your bots have not started learning from your chats.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

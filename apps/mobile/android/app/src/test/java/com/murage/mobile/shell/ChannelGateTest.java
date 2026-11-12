@@ -7,7 +7,7 @@ import org.json.JSONObject;
 import org.junit.Test;
 
 public class ChannelGateTest {
-    private final WorkspaceOrigin saved = WorkspaceOrigin.parse("https://mac.tailnet123.ts.net");
+    private final WorkspaceOrigin saved = WorkspaceOrigin.parse("https://mac.tail000000.ts.net");
 
     /** The wrapper always sends an id; the fixtures' bodies get one here. */
     private static String envelope(Object body) throws Exception {

@@ -1,3 +1,6 @@
+import { assertNoDecisionContinuations, DATA_DIR_NAMES_AFTER_118, downgradeDecisionTables, preservePost118Data, removePost118Data } from "./installation-decision-downgrade.ts";
+import { preserveSignalForDowngrade } from "./channels/signal/park-downgrade.ts";
+import type { ParkOptions } from "./channels/signal/park.ts";
 import { downgradeChatsPreviewTables } from "./thread-summary.ts";
 import { downgradeTranscriptSeqTo102 } from "./transcript-seq.ts";
 import { chmodSync, closeSync, copyFileSync, fsyncSync, mkdtempSync, openSync, existsSync, lstatSync, readFileSync, rmSync, unlinkSync } from "node:fs";
@@ -12,10 +15,10 @@ import { acquireDataDirLeaseForProcess, dataDirLeasePaths } from "../electron/da
 import { downgradeMemorySchema, suffixedSessionKeys, validateMemorySchema, type MemoryDowngradeTarget } from "./memory/schema.ts";
 import { askTombstonePathFor, readAskTombstone, readTombstone, tombstonePathFor } from "./phones/revocation-tombstone.ts";
 import { downgradeMemoryIndexFile } from "./memory/age-index.ts";
-import { assertNoHeldVenuePosts, assertNoOwedWorkForDowngrade, assertNoPendingPhoneWork, assertNoSpeechHeld, downgradeApplicationSchemaTo101, finishBranchChangeForDowngrade, downgradeCardTablesTo117, downgradePhoneObjectsTo108, downgradeSpeechTablesTo117, markInFlightSpeechInterrupted } from "./installation-app-schema-downgrade.ts";
+import { assertNoHeldVenuePosts, assertNoRestoreWindowOpen, assertNoOwedWorkForDowngrade, assertNoPendingPhoneWork, assertNoSpeechHeld, downgradeApplicationSchemaTo101, downgradeMessageSearch, finishBranchChangeForDowngrade, downgradeCardTablesTo117, downgradeDelegationPacks, downgradePhoneAskOptIns, downgradePhoneObjectsTo108, downgradeOwnerSendAskProof, downgradeSpeechTablesTo117, markInFlightSpeechInterrupted } from "./installation-app-schema-downgrade.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { foldRoutineStateForDowngrade } from "./routine-runs-journal.ts";
-import { deleteFtsOrphans, expectPragma, ftsProbeBoth, ftsSettled, optimizeUntilSettled } from "./settle-copy.ts";
+import { deleteFtsOrphans, removeMessageSearchFiles, expectPragma, ftsProbeBoth, ftsSettled, optimizeUntilSettled } from "./settle-copy.ts";
 
 function fail(code: string): never { throw Object.assign(new Error(code), { code }); }
 
@@ -127,7 +130,7 @@ export function resetIncarnatedSessionCursors(root: string, db: DatabaseSync): n
  * and the HighLevel folder (highlevel/, 1.0.18: the connection record with ids, the location name and a token fingerprint, never the
  * token, and the change journal; 1.0.2 has no HighLevel, and a later upgrade asks the owner to check the location again, as after a restore).
  * The Cloud-only names are never on a desktop that reinstalls 1.0.2. */
-export const DATA_DIR_NAMES_AFTER_102 = ["claude-private", "claude-signin-answers.json", "draft-only-cwd", "email-capabilities.json", "email-capabilities.json.tmp", "env", "feedback-install-id", "frozen-replies-recovery.json", "learning-paused-left.json", "memory-model-adopted.json", "memory-model-adopted.json.tmp", "memory-repairs.json", "memory-repairs.json.tmp", "pending-grants.json", "setup-backup.json", "cloud-computer-turns.json", "cloud-computer-turns.json.unreadable", "news-signup.json", "health", "health-key", "sentinel-delivery.json", "power-guard-notice.json", "highlevel"] as const;
+export const DATA_DIR_NAMES_AFTER_102 = ["browser-window", "model-catalogs", "claude-private", "claude-signin-answers.json", "draft-only-cwd", "email-capabilities.json", "email-capabilities.json.tmp", "env", "feedback-install-id", "frozen-replies-recovery.json", "learning-paused-left.json", "memory-model-adopted.json", "memory-model-adopted.json.tmp", "memory-repairs.json", "memory-repairs.json.tmp", "pending-grants.json", "setup-backup.json", "cloud-computer-turns.json", "cloud-computer-turns.json.unreadable", "news-signup.json", "health", "health-key", "sentinel-delivery.json", "power-guard-notice.json", "highlevel"] as const;
 /** Owner-kept notes written after 1.0.2 (backed up, so they are not in the derived list above), that 1.0.2's backup does not classify
  * either. The follow-model marker (thread-follow-model.ts) only records that the one-time chat model cleanup ran; 1.0.2 never reads
  * it. Removing it lets 1.0.2 take a backup; a later upgrade runs the cleanup once more, which drops only pins proved equal to the
@@ -192,14 +195,14 @@ export function preservePhoneCallsForDowngrade(root: string, family: string[] = 
  * (.murage-root.json, S5 data-roots.ts) names this folder's canonical root, its previous roots and any linked roots; 1.0.2 never reads
  * it. Removing it lets 1.0.2 take a backup, and a later 1.0.18 start reads the missing record as a first sight: the same as an upgrade
  * from 1.0.17, which had no record (each linked root is recorded silently, no card, nothing under any root is touched). */
-export const DATA_DIR_RECORDS_AFTER_102 = [".murage-root.json"] as const;
+export const DATA_DIR_RECORDS_AFTER_102 = ["browser-modes.json", ".murage-root.json"] as const;
 /** Removes those names from the data folder (a link is removed, never followed). Idempotent; returns the names removed. */
 export function removeDataDirNamesAfter102(root: string, alreadyPreserved = false): string[] {
-  if (!alreadyPreserved) preservePhoneCallsForDowngrade(root);
+  if (!alreadyPreserved) { preservePhoneCallsForDowngrade(root); preservePost118Data(root); }
   const removed: string[] = [];
   // The phone family leaves sidecars first, the main file last: a stop part way then leaves a family whose main file is still there, which the
   // preflight reads and a re-run finishes. The other order leaves sidecars with no main file, and the re-run refuses (PHONE_CALLS_UNREADABLE).
-  for (const name of [...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102, ...[...DATA_DIR_DATABASES_AFTER_102].reverse(), ...DATA_DIR_RECORDS_AFTER_102]) {
+  for (const name of [...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102, ...[...DATA_DIR_DATABASES_AFTER_102].reverse(), ...DATA_DIR_RECORDS_AFTER_102, ...DATA_DIR_NAMES_AFTER_118]) {
     const path = join(root, name);
     let stat;
     try { stat = lstatSync(path); } catch { continue; }
@@ -291,7 +294,7 @@ export function refuseStepBefore102(): never {
 }
 /** `testOnlyBefore102` is the tests' route to a target of 6 or below, for the rewind code and the checks against the real 1.0.1: only test files pass it
  * (installation-recovery-command.test.ts scans for that), and the command takes strings, so neither the hand-run command nor the app can set it. */
-export function downgradeInstallationMemorySchema(dataDir: string, to: MemoryDowngradeTarget, testing: { at?: (point: DowngradeSearchPoint) => void; testOnlyBefore102?: true } = {}) {
+export function downgradeInstallationMemorySchema(dataDir: string, to: MemoryDowngradeTarget, testing: { at?: (point: DowngradeSearchPoint) => void; testOnlyBefore102?: true; signal?: ParkOptions } = {}) {
   if (to <= 6 && !testing.testOnlyBefore102) refuseStepBefore102();
   const at = testing.at ?? (() => {});
   const root = dataDirLeasePaths(dataDir).canonicalDataDir;
@@ -299,7 +302,6 @@ export function downgradeInstallationMemorySchema(dataDir: string, to: MemoryDow
   const stat = existsSync(file) ? lstatSync(file) : null;
   const hasDatabase = Boolean(stat?.isFile() && !stat.isSymbolicLink());
   const routines = join(root, "routines.json");
-  if (!hasDatabase && !existsSync(routines)) fail("MEMORY_DATABASE_MISSING");
   const lease = acquireDataDirLeaseForProcess(root);
   // --to 13 is the step back to 1.0.17, the same memory version: only what 1.0.18 adds leaves (the chats preview, card and spoken-reply
   // tables, the 1.0.18 optional memory indexes). Every object 1.0.17 knows stays as it is: its phone, bot-call, trigger and push objects,
@@ -309,6 +311,10 @@ export function downgradeInstallationMemorySchema(dataDir: string, to: MemoryDow
   // does not know the name and leaves it out of its backup, it does not refuse it) and a private copy is kept beside the folder, as on every other target.
   const to117 = to === 13;
   try {
+    // RESTORE WINDOW (read-only, before the first write): an owner restore that has not finished leaves its preparation owed to the next start of THIS build,
+    // and an older build opened in between would write into that database, so the step back refuses until this build has finished the recovery.
+    assertNoRestoreWindowOpen(root);
+    if (!hasDatabase && !existsSync(routines)) fail("MEMORY_DATABASE_MISSING");
     // PREP: an attempt a crash left reserved or streaming is marked interrupted (the one write before the preflight, so its refusal ends)
     if (hasDatabase) {
       // An attempt a crash left reserved or streaming is marked interrupted and its account held ten minutes first, durably, exactly as a start does, so the refusal below ends
@@ -330,15 +336,19 @@ export function downgradeInstallationMemorySchema(dataDir: string, to: MemoryDow
         probe.exec("PRAGMA query_only=ON");
         assertTombstonesReadable(probe);
         assertNoPendingPhoneWork(probe); assertNoHeldVenuePosts(probe); assertNoSpeechHeld(probe);
+        assertNoDecisionContinuations(probe);
         assertNoOwedWorkForDowngrade(probe, root);
         if (!probe.prepare("SELECT 1 FROM sqlite_schema WHERE name='memory_meta'").get()) fail("MEMORY_SCHEMA_UNSUPPORTED");
         validateMemorySchema(probe);
         if (ftsProbeBoth(probe) === "unknown") fail("SEARCH_INDEX_NOT_SETTLED");
       } finally { probe.close(); }
     }
+    // Signal and connector custody is completed on every supported target, including 13, before removal/stamp.
+    const signalPreservation = preserveSignalForDowngrade(root,testing.signal);
     // PRESERVE: the private copy of the phone history, then the routines (1.0.2 bgwork): an older release reads only routines.json and plain journal
     // lines, so every cursor a routine state line moved is folded in before it can see the schedule (no occurrence runs twice).
     const phoneCallsPreservedAt = preservePhoneCallsForDowngrade(root, phoneFamily);
+    const applicationDataPreservedAt = preservePost118Data(root);
     foldRoutineStateForDowngrade(routines);
     if (!hasDatabase) fail("MEMORY_DATABASE_MISSING");
     const db = new DatabaseSync(file);
@@ -354,12 +364,24 @@ export function downgradeInstallationMemorySchema(dataDir: string, to: MemoryDow
       // every build before 1.0.3 lacks messages.seq and its index (transcript-seq.ts), and every build before 1.0.9 the bot call tables, their
       // trigger on messages and push_bindings.rings_for_calls (bot-calls-schema.ts): they leave on the way to such a build
       // every older build lacks the 1.0.18 chats preview tables: they leave, whatever the target (thread-summary.ts)
+      downgradeDecisionTables(db);
+      downgradeOwnerSendAskProof(db);
       downgradeChatsPreviewTables(db);
       if (!to117) downgradeBotCallsTo108(db);
       // every build before 1.0.12 lacks the connected-app trigger tables: they leave first on the way to one (app-trigger-store.ts)
       if (!to117) downgradeAppTriggers(db);
       // every older build lacks the 1.0.18 card tables (venue_posts, room_shares): they leave first, whatever the target (installation-app-schema-downgrade.ts)
       downgradeCardTablesTo117(db);
+      // Delegation packs are newer than every supported downgrade target.
+      downgradeDelegationPacks(db);
+      // HighLevel marks are newer than every supported downgrade target.
+      // DROP TABLE also removes its primary-key index before the legacy stamp.
+      db.exec("DROP TABLE IF EXISTS highlevel_thread_marks");
+      // The device-id disclosure choice is 1.0.19 state. Every supported
+      // downgrade target predates it, including 1.0.17 which keeps phone registrations.
+      downgradePhoneAskOptIns(db);
+      // Older targets remove all phone columns below; 1.0.17 keeps those rows
+      // and columns, but its strict inspector cannot accept 1.0.19 ask proof.
       // every older build lacks the 1.0.18 spoken-reply tables (speech_*): they leave first, whatever the target (installation-app-schema-downgrade.ts)
       downgradeSpeechTablesTo117(db);
       // the objects of 1.0.3 to 1.0.12 below leave on the way to a build before them, and stay on the step back to 1.0.17 (to117), which has them
@@ -381,6 +403,8 @@ export function downgradeInstallationMemorySchema(dataDir: string, to: MemoryDow
       if (to < 10 && reclaimHasRun(db)) resetRetainedSessionCursors(dirname(file));
       // every build before memory schema 12 resumes by the raw cursor (rule 27): a session with a later incarnation never resumes there
       if (to < 12) resetIncarnatedSessionCursors(dirname(file), db);
+      downgradeMessageSearch(db);
+      removeMessageSearchFiles(root);
       settleSearchIndexForDowngrade(db, at);
       // STAMP LAST: the memory schema stamp is what tells 1.0.17 a folder is done, so every step that leaves a file or a name goes BEFORE it
       // (to 12 and below; 13 has no stamp change and leaves memory-index.db alone). A stopped run leaves the stamp up, 1.0.17 refuses the folder, and
@@ -395,7 +419,7 @@ export function downgradeInstallationMemorySchema(dataDir: string, to: MemoryDow
         removedNames = removeDataDirNamesAfter102(root, true);
         at("names-removed");
       }
-      const result = { ...downgradeMemorySchema(db, to), ...(phoneCallsPreservedAt ? { phoneCallsPreservedAt } : {}) };
+      const result = { ...downgradeMemorySchema(db, to), ...signalPreservation, ...(phoneCallsPreservedAt ? { phoneCallsPreservedAt } : {}) };
       checkedTruncate(db);
       at("checkpointed");
       // The live merge marker (search-merge-runner) leaves only after that checkpoint, and only while its table is still there
@@ -407,9 +431,10 @@ export function downgradeInstallationMemorySchema(dataDir: string, to: MemoryDow
         // (the marker is gone and every step before it reruns as a no-op, so the rerun's first checked TRUNCATE folds it)
         checkedTruncate(db);
       }
+      if (to117) removedNames.push(...removePost118Data(root));
       const objectsAfter = new Set(to >= 12 ? schemaObjectKeys(db) : []);
       const gone = [...new Set(objectsBefore.filter(key => !objectsAfter.has(key)).map(key => key.slice(key.indexOf(":") + 1)))].sort();
-      const reported = to >= 12 ? { ...result, removed: [...gone, ...removedNames] } : result;
+      const reported = { ...(to >= 12 ? { ...result, removed: [...gone, ...removedNames] } : result), ...(applicationDataPreservedAt ? {applicationDataPreservedAt} : {}) };
       return app.exported || app.interrupted ? { ...reported, handoffs: app.exported, handoffsStarted: app.interrupted } : reported;
     } finally { db.close(); }
   } finally { lease.release(); }

@@ -8,7 +8,7 @@ import { createWorker } from "../src/index";
 import { classifyEdge } from "../src/edge-limits";
 import { REQUEUE_PATH, sixDigits, sweepStepUpEmail } from "../src/step-up-email";
 import { keyWrapperFor } from "../src/key-wrapper";
-import { sweepFlux, type FluxClient, type FluxMint } from "../src/b4-flux";
+import { linkRedirectForTests, sweepFlux, type FluxClient, type FluxMint } from "../src/b4-flux";
 import { sha256 } from "../src/installations";
 /** Astra INTEGRATED-1 #7: real billing hooks advertising the qualified router capability (the B4 launch gate open). */
 const QUALIFIED_HOOKS = { stub: false, capabilities: { reversalTargets: true } } as unknown as NonNullable<import("../src/b4-flux").FluxDependencies["billingFlux"]>;
@@ -117,7 +117,7 @@ const worker = makeWorker();
 /** Extra bindings for one test (cleared after each). */
 let extraEnv: Record<string, unknown> = {};
 const testEnv = () => ({ ...env, ...extraEnv, DB: hookDb(env.DB), SUPABASE_URL: REF_ORIGIN, SUPABASE_PUBLISHABLE_KEY: "sb_publishable_testkey_0123456789abcdef",
-  CLOUD_KEK_V1: KEK, CLOUD_FLUX_ROUTES_ENABLED: "1", FLUX_API_BASE: "https://api.fluxrouter.ai", FLUX_CLOUD_SERVICE_TOKEN: "s".repeat(40),
+  CLOUD_KEK_V1: KEK, CLOUD_FLUX_ROUTES_ENABLED: "1", FLUX_API_BASE: "https://api.fluxrouter.ai", FLUX_CLOUD_SERVICE_TOKEN: "s".repeat(40), FLUX_CLOUD_GRANTS_TOKEN: "g".repeat(40),
   ...(maxAge ? { CLOUD_STEPUP_MAX_AGE_SECONDS: maxAge } : {}), MACHINE_OPEN_LIMIT: undefined, MACHINE_BEARER_LIMIT: undefined }) as unknown as Env;
 
 /** An aal1 sign-in token of session `sid` (the emailed sign-in code: no authenticator). */
@@ -129,10 +129,10 @@ async function token(sid = S1, over: Record<string, unknown> = {}) {
   const input = `${b64u(JSON.stringify({ alg: "ES256", kid: "ec-1", typ: "JWT" }))}.${b64u(JSON.stringify(c))}`;
   return `${input}.${b64u(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, ec.privateKey, new TextEncoder().encode(input)))}`;
 }
-async function call(method: string, path: string, bearer: string, body?: unknown, w = worker) {
+async function call(method: string, path: string, bearer: string, body?: unknown, w = worker, headers: Record<string, string> = {}) {
   const ctx = createExecutionContext();
   const res = await w.fetch(new Request(`https://auth.murage.test${path}`, { method,
-    headers: { authorization: `Bearer ${bearer}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    headers: { authorization: `Bearer ${bearer}`, ...(body === undefined ? {} : { "content-type": "application/json" }), ...headers },
     body: body === undefined ? undefined : JSON.stringify(body) }), testEnv(), ctx);
   await waitOnExecutionContext(ctx);
   return res;
@@ -169,6 +169,20 @@ const newerHome = async () => env.DB.prepare(`INSERT INTO cloud_homes (id,instal
   VALUES ('home-new',?,?,'ready','ready',?,'k',1,1)`).bind(crypto.randomUUID(), await userId(), `sha256:${"b".repeat(64)}`).run();
 const commands = async () => (await env.DB.prepare("SELECT id,home_id,kind FROM cloud_home_commands").all<{ id: string; home_id: string; kind: string }>()).results;
 const intentRow = (id: string) => env.DB.prepare("SELECT * FROM cloud_stepup_intents WHERE id=?").bind(id).first<Body>();
+/** A flux_mint operation from before the owner mint was retired, left committed and never delivered (its runner died after the key committed):
+ *  the key is active at the router, the intent is 'committed'. The owner route can no longer make one, so it is seeded; the sweep still drains it. */
+const UNDELIVERED_GENERATION = 1;
+async function committedMintIntent() {
+  const intent = `si_${Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString("hex")}`;
+  await env.DB.batch([
+    env.DB.prepare("UPDATE flux_home_keys SET generation=?, gen_floor=?, state='active' WHERE home_id='home-se'").bind(UNDELIVERED_GENERATION, UNDELIVERED_GENERATION),
+    env.DB.prepare(`INSERT INTO cloud_stepup_intents (id,user_id,session_id,method,path,params_hash,target_kind,target,secret,state,created_at,expires_at,approved_at,claimed_at,
+        op_kind,phase,dispatch_ref,done_at,response_status)
+      VALUES (?,?,?,'POST','/v1/homes/home-se/flux/subkey','h','flux','{}',1,'done',?,?,?,?,'flux_mint','committed',?,?,500)`)
+      .bind(intent, await userId(), S1, clock, clock + 30 * 60_000, clock, clock, `flux:home-se:${UNDELIVERED_GENERATION}`, clock),
+  ]);
+  return intent;
+}
 /** Every row of every table, as one string: a probe that nothing secret was persisted anywhere in D1. */
 async function everything(): Promise<string> {
   const tables = (await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' AND name NOT LIKE 'd1_%'")
@@ -271,7 +285,9 @@ describe("send and verify", () => {
     expect(sent).toEqual({ sent: true, challengeId: expect.stringMatching(/^sc_[0-9a-f]{32}$/), digits: 6, expiresAt: nowS() + 600, expiresIn: 600, resendIn: 30 });
     expect(mail).toHaveLength(1);
     expect(mail[0].to).toBe(EMAIL);
-    expect(mail[0].subject).toBe("Your Murage security code");
+    expect(mail[0].subject).toBe("Your Murage code to confirm it's you");
+    expect(mail[0].text).toContain("Type this code on the \"Confirm it's you\" page. It approves ");
+    expect(mail[0].text).toContain("It is not the code that confirms your email.");
     const code = codeFromMail();
     expect(code).toMatch(/^\d{6}$/);
     expect(JSON.stringify((await env.DB.prepare("SELECT * FROM cloud_stepup_challenges").all()).results)).not.toContain(code);
@@ -598,7 +614,7 @@ describe("logs, ignored references, factor administration", () => {
 
 describe("STEPUP-EMAIL-2: no stored answers, frozen targets, atomic claims, bound continuations, the execution journal", () => {
   const LOGS_REQUEST = "/v1/account/home/logs/request";
-  const SUBKEY = "/v1/homes/home-se/flux/subkey";
+  const CAP = "/v1/homes/home-se/flux/cap";
   /** A ready export archive of home-se whose decryption key has not been shown yet. */
   async function exportReady() {
     const requestId = crypto.randomUUID();
@@ -642,24 +658,6 @@ describe("STEPUP-EMAIL-2: no stored answers, frozen targets, atomic claims, boun
     expect(await intentRow(intent)).toMatchObject({ state: "done", secret: 1, response_status: 200, response_code: null, response_ref: null });
   });
 
-  it("#1 the Flux key is never stored; the mint runs under the approval's operation key", async () => {
-    await fluxHome();
-    const t = await token();
-    const { intent } = await refused(t, SUBKEY, {});
-    await approve(t, intent);
-    const res = await call("POST", SUBKEY, t, { stepUpIntentId: intent });
-    expect(res.headers.get(HDR)).toBe("1");
-    const [s, b] = await out(res);
-    expect(s).toBe(200);
-    expect(b.key).toMatch(/^sk-flux-stepup-secret-/);
-    expect(fluxCalls.mints).toHaveLength(1);
-    expect(fluxCalls.mints[0].opId).toBe(`owner:home-se:${intent}`);
-    const again = await call("POST", SUBKEY, t, { stepUpIntentId: intent });
-    expect(await out(again)).toEqual([410, { error: "already_completed", operation: { id: intent } }]);
-    expect(fluxCalls.mints).toHaveLength(1);
-    expect(await everything()).not.toContain(b.key as string);
-  });
-
   it("COPIED TOKEN race on a secret-bearing operation: one execution, and the loser never receives the secret", async () => {
     const t = await token();
     const { requestId } = await exportReady();
@@ -681,36 +679,19 @@ describe("STEPUP-EMAIL-2: no stored answers, frozen targets, atomic claims, boun
     expect(JSON.stringify(lb)).not.toContain(key);
   });
 
-  it("#2 an approved /flux/subkey intent is void after an owner Stop: refused with a fresh intent, nothing minted", async () => {
-    await fluxHome();
-    const t = await token();
-    const { intent } = await refused(t, SUBKEY, {});
-    await approve(t, intent);
-    // The owner's Stop (b4-flux.ts ownerStop) advances the lifecycle version and stops the home.
-    await env.DB.prepare("UPDATE flux_home_keys SET lifecycle_version=lifecycle_version+1, state='stopped' WHERE home_id='home-se'").run();
-    const res = await call("POST", SUBKEY, t, { stepUpIntentId: intent });
-    const [s, b] = await out(res);
-    expect(s).toBe(403);
-    expect(b.error).toBe("step_up_required");
-    expect(b.step_up.email_code.intent_id).not.toBe(intent);
-    expect(res.headers.get(HDR)).toBeNull();
-    expect(fluxCalls.mints).toHaveLength(0);
-    expect(await intentRow(intent)).toBeNull();
-  });
-
   it("#2 a cap or link change after approval voids it too", async () => {
     await fluxHome();
     const t = await token();
-    const first = await refused(t, SUBKEY, {});
+    const first = await refused(t, CAP, { capUsd: 50 });
     await approve(t, first.intent);
     await env.DB.prepare("UPDATE flux_home_keys SET cap_version=cap_version+1 WHERE home_id='home-se'").run();
-    expect((await call("POST", SUBKEY, t, { stepUpIntentId: first.intent })).status).toBe(403);
+    expect((await call("POST", CAP, t, { capUsd: 50, stepUpIntentId: first.intent })).status).toBe(403);
     clock += 31_000;
-    const second = await refused(t, SUBKEY, {});
+    const second = await refused(t, CAP, { capUsd: 50 });
     await approve(t, second.intent);
     await env.DB.prepare("UPDATE flux_links SET link_version=link_version+1").run();
-    expect((await call("POST", SUBKEY, t, { stepUpIntentId: second.intent })).status).toBe(403);
-    expect(fluxCalls.mints).toHaveLength(0);
+    expect((await call("POST", CAP, t, { capUsd: 50, stepUpIntentId: second.intent })).status).toBe(403);
+    expect(await env.DB.prepare("SELECT cap_microcents FROM flux_home_keys WHERE home_id='home-se'").first<Body>()).toEqual({ cap_microcents: 30_000_000 });
   });
 
   it("#3 a newer home inserted immediately before the claiming statement: the claim fails, neither home is acted on", async () => {
@@ -914,7 +895,8 @@ describe("STEPUP-EMAIL-2: no stored answers, frozen targets, atomic claims, boun
 });
 
 describe("STEPUP-EMAIL-3: claims under the handler's lease, fenced disclosure, explicit phases", () => {
-  const SUBKEY = "/v1/homes/home-se/flux/subkey";
+  const CAP = "/v1/homes/home-se/flux/cap";
+  const COMPAT = { "x-murage-site-compat": "spending-2" };
   const PORTAL = "/v1/billing/portal";
   async function fluxHome() {
     const owner = await userId();
@@ -932,35 +914,12 @@ describe("STEPUP-EMAIL-3: claims under the handler's lease, fenced disclosure, e
     await env.DB.batch(["flux_home_ops", "flux_home_keys", "flux_links", "cloud_machines", "billing_subscriptions"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
   });
 
-  it("#2 the claim holds the Flux home lease: an owner Stop that lands after it voids the approved resume (never 200, never active)", async () => {
-    await fluxHome();
-    const t = await token();
-    const { intent } = await refused(t, SUBKEY, {});
-    await approve(t, intent);
-    const strong = await authenticatorToken(S2);
-    let stop: [number, Body] | null = null;
-    // The claim passes; then, before the handler mints, the owner's Stop (another session, a trusted authenticator) completes its batch.
-    armDb(/SET state='executing', phase=/, async () => {
-      armDb(/INSERT OR IGNORE INTO flux_home_keys/, async () => { stop = [...await out(await call("POST", "/v1/homes/home-se/flux/stop", strong, {}))]; });
-    });
-    const res = await call("POST", SUBKEY, t, { stepUpIntentId: intent });
-    expect(stop![0]).toBeGreaterThanOrEqual(200);
-    expect(stop![0]).toBeLessThan(300);
-    // Refused: the Stop moved the target the approval was frozen at, so the approval is void and a fresh one is asked for (Astra
-    // STEPUP-EMAIL-7 #2: the mint's reservation validates the whole frozen target).
-    const [status, refusal] = await out(res);
-    expect([status, refusal.error]).toEqual([403, "step_up_required"]);
-    expect(fluxCalls.mints).toHaveLength(0);
-    const k = await keyRow();
-    expect(k!.state).not.toBe("active");
-    expect(k!.op_holder).toBeNull();
-  });
-
   it("STEPUP-EMAIL-6 #2 an approved cap increase superseded by a newer reduction (cap_version 2) is refused, never committed as version 3", async () => {
     const CAP = "/v1/homes/home-se/flux/cap";
     await fluxHome();
     await env.DB.prepare("UPDATE flux_home_keys SET cap_version=1 WHERE home_id='home-se'").run();
     const t = await token();
+    extraEnv = { FLUX_RESUME_VIA_POLLER: "1" }; // 8b: this home is stopped, so the raise is a resume through the poller (flag on, site header sent)
     const { intent } = await refused(t, CAP, { capUsd: 500 });
     await approve(t, intent);
     const capRow = () => env.DB.prepare("SELECT cap_microcents,cap_version FROM flux_home_keys WHERE home_id='home-se'").first<Body>();
@@ -971,7 +930,7 @@ describe("STEPUP-EMAIL-3: claims under the handler's lease, fenced disclosure, e
         await env.DB.prepare("UPDATE flux_home_keys SET cap_microcents=1000000000,cap_custom=1,cap_version=2 WHERE home_id='home-se'").run();
       });
     });
-    const [status, b] = await out(await call("POST", CAP, t, { capUsd: 500, stepUpIntentId: intent }));
+    const [status, b] = await out(await call("POST", CAP, t, { capUsd: 500, stepUpIntentId: intent }, worker, { "x-murage-site-compat": "spending-2" }));
     expect([status, b.error]).toEqual([403, "step_up_required"]);
     expect(b.step_up.email_code.intent_id).not.toBe(intent);
     // The reduction stands; nothing of the stale approval was written or queued.
@@ -986,21 +945,46 @@ describe("STEPUP-EMAIL-3: claims under the handler's lease, fenced disclosure, e
     await fluxHome();
     await env.DB.prepare("UPDATE flux_home_keys SET cap_version=1 WHERE home_id='home-se'").run();
     const t = await token();
+    extraEnv = { FLUX_RESUME_VIA_POLLER: "1" }; // 8b: a stopped home's raise is a resume through the poller
     const { intent } = await refused(t, CAP, { capUsd: 500 });
     await approve(t, intent);
-    const res = await call("POST", CAP, t, { capUsd: 500, stepUpIntentId: intent });
+    const res = await call("POST", CAP, t, { capUsd: 500, stepUpIntentId: intent }, worker, { "x-murage-site-compat": "spending-2" });
     expect(res.status).toBe(200);
     expect(await env.DB.prepare("SELECT cap_version FROM flux_home_keys WHERE home_id='home-se'").first<Body>()).toEqual({ cap_version: 2 });
     expect(await intentRow(intent)).toMatchObject({ state: "done" });
   });
 
-  it("#2 a busy Flux lease at claim time consumes nothing; the claim itself takes the lease in the same batch", async () => {
+  it("8b 2.6a: an approved resume frozen at lifecycle V is void once the stopped-live repair Stop moved the home to V+1: 403 step_up_required, zero writes, the home stays stopped", async () => {
+    const CAP = "/v1/homes/home-se/flux/cap";
     await fluxHome();
     const t = await token();
-    const { intent } = await refused(t, SUBKEY, {});
+    extraEnv = { FLUX_RESUME_VIA_POLLER: "1" };
+    const { intent } = await refused(t, CAP, { capUsd: 500 });
+    await approve(t, intent);
+    const snap = async () => JSON.stringify([(await env.DB.prepare("SELECT home_id,generation,state,cap_microcents,cap_version,billing_hold,lifecycle_version,key_expires_at,resume_lv,pending_op_id,spending_off FROM flux_home_keys WHERE home_id='home-se'").first<Body>()),
+      (await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_home_ops WHERE home_id='home-se'").first<Body>())]);
+    let after = "";
+    // The claim passes; then, before the resume batch, the repair Stop's own batch lands: the lifecycle moves up one and the row stays stopped.
+    armDb(/SET state='executing', phase=/, async () => {
+      armDb(/UPDATE flux_home_keys SET plan=\?,cap_microcents=/, async () => {
+        await env.DB.prepare("UPDATE flux_home_keys SET lifecycle_version=lifecycle_version+1 WHERE home_id='home-se'").run();
+        after = await snap();
+      });
+    });
+    const [status, b] = await out(await call("POST", CAP, t, { capUsd: 500, stepUpIntentId: intent }, worker, { "x-murage-site-compat": "spending-2" }));
+    expect([status, b.error]).toEqual([403, "step_up_required"]);
+    expect(await snap()).toBe(after); // the aborted batch left everything exactly as the repair left it
+    expect(await keyRow()).toMatchObject({ state: "stopped", lifecycle_version: 4 });
+  });
+
+  it("#2 a busy Flux lease at claim time consumes nothing; the claim itself takes the lease in the same batch", async () => {
+    await fluxHome();
+    extraEnv = { FLUX_RESUME_VIA_POLLER: "1" }; // 8b: this home is stopped, so the raise is a resume through the poller
+    const t = await token();
+    const { intent } = await refused(t, CAP, { capUsd: 500 });
     await approve(t, intent);
     await env.DB.prepare("UPDATE flux_home_keys SET op_holder='someone', op_lease_until=? WHERE home_id='home-se'").bind(clock + 60_000).run();
-    const busy = await call("POST", SUBKEY, t, { stepUpIntentId: intent });
+    const busy = await call("POST", CAP, t, { capUsd: 500, stepUpIntentId: intent }, worker, COMPAT);
     // Never claimed: nothing consumed, and the answer says nothing of the kind.
     expect(busy.headers.get(HDR)).toBeNull();
     expect(await out(busy)).toEqual([409, { error: "home_busy" }]);
@@ -1008,9 +992,9 @@ describe("STEPUP-EMAIL-3: claims under the handler's lease, fenced disclosure, e
     await env.DB.prepare("UPDATE flux_home_keys SET op_holder=NULL, op_lease_until=NULL WHERE home_id='home-se'").run();
     let held: Body | null = null;
     armDb(/SET state='executing', phase=/, async () => {
-      armDb(/INSERT OR IGNORE INTO flux_home_keys/, async () => { held = await keyRow(); });
+      armDb(/UPDATE flux_home_keys SET plan=\?,cap_microcents=/, async () => { held = await keyRow(); });
     });
-    const ran = await call("POST", SUBKEY, t, { stepUpIntentId: intent });
+    const ran = await call("POST", CAP, t, { capUsd: 500, stepUpIntentId: intent }, worker, COMPAT);
     expect(ran.status).toBe(200);
     expect(held!.op_holder).toMatch(/^stepup-/);
     expect(await intentRow(intent)).toMatchObject({ state: "done", phase: "delivered", lease_kind: "flux" });
@@ -1063,50 +1047,11 @@ describe("STEPUP-EMAIL-3: claims under the handler's lease, fenced disclosure, e
     expect(await env.DB.prepare("SELECT holder FROM billing_home_leases WHERE home_id='home-se'").first<Body>()).toMatchObject({ holder: null });
   });
 
-  it("#4 an interruption before the mint (only lease bookkeeping happened) is NOT done: the exact retry mints once", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
+  it("#4 a committed, never delivered flux_mint operation (made before the owner mint was retired): the sweep revokes that undelivered key by phase", async () => {
     await fluxHome();
-    const t = await token();
-    const { intent } = await refused(t, SUBKEY, {});
-    await approve(t, intent);
-    // The runner acquired the Flux lease and died before anything of the mint.
-    armDb(/SET state='executing', phase=/, async () => {
-      armDb(/SELECT op_id,seq,kind,payload,attempts FROM flux_home_ops/, async () => { throw new Error("worker fell over"); });
-    });
-    const failed = await call("POST", SUBKEY, t, { stepUpIntentId: intent });
-    expect(failed.status).toBe(500);
-    expect(failed.headers.get(HDR)).toBe("1");
-    expect(fluxCalls.mints).toHaveLength(0);
-    expect(await intentRow(intent)).toMatchObject({ state: "executing", phase: "claimed" });
-    expect((await keyRow())!.op_holder).toBeNull();
-    const retried = await call("POST", SUBKEY, t, { stepUpIntentId: intent });
-    expect(retried.status).toBe(200);
-    expect(fluxCalls.mints).toHaveLength(1);
-    expect(fluxCalls.mints[0].opId).toBe(`owner:home-se:${intent}`);
-    expect(await intentRow(intent)).toMatchObject({ state: "done", phase: "delivered" });
-  });
-
-  it("#4 an interruption after the key committed leaves delivery pending; the sweep revokes that undelivered key by phase", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-    await fluxHome();
-    const t = await token();
-    const { intent } = await refused(t, SUBKEY, {});
-    await approve(t, intent);
-    armDb(/SET state='executing', phase=/, async () => {
-      armDb(/UPDATE flux_home_keys SET generation=\?,state='active'/, async () => {
-        armDb(/SELECT op_id,seq,kind,payload,attempts FROM flux_home_ops/, async () => { throw new Error("worker fell over"); });
-      });
-    });
-    const failed = await call("POST", SUBKEY, t, { stepUpIntentId: intent });
-    expect(failed.status).toBe(500);
-    expect(failed.headers.get(HDR)).toBe("1");
-    expect(JSON.stringify(await failed.json())).not.toMatch(/sk-flux/);
-    expect(fluxCalls.mints).toHaveLength(1);
-    const generation = fluxCalls.mints[0].generation;
+    const intent = await committedMintIntent();
+    const generation = UNDELIVERED_GENERATION;
     expect(await intentRow(intent)).toMatchObject({ state: "done", phase: "committed", dispatch_ref: `flux:home-se:${generation}` });
-    // Never re-run: its duplicate is 410 with the reference only.
-    expect(await out(await call("POST", SUBKEY, t, { stepUpIntentId: intent }))).toEqual([410, { error: "already_completed", operation: { id: intent } }]);
-    expect(fluxCalls.mints).toHaveLength(1);
     await sweepStepUpEmail(testEnv(), clock);
     // Queued, not yet confirmed: 'compensating' (STEPUP-EMAIL-4 #3), never compensated on the queue alone.
     expect((await intentRow(intent))!.phase).toBe("compensating");
@@ -1158,7 +1103,8 @@ describe("STEPUP-EMAIL-3: claims under the handler's lease, fenced disclosure, e
 });
 
 describe("STEPUP-EMAIL-4: link revisions, undelivered keys, own reservations, settled-only collection, consumed takeovers", () => {
-  const SUBKEY = "/v1/homes/home-se/flux/subkey";
+  const CAP = "/v1/homes/home-se/flux/cap";
+  const COMPAT = { "x-murage-site-compat": "spending-2" };
   const LINK = "/v1/flux/link/complete";
   const FLUX_ACCOUNT = "11111111-2222-3333-4444-555555555555";
   let signer: CryptoKey;
@@ -1182,6 +1128,7 @@ describe("STEPUP-EMAIL-4: link revisions, undelivered keys, own reservations, se
   }
   /** A link challenge of the owner and Flux's signed proof for it: a /flux/link/complete body the handler accepts. */
   async function linkBody() {
+    await proven();
     const state = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
     await env.DB.prepare("INSERT INTO flux_link_challenges (state_hash,owner_user_id,expires_at) VALUES (?,?,?)").bind(await sha256(state), await userId(), clock + 3_600_000).run();
     const payload = { v: 1, aud: "murage-cloud-link", flux_account_id: FLUX_ACCOUNT, state, iat: nowS(), exp: nowS() + 3000, jti: crypto.randomUUID() };
@@ -1196,20 +1143,14 @@ describe("STEPUP-EMAIL-4: link revisions, undelivered keys, own reservations, se
   ]);
   const links = async () => (await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_links").first<{ n: number }>())!.n;
   const keyRow = () => env.DB.prepare("SELECT state,lifecycle_version,op_holder,generation FROM flux_home_keys WHERE home_id='home-se'").first<Body>();
-  /** The mint runner dies right after its key was committed (the key is active, never delivered). */
-  async function undeliveredMint(t: string) {
-    const { intent } = await refused(t, SUBKEY, {});
-    await approve(t, intent);
-    armDb(/SET state='executing', phase=/, async () => {
-      armDb(/UPDATE flux_home_keys SET generation=\?,state='active'/, async () => {
-        armDb(/SELECT op_id,seq,kind,payload,attempts FROM flux_home_ops/, async () => { throw new Error("worker fell over"); });
-      });
-    });
-    expect((await call("POST", SUBKEY, t, { stepUpIntentId: intent })).status).toBe(500);
-    return intent;
-  }
-  beforeEach(() => { extraEnv = { FLUX_LINK_PUBLIC_KEY: linkKey }; });
+  const undeliveredMint = async (_t: string) => committedMintIntent();
+  // The retired link flow, switched on for these cases only (b4-flux.ts linkRedirectForTests), with the owner's email proven: its INSERT
+  // carries the email fence (ITEM4-PROOF-CURRENT P-link).
+  beforeEach(() => { extraEnv = { FLUX_LINK_PUBLIC_KEY: linkKey }; linkRedirectForTests.enabled = true; });
+  const proven = async () => env.DB.prepare(`UPDATE supabase_identities SET contact_email=COALESCE(contact_email,?), email_verified_at=1,
+    email_verified_for=lower(trim(COALESCE(contact_email,?))) WHERE sub=?`).bind(EMAIL, EMAIL, SUB).run();
   afterEach(async () => {
+    linkRedirectForTests.enabled = false;
     await env.DB.batch(["flux_home_ops", "flux_home_keys", "flux_links", "flux_link_floor", "flux_link_challenges", "flux_link_proofs", "cloud_machines", "cloud_alerts"]
       .map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
   });
@@ -1252,84 +1193,30 @@ describe("STEPUP-EMAIL-4: link revisions, undelivered keys, own reservations, se
     expect(await env.DB.prepare("SELECT link_version FROM flux_links").first<Body>()).toEqual({ link_version: 3 });
   });
 
-  it("#4 a home with no key row yet: the claim's seeding is not a target change; the approved mint runs once", async () => {
-    await fluxHome({ keyRow: false });
-    const t = await token();
-    const { intent } = await refused(t, SUBKEY, {});
-    await approve(t, intent);
-    const res = await call("POST", SUBKEY, t, { stepUpIntentId: intent });
-    expect(res.status).toBe(200);
-    expect(fluxCalls.mints).toHaveLength(1);
-    expect(await intentRow(intent)).toMatchObject({ state: "done", phase: "delivered" });
-  });
-
-  it("#4 an interruption after the mint's own lifecycle reservation, before dispatch: the retry recognises it and mints once", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
+  it("STEPUP-EMAIL-7 #2 after the claim, the home generation advances with the Flux lifecycle unchanged: 403 fresh intent, nothing written or reserved", async () => {
     await fluxHome();
+    extraEnv = { FLUX_RESUME_VIA_POLLER: "1" }; // 8b: this home is stopped, so the raise is a resume through the poller
     const t = await token();
-    const { intent } = await refused(t, SUBKEY, {});
-    await approve(t, intent);
-    armDb(/SET state='executing', phase=/, async () => {
-      armDb(/UPDATE flux_home_ops SET payload=json_set/, async () => { throw new Error("worker fell over"); });
-    });
-    const failed = await call("POST", SUBKEY, t, { stepUpIntentId: intent });
-    expect(failed.status).toBe(500);
-    expect(failed.headers.get(HDR)).toBe("1");
-    expect(fluxCalls.mints).toHaveLength(0);
-    expect((await keyRow())!.lifecycle_version).toBe(4);
-    const row = (await intentRow(intent))!;
-    expect(row).toMatchObject({ state: "executing", phase: "claimed" });
-    expect(row.reserved_target).not.toBeNull();
-    const retried = await call("POST", SUBKEY, t, { stepUpIntentId: intent });
-    expect(retried.status).toBe(200);
-    expect(fluxCalls.mints).toHaveLength(1);
-    expect(fluxCalls.mints[0].opId).toBe(`owner:home-se:${intent}`);
-    expect(await intentRow(intent)).toMatchObject({ state: "done", phase: "delivered" });
-  });
-
-  it("#4 ... but an owner Stop that intervenes after that reservation still voids the approval: nothing minted", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-    await fluxHome();
-    const t = await token();
-    const { intent } = await refused(t, SUBKEY, {});
-    await approve(t, intent);
-    armDb(/SET state='executing', phase=/, async () => {
-      armDb(/UPDATE flux_home_ops SET payload=json_set/, async () => { throw new Error("worker fell over"); });
-    });
-    expect((await call("POST", SUBKEY, t, { stepUpIntentId: intent })).status).toBe(500);
-    const strong = await authenticatorToken(S2);
-    const stop = await call("POST", "/v1/homes/home-se/flux/stop", strong, {});
-    expect(stop.status).toBeLessThan(300);
-    const [s, b] = await out(await call("POST", SUBKEY, t, { stepUpIntentId: intent }));
-    expect([s, b.error]).toEqual([403, "step_up_required"]);
-    expect(fluxCalls.mints).toHaveLength(0);
-    expect((await keyRow())!.state).not.toBe("active");
-    expect(await intentRow(intent)).toBeNull();
-  });
-
-  it("STEPUP-EMAIL-7 #2 after the claim, the home generation advances with the Flux lifecycle unchanged: 403 fresh intent, nothing minted or reserved", async () => {
-    await fluxHome();
-    const t = await token();
-    const { intent } = await refused(t, SUBKEY, {});
+    const { intent } = await refused(t, CAP, { capUsd: 500 });
     await approve(t, intent);
     const before = (await keyRow())!;
     // The claim passes; then, right before the mint's own reservation, the home moves to its next generation (a reset, a restore).
     armDb(/SET state='executing', phase=/, async () => {
-      armDb(/UPDATE flux_home_keys SET lifecycle_version = lifecycle_version \+/, async () => {
+      armDb(/UPDATE flux_home_keys SET plan=\?,cap_microcents=/, async () => {
         await env.DB.prepare("UPDATE cloud_homes SET generation=generation+1 WHERE id='home-se'").run();
       });
     });
-    const [s, b] = await out(await call("POST", SUBKEY, t, { stepUpIntentId: intent }));
+    const [s, b] = await out(await call("POST", CAP, t, { capUsd: 500, stepUpIntentId: intent }, worker, COMPAT));
     expect([s, b.error]).toEqual([403, "step_up_required"]);
     expect(b.step_up).toBeTruthy();
-    expect(fluxCalls.mints).toHaveLength(0);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_home_ops WHERE home_id='home-se'").first<Body>())!.n).toBe(0);
     const after = (await keyRow())!;
     expect([after.lifecycle_version, after.state]).toEqual([before.lifecycle_version, before.state]);
     // Never recorded as an own reservation: the approval is gone, not resumable at the new generation.
     expect(await intentRow(intent)).toBeNull();
-    const again = await out(await call("POST", SUBKEY, t, { stepUpIntentId: intent }));
+    const again = await out(await call("POST", CAP, t, { capUsd: 500, stepUpIntentId: intent }, worker, COMPAT));
     expect(again[0]).toBe(403);
-    expect(fluxCalls.mints).toHaveLength(0);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_home_ops WHERE home_id='home-se'").first<Body>())!.n).toBe(0);
   });
 
   it("#5 a fresh refusal after expiry never deletes an undelivered mint record; the sweep then compensates it", async () => {
@@ -1345,26 +1232,27 @@ describe("STEPUP-EMAIL-4: link revisions, undelivered keys, own reservations, se
     await sweepStepUpEmail(testEnv(), clock);
     expect((await intentRow(intent))!.phase).toBe("compensating");
     await sweepFlux(testEnv(), { fluxClient: () => fakeFlux, billingFlux: QUALIFIED_HOOKS, now: () => clock });
-    expect(fluxCalls.revokes.filter((r) => r.generation === fluxCalls.mints[0].generation)).toHaveLength(1);
+    expect(fluxCalls.revokes.filter((r) => r.generation === UNDELIVERED_GENERATION)).toHaveLength(1);
     expect((await intentRow(intent))!.phase).toBe("compensated");
   });
 
   it("#6 a retry of an expired executing operation that meets the sweep's lease: 409 home_busy, marked consumed", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     await fluxHome();
+    extraEnv = { FLUX_RESUME_VIA_POLLER: "1" }; // 8b: this home is stopped, so the raise is a resume through the poller
     const t = await token();
-    const { intent } = await refused(t, SUBKEY, {});
+    const { intent } = await refused(t, CAP, { capUsd: 500 });
     await approve(t, intent);
     armDb(/SET state='executing', phase=/, async () => {
-      armDb(/SELECT op_id,seq,kind,payload,attempts FROM flux_home_ops/, async () => { throw new Error("worker fell over"); });
+      armDb(/UPDATE flux_home_keys SET plan=\?,cap_microcents=/, async () => { throw new Error("worker fell over"); });
     });
-    expect((await call("POST", SUBKEY, t, { stepUpIntentId: intent })).status).toBe(500);
+    expect((await call("POST", CAP, t, { capUsd: 500, stepUpIntentId: intent }, worker, COMPAT)).status).toBe(500);
     // The sweep drains the home meanwhile: it holds the Flux lease.
     await env.DB.prepare("UPDATE flux_home_keys SET op_holder='sweep-holder', op_lease_until=? WHERE home_id='home-se'").bind(clock + 60_000).run();
-    const busy = await call("POST", SUBKEY, t, { stepUpIntentId: intent });
+    const busy = await call("POST", CAP, t, { capUsd: 500, stepUpIntentId: intent }, worker, COMPAT);
     expect(busy.headers.get(HDR)).toBe("1");
     expect(await out(busy)).toEqual([409, { error: "home_busy" }]);
-    expect(fluxCalls.mints).toHaveLength(0);
+    expect((await env.DB.prepare("SELECT cap_microcents FROM flux_home_keys WHERE home_id='home-se'").first<Body>())).toEqual({ cap_microcents: 30_000_000 });
     expect((await intentRow(intent))!.state).toBe("executing");
   });
   it("STEPUP-EMAIL-5 #4: link completion is ONE transaction: a failure inside it commits nothing, and the exact retry links once", async () => {
@@ -1399,7 +1287,7 @@ describe("STEPUP-EMAIL-4: link revisions, undelivered keys, own reservations, se
     await fluxHome();
     const t = await token();
     const intent = await undeliveredMint(t);
-    const generation = fluxCalls.mints[0].generation;
+    const generation = UNDELIVERED_GENERATION;
     const opId = `undelivered:${intent}`;
     const alerts = async () => (await env.DB.prepare("SELECT home_id,severity,detail,resolved_at FROM cloud_alerts WHERE kind='flux.undelivered_key_unrevoked'")
       .all<Body>()).results;

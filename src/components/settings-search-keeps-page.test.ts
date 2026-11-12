@@ -21,7 +21,8 @@ describe("Settings search and the open page", () => {
   it("keeps the page mounted, hidden while a search is showing", () => {
     expect(pane).toMatch(/<div data-settings-page-body hidden=\{q \? true : undefined\} className=\{q \? "hidden" : "contents"\}>/);
     const body = pane.slice(pane.indexOf("data-settings-page-body"));
-    expect(body).toContain('section === "skills"');
+    expect(body).toContain("SettingsPageMount");
+    expect(readFileSync(new URL("./settings/page-registry.tsx", import.meta.url), "utf8")).toContain('connections: () => import("./pages/ConnectionsPage")');
   });
 });
 

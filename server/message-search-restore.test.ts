@@ -8,7 +8,7 @@
 // and gets one; and a tampered index definition is still refused.
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
 
@@ -17,7 +17,10 @@ import { database, finishBackgroundUpgradeWorkNow } from "./database.ts";
 import { inspectInstallationDatabase, snapshotInstallationDatabase } from "./installation-database-snapshot.ts";
 import { closeMessageDb, deleteThread, insertMessage, searchMessages, updateMessage } from "./message-db.ts";
 import { stopWalMaintenance } from "./wal-maintenance.ts";
-import { backfillMessageSearchIndex, messageSearchIndexReady, trigramQuery } from "./message-search-index.ts";
+import { stopSearchIndex } from "./message-search-index.ts";
+import { waitSearchFixture } from "./testing/message-search-fixture.ts";
+import { MESSAGE_SEARCH_DDL } from "./message-tables.ts";
+import { backfillMessageSearchIndex as fillLegacy } from "./testing/message-search-index-before-split.ts";
 import type { Message } from "./store.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
@@ -26,7 +29,16 @@ const msg = (id: string, text: string): Message => ({ id, role: "user", kind: "t
 const roots: string[] = [];
 const queries = ["railway", "RAILWAY up", "日本語", "日本", "café", "needle", "alembic", "removed", "edited", "zzz-nothing", "50%"];
 const answers = () => queries.map((query) => searchMessages(query).map((hit) => `${hit.threadId}/${hit.messageId}`));
-const indexedRows = () => Number(database().prepare("SELECT COUNT(*) AS n FROM messages_fts_docsize").get()!.n);
+const indexedRows = () => {
+  const reader = new DatabaseSync(join(DATA_DIR, "search.db"), { readOnly: true });
+  try { return Number(reader.prepare("SELECT COUNT(*) AS n FROM messages_fts_docsize").get()!.n); }
+  finally { reader.close(); }
+};
+async function legacyIndex() {
+  await stopSearchIndex();
+  database().exec(MESSAGE_SEARCH_DDL);
+  fillLegacy(database());
+}
 
 /** A used installation: every write path has run (insert, replace, edit, delete). */
 function populate() {
@@ -52,74 +64,81 @@ function restoreInto(snapshot: string) {
 beforeEach(() => { closeMessageDb(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { closeMessageDb(); for (const root of roots.splice(0)) removeTempDirSync(root); });
 
-it("snapshots an indexed installation, carries the index, and restored search answers identically", async () => {
+it("snapshots an indexed installation, omits the derived index, and rebuilds identical restored search", async () => {
   populate();
+  await waitSearchFixture();
   const before = answers();
   expect(before.flat().length).toBeGreaterThan(0);
   const indexed = indexedRows();
   expect(indexed).toBeGreaterThan(0);
-  closeMessageDb(); await stopWalMaintenance(); /* closeDatabase stops the checkpointer without waiting (wal3); a second connection must wait for it */ // the offline snapshot takes the installation lease; the app is not running
+  await stopSearchIndex(); closeMessageDb(); await stopWalMaintenance(); /* closeDatabase stops the checkpointer without waiting (wal3); a second connection must wait for it */ // the offline snapshot takes the installation lease; the app is not running
   const target = join(stage(), "snapshot.db");
   expect(await snapshotInstallationDatabase(DATA_DIR, target)).toMatchObject({ status: "copied" });
 
-  // The index travelled inside the file: ask it directly, before the app ever opens it.
+  // Reviewed lifecycle 2de8a7c65c: a snapshot excludes the derived search file.
   const file = new DatabaseSync(target, { readOnly: true });
   try {
-    expect(file.prepare("SELECT COUNT(*) AS n FROM messages_fts_docsize").get()!.n).toBe(indexed);
-    expect(file.prepare("SELECT COUNT(*) AS n FROM messages_fts WHERE messages_fts MATCH ?").get(trigramQuery("railway"))!.n).toBeGreaterThan(0);
+    expect(file.prepare("SELECT name FROM sqlite_schema WHERE name GLOB 'messages_fts*'").all()).toEqual([]);
+    expect(existsSync(join(dirname(target), "search.db"))).toBe(false);
     expect(file.prepare("PRAGMA integrity_check").all()).toEqual([{ integrity_check: "ok" }]);
     expect(inspectInstallationDatabase(file).messages).toBeGreaterThan(0);
   } finally { file.close(); }
 
   restoreInto(target);
+  await waitSearchFixture();
   expect(answers()).toEqual(before);
-  // the first open notes where the index ends; the rest is filled by the background work (upgrade-background.ts), and searches scan until then
+  // The first open rebuilds the excluded derived file through the real worker.
   finishBackgroundUpgradeWorkNow();
-  expect(messageSearchIndexReady(database())).toBe(true);
-  expect(backfillMessageSearchIndex(database())).toBe(0); // nothing missing: it did not need rebuilding
   expect(indexedRows()).toBe(indexed);
 });
 
 it("restores a snapshot taken while the index was ahead of the checkpoint (WAL-resident writes)", async () => {
   populate();
+  await waitSearchFixture();
   const before = answers();
   database().exec("PRAGMA wal_autocheckpoint=0"); // keep this run's writes in the -wal file
   insertMessage("a", msg("m9", "written after the last checkpoint needle"));
   const expected = searchMessages("after the last checkpoint").length;
   expect(expected).toBe(1);
-  closeMessageDb(); await stopWalMaintenance(); /* closeDatabase stops the checkpointer without waiting (wal3); a second connection must wait for it */
+  await stopSearchIndex(); closeMessageDb(); await stopWalMaintenance(); /* closeDatabase stops the checkpointer without waiting (wal3); a second connection must wait for it */
   const target = join(stage(), "snapshot.db");
   await snapshotInstallationDatabase(DATA_DIR, target);
   restoreInto(target);
+  await waitSearchFixture();
   expect(searchMessages("after the last checkpoint")).toHaveLength(1);
   expect(answers().slice(0, 3)).toEqual(before.slice(0, 3));
 });
 
 it("an archive from before the index restores, and the first open builds the index", async () => {
   populate();
+  await waitSearchFixture();
   const before = answers();
   // Make the snapshot source look like a database an older release wrote.
+  await legacyIndex();
   database().exec("DROP TABLE messages_fts");
   expect(database().prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'messages_fts%'").all()).toEqual([]);
-  closeMessageDb(); await stopWalMaintenance(); /* closeDatabase stops the checkpointer without waiting (wal3); a second connection must wait for it */
+  await stopSearchIndex(); closeMessageDb(); await stopWalMaintenance(); /* closeDatabase stops the checkpointer without waiting (wal3); a second connection must wait for it */
   const target = join(stage(), "snapshot.db");
   expect(await snapshotInstallationDatabase(DATA_DIR, target)).toMatchObject({ status: "copied" });
   restoreInto(target);
+  await waitSearchFixture();
   expect(answers()).toEqual(before);
-  // the first open notes where the index ends; the background work fills the rest (upgrade-background.ts), and searches scan until then
+  // A pre-index archive also rebuilds through the real worker.
   finishBackgroundUpgradeWorkNow();
-  expect(messageSearchIndexReady(database())).toBe(true);
   expect(indexedRows()).toBeGreaterThan(0);
 });
 
 it("a restored index that is behind its messages is topped up, never trusted blind", async () => {
   populate();
+  await waitSearchFixture();
   const before = answers();
+  await legacyIndex();
   database().exec("DELETE FROM messages_fts WHERE rowid > 2"); // a partially built index
-  closeMessageDb(); await stopWalMaintenance(); /* closeDatabase stops the checkpointer without waiting (wal3); a second connection must wait for it */
+  await stopSearchIndex(); closeMessageDb(); await stopWalMaintenance(); /* closeDatabase stops the checkpointer without waiting (wal3); a second connection must wait for it */
   const target = join(stage(), "snapshot.db");
   await snapshotInstallationDatabase(DATA_DIR, target);
   restoreInto(target);
+  await waitSearchFixture();
   expect(answers()).toEqual(before);
 });
 
@@ -132,8 +151,10 @@ it.each([
   ["a trigger on the index", "CREATE TRIGGER hostile AFTER INSERT ON messages BEGIN DELETE FROM thread_state; END"],
 ])("still refuses an archive whose search index has %s", async (_name, sql) => {
   populate();
+  await waitSearchFixture();
+  await legacyIndex();
   database().exec(sql);
-  closeMessageDb(); await stopWalMaintenance(); /* closeDatabase stops the checkpointer without waiting (wal3); a second connection must wait for it */
+  await stopSearchIndex(); closeMessageDb(); await stopWalMaintenance(); /* closeDatabase stops the checkpointer without waiting (wal3); a second connection must wait for it */
   const target = join(stage(), "snapshot.db");
   await expect(snapshotInstallationDatabase(DATA_DIR, target)).rejects.toMatchObject({ code: "DATABASE_SCHEMA_UNSUPPORTED" });
   expect(existsSync(target)).toBe(false);

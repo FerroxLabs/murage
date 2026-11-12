@@ -493,3 +493,21 @@ test("no previous identity: past the deadline the registration needs attention, 
   assert.equal(result.state, "registration-needed");
   assert.equal(readRegistrationRecord(fx.outputRoot, { platform: "linux" }).reason, "no-heartbeat");
 });
+
+test('Windows gate prefixes the production task and joins the job through the GUI bridge',()=>{
+ const keys=['MURAGE_GATE_RUN_PREFIX','MURAGE_GATE_TASK_HELPER','MURAGE_GATE_JOB_NAME'];
+ const saved=keys.map(k=>process.env[k]);
+ try {
+  const prefix=`MurageCI-${'a'.repeat(32)}-`;
+  process.env.MURAGE_GATE_RUN_PREFIX=prefix;
+  process.env.MURAGE_GATE_TASK_HELPER='C:\\murage-ci\\results\\h1\\task-bridge.exe';
+  process.env.MURAGE_GATE_JOB_NAME=`Local\\${prefix}`;
+  assert.equal(sentinelNames(ID).task,`\\FerroxLabs\\Murage\\Sentinel\\${prefix}${ID}`);
+  const input=descriptorFor({platform:'win32',exe:'C:\\murage-ci\\app\\Murage.exe',entry:'C:\\murage-ci\\scan.js'});
+  const invocation=sentinelInvocation({platform:'win32',...input});
+  assert.equal(invocation.executable,process.env.MURAGE_GATE_TASK_HELPER);
+  assert.deepEqual(invocation.args.slice(0,3),[process.env.MURAGE_GATE_JOB_NAME,input.descriptor.executable.path,SENTINEL_TRAMPOLINE_FLAG]);
+  process.env.MURAGE_GATE_JOB_NAME='unowned';
+  assert.throws(()=>sentinelNames(ID));
+ }finally{keys.forEach((k,i)=>{if(saved[i]===undefined)delete process.env[k];else process.env[k]=saved[i];});}
+});

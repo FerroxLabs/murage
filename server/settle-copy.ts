@@ -1,3 +1,4 @@
+import * as messageSearch from "./message-search-index.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -18,6 +19,32 @@ import { DatabaseSync } from "node:sqlite";
 
 /** The side files SQLite can write beside a database file. */
 export const SQLITE_SIDECARS = ["-journal", "-wal", "-shm"] as const;
+
+/** Frozen upgrade slots. Only private copies and stopped offline downgrades may drop them. */
+export const RETIRED_SEARCH_TABLES: readonly string[] = Object.freeze(Array.from({ length: 8 }, (_, i) => `messages_fts_retired${i ? `_${i + 1}` : ""}`));
+export const RETIRED_SEARCH_OBJECTS: readonly string[] = Object.freeze(RETIRED_SEARCH_TABLES.flatMap(name => [name, ...["_data", "_idx", "_docsize", "_config"].map(suffix => name + suffix)]));
+
+/** Caller must hold the stopped installation's exclusive lease (or have joined every writer).
+ * Sidecars go first so retry after interruption cannot replay a stale WAL onto a fresh file. */
+export function removeMessageSearchFiles(dataDir: string): void {
+  // B1 supplies SEARCH_FILES. The fallback keeps this disjoint lifecycle commit verifiable on b4dc27ea9.
+  const files = "SEARCH_FILES" in messageSearch ? messageSearch.SEARCH_FILES as readonly string[] : ["search.db", "search.db-wal", "search.db-shm"];
+  for (const name of [...files.slice(1), files[0]]) rmSync(join(dataDir, name), { force: true });
+}
+
+/** Offline cleanup route for inert retired indexes. Never call on the serving connection. */
+export function dropRetiredSearchTables(db: DatabaseSync): number {
+  let dropped = 0;
+  for (const name of RETIRED_SEARCH_TABLES) {
+    if (hasTable(db, name)) { db.exec(`DROP TABLE "${name}"`); dropped++; }
+    // A killed/older retirement can leave only shadows. These fixed names never come from archive SQL.
+    for (const suffix of ["_data", "_idx", "_docsize", "_config"]) {
+      if (hasTable(db, name + suffix)) { db.exec(`DROP TABLE "${name + suffix}"`); dropped++; }
+    }
+  }
+  return dropped;
+}
+
 /** The settled file VACUUM INTO writes beside a copy before it is renamed over it (R6.1). Private like the copy; every sweep of a
  * copy's leftovers covers it and its side files. */
 export const SETTLE_INTO_SUFFIX = "-settle";
@@ -154,6 +181,8 @@ export function settleFtsCopy(partial: string, options: SettleCopyOptions): void
     expectPragma(db, "PRAGMA secure_delete=ON", 1);
     if (options.check) expectPragma(db, "PRAGMA quick_check", "ok");
     settleCopyIo.step("opened", partial);
+    dropRetiredSearchTables(db);
+    if (hasTable(db, "search_intents")) db.exec("DELETE FROM search_intents");
     if (hasTable(db, "messages_fts")) {
       // 2. orphans out; 3. optimize until the probe proves the index clean
       deleteFtsOrphans(db);
@@ -191,12 +220,16 @@ export function settleFtsCopy(partial: string, options: SettleCopyOptions): void
 }
 
 /** The keep rule for a copy already under its final name: open read-only, probe, close; then no side file may sit beside it
- * (a read-only open of a WAL file creates them). Kept only when settled and none exists. */
+ * (a read-only open of a WAL file creates them). Retired objects and queued intents require sanitization too. */
 export function settledCopyKept(path: string): boolean {
   let state: FtsSettledState = "unknown";
   try {
     const db = new DatabaseSync(path, { readOnly: true });
-    try { state = ftsSettled(db); } finally { db.close(); }
+    try {
+      const needsSanitization = RETIRED_SEARCH_OBJECTS.some(name => hasTable(db, name)) ||
+        (hasTable(db, "search_intents") && db.prepare("SELECT 1 FROM search_intents LIMIT 1").get() !== undefined);
+      state = needsSanitization ? "owed" : ftsSettled(db);
+    } finally { db.close(); }
   } catch { state = "unknown"; }
   if (hasSidecar(path)) return false;
   return state === "settled";

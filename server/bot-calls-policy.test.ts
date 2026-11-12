@@ -176,3 +176,17 @@ describe("quietHoursActive", () => {
     expect(quietHoursActive({}, new Date("2026-10-27T23:30:00Z"))).toBe(false);
   });
 });
+
+it('X4 No limits bypasses rate caps and cooldown; owner calls-off remains honoured',async()=>{
+ const {bindServiceTurn}=await import('./service-no-limits.ts');
+ bindServiceTurn('nolim-call','t1','scout',()=>true,()=>({ownerAudience:true,origin:'owner',noLimits:true}));
+ const db=fresh();
+ const a=intent(db,A_RING),b=intent(db,A_RING);
+ db.prepare("UPDATE bot_calls SET rang_at=?,ended_at=?,state='done',outcome='declined' WHERE id IN (?,?)").run(T0-1,T0-1,a,b);
+ const id=intent(db,A_RING);
+ await run(db,id,world());expect(outcome(db,id)).toBe('ringing');
+ cancelBotCalls(db,{intent:id},'owner',NO_CALL_EFFECTS,T0+1500);
+ setCallsOffUntil(db,T0+3600_000);
+ const off=intent(db,A_RING);await run(db,off,world());expect(outcome(db,off)).toBe('texted');expect(last(db,off)?.result).toBe('off_today');
+ bindServiceTurn('nolim-call','t1','scout',()=>false,()=>({ownerAudience:true,origin:'owner',noLimits:true}));
+});

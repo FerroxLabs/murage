@@ -1,3 +1,4 @@
+import "../../shared/win-hide-child-process.mjs";
 import { MemoryEligibility } from "./eligibility.ts";
 import { captureWork } from "./chunks.ts";
 import { workSchema,indexBatchSchema,searchInputSchema,scopePartSchema,type MemorySearchInput } from "./worker-protocol.ts";

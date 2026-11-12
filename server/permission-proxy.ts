@@ -1,3 +1,4 @@
+import "../shared/win-hide-child-process.mjs";
 // permission-proxy — the MCP stdio server the claude CLI spawns for
 // --permission-prompt-tool (ported from agentcal's runPermissionProxy;
 // dedicated entry file, so there is no argv-dispatch fork-bomb hazard).
@@ -179,6 +180,8 @@ async function handle(msg: any) {
         if (!judged || typeof judged !== "object" || Array.isArray(judged)) {
           return send({ jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text: JSON.stringify({ behavior: "deny", message: "Murage: the call carried no input to judge" }) }] } });
         }
+        // This is control data, even for a huge Write. The Claude launch owns
+        // MAX_MCP_OUTPUT_TOKENS so its MCP limiter cannot replace it with a file notice.
         const result: AllowPermissionResult = { behavior: "allow", updatedInput: judged };
         if (answer.always && suggestions) result.updatedPermissions = suggestions;
         text = JSON.stringify(result);

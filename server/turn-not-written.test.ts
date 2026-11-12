@@ -165,13 +165,13 @@ describe("I14: dispatchedIn means released to the engine's write", () => {
     expect(row.dispatchedIn).toBe("T2");
   });
 
-  it("a later check refusing the second fence takes the first release back", () => {
+  it("a later check refusing the second fence keeps the first release: that write was released and may have happened (turn-dispatch-guard contract)", () => {
     const { row, attribution, boundary } = rows();
     boundary.beforeSubmit(() => {});
     attribution.accepted("g1", "T1");
     expect(row.dispatchedIn).toBe("T1");
     expect(() => boundary.beforeSubmit(() => { throw new Error("retired during the MCP wait"); })).toThrow("retired during");
-    expect(row.dispatchedIn).toBeUndefined();
+    expect(row.dispatchedIn).toBe("T1");
   });
 });
 

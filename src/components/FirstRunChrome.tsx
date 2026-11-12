@@ -10,10 +10,11 @@
 // they had never seen.
 
 import { announceSetupView } from "@/lib/app-events";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import type { FirstRunTiming } from "@/lib/first-run-timing";
 import { api } from "@/state/store";
+import { isCloudHome } from "@/lib/cloud-workspace";
 import type { SetupStep, SetupView } from "../../shared/setup";
 
 /** The bot's own bubble. Wider than a text bubble because these carry rows
@@ -158,6 +159,17 @@ export const SETUP_READ_RETRY_LIMIT = 5;
 let idleReads = 0;
 let lastSeen = "";
 let failedReads = 0;
+/** CLOUD ONLY. The five quick retries ran out with nothing read: the cards say so and offer Try again, and a slow re-read
+ *  keeps going by itself so a home that comes back needs no reload. Always false off a Cloud home. */
+let readGaveUp = false;
+const gaveUpListeners = new Set<(gaveUp: boolean) => void>();
+const SLOW_RETRY_MS = 15_000;
+
+function setReadGaveUp(next: boolean): void {
+  if (readGaveUp === next) return;
+  readGaveUp = next;
+  for (const listener of [...gaveUpListeners]) listener(next);
+}
 /** The route answered 403/404: this surface (a phone through the door) is
  * never shown the first run, so asking again only adds 404s to its log. */
 let refused = false;
@@ -200,7 +212,16 @@ function schedulePoll(view: SetupView): void {
  * answer beats no answer.
  */
 function scheduleRetry(): void {
-  if (pollTimer || failedReads >= SETUP_READ_RETRY_LIMIT) return;
+  if (pollTimer) return;
+  if (failedReads >= SETUP_READ_RETRY_LIMIT) {
+    if (!isCloudHome()) return;
+    setReadGaveUp(true);
+    pollTimer = setTimeout(() => {
+      pollTimer = null;
+      void readSetupView(true);
+    }, SLOW_RETRY_MS);
+    return;
+  }
   failedReads += 1;
   pollTimer = setTimeout(() => {
     pollTimer = null;
@@ -233,6 +254,7 @@ export function readSetupView(force = false): Promise<SetupView | null> {
     .then((view: SetupView) => {
       if (view && Array.isArray(view.steps)) {
         failedReads = 0;
+        setReadGaveUp(false);
         cached = { view, at: Date.now() };
         publish(view);
       } else {
@@ -273,8 +295,20 @@ export function forgetSetupView(): void {
   idleReads = 0;
   lastSeen = "";
   failedReads = 0;
+  setReadGaveUp(false);
   clearPoll();
   void readSetupView(true);
+}
+
+/** Whether the setup read has run out of retries (Cloud only), so a card can say so and offer Try again. */
+export function useSetupReadGaveUp(): boolean {
+  const [gaveUp, setGaveUp] = useState(readGaveUp);
+  useEffect(() => {
+    gaveUpListeners.add(setGaveUp);
+    setGaveUp(readGaveUp);
+    return () => { gaveUpListeners.delete(setGaveUp); };
+  }, []);
+  return gaveUp;
 }
 
 export function useSetupView(): { view: SetupView | null; refresh: () => void } {
@@ -297,6 +331,35 @@ export function useSetupView(): { view: SetupView | null; refresh: () => void } 
   // the same reason `forgetSetupView` does: the run of identical answers that
   // stopped it is over.
   return { view, refresh: () => forgetSetupView() };
+}
+
+/** A burst of bot changes is one re-read, this long after the last. */
+export const BOT_CHANGE_REREAD_MS = 400;
+
+type RosterBot = { id: string; hidden?: boolean; modelSelection?: { instanceId?: string } };
+
+/**
+ * Which engines are owed on a Cloud home follows the visible bots, but the view stops polling after onboarding. Feed this
+ * the roster on every change: the first call is the baseline, a later change to the roster, a hide/archive or a bot's engine
+ * re-reads the view once, however many changes arrive within the window.
+ */
+export function createBotChangeRefresher(reread: () => void = forgetSetupView, ms = BOT_CHANGE_REREAD_MS): (bots: readonly RosterBot[]) => void {
+  let seen: string | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  return (bots) => {
+    const signature = bots.map((bot) => `${bot.id}:${bot.hidden ? 1 : 0}:${bot.modelSelection?.instanceId ?? ""}`).join("|");
+    const changed = seen !== null && seen !== signature;
+    seen = signature;
+    if (!changed) return;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => { timer = null; reread(); }, ms);
+  };
+}
+
+export function useRefreshSetupOnBotChange(bots: readonly RosterBot[]): void {
+  const refresher = useRef<ReturnType<typeof createBotChangeRefresher> | undefined>(undefined);
+  refresher.current ??= createBotChangeRefresher();
+  useEffect(() => refresher.current?.(bots), [bots]);
 }
 
 /**
@@ -324,6 +387,15 @@ export const PARKED_CARD_STEP: SetupStep = "flow";
 export async function answerSetupStep(step: SetupStep, answer: string, timing?: FirstRunTiming): Promise<void> {
   const send = () => api("/api/setup/answer", { method: "POST", body: JSON.stringify({ step, answer }), ...(timing ? { headers: timing.headers() } : {}) });
   await (timing ? timing.time("answer", send) : send());
+  forgetSetupView();
+}
+
+/**
+ * Settle one of the three 1.0.19 cards by its own record (FIRSTRUN-1019 D4). Nothing but this settles them: a finished
+ * step never does. The answer is the setup view with the next card already appended.
+ */
+export async function settleSetupCard(key: "flux:notify" | "chat:hire" | "detect:move-grok"): Promise<void> {
+  await api("/api/setup/card", { method: "POST", body: JSON.stringify({ key, action: "settle" }) });
   forgetSetupView();
 }
 

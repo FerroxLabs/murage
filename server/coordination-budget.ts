@@ -63,7 +63,12 @@ export class CoordinationBudget {
     }
     return { rootId, path: [owner] };
   }
-  advance(trace: CoordinationTrace | undefined, sender: string, target: string): CoordinationTrace {
+  advance(trace: CoordinationTrace | undefined, sender: string, target: string, noLimits = false): CoordinationTrace {
+    if (noLimits) {
+      id.parse(sender); id.parse(target);
+      if (trace && (!coordinationTraceSchema.extend({ path: z.array(id).min(1) }).safeParse(trace).success || trace.path.at(-1) !== sender)) throw new Error("COORDINATION_ANCESTRY_INVALID");
+      return { rootId: trace?.rootId ?? randomUUID(), path: [...(trace?.path ?? [sender]).slice(-2), target] };
+    }
     if (!trace || !coordinationTraceSchema.safeParse(trace).success) throw new Error("COORDINATION_ALLOWANCE_UNAVAILABLE: start a new owner task");
     let root = this.state.roots.find(root => root.id === trace.rootId && root.expiresAt > this.now());
     let promoting: State["roots"] | undefined;

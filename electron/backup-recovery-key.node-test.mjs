@@ -55,10 +55,10 @@ test("a created key file is age-keygen's format and works with the real age tool
     assert.equal(text.split("\n")[1],"# public key: "+created.publicKey);assert.equal(created.label,"murage-recovery-key.txt");assert.equal(created.file,file);
     if(process.platform!=="win32")assert.equal(lstatSync(file).mode&0o777,0o600);
     assert.equal(readBackupIdentity(file,p.installation).recipient,created.publicKey);
-    assert.equal(execFileSync(keygen,["-y",file],{encoding:"utf8",env:{PATH:""}}).trim(),created.publicKey);
-    const secret="A fixture archive only this key opens.\n",encrypted=execFileSync(ageExecutable,["-r",created.publicKey],{input:secret,env:{PATH:""}});
+    assert.equal(execFileSync(keygen,["-y",file],{ windowsHide: true,encoding:"utf8",env:{PATH:""}}).trim(),created.publicKey);
+    const secret="A fixture archive only this key opens.\n",encrypted=execFileSync(ageExecutable,["-r",created.publicKey],{ windowsHide: true,input:secret,env:{PATH:""}});
     assert.equal(encrypted.includes(Buffer.from(secret)),false);
-    assert.equal(execFileSync(ageExecutable,["-d","-i",file],{input:encrypted,encoding:"utf8",env:{PATH:""}}),secret);
+    assert.equal(execFileSync(ageExecutable,["-d","-i",file],{ windowsHide: true,input:encrypted,encoding:"utf8",env:{PATH:""}}),secret);
   }finally{p.cleanup();}
 });
 

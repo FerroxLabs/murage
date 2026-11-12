@@ -104,7 +104,7 @@ import { api, useStore, type Bot, type Group } from "@/state/store";
 import { useDirtyBaseline } from "@/hooks/use-dirty-baseline";
 import { permissionModeOf } from "@/lib/permission-mode";
 import { engineKey, limitEngineOptions } from "../../shared/limit-engine-key";
-import { RoutineApprovalLevel, RoutineGrants, type RoutineLevelChoice } from "./RoutineApprovals";
+import { RoutineApprovalLevel, RoutineGrants, routineLevelChoice, routinePermissionPatch, type RoutineLevelChoice } from "./RoutineApprovals";
 import { fromAnswer } from "@/state/answer-tag";
 import { resourceWaitLabel } from "@/lib/resource-wait";
 import { findTask } from "@/lib/task-window";
@@ -478,7 +478,7 @@ export function EventEditor({ lifecycle,
   const [runOn, setRunOn] = useState<RoutineRunOn>(existingRoutine?.runOn ?? defaultRunOn ?? "ember");
   const [overlap, setOverlap] = useState<"skip" | "queue">(existingRoutine?.overlap ?? "skip");
   const [deliverTo, setDeliverTo] = useState<"chat" | "list">(existingRoutine?.deliverTo === "list" ? "list" : "chat");
-  const [permissionMode, setPermissionMode] = useState<RoutineLevelChoice>(existingRoutine?.permissionMode ?? permissionModeOf(state.bots.find((bot) => bot.id === botIds[0]) ?? { autoApprove: false, fullAccess: false }));
+  const [permissionMode, setPermissionMode] = useState<RoutineLevelChoice>(routineLevelChoice(existingRoutine));
   const [attachments, setAttachments] = useState<Array<RoutineContextAttachment | CalendarCallAttachment>>(
     existingRoutine?.target === "room-goal" ? [] : existingRoutine?.attachments ?? existingCall?.attachments ?? [],
   );
@@ -571,7 +571,7 @@ export function EventEditor({ lifecycle,
           overlap,
           ...(routineTarget === "bot" ? { deliverTo } : {}),
           ...(!existingRoutine && routineTarget === "bot" && recurrence !== "none" ? { carryLastReport: true } : {}),
-          ...(routineTarget === "bot" ? { permissionMode } : {}),
+          ...(routineTarget === "bot" ? routinePermissionPatch(permissionMode,existingRoutine) : {}),
         };
         const response = await api(existingRoutine ? `/api/routines/${existingRoutine.id}` : "/api/routines", {
           method: existingRoutine ? "PATCH" : "POST",

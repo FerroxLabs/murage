@@ -1,3 +1,5 @@
+import { fixtureActionDetail } from '../testing/highlevel-r4-fixtures.ts';
+import { r4HighLevelHarness as highLevelHarness } from '../testing/highlevel-r4-fixtures.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -8,7 +10,8 @@ import { HIGHLEVEL_HELPER_NAMES, HIGHLEVEL_READ_TOOL_NAMES, HIGHLEVEL_TOOL_NAMES
 import { forgetAllTurnMarks, isEmailReadToolName, isHighLevelChangeToolName, promptCarriesEmailDerived, turnEmailDerived } from "../email/external-marks.ts";
 import { HIGHLEVEL_OUTSIDE_KIND, HIGHLEVEL_OUTSIDE_RULE } from "./tools.ts";
 import { accessRoleBinding } from "../bot-access-role.ts";
-import { FAKE_CONNECTION_ID, highLevelHarness, scriptCrm, until } from "../testing/fake-highlevel.ts";
+import { FAKE_CONNECTION_ID,  scriptCrm, until } from "../testing/fake-highlevel.ts";
+import { BUDGET_CALLS } from "./client.ts";
 import { assertConnectedAppCall } from "../bot-access.ts";
 import { filterRelayToolList, filterRelayToolListBytes, highlevelRelayRefusal, visibleHighLevelTools } from "./access.ts";
 import { argumentsDigest, HighLevelActions, normalizeArguments, reviewDigestFor, type ActionIntent } from "./actions.ts";
@@ -152,8 +155,9 @@ describe("exact review: a changed argument, role, revision or epoch stales the a
     scriptCrm(h.api);
     const view = h.leases.views.get(FAKE_CONNECTION_ID)!;
     const live = { connection: view, signal: new AbortController().signal, assertActive: () => {} };
-    for (let i = 0; i < 90; i++) (await h.client.gate.admit(view.locationId, live)).spend();
     const pending = h.host.call(h.claim, "HIGHLEVEL_ADD_NOTE", { contactId: "contact_1", body: "x" });
+    await until(() => h.reviews.length > 0);
+    for (let i = 0; i < BUDGET_CALLS; i++) (await h.client.gate.admit(view.locationId, live)).spend();
     const review = await h.approveNext();
     await until(() => h.sleeps.length > 0);
     h.saveAccess([h.grant("read")], 2);
@@ -196,22 +200,22 @@ describe("exact review: a changed argument, role, revision or epoch stales the a
     expect(h.api.requests).toEqual([]);
   });
 
-  it("the custom-field read inside an approved change is authorized again before it leaves", async () => {
+  it("the custom-field preflight is authorized before review and before it leaves", async () => {
     const h = highLevelHarness({ manualSleep: true });
     scriptCrm(h.api);
     const view = h.leases.views.get(FAKE_CONNECTION_ID)!;
     const live = { connection: view, signal: new AbortController().signal, assertActive: () => {} };
     for (let i = 0; i < 90; i++) (await h.client.gate.admit(view.locationId, live)).spend();
     const pending = h.host.call(h.claim, "HIGHLEVEL_CREATE_CONTACT", { firstName: "Ada", customFields: { "Lead source": "web" } });
-    const review = await h.approveNext();
     await until(() => h.sleeps.length > 0);
+    expect(h.reviews).toHaveLength(0);
     h.saveAccess([], 2);
     h.advance(20_000);
     h.releaseSleeps();
     expect(await pending).toMatchObject({ isError: true });
     expect(h.api.calls("GET", /customFields/u)).toEqual([]);
     expect(h.api.calls("POST", /^\/contacts\/$/u)).toEqual([]);
-    expect(h.actions.get(review.actionId)!.dispatchAttempts).toBe(0);
+    expect(h.reviews).toHaveLength(0);
   });
 
   it("HIGHLEVEL_LIST_CONNECTIONS answers only with grants still held after its status reads", async () => {
@@ -234,7 +238,8 @@ describe("exact review: a changed argument, role, revision or epoch stales the a
     const journal = { put: (row: ActionIntent) => { if (failing) throw new Error("disk full"); rows.set(row.actionId, row); }, delete: (id: string) => { rows.delete(id); }, all: () => [...rows.values()] };
     const actions = new HighLevelActions({ journal, reviewTtlMs: 5 });
     const review = actions.propose({ botId: "b", threadId: "t", turnGeneration: "g", connectionId: "hl_a", connectionEpoch: 1, locationId: "l", companyId: "c",
-      grantRevision: 1, accessRevision: 1, policyRevision: 1, roleBinding: "r" }, "HIGHLEVEL_ADD_NOTE", { contactId: "c1", body: "x" }, { recordRefs: [], fields: ["body"] });
+      grantRevision: 1, accessRevision: 1, policyRevision: 1, roleBinding: "r" }, "HIGHLEVEL_ADD_NOTE", { contactId: "c1", body: "x" }, fixtureActionDetail({ recordRefs: [], fields: ["body"] }, { botId: "b", threadId: "t", turnGeneration: "g", connectionId: "hl_a", connectionEpoch: 1, locationId: "l", companyId: "c",
+      grantRevision: 1, accessRevision: 1, policyRevision: 1, roleBinding: "r" }));
     failing = true;
     await expect(actions.awaitDecision(review.actionId, new AbortController().signal)).rejects.toThrow(/could not be recorded/u);
     expect(actions.review(review.actionId)).toBeUndefined();
@@ -342,7 +347,11 @@ describe("capability, audience and relay boundaries", () => {
   it("tools/list advertises exactly what this bot may call", async () => {
     const h = highLevelHarness();
     const listed = (await h.host.handle(h.claim, { id: 1, method: "tools/list" })).result as { tools: Array<{ name: string }> };
-    expect(listed.tools.map((tool) => tool.name)).toEqual([...HIGHLEVEL_TOOL_NAMES, "HIGHLEVEL_LIST_CONNECTIONS", "HIGHLEVEL_ACTION_STATUS"]);
+    // C2: legacy grants are mapped to read operations, never advertised under the old twenty names.
+    const names = listed.tools.map(tool => tool.name);
+    expect(names).toContain("HIGHLEVEL_LIST_CONNECTIONS");
+    expect(names).toContain("HIGHLEVEL_ACTION_STATUS");
+    expect(names.some(name => (HIGHLEVEL_TOOL_NAMES as readonly string[]).includes(name))).toBe(false);
   });
 });
 

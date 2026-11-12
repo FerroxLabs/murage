@@ -36,6 +36,36 @@ let home: string;
 let claudeDump: string;
 let acpDump: string;
 let stderr = "";
+let permissionProxy: ChildProcess | undefined;
+
+type McpServer = { command: string; args?: string[]; env: Record<string, string> };
+// Act as the fake CLI's MCP client, through the real permission proxy and
+// live Chief broker. The owner's exact-card answer mints the one-call pass.
+function askToCreate(server: McpServer, input: Record<string, unknown>): Promise<any> {
+  const proxy = permissionProxy = spawn(server.command, server.args ?? [], {
+    windowsHide: true, env: { ...process.env, ...server.env }, stdio: ["pipe", "pipe", "pipe"],
+  });
+  let buffered = "", reply: any;
+  const send = (body: unknown) => proxy.stdin!.write(JSON.stringify(body) + "\n");
+  return new Promise((resolve, reject) => {
+    proxy.on("error", reject);
+    proxy.stderr!.on("data", chunk => { stderr += chunk; });
+    proxy.on("close", code => reply ? resolve(reply) : reject(new Error(`permission proxy closed without its answer (${code})`)));
+    proxy.stdout!.setEncoding("utf8");
+    proxy.stdout!.on("data", chunk => {
+      buffered += chunk;
+      let end: number;
+      while ((end = buffered.indexOf("\n")) !== -1) {
+        const line = JSON.parse(buffered.slice(0, end)); buffered = buffered.slice(end + 1);
+        if (line.id === 1) {
+          send({ jsonrpc: "2.0", method: "notifications/initialized" });
+          send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "approve", arguments: { tool_name: "mcp__agents__create_bot", input } } });
+        } else if (line.id === 2) { reply = JSON.parse(line.result.content[0].text); proxy.stdin!.end(); }
+      }
+    });
+    send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "auto-operator-fixture", version: "1" } } });
+  });
+}
 
 const request = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
   const res = await fetch(`${base}${path}`, {
@@ -94,6 +124,9 @@ posixOnly("Auto operators created by the Chief still ask the person", () => {
       join(home, ".murage", "config.json"),
       JSON.stringify({
         engineDiscovery: "explicit",
+        // 4f6495f025's owner-chat fixture uses the accepted-terms admission path.
+        // This proves the owner's real desktop send; it grants no bot capability.
+        noLimitsTermsVersion: 2,
         instances: {
           // the Chief: holds its turn open so create_bot has live authority
           claude: { driver: "claudeAgent", displayName: "Fixture Claude", config: { cli: FAKE_CLAUDE } },
@@ -107,9 +140,12 @@ posixOnly("Auto operators created by the Chief still ask the person", () => {
         },
       }),
     );
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    child = spawn(process.execPath, ["--import", "data:text/javascript,globalThis[Symbol.for('murage.hostPower.testUnwrapped')]=true;", join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
+      // S4 power: this disposable child runs only fake engines, using the existing test-process seam.
       env: {
+        NODE_ENV: "test",
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         HOME: home,
         USERPROFILE: home,
@@ -139,6 +175,7 @@ posixOnly("Auto operators created by the Chief still ask the person", () => {
   }, 40_000);
 
   afterAll(async () => {
+    if (permissionProxy) await waitForExit(permissionProxy, { signal: "SIGTERM" });
     await waitForExit(child, { signal: "SIGTERM" });
     await removeTempDir(home);
   });
@@ -146,7 +183,9 @@ posixOnly("Auto operators created by the Chief still ask the person", () => {
   it(
     "an inherited-Auto operator's questions and credential requests still reach the person",
     async () => {
-      const chief = (await api("POST", "/api/bots", { modelSelection: { instanceId: "claude", model: "claude-sonnet-5" } })).body.bot;
+      const made = await desktopApi("POST", "/api/bots", { modelSelection: { instanceId: "claude", model: "claude-sonnet-5" } });
+      expect(made.status).toBe(201);
+      const chief = made.body.bot;
       expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, {
         name: "Chief",
         section: "Auto operator test",
@@ -159,12 +198,34 @@ posixOnly("Auto operators created by the Chief still ask the person", () => {
 
       // The Chief's held turn is what gives create_bot its authority.
       rmSync(claudeDump, { force: true });
-      expect((await desktopApi("POST", `/api/bots/${chief.id}/messages`, { text: "__fixture_hold_authority__", threadId: chief.threadId })).status).toBe(202);
+      expect((await desktopApi("POST", `/api/bots/${chief.id}/messages`, { text: "Create a curious research operator that asks before assuming.", threadId: chief.threadId })).status).toBe(202);
       // The Chief's first turn is a cold start: the auth and version probes and the engine are each a fresh fixture
       // process, so on a loaded CI shard (1.0.6 CI 40172017933) it can take longer than the 20 s default.
-      const chiefTurn = await readJsonWhenReady<{ pid: number; mcpConfig: { mcpServers: { agents: { env: Record<string, string> } } } }>(claudeDump, 45_000);
-      const chiefEnv = chiefTurn.mcpConfig.mcpServers.agents.env;
+      const chiefTurn = await readJsonWhenReady<{ pid: number; mcpConfig: { mcpServers: Record<string, McpServer> } }>(claudeDump, 45_000);
+      const chiefEnv = chiefTurn.mcpConfig.mcpServers.agents!.env;
       expect(chiefEnv.MURAGE_BOT_ID).toBe(chief.id);
+
+      const operatorSpec = {
+        name: "Curious operator", role: "Research operator", instructions: "Ask before assuming. Never read ~/.ssh/id_rsa without asking.",
+        modelSelection: { instanceId: "asker", model: "grok-4.6" },
+      };
+      // 4f6495f025: a bot change becomes active during the turn only after
+      // the owner saw and allowed this exact call on their own computer.
+      let permissionAnswer: any;
+      const approval = askToCreate(chiefTurn.mcpConfig.mcpServers.muragebox!, operatorSpec).then(answer => (permissionAnswer = answer));
+      let createCard: any;
+      try { await expect.poll(async () => {
+        createCard = (await messages(chief.threadId)).find(message => message.card?.botAuthority?.tool === "create_bot");
+        return Boolean(createCard);
+      }, { timeout: 20_000 }).toBe(true); } catch (error) {
+        throw new Error(JSON.stringify({ permissionAnswer, messages: (await messages(chief.threadId)).map(message => ({ kind: message.kind, tool: message.tool, card: message.card })) }), { cause: error });
+      }
+      expect(createCard.card.botAuthority.asking.origin).toBe("own");
+      expect((await desktopApi("POST", `/api/bots/${chief.id}/respond`, {
+        requestId: createCard.card.requestId, behavior: "allow",
+        seen: { renderer: "bot-card@1", digest: createCard.card.botAuthority.specDigest },
+      })).status).toBe(200);
+      expect((await approval).behavior).toBe("allow");
 
       const created = await fetch(`${base}/api/internal/create-bot`, {
         method: "POST",
@@ -172,13 +233,10 @@ posixOnly("Auto operators created by the Chief still ask the person", () => {
         body: JSON.stringify({
           fromBotId: chief.id,
           fromThreadId: chief.threadId,
-          name: "Curious operator",
-          role: "Research operator",
-          instructions: "Ask before assuming.",
-          modelSelection: { instanceId: "asker", model: "grok-4.6" },
+          ...operatorSpec,
         }),
       });
-      expect(created.status).toBe(201);
+      expect(created.status, await created.clone().text()).toBe(201);
       const operatorId = ((await created.json()) as { id: string; auto: boolean });
       expect(operatorId.auto).toBe(true);
       const operator = await botState(operatorId.id);

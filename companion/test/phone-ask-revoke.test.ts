@@ -174,6 +174,14 @@ describe("the harness is told which kind of mint it is", () => {
     expect(bodies).toEqual([{ deviceId: "devA", scope: "ask" }, { deviceId: "devA" }]);
   });
 
+  it("an ask mint that opted in to the device id tells the harness; a jobs mint never does", async () => {
+    const bodies: unknown[] = [];
+    const harness = async (r: { body: Buffer | null }) => { bodies.push(JSON.parse(r.body!.toString("utf8"))); return { status: 200, body: { ok: true } }; };
+    expect(await phoneHarnessMinted(harness, PROOF, "devA", undefined, "ask", true)).toBe("ok");
+    expect(await phoneHarnessMinted(harness, PROOF, "devA", undefined, "jobs", true)).toBe("ok");
+    expect(bodies).toEqual([{ deviceId: "devA", scope: "ask", wantsDeviceId: true }, { deviceId: "devA" }]);
+  });
+
   it("the bootstrap for scope ask sends the ask scope to minted", async () => {
     removeTempDirSync(DATA_DIR);
     const r = new DeviceRegistry({ statementKeys: KEYS, now: () => NOW });

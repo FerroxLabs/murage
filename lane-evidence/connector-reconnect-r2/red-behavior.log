@@ -1,0 +1,212 @@
+
+ RUN  v4.1.12 /work
+
+ ❯ server/connector-reconnect-r2-workflow.test.ts (1 test | 1 failed) 84108ms
+   × R2 scheduled Gmail work preflights an ACTIVE lapse and fails visibly even when the engine reports success 84105ms
+ ❯ server/connector-reconnect-r2.test.ts (15 tests | 14 failed) 188ms
+   × R2 status INITIATED marks only the non-ACTIVE account 47ms
+   × R2 status INITIALIZING marks only the non-ACTIVE account 6ms
+   × R2 status FAILED marks only the non-ACTIVE account 5ms
+   × R2 status INACTIVE marks only the non-ACTIVE account 7ms
+   × R2 status EXPIRED marks only the non-ACTIVE account 10ms
+   × R2 status UNKNOWN marks only the non-ACTIVE account 8ms
+   × R2 broker JSON-RPC error message invalid_credentials becomes an attributed visible failure with no retry 34ms
+   × R2 broker JSON-RPC error message Token has expired becomes an attributed visible failure with no retry 10ms
+   × R2 broker JSON-RPC error message authentication failed becomes an attributed visible failure with no retry 9ms
+   × R2 broker JSON-RPC error message invalid_auth becomes an attributed visible failure with no retry 9ms
+   × R2 broker JSON-RPC error message token_revoked becomes an attributed visible failure with no retry 9ms
+   × R2 broker JSON-RPC error message account is not active becomes an attributed visible failure with no retry 5ms
+   ✓ R2 successful content and permission refusals never impersonate an auth failure 4ms
+   × R2 scheduled preflight uses one safe read per account, hourly, before work; never probes unknown toolkits 8ms
+   × R2 preflight catches an ACTIVE idle lapse and stops scheduled work 5ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 15 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connector-reconnect-r2-workflow.test.ts > R2 scheduled Gmail work preflights an ACTIVE lapse and fails visibly even when the engine reports success
+AssertionError: expected 'completed' to be 'failed' // Object.is equality
+
+Expected: "failed"
+Received: "completed"
+
+ ❯ server/connector-reconnect-r2-workflow.test.ts:68:128
+     66|     expect(scheduled.status).toBe(201); const routine = scheduled.body…
+     67|     const runs = async () => (await api("GET", "/api/routines")).body.…
+     68|     await expect.poll(async () => (await runs()).find((r: any) => r.tr…
+       |                                                                                                                                ^
+     69|     const failed = (await runs())[0];
+     70|     expect(probes).toBe(1); expect(failedCalls).toBe(0); expect(comple…
+
+Caused by: Error: Matcher did not succeed in time.
+ ❯ server/connector-reconnect-r2-workflow.test.ts:68:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/15]⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > R2 status INITIATED marks only the non-ACTIVE account
+ FAIL  server/connector-reconnect-r2.test.ts > R2 status INITIALIZING marks only the non-ACTIVE account
+ FAIL  server/connector-reconnect-r2.test.ts > R2 status FAILED marks only the non-ACTIVE account
+ FAIL  server/connector-reconnect-r2.test.ts > R2 status INACTIVE marks only the non-ACTIVE account
+ FAIL  server/connector-reconnect-r2.test.ts > R2 status EXPIRED marks only the non-ACTIVE account
+ FAIL  server/connector-reconnect-r2.test.ts > R2 status UNKNOWN marks only the non-ACTIVE account
+AssertionError: expected [] to deeply equal [ [ { id: 'a', alias: 'work' } ] ]
+
+- Expected
++ Received
+
+- [
+-   [
+-     {
+-       "alias": "work",
+-       "id": "a",
+-     },
+-   ],
+- ]
++ []
+
+ ❯ server/connector-reconnect-r2.test.ts:39:62
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/15]⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message invalid_credentials becomes an attributed visible failure with no retry
+ FAIL  server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message Token has expired becomes an attributed visible failure with no retry
+ FAIL  server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message authentication failed becomes an attributed visible failure with no retry
+ FAIL  server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message invalid_auth becomes an attributed visible failure with no retry
+ FAIL  server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message token_revoked becomes an attributed visible failure with no retry
+ FAIL  server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message account is not active becomes an attributed visible failure with no retry
+AssertionError: expected undefined to deeply equal [ { id: 'a', alias: 'work' } ]
+
+- Expected:
+[
+  {
+    "alias": "work",
+    "id": "a",
+  },
+]
+
++ Received:
+undefined
+
+ ❯ server/connector-reconnect-r2.test.ts:46:50
+     44|   const onReconnect = vi.fn();
+     45|   const reply = await call(undefined, undefined, { onReconnect });
+     46|   expect(appsNeedingReconnect(cfg)[0]?.accounts).toEqual([{ id: "a", a…
+       |                                                  ^
+     47|   expect(new TextDecoder().decode(reply.bytes)).toMatch(/Gmail.*Reconn…
+     48|   expect(onReconnect).toHaveBeenCalledOnce();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/15]⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > R2 scheduled preflight uses one safe read per account, hourly, before work; never probes unknown toolkits
+AssertionError: expected [] to deeply equal ArrayContaining{…}
+
+- Expected
++ Received
+
+- ArrayContaining [
+-   {
+-     "account": "a",
+-     "arguments": {
+-       "user_id": "me",
+-     },
+-     "tool_slug": "GMAIL_GET_PROFILE",
+-   },
+-   {
+-     "account": "b",
+-     "arguments": {
+-       "user_id": "me",
+-     },
+-     "tool_slug": "GMAIL_GET_PROFILE",
+-   },
+- ]
++ []
+
+ ❯ server/connector-reconnect-r2.test.ts:65:58
+     63|   await Promise.all([call(undefined, undefined, { scheduled: true }), …
+     64|   const probes = () => calls.filter(c => String(c.id).startsWith("heal…
+     65|   expect(probes().map(c => c.params.arguments.tools[0])).toEqual(expec…
+       |                                                          ^
+     66|     { tool_slug: "GMAIL_GET_PROFILE", account: "a", arguments: { user_…
+     67|     { tool_slug: "GMAIL_GET_PROFILE", account: "b", arguments: { user_…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/15]⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > R2 preflight catches an ACTIVE idle lapse and stops scheduled work
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ server/connector-reconnect-r2.test.ts:81:64
+     79|   failure = { error: { code: -32000, message: "invalid_grant" } };
+     80|   const reply = await call(undefined, undefined, { scheduled: true });
+     81|   expect(calls.every(c => String(c.id).startsWith("health-"))).toBe(tr…
+       |                                                                ^
+     82|   expect(calls).toHaveLength(2);
+     83|   expect(new TextDecoder().decode(reply.bytes)).toMatch(/Gmail.*Reconn…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/15]⎯
+
+⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯
+
+Vitest caught 3 unhandled errors during the test run.
+This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+ReferenceError: Gmail is not defined
+ ❯ Server.<anonymous> server/connector-reconnect-r2-workflow.test.ts:20:31
+     18|     if (req.url?.endsWith("/v1/mcp")) {
+     19|       const parts: Gmail[] = []; for await (const part of req) parts.p…
+     20|       const body = JSON.parse(Gmail.concat(parts).toString());
+       |                               ^
+     21|       const reply = (result: unknown) => res.end(JSON.stringify({ json…
+     22|       if (body.method === "initialize") return void reply({ protocolVe…
+ ❯ processTicksAndRejections node:internal/process/task_queues:104:5
+
+This error originated in "server/connector-reconnect-r2-workflow.test.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "R2 scheduled Gmail work preflights an ACTIVE lapse and fails visibly even when the engine reports success". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+ReferenceError: Gmail is not defined
+ ❯ Server.<anonymous> server/connector-reconnect-r2-workflow.test.ts:20:31
+     18|     if (req.url?.endsWith("/v1/mcp")) {
+     19|       const parts: Gmail[] = []; for await (const part of req) parts.p…
+     20|       const body = JSON.parse(Gmail.concat(parts).toString());
+       |                               ^
+     21|       const reply = (result: unknown) => res.end(JSON.stringify({ json…
+     22|       if (body.method === "initialize") return void reply({ protocolVe…
+ ❯ processTicksAndRejections node:internal/process/task_queues:104:5
+
+This error originated in "server/connector-reconnect-r2-workflow.test.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "R2 scheduled Gmail work preflights an ACTIVE lapse and fails visibly even when the engine reports success". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+ReferenceError: Gmail is not defined
+ ❯ Server.<anonymous> server/connector-reconnect-r2-workflow.test.ts:20:31
+     18|     if (req.url?.endsWith("/v1/mcp")) {
+     19|       const parts: Gmail[] = []; for await (const part of req) parts.p…
+     20|       const body = JSON.parse(Gmail.concat(parts).toString());
+       |                               ^
+     21|       const reply = (result: unknown) => res.end(JSON.stringify({ json…
+     22|       if (body.method === "initialize") return void reply({ protocolVe…
+ ❯ processTicksAndRejections node:internal/process/task_queues:104:5
+
+This error originated in "server/connector-reconnect-r2-workflow.test.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "R2 scheduled Gmail work preflights an ACTIVE lapse and fails visibly even when the engine reports success". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+
+
+ Test Files  2 failed (2)
+      Tests  15 failed | 1 passed (16)
+     Errors  3 errors
+   Start at  03:59:12
+   Duration  94.43s (transform 7.29s, setup 9.19s, import 644ms, tests 84.30s, environment 0ms)
+

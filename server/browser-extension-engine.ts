@@ -37,6 +37,7 @@ export interface BrowserExtensionEngineBackend {
 }
 export interface BrowserExtensionEngineOptions {
   dataDir:string; realmId:string; bindingId:string;
+  noLimits?:()=>boolean;
   transport:BrowserExtensionEngineTransport;
   authorize:()=>boolean;
   authorizationError?:()=>Error;
@@ -251,6 +252,6 @@ export class BrowserExtensionEngine {
     const server=this.server;this.server=undefined;if(server)await new Promise<void>(resolve=>server.close(()=>resolve()));this.sessions.clear();this.known.clear();this.starting=undefined;
   }
   /** Murage-owned snapshot, refs and diff for one document (spec 6.1). The core lane keeps one per tab and calls it from the executor. */
-  readLayer(document:ExtensionDocument,origin:()=>string):ReadLayer{return new ReadLayer((method,params)=>this.options.transport.send(method,(params??{}) as Json,document),{origin,url:()=>document.url});}
+  readLayer(document:ExtensionDocument,origin:()=>string):ReadLayer{return new ReadLayer((method,params)=>this.options.transport.send(method,(params??{}) as Json,document),{origin,url:()=>document.url,noLimits:this.options.noLimits});}
   async close(){this.closed=true;await this.dispose();}
 }

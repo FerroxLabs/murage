@@ -1,0 +1,69 @@
+{
+ "status": 429,
+ "headers": {
+  "date": "<HTTP-date>",
+  "server": "uvicorn",
+  "x-flux-alias": "deepseek-v4-flash",
+  "content-type": "application/json",
+  "x-frame-options": "DENY",
+  "content-security-policy": "frame-ancestors 'none'",
+  "x-content-type-options": "nosniff",
+  "connection": "close",
+  "content-length": "<n>"
+ },
+ "body": {
+  "error": {
+   "message": "hourly_burn_limit",
+   "type": "None",
+   "param": "None",
+   "code": "429",
+   "provider_specific_fields": {
+    "error": "hourly_burn_limit",
+    "subscription_tier": "builder",
+    "spent_usd_last_hour": 20.0412,
+    "inflight_usd": 0.12,
+    "threshold_usd": 20.0,
+    "retry_after": 1800
+   }
+  }
+ },
+ "endpoint": "/v1/chat/completions",
+ "per_endpoint": {
+  "/v1/messages": {
+   "status": 429,
+   "headers": {
+    "content-length": "92",
+    "content-type": "application/json"
+   },
+   "body": {
+    "type": "error",
+    "error": {
+     "type": "rate_limit_error",
+     "message": "upstream error (status 429)"
+    }
+   },
+   "method": "from-code (rendered in fixture env with the real Flux renderer)",
+   "headers_note": "content-type and content-length are from the real renderer. The security headers seen on every live chat capture (x-frame-options, content-security-policy, x-content-type-options) are app-wide and expected here too, but these routes were NOT live-captured (staging does not mount the Flux /v1/messages and /v1/responses handlers). x-request-id is echoed on /v1/messages only when the client sent one."
+  },
+  "/v1/responses": {
+   "status": 429,
+   "headers": {
+    "content-length": "159",
+    "content-type": "application/json"
+   },
+   "body": {
+    "error": {
+     "error": "hourly_burn_limit",
+     "subscription_tier": "builder",
+     "spent_usd_last_hour": 20.0412,
+     "inflight_usd": 0.12,
+     "threshold_usd": 20.0,
+     "retry_after": 1800
+    }
+   },
+   "method": "from-code (rendered in fixture env with the real Flux renderer)",
+   "headers_note": "content-type and content-length are from the real renderer. The security headers seen on every live chat capture (x-frame-options, content-security-policy, x-content-type-options) are app-wide and expected here too, but these routes were NOT live-captured (staging does not mount the Flux /v1/messages and /v1/responses handlers). x-request-id is echoed on /v1/messages only when the client sent one."
+  }
+ },
+ "notes": "Hourly spend burn gate (FIXTURE_FEATURE=true in prod). Dict detail with a flat 'error' string: chat message is just 'hourly_burn_limit'; /v1/messages falls back to 'upstream error (status 429)'. retry_after (seconds) only in the body; no Retry-After header. Sample numbers are illustrative."
+}

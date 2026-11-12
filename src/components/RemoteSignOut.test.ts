@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { RemoteSignOut, RemoteSignOutCard } from "./RemoteSignOut";
 import { doorSessionConfirmed } from "../lib/session-check";
 
-const settings = readFileSync(new URL("./SettingsModal.tsx", import.meta.url), "utf8");
+const general = readFileSync(new URL("./settings/pages/GeneralPage.tsx", import.meta.url), "utf8");
 
 describe("the remote sign-out control", () => {
   it("starts as one clearly named button that does nothing until confirmed", () => {
@@ -37,7 +37,8 @@ describe("the remote sign-out control", () => {
   });
 
   it("appears only on a confirmed remote surface, in General", () => {
-    const general = settings.slice(settings.indexOf('{section === "general" && ('), settings.indexOf('{desktop === true && section === "backups"'));
+    expect(readFileSync(new URL("./settings/page-registry.tsx", import.meta.url), "utf8")).toContain('general: () => import("./pages/GeneralPage")');
+    expect(general.match(/<RemoteSignOut \/>/g)).toHaveLength(1);
     expect(general).toContain("{desktop === false && <RemoteSignOut />}");
   });
 });

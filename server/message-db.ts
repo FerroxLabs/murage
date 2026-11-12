@@ -1,3 +1,4 @@
+import { assertCardAuthorized, terminalLegacy } from './decision/records.ts';
 import { DATA_DIR } from "./config.ts";
 import { dataRoots, ownedPath } from "./data-roots.ts";
 import { rebaseAttachmentRecord } from "./attachment-paths.ts";
@@ -40,11 +41,10 @@ import { imagePathsOf, tagImagePaths } from "./message-image-paths.ts";
 import {
   MIN_INDEXED_QUERY_CODEPOINTS,
   dropThreadSearchRows,
-  mergeMessageSearchIndex,
-  disableMessageSearchIndex,
-  messageSearchIndexReady,
   searchableText,
   trigramQuery,
+  readMessageSearchCandidates,
+  pruneMessageSearchIntents,
   syncMessageSearchRow,
 } from "./message-search-index.ts";
 import { captureMessage, captureBranchChange, captureThreadDeletion, exportPasteNoted } from "./memory/capture.ts";
@@ -756,7 +756,7 @@ function importLegacy(threadId: string, legacyFile: string): ThreadRows {
   // takes its lsn (and its rowid) in time order, so a positional range written later (a forget of an early line) reads the thread as it was.
   // A stable sort: lines with the same time, or none, keep their place in the file.
   // U4 S3: every line of the file passes the stored-row check before it is inserted, recorded or returned (a hand-edited or old file included)
-  messages = messages.map((message) => checkStoredRow(message));
+  messages = messages.map((message) => terminalLegacy(checkStoredRow(message)));
   messages = messages.map(message => {
     const next = rebaseAttachmentRecord(message);
     if (next !== message) {
@@ -807,6 +807,7 @@ function importLegacy(threadId: string, legacyFile: string): ThreadRows {
  * included) takes MAX(seq)+1 in this same write transaction; else NULL, and the walk numbers it at its rowid. `message.seq` is
  * set to what was stored (removed for NULL): every delivery path hands this same object on. The JSON never holds it. */
 function replaceRow(insert: StatementSync, threadId: string, message: Message, structure: "append" | "none" = "append", preview: "sync" | "defer" = "sync"): void {
+  assertCardAuthorized(db(), threadId, message);
   const prior = db().prepare("SELECT rowid AS position, seq FROM messages WHERE thread_id = ? AND id = ?").get(threadId, message.id) as
     | { position: number; seq: number | null }
     | undefined;
@@ -822,7 +823,8 @@ function replaceRow(insert: StatementSync, threadId: string, message: Message, s
   trackAttachmentNames(db(), threadId, message);
   if (message.turnId) trackTurnFirst(threadId, message, Number(result.lastInsertRowid));
   const text = searchableText(message);
-  if (text !== null) syncMessageSearchRow(db(), Number(result.lastInsertRowid), text);
+  syncMessageSearchRow(db(), Number(result.lastInsertRowid), text);
+  pruneMessageSearchIntents(db());
 }
 
 /** Record a turn's first row as it is written: the lowest position any row of the turn has had. The fill of a thread
@@ -1134,6 +1136,12 @@ export function updateMessage(threadId: string, message: Message, within?: () =>
     const prior = database.prepare(
       "SELECT rowid AS position, seq, kind, text, CASE kind WHEN 'activity' THEN json_extract(json, '$.tool.name') END AS tool_name, CASE WHEN json_valid(json) THEN json_type(json, '$.parentId') END AS parent_type, CASE WHEN json_valid(json) THEN json_extract(json, '$.parentId') END AS parent FROM messages WHERE thread_id=? AND id=?",
     ).get(threadId, message.id) as { position: number; seq: number | null; kind: string; text: string | null; tool_name: string | null; parent_type: string | null; parent: string | null } | undefined;
+    // Text streams keep their existing hot path: a card introduction/erasure is
+    // kind-gated here and is independently enforced by the SQL trigger.
+    if (message.kind === 'options' || prior?.kind === 'options' || ['secret','mcpSignIn','connector'].includes(message.kind)) {
+      const stored = database.prepare('SELECT json FROM messages WHERE thread_id=? AND id=?').get(threadId,message.id);
+      assertCardAuthorized(database,threadId,message,stored ? JSON.parse(String(stored.json)) : undefined);
+    }
     // the patched object carries the row's number from this read (r7 R3), never one copied from elsewhere; the JSON never holds it
     if (prior) { if (prior.seq === null) delete message.seq; else message.seq = Number(prior.seq); }
     database.prepare("UPDATE messages SET at=?, role=?, kind=?, text=?, json=? WHERE thread_id=? AND id=?")
@@ -1154,7 +1162,7 @@ export function updateMessage(threadId: string, message: Message, within?: () =>
     if (prior) {
       const before = searchableText({ kind: prior.kind, text: prior.text, tool: { name: prior.tool_name } });
       const after = searchableText(message);
-      if (before !== after) syncMessageSearchRow(database, prior.position, after);
+      if (before !== after) { syncMessageSearchRow(database, prior.position, after); pruneMessageSearchIntents(database); }
     }
     // An answered or dismissed card is no longer open, or sought on any branch.
     trackOpenCard(database, threadId, message);
@@ -1480,7 +1488,7 @@ export function deleteThread(threadId: string): void {
     captureThreadDeletion(database,threadId);
     // the durable proof that the OWNER deleted this conversation, committed with its rows (owner-deletions.ts)
     recordOwnerDeletion(database, threadId);
-    const indexed = dropThreadSearchRows(database, threadId); // before the rows it is keyed by go
+    dropThreadSearchRows(database, threadId); // one fixed-size intent in this transaction
     database.prepare("DELETE FROM messages WHERE thread_id=?").run(threadId);
     lowerSweepMarks(database);
     setupFactsCache(database).forget(threadId);
@@ -1497,7 +1505,6 @@ export function deleteThread(threadId: string): void {
     database.prepare("DELETE FROM owner_sends WHERE thread_id=?").run(threadId);
     // ...and so do the words of its room requests (a request closed later must not make a chip for a conversation that is gone)
     scrubOwnerSendsOfThread(database, threadId);
-    if (indexed) mergeMessageSearchIndex(database);
     bumpMessagesVersion();
     noteThreadChanged(threadId);
   });
@@ -1711,44 +1718,21 @@ export function searchMessagesWithMeta(
       verified.push(...verifyChunk(got.map(row => row.rowid)));
       if (verified.length || !got.length || groupedWalk.walked === budget) { partial = walk.more(); break; }
     }
-  } else if ([...needle].length >= MIN_INDEXED_QUERY_CODEPOINTS && messageSearchIndexReady(handle)) {
-    // The trigram index names the candidates (code points, not UTF-16 units); they are verified in RESULT order, (at DESC, rowid DESC), because rowid is
-    // insertion order and an import gives old messages new rowids.
-    try {
-      const match = trigramQuery(needle);
-      if (!threadIds) {
-        // No scope (the owner's desktop): the candidates are read from the index alone (rowids, no row touched) and put in time order by the
-        // at index, never by reading each candidate's row for its timestamp. That read was one random table page per candidate, 2,001 for a
-        // common word: 1,888 page misses and 1.4 s on a cold cache on the owner's copy, and 53 to 249 ms a search in the rc13 data run while
-        // the memory upgrade's commits kept dropping the page cache (/api/search?q=email p95 129 ms, 176 ms after the upgrade).
-        const candidates = (handle.prepare("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ? ORDER BY rowid DESC LIMIT ?")
-          .all(match, TRIGRAM_CANDIDATE_CAP + 1) as Array<{ rowid: number }>).map((row) => Number(row.rowid));
-        if (candidates.length > TRIGRAM_CANDIDATE_CAP) { candidates.length = TRIGRAM_CANDIDATE_CAP; partial = true; }
-        verifyNewestCandidates(candidates);
-      } else {
-        // At most CAP+1 index matches are EXAMINED, the highest rowids first, whatever the scope: the scope is checked on those rows (one primary-key
-        // probe each), never by reading on through the index until enough in-scope rows turn up (thread A's one match behind 100,000 newer
-        // matches in thread B was 100,000 probes). LEFT JOIN keeps the index row's place in the count when its message is gone.
-        const inScope = "s.thread_id IN (SELECT value FROM json_each(?))";
-        const examined = handle.prepare(
-          `SELECT f.rowid AS rowid, s.at AS at, ${inScope} AS ok FROM (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ? ORDER BY rowid DESC LIMIT ?) f ` +
-          "LEFT JOIN messages s ON s.rowid = f.rowid",
-        ).all(...scopeParams, match, TRIGRAM_CANDIDATE_CAP + 1) as Array<{ rowid: number; at: number | null; ok: number | null }>;
-        const capped = examined.length > TRIGRAM_CANDIDATE_CAP;
-        if (capped && perThread) {
-          // A few threads, and the index holds more matches than one read may examine: walk those threads' own rows newest first (the kind index)
-          // and check each chunk with the LIKE, as a short query does. The window bounds the walk; running out of the scope first is a complete
-          // answer. (Asking the trigram index about each walked row by rowid was measured on the owner's copy: 134 ms of CPU per 500 rows, against
-          // under 1 ms for the LIKE on the same rows.)
-          walkWindow(perThread);
-        } else {
-          if (capped) { examined.length = TRIGRAM_CANDIDATE_CAP; partial = true; }
-          const all = examined.filter((row): row is { rowid: number; at: number; ok: number } => row.at !== null && Boolean(row.ok) && (before === undefined || row.at < before || row.at === before && beforeRowid !== undefined && row.rowid < beforeRowid));
-          all.sort((x, y) => y.at - x.at || y.rowid - x.rowid);
-          for (let i = 0; i < all.length && !enough(); i += SEARCH_CHUNK) verified.push(...verifyChunk(all.slice(i, i + SEARCH_CHUNK).map((row) => row.rowid)));
-        }
-      }
-    } catch (error) { disableMessageSearchIndex(handle, error); verified.length = 0; partial = false; walkWindow(perThread); }
+  } else if ([...needle].length >= MIN_INDEXED_QUERY_CODEPOINTS) {
+    const candidates = readMessageSearchCandidates(handle, trigramQuery(needle), TRIGRAM_CANDIDATE_CAP);
+    partial = candidates.partial;
+    if (!threadIds) verifyNewestCandidates(candidates.rowids);
+    else {
+      // Scope probes on main follow the already-capped search.db snapshot.
+      // Missing live rows still consumed their candidate slot before this probe.
+      const rows = handle.prepare(
+        "SELECT m.rowid AS rowid,m.at AS at,m.thread_id IN (SELECT value FROM json_each(?)) AS ok " +
+        "FROM json_each(?) c CROSS JOIN messages m ON m.rowid=c.value",
+      ).all(...scopeParams, JSON.stringify(candidates.rowids)) as Array<{ rowid: number; at: number; ok: number }>;
+      const scoped = rows.filter(row => row.ok && (before === undefined || row.at < before || row.at === before && beforeRowid !== undefined && row.rowid < beforeRowid));
+      scoped.sort((x,y) => y.at-x.at || y.rowid-x.rowid);
+      for (let i=0; i<scoped.length && !enough(); i+=SEARCH_CHUNK) verified.push(...verifyChunk(scoped.slice(i,i+SEARCH_CHUNK).map(row => row.rowid)));
+    }
   } else walkWindow(perThread);
   if (enough()) partial = true;
 

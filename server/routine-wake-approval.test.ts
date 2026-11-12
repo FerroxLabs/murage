@@ -33,18 +33,24 @@ describe("the follow-through turn of the owner's own routine", () => {
   });
 
   it("never above the ceiling: a routine at Ask, or a bot lowered to Ask, still asks", () => {
-    expect(wake("unlimited", "ask").approve).toBeNull();
+    expect(wake("full", "ask").approve).toBeNull();
     expect(wake("ask", "unlimited").approve).toBeNull();
   });
 
-  it("the stop line and the key guard still hold at No limits on a routine turn", () => {
+  // NOLIM 1.0.19: the stop line still holds at No limits (its source is kept); a key read is a deny row, not a wipe row, so the owner's routine turn runs it
+  it("the stop line still holds at No limits on a routine turn, and a key read runs (not a wipe row)", () => {
     const stop: StopHit = { kind: "delete", place: "/Users/x/Documents", what: "Deletes files outside its folder" };
     expect(wake("unlimited", "unlimited", { stopLine: stop })).toMatchObject({ approve: null, source: "stop-line" });
     const key = routineTurnApproval({ bot: bot("unlimited"), run: { permissionMode: "unlimited" }, tool: "Bash", summary: "cat ~/.ssh/id_ed25519", context: { stopLine: null } }).verdict;
-    expect(key.approve).toBeNull();
+    expect(key.approve).toBeTruthy();
   });
 
   it("an outside event's turn keeps the unattended judge even with a routine run attached", () => {
     expect(wake("unlimited", "unlimited", { unattended: true })).toMatchObject({ approve: null, source: "unattended-block" });
   });
+});
+
+
+it("No limits follow-through ignores a saved Ask ceiling", () => {
+  expect(wake("unlimited", "ask")).toMatchObject({ source:"no-limits" });
 });

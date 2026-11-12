@@ -1,3 +1,4 @@
+import { finalDecision } from "../shared/no-limits-decision.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
 //
@@ -136,7 +137,7 @@ it("a repeated request_id is not decided twice", async () => {
 const FULL = { autoApprove: true, fullAccess: true };
 const level = (askAfter?: number) => (ask: ImageAutoAsk): ImageAutoApproval | null => {
   const d = decideImageApproval({ level: FULL, origin: "owner", ownerAudience: true, askAfter, ...ask });
-  return d.ask ? null : { basis: d.basis };
+  return finalDecision(d.reads, "generate_image").verdict === "run" && "basis" in d ? { basis: d.basis } : null;
 };
 const request = (n: number, extra: Record<string, unknown> = {}) => ({ connectionId: "flux", prompt: `scene ${n}`, ...extra });
 

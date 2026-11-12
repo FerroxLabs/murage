@@ -9,7 +9,7 @@ import { resolve } from "node:path";
 import { expect, it } from "vitest";
 
 async function closeWhileReporting() {
-  const child = fork(resolve("server/memory/worker.ts"), [], { execArgv: ["--experimental-strip-types", "--no-warnings"], stdio: ["ignore", "ignore", "pipe", "ipc"] });
+  const child = fork(resolve("server/memory/worker.ts"), [], { windowsHide: true, execArgv: ["--experimental-strip-types", "--no-warnings"], stdio: ["ignore", "ignore", "pipe", "ipc"] });
   let stderr = "";
   child.stderr!.on("data", data => { stderr += data; });
   const stderrClosed = new Promise<void>(done => child.stderr!.once("close", () => done()));

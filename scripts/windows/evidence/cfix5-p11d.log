@@ -1,0 +1,15 @@
+P11D SCANNER FIXTURE HIT RATE 57/57 (100%); PARSE-FAILURE COUNT 0
+✔ p11d: crev4 exact parenthesized multiline CIM input is rejected (606.20321ms)
+✔ p11d: valid hostile fixtures are detected without masking parser failures (704.984549ms)
+✔ p11d: malformed PowerShell, JavaScript, C# and batch source fails closed (2232.880032ms)
+✔ p11d: harmless syntax and command-looking data do not produce violations (1266.828978ms)
+✔ p11d: a missing PowerShell parser fails closed (5.084265ms)
+✔ p11d: JavaScript bindings respect lexical scopes (9.333512ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5122.077701

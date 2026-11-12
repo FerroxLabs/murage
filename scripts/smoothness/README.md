@@ -200,3 +200,53 @@ ALL ELD now begins at the first message send attempt, including preflight, room 
 Rig 8 Nov (MurageMain ruling): on real engines the three S3 room bots are set to Full access (setLevel full, as S5 does for its held bots) before the room is created, so S3.cards measures room smoothness and not Ask cards; the S3.cards bound (0) is unchanged and S4 keeps its own Ask and No limits levels. real-smooth.sh now exports TREE_SHA (the staged build sha, .smooth-sha or git rev-parse) so the gate header and results.json carry it instead of "tree ?".
 
 Rig 8 Nov (Sean approved Mac CPU row): on macOS S9.cpuTree is the judged CPU row at its 0.25 bound and S9.cpu (whole-machine top) is information only, labelled "whole machine, info only (macOS)". Linux (cgroup) and Windows keep S9.cpu judged. No bound changes.
+
+Source container runs provision the native relocation helper before measurement
+(`native-preflight.mjs`, called by `smooth.mjs` before server startup). A missing Linux helper is
+compiled from this checkout's `native/engine-exclusion/exclusion.c` with the
+fixture image's gcc and N-API headers, without network access. Its `build.json`
+records the source hash, binary hash, target, compiler and `fixtureOnly: true`.
+This artifact belongs to the Node fixture runtime; release packages continue to
+use `build-engine-exclusion.mjs` and its AlmaLinux glibc floor.
+
+To supply an existing build, set `SMOOTH_NATIVE_FROM` to a mounted directory
+containing `<platform>-<arch>/engine-exclusion.node` and `build.json`. For a
+standalone helper build/load proof, run
+`node scripts/smoothness/native-preflight.mjs`. macOS and Windows require an
+existing build (their build and packaging paths remain in the platform scripts).
+Every source leg verifies the receipt's source and binary hashes and optional
+`SMOOTH_ENGINE_EXCLUSION_SHA256`, then asks the product loader to open that exact
+file. The load probe must move a dangling link and refuse an occupied target.
+Missing, stale, unloadable or unsafe helpers refuse the leg before any turn.
+The result keeps `nativePreflight`. A preparation failure invalidates the leg
+through the existing refusal path, after superseding any previous PASS.
+
+The focused fake-engine regression is
+`pnpm exec vitest run scripts/smoothness/s5-relocation.test.mjs scripts/smoothness/native-preflight.test.mjs`.
+After provisioning the helper, it seeds three old-root pinned skill links in a
+fresh verification fixture, sends five turns and applies the unchanged
+`S5.firstText`, `S5.resumed` and `S5.failed` budgets. It retains bounded control
+results and the fixture log in `.planning/s5-evidence` (or `S5_EVIDENCE_DIR`).
+It does not qualify the full real-data idle/load gate.
+
+For the original S5 long-thread proof, run `s5-replay.mjs` inside the isolated,
+network-disabled test container, with the preserved drained archive and private
+manifest (archive SHA-256, bot, thread, original message count, all 12 link names
+and targets, source HEAD, and `supportHashes`). Export the five fake-engine
+files from the original overlay, the two prebuild helpers from its rig and its
+verified `cage/` files into the support directory; the manifest pins their hashes. No private fixture data
+belongs in Git.
+
+```
+node scripts/smoothness/s5-replay.mjs ARCHIVE MANIFEST PINNED_SUPPORT OUTPUT
+S5_REPLAY_MANIFEST=MANIFEST S5_REPLAY_RESULTS=OUTPUT/s5-replay-results.json pnpm exec vitest run scripts/smoothness/s5-replay.test.mjs --maxWorkers=1
+```
+
+The replay verifies the archive, history count and every old-root link before
+launching the unchanged rig with `SMOOTH_SCENARIOS=longThread` and fake engines.
+It retains the input proof, original-history hashes before and after, all three
+row verdicts, prebuild and server logs, raw rig results and native helper. Its
+selected task's Mac working-folder pin is adapted to the copied desk and that
+path change is recorded separately; its history and skill links are preserved.
+The temporary source/data copies are removed afterward. This is S5-only evidence;
+the full idle/load release gate still requires both complete legs.

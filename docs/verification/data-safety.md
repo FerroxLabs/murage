@@ -540,3 +540,5 @@ away from a real directory, and what changed:
 | `scripts/import-wayland-*.mjs`, `publish-profiles.mjs`: `rm -rf <argument>` | any `--out` | admitted only when temp, scratch-marked or inside the repo |
 | `node --test` files and `control-murage.ts`: mkdtemp targets, no faked home, no guard | a single wrong `join` reaches the real home | `safeWipeSync` per site plus the preloaded process guard |
 | every human spec's `rmSync(DATA_DIR)` / `rmSync(cache)` at module load or teardown | one variable away | `safeWipeSync`, variable required and admitted |
+
+Signal production unlink (`server/channels/signal/wipe.ts`) is registered alongside WhatsApp: it removes only `signal/auth`, or `signal` plus `channels/signal/<validated-id>`, below the canonical data directory. It validates every ancestor before deleting, rejects linked ancestors, removes leaf links without following them, and preserves the revocation marker and other connection receipts. `wipe.test.ts` verifies both scopes, traversal rejection, and ancestor/leaf symlinks. The test-only safe-wipe helper is not imported by production.

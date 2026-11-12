@@ -39,41 +39,30 @@ const CATALOG = {
   ],
 };
 
-function recorder(over: Record<string, (body: any) => unknown> = {}) {
-  const calls: { action: string; body: any }[] = [];
+function recorder(over: { hire?: (body: any) => unknown; catalog?: () => unknown } = {}) {
+  const calls: { path: string; body: any }[] = [];
   const request = async (path: string, init?: { method?: string; body?: string }) => {
-    expect(path).toBe("/api/starter-profiles");
     const body = JSON.parse(init?.body ?? "{}");
-    calls.push({ action: body.action, body });
-    const answer = over[body.action];
-    if (answer) {
-      const value = answer(body);
-      if (value instanceof Error) throw value;
-      return value;
-    }
-    if (body.action === "catalog") return CATALOG;
-    if (body.action === "preview") return { archiveSha256: "sha", reviewHash: "review", scan: { blocked: false } };
-    return { bots: [], routines: [] };
+    calls.push({ path, body });
+    if (path === "/api/starter-profiles") return over.catalog ? over.catalog() : CATALOG;
+    expect(path).toBe("/api/setup/hire");
+    const value = over.hire ? over.hire(body) : { hired: [] };
+    if (value instanceof Error) throw value;
+    return value;
   };
   return { calls, request };
 }
 
 describe("the crew the business job installs", () => {
-  it("reviews the exact selection it then imports, and imports everything", async () => {
+  it("hires every Solo Business agent through the hire route (D12d)", async () => {
     const { calls, request } = recorder();
     await installFirstRunCrew(request);
-    expect(calls.map((call) => call.action)).toEqual(["catalog", "preview", "import"]);
-
-    const [, review, imported] = calls;
-    expect(review.body.selection).toEqual(imported.body.selection);
-    // Every bot and the review, because the screen that follows names all of
-    // them. A partial selection describes a crew the person did not get.
-    expect(imported.body.selection.agents).toEqual(["business-planner", "draft-partner"]);
-    expect(imported.body.selection.routines).toEqual(["weekly-business-review"]);
-    // The import carries the review's own hashes, which is what the importer
-    // refuses to proceed without.
-    expect(imported.body.archiveSha256).toBe("sha");
-    expect(imported.body.reviewHash).toBe("review");
+    expect(calls.map((call) => call.path)).toEqual(["/api/starter-profiles", "/api/setup/hire"]);
+    // The server ensures them: ones already hired are skipped and the routine travels with its owner.
+    expect(calls[1].body.agents).toEqual([
+      { profileId: FIRST_RUN_CREW_PROFILE, key: "business-planner" },
+      { profileId: FIRST_RUN_CREW_PROFILE, key: "draft-partner" },
+    ]);
   });
 
   it("describes the crew from the package rather than from memory", async () => {
@@ -82,25 +71,11 @@ describe("the crew the business job installs", () => {
     expect(reading.routine).toMatchObject({ time: "09:00", weekdays: [1], durationMinutes: 15, enabledAfterInstall: false });
   });
 
-  // A person who presses the job twice, or comes back to a workspace that
-  // already has the crew, must see their crew rather than an error about
-  // review hashes. The route answers 409 for a package already imported.
-  it("treats an already-installed crew as a yes", async () => {
-    const already = Object.assign(new Error("This reviewed package was already imported"), { status: 409 });
-    const { request } = recorder({ import: () => already });
-    const reading = await installFirstRunCrew(request);
-    expect(reading.agents).toHaveLength(2);
-  });
-
-  it("does not swallow a refusal that is not that one", async () => {
-    const { request } = recorder({ import: () => Object.assign(new Error("nope"), { status: 400 }) });
+  it("treats a 409 as a yes, and does not swallow any other refusal", async () => {
+    const already = Object.assign(new Error("already"), { status: 409 });
+    expect((await installFirstRunCrew(recorder({ hire: () => already }).request)).agents).toHaveLength(2);
+    const { request } = recorder({ hire: () => Object.assign(new Error("nope"), { status: 400 }) });
     await expect(installFirstRunCrew(request)).rejects.toThrow(/nope/);
-  });
-
-  it("installs nothing when the review says the contents are blocked", async () => {
-    const { calls, request } = recorder({ preview: () => ({ scan: { blocked: true } }) });
-    await expect(installFirstRunCrew(request)).rejects.toThrow(/content checks/i);
-    expect(calls.map((call) => call.action), "a blocked package was imported anyway").not.toContain("import");
   });
 
   it("refuses to pretend when the profile is not on this computer", async () => {

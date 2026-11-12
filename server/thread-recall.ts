@@ -29,8 +29,12 @@ import { lineAuthor, newestMessageAt, readActiveLeafOrNewest, readMessage, searc
 import { addTurnParents, isTurnOpen, recordTurnReads } from "./memory/lineage-write.ts";
 import { addRootsToRunningTurn, addSourcesToRunningTurn, shownLinesRoots, sourcesRoom, TURN_SOURCES_MAX, type RunningTurnLineage, type ShownLine } from "./steer-lineage.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
-import { recallThreads, type MemoryAccess } from "./memory/policy.ts";
-import type { LineageRef, LineageAudience, LineageVerdict } from "./memory/lineage-types.ts";
+import { packLoan, recallThreads, type MemoryAccess, type PackLoanTurn } from "./memory/policy.ts";
+import type { LineageRef, LineageAudience, LineageVerdict, PromptPart } from "./memory/lineage-types.ts";
+import { lineRefs, promptPart } from "./memory/prompt-parts.ts";
+import { branchRows } from "./branch-store.ts";
+import { fencePageText } from "./browser-untrusted.ts";
+import { PACK_LENT_MAX, PACK_PAGE, type DelegationPack, type DelegationPackRow, type PackBinding } from "./delegation-pack/types.ts";
 import type { Message } from "./store.ts";
 
 /** Rule 14: calls per generation (the 13th is refused). */
@@ -67,6 +71,8 @@ export interface ThreadRecallState {
   sealed: boolean;
   /** Rule 22: set at the memory mount when the turn's audience reaches at least one thread (`recallThreads(access)` is not empty). */
   eligible?: boolean;
+  /** The live append-only list shared with this generation’s provider-write guard. */
+  pack?: { bindings: PackBinding[]; turn(packId: string): PackLoanTurn };
 }
 
 export type ThreadRecallTool = "thread_search" | "thread_list" | "thread_read";
@@ -240,6 +246,10 @@ function threadInfo(botId: string, threadId: string): ThreadInfo {
   };
 }
 const speakerName = (row: BotRow): string => row.role === "user" ? "owner" : row.speaker?.name || "bot";
+function readRow(row: BotRow, carried?: () => void, whole = false, metadata: Pick<Message, "id" | "externalContent"> = row) {
+  const shown = whole ? { text: row.text, cut: false } : cut(row.text, TEXT_CHARS);
+  return { messageId: row.id, at: iso(row.at), speaker: speakerName(row), text: emailDerivedText(metadata, shown.text, carried), ...(shown.cut ? { truncated: true as const } : {}) };
+}
 const snippetOf = (text: string, needle: string): string => {
   const at = Math.max(0, text.toLowerCase().indexOf(needle));
   const start = Math.max(0, at - SNIPPET_BEFORE), end = Math.min(text.length, at + needle.length + SNIPPET_AFTER);
@@ -395,10 +405,7 @@ function planRead(access: MemoryAccess, set: readonly string[], args: z.infer<ty
     checking: judged.checking, unavailable: judged.unavailable,
     trim: args.direction === "before" ? "start" : args.direction === "after" ? "end" : "far",
     build(kept, notes) {
-      const rows = kept.map(({ row }) => {
-        const shown = cut(row.text, TEXT_CHARS);
-        return { messageId: row.id, at: iso(row.at), speaker: speakerName(row), text: emailDerivedText(row, shown.text, carried), ...(shown.cut ? { truncated: true as const } : {}) };
-      });
+      const rows = kept.map(({ row }) => readRow(row, carried));
       if (notes.truncated && rows.length) {
         const rowOut = rows[rows.length - 1]! as { truncated?: true };
         rowOut.truncated = true;
@@ -449,7 +456,7 @@ export function fit(plan: Plan, rows: Seen[], notes: { checking: number; unavail
 const refuse = (host: ThreadRecallHost, status: number, error: string): void => host.respond(status, { error });
 
 /** Rule 12: the turn is the very object the dispatch of this generation opened, and every other fact about the generation still agrees. */
-function bindTurn(host: ThreadRecallHost): RunningTurnLineage | null {
+function bindTurn(host: ReleaseHost): RunningTurnLineage | null {
   const { claim } = host;
   const lineage = host.lineage();
   if (!lineage || lineage.generation !== claim.generation || lineage.botId !== claim.botId) return null;
@@ -459,6 +466,215 @@ function bindTurn(host: ThreadRecallHost): RunningTurnLineage | null {
 
 const refsOf = (rows: ReadonlyArray<Seen>): LineageRef[] => rows.map(({ threadId, row }) => ({ kind: "line" as const, threadId, messageId: row.id }));
 const shownOf = (rows: ReadonlyArray<Seen>): ShownLine[] => rows.map(({ threadId, row }) => ({ threadId, id: row.id, role: row.role }));
+
+type ReleaseHost = Pick<ThreadRecallHost, "claim" | "access" | "lineage" | "active" | "ownerGeneration" | "state" | "seal">;
+interface ReleaseScope { threads: readonly string[]; allows?(row: Seen): boolean }
+interface ReleaseOutcome<T> { body: T; kept: Seen[]; listed?: Array<{ threadId: string; at: number }> }
+
+/** The shared synchronous release boundary. The caller supplies only its eligible set and representation;
+ * binding, fresh access, row judgment, source capacity, sealing, persistence and ancestry stay together. */
+function releaseRows<T>(host: ReleaseHost, plan: Pick<Plan, "rows" | "checking" | "unavailable" | "needle">,
+  scope: (access: MemoryAccess) => ReleaseScope,
+  render: (rows: Seen[], notes: { checking: number; unavailable: number }, fresh: MemoryAccess | null, set: readonly string[]) => ReleaseOutcome<T>,
+  remember = true): { outcome: ReleaseOutcome<T> } | { error: string } {
+  const lineage = bindTurn(host), state = host.state();
+  if (!lineage || !state) return { error: NOT_ACTIVE_LINE };
+  const fresh = host.access();
+  const freshScope: ReleaseScope = fresh ? scope(fresh) : { threads: [] };
+  let checking = plan.checking, unavailable = plan.unavailable;
+  let candidates = plan.rows.filter(row => freshScope.threads.includes(row.threadId) && (!freshScope.allows || freshScope.allows(row)));
+  if (fresh && candidates.length) {
+    const again = rejudge(fresh, candidates, plan.needle);
+    candidates = again.shown;
+    checking += again.checking; unavailable += again.unavailable;
+  }
+  const outcome = render(candidates, { checking, unavailable }, fresh, freshScope.threads);
+  const released = outcome.kept;
+  if (released.length) {
+    const room = sourcesRoom(lineage, shownOf(released)), sources = lineage.sources;
+    if (sources === undefined || sources === "over" || sources.length + room > TURN_SOURCES_MAX) return { error: OUT_OF_ROOM_LINE };
+  }
+  if (released.length || outcome.listed?.length) {
+    if (!state.sealed) {
+      try { host.seal(); } catch { return { error: UNRECORDED_LINE }; }
+      state.sealed = true;
+    }
+    const refs = refsOf(released);
+    if (refs.length) {
+      try { transaction(tx => { if (!recordTurnReads(tx, lineage.turn, refs)) throw new Error("thread reads not recorded"); }); }
+      catch { return { error: UNRECORDED_LINE }; }
+      const lines = shownOf(released);
+      addTurnParents(lineage.turn, refs);
+      addSourcesToRunningTurn(lineage, lines);
+      addRootsToRunningTurn(host.claim.threadId, lineage, shownLinesRoots(LineageAllowance.tool(), lines, undefined, host.claim.threadId));
+      if (remember) for (const { threadId, row } of released) state.released.set(row.id, threadId);
+    }
+    recallRowsOutside(host.claim.threadId, outcome.listed ?? released.map(({ threadId, row }) => ({ threadId, at: row.at })));
+  }
+  return { outcome };
+}
+
+/** A server prompt builder uses the same generation state and seal as its thread tools.
+ * turn() must read the current run and source unattended state; replay supplies the stored delegated anchor for this pack. */
+export interface PackReleaseHost extends ReleaseHost {
+  turn(packId: string): PackLoanTurn;
+  packSuppressed?: true;
+  memoryLastResort?: boolean;
+}
+
+/** Decode only bounded ID metadata. This read is also available to the dispatch's write guard. */
+export function readDelegationPack(id: string): DelegationPack | null {
+  try {
+    const row = database().prepare("SELECT * FROM delegation_packs WHERE id=?").get(id) as unknown as DelegationPackRow | undefined;
+    if (!row) return null;
+    const refs: unknown = JSON.parse(row.refs), prepared: unknown = JSON.parse(row.prepared);
+    const ids = (value: unknown): value is string[] => Array.isArray(value) && value.length <= PACK_LENT_MAX && value.every(id => typeof id === "string" && id.length > 0 && id.length <= 256);
+    if (!ids(refs) || !ids(prepared) || prepared.some(id => !refs.includes(id))) return null;
+    return Object.freeze({ ...row, refs: Object.freeze([...new Set(refs)]), prepared: Object.freeze([...new Set(prepared)]) });
+  } catch { return null; }
+}
+
+/** Select a chronological suffix by walking newest first. Page zero deliberately stops at the first
+ * overflow (including an oversized row); older pages remove individually unfit rows before selection. */
+function selectWhole(rows: Seen[], measure: (kept: Seen[]) => number, budget: number, limit = PACK_PAGE): Seen[] {
+  let kept: Seen[] = [];
+  for (let i = rows.length - 1; i >= 0 && kept.length < limit; i--) {
+    const next = [rows[i]!, ...kept];
+    if (measure(next) > budget) break;
+    kept = next;
+  }
+  return kept;
+}
+
+/** BotRow contains only admitted words; fetch the email flag without replacing those words with raw text. */
+function wholeContext(rows: Seen[], origin: string, older = false): (kept: Seen[]) => string {
+  const formatted = new Map(rows.map(seen => [seen, readRow(seen.row, undefined, true, readMessage(seen.threadId, seen.row.id) ?? seen.row)]));
+  return kept => kept.length ? fencePageText(JSON.stringify({ rows: kept.map(row => formatted.get(row)!), ...(older ? { older_lines: true } : {}) }),
+    { origin, kind: "delegation-context" }) : "";
+}
+
+/** Whole rows, oldest first, measured after email formatting and the outer fence. No partial source line is lent. */
+export function fitWhole(rows: Seen[], origin: string, budget = THREAD_ENVELOPE_BUDGET, older = false): { body: string; kept: Seen[] } {
+  const make = wholeContext(rows, origin, older);
+  const kept = selectWhole(rows, kept => Buffer.byteLength(make(kept), "utf8"), budget, rows.length);
+  return { body: make(kept), kept };
+}
+
+/** Both prompt and tool pages cross this synchronous boundary. All candidates are fixed lent IDs;
+ * source-pair loading, current loan/branch checks and releaseRows' seal and lineage writes are shared. */
+function releasePack<T>(pack: DelegationPack, ids: readonly string[], host: PackReleaseHost,
+  render: (rows: Seen[], origin: string, unavailable: number) => ReleaseOutcome<T>, page = false,
+  sourceThreadId = pack.source_thread_id): { outcome: ReleaseOutcome<T>; binding?: PackBinding } | { error: string } {
+  if (!bindTurn(host) || !host.state()) return { error: NOT_ACTIVE_LINE };
+  const access = host.access();
+  const loan = access && access.threadId === host.claim.threadId && access.botId === host.claim.botId && access.generation === host.claim.generation
+    ? packLoan(pack, access, host.turn(pack.id)) : null;
+  const thread = sourceThreadId;
+  const positions = new Map(database().prepare("SELECT id,rowid AS mrow FROM messages WHERE thread_id=? AND id IN (SELECT value FROM json_each(?))")
+    .all(thread, JSON.stringify(ids)).map(row => [String(row.id), Number(row.mrow)]));
+  let sourceLeafId = readActiveLeafOrNewest(thread), currentTurn = host.turn(pack.id);
+  const branch = branchRows(thread, sourceLeafId);
+  const items: Array<{ threadId: string; message: Message }> = [];
+  if (loan?.sourceThreadId === thread) for (const ref of ids) {
+    const mrow = positions.get(ref);
+    if (!loan.ids.has(ref) || mrow === undefined || branch.contains(mrow) !== true) continue;
+    const message = readMessage(thread, ref);
+    if (message) items.push({ threadId: thread, message });
+  }
+  const judged = access ? judgeRows(access, items) : { shown: [], checking: 0, unavailable: 0 };
+  const origin = `your chat with ${executionStore()?.bot(pack.source_bot_id)?.name ?? "your companion"}`;
+  const result = releaseRows(host, { rows: judged.shown, checking: judged.checking, unavailable: judged.unavailable }, fresh => {
+    if (fresh.threadId !== host.claim.threadId || fresh.botId !== host.claim.botId || fresh.generation !== host.claim.generation) return { threads: [] };
+    const currentPack = readDelegationPack(pack.id);
+    currentTurn = host.turn(pack.id);
+    const currentLoan = currentPack && packLoan(currentPack, fresh, currentTurn);
+    if (!currentLoan || currentLoan.sourceThreadId !== thread) return { threads: [] };
+    sourceLeafId = readActiveLeafOrNewest(thread);
+    const currentBranch = branchRows(thread, sourceLeafId);
+    return { threads: [thread], allows: ({ row }) => {
+      const mrow = positions.get(row.id);
+      return currentLoan.ids.has(row.id) && mrow !== undefined && currentBranch.contains(mrow) === true;
+    } };
+  }, rows => render(rows, origin, ids.length - rows.length), false);
+  if ("error" in result || !result.outcome.kept.length) return result;
+  const { kept } = result.outcome;
+  for (const { threadId, row } of kept) emailDerivedText(readMessage(threadId, row.id) ?? row, row.text, () => markTurnEmailDerived(host.claim.threadId));
+  const binding: PackBinding = Object.freeze({ packId: pack.id, destinationThreadId: host.claim.threadId, generation: host.claim.generation,
+    sourceThreadId: thread, sourceLeafId, driverKind: currentTurn.driverKind,
+    refs: Object.freeze(kept.map(({ row }) => Object.freeze({ id: row.id, mrow: positions.get(row.id)! }))),
+    anchor: currentTurn.anchor ? Object.freeze({ ...currentTurn.anchor }) : null, ...(page ? { page: true as const } : {}) });
+  return { ...result, binding };
+}
+
+/** Up to three packs in newest-first discovery order, sharing one byte budget. Nothing is stored as prepared here:
+ * the caller adds these parts to buildPrompt and hands these bindings to its guard at every provider write. */
+export function releaseDelegationPacks(packIds: readonly string[], host: PackReleaseHost): {
+  parts: PromptPart[]; bindings: PackBinding[]; lines: number; released: Map<string, string[]>;
+} | null {
+  if (host.packSuppressed || host.memoryLastResort) return null;
+  const parts: PromptPart[] = [], bindings: PackBinding[] = [], released = new Map<string, string[]>();
+  let budget = THREAD_ENVELOPE_BUDGET, lines = 0;
+  for (const id of [...new Set(packIds)].slice(0, 3)) {
+    try {
+      const pack = readDelegationPack(id);
+      if (!pack) continue;
+      const result = releasePack(pack, pack.refs.slice(-PACK_PAGE), host,
+        (rows, origin) => fitWhole(rows, origin, budget - (parts.length ? 2 : 0), pack.refs.length > PACK_PAGE));
+      if ("error" in result || !result.binding) continue;
+      const { kept, body } = result.outcome;
+      const ids = kept.map(({ row }) => row.id);
+      parts.push(promptPart(body, lineRefs(result.binding.sourceThreadId, ids)));
+      bindings.push(result.binding);
+      budget -= Buffer.byteLength(body, "utf8") + (parts.length > 1 ? 2 : 0);
+      lines += kept.length; released.set(id, ids);
+    } catch { /* A pack that cannot be checked leaves the delegation's note alone. */ }
+  }
+  return parts.length ? { parts, bindings, lines, released } : null;
+}
+
+interface OlderAnswer { context: string; more: boolean; unavailable?: number; notice?: string }
+function fitOlder(rows: Seen[], origin: string, unavailable: number, notice: string, limit: number): ReleaseOutcome<OlderAnswer> {
+  const context = wholeContext(rows, origin);
+  let readable = rows;
+  const make = (kept: Seen[]): OlderAnswer => ({ context: context(kept),
+    more: kept.length > 0 && readable.indexOf(kept[0]!) > 0,
+    ...(unavailable ? { unavailable } : {}), ...(!kept.length ? { notice } : {}) });
+  // The count and `more` are part of the measured answer. Removing an unfit row can grow
+  // the count or change true to false; repeat until every remaining row still fits alone.
+  for (;;) {
+    const fitting = readable.filter(row => envelopeBytes(make([row])) <= THREAD_ENVELOPE_BUDGET);
+    if (fitting.length === readable.length) break;
+    unavailable += readable.length - fitting.length;
+    readable = fitting;
+  }
+  const kept = selectWhole(readable, kept => envelopeBytes(make(kept)), THREAD_ENVELOPE_BUDGET, limit);
+  return { body: make(kept), kept };
+}
+
+async function releaseOlder(args: z.infer<typeof readArgs>, binding: PackBinding, state: ThreadRecallState, host: ThreadRecallHost): Promise<void> {
+  const packState = state.pack!;
+  await host.yield(); // The last await; no release, binding or prepared write precedes it.
+  if (host.state() !== state || state.pack !== packState || !bindTurn(host)) return refuse(host, 409, NOT_ACTIVE_LINE);
+  const pack = readDelegationPack(binding.packId);
+  const source = pack ? executionStore()?.bot(pack.source_bot_id)?.name ?? "your companion" : "your companion";
+  const notice = `No older lines were lent for this job. Ask ${source} if you need more.`;
+  const cursor = pack?.refs.indexOf(args.message_id) ?? -1;
+  if (!pack || cursor < 0) return host.respond(200, { context: "", more: false, notice });
+  const result = releasePack(pack, pack.refs.slice(0, cursor), { ...host, turn: id => packState.turn(id) },
+    (rows, origin, unavailable) => fitOlder(rows, origin, unavailable, notice, args.limit ?? PACK_PAGE), true, binding.sourceThreadId);
+  if ("error" in result) return refuse(host, 409, result.error);
+  if (result.binding) {
+    packState.bindings.push(result.binding);
+    try {
+      transaction(db => {
+        const current = readDelegationPack(pack.id)!;
+        db.prepare("UPDATE delegation_packs SET prepared=? WHERE id=?")
+          .run(JSON.stringify([...new Set([...current.prepared, ...result.binding!.refs.map(ref => ref.id)])]), pack.id);
+      }, { op: "delegation-pack-prepared" });
+    } catch { console.warn("[deleg.pack.prepared_unrecorded] count=1"); }
+  }
+  host.respond(200, result.outcome.body);
+}
 
 /** Serves one thread tool call. `body` is the parsed request body; the answer goes out through `host.respond`, exactly once. */
 export async function threadRecallRoute(tool: ThreadRecallTool, body: unknown, access: MemoryAccess, host: ThreadRecallHost): Promise<void> {
@@ -476,6 +692,12 @@ export async function threadRecallRoute(tool: ThreadRecallTool, body: unknown, a
   } catch (error) {
     const problem = error instanceof z.ZodError ? error.issues.slice(0, 4).map(issue => `${issue.path.join(".") || "request"}: ${issue.message}`).join("; ") : error instanceof Error ? error.message : "bad request";
     return refuse(host, 400, `Thread request rejected: ${problem}`);
+  }
+
+  if (tool === "thread_read") {
+    const read = args as z.infer<typeof readArgs>;
+    const binding = read.direction === "before" ? state.pack?.bindings.find(binding => binding.refs.some(ref => ref.id === read.message_id)) : undefined;
+    if (binding) return releaseOlder(read, binding, state, host);
   }
 
   const set = recallThreads(access);
@@ -497,61 +719,13 @@ export async function threadRecallRoute(tool: ThreadRecallTool, body: unknown, a
   await host.yield();
 
   // ── one synchronous block: re-check, revalidate, seal, persist, add to the running turn, release ──
-  const lineage = bindTurn(host);
-  if (!lineage) return refuse(host, 409, NOT_ACTIVE_LINE);
-
-  // rule 23a: the audience and the door verdicts again, for exactly the rows about to leave
-  const fresh = host.access();
-  const freshSet = fresh ? recallThreads(fresh) : [];
-  let checking = plan.checking, unavailable = plan.unavailable;
-  let candidates = plan.rows;
-  if (candidates.length) {
-    candidates = fresh ? candidates.filter(({ threadId }) => freshSet.includes(threadId)) : [];
-    if (fresh && candidates.length) {
-      const again = rejudge(fresh, candidates, plan.needle);
-      candidates = again.shown;
-      checking += again.checking; unavailable += again.unavailable;
-    }
-  }
-  const releasingList = tool === "thread_list" && freshSet.length > 0 && listed !== undefined && listed.length > 0;
-  const outcome = tool === "thread_list"
-    ? { body: listedBody(fresh && freshSet.length ? relisted(fresh.botId, listed!.filter(thread => freshSet.includes(thread.threadId)), cutoff) : [], listHeld, !fresh), kept: [] as Seen[] }
-    : fit(plan, candidates, { checking, unavailable });
-  const released = outcome.kept;
-  const releases = tool === "thread_list" ? releasingList && (outcome.body.threads as unknown[]).length > 0 : released.length > 0;
-
-  // rule 13: the sources preflight counts only the rows that will leave: after the revalidation above, the page cut and the envelope trim,
-  // still inside this synchronous block and before anything is persisted
-  if (released.length) {
-    const room = sourcesRoom(lineage, shownOf(released));
-    const sources = lineage.sources;
-    if (sources === undefined || sources === "over" || sources.length + room > TURN_SOURCES_MAX) return refuse(host, 409, OUT_OF_ROOM_LINE);
-  }
-
-  // an empty answer writes nothing: no seal, no persistence
-  if (releases) {
-    if (!state.sealed) {
-      try { host.seal(); } catch { return refuse(host, 409, UNRECORDED_LINE); }
-      state.sealed = true;
-    }
-    const refs = refsOf(released);
-    if (refs.length) {
-      try { transaction(tx => { if (!recordTurnReads(tx, lineage.turn, refs)) throw new Error("thread reads not recorded"); }); }
-      catch { return refuse(host, 409, UNRECORDED_LINE); }
-      const lines = shownOf(released);
-      addTurnParents(lineage.turn, refs);
-      addSourcesToRunningTurn(lineage, lines);
-      addRootsToRunningTurn(host.claim.threadId, lineage, shownLinesRoots(LineageAllowance.tool(), lines, undefined, host.claim.threadId));
-      for (const { threadId, row } of released) state.released.set(row.id, threadId);
-    }
-    // NOLIMITS v1 1.0.19 4.2 r3: the reading turn is marked by what leaves, on evidence (a row, or a listed thread's newest
-    // line, of a turn that was marked), never by the call (outside-own.ts no longer marks recall at the gate)
-    const rows = tool === "thread_list"
-      ? (outcome.body.threads as ListedThread[]).map((thread) => ({ threadId: thread.threadId, at: Date.parse(thread.lastAt) }))
-      : released.map(({ threadId, row }) => ({ threadId, at: row.at }));
-    recallRowsOutside(host.claim.threadId, rows);
-  }
-  host.respond(200, outcome.body);
+  const released = releaseRows(host, plan, fresh => ({ threads: recallThreads(fresh) }), (candidates, notes, fresh, freshSet) => {
+    if (tool !== "thread_list") return fit(plan, candidates, notes);
+    const body = listedBody(fresh && freshSet.length ? relisted(fresh.botId, listed!.filter(thread => freshSet.includes(thread.threadId)), cutoff) : [], listHeld, !fresh);
+    return { body, kept: [], listed: (body.threads as ListedThread[]).map(thread => ({ threadId: thread.threadId, at: Date.parse(thread.lastAt) })) };
+  });
+  if ("error" in released) return refuse(host, 409, released.error);
+  host.respond(200, released.outcome.body);
 }
 
 /** Release time (rule 23a for thread_list): every listed thread's lastAt asked again, so a line forgotten since the plan never gives its time;

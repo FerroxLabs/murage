@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {Message,MessageOrigin} from "./store.ts";
 import type {RoutineRunTrigger} from "./routines.ts";
-export function automationForTurn(input:{automation?:Message["automation"];automationSource?:RoutineRunTrigger;commsDepth?:number;cardContinuation?:boolean;projectCardRun?:{request:{id:string}};memorySkillSource?:string;unattended?:boolean;origin?:MessageOrigin},run?:{routineId?:string;webhookId?:string;telegramConnectionId?:string;channelOrigin?:{platform:"slack"|"discord"|"whatsapp";connectionId:string}}):Message["automation"]{
+export function automationForTurn(input:{automation?:Message["automation"];automationSource?:RoutineRunTrigger;commsDepth?:number;cardContinuation?:boolean;projectCardRun?:{request:{id:string}};memorySkillSource?:string;unattended?:boolean;origin?:MessageOrigin},run?:{routineId?:string;webhookId?:string;telegramConnectionId?:string;channelOrigin?:{platform:"slack"|"discord"|"whatsapp"|"signal";connectionId:string}}):Message["automation"]{
  if(input.automation)return input.automation;
  if(input.projectCardRun||input.cardContinuation||input.memorySkillSource)return {kind:"card"};
  // 1.0.11 APP-TRIGGERS: a connected-app run is an outside event, marked as one (its own label arrives with the run-thread UI)

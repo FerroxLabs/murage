@@ -14,7 +14,7 @@ beforeEach(() => { rig = launcherRig(".murage-placeholder-"); });
 afterEach(() => rig.dispose());
 
 const MASK_NAMES = [".claude", ".codex", ".fuigo", ".grok", ".kimi-code", ".opencode"];
-const argsFor = (engine: string, extra?: string) => engine === "claudeAgent" && extra ? [...MINIMAL_ARGV.claudeAgent, "--add-dir", extra] : MINIMAL_ARGV[engine as keyof typeof MINIMAL_ARGV];
+const argsFor = (engine: string, extra?: string) => (engine === "claudeAgent" || engine === "antigravity") && extra ? [...MINIMAL_ARGV[engine], "--add-dir", extra] : MINIMAL_ARGV[engine as keyof typeof MINIMAL_ARGV];
 
 // ensure_placeholder on <dir>/<name> with a recording seam; `race` is Python run as the after-mkdirat hook
 // (r: the race counter, d: the directory fd, n: the name).
@@ -47,8 +47,11 @@ describe("fixture 1: MASK_NAMES is the union and every engine masks it", () => {
     mkdirSync(extra);
     const plan = rig.plan(rig.request(engine, { cwd, args: argsFor(engine, extra) })).ok!;
     for (const name of MASK_NAMES) expect(plan.tmpfs).toContain(`${cwd}/${name}`);
-    if (engine === "claudeAgent") for (const name of MASK_NAMES) expect(plan.tmpfs).toContain(`${extra}/${name}`);
-    for (const path of plan.tmpfs.filter(path => path.startsWith(`${rig.workspaces}/`))) expect(MASK_NAMES).toContain(path.slice(path.lastIndexOf("/") + 1));
+    if (engine === "claudeAgent" || engine === "antigravity") for (const name of MASK_NAMES) expect(plan.tmpfs).toContain(`${extra}/${name}`);
+    // antigravity alone also masks the two directories agy reads hooks from in each of its four customization roots (never a root itself)
+    const agyDirs = engine === "antigravity" ? [".agents", ".agent", "_agents", "_agent"].flatMap(root => [`${root}/plugins`, `${root}/agents`]) : [];
+    for (const path of plan.tmpfs.filter(path => path.startsWith(`${rig.workspaces}/`))) expect([...MASK_NAMES, ...agyDirs].some(name => path.endsWith(`/${name}`))).toBe(true);
+    expect(plan.tmpfs).not.toContain(`${cwd}/.agents`);
   });
 
   it("gives Grok the chain shadows Fuigo has: .grok and .claude from cwd to the grant root, never the state home", () => {
@@ -131,6 +134,8 @@ def rename(src,dst):
     if os.lstat(src).st_ino in frozen: raise PermissionError(errno.EPERM,"immutable")
     os.rename(src,dst)
 def plant():
+    # On the home the immutable flag refuses a write into the placeholder for every caller, root included; root passes the 0555 mode, so the seam stands in for the flag here as it does for the rename.
+    if os.getuid()==0 and os.lstat(mask).st_ino in frozen: raise PermissionError(errno.EPERM,"immutable")
     with open(mask+"/settings.json","w") as f: f.write('{"apiKeyHelper":"/bin/true","hooks":{"Stop":[{"command":"/bin/true"}]}}')
 results={"plant":attempt(plant),"rename":attempt(lambda: rename(mask,cwd+"/moved")),"recreate":attempt(lambda: os.mkdir(mask))}
 options=argv[:argv.index("--")]

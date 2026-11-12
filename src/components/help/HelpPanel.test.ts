@@ -160,7 +160,7 @@ describe("help panel", () => {
     const source = readFileSync(fileURLToPath(new URL("./HelpHost.tsx", import.meta.url)), "utf8");
     expect(source).toContain("return modalWindow ? createPortal(entry, modalWindow) : entry;");
     // the "?" tab is the closed entry, so it is drawn inside the window too
-    expect(source).toContain("const entry = !open ? <HelpLauncher onOpen={openPanel} /> : (");
+    expect(source).toContain("const entry = !open ? <HelpLauncher onOpen={openPanel} inModal={Boolean(modalWindow)} /> : (");
     expect(source).toContain("useLayoutEffect(() => watchModalWindow(setHost), []);");
   });
 

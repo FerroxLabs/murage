@@ -1,8 +1,8 @@
 import { cloudHomeCopy } from "./copy.ts";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { lstatSync, mkdirSync, readFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { writeFileAtomic } from "../atomic.ts";
+import { syncParentDirectoryStatus, writeFileAtomic } from "../atomic.ts";
 
 type SealedValue = { nonce: string; tag: string; ciphertext: string };
 
@@ -65,7 +65,10 @@ export class SealedSecretStore {
   private values: Record<string, string>;
   private readonly directory: string;
   private readonly machineId: string;
-  constructor(directory: string, machineId: string, dataKey: Buffer) {
+  private readonly syncDir: (path: string) => "synced" | "unsupported";
+  /** `syncDir` is a test seam for the directory sync (default: the real one). */
+  constructor(directory: string, machineId: string, dataKey: Buffer, seams: { syncDir?: (path: string) => "synced" | "unsupported" } = {}) {
+    this.syncDir = seams.syncDir ?? syncParentDirectoryStatus;
     this.directory = directory;
     this.machineId = machineId;
     this.key = Buffer.from(dataKey);
@@ -90,16 +93,39 @@ export class SealedSecretStore {
     if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 || stat.uid !== process.getuid?.()) throw new Error(cloudHomeCopy.cloudCredentialDirectoryPermissionsAreInvalid);
   }
   getAll(): Record<string, string> { return { ...this.values }; }
-  patch(records: Record<string, string>): Record<string, string> {
+  /** Rereads credentials.enc from disk and unseals it: proof that a write landed, which getAll (the in-memory copy) is not. Throws on any failure. */
+  readBack(): Record<string, string> {
+    this.assertDirectory();
+    const stat = lstatSync(this.file);
+    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 || stat.uid !== process.getuid?.()) throw new Error(cloudHomeCopy.cloudCredentialFilePermissionsAreInvalid);
+    const plain = unsealValue(JSON.parse(readFileSync(this.file, "utf8")), this.key, this.aad());
+    try { return { ...stringRecords(JSON.parse(plain.toString("utf8"))) }; }
+    finally { plain.fill(0); }
+  }
+  patch(records: Record<string, string>): Record<string, string> { this.write(records); return this.getAll(); }
+  /** patch, then a directory sync that really ran (CLOUD-EMAIL-KEYSTORE-1019 r2 section 2). `durable: false` when the filesystem cannot sync a
+   * directory: the file is already renamed and in memory, but nothing may be acknowledged. An I/O error throws. */
+  patchDurable(records: Record<string, string>): { durable: boolean } {
+    this.write(records);
+    return { durable: this.syncDir(this.file) === "synced" };
+  }
+  /** Whether this directory can be made durable: a probe file is created, synced through its directory and removed. */
+  probeDurable(): boolean {
+    this.assertDirectory();
+    const probe = join(this.directory, ".sync-probe");
+    try { writeFileSync(probe, "", { mode: 0o600 }); return this.syncDir(probe) === "synced"; }
+    catch { return false; }
+    finally { try { unlinkSync(probe); } catch { /* absent */ } }
+  }
+  private write(records: Record<string, string>): void {
     this.assertDirectory();
     try { if (lstatSync(this.file).isSymbolicLink()) throw new Error(cloudHomeCopy.cloudCredentialFileCannotBeALink); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     const next = { ...this.values, ...stringRecords(records) };
     const plain = Buffer.from(JSON.stringify(next));
-    try { writeFileAtomic(this.file, JSON.stringify(sealValue(plain, this.key, this.aad())), { mode: 0o600 }); }
+    try { writeFileAtomic(this.file, JSON.stringify(sealValue(plain, this.key, this.aad())), { mode: 0o600, syncDir: true }); }
     finally { plain.fill(0); }
     this.values = next;
-    return this.getAll();
   }
   close(): void { this.key.fill(0); this.values = Object.create(null); }
 }

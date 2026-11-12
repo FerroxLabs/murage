@@ -82,12 +82,17 @@ export function createToolListNormalizer(): {
   observeRequest: (line: string) => void;
   /** Map a server → agent line to what the agent should receive. */
   rewriteResponse: (line: string) => string;
+  /** The request with this id will never be answered (cancelled, superseded, undeliverable): stop waiting for it. */
+  forget: (id: unknown) => void;
 } {
   // JSON-RPC ids may be numbers or strings, and 7 is not "7".
   const pending = new Set<string>();
   const idKey = (id: unknown) => `${typeof id}:${String(id)}`;
 
   return {
+    forget(id) {
+      pending.delete(idKey(id));
+    },
     observeRequest(line) {
       let frame: unknown;
       try {

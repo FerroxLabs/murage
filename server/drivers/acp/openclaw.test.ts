@@ -13,7 +13,8 @@ import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
 import { BUILT_IN_DRIVERS } from "../builtIn.ts";
-import { OpenclawAgentDriver, openclawBridgeArgs } from "./openclaw.ts";
+import { OpenclawAgentDriver, openclawBridgeArgs, openclawSupport, createOpenclawPrePromptGuard } from "./openclaw.ts";
+import { createAcpDriver } from "./core.ts";
 import { TURN_ASK_RULES } from "../../../shared/ask-wording.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
@@ -92,7 +93,12 @@ describe("OpenclawAgentDriver turns (fake CLI)", () => {
   let scratch: string;
 
   const create = async (config: Record<string, unknown> = {}, environment: Record<string, string> = {}) => {
-    instance = await OpenclawAgentDriver.create({
+    const prePrompt = createOpenclawPrePromptGuard({
+      probeVersion: async () => "2026.10.5",
+      call: async (_cli, _method, params) => ({ ok: true, key: params.key, entry: { permissionMode: "read-only" } }),
+      verifyCoverage: async () => ({ refusedReads: true, skillRoots: true, extraTools: true, nativeHarnesses: true, delegation: true, readBoundary: true }),
+    });
+    instance = await createAcpDriver({ ...openclawSupport, prePrompt }).create({
       instanceId: "openclaw-test",
       displayName: "OpenClaw Test",
       environment,
@@ -201,7 +207,7 @@ describe("OpenclawAgentDriver turns (fake CLI)", () => {
     expect(state.mcpServers ?? []).toEqual([]);
   });
 
-  it("sends a non-Ask prompt with no /exec directive, as in 1.0.2, so the owner's OpenClaw policy applies (2026.10.5 refused redirects under ask=always)", async () => {
+  it("prepends the deny directive to a non-Ask prompt", async () => {
     const promptDump = join(scratch, "prompt.json");
     process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
     process.env.FAKE_ACP_MODE = "no-auth";
@@ -210,9 +216,9 @@ describe("OpenclawAgentDriver turns (fake CLI)", () => {
     await recorder.until((e) => e.type === "turn.completed");
     const blocks = JSON.parse(readFileSync(promptDump, "utf8")) as Array<{ type: string; text?: string }>;
     const text = blocks.map((b) => b.text ?? "").join("");
-    expect(text).not.toContain("/exec");
+    expect(text.split("\n")[0]).toBe("/exec security=deny");
     // 1.0.4 QW (21e9b0f53): every engine's turn carries the ask rule line after the persona.
-    expect(text.startsWith(`You are Fred.\n\n${TURN_ASK_RULES}\n\nrun it`)).toBe(true);
+    expect(text.startsWith(`/exec security=deny\nYou are Fred.\n\n${TURN_ASK_RULES}\n\nrun it`)).toBe(true);
     delete process.env.FAKE_ACP_PROMPT_DUMP;
   });
 

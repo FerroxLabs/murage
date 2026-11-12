@@ -37,6 +37,14 @@ test("an exit nobody asked for restarts even when the code is 0", () => {
   assert.equal(decision.delayMs, RESTART_DELAYS_MS[0]);
 });
 
+test("J4: the exit 75 an owner restore leaves with (the server restarts to open the restored home) gets a replacement on the desktop", () => {
+  // server/index.ts exits 75 after a finished restore; the Cloud supervisor restarts on exactly 75 (cloud-home/supervisor.ts homeChildExit), and here the code is ignored.
+  const supervisor = createServerSupervisor({ now: at().now });
+  const decision = supervisor.decide({ code: 75 });
+  assert.equal(decision.action, "restart");
+  assert.equal(decision.delayMs, RESTART_DELAYS_MS[0]);
+});
+
 test("repeated unasked clean exits still end in give-up", () => {
   const clock = at();
   const supervisor = createServerSupervisor({ now: clock.now });

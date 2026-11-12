@@ -149,6 +149,7 @@ describe("direct run settlement across a late close and a retry relaunch", () =>
       }),
     );
     child = spawn(process.execPath, ["--import", TELEGRAM_PRELOAD, join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

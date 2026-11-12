@@ -7,6 +7,7 @@
 // variable): threadId, the window start, the store's line index, the bot viewer, routeHasTools, the externalUpdates key, the memory
 // floor (memory mode / last resort, IX:12366), projectCardRun, the skip set and replayOptions. Per-turn work is the window that
 // fills the replay budget, never the thread's history (lines older than the window are counted as not shown: replayMore).
+import { setImmediate as yieldToLoop } from "node:timers/promises";
 import { botMessages, botViewer } from "../bot-read.ts";
 import { database } from "../database.ts";
 import { promptRows } from "../external-context-delivery.ts";
@@ -15,6 +16,10 @@ import { replayWindow, type ReplayWindowOptions } from "./disclosures.ts";
 
 /** The window of text lines a replay first reads; it doubles until the replay's own budget is filled from inside it. */
 export const REPLAY_LINES_START = 80;
+/** A byte budget alone cannot bound short, skipped or withheld history. Older rows stay omitted. */
+export const REPLAY_LINES_MAX = 1280;
+/** Privacy checks and rendering yield between these batches, including within a widening window. */
+export const REPLAY_SLICE_LINES = 40;
 
 /** What the memory floor returns when memory is not active (or a last-resort rebuild): room-transcript.ts roomTranscriptWithoutMemory. */
 export type ReplayFloor = { messages: Message[]; withheld: Set<string>; forgotten: Set<string>; checking: Set<string>; checked: Set<string> } | undefined;
@@ -32,7 +37,7 @@ export interface TurnReplayInputsArgs {
   externalUpdates: readonly string[] | undefined;
   /** null when memory mode is "active" and the turn is not the last resort (IX:12366): no floor. Otherwise the floor over the window's rows. */
   floor: ((activeMessages: Message[]) => ReplayFloor) | null;
-  /** a project card run replays nothing, and the loop then runs to !replayMore (IX:12371) */
+  /** A project card run replays nothing; scanning still stops at the row ceiling. */
   projectCardRun: boolean;
   /** the turn's skip set: its own userMessage id and opts.excludeMessageIds (IX:12334); not modified */
   skip: ReadonlySet<string>;
@@ -41,6 +46,8 @@ export interface TurnReplayInputsArgs {
    * passes 1: each window W reads W - 1 lines, which are exactly the turn's W lines minus U (U is in the turn's skip set), so every
    * window, its hasMore, the replayable set, the replayed suffix and the stop are the turn's. The turn passes 0 (the default). */
   headSlot?: number;
+  /** The foreground turn yields to timers and I/O between bounded batches. The warmer uses the same steps synchronously. */
+  cooperative?: true;
   /** tests only: the first window (REPLAY_LINES_START) */
   windowStart?: number;
 }
@@ -66,22 +73,41 @@ export interface TurnReplayInputs {
 }
 
 /** The newest text lines of the active branch, read in a window that doubles until the replay's own budget is filled from inside it,
- * or the branch has no more (IX:12352-12377 at b13e, unchanged). */
-export function turnReplayInputs(args: TurnReplayInputsArgs): TurnReplayInputs {
+ * the row ceiling is reached, or the branch has no more. */
+export function turnReplayInputs(args: TurnReplayInputsArgs & { cooperative: true }): Promise<TurnReplayInputs>;
+export function turnReplayInputs(args: Omit<TurnReplayInputsArgs, "cooperative"> & { cooperative?: never }): TurnReplayInputs;
+export function turnReplayInputs(args: TurnReplayInputsArgs): TurnReplayInputs | Promise<TurnReplayInputs> {
+  const steps = replayInputSteps(args);
+  if (args.cooperative) return (async () => {
+    for (;;) {
+      await yieldToLoop();
+      const step = steps.next();
+      if (step.done) return step.value;
+    }
+  })();
+  for (;;) { const step = steps.next(); if (step.done) return step.value; }
+}
+
+/** Both callers consume identical windows and privacy checks; only the foreground caller awaits the slice boundaries. */
+function* replayInputSteps(args: TurnReplayInputsArgs): Generator<void, TurnReplayInputs> {
   const { store, threadId, botId, routeHasTools, externalUpdates, floor, projectCardRun, skip, replayOptions } = args;
   const headSlot = args.headSlot ?? 0;
   let replayMore = false;
   let branchMessages: Message[] = [], activeMessages: Message[] = [], tailIds = new Set<string>(), heldReplayIds = new Set<string>();
   let replayFloor: ReplayFloor;
   let replayableMessages: Message[] = [], replayedMessages: Message[] = [];
-  let window = args.windowStart ?? REPLAY_LINES_START;
+  let window = Math.min(args.windowStart ?? REPLAY_LINES_START, REPLAY_LINES_MAX);
   const exactWindows: boolean[] = [];
-  for (; ; window *= 2) {
+  for (; ; window = Math.min(window * 2, REPLAY_LINES_MAX)) {
     // MUTANT:no-head-slot
     const branchTail = store.activeTextLines(threadId, window - headSlot);
     replayMore = branchTail.hasMore;
     exactWindows.push(branchTail.exact === true);
-    branchMessages = botMessages(database(), botViewer(botId), threadId, branchTail.messages);
+    branchMessages = [];
+    for (let start = 0; start < branchTail.messages.length; start += REPLAY_SLICE_LINES) {
+      yield;
+      branchMessages.push(...botMessages(database(), botViewer(botId), threadId, branchTail.messages.slice(start, start + REPLAY_SLICE_LINES)));
+    }
     activeMessages = promptRows(branchMessages, routeHasTools, externalUpdates);
     const activeReplayIds = new Set(activeMessages.map(row => row.id));
     heldReplayIds = new Set(branchMessages.filter(row => !activeReplayIds.has(row.id)).map(row => row.id));
@@ -89,14 +115,28 @@ export function turnReplayInputs(args: TurnReplayInputsArgs): TurnReplayInputs {
     // With memory not active (capture only, paused or off) the replay still follows the content rule a room follows (0.1.61 T2 R3-7):
     // a reply made with memory the owner has since forgotten or changed, and a copy of one, reads as its withheld line (or is left out
     // for a turn that is not the owner's) instead of coming back raw. A thread that never used memory is read as it is (undefined).
-    replayFloor = floor ? floor(activeMessages) : undefined;
+    replayFloor = undefined;
+    if (floor) {
+      const messages: Message[] = [];
+      for (let start = 0; start < activeMessages.length; start += REPLAY_SLICE_LINES) {
+        yield;
+        const batch = activeMessages.slice(start, start + REPLAY_SLICE_LINES);
+        const checked = floor(batch);
+        messages.push(...(checked?.messages ?? batch));
+        if (checked) {
+          replayFloor ??= { messages, withheld: new Set(), forgotten: new Set(), checking: new Set(), checked: new Set() };
+          for (const key of ["withheld", "forgotten", "checking", "checked"] as const)
+            for (const id of checked[key]) replayFloor[key].add(id);
+        }
+      }
+    }
     // Kept as messages, not just role/text: the external-delivery accounting needs to know WHICH ids a branch replay would actually
     // carry, and this filter (settled text only, the budget's window) is what decides that.
     replayableMessages = (projectCardRun ? [] : (replayFloor?.messages ?? activeMessages))
       .filter((m) => m.kind === "text" && m.text && !skip.has(m.id) && !heldReplayIds.has(m.id));
     replayedMessages = replayWindow(replayableMessages, replayOptions);
     // the replay's window ends inside what was read (an older line could not enter), or the branch has no older line
-    if (!replayMore || replayedMessages.length < replayableMessages.length) break;
+    if (!replayMore || replayedMessages.length < replayableMessages.length || window >= REPLAY_LINES_MAX) break;
   }
   const finalSkip = new Set(skip);
   for (const id of heldReplayIds) finalSkip.add(id);

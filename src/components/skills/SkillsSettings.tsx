@@ -11,7 +11,6 @@ import { SkillReader } from "./SkillReader";
 import { topicLabel, TopicSelect } from "./TopicSelect";
 import { VerdictBadge } from "./VerdictBadge";
 import { listSkills, verdictLabel, CLEAN_LINE, type SkillSummary, type SkillsPage } from "@/lib/skills-api";
-import { InAdvanced } from "../SettingsPrimitives";
 
 type View = { kind: "list" } | { kind: "read"; ref: string } | { kind: "import" };
 
@@ -47,7 +46,7 @@ function SkillRow({ skill, onOpen, browsing }: { skill: SkillSummary; onOpen(ref
  *  says what they cover and what each verdict means. */
 export function SkillScanRules() {
   return (
-    <div id="skill-scan-rules-heading" data-setting-control="skill-scan-rules-heading" tabIndex={-1} className="rounded-xl bg-card p-4 outline-none">
+    <div data-setting-control="skill-scan-rules-heading" tabIndex={-1} className="rounded-xl bg-card p-4 outline-none">
       <h3 className="text-[15px] font-medium text-ink">Scan rules</h3>
       <p className="mt-0.5 text-[13px] leading-relaxed text-ink-secondary">Every skill is read before a bot can use it. The check looks for skills that:</p>
       <ul className="mt-2 list-disc space-y-0.5 pl-5 text-[12.5px] text-ink-secondary">
@@ -98,10 +97,10 @@ export function SkillsSettings() {
   const searching = Boolean(query.trim() || category);
   return (
     <>
-    <section aria-labelledby="skills-settings-title">
+    <section aria-labelledby="skills-library-title">
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
-          <h2 id="skills-settings-title" className="text-[15px] font-medium text-ink">Skills</h2>
+          <h2 id="skills-library-title" className="text-[15px] font-medium text-ink">Skills</h2>
           <p className="text-[12.5px] text-ink-secondary">Instructions your bots can follow. Read any skill before you use it.</p>
         </div>
         <button type="button" data-setting-control="skills-settings-title" onClick={() => setView({ kind: "import" })} className="shrink-0 rounded-lg bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white">Import skill</button>
@@ -156,7 +155,6 @@ export function SkillsSettings() {
         </>
       )}
     </section>
-    <InAdvanced><SkillScanRules /></InAdvanced>
     </>
   );
 }

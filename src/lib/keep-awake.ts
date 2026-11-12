@@ -12,6 +12,9 @@ export const KEEP_AWAKE_DETAIL =
   "Your phone reaches Murage through this computer, so it can’t answer while the computer is asleep. "
   + "This stops it going to sleep on its own. Closing the lid still puts a laptop to sleep.";
 
+/** SIMPLE-COPY 3: the short line Simple shows; the full sentence is in the Phone How this works. */
+export const KEEP_AWAKE_DETAIL_SIMPLE = "Stops this computer sleeping on its own, so your phone can reach it.";
+
 export interface KeepAwakeOffer { checked: boolean; disabled: boolean }
 
 /** Null while there is nothing it would do: no sidecar, or a failed one. */

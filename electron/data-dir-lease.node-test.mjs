@@ -10,8 +10,9 @@ import { inspect } from "node:util";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import test from "node:test";
-import { acquireDataDirLease, acquireDataDirLeaseForProcess, dataDirLeasePaths, inspectDataDirLease } from "./data-dir-lease.mjs";
+import { acquireDataDirLease, acquireDataDirLeaseForProcess, dataDirLeasePaths, dataDirIdentity, currentDataDirLeaseEpoch, inspectDataDirLease } from "./data-dir-lease.mjs";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
+import { WINDOWS_NATIVE_VERSION } from "./windows-native.mjs";
 
 const MODULE = new URL("./data-dir-lease.mjs", import.meta.url).href;
 const PRIVATE_ENV = "MURAGE_INTERNAL_DATA_DIR_LEASE";
@@ -88,7 +89,7 @@ const WORKER = `
   if (process.env.LEASE_TEST_PS !== undefined) {
     const table = JSON.parse(process.env.LEASE_TEST_PS);
     const native = {
-      version: () => 10,
+      version: () => ${WINDOWS_NATIVE_VERSION},
       processStart(pid) {
         probes.push({ mode: 'sync', pid });
         const entry = pid === process.pid && table.self !== undefined ? table.self.replace('SELF_PID', String(process.pid)) : table[String(pid)];
@@ -198,6 +199,7 @@ const WORKER = `
 
 function worker(f, environment = {}) {
   const child = spawn(process.execPath, ["--input-type=module", "--eval", WORKER], {
+    windowsHide: true,
     env: { PATH: process.env.PATH, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}), HOME: f.root, USERPROFILE: f.root, LEASE_TEST_DATA_DIR: f.dataDir, ...environment },
     stdio: ["ignore", "ignore", "pipe", "ipc"],
   });
@@ -242,7 +244,7 @@ async function stop(item) {
 }
 
 async function deadPid() {
-  const child = spawn(process.execPath, ["--eval", "process.exit(0)"], { stdio: "ignore" });
+  const child = spawn(process.execPath, ["--eval", "process.exit(0)"], { windowsHide: true, stdio: "ignore" });
   const pid = child.pid;
   await new Promise((resolve) => child.once("close", resolve));
   return pid;
@@ -622,7 +624,7 @@ test("invalid, unreadable, symlink and special lease records remain untouched", 
 
 test("a FIFO lease refuses without opening or waiting for a writer", { skip: process.platform === "win32" }, () => {
   const f = fixture();
-  execFileSync("mkfifo", [f.leasePath]);
+  execFileSync("mkfifo", [f.leasePath], { windowsHide: true });
   assert.throws(() => acquireDataDirLease(f.dataDir), errorCode("LEASE_INVALID"));
   assert.equal(lstatSync(f.leasePath).isFIFO(), true);
 });
@@ -973,7 +975,7 @@ const syncProbes = (outcome) => outcome.probes.filter((probe) => probe.mode === 
 
 // Only this test-owned child is ever signalled, by the shared afterEach.
 async function sleeper() {
-  const child = spawn(process.execPath, ["--eval", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  const child = spawn(process.execPath, ["--eval", "setInterval(() => {}, 1000)"], { windowsHide: true, stdio: "ignore" });
   const exited = new Promise((resolve) => child.once("close", resolve));
   sleepers.add({ child, exited });
   await until(() => Boolean(child.pid), "sleeper pid");
@@ -1415,7 +1417,7 @@ const procState = (pid) => { try { const raw = readFileSync(`/proc/${pid}/stat`,
 const procStart = (pid) => { const raw = readFileSync(`/proc/${pid}/stat`, "latin1"); return raw.slice(raw.lastIndexOf(")") + 1).trim().split(/\s+/)[19]; };
 // A zombie of our own: the shell backgrounds a short child, then execs into a sleep that never waits for it.
 async function zombie() {
-  const holder = spawn("/bin/sh", ["-c", "sleep 0.05 & echo $!; exec sleep 60"], { stdio: ["ignore", "pipe", "ignore"] });
+  const holder = spawn("/bin/sh", ["-c", "sleep 0.05 & echo $!; exec sleep 60"], { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
   const exited = new Promise((resolve) => holder.once("close", resolve));
   sleepers.add({ child: holder, exited });
   let out = "";
@@ -1571,4 +1573,16 @@ test("macOS and Windows liveness never read /proc and are unchanged", async () =
     await stop(contender);
   }
   rmSync(f.leasePath);
+});
+
+test("Signal coverage sees only the currently held lease generation",()=>{
+ const f=fixture();assert.equal(currentDataDirLeaseEpoch(f.dataDir),null);
+ const first=acquireDataDirLease(f.dataDir);const epoch=currentDataDirLeaseEpoch(f.dataDir);assert.match(epoch,/^[0-9a-f-]{36}$/);
+ first.release();assert.equal(currentDataDirLeaseEpoch(f.dataDir),null);
+ const second=acquireDataDirLease(f.dataDir);assert.notEqual(currentDataDirLeaseEpoch(f.dataDir),epoch);second.release();
+});
+test("Signal root binding and lease paths share the canonical digest including Darwin NFC/case folding",()=>{
+ const f=fixture(),paths=dataDirLeasePaths(f.dataDir);assert.ok(paths.leasePath.endsWith(dataDirIdentity(paths.canonicalDataDir)+".lease"));
+ assert.equal(dataDirIdentity("/tmp/Café","darwin"),dataDirIdentity("/TMP/CAFE\u0301","darwin"));
+ assert.notEqual(dataDirIdentity("/tmp/Café","linux"),dataDirIdentity("/tmp/café","linux"));
 });

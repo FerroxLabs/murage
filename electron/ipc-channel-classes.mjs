@@ -43,6 +43,12 @@ export const CLOUD_SAFE_CHANNELS = Object.freeze([
   "desktop:open-external", // main re-validates: a credential-free web URL (https only from a Cloud-home window), opened in the default browser
   "desktop:unread-count", // a number; main applies it to the main window only
   "approval-notification:show", // an OS notification; main validates the payload
+  "cloud-attention:hello", // {session}: binds the window's delivery session; main derives the HOME from the Cloud window and accepts only the top frame on its origin
+  "cloud-attention:offer", // routing ids only (kind, thread, request, delivery, an opaque ref) + the session; main derives the HOME from the Cloud window itself
+  "cloud-attention:visible", // {threadId|null, focused}; the home is derived by main
+  "cloud-attention:present", // the already server-filtered words for one ref main asked for (bounded: title 256, body 1024, icon 64 KB); main checks session and gen
+  "cloud-attention:gone", // {session, ref, gen}: the window holds no payload for that ref
+  "cloud-attention:freed", // one-way ack {session, refs}: payloads the window dropped (unknown refs ignored)
 ]);
 
 /**
@@ -51,6 +57,11 @@ export const CLOUD_SAFE_CHANNELS = Object.freeze([
  * fails on any REGISTERED cloud-home:* channel that is not listed explicitly in one of the two tables.
  */
 export const CLOUD_ONLY_CHANNELS = Object.freeze([
+  "cloud-home:browser-popout:open", // open a view for a bot in the sender's home only
+  "cloud-home:browser-popout:close", // close a home view, or the pop-out sender's own view
+  "cloud-home:browser-popout:state-now", // list only the sender's home or own pop-out
+  "cloud-home:browser-popout:state", // main pushes a view's state to its owning Cloud window
+  "cloud-home:request-sign-in", // sender-home bot and engine only; opens the existing local Connect sign-in
   "cloud-home:reachable", // is the home this window belongs to answering (main reads the sender's home; the window passes nothing)
   "cloud-home:disconnect-this", // Settings: disconnect this computer from the window's own home (sender's home only; no arguments)
 ]);
@@ -75,6 +86,7 @@ export const MAIN_ONLY_CLOUD_CHANNELS = Object.freeze([
   "cloud-home:engine-login:closed",
   // main -> local window: show the Connect panel (this computer was disconnected, from Settings or from My Cloud).
   "cloud-home:show-connect",
+  "cloud-home:sign-in-requested", // main -> local window: the validated home, bot and engine to open in Connect
   // main -> local window: main handled a Cloud link; its kind (and an open-cloud home id) only, never the link.
   "cloud-home:link-event",
 ]);
@@ -85,6 +97,8 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   "android-device:frame",
   "android-device:input",
   "android-device:status",
+  // app-readiness (main probes the main window; the ack comes back from its top frame only)
+  "app-readiness:alive",
   // assemblyai
   "assemblyai:set-key",
   "assemblyai:status",
@@ -158,6 +172,10 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   "cua:linux-retry",
   "cua:linux-status",
   "cua:permissions",
+  // browser-popout (the owned pop-out exception is separately channel-limited)
+  "browser-popout:open",
+  "browser-popout:close",
+  "browser-popout:state-now",
   // desktop-viewer
   "desktop-viewer:close",
   "desktop-viewer:open",
@@ -232,9 +250,27 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   "speech:pcm",
   "speech:start",
   "speech:stop",
+  // attention router (the local window only; a Cloud window uses the cloud-attention:* set above)
+  "attention:hello",
+  "attention:offer",
+  "attention:visible",
+  "attention:present",
+  "attention:gone",
+  "attention:freed",
+  // notify-surfaces
+  "notify-surfaces:capabilities",
+  "notify-surfaces:ensure-permission",
+  "notify-surfaces:get",
+  "notify-surfaces:reset",
+  "notify-surfaces:set",
   // startup-background
   "startup-background:status",
   "startup-background:update",
+  // start-up screens: the cached picture, and the What's new request (startup:whats-new, main to renderer, is a send and needs no class)
+  "startup-picture:save",
+  "startup-picture:session-tip",
+  "startup:ack-whats-new",
+  "startup:pending-whats-new",
   // update
   "update:check",
   "update:download",
@@ -248,7 +284,8 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
  * Channels main registers in a loop from a template string (backup-closed:${action}, backup-remote:${action}); the
  * preload calls them by their expanded names. All local-only.
  */
-export const LOCAL_ONLY_PREFIXES = Object.freeze(["backup-closed:", "backup-remote:", "local-engine-login:"]);
+// attention-window:* is the attention windows' own gate (electron/attention-ipc.mjs), registered there and never from a Cloud window.
+export const LOCAL_ONLY_PREFIXES = Object.freeze(["backup-closed:", "backup-remote:", "local-engine-login:", "attention-window:"]);
 
 const mainOnlyCloud = new Set(MAIN_ONLY_CLOUD_CHANNELS);
 

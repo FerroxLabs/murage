@@ -137,7 +137,7 @@ it("L9 B5: Stop does not cancel an open scan; expiry is shared until cleanup; a 
     expect(closed).toBe(false);
     // A separate server process imports an empty module-local map even while
     // this process still owns its expired, paused entry.
-    const fresh = execFileSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", `import { kimiSignedIn } from ${JSON.stringify(new URL("./kimi.ts", import.meta.url).href)}; console.log(await kimiSignedIn({KIMI_CODE_HOME:${JSON.stringify(home)}}));`], { encoding: "utf8", timeout: 15_000, env: { ...process.env, NODE_OPTIONS: "" } });
+    const fresh = execFileSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", `import { kimiSignedIn } from ${JSON.stringify(new URL("./kimi.ts", import.meta.url).href)}; console.log(await kimiSignedIn({KIMI_CODE_HOME:${JSON.stringify(home)}}));`], { windowsHide: true, encoding: "utf8", timeout: 15_000, env: { ...process.env, NODE_OPTIONS: "" } });
     expect(fresh.trim()).toBe("true");
     release(); await done;
     expect(closed).toBe(true);

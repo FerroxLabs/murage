@@ -51,6 +51,7 @@ describe("Tailscale executable discovery", () => {
     await listener.refreshTailnetName();
 
     expect(listener.tailnetName()).toBe("fixture.tail1234.ts.net");
+    expect(run.mock.calls[0]?.[2].windowsHide).toBeUndefined();
     expect(run.mock.calls[0]?.[2].env?.TAILSCALE_BE_CLI).toBe("1");
     expect(process.env.TAILSCALE_BE_CLI).toBe("0");
   });
@@ -107,6 +108,7 @@ describe("Tailscale executable discovery", () => {
     expect(args).toEqual(["status", "--json"]);
     expect(options.shell).toBeUndefined();
     expect(options.maxBuffer).toBe(16 * 1024 * 1024);
+    expect(options.windowsHide).toBeUndefined();
     expect(options.killSignal).toBe("SIGKILL");
     expect(options.timeout).toBeGreaterThan(0);
     expect(options.timeout).toBeLessThanOrEqual(5_000);
@@ -156,6 +158,7 @@ describe("PATH reaching the actual CLI probes", () => {
       expect(cli).toBe(windows64);
       expect(args).toEqual(["serve", "status", "--json"]);
       expect(options.env?.PATH).toBe(expectedPath);
+      expect(options.windowsHide).toBeUndefined();
       expect(options.killSignal).toBe("SIGKILL");
       expect(options.maxBuffer).toBe(1024 * 1024);
       expect(options.timeout).toBeGreaterThan(0);

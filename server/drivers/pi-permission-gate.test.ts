@@ -515,7 +515,7 @@ describe("T105: the inlined copies equal their modules", () => {
     return gate.slice(from + begin.length, to);
   };
   it("shared/sensitive-paths.ts and shared/in-project.ts are carried whole", () => {
-    for (const file of ["shared/sensitive-paths.ts", "shared/in-project.ts"]) expect(block(file)).toBe(strip(here(`../../${file}`)));
+    for (const file of ["shared/sensitive-paths.ts", "shared/in-project.ts", "shared/no-limits-visible-wipe.ts"]) expect(block(file)).toBe(strip(here(`../../${file}`)));
   });
   it("the scan limits the gate uses are the same lines", () => {
     const source = here("../../shared/scan-limits.ts");
@@ -554,4 +554,20 @@ describe("T64: the installed engine's fields, pinned (@earendil-works/pi-coding-
       expect(gate.asked).toHaveLength(1);
     });
   }
+});
+
+describe('B8 No limits keeps only the local wipe check when the broker UI or secret is unavailable',()=>{
+ it.each([false,true])('missing secret=%s: non-wipe runs and real wipe blocks',async missing=>{
+  if(!missing)process.env.MURAGE_PI_GATE=SECRET;
+  process.env.MURAGE_PI_NO_LIMITS='1';
+  const on=new Map<string,Handler>();
+  try{
+   piPermissionGate({on:(name:string,handler:Handler)=>on.set(name,handler)} as never);
+   const call=on.get('tool_call')!,ctx={cwd:project,hasUI:false,ui:{}};
+   expect(await call({toolName:'bash',input:{command:'touch ~/.ssh/config'}},ctx)).toBeUndefined();
+   expect(await call({toolName:'bash',input:{command:'rm -rf ~'}},ctx)).toMatchObject({block:true});
+   expect(await call({toolName:'bash',input:{command:'echo "rm -rf /"'}},ctx)).toBeUndefined();
+   expect(await call({toolName:'bash',input:{command:'rm -rf "$UNKNOWN"'}},ctx)).toBeUndefined();
+  }finally{delete process.env.MURAGE_PI_NO_LIMITS;}
+ });
 });

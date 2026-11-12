@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -47,7 +48,7 @@ export class ClaudeSigninAnswers {
     this.salt = "";
     this.answers = [];
     try {
-      const parsed = JSON.parse(readFileSync(file, "utf8")) as { salt?: unknown; answers?: unknown };
+      const parsed = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(file, "utf8"))) as { salt?: unknown; answers?: unknown };
       if (typeof parsed.salt === "string" && HEX64.test(parsed.salt)) this.salt = parsed.salt;
       if (this.salt && Array.isArray(parsed.answers)) {
         this.answers = parsed.answers.filter((a): a is StoredAnswer => !!a && typeof a === "object"

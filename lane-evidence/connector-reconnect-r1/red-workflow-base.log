@@ -1,0 +1,36 @@
+
+ RUN  v4.1.12 /work
+
+ ❯ server/connector-health-scheduled-workflow.test.ts (1 test | 1 failed) 38119ms
+   × P2-6 scheduled Buffer work fails visibly while lapsed and safely continues after reconnect 38117ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connector-health-scheduled-workflow.test.ts > P2-6 scheduled Buffer work fails visibly while lapsed and safely continues after reconnect
+AssertionError: expected +0 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ server/connector-health-scheduled-workflow.test.ts:61:127
+     59|     // Exercise the normal owner's confirmation route, with no policy …
+     60|     expect((await raiseLevel(api, bot.id, { noLimits: true, acknowledg…
+     61|     await expect.poll(async () => (await api("GET", "/api/connectors/n…
+       |                                                                                                                               ^
+     62|     const incident = (await api("GET", "/api/connectors/needs-reconnec…
+     63|     expect(probes).toBeGreaterThan(0);
+
+Caused by: Error: Matcher did not succeed in time.
+ ❯ server/connector-health-scheduled-workflow.test.ts:61:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  03:31:44
+   Duration  42.53s (transform 3.42s, setup 4.15s, import 152ms, tests 38.12s, environment 0ms)
+

@@ -1,0 +1,21 @@
+# D102 native Gradle proof — 2026-11-11
+
+Signal source: `48a0a5e90cb0c36153f0276c0affff090e588290`.
+Builder: `node:24-bookworm@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4` on build-host.
+Gradle: pinned D061 9.8.2 distribution, local verified ZIP. Java: authenticated pinned Temurin 25.0.5+8.
+
+Result: **192 components / 342 artifacts**, each with SHA-256: **142 JARs, 107 POMs, 93 module files**. **334 artifacts** also have artifact-scoped PGP trust using **37 signing fingerprints**. `closure.json` is the complete inventory; the XML/keyring are committed under root `gradle/`. No trusted-artifact bypass, global trusted-key pattern, or network key lookup is allowed in strict builds. Eight artifacts use checksum verification alone, as detailed in the release plan. A key retrieval command returning success can still leave a key unusable by GnuPG; the inventory records the verified result.
+
+`strict-tampered.log` and its exit file show **exit 1**, during buildSrc plugin resolution. `tamper.py` replaced exactly one checksum, for the Kotlin DSL plugin marker POM, with 64 zeroes. `tamper.log` and `tamper-report.html` retain the expected/actual hash evidence.
+
+`strict-good.log` and its exit file show **exit 0**, `installDist` successful, **12 tasks executed**. Source, Gradle home, wrapper extraction, and task/configuration state were fresh for each case. Only the generation step's module-download cache was copied; verification and task caches were not copied. Both proof runs used strict mode and `--offline` inside a container with `--network none`. `strict-output-jars.SHA256SUMS` identifies the generated installDist JARs; this does not qualify final normalized runtime archives or replace their release pins.
+
+`tests.log`: Signal runtime suite **145 passed / 6 skipped** in a second isolated network-none pinned container using existing local test dependencies, mounted read-only. `container-provenance.json` records both container image identities and network modes. No app server or live user data was used. Committed logs omit ANSI color and trailing whitespace; raw logs remain in the job evidence directory.
+
+Reproduction scripts retain the actual container paths: `/repo` is this checkout, `/job` is a fresh job input/cache directory, `/evidence` is the job's evidence/script directory. Run `generate.sh` only during authorized metadata generation; it downloads and verifies D060/D061 and the build JDK, redirects the wrapper to the local ZIP, then runs Gradle `--write-verification-metadata sha256,pgp --export-keys installDist`. Run a second pass in that same source and Gradle home with `--offline --no-configuration-cache --write-verification-metadata sha256 installDist` and the same reproducibility init script to retain SHA-256 even for signed artifacts (`generate-sha.log`).
+
+`enrich-keys.py` retrieves the missing/full public keys during the metadata-generation network window. `normalize-metadata.py` runs offline, checks every artifact checksum against the cache, verifies signatures, narrows PGP trust to each artifact, exports the used keys, and disables keyserver lookup. Gradle's original generation verified the Signal signer; its stripped key has no UID and is retained for Gradle verification. GnuPG checks the other 332 signed artifacts. Copy the resulting XML/keyring from `/evidence/metadata` into the checkout's `gradle/`, then run `prove.sh` in a new network-none pinned container. Proof requires fresh `/job/strict-tampered` and `/job/strict-good` directories. Container execution was capped at two job containers, with load below 60.
+
+The production input builder copies the committed metadata/keyring into both independently extracted sources, uses `--dependency-verification=strict --no-configuration-cache`, and records both verification-file hashes in the uploaded evidence. MAIN still owns runtime archive qualification, workflow dispatch, releases and tags; none were performed here.
+
+The two subsequent BLOCK fixes, their baseline RED executions, and killed retriever/production-wiring mutants are recorded in [review-fix/README.md](review-fix/README.md). That round changes retrieval error handling and adds behavioral production-path coverage; it does not regenerate this closure or replace the native Gradle proof.

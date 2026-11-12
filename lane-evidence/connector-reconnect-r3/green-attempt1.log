@@ -1,0 +1,305 @@
+
+ RUN  v4.1.12 /work
+
+ ✓ server/connected-app-health.test.ts > one app's authorization failure > flips Gmail to needs-reconnect while Calendar stays active 52ms
+ ✓ server/connected-app-health.test.ts > one app's authorization failure > keeps the failed account when inventory says connected:false 9ms
+ ✓ server/connected-app-health.test.ts > one app's authorization failure > learns an expired account from inventory without a tool call 5ms
+ ✓ server/connected-app-health.test.ts > one app's authorization failure > a healthy second account or a newly added account cannot erase the expired account 5ms
+ ✓ server/connected-app-health.test.ts > one app's authorization failure > clears when a call to that app succeeds 13ms
+ × server/connected-app-health.test.ts > one app's authorization failure > clears when the person signs in again (a new account) 26ms
+   → expected [] to have a length of 1 but got +0
+ ✓ server/connected-app-health.test.ts > one app's authorization failure > is not set by an ordinary tool error, a lookup, or a broker that is dark 17ms
+ × server/connected-app-health.test.ts > one app's authorization failure > marks the one app that failed when a call touches two 8ms
+   → expected [] to deeply equal [ 'gmail' ]
+ ✓ server/connected-app-health.test.ts > signing in again > never removes the active account before the new sign-in is active, then retires exactly that one 119ms
+ ✓ server/connected-app-health.test.ts > signing in again > a mark made before any inventory was held still clears when a new account signs in 17ms
+ × server/connected-app-health.test.ts > what the bot is told > names the app by its own curated label, letters, digits and spaces only, whatever the catalog says 20ms
+   → expected [] to deeply equal [ 'Gmail' ]
+ × server/connected-app-health.test.ts > what the bot is told > names the app that needs reconnecting, and differs from the unreachable line 13ms
+   → expected '' to match /Gmail needs reconnecting/
+ ✓ server/connected-app-health.test.ts > what the bot is told > names several apps and follows the copy rules 3ms
+ ✓ server/connected-app-health.test.ts > reading an app's answer > reads a single-tool error answer and an event stream 4ms
+ ✓ server/connected-app-health.test.ts > reading an app's answer > reads success and ordinary errors as not an authorization failure 3ms
+ ✓ server/connected-app-health.test.ts > reading an app's answer > does not read a 403, forbidden or a missing scope as a sign-in failure: signing in again would not change it 3ms
+ ✓ server/connected-app-health.test.ts > reading an app's answer > reads a row only for an app the request named, at the answer's own level 3ms
+ ✓ server/connected-app-health.test.ts > reading an app's answer > reads the broker's structured signal, never free words in a message 3ms
+ ✓ server/connected-app-health.test.ts > reading an app's answer > ignores another request's frame 2ms
+ ✓ server/connected-app-health.test.ts > P1-1 ACTIVE inventory cannot hide a known expired grant 6ms
+ ✓ server/connected-app-health.test.ts > P1-2 verified same-owner proactive renewal keeps UUID and cooldown 13ms
+ ✓ server/connected-app-health.test.ts > P1-3 reconnecting A never implicates healthy B 13ms
+ ✓ server/connected-app-health.test.ts > P1-3 success clears only its account and preserves the other incident UUID 11ms
+ ✓ server/connected-app-health.test.ts > P2-5 one inventory check writes once at 10 and 1000 connectors; unchanged writes zero 82ms
+ ✓ server/connected-app-health.test.ts > P1-1 idle Buffer probe detects an ACTIVE revoked grant without an expiry field 8ms
+ ✓ server/connected-app-health.test.ts > P1-3 mixed results for two accounts of one app mark only the failed row 6ms
+ ✓ server/connected-app-health.test.ts > an account in cooldown cannot inherit another account's delivery receipt 13ms
+ ✓ server/connected-app-health.test.ts > R3 structured status contract > R3a status 500 with item 401 prose cannot impersonate auth 1ms
+ ✓ server/connected-app-health.test.ts > R3 structured status contract > R3b prose-only 401 with ACTIVE is clean, EXPIRED inventory creates incident 8ms
+ ✓ server/connected-app-health.test.ts > R3 structured status contract > R3c status_code 401 alone is a failed row even without a failure flag 1ms
+ ✓ server/connected-app-health.test.ts > R3 structured status contract > R3d nested error status 403 is exact and never accepts prose status 1ms
+ ✓ server/connected-app-health.test.ts > R3 structured status contract > R3e parsed kind auth suppresses account auth without the Flux sentence 1ms
+ ✓ server/connected-app-health.test.ts > R3 structured status contract > R3f brokerAuthOf handles error data and parsed envelopes; never scans app data 1ms
+ ✓ server/connected-app-health.test.ts > R3 structured status contract > R3g code 401 and deep data are not HTTP status; status parsing is strict 1ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 status INITIATED marks only the non-ACTIVE account 33ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 status INITIALIZING marks only the non-ACTIVE account 9ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 status FAILED marks only the non-ACTIVE account 7ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 status INACTIVE marks only the non-ACTIVE account 7ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 status EXPIRED marks only the non-ACTIVE account 7ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 status UNKNOWN marks only the non-ACTIVE account 5ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message invalid_credentials becomes an attributed visible failure with no retry 22ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message Token has expired becomes an attributed visible failure with no retry 8ms
+stderr | server/connector-reconnect-r2.test.ts > R2 preflight catches an ACTIVE idle lapse and stops scheduled work
+connected apps: gmail needs reconnecting: HTTP 401
+
+ ✓ server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message authentication failed becomes an attributed visible failure with no retry 13ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message invalid_auth becomes an attributed visible failure with no retry 8ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message token_revoked becomes an attributed visible failure with no retry 7ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message account is not active becomes an attributed visible failure with no retry 8ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 successful content and permission refusals never impersonate an auth failure 3ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 scheduled preflight uses one safe read per account, hourly, before work; never probes unknown toolkits 47ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 preflight catches an ACTIVE idle lapse and stops scheduled work 12ms
+stderr | server/connector-reconnect-r2.test.ts > Flux contract: project-key HTTP 401 is an outage, never a user reconnect
+connected apps: unreachable (tool call): HTTP 401 token rejected
+
+stderr | server/connector-reconnect-r2.test.ts > Flux contract: preflight upstream 401 with ACTIVE status raises reconnect
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r2.test.ts > Flux contract: preflight upstream 403 with ACTIVE status raises reconnect
+connected apps: gmail needs reconnecting: HTTP 403
+
+stderr | server/connector-reconnect-r2.test.ts > Flux contract: a JSON error inside MCP content is still an upstream preflight failure
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r2.test.ts > R2 reconnect guard blocks A but lets healthy B work without clearing A
+connected apps: gmail needs reconnecting: HTTP 401
+
+ ✓ server/connector-reconnect-r2.test.ts > R2 hourly probe budget survives reopening the ledger and renewal of the owner token 6ms
+ ✓ server/connector-reconnect-r2.test.ts > Flux contract: tool error refreshes inventory and EXPIRED identifies only its account 7ms
+ ✓ server/connector-reconnect-r2.test.ts > Flux contract: generic error with ACTIVE status is not a reconnect incident 6ms
+ ✓ server/connector-reconnect-r2.test.ts > Flux contract: project-key HTTP 401 is an outage, never a user reconnect 5ms
+ ✓ server/connector-reconnect-r2.test.ts > Flux contract: project-key HTTP 403 is an outage, never a user reconnect 5ms
+ ✓ server/connector-reconnect-r2.test.ts > Flux contract: an in-band project-key error is not mistaken for upstream account auth 4ms
+ ✓ server/connector-reconnect-r2.test.ts > Flux contract: preflight upstream 401 with ACTIVE status raises reconnect 9ms
+ ✓ server/connector-reconnect-r2.test.ts > Flux contract: preflight upstream 403 with ACTIVE status raises reconnect 10ms
+ ✓ server/connector-reconnect-r2.test.ts > Flux contract: a JSON error inside MCP content is still an upstream preflight failure 8ms
+ ✓ server/connector-reconnect-r2.test.ts > Flux contract: an unattributed multi-app tool error still refreshes account statuses 6ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 reconnect guard blocks A but lets healthy B work without clearing A 8ms
+ ✓ server/connector-reconnect-r2.test.ts > Flux contract: prose-only upstream failure with ACTIVE never establishes authentication 11ms
+ ✓ server/connector-reconnect-r3-schedule.test.ts > R4a three monitor ticks without routines only refresh inventory 84ms
+stderr | server/connector-reconnect-r3-schedule.test.ts > R4 bounded best effort: tick phase, restart budget, newly enabled and overdue runs
+connected apps: gmail needs reconnecting: HTTP 401
+
+ ✓ server/connector-reconnect-r3-schedule.test.ts > R4b disabled=false or outside lookahead=30 has no reads 28ms
+ ✓ server/connector-reconnect-r3-schedule.test.ts > R4b disabled=true or outside lookahead=61 has no reads 15ms
+ ✓ server/connector-reconnect-r3-schedule.test.ts > R4c learned gmail due in 30 minutes reads each gmail account once, never slack 30ms
+ ✓ server/connector-reconnect-r3-schedule.test.ts > R4d first scheduled dispatch preflights at runtime and learns toolkit 13ms
+ ✓ server/connector-reconnect-r3-schedule.test.ts > R4 retention unions real dispatches, reloads, scopes owner and revision, deletes stale learning 29ms
+ ✓ server/connector-reconnect-r3-schedule.test.ts > R4 bounded best effort: tick phase, restart budget, newly enabled and overdue runs 148ms
+stderr | server/connector-reconnect-r3-preflight.test.ts > R1e success re-reads ACTIVE, clears only that account and its unverified state
+connected apps: gmail needs reconnecting: HTTP 401
+
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1a failed probe still awaits EXPIRED inventory 26ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1b failed probe still awaits EXPIRED inventory 14ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1c ACTIVE uncertainty is unverified 10ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1d ACTIVE uncertainty is unverified 10ms
+ × server/connector-reconnect-r3-preflight.test.ts > R1e success re-reads ACTIVE, clears only that account and its unverified state 39ms
+   → expected undefined to be 'unverified' // Object.is equality
+stderr | server/connector-reconnect-r3-preflight.test.ts > R1f failed inventory retains incident and renders unverified copy
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-preflight.test.ts > R1f failed inventory retains incident and renders unverified copy
+connected apps: managed inventory status check failed: HTTP 502 fixture unavailable
+
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1f failed inventory retains incident and renders unverified copy 18ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1g Flux kind=auth is an outage and still re-reads inventory 5ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after transport 56ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after http 57ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after brokerAuth 59ms
+stderr | server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after upstreamAuth
+connected apps: gmail needs reconnecting: HTTP 401
+
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after upstreamAuth 59ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after toolError 58ms
+stderr | server/connector-reconnect-r3-preflight.test.ts > R1 unknown keeps an existing incident; inventory change clears unverified
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-preflight.test.ts > R1 removal between probe and refresh blocks that ID on scheduled dispatch
+connected apps: gmail needs reconnecting: account removed
+
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after ok 58ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1 unknown keeps an existing incident; inventory change clears unverified 17ms
+ × server/connector-reconnect-r3-preflight.test.ts > R1 removal between probe and refresh blocks that ID on scheduled dispatch 17ms
+   → expected [ { jsonrpc: '2.0', …(3) }, …(1) ] to have a length of 1 but got 2
+stderr | server/connector-reconnect-r3-preflight.test.ts > R3d preflight response.error.status 403 with ACTIVE creates an incident
+connected apps: gmail needs reconnecting: HTTP 403
+
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h held pre-probe ACTIVE fetch cannot replace post-probe EXPIRED inventory 60ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R3d preflight response.error.status 403 with ACTIVE creates an incident 9ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R3e row-level Flux auth never creates an incident 8ms
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2a wrapped multi attributes A failure and B success separately
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2b direct provider preserves B account for attribution and guard
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2e six call shapes use the same normalized rows in requirements, attribution and guard
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2e six call shapes use the same normalized rows in requirements, attribution and guard
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2e six call shapes use the same normalized rows in requirements, attribution and guard
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2e six call shapes use the same normalized rows in requirements, attribution and guard
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2e six call shapes use the same normalized rows in requirements, attribution and guard
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2e six call shapes use the same normalized rows in requirements, attribution and guard
+connected apps: gmail needs reconnecting: HTTP 401
+
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2a wrapped multi attributes A failure and B success separately 32ms
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2b direct provider preserves B account for attribution and guard 10ms
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2c unknown account never creates or blocks an incident 9ms
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2d unknown account never creates or blocks an incident 7ms
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2e six call shapes use the same normalized rows in requirements, attribution and guard 39ms
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2 duplicate account failure wins regardless of row order false
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2 duplicate account failure wins regardless of row order true
+connected apps: gmail needs reconnecting: HTTP 401
+
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2 duplicate account failure wins regardless of row order false 12ms
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2 duplicate account failure wins regardless of row order true 11ms
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch same creates no incident 11ms
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch mixed creates no incident 12ms
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch missing-index creates no incident 11ms
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch malformed creates no incident 10ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connected-app-health.test.ts > one app's authorization failure > clears when the person signs in again (a new account)
+AssertionError: expected [] to have a length of 1 but got +0
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ server/connected-app-health.test.ts:185:41
+    183|     rows = [{ tool_slug: "GMAIL_SEND_EMAIL", ok: false, error: "HTTP 4…
+    184|     await call("GMAIL_SEND_EMAIL");
+    185|     expect(appsNeedingReconnect(cfg())).toHaveLength(1);
+       |                                         ^
+    186|     accounts = { ...accounts, gmail: [{ id: "ca_gmail2", alias: "work"…
+    187|     const services = (await connectedInventory(cfg(), { force: true })…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  server/connected-app-health.test.ts > one app's authorization failure > marks the one app that failed when a call touches two
+AssertionError: expected [] to deeply equal [ 'gmail' ]
+
+- Expected
++ Received
+
+- [
+-   "gmail",
+- ]
++ []
+
+ ❯ server/connected-app-health.test.ts:224:60
+    222|       params: { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tool…
+    223|     });
+    224|     expect(appsNeedingReconnect(cfg()).map((a) => a.slug)).toEqual(["g…
+       |                                                            ^
+    225|   });
+    226| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  server/connected-app-health.test.ts > what the bot is told > names the app by its own curated label, letters, digits and spaces only, whatever the catalog says
+AssertionError: expected [] to deeply equal [ 'Gmail' ]
+
+- Expected
++ Received
+
+- [
+-   "Gmail",
+- ]
++ []
+
+ ❯ server/connected-app-health.test.ts:275:61
+    273|     rows = [{ tool_slug: "GMAIL_FETCH_EMAILS", ok: false, error: "401"…
+    274|     await call("GMAIL_FETCH_EMAILS");
+    275|     expect(appsNeedingReconnect(cfg()).map((a) => a.label)).toEqual(["…
+       |                                                             ^
+    276|     const line = reconnectSystemPrompt(cfg());
+    277|     expect(line.startsWith(" Gmail needs reconnecting:")).toBe(true);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+ FAIL  server/connected-app-health.test.ts > what the bot is told > names the app that needs reconnecting, and differs from the unreachable line
+AssertionError: expected '' to match /Gmail needs reconnecting/
+
+- Expected:
+/Gmail needs reconnecting/
+
++ Received:
+""
+
+ ❯ server/connected-app-health.test.ts:288:18
+    286|     await call("GMAIL_FETCH_EMAILS");
+    287|     const line = reconnectSystemPrompt(cfg());
+    288|     expect(line).toMatch(/Gmail needs reconnecting/);
+       |                  ^
+    289|     expect(line).not.toMatch(/Calendar/);
+    290|     expect(line).toMatch(/ask the owner/);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1e success re-reads ACTIVE, clears only that account and its unverified state
+AssertionError: expected undefined to be 'unverified' // Object.is equality
+
+- Expected:
+"unverified"
+
++ Received:
+undefined
+
+ ❯ server/connector-reconnect-r3-preflight.test.ts:51:149
+     49| });
+     50| it("R1e success re-reads ACTIVE, clears only that account and its unve…
+     51|   await incident(); await check(); expect(reads).toBe(1); expect(compo…
+       |                                                                                                                                                     ^
+     52| });
+     53| it("R1f failed inventory retains incident and renders unverified copy"…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/6]⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1 removal between probe and refresh blocks that ID on scheduled dispatch
+AssertionError: expected [ { jsonrpc: '2.0', …(3) }, …(1) ] to have a length of 1 but got 2
+
+- Expected
++ Received
+
+- 1
++ 2
+
+ ❯ server/connector-reconnect-r3-preflight.test.ts:83:101
+     81|   afterProbe=()=>{accounts.gmail=accounts.gmail!.filter(a=>a.id!=="A")…
+     82|   expect(composio.appsNeedingReconnect(cfg)[0]?.accounts.map(a=>a.id))…
+     83|   const count=calls.length; await dispatch(undefined,{account:"A"},{sc…
+       |                                                                                                     ^
+     84|   await dispatch(undefined,{account:"B"},{scheduled:true}); expect(cal…
+     85| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/6]⎯
+
+
+ Test Files  2 failed | 3 passed (5)
+      Tests  6 failed | 91 passed (97)
+   Start at  04:51:24
+   Duration  15.70s (transform 7.68s, setup 11.79s, import 1.29s, tests 1.90s, environment 0ms)
+

@@ -1,3 +1,4 @@
+import { withFixtureSudo } from "./fixture-sudo.mjs";
 /**
  * @license
  * Copyright 2026 Ferrox Labs
@@ -430,11 +431,14 @@ function runCli(args, env, { input = null } = {}) {
       mkdirSync(join(installed, "bin"), { recursive: true });
       cpSync(join(dirname(dirname(CLI)), "lib"), join(installed, "lib"), { recursive: true });
       cpSync(CLI, join(installed, "bin", "murage.mjs"));
+      mkdirSync(join(dirname(installed), "shared"), { recursive: true });
+      cpSync(new URL("../../shared/win-hide-child-process.mjs", import.meta.url), join(dirname(installed), "shared", "win-hide-child-process.mjs"));
+      cpSync(new URL("../../shared/win-hide-child-process.cjs", import.meta.url), join(dirname(installed), "shared", "win-hide-child-process.cjs"));
     }
     const child = spawn(process.execPath, [join(installed, "bin", "murage.mjs"), ...args], {
       detached: process.platform !== "win32",
       stdio: [input === null ? "ignore" : "pipe", "pipe", "pipe"],
-      env: { ...env, NO_COLOR: "1" },
+      env: withFixtureSudo({ ...env, NO_COLOR: "1" }, dirname(env.MURAGE_DATA_DIR)),
     });
     if (input !== null) {
       child.stdin.end(input);

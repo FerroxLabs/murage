@@ -52,6 +52,7 @@ export const FULL_RUN_JOBS = [
   "control-plane check + workerd tests + dry run",
   "phone app shell contracts (Ubuntu)",
   "package + smoke (Ubuntu 24.04 x64)",
+  "OpenCode 1.19.5 engine gate (Ubuntu)",
 ];
 
 /** Whether a run with its required job skipped shows the mark of a scoped dispatch. A full run cut short shows none. */

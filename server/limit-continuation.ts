@@ -1,3 +1,5 @@
+import { FLUX_REFUSAL_LINES } from "../shared/flux-refusal-copy.ts";
+import { PromptSM, isTerminal, REFUSAL_REASONS, type Decision, type Reason } from "../shared/flux-busyloop.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -28,6 +30,8 @@ export interface LimitTurn {
   /** every send id the turn's words came under (a drained batch has several) */
   sendIds: string[];
   sourceMessageId: string;
+  /** Stable across routine/channel/limit resends; a manual send starts a new prompt. */
+  refusalKey?: string;
   sourceText: string;
   replyToId?: string;
   ownerDirect: boolean;
@@ -50,6 +54,7 @@ export interface LimitTurn {
   engineCode?: string;
   /** Flux's refusal code, carried structurally (server/flux-refusal.ts): the sanitised errorText may have lost it */
   gatewayCode?: FluxRefusalCode;
+  fluxDecision?: Decision;
   /** FLUX-BURN-COPY-1018: when Flux's hourly spend gate lifts (epoch ms), only from the retry_after its body carried */
   gatewayResetsAt?: number;
   /** the HTTP status of that error, when the driver reported one structurally (providerError.httpStatus, Astra r4) */
@@ -71,9 +76,24 @@ export function relayedRefusalText(turn: Pick<LimitTurn, "textActivity" | "text"
 /** One record per thread for the direct turn in flight. */
 export class LimitTurns {
   private readonly turns = new Map<string, LimitTurn>();
-  begin(turn: LimitTurn): void { this.turns.set(turn.threadId, turn); }
+  private readonly prompts = new Map<string, PromptSM>();
+  private readonly terminal = new Map<string, { key: string; decision: Decision }>();
+  begin(turn: LimitTurn): void {
+    const key = turn.refusalKey ?? turn.sourceMessageId;
+    const stopped = this.terminal.get(turn.threadId);
+    if (stopped?.key === key) throw new Error("Flux refused this prompt. Send a new message to try again.");
+    this.terminal.delete(turn.threadId);
+    this.turns.set(turn.threadId, turn);
+    this.prompts.set(turn.threadId, new PromptSM(false));
+  }
+  /** B8: the shared submission chokepoint, including late writes by an active adapter. */
+  assertCanSubmit(threadId: string): void {
+    if (this.terminal.has(threadId)) throw new Error("Flux refused this prompt. Send a new message to try again.");
+    const prompt = this.prompts.get(threadId);
+    if (prompt) { prompt.dispatch(prompt.main ? "sampler_retry" : "main"); if (prompt.violations.length) throw new Error("Flux refused this prompt. Send a new message to try again."); }
+  }
   get(threadId: string): LimitTurn | undefined { return this.turns.get(threadId); }
-  end(threadId: string): void { this.turns.delete(threadId); }
+  end(threadId: string): void { this.turns.delete(threadId); this.prompts.delete(threadId); }
   /** Marks the thread's current record as having minted a phone authority, only when it is the record of that source message. */
   markPhoneHeld(threadId: string, sourceMessageId: string): void {
     const turn = this.turns.get(threadId);
@@ -86,10 +106,11 @@ export class LimitTurns {
     const turn = this.turns.get(threadId);
     if (!turn || (turn.providerTurnId && turnId && turnId !== turn.providerTurnId)) return undefined;
     this.turns.delete(threadId);
+    this.prompts.delete(threadId);
     return turn;
   }
   /** Fold one engine event into the thread's record. */
-  observe(event: { type: string; threadId: string; turnId?: string; streamKind?: string; itemType?: string; itemId?: string; origin?: string; message?: string; errorKind?: unknown; engineCode?: unknown; gatewayCode?: unknown; gatewayResetsAt?: unknown; providerError?: { httpStatus?: unknown } | null; limitResetsAt?: unknown; delta?: unknown; text?: unknown }): void {
+  observe(event: { type: string; threadId: string; turnId?: string; streamKind?: string; itemType?: string; itemId?: string; origin?: string; message?: string; errorKind?: unknown; engineCode?: unknown; gatewayCode?: unknown; fluxDecision?: Decision; httpStatus?: unknown; gatewayResetsAt?: unknown; providerError?: { httpStatus?: unknown } | null; limitResetsAt?: unknown; delta?: unknown; text?: unknown }): void {
     const turn = this.turns.get(event.threadId);
     if (!turn) return;
     if (event.type === "turn.started") { if (event.turnId && !turn.providerTurnId) turn.providerTurnId = event.turnId; return; }
@@ -105,11 +126,15 @@ export class LimitTurns {
     else if (event.type === "item.started" && event.origin === "murage" && event.itemId) (turn.murageItems ??= new Set()).add(event.itemId);
     if (event.type === "runtime.error" && typeof event.message === "string") {
       turn.errorText = event.message.slice(0, 2000);
+      turn.fluxDecision = event.fluxDecision;
+      if (event.fluxDecision) this.prompts.get(turn.threadId)?.respond("main", typeof event.httpStatus === "number" ? event.httpStatus : 0, event.fluxDecision);
+      if (isTerminal(event.fluxDecision)) this.terminal.set(turn.threadId, { key: turn.refusalKey ?? turn.sourceMessageId, decision: event.fluxDecision! });
       turn.errorKind = typeof event.errorKind === "string" ? event.errorKind : undefined;
       turn.engineCode = typeof event.engineCode === "string" ? event.engineCode : undefined;
       turn.gatewayCode = typeof event.gatewayCode === "string" && FLUX_REFUSAL_CODES.has(event.gatewayCode) ? event.gatewayCode as FluxRefusalCode : undefined;
-      turn.gatewayResetsAt = turn.gatewayCode === "hourly_burn_limit" && typeof event.gatewayResetsAt === "number" && Number.isFinite(event.gatewayResetsAt) ? event.gatewayResetsAt : undefined;
-      const status = event.providerError?.httpStatus;
+      const dated = turn.gatewayCode === "hourly_burn_limit" || ["hourly", "keyBudget", "keyTokens", "botBudget", "planAllowance"].includes(turn.fluxDecision?.reason ?? "");
+      turn.gatewayResetsAt = dated && typeof event.gatewayResetsAt === "number" && Number.isFinite(event.gatewayResetsAt) ? event.gatewayResetsAt : undefined;
+      const status = event.httpStatus ?? event.providerError?.httpStatus;
       turn.httpStatus = typeof status === "number" && Number.isInteger(status) && status >= 100 && status < 600 ? status : undefined;
       turn.errorResetsAt = typeof event.limitResetsAt === "number" && Number.isFinite(event.limitResetsAt) ? event.limitResetsAt : undefined;
     }
@@ -127,6 +152,7 @@ export function limitOutcome(turn: LimitTurn, facts: {
   backup?: ModelSelection;
   backupUsable: boolean;
 }): LimitOutcome {
+  if (isTerminal(turn.fluxDecision)) return { kind: "none" };
   if (turn.routine || !turn.ownerDirect) return { kind: "none" };
   if (turn.onFailover || facts.resentByFailover) return { kind: "plain" };
   if (facts.backup && facts.backupUsable) return { kind: "failover", to: facts.backup };
@@ -146,19 +172,20 @@ export function isGatewayEngine(turn: Pick<LimitTurn, "driverKind" | "viaGateway
 /** Why a gateway refusal is not a limit, read by Flux's own code words first (flux_credit_state): `credit` (402
  * credit_exhausted), `unresolved` (402 credit_unresolved), `hold` (429 while low credit is reserved by requests in flight),
  * `hourly` (429 hourly_burn_limit, Flux's hourly spend gate), `busy` (a 429 with no reset time). `null`: a limit or a payment card as before. */
-export type GatewayBusyReason = "busy" | "credit" | "unresolved" | "hold" | "freeCap" | "hourly";
+export type GatewayBusyReason = Exclude<Reason, "other"> | "repeated";
 export const GATEWAY_HOLD = /because other requests have temporarily reserved it|x-flux-hold-reason/i;
-export function gatewayBusy(turn: Pick<LimitTurn, "driverKind" | "viaGateway" | "errorText" | "gatewayCode">, facts: { preset?: string; resetsAt: number | null }): GatewayBusyReason | null {
+export function gatewayBusy(turn: Pick<LimitTurn, "driverKind" | "viaGateway" | "errorText" | "gatewayCode" | "fluxDecision">, facts: { preset?: string; resetsAt: number | null }): GatewayBusyReason | null {
   if (!isGatewayEngine(turn, facts.preset)) return null;
+  if (turn.fluxDecision && REFUSAL_REASONS.has(turn.fluxDecision.reason)) return turn.fluxDecision.reason as GatewayBusyReason;
   // The structured code first: Flux puts it in error.state, a header or a Python repr the engine's sanitiser drops.
   const coded = { free_cap_reached: "freeCap", credit_exhausted: "credit", credit_unresolved: "unresolved", hourly_burn_limit: "hourly", hold: "hold" } as const;
   if (turn.gatewayCode && Object.hasOwn(coded, turn.gatewayCode)) return coded[turn.gatewayCode];
   const text = turn.errorText ?? "";
-  // Flux rate_limiter.py: a free key past this month's allowance (429, state free_cap_reached). Never retried.
-  if (/\bfree_cap_reached\b/i.test(text)) return "freeCap";
+  // The Flux router's rate limiter: a free key past this month's allowance (429, state free_cap_reached). Never retried.
+  if (/\bfree_cap_reached\b|monthly free-tier token allowance/i.test(text)) return "freeCap";
   if (/\bcredit_exhausted\b/i.test(text)) return "credit";
   if (/\bcredit_unresolved\b/i.test(text)) return "unresolved";
-  // FLUX-BURN-COPY-1018: Flux's hourly spend gate (forge_hook.py, 429 hourly_burn_limit). Never retried.
+  // FLUX-BURN-COPY-1018: Flux's hourly spend gate (429 hourly_burn_limit). Never retried.
   if (/\bhourly_burn_limit\b/i.test(text)) return "hourly";
   if (GATEWAY_HOLD.test(text)) return "hold";
   if (facts.resetsAt !== null) return null;
@@ -170,13 +197,22 @@ export function isGatewayBusyRow(message: { role: string; turnId?: string; tool?
   return message.role === "bot" && message.tool?.name.startsWith("error:") === true && (!providerTurnId || message.turnId === providerTurnId);
 }
 export function gatewayBusyLine(engine: string, reason?: GatewayBusyReason): string {
-  return reason === "hourly" ? "You've reached your Flux hourly limit. Your message is kept." : `${engine} is busy right now. Your message is kept.`;
+  if (reason && reason !== "repeated" && FLUX_REFUSAL_LINES[reason]) return FLUX_REFUSAL_LINES[reason]!;
+  const lines: Partial<Record<GatewayBusyReason, string>> = {
+    freeCap: `You've used this month's included ${engine} allowance. Add credit to keep going. Your message is kept.`,
+    credit: `Your Flux credit has run out. Add credit to keep using ${engine}. Your message is kept.`,
+    unresolved: "Flux couldn't check your credit just now. Your message is kept.",
+    hold: `Your Flux credit is low, so ${engine} can only run one thing at a time. Add credit to run more at once.`,
+    hourly: "You've reached your Flux hourly limit. Your message is kept.",
+    repeated: `${engine} keeps turning this request down. Your message is kept.`,
+  };
+  return (reason && lines[reason]) || `${engine} is busy right now. Your message is kept.`;
 }
 /** The one card's facts on the turn's error row: the engine, the reason and, for the hourly gate only, the reset Flux sent. */
-export interface GatewayBusyFacts { engine: string; reason: GatewayBusyReason; resetsAt?: number }
-export function gatewayBusyFacts(turn: Pick<LimitTurn, "engineName" | "gatewayResetsAt">, reason: GatewayBusyReason): GatewayBusyFacts {
+export interface GatewayBusyFacts { engine: string; reason: GatewayBusyReason; resetsAt?: number; waitSeconds?: number; shortReason?: string }
+export function gatewayBusyFacts(turn: Pick<LimitTurn, "engineName" | "gatewayResetsAt" | "fluxDecision">, reason: GatewayBusyReason): GatewayBusyFacts {
   const engine = turn.engineName.slice(0, 80);
-  return reason === "hourly" && turn.gatewayResetsAt !== undefined ? { engine, reason, resetsAt: turn.gatewayResetsAt } : { engine, reason };
+  return { engine, reason, ...(["hourly", "keyBudget", "keyTokens", "botBudget", "planAllowance"].includes(reason) && turn.gatewayResetsAt !== undefined ? { resetsAt: turn.gatewayResetsAt } : {}), ...(typeof turn.fluxDecision?.wait === "number" ? { waitSeconds: turn.fluxDecision.wait } : {}) };
 }
 
 /** The plain line: no backup, a second hop, or a refusal the owner has to wait out. Only a reset time the engine sent names a time. */

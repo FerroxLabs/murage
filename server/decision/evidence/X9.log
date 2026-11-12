@@ -1,0 +1,42 @@
+COMMAND node_modules/.bin/vitest run server/decision/base-parity.test.ts -t R10
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/base-parity.test.ts > R10 outside-marked owner request runs: ssh host 'echo fixture'
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/base-parity.test.ts (5 tests | 3 failed | 2 skipped) 1039ms
+   ↓ R13 405 frozen 1.0.18 verdicts remain byte equal on BASE
+   × R10 outside-marked owner request runs: ssh host 'echo fixture' 393ms
+   × R10 outside-marked owner request runs: cd d && ls 327ms
+   × R10 outside-marked owner request runs: git commit -am x && git push origin HEAD && rm -f /tmp/x.tmp 315ms
+   ↓ R3 data fields never become executable evidence
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 2 skipped (5)
+   Start at  06:31:31
+   Duration  5.99s (transform 3.91s, setup 4.59s, import 243ms, tests 1.04s, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/base-parity.test.ts > R10 outside-marked owner request runs: ssh host 'echo fixture'
+ FAIL  server/decision/base-parity.test.ts > R10 outside-marked owner request runs: cd d && ls
+ FAIL  server/decision/base-parity.test.ts > R10 outside-marked owner request runs: git commit -am x && git push origin HEAD && rm -f /tmp/x.tmp
+AssertionError: expected 'card' to be 'run' // Object.is equality
+
+Expected: "run"
+Received: "card"
+
+ ❯ server/decision/base-parity.test.ts:11:126
+      9| });
+     10| it.each(['ssh host \'echo fixture\'','cd d && ls','git commit -am x &&…
+     11|  const f=fixture();const h=f.open('r',{command},{summary:'mkfs /dev/sd…
+       |                                                                                                                              ^
+     12| });
+     13| it('R3 data fields never become executable evidence',()=>{
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+

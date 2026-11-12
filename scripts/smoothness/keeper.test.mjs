@@ -1,7 +1,7 @@
-import { scrubCore, safeAccounting } from "./scrub-accounting.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Rig v5.9 round 2: the REAL keep-logs.sh and stage-keeper.sh run in temp dirs (bash + awk + GNU find), the hz-smooth.sh wiring read as text.
+import { scrubCore, safeAccounting } from "./scrub-accounting.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, renameSync, statSync, symlinkSync, utimesSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -451,8 +451,9 @@ esac`);
   executable(base, "ssh", 'while [[ "$1" = -* ]]; do shift 2; done; shift; host_node=/usr/local/bin/node; command=${*//"$host_node"/$TEST_NODE}; old_root=/srv/murage-smooth; command=${command//"$old_root"/$TEST_HOST}; exec bash -c "$command"');
   env.TEST_NODE = process.execPath; env.TEST_HOST = host;
   const launch = extra => {
-    expect(existsSync("/usr/bin/zsh"), "hz requires /usr/bin/zsh").toBe(true);
-    return spawnSync("/usr/bin/zsh", [HZ, "lab", REV], { env: { ...env, ...extra }, encoding: "utf8", timeout: 20_000 });
+    const shell = spawnSync("zsh", ["--version"], { env, encoding: "utf8" });
+    expect(shell.status, "hz requires zsh on PATH").toBe(0);
+    return spawnSync("zsh", [HZ, "lab", REV], { env: { ...env, ...extra }, encoding: "utf8", timeout: 20_000 });
   };
   return { base, host, lane, env, launch };
 }

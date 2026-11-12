@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
+import { joinRequired } from "./held-until-item9-highs";
 import type { ControlPlaneAuth } from "./auth";
 import { accountSession } from "./auth";
 import { accountContactEmail } from "./cloud-accounts";
@@ -10,6 +11,7 @@ import { HTTPError, json, readBoundedJSON } from "./http";
 import { signPayload } from "./b3-signatures";
 import { pinnedTargetHolds } from "./step-up-op";
 import { base64, kekReadable, keyWrapperFor, type KeyWrapper } from "./key-wrapper";
+import { auditedKeyUse } from "./access-events";
 
 // First-device pairing. The home accepts POST /api/cloud/pairing for its first
 // device only with an HMAC made with its bootstrap secret; the control plane
@@ -239,7 +241,7 @@ async function firstDeviceAtHome(request: Request, env: Env, homeId: string, acc
  * signed body names it. `null` pins a staging test machine that has no home row at all. Undefined is the unpinned inbox-code route.
  */
 async function prepareHomeRequest(env: Env, homeId: string, account: PairingAccount, device: Record<string, unknown>,
-  extra: Record<string, unknown> = {}, pinned: number | null | undefined, dependencies: PairingDependencies) {
+  extra: Record<string, unknown> = {}, pinned: number | null | undefined, dependencies: PairingDependencies, audited = true) {
   const machine = await env.DB.prepare(`SELECT m.generation,m.state,k.wrapped_bootstrap_secret,k.kek_id,e.hostname,
       h.id AS home_row,h.generation AS home_generation
     FROM cloud_machines m JOIN cloud_home_keys k ON k.home_id=m.home_id
@@ -256,10 +258,15 @@ async function prepareHomeRequest(env: Env, homeId: string, account: PairingAcco
   }
   // The origin is built from the stored hostname only.
   const homeOrigin = `https://${machine.hostname}`;
-  const secret = base64(await (dependencies.keyWrapper ?? keyWrapperFor)(env).unwrap(homeId, machine.wrapped_bootstrap_secret));
   // The signed body always names the generation it is disclosed for (the pinned one, else the home's as read with the key, else the
   // machine's for a staging machine with no home row); the home compares it with its own pin before minting (Astra STEPUP-EMAIL-7 #1).
   const generation = typeof pinned === "number" ? pinned : machine.home_generation ?? machine.generation;
+  // The audit entry is written before the key service is called: a failed write ends the pairing with 503 audit_unavailable. The one
+  // unaudited use is the read-only device list that names a device in a removal email (homeManagementCall's `readOnly`): nothing is
+  // connected, so the owner's digest must not say a device was.
+  const unwrap = async () => (dependencies.keyWrapper ?? keyWrapperFor)(env).unwrap(homeId, machine.wrapped_bootstrap_secret);
+  const secret = base64(audited ? await auditedKeyUse(env.DB, { homeId, generation, kind: "pairing_key_use", actor: "owner",
+    reason: "a device was connected to the home at the owner's request" }, unwrap) : await unwrap());
   const body = JSON.stringify({
     operation: "/api/cloud/pairing", timestamp: Date.now() / 1000, nonce: crypto.randomUUID().replaceAll("-", ""),
     account: account.id, ...device, ttl: HOME_TTL_SECONDS, ...extra, generation,
@@ -419,15 +426,17 @@ export async function spendPairHold(db: D1Database, holdId: string, digest: stri
  *  other ticket holds and stamps reserved_by/reserved_until; it never spends. `prior`: the nonce this same request reserved with before
  *  (a re-mint takes its own reservation over). A concurrent mint that finds the hold reserved gets null (no claim). */
 export async function reservePairHold(db: D1Database, homeId: string, generation: number, bind: string, nonce: string, until: number, now: number,
-  prior: string | null = null, consumed: string[] = []): Promise<string | null> {
+  prior: string | null = null, consumed: string[] = [], only?: { completedBefore: number; ranAtLeastMs: number }): Promise<string | null> {
+  // `only` (door device confirmation): the hold must have completed before the second step and have run at least that long.
+  const exact = only ? " AND r.completed_at<? AND r.completed_at-r.started_at>=?" : "";
   const free = "(reserved_until IS NULL OR reserved_until<=? OR reserved_by=?)";
   // `consumed`: the hold ids the home just reported it spent (devices.ts), excluded here even if recording them failed (Astra D1 #3).
   const row = await db.prepare(`UPDATE cloud_recovery_holds SET reserved_by=?, reserved_until=?
     WHERE id=(SELECT r.id ${ELIGIBLE_HOLD} AND r.generation=? AND ${free.replaceAll("reserved_", "r.reserved_")}
-        AND r.id NOT IN (SELECT value FROM json_each(?))
+        AND r.id NOT IN (SELECT value FROM json_each(?))${exact}
       ORDER BY r.completed_at DESC LIMIT 1)
       AND canceled_at IS NULL AND (spent_device_digest IS NULL OR spent_device_digest=?) AND ${free}
-    RETURNING id`).bind(nonce, until, homeId, now - PAIR_HOLD_USE_MS, bind, generation, now, prior ?? "", JSON.stringify(consumed), bind, now, prior ?? "")
+    RETURNING id`).bind(nonce, until, homeId, now - PAIR_HOLD_USE_MS, bind, generation, now, prior ?? "", JSON.stringify(consumed), ...(only ? [only.completedBefore, only.ranAtLeastMs] : []), bind, now, prior ?? "")
     .first<{ id: string }>();
   return row?.id ?? null;
 }
@@ -451,13 +460,17 @@ export async function readyPairHolds(db: D1Database, homeId: string, now: number
     state: r.reserved_until !== null && r.reserved_until > now ? "reserved" as const : "ready" as const, readyUntil: r.completed_at + PAIR_HOLD_USE_MS }));
 }
 
+/** The one management operation that may run read-only (devices.ts HOME_DEVICES_LIST). */
+const READ_ONLY_OPERATION = "/api/cloud/devices/list";
 /** ONE bootstrap-HMAC call to a home management route (device management, CLOUD-DOOR-V2-DESIGN.md 3.2): the body names `operation` (the
  *  exact home path the home compares), a fresh nonce the home stores, the account and the home's current generation. Unreachable, or a home
  *  that cannot be asked now: 503 home_unreachable. Returns the home's answer as is. */
 export async function homeManagementCall(env: Env, homeId: string, account: PairingAccount, operation: string, extra: Record<string, unknown>,
-  dependencies: PairingDependencies): Promise<Response> {
+  dependencies: PairingDependencies, options: { readOnly?: boolean } = {}): Promise<Response> {
+  // readOnly writes no pairing_key_use audit row, and only ever for the device list: every other management call is audited.
+  if (options.readOnly && operation !== READ_ONLY_OPERATION) throw new HTTPError(500, "internal_error");
   let prepared: Awaited<ReturnType<typeof prepareHomeRequest>>;
-  try { prepared = await prepareHomeRequest(env, homeId, account, {}, { ...extra, operation }, undefined, dependencies); }
+  try { prepared = await prepareHomeRequest(env, homeId, account, {}, { ...extra, operation }, undefined, dependencies, !options.readOnly); }
   catch (e) {
     if (e instanceof HTTPError && e.status === 503) throw new HTTPError(503, "home_unreachable");
     throw e;
@@ -504,6 +517,12 @@ export async function pairingRoute(
   request: Request, env: Env, auth: ControlPlaneAuth, dependencies: PairingDependencies = {},
 ): Promise<Response | null> {
   const path = new URL(request.url).pathname;
+  // Door device confirmation (device-join.ts): with DOOR_JOIN_REQUIRED=1 the door is the only way to add a full-scope device, so every pairing
+  // route that could enroll one answers 410 use_connect (start, code, device, desktop-code, and the desktop redeem in both modes).
+  if (joinRequired(env) && (path === DESKTOP_REDEEM_PATH || DESKTOP_ROUTE.test(path) || ROUTE.test(path))) {
+    if (request.method !== "POST") throw new HTTPError(405, "method_not_allowed");
+    throw new HTTPError(410, "use_connect");
+  }
   if (path === DESKTOP_REDEEM_PATH) {
     if (request.method !== "POST") throw new HTTPError(405, "method_not_allowed");
     return redeemDesktopCode(request, env, dependencies);

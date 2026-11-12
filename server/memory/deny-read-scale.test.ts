@@ -62,7 +62,8 @@ function build(n: number): WritetimeFixture {
   return f;
 }
 
-interface Turn { verdicts: string[]; statements: number; rows: number; sql: readonly string[] }
+interface QueryObservation { sql: string; args: unknown[] }
+interface Turn { queries: QueryObservation[]; verdicts: string[]; statements: number; rows: number; sql: readonly string[] }
 function turn(f: WritetimeFixture, n: number): Turn {
   const db = f.db;
   const tail = (from: number, to: number): PageLine[] => {
@@ -75,6 +76,19 @@ function turn(f: WritetimeFixture, n: number): Turn {
   const out: LineageVerdict[] = [];
   db.prepare("UPDATE memory_lineage_lsn_meta SET value=value+1 WHERE key='deny_generation'").run();
   const built = buildPrompt(undefined, quotes.map(ref => promptPart("quote", [ref])));
+  const queries: QueryObservation[] = [];
+  const prepare = db.prepare.bind(db);
+  db.prepare = (sql: string) => {
+    const statement = prepare(sql);
+    for (const method of ["all", "get"] as const) {
+      const run = statement[method];
+      Object.defineProperty(statement, method, { configurable: true, value: (...args: unknown[]) => {
+        queries.push({ sql, args }); return Reflect.apply(run, statement, args);
+      } });
+    }
+    return statement;
+  };
+  try {
   resetDenyReadMeter();
   for (const [from, to] of [[400, 600], [200, 400], [0, 200]] as const) out.push(...denyLookup(db, { threadId: "BIG", lines: tail(from, to) }, MEMBER).values());
   out.push(refsLookup(db, quotes, MEMBER));
@@ -82,17 +96,30 @@ function turn(f: WritetimeFixture, n: number): Turn {
   out.push(sessionLookup(db, { threadId: "BIG", driverInstance: "d", nativeSession: "n" }, MEMBER));
   out.push(fenceVerdict(db, built, MEMBER));
   const meter = denyReadMeter();
-  return { verdicts: out.map(v => JSON.stringify(v)), statements: meter.statements, rows: meter.rows, sql: meter.sql };
+  return { queries, verdicts: out.map(v => JSON.stringify(v)), statements: meter.statements, rows: meter.rows, sql: meter.sql };
+  } finally { db.prepare = prepare; }
 }
 
 /** Plans that read a table whole: none, except a bounded existence probe (LIMIT 1, or memory_deny's whole-table EXISTS) and json_each. */
-function scans(f: WritetimeFixture, sql: readonly string[]): string[] {
+function scans(f: WritetimeFixture, sql: readonly string[], queries: readonly QueryObservation[] = []): string[] {
   const bad: string[] = [];
   for (const text of sql) {
-    for (const row of f.db.prepare(`EXPLAIN QUERY PLAN ${text}`).all() as Array<{ detail: string }>) {
+    const plan = f.db.prepare(`EXPLAIN QUERY PLAN ${text}`).all() as Array<{ detail: string }>;
+    const raw = /^WITH raw AS MATERIALIZED \(SELECT since_lsn,revoke_id FROM (memory_deny_pending(?:_scope)?) WHERE (?:thread_id|scope_id)=\? LIMIT \?\)/.exec(text);
+    const executions = queries.filter(query => query.sql === text);
+    const boundedRaw = raw && executions.length > 0 && executions.every(query => {
+      const bound = query.args.at(-1); return typeof bound === "number" && Number.isInteger(bound) && bound > 0 && bound <= 257;
+    }) && plan.some(row => row.detail.startsWith(`SEARCH ${raw[1]} `));
+    const boundedCandidates = /WITH candidates AS MATERIALIZED \(SELECT revoke_id FROM memory_deny_memory WHERE kind='(?:record|source)' AND id=[^;]+? LIMIT 257\) SELECT CASE WHEN count\(\*\)>256 THEN -1/.test(text)
+      && plan.some(row => row.detail.startsWith("SEARCH memory_deny_memory "));
+    for (const row of plan) {
       const detail = String(row.detail);
       if (!detail.startsWith("SCAN ")) continue;
       if (/VIRTUAL TABLE|CONSTANT ROW/.test(detail)) continue;
+      // These are bounded temporary rows, not history tables. Require the source
+      // index seek and the observed <=257 bound; every real-table scan still fails.
+      if (/^SCAN raw\b/.test(detail) && boundedRaw) continue;
+      if (/^SCAN candidates\b/.test(detail) && boundedCandidates) continue;
       if (/^SCAN (memory_deny|memory_deny_pending|memory_deny_pending_scope)\b/.test(detail) && (/LIMIT 1/.test(text) || /EXISTS \(SELECT 1 FROM memory_deny\)/.test(text))) continue;
       // rc3f branch-change gate (deny.ts BRANCH_CHANGE_PENDING): the uncorrelated "any branch change pending" probe reads at most one row of a table that is empty outside a flip
       if (/^SCAN branch_change\b/.test(detail) && /EXISTS \(SELECT 1 FROM branch_change\)/.test(text)) continue;
@@ -113,9 +140,22 @@ it("one turn's lookups are flat: identical statements, rows and verdicts at 1k a
   // the design's budget: about 120-200 seeks, about 1,000 rows (S6's door epoch and session seeks over int/1.0.3: 214 measured, flat above)
   expect(a.statements).toBeLessThanOrEqual(230);
   expect(a.rows).toBeLessThanOrEqual(1500);
-  expect(scans(large, b.sql)).toEqual([]);
+  expect(scans(large, b.sql, b.queries)).toEqual([]);
   // a warm second turn costs the same again (no cache that grows with history decides it)
   const c = turn(large, BIG);
   expect(c.statements).toBeLessThanOrEqual(b.statements);
   expect(c.rows).toBeLessThanOrEqual(b.rows);
 }, 900_000);
+
+
+it("plan audit rejects unbounded materialization, excessive bounds and scans of real history tables", () => {
+  const fixture = new WritetimeFixture(); fixtures.push(fixture);
+  const bounded = "WITH raw AS MATERIALIZED (SELECT since_lsn,revoke_id FROM memory_deny_pending WHERE thread_id=? LIMIT ?) SELECT * FROM raw";
+  expect(scans(fixture, [bounded], [{ sql: bounded, args: ["BIG", 257] }])).toEqual([]);
+  expect(scans(fixture, [bounded], [{ sql: bounded, args: ["BIG", 1000] }])).not.toEqual([]);
+  expect(scans(fixture, [bounded])).not.toEqual([]);
+  const unbounded = "WITH raw AS MATERIALIZED (SELECT since_lsn,revoke_id FROM memory_deny_pending WHERE thread_id=?) SELECT * FROM raw";
+  expect(scans(fixture, [unbounded])).not.toEqual([]);
+  const history = bounded + " JOIN memory_records";
+  expect(scans(fixture, [history], [{ sql: history, args: ["BIG", 257] }])).not.toEqual([]);
+});

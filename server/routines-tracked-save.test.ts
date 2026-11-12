@@ -84,6 +84,15 @@ function expectOnDisk(f: Fixture) {
 
 /** Every public RoutineManager method, each driven once against the fixture. */
 const DRIVERS: Record<string, (f: Fixture) => unknown> = {
+  routineRequestReceiptSnapshot: f => {
+    const snapshot=f.m.routineRequestReceiptSnapshot();
+    expect(snapshot).toEqual(plain(internals(f.m).routineRequestReceipts));
+    snapshot.splice(0);expect(f.m.routineRequestReceiptSnapshot()).toEqual(plain(internals(f.m).routineRequestReceipts));
+  },
+  inheritAllPermissions: f => {
+    f.m.inheritAllPermissions();
+    expect(f.m.listRoutines().every(r=>r.permissionExplicit===false&&r.permissionMode===undefined)).toBe(true);
+  },
   listRoutines: f => f.m.listRoutines(),
   listRuns: f => f.m.listRuns(),
   activeRunForBot: f => f.m.activeRunForBot("bot-a"),

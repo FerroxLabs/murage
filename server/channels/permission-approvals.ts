@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import type { TelegramApproval, TelegramApprovalActions } from "../telegram-approvals.ts";
+import { durableChannelApproval, type TelegramApproval, type TelegramApprovalActions } from "../telegram-approvals.ts";
 import { channelReply } from "./reply-text.ts";
 import { approvalResultLabel } from "./approval-labels.ts";
 
@@ -60,7 +60,7 @@ export class PermissionApprovals {
   private active() { return !this.abort.signal.aborted && this.options.active(); }
   clear() { this.abort.abort(); this.offers.clear(); }
   private pending(offer: Offer) {
-    return this.options.actions.pending().some(item => !item.questions?.length && item.id === offer.approval.id && item.fingerprint === offer.approval.fingerprint);
+    return this.options.actions.pending().filter(durableChannelApproval).some(item => !item.questions?.length && item.id === offer.approval.id && item.fingerprint === offer.approval.fingerprint);
   }
   private async settle(offer: Offer) {
     if (!this.active() || !offer.messageId || !offer.outcome || offer.editAttempted) return;
@@ -74,7 +74,7 @@ export class PermissionApprovals {
     if (!this.active() || this.publishing) return;
     this.publishing = true;
     try {
-      const pending = this.options.actions.pending().filter(item => !item.questions?.length).slice(0, 32);
+      const pending = this.options.actions.pending().filter(durableChannelApproval).filter(item => !item.questions?.length).slice(0, 32);
       for (const [id, offer] of this.offers) {
         if (!this.active()) return;
         const same = pending.some(item => item.id === id && item.fingerprint === offer.approval.fingerprint);
@@ -90,7 +90,7 @@ export class PermissionApprovals {
         if (!this.active()) return;
         if (this.offers.has(approval.id) || !approval.summary || approval.summary.length + hint().length > this.options.maxText) continue;
         if (this.offers.size >= 32) {
-          const live = this.options.actions.pending();
+          const live = this.options.actions.pending().filter(durableChannelApproval);
           const settled = [...this.offers].find(([, offer]) => offer.consumed && !live.some(item => item.id === offer.approval.id));
           if (!settled) continue;
           this.offers.delete(settled[0]);

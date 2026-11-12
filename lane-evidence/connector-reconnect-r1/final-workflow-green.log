@@ -1,0 +1,11 @@
+
+ RUN  v4.1.12 /work
+
+ ✓ server/connector-health-scheduled-workflow.test.ts (1 test) 73833ms
+   ✓ P2-6 scheduled Buffer work fails visibly while lapsed and safely continues after reconnect  73830ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  03:32:55
+   Duration  78.02s (transform 3.23s, setup 3.93s, import 148ms, tests 73.83s, environment 0ms)
+

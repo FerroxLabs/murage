@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // NOLIMITS v1 cut part B (designs/NOLIMITS-V1-CUT.md V1, V6, F1, F2, F4): Murage's own tools at the server. One middleware in
-// front of every /api/internal/* route marks (a), holds writers on a marked lane turn with the floor refusal (b), records
-// ownWrite keys off the lane (c); the memory bundle and the recall tools mark (V1); memory_save on a marked turn binds the
+// front of every /api/internal/* route marks (a), preserves the writer floor below No limits (b), records
+// ownWrite keys on successful marked writes (c); the memory bundle and the recall tools mark (V1); memory_save on a marked turn binds the
 // outside origin (F2); the bot's notebook in the prompt is matched against the download registry (F4).
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,7 +23,7 @@ import { fileOutsideStore } from "./outside-store.ts";
 import { toolStartOutside } from "./outside-wire.ts";
 import {
   OUTSIDE_WRITE_REFUSAL, OWN_HOLD_EXEMPT, OWN_MARKS_TOOLS, OWN_READ_CLEAN_TOOLS, OWN_WRITERS, notebookOutsideMark, ownCreatedBot, ownEnvelopeApplied, ownTargetOfBody, ownToolGate, ownWriteCommit, ownWritePlan,
-  ownToolOfRoute, ownWriteTurnStartMark,
+  ownToolOfRoute, ownWriteTurnStartMark, ownPeerContentDelivered,
 } from "./outside-own.ts";
 import { markRecallRecords, markRecordOutsideDerived, memoryRecordsNotProvenClean, recordOutsideDerived } from "./memory/outside-derived.ts";
 import { appendMessage } from "./message-db.ts";
@@ -58,13 +58,13 @@ let now = 0;
 const wire = () => expect(wireOutsideStore(fileOutsideStore(join(tmp(), "outside-state.jsonl")), () => now)).toBe(true);
 afterEach(() => { restartOutsideForTests(); now = 0; });
 
-const LANE = { lane: true } as const;
+const LANE = { lane: true, bot: { autoApprove: true, fullAccess: true, noLimits: true, permissionExplicit: true }, origin: 'owner' } as const;
 const OFF = { lane: false } as const;
 const gate = (tool: string, facts: { lane: boolean }, extra: Partial<Parameters<typeof ownToolGate>[0]> = {}) =>
-  ownToolGate({ threadId: "t1", botId: "b1", tool, lane: facts.lane, ...extra });
+  ownToolGate({ threadId: "t1", botId: "b1", tool, ...facts, ...extra });
 /** S4 R-a: the gate, then the route answering 2xx: the keys are recorded after the route (ownWritePlan, ownWriteCommit). */
 const gateThenRoute = (tool: string, facts: { lane: boolean }, extra: Partial<Parameters<typeof ownToolGate>[0]> = {}) => {
-  const call = { threadId: "t1", botId: "b1", tool, lane: facts.lane, ...extra };
+  const call = { threadId: "t1", botId: "b1", tool, ...facts, ...extra };
   const held = ownToolGate(call);
   if (!held) ownWriteCommit(ownWritePlan(call), 200);
   return held;
@@ -78,6 +78,8 @@ const ACTING_ROUTES: readonly string[] = [
   "/api/internal/computer-control", "/api/internal/headless-browser", "/api/internal/unified-browser", "/api/internal/host-computer", "/api/internal/connectors/mcp", "/api/internal/highlevel/mcp",
   // the computer session's heartbeat: touches the stall watchdog, reads and writes nothing
   "/api/internal/computer-activity",
+  // 9e6f55e198: continuation-backed web reader, authorizes its own capability at each read and returns untrusted content.
+  "/api/internal/web-read",
 ];
 /** Tools the route table names that are outside the four closed lists; each entry says why. */
 const OWN_ROUTE_ONLY: readonly string[] = [
@@ -118,14 +120,15 @@ describe("V6-5 the own-tool lists are closed", () => {
     expect(unclassified.sort()).toEqual([]);
   });
 
-  it("venue_post: a Post in… line is an own write, so a marked No limits turn is refused and a clean one runs", () => {
+  it("venue_post reaches its own guard and preserves the outside mark", () => {
     wire();
     expect(ownToolOfRoute("POST", "/api/internal/venue/post")).toBe("venue_post");
     beginOutsideTurn("t1", "i1", "turn-1", false);
     expect(gate("venue_post", LANE)).toBeNull();
     expect(turnOutsideRead("t1")).toBeNull();
     markTurnOutside("t1", "web page");
-    expect(gate("venue_post", LANE)).toEqual({ refuse: OUTSIDE_WRITE_REFUSAL });
+    expect(gate("venue_post", LANE)).toBeNull();
+    expect(turnOutsideRead("t1")).toBe("web page");
   });
 });
 
@@ -177,17 +180,19 @@ describe("V6 (a) the mark, V1-2 the recall tools, F1 the readers", () => {
     expect(gate("route:/api/internal/host-computer", OFF)).toBeNull();
     expect(turnOutsideRead("t1")).toBe("outside tool");
   });
-  it("a writer does not mark its own turn (so a clean lane turn may save twice); ask_bot and delegate_bot mark another bot", () => {
+  it("a writer and a peer call stay clean until peer content is delivered", () => {
     wire(); beginOutsideTurn("t1", "i", undefined, false);
     expect(gate("memory_save", LANE)).toBeNull();
     expect(gate("update_bot", LANE)).toBeNull();
     expect(turnOutsideRead("t1")).toBeNull();
     expect(gate("ask_bot", LANE)).toBeNull();
+    expect(turnOutsideRead("t1")).toBeNull();
+    ownPeerContentDelivered("t1", { origins: ["peer-result"], ranges: [] });
     expect(turnOutsideRead("t1")).toBe("another bot");
     // the engine side agrees: an own writer's item.started does not mark, a foreign server's tool of that name does
     expect(toolStartOutside({ origin: "engine", title: "mcp__murage-memory__memory_save" })).toBeNull();
     expect(toolStartOutside({ origin: "engine", title: "mcp__agents__update_bot" })).toBeNull();
-    // 1.0.19 4.2: an own server's tool never marks at the item; ask_bot marks `another bot` in its handler (the gate above)
+    // 1.0.19 4.2: an own server's tool never marks at the item; ask_bot marks `another bot` only at content delivery
     expect(toolStartOutside({ origin: "engine", title: "mcp__agents__ask_bot" })).toBeNull();
     expect(toolStartOutside({ origin: "engine", title: "mcp__elsewhere__memory_save" })).toBe("outside tool");
   });
@@ -209,7 +214,7 @@ describe("V6 (a) the mark, V1-2 the recall tools, F1 the readers", () => {
 
 describe("V6 (b) the writer hold on a marked lane turn", () => {
   const held = [...OWN_WRITERS].filter((tool) => !OWN_HOLD_EXEMPT.has(tool));
-  it("route ruling 11-06: a connect-app card and a share ask are refused on a marked lane turn, run on a clean one, record their key off the lane", () => {
+  it("route ruling 11-06: a connect-app card and share ask reach their own guards and retain marks and write keys", () => {
     wire();
     expect(ownToolOfRoute("POST", "/api/internal/connectors/request")).toBe("connectors_request");
     expect(ownToolOfRoute("POST", "/api/internal/room-share/ask")).toBe("ask_owner_to_share");
@@ -218,7 +223,7 @@ describe("V6 (b) the writer hold on a marked lane turn", () => {
       expect(gate(tool, LANE), tool).toBeNull();
       expect(turnOutsideRead("t1"), tool).toBeNull();
       markTurnOutside("t1", "web page");
-      expect(gate(tool, LANE), tool).toEqual({ refuse: OUTSIDE_WRITE_REFUSAL });
+      expect(gate(tool, LANE), tool).toBeNull();
     }
     expect(ownWritten("bot:b1")).toBe(false);
     beginOutsideTurn("t1", "i", undefined, false);
@@ -278,42 +283,47 @@ describe("V6 (b) the writer hold on a marked lane turn", () => {
       expect(route).toContain("line: parsed.data.line, at: Date.now(), outside: turnOutsideRead(internalClaim.threadId) }");
     } finally { db.close(); }
   });
-  it("V6-1 every OWN_WRITERS tool but the six is refused with the fixed text on a marked lane turn, before it runs", () => {
+  it("bot-create authority replaces the blanket lane refusal; each tool keeps its own guards", () => {
     wire(); beginOutsideTurn("t1", "i", undefined, false); markTurnOutside("t1", "web page");
-    for (const tool of held) expect(gate(tool, LANE), tool).toEqual({ refuse: OUTSIDE_WRITE_REFUSAL });
+    for (const tool of held) expect(gate(tool, LANE), tool).toBeNull();
     for (const tool of OWN_HOLD_EXEMPT) expect(gate(tool, LANE), tool).toBeNull();
     expect(OUTSIDE_WRITE_REFUSAL).not.toMatch(/—|safe|free/i);
   });
   it("V6-1 a clean lane turn and a marked turn off the lane run every writer as today", () => {
     wire();
-    // a fresh clean turn per tool: ask_bot, delegate_bot and project_bring_in mark their own turn ("another bot"), so a later
-    // writer in the same turn is rightly refused
+    // A fresh clean turn per tool: ask_bot, delegate_bot and project_bring_in can mark their own turn.
     for (const tool of held) { beginOutsideTurn("t1", "i", undefined, false); expect(gate(tool, LANE), tool).toBeNull(); }
     beginOutsideTurn("t1", "i", undefined, false);
     markTurnOutside("t1", "web page");
     for (const tool of held) expect(gate(tool, OFF), tool).toBeNull();
   });
-  it("the store not ready reads as marked on the lane (fail closed)", () => {
+  it("the store not ready stays marked while the authority gate routes tools to their guards", () => {
     beginOutsideTurn("t1", "i", undefined, false);
-    expect(gate("memory_save", LANE)).toEqual({ refuse: OUTSIDE_WRITE_REFUSAL });
+    expect(gate("memory_save", LANE)).toBeNull();
+    expect(turnOutsideRead("t1")).not.toBeNull();
   });
-  it("V6-2 a phoneJobs tool on a marked lane turn is held before any job row; off the lane it runs", () => {
+  it("D3 phone tools on a marked lane reach the phone guards and mint nothing", () => {
     wire(); beginOutsideTurn("t1", "i", undefined, false); markTurnOutside("t1", "web search");
     for (const tool of [...PHONE_TOOL_NAMES, "phone"]) {
-      expect(gate(tool, LANE), tool).toEqual({ refuse: OUTSIDE_WRITE_REFUSAL });
+      expect(gate(tool, LANE), tool).toBeNull();
       expect(gate(tool, OFF), tool).toBeNull();
     }
   });
-  it("the hold is judged on the state before the call: a writer that is the first own call of a clean lane turn runs", () => {
+  it("delegate receipts stay clean; delivered content marks and later calls keep the mark", () => {
     wire(); beginOutsideTurn("t1", "i", undefined, false);
     expect(gate("delegate_bot", LANE)).toBeNull();
+    expect(turnOutsideRead("t1")).toBeNull();
+    ownPeerContentDelivered("t1", { origins: [], ranges: [] });
+    expect(turnOutsideRead("t1")).toBeNull();
+    ownPeerContentDelivered("t1", { origins: ["peer-result"], ranges: [] });
     expect(turnOutsideRead("t1")).toBe("another bot");
-    expect(gate("delegate_bot", LANE)).toEqual({ refuse: OUTSIDE_WRITE_REFUSAL });
+    expect(gate("delegate_bot", LANE)).toBeNull();
+    expect(turnOutsideRead("t1")).toBe("another bot");
   });
   it("the middleware sits in front of every /api/internal route, after the capability checks and before the memory routes", () => {
     const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "index.ts"), "utf8").replace(/\r\n/g, "\n");
     const mount = source.indexOf('if (path.startsWith("/api/internal/")) {');
-    const call = source.indexOf("const ownHeld = ownToolGate(", mount);
+    const call = source.indexOf("const ownHeld = BOT_MANAGEMENT.has(ownTool) ? null : ownToolGate(ownCall)", mount);
     // the one route that answers before that step takes it too
     expect(source.indexOf('tool: "project_propose"', mount)).toBeLessThan(source.indexOf("chiefProposals.submit(", mount));
     expect(mount).toBeGreaterThan(0);

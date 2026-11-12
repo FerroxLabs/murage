@@ -1,3 +1,4 @@
+import { readApproval } from "./decision/index.ts";
 import { randomBytes } from "node:crypto";
 import type { TelegramUpdate } from "./telegram-update.ts";
 import type { TelegramButton, TelegramTransport } from "./telegram-transport.ts";
@@ -6,6 +7,7 @@ import { channelReply, channelReplyNumber } from "./channels/reply-text.ts";
 import { approvalButtonLabel, approvalResultLabel } from "./channels/approval-labels.ts";
 
 export interface TelegramApproval {
+  approvalId?:string;requestRef?:string;actionHash?:string;
   id: string;
   fingerprint: string;
   summary: string;
@@ -20,6 +22,13 @@ export interface TelegramApproval {
   /** Computer control (any scoped card): shown with one plain line and no
    * buttons; no chat can allow it. */
   desktopOnly?: boolean;
+}
+/** Mirrors enumerate the authoritative open-record feed joined to chat rows.
+ * A copied row or mismatched durable identity is never a second permission. */
+export function durableChannelApproval(approval:TelegramApproval):boolean {
+  if(!approval.approvalId||!approval.requestRef||!approval.actionHash)return false;
+  const record=readApproval(approval.approvalId);
+  return record?.state==='open'&&record.chatMessageId===approval.id&&record.requestId===approval.requestRef&&record.actionHash===approval.actionHash;
 }
 /** What the owner decided about a question, in the desktop card's own terms. */
 export type TelegramQuestionReply = { behavior: "answer"; answers: QuestionAnswer[] } | { behavior: "skip" };
@@ -77,7 +86,7 @@ export class TelegramApprovals {
   }
   clear() { this.offers.clear(); }
   private stillPending(offer: Offer) {
-    return this.actions.pending().some(item => item.id === offer.approval.id && item.fingerprint === offer.approval.fingerprint);
+    return this.actions.pending().filter(durableChannelApproval).some(item => item.id === offer.approval.id && item.fingerprint === offer.approval.fingerprint);
   }
   private async settle(offer: Offer, owner: Owner, signal: AbortSignal) {
     if (!offer.outcome || !offer.messageId || offer.editAttempted || !this.transport.settleApprovalMessage) return;
@@ -89,7 +98,7 @@ export class TelegramApprovals {
     } catch { /* The callback result still reports the actual decision. */ }
   }
   async publish(owner: Owner, active: () => boolean, signal: AbortSignal) {
-    const pending = this.actions.pending().slice(0, 32);
+    const pending = this.actions.pending().filter(durableChannelApproval).slice(0, 32);
     for (const [id, offer] of this.offers) {
       if (!active()) return;
       if (!pending.some(item => item.id === id && item.fingerprint === offer.approval.fingerprint)) {
@@ -105,7 +114,7 @@ export class TelegramApprovals {
       if (this.offers.has(approval.id)) continue;
       if (this.offers.size >= 32) {
         // Never one whose card still waits: a consumed offer with an unknown outcome must not come back with fresh buttons.
-        const live = this.actions.pending();
+        const live = this.actions.pending().filter(durableChannelApproval);
         const oldestSettled = [...this.offers].find(([, offer]) => offer.consumed && !live.some(item => item.id === offer.approval.id));
         if (oldestSettled) this.offers.delete(oldestSettled[0]);
         else continue;

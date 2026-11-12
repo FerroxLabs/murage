@@ -254,7 +254,9 @@ describe("15c: the judge is carried, never rebuilt", () => {
 describe("18e: viewer and judge literals", () => {
   /** The files that may write the human viewer literal: the door's own type and the owner's routes (filled in as they move to the door). */
   // a file mapped to a pattern may hold the literal only on a line matching it: project-memory-tools.ts's owner page route (OWNER_PAGE)
-  const HUMAN_ALLOW = new Map<string, RegExp | null>([["bot-read.ts", null], ["project-memory-tools.ts", /const ownerPageViewer = \(\): Viewer => \(\{ kind: "human" \}\);/]]);
+  const HUMAN_ALLOW = new Map<string, RegExp | null>([["bot-read.ts", null], ["project-memory-tools.ts", /const ownerPageViewer = \(\): Viewer => \(\{ kind: "human" \}\);/],
+    // Delegation's owner sheet calls this callback only after isOwnerRequest; no other index.ts human reader is admitted.
+    ["index.ts", /^\s*const row = stored && botMessages\(database\(\), \{ kind: "human" \}, threadId, \[stored\]\)\[0\];$/]]);
   it("a human viewer literal appears only in the allowlist", () => {
     expect(statSync(join(SERVER, "bot-read.ts")).isFile()).toBe(true);
     const found: string[] = [];
@@ -338,12 +340,20 @@ describe("16: every bot-facing read goes through the door", () => {
  * - message-db.ts, int's seq order (ROOM-ORDER-DESIGN r7 R2): readThread's two statements (numbered or legacy order), the six PAGE_SQL page
  *   reads (seq and rowid keys) and the branch walk's next-row read. They are the store's own loaders under Store.messagesFor and the page
  *   reads; every bot-facing caller reads their rows through botRows. */
+// 1.0.19 merged delegation/tool-budget reads: boundary-ports ownerInput returns only provenance;
+// index.ts updates a tool-limit notice, collects pack rowids, and reads the owner sheet through its reader;
+// memory/policy validates the pack anchor rowid; thread-recall maps permitted source ids to rowids
+// before the existing packLoan/branch/release checks. No raw words bypass the reader door.
+// 4f6495f025 adds three card/authority lookups to index.ts: parent turn origin and the two setup-card liveness probes.
+// 7bb5b132c7 adds the bounded deny-read role probe; no stored words bypass the bot reader.
 const RAW_READS: Record<string, number> = {
   "backup-waiting.ts": 1,
   // 1.0.9 bot calls: settleArmedAtBoot reads only a thread's newest message time (MAX(at)); matchChannelOwed reads one inbound row's json,
   // time and role to match a sender rule and keeps only the sender id and message id. Server-side admission, never handed to a bot.
   "bot-calls-machine.ts": 2,
-  "bot-egress.expect-errors.ts": 2, "boundary-ports.ts": 9, "branch-fill.ts": 5, "branch-index.ts": 7, "branch-store.ts": 4,
+  // 4f6495f025: continue reads its own bot-authority card to carry its origin and pass generation; no row or words reach a bot.
+  "bot-call-authority.ts": 1,
+  "bot-egress.expect-errors.ts": 2, "boundary-ports.ts": 10, "branch-fill.ts": 5, "branch-index.ts": 7, "branch-store.ts": 4,
   "browser-extension-approvals.ts": 3, "browser-extension-setup.ts": 1, "card-summary.ts": 3, "conversation-deletion.ts": 3,
   // 1.0.4 QW Q4 (0bc0c7c28): findWidget reads the one row whose id is the widget id, in the calling turn's own thread, and only while it holds
   // that widget (the WidgetStore interface line counts as the second). update_widget answers the bot with ids and a fixed line, never the row.
@@ -351,6 +361,8 @@ const RAW_READS: Record<string, number> = {
   // frozen-replies.ts (the boot recovery's scan and the rows it judges), handoff-reply.ts and held-replies.ts (an earlier build's held row, retired),
   // index.ts (the retired hold's result row), boundary-ports.ts (a shared request's closing row, terminalFor): server-side reads, never handed to a bot
   "frozen-replies.ts": 5,
+  // HighLevel review cards read their own owner-only card by id to mark it answered; no stored words reach a bot.
+  "highlevel/review-cards.ts": 1,
   "handoff-boundary.ts": 1, "handoff-dispatch.ts": 1, "handoff-evidence.ts": 1, "handoff-reply.ts": 1, "harness/event-log.ts": 5, "held-replies.ts": 1, "host-computer-consent.ts": 1,
   "human-principals.ts": 1, "image-operations.ts": 2, "inbox-fill-worker.ts": 1, "inbox.base-reference.ts": 4, "inbox.legacy-reference.ts": 1,
   // 1.0.9 share and ask (S37): index.ts adds the share-orphan reclaim's messageNames probe, `SELECT 1 FROM messages WHERE json LIKE ? LIMIT 1`:
@@ -371,10 +383,12 @@ const RAW_READS: Record<string, number> = {
   // match a site the owner named, and only an id and a yes/no leave it, never a row or its words to a bot.
   // 1.0.18 U22 G20 (63db4b960): the limit failover reads the turn's own source row by its id (messageById) only to see whether it is a
   // share or ask-intent line (via); a via line starts no failover. Only a null return leaves, never a row or its words to a bot.
-  "inbox.ts": 6, "index.ts": 83,"installation-activation.ts": 1, "installation-database-snapshot.ts": 6, "installation-restore-preparation.ts": 1,
+  // 1.0.19 NOTIFY (ad20c3987): attentionCardRecord reads the requested open card for the desktop-only attention/card route.
+  // It returns projected ids, display, outsideOk and digest; previewContent gates the display and digest. No stored row goes to a bot.
+  "inbox.ts": 6, "index.ts": 90,"installation-activation.ts": 1, "installation-database-snapshot.ts": 6, "installation-restore-preparation.ts": 1,
   // 1.0.4: index.ts adds the limit-failover resend (the owner's own user row, through acceptBotSend), the turn's sendIds, and the two owner-only MCP card routes
   // (dismissMcpCards, mcp-enable-cards); mcp-bot-cards.ts reads only the ids of open cards. None hands a stored row to a bot.
-  "mcp-bot-cards.ts": 2, "mcp-signin-card.ts": 1, "memory/branch-change.ts": 3, "murage-anchor.ts": 1, "memory/bring-in.ts": 1, "memory/capture.ts": 3, "memory/deny-read.ts": 1,
+  "mcp-bot-cards.ts": 2, "mcp-signin-card.ts": 1, "memory/branch-change.ts": 3, "murage-anchor.ts": 1, "memory/bring-in.ts": 1, "memory/capture.ts": 3, "memory/deny-read.ts": 2,
   "memory/evolution-forgetting.ts": 1, "memory/learning-wiring.ts": 2, "memory/lineage-backfill.ts": 9,
   // 1.0.18 TURNSTART r16 (lineage warmer): the warm confirm reads only to judge, never to answer. lineage-warm.ts (7): the thread head and the row before
   // a seq (rowid, id), the transcript anchor of a clean confirm (rowid, id), the two rows after the anchor (id, text, json)
@@ -382,9 +396,10 @@ const RAW_READS: Record<string, number> = {
   // scan page. lineage-warm-surface.ts (7) is the test surface that drives those paths (it writes fixture messages, a foreign commit and removes a row).
   // Production results of the warmer are booleans, ids, counts and verdicts; the fixture line index serves only the test surface. No stored row or its words go to a bot.
   "memory/lineage-warm.ts": 7, "memory/lineage-warm-surface.ts": 7,
-  "memory/memory-moments.ts": 5, "memory/outcomes.ts": 4, "memory/past-chats-build.ts": 2, "memory/pip-reflect.ts": 2, "memory/policy.ts": 1, "memory/replay-lineage.ts": 6,
+  "memory/memory-moments.ts": 5, "memory/outcomes.ts": 4, "memory/past-chats-build.ts": 2, "memory/pip-reflect.ts": 2, "memory/policy.ts": 2, "memory/replay-lineage.ts": 6,
   "memory/restore.ts": 1, "memory/reveal-capture.ts": 1, "memory/schema.ts": 1, "memory/upgrade-counts.ts": 2, "message-db.ts": 49 /* + S5 site 14 rebaseMessageAttachmentPaths: one SELECT of attachment rows for the data-folder move rebase, decoded through rowToMessage */,
-  "message-search-index.ts": 7, "message-tables.ts": 6, "message-walker.ts": 2, "partition-sources.ts": 2, "peer-approval.ts": 1,
+  // 05c9ae71ff: the isolated search worker owns keyed, byte-bounded index construction reads; never a bot-facing reader.
+  "search-index-worker.ts": 4, "message-tables.ts": 6, "message-walker.ts": 2, "partition-sources.ts": 2, "peer-approval.ts": 1,
   "project-digest.ts": 2, "project-goals.ts": 1, "project-memory-tools.ts": 4, "project-routes.ts": 1, "project-tools.ts": 1, "prompt-quotes.ts": 2,
   // 1.0.10 ROUTINE-DELIVER-1010: routine-delivery.ts reads back only its own result card by its stable id (rrun-<runId>) to patch it; index.ts
   // passes that one lookup through; message-db.ts artifactRowsBetween reads a routine run's own saved-file rows to list their Files ids on the
@@ -392,13 +407,13 @@ const RAW_READS: Record<string, number> = {
   "routine-delivery.ts": 2,
   // 1.0.18 SMOOTH-FTS T7: settle-copy.ts ORPHAN_IDS names `messages` only inside NOT EXISTS, to find search-index ids whose message is gone
   // in a PRIVATE copy being settled (backup, damaged export, pre-prune snapshot). It returns index ids to delete, never a row or its words.
-  "publish/publish-ops.ts": 4, "room-turn-rows.ts": 3, "settle-copy.ts": 1, "setup-thread-facts.ts": 1, "steer-queue.ts": 1, "storage-attachments.ts": 1, "store.ts": 6,
+  "publish/publish-ops.ts": 4, "room-turn-rows.ts": 3, "settle-copy.ts": 1, "setup-thread-facts.ts": 3, "steer-queue.ts": 1, "storage-attachments.ts": 1, "store.ts": 6,
   // C2 previews: one indexed leaf id, a LIMIT 1 existence probe, MAX(rowid) endpoint and a 100-row backfill page.
   // Ancestor walks stop at 50; only the owner chat list reads summary text, never a bot-facing result.
   "thread-summary.ts": 4,
   // 1.0.6 recall-forgotten (bb32902a5): thread_list's newestRememberedAt pages a thread's rowid, id, time and withheld stamp to find the newest
   // line the owner has not forgotten; only that time leaves, never a row or its words.
-  "thread-recall.ts": 1, "transcript-backfill.ts": 11, "transcript-seq.ts": 6,
+  "thread-recall.ts": 2, "transcript-backfill.ts": 11, "transcript-seq.ts": 6,
   // 1.0.18 D24 speech (b320b1a98): storedReplyTarget refuses anyone but the owner first, then reads the one bot reply the owner asked to
   // hear (messageById) to check it is a finished bot text line; its text goes to the owner's own speech provider, never to a bot.
   "tts/reply-target.ts": 1,

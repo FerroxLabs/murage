@@ -25,16 +25,43 @@ describe("delegate_bot to an OpenClaw own-tools teammate (fake ACP CLI)", () => 
       {
         chief: {
           driver: "grokAgent",
-          environment: { FAKE_ACP_MODE: "delegate-peer", FAKE_ACP_DELEGATE_MESSAGE: "summarise the openclaw report" },
+          environment: { FAKE_ACP_MODE: "delegate-peer", FAKE_ACP_DELEGATE_MESSAGE: "summarise the openclaw report", ...(process.env.DELEGATION_DIAG_PROFILE ? { FAKE_ACP_INIT_DELAY_MS: process.env.DELEGATION_DIAG_INIT_MS ?? "0" } : {}) },
           config: { cli: FAKE_ACP_CLI, fullAuto: true },
         },
         ocmate: {
           driver: "openclawAgent",
-          environment: { FAKE_ACP_MODE: "happy", FAKE_ACP_DUMP: dump },
+          environment: { FAKE_ACP_MODE: "happy", FAKE_ACP_DUMP: dump, ...(process.env.DELEGATION_DIAG_PROFILE ? { FAKE_ACP_INIT_DELAY_MS: process.env.DELEGATION_DIAG_INIT_MS ?? "0" } : {}) },
           config: { cli: FAKE_ACP_CLI, fullAuto: false, agent: "main" },
         },
       },
       "murage-oc-deleg-",
+      // cddf1c168e requires confirmed read-only and independent boundary
+      // coverage at every level. Supply the reviewed fixture seam for this
+      // fake CLI; the production guard remains closed without a verifier.
+      { instrumentationSource: `
+        ${process.env.DELEGATION_TRACE ? `process.env.DELEGATION_TRACE = ${JSON.stringify(process.env.DELEGATION_TRACE)}; process.env.DELEGATION_DIAG_PROFILE = ${JSON.stringify(process.env.DELEGATION_DIAG_PROFILE ?? "")}; await import(${JSON.stringify(new URL(process.env.DELEGATION_DIAG_PROFILE ? "../evidence/fixm9-g3-diag/observer.mjs" : "../evidence/fixm9-g3/round3/provider-trace.mjs", import.meta.url).href)});` : ""}
+        import { appendFileSync } from 'node:fs';
+        import { isMainThread } from 'node:worker_threads';
+        if (isMainThread) {
+          const { BUILT_IN_DRIVERS } = await import(${JSON.stringify(new URL("./drivers/builtIn.ts", import.meta.url).href)});
+          const { createAcpDriver } = await import(${JSON.stringify(new URL("./drivers/acp/core.ts", import.meta.url).href)});
+          const { openclawSupport, createOpenclawPrePromptGuard } = await import(${JSON.stringify(new URL("./drivers/acp/openclaw.ts", import.meta.url).href)});
+          const prePrompt = createOpenclawPrePromptGuard({
+            probeVersion: async () => 'OpenClaw 2026.10.5',
+            call: async (cli, method, params) => {
+              if (cli !== ${JSON.stringify(FAKE_ACP_CLI)} || method !== 'sessions.patch') throw Error('unexpected fake Gateway call');
+              appendFileSync(${JSON.stringify(`${dump}.gateway.jsonl`)}, JSON.stringify({ method, params }) + '\\n');
+              return { ok: true, key: params.key, entry: { permissionMode: params.permissionMode } };
+            },
+            verifyCoverage: async (ctx) => ctx.config.cli === ${JSON.stringify(FAKE_ACP_CLI)} ? {
+              refusedReads: true, skillRoots: true, extraTools: true, nativeHarnesses: true, delegation: true, readBoundary: true,
+            } : undefined,
+          });
+          const index = BUILT_IN_DRIVERS.findIndex(driver => driver.driverKind === openclawSupport.driverKind);
+          if (index < 0) throw Error('OpenClaw fixture driver missing');
+          BUILT_IN_DRIVERS[index] = createAcpDriver({ ...openclawSupport, prePrompt });
+        }
+      ` },
     );
   }, 40_000);
 
@@ -68,10 +95,8 @@ describe("delegate_bot to an OpenClaw own-tools teammate (fake ACP CLI)", () => 
     await api("PATCH", `/api/bots/${seeded.id}`, { hidden: true });
     const mate = (await api("POST", "/api/bots")).body.bot;
     await api("PATCH", `/api/bots/${mate.id}`, { name: "Claw", modelSelection: { instanceId: "ocmate", model: "openclaw-default" } });
-    // Claw runs at Auto. At Ask an OpenClaw turn first sets the Gateway session read-only, and refuses the turn on a
-    // version below the permissionMode floor (the Ask hard stop, drivers/ask-stop.test.ts). The fake CLI is no
-    // OpenClaw Gateway, so at Ask the delegated turn is refused before it runs. At Auto (option A) the prompt carries
-    // no /exec directive and the owner's own OpenClaw settings apply, which is the path this delegation test covers.
+    // Auto still requires read-only under cddf1c168e; the fake Gateway above
+    // supplies that confirmation and the fixture's independent coverage.
     expect((await api("PATCH", `/api/bots/${mate.id}`, { autoApprove: true, acknowledgeLocalAuto: true })).status).toBe(200);
     const chief = (await api("POST", "/api/bots")).body.bot;
     await api("PATCH", `/api/bots/${chief.id}`, { name: "Chief", modelSelection: { instanceId: "chief", model: "fake-model" } });
@@ -115,5 +140,8 @@ describe("delegate_bot to an OpenClaw own-tools teammate (fake ACP CLI)", () => 
     const spawned = JSON.parse(readFileSync(dump, "utf8"));
     expect(spawned.argv.join(" ")).toMatch(/acp --session agent:main:murage-(owner|guest)-[0-9a-f]{24}/);
     expect(JSON.parse(readFileSync(`${dump}.mcp.json`, "utf8"))).toEqual([]);
+    const gateway = readFileSync(`${dump}.gateway.jsonl`, "utf8").trim().split("\n").map(line => JSON.parse(line));
+    expect(gateway).toHaveLength(1);
+    expect(gateway[0]).toEqual({ method: "sessions.patch", params: { key: spawned.argv[spawned.argv.indexOf("--session") + 1], permissionMode: "read-only" } });
   }, 70_000);
 });

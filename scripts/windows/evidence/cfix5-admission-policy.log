@@ -1,0 +1,7 @@
+PASS non-Windows refused
+PASS Desktop operator admitted
+PASS Desktop cannot select Handoff
+PASS Handoff operator admitted on gate
+PASS direct child without context refused
+PASS child with actual job membership admitted
+PASS spoofed environment without job membership refused

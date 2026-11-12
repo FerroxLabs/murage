@@ -45,6 +45,7 @@ describe("a chat's native session across a restart on a slow machine", () => {
   const start = async () => {
     stderr = "";
     child = spawn(process.execPath, ["--import", PRELOAD, join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

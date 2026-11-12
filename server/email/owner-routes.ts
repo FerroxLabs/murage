@@ -11,14 +11,18 @@
 // EMAIL-CAPS-CACHE-1011: the status route answers from the last definitive answer and never waits for #31 (?refresh=1 starts the read in
 // the background; the app reads again on the emailStatus socket frame). With a key saved and no definitive answer yet it answers
 // "Checking" (200), never off.
+import { RESTORE_FINISHING_LINE } from "./restore-job.ts";
 import type { BindingRow } from "./email-store.ts";
+import { RemovalRefused } from "./binding-service.ts";
+import { isGateRefusal } from "./removal-gate.ts";
 import { LIVE_BINDING_STATES, OPEN_SEND_STATES, TERMINAL_SEND_STATES, type SendState } from "./email-store.ts";
 import type { EmailRuntime } from "./runtime.ts";
 import { emailRef } from "./canonical.ts";
 import { filteredReason, isFilteredMail } from "./inbound.ts";
 import { addrSpec } from "./tools.ts";
+import { botScope, buildRows, otherScope, OwnerTokens, parkScope, tokensFor, type ParkPort } from "./owner-view.ts";
 import {
-  activityLine, bindingFailureLine, EMAIL_OWNER_COPY, EMAIL_POLICY_COPY, EMAIL_SETUP_COPY, emailOwnerActionCard, emailOwnerActionRequestId, headerChip,
+  activityLine, bindingFailureLine, EMAIL_OWNER_COPY, EMAIL_POLICY_COPY, EMAIL_SETUP_COPY, emailOwnerActionCard, emailOwnerActionRequestId, EMAIL_OWNER_PROOF_THREAD, headerChip,
   ownerRouteLine, EMAIL_STATUS_COPY, type EmailBotView, type EmailCheckingView, type EmailOwnerAction, type EmailStatusView, type EmailTrustEntry,
 } from "../../shared/email-copy.ts";
 
@@ -38,7 +42,18 @@ export interface OwnerRouteDeps {
   /** Phone acts: the fresh device proof over this card; null = go on. */
   freshProof: (threadId: string, requestId: string, card: { tool: string; title: string; subtitle: string }, body: Record<string, unknown>) => Promise<OwnerRouteAnswer | null>;
   now?: () => number;
+  /** Restore park (Batch A wires the real one): the park table, Keep and Remove. Absent: there are no parks. */
+  parks?: ParkPort;
+  /** The restore check row (an unconfirmed inventory after a restore); wired by the restore-job batch. */
+  restoreCheck?: () => boolean;
+  /** The owner confirmed the inventory: removes the durable check (RestoreJobStore.confirmCheck). */
+  confirmRestoreCheck?: () => boolean;
+  /** True while a restore job is open (armed, captured, swapped): every owner decision is refused restore_finishing. */
+  restoreWindow?: () => boolean;
 }
+/** One token key per email runtime (per process): a restart expires every outstanding token. */
+const tokensOf = (deps: OwnerRouteDeps): OwnerTokens => tokensFor(deps.runtime);
+const clock = (deps: OwnerRouteDeps): number => (deps.now ?? Date.now)();
 
 export const EMAIL_OWNER_PREFIX = "/api/email/";
 const ACTIONS: Record<string, EmailOwnerAction> = {
@@ -100,9 +115,15 @@ async function enabledRoute(deps: OwnerRouteDeps, request: OwnerRouteRequest): P
   const services = deps.runtime.services();
   if (!services) return refuse(404, EMAIL_OWNER_COPY.notAvailable);
   const { method, path } = request;
+  if (method !== "GET" && deps.restoreWindow?.()) return refuse(409, RESTORE_FINISHING_LINE, { code: "restore_finishing" });
   if (path === "/api/email/status" && method === "GET") return { status: 200, body: await statusView(deps, request.surface === "desktop") as unknown as Record<string, unknown> };
   const other = path.match(/^\/api\/email\/other-setups\/([\w-]{1,160})\/remove$/);
   if (other && method === "POST") return removeOtherSetup(deps, request, other[1]!);
+  const parkedRoute = path.match(/^\/api\/email\/parked\/([\w-]{1,160})\/(keep|remove)$/);
+  if (parkedRoute && method === "POST") return parkedAct(deps, request, parkedRoute[1]!, parkedRoute[2] as "keep" | "remove");
+  if (path === "/api/email/restore/confirm-inventory" && method === "POST") return confirmInventory(deps, request);
+  const tryAgain = path.match(/^\/api\/email\/bots\/([\w-]{1,160})\/try-again$/);
+  if (tryAgain && method === "POST") return tryAgainNow(deps, request, tryAgain[1]!);
   if (path === "/api/email/account" && method === "POST") return account(deps, request);
   const read = path.match(/^\/api\/email\/bots\/([\w-]{1,160})$/);
   if (read && method === "GET") {
@@ -116,11 +137,83 @@ async function enabledRoute(deps: OwnerRouteDeps, request: OwnerRouteRequest): P
   const bot = deps.bot(act[1]!);
   if (!bot) return refuse(404, "No such bot.");
   const body = record(request.body);
+  // restore park int: the park_rev the owner saw is read BEFORE the phone's proof await and carried to the gate; a park that moved meanwhile answers confirm_expired
+  const seenRev = deps.runtime.services()?.store.getPark(bot.id)?.parkRev;
   if (request.surface === "phone") {
     const refused = await deps.freshProof(bot.threadId, emailOwnerActionRequestId(action, bot.id), emailOwnerActionCard(action, bot.id, body), body);
     if (refused) return refused;
   }
-  return botAct(deps, bot, action, body);
+  if (action !== "keep" && action !== "remove") return botAct(deps, bot, action, body);
+  // r3.1 4.3 and contract round 4: a bot row Keep is tokenless, its Remove is tokened; desktop callers that still send confirm: true keep working
+  const rowId = `bot:${bot.id}`, wantsHome = request.surface === "phone" || "token" in body;
+  const done = async (answer: OwnerRouteAnswer): Promise<OwnerRouteAnswer> => {
+    if (answer.status >= 400 && wantsHome && answer.body.rowId === undefined) return { status: answer.status, body: { ...answer.body, rowId } };
+    return answer.status === 200 && wantsHome ? { status: 200, body: await statusView(deps, request.surface === "desktop") as unknown as Record<string, unknown> } : answer;
+  };
+  const binding = deps.runtime.services()!.store.getBinding(bot.id);
+  const park = binding?.state === "removal_parked" ? deps.parks?.list().find(item => item.botId === bot.id) : undefined;
+  if (park) {
+    if (park.state === "keep_pending") return done(refuse(409, ownerRouteLine("keep_pending"), { code: "keep_pending" }));
+    if (action === "remove" && tokensOf(deps).check(body.token, parkScope(park, "remove"), clock(deps)) !== "ok") return done(refuse(409, ownerRouteLine("confirm_expired"), { code: "confirm_expired" }));
+    const expect = { parkId: park.parkId, parkRev: seenRev ?? park.parkRev };
+    const result = action === "keep" ? await deps.parks!.keep(bot.id, expect) : await deps.parks!.remove(bot.id, "bot_section", expect);
+    return done(result.ok ? { status: 200, body: {} } : refuse(result.status, ownerRouteLine(result.code), { code: result.code }));
+  }
+  if (action === "remove" && body.confirm !== true) {
+    if (typeof body.token !== "string" || !binding) return botAct(deps, bot, action, body, seenRev);
+    if (tokensOf(deps).check(body.token, botScope(binding, "remove"), clock(deps)) !== "ok") return done(refuse(409, ownerRouteLine("confirm_expired"), { code: "confirm_expired" }));
+    return done(await botAct(deps, bot, action, { ...body, confirm: true }, seenRev));
+  }
+  return done(await botAct(deps, bot, action, body, seenRev));
+}
+
+/** Contract round 4: Try again now, on a removing row. Runs the resumer once; the answer is the full home view. */
+async function tryAgainNow(deps: OwnerRouteDeps, request: OwnerRouteRequest, botId: string): Promise<OwnerRouteAnswer> {
+  const rowId = `removing:${botId}`, bot = deps.bot(botId);
+  const body = record(request.body);
+  if (request.surface === "phone") {
+    const refused = await deps.freshProof(bot?.threadId ?? EMAIL_OWNER_PROOF_THREAD, emailOwnerActionRequestId("try_again", botId), emailOwnerActionCard("try_again", botId, body), body);
+    if (refused) return refused;
+  }
+  const services = deps.runtime.services()!;
+  const row = services.store.getBinding(botId);
+  if (!row || (row.state !== "removing" && row.state !== "remove_requested")) return refuse(409, ownerRouteLine("inbox_gone"), { code: "inbox_gone", rowId });
+  try { await services.bindings.reap(); } catch { /* the row keeps showing Removing */ }
+  return { status: 200, body: await statusView(deps, request.surface === "desktop") as unknown as Record<string, unknown> };
+}
+
+/** 7.2 and 7.3: Keep and Remove for an address whose bot is gone. The token is the one this view minted for exactly this park revision. */
+async function parkedAct(deps: OwnerRouteDeps, request: OwnerRouteRequest, botId: string, act: "keep" | "remove"): Promise<OwnerRouteAnswer> {
+  const rowId = `parked:${botId}`, body = record(request.body);
+  if (!deps.parks) return refuse(404, "No such route.");
+  if (request.surface === "phone") {
+    const action = act === "keep" ? "parked_keep" : "parked_remove";
+    const refused = await deps.freshProof(EMAIL_OWNER_PROOF_THREAD, emailOwnerActionRequestId(action, botId), emailOwnerActionCard(action, botId, body), body);
+    if (refused) return refused;
+  }
+  if (deps.bot(botId)) return refuse(409, EMAIL_OWNER_COPY.actionFailed, { code: "not_orphan", rowId });
+  const park = deps.parks.list().find(item => item.botId === botId);
+  if (!park) return refuse(409, ownerRouteLine("inbox_gone"), { code: "inbox_gone", rowId });
+  if (park.state === "keep_pending") return refuse(409, ownerRouteLine("keep_pending"), { code: "keep_pending", rowId });
+  if (tokensOf(deps).check(body.token, parkScope(park, act), clock(deps)) !== "ok") return refuse(409, ownerRouteLine("confirm_expired"), { code: "confirm_expired", rowId });
+  const expect = { parkId: park.parkId, parkRev: park.parkRev };
+  const result = act === "keep" ? await deps.parks.keep(botId, expect) : await deps.parks.remove(botId, "orphan", expect);
+  if (!result.ok) return refuse(result.status, ownerRouteLine(result.code), { code: result.code, rowId });
+  return { status: 200, body: await statusView(deps, request.surface === "desktop") as unknown as Record<string, unknown> };
+}
+
+/** The restore-job batch builds the inventory confirm; until it lands the action is in the view and the route refuses plainly. */
+async function confirmInventory(deps: OwnerRouteDeps, request: OwnerRouteRequest): Promise<OwnerRouteAnswer> {
+  const body = record(request.body);
+  if (request.surface === "phone") {
+    const refused = await deps.freshProof(EMAIL_OWNER_PROOF_THREAD, emailOwnerActionRequestId("confirm_inventory", "restore"), emailOwnerActionCard("confirm_inventory", "restore", body), body);
+    if (refused) return refused;
+  }
+  // r3.4d J2: ready = the restore job finished a blind restore and its inventory check is pending (restoreCheck). The confirm removes the durable check; nothing pending is not ready.
+  if (!deps.restoreCheck?.()) return refuse(409, ownerRouteLine("restore_not_ready"), { code: "restore_not_ready", rowId: "restore_check:home" });
+  // L7: success only when the check was really consumed.
+  if (!deps.confirmRestoreCheck?.()) return refuse(409, ownerRouteLine("restore_not_ready"), { code: "restore_not_ready", rowId: "restore_check:home" });
+  return { status: 200, body: await statusView(deps, request.surface === "desktop") as unknown as Record<string, unknown> };
 }
 
 /** 2.6 data folder lost: an inbox of this account whose bot is not on this install, listed under "Email addresses from another setup". */
@@ -128,7 +221,13 @@ async function otherSetups(deps: OwnerRouteDeps): Promise<EmailStatusView["other
   const store = deps.runtime.services()!.store;
   const listed = await deps.runtime.client.listInboxes({ kind: "owner" });
   if (listed.kind !== "ok") return undefined;
-  const known = new Set([...store.bindings().map(row => row.inboxId), ...store.tombstones().map(tomb => tomb.inboxId)].filter(Boolean));
+  // T7c: a park that never learned its address, whose inbox Flux still lists, takes the listed address (park_rev + 1); only then does the owner see it by name
+  for (const park of store.parks()) {
+    if (park.address || !park.inboxId) continue;
+    const item = (listed.body.data ?? []).find(entry => entry.id === park.inboxId && entry.state !== "deleted");
+    if (item && typeof item.address === "string" && item.address) store.casPark(park.botId, park.parkRev, { address: item.address });
+  }
+  const known = new Set([...store.bindings().map(row => row.inboxId), ...store.tombstones().map(tomb => tomb.inboxId), ...store.parks().map(park => park.inboxId)].filter(Boolean));
   return (listed.body.data ?? [])
     .filter(item => typeof item.id === "string" && item.state !== "deleted" && item.state !== "closing" && !known.has(item.id) && !(typeof item.bot_id === "string" && deps.bot(item.bot_id)))
     .map(item => ({ inboxId: item.id, address: typeof item.address === "string" ? item.address : null }));
@@ -136,13 +235,24 @@ async function otherSetups(deps: OwnerRouteDeps): Promise<EmailStatusView["other
 
 /** Remove for an address from another setup (desktop only): DELETE #7 with the owner token; a 202 is enough for this list. */
 async function removeOtherSetup(deps: OwnerRouteDeps, request: OwnerRouteRequest, inboxId: string): Promise<OwnerRouteAnswer> {
-  if (request.surface !== "desktop") return refuse(403, EMAIL_OWNER_COPY.computerOnly);
-  if (record(request.body).confirm !== true) return refuse(400, "Confirm to remove this address.", { code: "confirm_required" });
+  const rowId = `other_setup:${inboxId}`, body = record(request.body);
+  // contract round 4: the phone now removes these too, with its fresh proof over the exact act
+  if (request.surface === "phone") {
+    const refused = await deps.freshProof(EMAIL_OWNER_PROOF_THREAD, emailOwnerActionRequestId("other_setup_remove", inboxId), emailOwnerActionCard("other_setup_remove", inboxId, body), body);
+    if (refused) return refused;
+  }
   const listed = await otherSetups(deps);
-  if (!listed?.some(item => item.inboxId === inboxId)) return refuse(404, "That address is not from another setup.");
-  const answer = await deps.runtime.client.deleteInbox(inboxId);
-  if (answer.kind === "ok" || answer.kind === "held" || (answer.kind === "refused" && answer.status === 404)) return { status: 200, body: await statusView(deps, true) as unknown as Record<string, unknown> };
-  return refuse(answer.kind === "refused" ? answer.status : 503, ownerRouteLine(answer.kind === "refused" ? answer.code : null));
+  if (!listed) return refuse(503, ownerRouteLine("other_setup_unavailable"), { code: "other_setup_unavailable", rowId }); // Flux did not answer the listing: say so, never "not from another setup"
+  const item = listed.find(entry => entry.inboxId === inboxId);
+  if (!item) return refuse(404, "That address is not from another setup.", { rowId });
+  const tokened = typeof body.token === "string";
+  if (tokened ? tokensOf(deps).check(body.token, otherScope(item.inboxId, item.address), clock(deps)) !== "ok" : !(request.surface === "desktop" && body.confirm === true))
+    return tokened ? refuse(409, ownerRouteLine("confirm_expired"), { code: "confirm_expired", rowId }) : refuse(400, "Confirm to remove this address.", { code: "confirm_required", rowId });
+  const answer = await deps.runtime.services()!.bindings.gate.deleteInbox({ kind: "foreign", inboxId }, null);
+  if (isGateRefusal(answer)) return refuse(409, ownerRouteLine(answer.code), { code: answer.code, rowId });
+  if (answer.kind === "ok" || answer.kind === "held" || (answer.kind === "refused" && answer.status === 404)) return { status: 200, body: await statusView(deps, request.surface === "desktop") as unknown as Record<string, unknown> };
+  const refusedCode = (answer.kind === "refused" ? answer.code : null) ?? "unavailable";
+  return refuse(answer.kind === "refused" ? answer.status : 503, ownerRouteLine(refusedCode), { code: refusedCode, rowId });
 }
 
 async function statusView(deps: OwnerRouteDeps, desktop: boolean): Promise<EmailStatusView> {
@@ -170,6 +280,7 @@ async function statusView(deps: OwnerRouteDeps, desktop: boolean): Promise<Email
     limits, removing,
     ...(accountSends ? { accountSends } : {}),
     ...(others?.length ? { otherSetups: others } : {}),
+    rows: buildRows({ tokens: tokensOf(deps), at: clock(deps), bindings: store.bindings(), bot: id => deps.bot(id), parks: deps.parks?.list() ?? [], otherSetups: others ?? [], restoreCheck: deps.restoreCheck?.() ?? false }),
     // 2.4, section 8: whether owner acts can run, and the owner token's health
     ownerSignedIn: Boolean(deps.runtime.secrets?.owner()), ownerKeyLine: deps.runtime.ownerKeyLine?.() ?? null,
     // 1.0.11: an account already on with eligible: false (credit, capacity) still hears why
@@ -218,7 +329,7 @@ function failed(answer: { kind: string; code?: string; status?: number; reason?:
   return refuse(status, ownerRouteLine(code), { code });
 }
 
-async function botAct(deps: OwnerRouteDeps, bot: { id: string; name: string; threadId: string }, action: EmailOwnerAction, body: Record<string, unknown>): Promise<OwnerRouteAnswer> {
+async function botAct(deps: OwnerRouteDeps, bot: { id: string; name: string; threadId: string }, action: EmailOwnerAction, body: Record<string, unknown>, parkRev?: number): Promise<OwnerRouteAnswer> {
   const services = deps.runtime.services()!;
   const { store, bindings } = services;
   const now = (deps.now ?? Date.now)();
@@ -253,13 +364,13 @@ async function botAct(deps: OwnerRouteDeps, bot: { id: string; name: string; thr
         return view();
       }
       const result = action === "pause" ? await bindings.pause(bot.id) : action === "resume" ? await bindings.resume(bot.id) : await bindings.reconnect(bot.id);
-      if (!result.ok) return refuse(result.status, ownerRouteLine(result.code), { code: result.code });
+      if (!result.ok) return refuse(result.status, ("detail" in result && result.detail ? result.detail : ownerRouteLine(result.code)), { code: result.code });
       return view();
     }
     case "remove":
       if (body.confirm !== true) return refuse(400, EMAIL_SETUP_COPY.removeConfirm(binding?.address ?? "this address", bot.name), { code: "confirm_required" });
       if (!binding) return refuse(404, "This bot has no email address.");
-      await bindings.remove(bot.id);
+      try { await bindings.remove(bot.id, parkRev); } catch (error) { if (error instanceof RemovalRefused) return refuse(409, ownerRouteLine(error.code), { code: error.code }); throw error; }
       return view();
     case "keep": {
       // design 3.2: "Removing: undo until [date]" with Keep address (#37); also a closing inbox Flux closed (billing, account)
@@ -319,6 +430,7 @@ export async function botView(deps: Pick<OwnerRouteDeps, "runtime">, bot: { id: 
     : state === "failed" ? bindingFailureLine(row?.failure)
     : state === "provisioning" ? EMAIL_SETUP_COPY.provisioning
     : state === "removing" || state === "remove_requested" ? EMAIL_OWNER_COPY.removingLine(row?.address ?? "this address", state === "remove_requested" ? row?.closingUntil ?? null : null)
+    : state === "removal_parked" ? EMAIL_OWNER_COPY.parkedLine(row?.address ?? "this address")
     : state === "restored_unverified" ? EMAIL_SETUP_COPY.reconnect : null;
   const label = (source: string) => EMAIL_POLICY_COPY.sources[source] ?? EMAIL_POLICY_COPY.sources.owner!;
   const entries = store.trustedEntries(bot.id);

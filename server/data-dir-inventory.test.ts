@@ -26,14 +26,53 @@ import { scanDataDirWrites, unclassifiedStaticWrites } from "./testing/data-dir-
 
 const ROOT = join(import.meta.dirname, "..");
 
+it("T-BACKUP excludes Signal credentials like WhatsApp and retains channel receipt history", () => {
+  const credentials = classifyDataDirEntry("whatsapp");
+  expect(credentials).toMatchObject({ backup: "excluded", why: expect.stringContaining("Credential") });
+  expect(classifyDataDirEntry("signal")).toEqual(credentials);
+  expect(classifyDataDirEntryForBackup("signal")).toEqual(credentials);
+  expect(DATA_DIR_RESTORABLE).not.toContain("signal");
+  expect(isRestorableDataDirName("signal")).toBe(false);
+  expect(classifyDataDirEntry("channels")).toMatchObject({ backup: "retained" });
+  expect(classifyDataDirEntry("signal-other")).toBeUndefined();
+});
+
+it("fence recovery notice obligations stay installation-local across backup and restore", () => {
+  expect(classifyDataDirEntry("fence-notices")).toMatchObject({ backup: "excluded" });
+  expect(DATA_DIR_RESTORABLE).not.toContain("fence-notices");
+  expect(isRestorableDataDirName("fence-notices")).toBe(false);
+});
+
+it("classifies local restore source archives without changing their existing unknown-name backup behavior", () => {
+  const existing = classifyDataDirEntryForBackup("unrecognised-restore-source-fixture");
+  expect(existing).toMatchObject({ backup: "excluded", skip: "unrecognised" });
+  expect(classifyDataDirEntry("restore-archives")).toEqual(existing);
+  expect(classifyDataDirEntryForBackup("restore-archives")).toEqual(existing);
+  expect(DATA_DIR_RESTORABLE).not.toContain("restore-archives");
+  expect(isRestorableDataDirName("restore-archives")).toBe(false);
+  expect(classifyDataDirEntry("restore-archives-other")).toBeUndefined();
+});
+
+it("classifies the restore alert marker without changing its existing backup behavior", () => {
+  const existing = classifyDataDirEntryForBackup("unrecognised-restore-marker-fixture");
+  expect(existing).toMatchObject({ backup: "excluded", skip: "unrecognised" });
+  expect(Object.hasOwn(DATA_DIR_ENTRIES, "restore-stuck-at")).toBe(true);
+  expect(classifyDataDirEntry("restore-stuck-at")).toEqual(existing);
+  expect(classifyDataDirEntryForBackup("restore-stuck-at")).toEqual(existing);
+  expect(DATA_DIR_RESTORABLE).not.toContain("restore-stuck-at");
+  expect(isRestorableDataDirName("restore-stuck-at")).toBe(false);
+  expect(classifyDataDirEntry("restore-stuck-at-other")).toBeUndefined();
+});
+
 // ---------------------------------------------------------------------------
 // 1. Static scan
 // ---------------------------------------------------------------------------
 
 /** A scan hit that is not the Murage data folder: file -> joined name -> why. */
 const NOT_THE_DATA_FOLDER: Record<string, Record<string, string>> = {
+  "server/settle-copy.ts": { "<<name>>": "deletes only the fixed SEARCH_FILES family (search.db, search.db-wal, search.db-shm), all explicitly excluded; T-INVENTORY and per-family M16 tests cover each name" },
   "server/data-roots.ts": { "<<name>>": "RootName is workspaces or providers, both classified top-level roots" },
-  "server/cloud-home/supervisor.ts": { "<<name>>": "Fixed root volume layout under /data (home, home/secrets, server-home, proxy, caddy, browser); the application DATA_DIR is /data/home, not this volume root" },
+  "server/cloud-home/home-volume-spec.ts": { "<<name>>": "Fixed root volume layout under /data (moved here from supervisor.ts for the root launcher); the application DATA_DIR is /data/home, not this volume root" },
   "server/setup-backup.ts": { "<<SETUP_BACKUP_FILE_NAME>>": "setup-backup.json (classified), the name shared/setup-backup-record.mjs exports" },
   "server/drivers/claude.ts": { "<<CLAUDE_SIGNIN_ANSWERS_FILE>>": "claude-signin-answers.json (classified): the sign-in card's remembered answers, the name drivers/claude-signin-answers.ts exports" },
   "server/user-chrome.ts": { DevToolsActivePort: "Chrome's own user-data folder, read only" },

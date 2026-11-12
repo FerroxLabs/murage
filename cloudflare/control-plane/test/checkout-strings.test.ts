@@ -25,7 +25,7 @@ describe("renewal wording on Stripe's page (§3.2, owner decision 2026-10-14, op
       expect(stringsFor("en").renewalSubmit(PLAN_MONTHLY_USD[p])).toBe(`Renews each month at US$${PLAN_MONTHLY_USD[p]} + tax until you cancel in your account.`);
       expect(stringsFor("de").renewalSubmit(PLAN_MONTHLY_USD[p])).toBe(`Verlängert sich monatlich für ${PLAN_MONTHLY_USD[p]} US$ zzgl. Steuern, bis Sie im Konto kündigen.`);
       for (const l of ["en", "de", "fr", "ja"]) for (const v of ["short", "full"] as const) {
-        const msg = directSubmitMessage(l, p, v, { terms: "https://t.example/terms", tos: "https://t.example/tos", privacy: "https://t.example/privacy" });
+        const msg = directSubmitMessage(l, p, v, { terms: "https://t.example/terms", tos: "https://t.example/tos", privacy: "https://t.example/privacy", flux: "https://fluxrouter.ai/terms-of-service" });
         expect(msg.startsWith(stringsFor(l).renewalSubmit(PLAN_MONTHLY_USD[p]))).toBe(true);
         expect(msg.length).toBeLessThanOrEqual(1200);
       }
@@ -60,22 +60,22 @@ describe("renewal wording on Stripe's page (§3.2, owner decision 2026-10-14, op
 
 describe("direct submit text (§3.3)", () => {
   it("has the four plan strings", () => {
-    expect(submitText("en", "short")).toBe("You also agree to the [Terms of Service].");
-    expect(submitText("de", "short")).toBe("Sie stimmen außerdem den [Nutzungsbedingungen] zu.");
-    expect(submitText("en", "full")).toBe("By submitting your order you agree to the [Murage Cloud terms] and [Terms of Service]. [Privacy Policy].");
-    expect(submitText("de", "full")).toBe("Mit dem Absenden Ihrer Bestellung stimmen Sie den [Murage-Cloud-Bedingungen] und den [Nutzungsbedingungen] zu. [Datenschutzerklärung].");
+    expect(submitText("en", "short")).toBe("You also confirm you are 18 or older, and you agree to the [Terms of Service] and [Flux Router Terms of Service].");
+    expect(submitText("de", "short")).toBe("Sie bestätigen außerdem, dass Sie mindestens 18 Jahre alt sind, und stimmen den [Nutzungsbedingungen] und den [Nutzungsbedingungen von Flux Router] zu.");
+    expect(submitText("en", "full")).toBe("By submitting your order you confirm you are 18 or older, and you agree to the [Murage Cloud terms], [Terms of Service] and [Flux Router Terms of Service]. [Privacy Policy].");
+    expect(submitText("de", "full")).toBe("Mit dem Absenden Ihrer Bestellung bestätigen Sie, dass Sie mindestens 18 Jahre alt sind, und stimmen den [Murage-Cloud-Bedingungen], den [Nutzungsbedingungen] und den [Nutzungsbedingungen von Flux Router] zu. [Datenschutzerklärung].");
   });
   it("US + de gets German; unknown locales get English", () => {
     expect(submitText(/* locale sent */ "de", "full")).toContain("Mit dem Absenden");
     expect(submitText("fr", "full")).toBe(submitText("en", "full"));
   });
   it("links turn each bracket into a Markdown link and stay under 1200 chars", () => {
-    const links = { terms: "https://t.example/terms", tos: "https://t.example/tos", privacy: "https://t.example/privacy" };
+    const links = { terms: "https://t.example/terms", tos: "https://t.example/tos", privacy: "https://t.example/privacy", flux: "https://fluxrouter.ai/terms-of-service" };
     expect(submitText("en", "full", links)).toBe(
-      "By submitting your order you agree to the [Murage Cloud terms](https://t.example/terms) and [Terms of Service](https://t.example/tos). [Privacy Policy](https://t.example/privacy).");
+      "By submitting your order you confirm you are 18 or older, and you agree to the [Murage Cloud terms](https://t.example/terms), [Terms of Service](https://t.example/tos) and [Flux Router Terms of Service](https://fluxrouter.ai/terms-of-service). [Privacy Policy](https://t.example/privacy).");
     expect(submitText("de", "full", links)).toBe(
-      "Mit dem Absenden Ihrer Bestellung stimmen Sie den [Murage-Cloud-Bedingungen](https://t.example/terms) und den [Nutzungsbedingungen](https://t.example/tos) zu. [Datenschutzerklärung](https://t.example/privacy).");
-    expect(submitText("de", "short", links)).toBe("Sie stimmen außerdem den [Nutzungsbedingungen](https://t.example/tos) zu.");
+      "Mit dem Absenden Ihrer Bestellung bestätigen Sie, dass Sie mindestens 18 Jahre alt sind, und stimmen den [Murage-Cloud-Bedingungen](https://t.example/terms), den [Nutzungsbedingungen](https://t.example/tos) und den [Nutzungsbedingungen von Flux Router](https://fluxrouter.ai/terms-of-service) zu. [Datenschutzerklärung](https://t.example/privacy).");
+    expect(submitText("de", "short", links)).toBe("Sie bestätigen außerdem, dass Sie mindestens 18 Jahre alt sind, und stimmen den [Nutzungsbedingungen](https://t.example/tos) und den [Nutzungsbedingungen von Flux Router](https://fluxrouter.ai/terms-of-service) zu.");
     for (const l of ["en", "de"]) for (const v of ["short", "full"] as const) expect(submitText(l, v, links).length).toBeLessThan(1200);
   });
 });
@@ -90,7 +90,7 @@ describe("the §3.1 disclosure box", () => {
       mp: "Link (by Stripe) takes your payment for us, in your currency. The amount can change with exchange rates.",
       eu: "EU, EEA and UK: your server starts as soon as you pay, at your request. You can still change your mind within 14 days of it starting and we refund you in full.",
       deat: "In Germany, the law needs an order button that says you must pay. Stripe only has that in German, so the payment page is in German.",
-      acceptance: "You accept the [Murage Cloud terms] and [Terms of Service] when you submit your order on the payment page. [Privacy Policy].",
+      acceptance: "You confirm you are 18 or older, and you accept the [Murage Cloud terms], [Terms of Service] and [Flux Router Terms of Service] when you submit your order on the payment page. [Privacy Policy].",
     });
   });
   it("German, Pro, MP, AT: every line verbatim", () => {
@@ -102,7 +102,7 @@ describe("the §3.1 disclosure box", () => {
       mp: "Link (by Stripe) nimmt Ihre Zahlung für uns entgegen, in Ihrer Währung. Der Betrag kann sich mit dem Wechselkurs ändern.",
       eu: "EU, EWR und UK: Ihr Server startet auf Ihren Wunsch sofort nach der Zahlung. Sie können sich innerhalb von 14 Tagen nach dem Start anders entscheiden und erhalten alles zurück.",
       deat: "In Österreich muss die Bestellschaltfläche die Zahlungspflicht nennen. Stripe bietet das nur auf Deutsch an, deshalb ist die Zahlungsseite auf Deutsch.",
-      acceptance: "Mit dem Absenden Ihrer Bestellung auf der Zahlungsseite akzeptieren Sie die [Murage-Cloud-Bedingungen] und die [Nutzungsbedingungen]. [Datenschutzerklärung].",
+      acceptance: "Sie bestätigen, dass Sie mindestens 18 Jahre alt sind, und akzeptieren mit dem Absenden Ihrer Bestellung auf der Zahlungsseite die [Murage-Cloud-Bedingungen], die [Nutzungsbedingungen] und die [Nutzungsbedingungen von Flux Router]. [Datenschutzerklärung].",
     });
   });
   it("US direct has price, renewal, refund, acceptance only; the price follows the plan", () => {
@@ -113,7 +113,7 @@ describe("the §3.1 disclosure box", () => {
   it("never carries the top-up text, the phone or the country line in renewalText", () => {
     for (const lang of ["en", "de"]) {
       const t = renderDisclosure("pro", "DE", lang, "link").renewalText;
-      expect(t).not.toMatch(/Flux|Legal notices|Telefon|\{|\}|Buying as|Kauf als|\+\d{6}/);
+      expect(t).not.toMatch(/Flux(?! Router)|Legal notices|Telefon|\{|\}|Buying as|Kauf als|\+\d{6}/);
     }
   });
   it("page strings around the box (country line, button, legal notices from a passed-in phone)", () => {

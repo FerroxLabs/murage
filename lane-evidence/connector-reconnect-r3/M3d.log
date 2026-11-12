@@ -1,0 +1,86 @@
+
+ RUN  v4.1.12 /work
+
+ ↓ server/connected-app-health.test.ts > one app's authorization failure > flips Gmail to needs-reconnect while Calendar stays active
+ ↓ server/connected-app-health.test.ts > one app's authorization failure > keeps the failed account when inventory says connected:false
+ ↓ server/connected-app-health.test.ts > one app's authorization failure > learns an expired account from inventory without a tool call
+ ↓ server/connected-app-health.test.ts > one app's authorization failure > a healthy second account or a newly added account cannot erase the expired account
+ ↓ server/connected-app-health.test.ts > one app's authorization failure > clears when a call to that app succeeds
+ ↓ server/connected-app-health.test.ts > one app's authorization failure > clears when the person signs in again (a new account)
+ ↓ server/connected-app-health.test.ts > one app's authorization failure > is not set by an ordinary tool error, a lookup, or a broker that is dark
+ ↓ server/connected-app-health.test.ts > one app's authorization failure > marks the one app that failed when a call touches two
+ ↓ server/connected-app-health.test.ts > signing in again > never removes the active account before the new sign-in is active, then retires exactly that one
+ ↓ server/connected-app-health.test.ts > signing in again > a mark made before any inventory was held still clears when a new account signs in
+ ↓ server/connected-app-health.test.ts > what the bot is told > names the app by its own curated label, letters, digits and spaces only, whatever the catalog says
+ ↓ server/connected-app-health.test.ts > what the bot is told > names the app that needs reconnecting, and differs from the unreachable line
+ ↓ server/connected-app-health.test.ts > what the bot is told > names several apps and follows the copy rules
+ ↓ server/connected-app-health.test.ts > reading an app's answer > reads a single-tool error answer and an event stream
+ ↓ server/connected-app-health.test.ts > reading an app's answer > reads success and ordinary errors as not an authorization failure
+ ↓ server/connected-app-health.test.ts > reading an app's answer > does not read a 403, forbidden or a missing scope as a sign-in failure: signing in again would not change it
+ ↓ server/connected-app-health.test.ts > reading an app's answer > reads a row only for an app the request named, at the answer's own level
+ ↓ server/connected-app-health.test.ts > reading an app's answer > reads the broker's structured signal, never free words in a message
+ ↓ server/connected-app-health.test.ts > reading an app's answer > ignores another request's frame
+ ↓ server/connected-app-health.test.ts > P1-1 ACTIVE inventory cannot hide a known expired grant
+ ↓ server/connected-app-health.test.ts > P1-2 verified same-owner proactive renewal keeps UUID and cooldown
+ ↓ server/connected-app-health.test.ts > P1-3 reconnecting A never implicates healthy B
+ ↓ server/connected-app-health.test.ts > P1-3 success clears only its account and preserves the other incident UUID
+ ↓ server/connected-app-health.test.ts > P2-5 one inventory check writes once at 10 and 1000 connectors; unchanged writes zero
+ ↓ server/connected-app-health.test.ts > P1-1 idle Buffer probe detects an ACTIVE revoked grant without an expiry field
+ ↓ server/connected-app-health.test.ts > P1-3 mixed results for two accounts of one app mark only the failed row
+ ↓ server/connected-app-health.test.ts > an account in cooldown cannot inherit another account's delivery receipt
+ ↓ server/connected-app-health.test.ts > R3 structured status contract > R3a status 500 with item 401 prose cannot impersonate auth
+ ↓ server/connected-app-health.test.ts > R3 structured status contract > R3b prose-only 401 with ACTIVE is clean, EXPIRED inventory creates incident
+ ↓ server/connected-app-health.test.ts > R3 structured status contract > R3c status_code 401 alone is a failed row even without a failure flag
+ × server/connected-app-health.test.ts > R3 structured status contract > R3d nested error status 403 is exact and never accepts prose status 40ms
+   → expected 1 to be +0 // Object.is equality
+ ↓ server/connected-app-health.test.ts > R3 structured status contract > R3e parsed kind auth suppresses account auth without the Flux sentence
+ ↓ server/connected-app-health.test.ts > R3 structured status contract > R3f brokerAuthOf handles error data and parsed envelopes; never scans app data
+ × server/connected-app-health.test.ts > R3 structured status contract > R3g code 401 and deep data are not HTTP status; status parsing is strict 5ms
+   → expected 401 to be null
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connected-app-health.test.ts > R3 structured status contract > R3d nested error status 403 is exact and never accepts prose status
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ server/connected-app-health.test.ts:481:66
+    479|   it("R3d nested error status 403 is exact and never accepts prose sta…
+    480|     expect(reading({error:{status:"403"}}).authStatus.get("gmail")).to…
+    481|     expect(reading({status:"401 Unauthorized"}).authStatus.size).toBe(…
+       |                                                                  ^
+    482|   });
+    483|   it("R3e parsed kind auth suppresses account auth without the Flux se…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  server/connected-app-health.test.ts > R3 structured status contract > R3g code 401 and deep data are not HTTP status; status parsing is strict
+AssertionError: expected 401 to be null
+
+- Expected:
+null
+
++ Received:
+401
+
+ ❯ server/connected-app-health.test.ts:496:108
+    494|     expect(reading({code:401}).authStatus.size).toBe(0);
+    495|     const status=(r3Health as any).structuredStatus; expect(status).to…
+    496|     for(const value of ["401 Unauthorized","item 401"," 401",401.1,99,…
+       |                                                                                                            ^
+    497|     expect(status({status:500,response:{status:401}})).toBe(500);
+    498|     expect(status({data:{status:401}})).toBeNull(); expect(status({res…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 32 skipped (34)
+   Start at  05:11:24
+   Duration  9.61s (transform 7.51s, setup 8.57s, import 813ms, tests 56ms, environment 0ms)
+

@@ -33,6 +33,17 @@ const get = (path: string, bearer: boolean, method = "POST") => classifyEdge(new
   method, headers: { "CF-Connecting-IP": IP, ...(bearer ? { authorization: "Bearer abc" } : {}) },
 }));
 
+describe("edge limiter: a home's own calls (browser owner)", () => {
+  it("the four home-to-control-plane routes spend the open budget keyed by IP in their own key space; a GET or another path does not", () => {
+    for (const op of ["owner-code-send", "owner-code-verify", "terms-proof", "owner-event"]) {
+      expect(get(`/v1/homes/home-1/home/${op}`, false)).toEqual({ limiter: "MACHINE_OPEN_LIMIT", key: `homeapi:${IP}` });
+      expect(get(`/v1/homes/home-1/home/${op}`, true)).toEqual({ limiter: "MACHINE_OPEN_LIMIT", key: `homeapi:${IP}` });
+      expect(get(`/v1/homes/home-1/home/${op}`, false, "GET")).toBeNull();
+    }
+    expect(get("/v1/homes/home-1/home/unknown-op", false)).toBeNull();
+  });
+});
+
 describe("edge limiter selection", () => {
   it("keys bearer machine routes by machine id plus IP and everything else open by IP", () => {
     for (const op of ["unwrap", "lease", "heartbeat", "desired", "endpoint"]) {
@@ -166,8 +177,8 @@ describe("r1: public token routes at the edge (ASTRA-WP7-1 #4)", () => {
 });
 
 describe("Flux renewal acknowledgement at the edge (Astra B4-PORT P2)", () => {
-  // The Flux routes are default-off (CLOUD_FLUX_ROUTES_ENABLED); these exercise the limiter as it stands once they are on.
-  const fluxOn = { CLOUD_FLUX_ROUTES_ENABLED: "1" };
+  // The Flux routes are default-off (the Flux route switch); these exercise the limiter as it stands once they are on.
+  const fluxOn = { CLOUD_FLUX_ROUTES_ENABLED: "1", FLUX_CLOUD_SERVICE_TOKEN: "s".repeat(40), FLUX_CLOUD_GRANTS_TOKEN: "g".repeat(40) };
   it("classifies flux/subkey/ack with the other machine routes: open budget bearerless, bearer budget with a bearer, both keyed by IP", () => {
     for (const op of ["flux/subkey", "flux/subkey/ack", "flux/renewal-due"]) {
       expect(get(`/v1/machines/m-1/${op}`, false)).toEqual({ limiter: "MACHINE_OPEN_LIMIT", key: IP });

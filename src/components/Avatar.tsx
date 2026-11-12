@@ -139,6 +139,10 @@ export type EmberAvatarProps = {
   trackPointer?: boolean;
   /** Run the animation. Off renders the state's resting face. */
   animated?: boolean;
+  /** Off holds the mascot from blinking by itself (the logo's Ember blinks only when told to). Default on, as every avatar was. */
+  autoBlink?: boolean;
+  /** How strongly the body itself moves, 0 to 1. 0 holds it perfectly still (the welcome: Ember stands, blinks once). */
+  bodyMotion?: number;
 };
 
 function EmberAvatarComponent(
@@ -161,6 +165,8 @@ function EmberAvatarComponent(
     lookAround,
     trackPointer = true,
     animated = true,
+    autoBlink = true,
+    bodyMotion,
   }: EmberAvatarProps,
   ref: React.Ref<EmberAvatarHandle>,
 ) {
@@ -225,6 +231,8 @@ function EmberAvatarComponent(
         showMouth={showMouth}
         mouthStroke={mouthStroke}
         paused={!animated}
+        autoBlink={autoBlink}
+        motion={bodyMotion}
       />
     </span>
   );

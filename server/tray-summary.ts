@@ -10,6 +10,7 @@ import { isQuestionCard } from "../shared/questions.ts";
 import { looksDestructive, looksSensitive } from "./auto-approve.ts";
 import { isStopLineKey } from "./stop-line.ts";
 import type { BotRecord, Message } from "./store.ts";
+import { closedOutsideMap, outsideDisplay, outsideOkMap, type OutsideOkMap } from "./desktop-attention.ts";
 
 /** How many waiting items the menu lists before "See all in Inbox". */
 export const TRAY_ITEM_LIMIT = 5;
@@ -29,8 +30,15 @@ export interface TrayItem {
   threadId: string;
   messageId: string;
   requestId?: string;
+  reconnectIncidentId?: string;
   /** Allow once / Deny may be offered from the menu. */
   quick: boolean;
+  /** The card as an outside surface shows it (bot, what it wants, the FULL detail); absent when previews are off or nothing is waiting. */
+  display?: { botName: string; title: string; willRun: string };
+  /** Per outside surface: may Allow, Deny and Reply be offered there (the whole detail fits, previews on). Every entry false when previews are off. */
+  outsideOk: OutsideOkMap;
+  /** approvalDigestSync of the live card, for the outside answer to quote back. */
+  digest?: string;
 }
 export interface TrayWorking { botId: string; botName: string; threadId: string; doing: string; startedAt?: number }
 export interface TrayBot { id: string; name: string; chief: boolean }
@@ -81,23 +89,41 @@ export interface TraySummaryDeps {
   /** Engines present and signed out of, as the sidebar counts them: none
    * while the first run owns the main view. */
   signedOutEngines?: number;
+  /** "What shows outside the app" (notifications.previewContent). false: no card text leaves this module and nothing is answerable outside. Default true. */
+  previewContent?: boolean;
+  /** The digest of a live card (approvalDigestSync), computed with no await. */
+  digest?(threadId: string, requestId: string, card: Card): string;
+  /** Items to list (default TRAY_ITEM_LIMIT; the attention read asks for up to 50). */
+  itemLimit?: number;
+  connectorItems?: TrayItem[];
 }
 
+export const PREVIEWS_OFF_SUMMARY = "Your attention is needed.";
+export const PREVIEWS_OFF_NAME = "Murage";
+export const PREVIEWS_OFF_DOING = "Working";
+
 export function traySummary(deps: TraySummaryDeps): TraySummary {
+  const previews = deps.previewContent !== false;
   const botById = new Map(deps.bots.map(bot => [bot.id, bot]));
-  const items = deps.page.items.slice(0, TRAY_ITEM_LIMIT).map((item: InboxItem): TrayItem => {
+  const items = deps.page.items.slice(0, deps.itemLimit ?? TRAY_ITEM_LIMIT).map((item: InboxItem): TrayItem => {
     const message = item.kind !== "request" ? undefined
       : deps.message ? deps.message(item.link.threadId, item.link.messageId)
       : deps.messagesFor?.(item.link.threadId).find(entry => entry.id === item.link.messageId);
     const card = message?.card;
     const botId = message?.from?.botId ?? item.botId;
     const botName = (botId ? botById.get(botId)?.name : undefined) ?? item.sourceLabel.split(" · ")[0]?.trim() ?? "Murage";
-    const quick = trayQuickAnswer(card, { stopHit: card?.requestId ? deps.stopHit(item.link.threadId, card.requestId) : false });
+    const stopHit = card?.requestId ? deps.stopHit(item.link.threadId, card.requestId) : false;
+    const quick = previews && trayQuickAnswer(card, { stopHit });
+    const display = previews ? outsideDisplay(card, botName) : null;
+    const digest = previews && card?.requestId && deps.digest ? deps.digest(item.link.threadId, card.requestId, card) : undefined;
     return {
-      id: item.id, ...(botId ? { botId } : {}), botName,
-      summary: oneLine(card?.summary || card?.subtitle || item.summary || item.title),
+      id: item.id, ...(botId ? { botId } : {}), botName: previews ? botName : PREVIEWS_OFF_NAME,
+      summary: previews ? oneLine(card?.summary || card?.subtitle || item.summary || item.title) : PREVIEWS_OFF_SUMMARY,
       threadId: item.link.threadId, messageId: item.link.messageId,
       ...(card?.requestId ? { requestId: card.requestId } : {}), quick,
+      ...(display ? { display } : {}),
+      outsideOk: previews ? outsideOkMap(card, { stopHit, botName }) : closedOutsideMap(),
+      ...(digest ? { digest } : {}),
     };
   });
   const working: TrayWorking[] = [];
@@ -115,7 +141,7 @@ export function traySummary(deps: TraySummaryDeps): TraySummary {
       const last = deps.newestActivity ? deps.newestActivity(threadId, startedAt)
         : [...(deps.messagesFor?.(threadId) ?? [])].reverse().find(message => message.kind === "activity" && message.tool && (!startedAt || message.at >= startedAt));
       const doing = oneLine(last?.tool?.spoken ?? last?.tool?.summary ?? (task?.title && task.title !== "New task" ? task.title : "") ?? "") || "Working";
-      working.push({ botId: bot.id, botName: bot.name, threadId, doing, ...(startedAt ? { startedAt } : {}) });
+      working.push({ botId: bot.id, botName: previews ? bot.name : PREVIEWS_OFF_NAME, threadId, doing: previews ? doing : PREVIEWS_OFF_DOING, ...(startedAt ? { startedAt } : {}) });
     }
   }
   const visible = deps.bots.filter(bot => !bot.hidden);
@@ -124,10 +150,10 @@ export function traySummary(deps: TraySummaryDeps): TraySummary {
   const ordered = [...(chief ? [chief] : []), ...others];
   return {
     // Snoozed is not answered (UX L2B): the menu bar adds snoozed owed items back, as the sidebar badge does.
-    needsYou: deps.page.decisions + Math.max(0, deps.page.snoozedOwed ?? 0) + Math.max(0, deps.signedOutEngines ?? 0),
-    items,
+    needsYou: (deps.connectorItems?.length ?? 0) + deps.page.decisions + Math.max(0, deps.page.snoozedOwed ?? 0) + Math.max(0, deps.signedOutEngines ?? 0),
+    items: [...(deps.connectorItems ?? []), ...items].slice(0, deps.itemLimit ?? TRAY_ITEM_LIMIT),
     working,
-    bots: ordered.slice(0, BOT_LIMIT).map(bot => ({ id: bot.id, name: bot.name, chief: bot === chief })),
+    bots: ordered.slice(0, BOT_LIMIT).map(bot => ({ id: bot.id, name: previews ? bot.name : PREVIEWS_OFF_NAME, chief: bot === chief })),
     moreBots: ordered.length > BOT_LIMIT,
   };
 }

@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 import { constants, closeSync, fstatSync, openSync, createWriteStream, rmSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { Readable, Transform } from "node:stream";
@@ -88,7 +89,7 @@ async function runAge(executable: string,args: string[],input: Readable,output: 
   const outputFd=openSync(output,"wx",0o600);
   let bytes=0;
   const onBytes=safeBackupProgress(options.onBytes);
-  const child=spawn(executable,args,{stdio:inputFd===undefined?["pipe","pipe","pipe"]:["pipe","pipe","pipe",inputFd],env:{PATH:""},windowsHide:true});
+  const child=spawn(executable,[...args],withHideInherit({stdio:inputFd===undefined?["pipe","pipe","pipe"]:["pipe","pipe","pipe",inputFd],env:{PATH:""},windowsHide:true}));
   let didClose=false;
   // Log-only facts about the tool (never shown, never returned to a window):
   // its exit, a spawn errno, and the head of its error output. The head is

@@ -15,7 +15,7 @@ import { quietChildPipes } from "../child-pipe-quiet.mjs";
 // and the syscall fails. A child that has merely exited gives
 // ERR_STREAM_DESTROYED instead, which is a different and non-fatal path — the
 // first attempt at this fixture made that mistake and proved nothing.
-const child = spawn("/bin/sh", ["-c", "exec 0<&-; sleep 5"], { stdio: ["pipe", "ignore", "ignore"] });
+const child = spawn("/bin/sh", ["-c", "exec 0<&-; sleep 5"], { windowsHide: true, stdio: ["pipe", "ignore", "ignore"] });
 
 if (process.argv[2] === "guard") quietChildPipes(child);
 

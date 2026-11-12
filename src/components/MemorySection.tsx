@@ -1,22 +1,25 @@
+import { LearningConsentNotice } from "./LearningConsentNotice";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, useStore } from "@/state/store";
 import { t } from "@/lib/i18n";
-import { learningStillPaused } from "@/lib/learning-limit";
+import { LEARNING_LIMIT_ANCHOR, learningStillPaused } from "@/lib/learning-limit";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { useAction } from "@/lib/use-action";
 import { openDeepLink } from "@/lib/deep-link";
 import { useMemoryWaiting } from "@/lib/use-memory-waiting";
+import { useUpgradeContext } from "@/lib/memory-integrity-feed";
 import type { SettingsPage } from "@/lib/settings-pages";
 import {
-  formatTokens, learnAsWeTalk, learnAsWeTalkPatch, learningConnectionLabel, raisedCeiling, requestLearningAction, skippedSliceRetry,
+  learnAsWeTalk, learnAsWeTalkPatch, learningConnectionLabel, raisedCeiling, requestLearningAction, skippedSliceRetry,
   type LearningAction, type LearningEvent, type LearningPage, type LearningSource, type MemoryLearning,
 } from "@/lib/memory-learning";
-import { ceilingStatusLine, learningEventLabel, learningRequestError, memoryStatusLine, skippedSliceMessage } from "@/lib/memory-learning-text";
+import { ceilingStatusLine, learningEventLabel, learningRequestError, learningStatusLine, semanticPhrase, skippedSliceMessage } from "@/lib/memory-learning-text";
+import { countText } from "@/lib/memory-words";
 import { ActionButton, ActionStatus } from "./ActionButton";
-import { AdvancedHost, AdvancedSection, AdvancedSlotTarget, Card, InAdvanced, Switch } from "./SettingsPrimitives";
-import { MemorySettings, type MemoryStatus } from "./MemorySettings";
+import { AdvancedHost, AdvancedSection, AdvancedSlotTarget, Card, Part, Switch } from "./SettingsPrimitives";
+import { MemorySettings, memoryModeDescription, type MemoryStatus } from "./MemorySettings";
 import { memoryButtonClass, memoryInputClass } from "./MemoryReview";
 const buttonClass = `${memoryButtonClass} min-h-11`;
 interface SectionStatus {
@@ -53,26 +56,8 @@ function ConnectionSelect({ value, options, run }: { value: string; options: Rea
     <ActionStatus action={action} />
   </div>;
 }
-const millions = (tokens: number) => String(Math.round(tokens / 100_000) / 10);
-const parseMillions = (text: string): number | null => { const n = Number(text); return text.trim() !== "" && Number.isFinite(n) && n >= 0 && n <= 1_000_000 ? Math.round(n * 1_000_000) : null; };
-/** Change the monthly limit: two numbers in millions of tokens, saved with the learning revision. */
-function CeilingEditor({ ceiling, onSave, onCancel }: { ceiling: { input: number; output: number }; onSave: (next: { input: number; output: number }) => Promise<unknown> | unknown; onCancel: () => void }) {
-  const [read, setRead] = useState(millions(ceiling.input)), [written, setWritten] = useState(millions(ceiling.output));
-  const input = parseMillions(read), output = parseMillions(written), valid = input !== null && output !== null;
-  return <div className="mt-3 space-y-3 rounded-lg border border-hairline/40 p-3 text-[13px]">
-    <label className="block space-y-1">{t("memoryPage.ceiling.readLabel")}<input className={`${memoryInputClass} min-h-11`} inputMode="decimal" value={read} onChange={event => setRead(event.target.value)} /></label>
-    <label className="block space-y-1">{t("memoryPage.ceiling.writtenLabel")}<input className={`${memoryInputClass} min-h-11`} inputMode="decimal" value={written} onChange={event => setWritten(event.target.value)} /></label>
-    {!valid && <p role="status" className="text-[12px] text-ink-secondary">{t("memoryPage.ceiling.invalid")}</p>}
-    {valid && (input === 0 || output === 0) && <p role="status" className="text-[12px] text-ink-secondary">{t("memoryPage.ceiling.zero")}</p>}
-    <div className="flex flex-wrap items-start gap-2">
-      <ActionBtn label={t("memoryPage.ceiling.save")} pending={t("memoryPage.saving")} blocked={!valid} success={t("memoryPage.ceiling.saved")} run={() => onSave({ input: input!, output: output! })} />
-      <button type="button" className={buttonClass} onClick={onCancel}>{t("memoryPage.cancel")}</button>
-    </div>
-  </div>;
-}
 /** A retry the server no longer knows (404, MEMORY_SKIPPED_SLICE_UNKNOWN) was retried already. */
 const isAlreadyRetried = (cause: unknown) => (cause as { status?: number } | null)?.status === 404 || (cause instanceof Error && cause.message.includes("MEMORY_SKIPPED_SLICE_UNKNOWN"));
-const percentOf = (used: number, limit: number) => limit > 0 ? Math.min(100, Math.round(100 * used / limit)) : 100;
 const modeSentence = (mode: MemoryStatus["mode"]): string => ({
   active: t("memoryPage.modeSentence.active"),
   capture: t("memoryPage.modeSentence.capture"),
@@ -83,7 +68,7 @@ const modeSentence = (mode: MemoryStatus["mode"]): string => ({
 interface ContentProps {
   status: SectionStatus; bots: Array<{ id: string; name: string }>;
   events: LearningEvent[]; cursor: string | null; filter: string; busy: boolean; historyBusy: boolean;
-  refusals: Record<string, string>; workspace: ReactNode; waiting?: number;
+  refusals: Record<string, string>; workspace: ReactNode; waiting?: number; overviewMode?: string;
   /** Events whose skipped part has been retried: the row says so instead of offering Try again again. */
   retried?: ReadonlySet<string>; onRetried?(eventId: string): void;
   /** Runs one request. It resolves when the server has answered and throws a plain sentence when it refused. */
@@ -113,7 +98,7 @@ export function EventRow({ event, busy, refusal, retried = false, onRetried, onA
   </li>;
 }
 
-export function MemorySectionContent({ status, bots, events, cursor, filter, busy, historyBusy, refusals, workspace, waiting = 0, retried, onRetried, onAction, onFilter, onMore, onOpen, onRefresh, onOpenAdvanced }: ContentProps) {
+export function MemorySectionContent({ status, bots, events, cursor, filter, busy, historyBusy, refusals, workspace, waiting = 0, overviewMode, retried, onRetried, onAction, onFilter, onMore, onOpen, onRefresh, onOpenAdvanced }: ContentProps) {
   const learning = status.learning, settings = learning?.settings;
   const configure = (value: Partial<Omit<NonNullable<typeof settings>, "version" | "ceiling">>): Work => () => onAction({ action: "configure", learning: value, learningRevision: learning!.revision });
   const setMode = (mode: MemoryStatus["mode"]): Work => () => onAction({ action: "configure", mode });
@@ -124,14 +109,16 @@ export function MemorySectionContent({ status, bots, events, cursor, filter, bus
   const composite = settings ? learnAsWeTalk(settings) : null;
   const memories = status.records?.active ?? 0;
   return <div className="min-w-0 space-y-4" data-testid="memory-section">
+    <LearningConsentNotice />
+    <Part id="memory.overview">
     <section aria-label={t("memoryPage.title")}><Card>
       <div className="flex flex-wrap items-center justify-between gap-2"><h2 id="memory-status-heading" className="text-[15px] font-medium">{t("memoryPage.title")}</h2><ActionBtn label={t("memoryPage.refresh")} pending={t("memoryPage.refreshing")} blocked={busy || historyBusy} success={t("memoryPage.upToDate")} failure={t("memoryPage.refreshFailed")} run={onRefresh} /></div>
       <p className="mt-1 text-[13px] text-ink-secondary">{t("memoryPage.subtitle")}</p>
       <div className="mt-3 text-[13px]">
         <ActionSwitch settingControl="memory-heading" id="memory-on-label" label={t("memoryPage.on.label")} hint={status.mode === "capture" ? t("memoryPage.on.captureHint") : undefined} checked={status.mode === "active"} disabled={busy}
           run={setMode(status.mode === "active" ? "paused" : "active")} success={status.mode === "active" ? t("memoryPage.on.pausedDone") : t("memoryPage.on.onDone")} />
-        {!learning || !settings ? <p role="status" className="mt-3 text-[13px] text-ink-secondary">{t("memoryPage.learningUnavailable")}</p> : <div className="mt-3 space-y-2">
-          <p role="status">{memoryStatusLine({ mode: status.mode, learning, memories, memoriesMore: status.recordsMore?.active, waiting, semantic: status.semantic })}</p>
+        <p role="status" className="mt-3 text-[13px] text-ink-secondary">{t(memories === 1 && !status.recordsMore?.active ? "memorySettings.savedOne" : "memorySettings.savedOther", { count: countText(memories, status.recordsMore?.active), waiting })}. {overviewMode ?? modeSentence(status.mode)} {status.semantic && semanticPhrase(status.semantic)}{(!learning || !settings) && <> {t("memoryPage.learningUnavailable")}</>}</p>
+        {learning && settings && <div className="mt-3 space-y-2">
           {ceilingLine && <p className="flex flex-wrap items-center gap-2 text-ink-secondary">{ceilingLine.text}
             {ceilingLine.follow === "raise" && <ActionBtn pauseOnResult label={t("memoryPage.ceiling.raise")} pending={t("memoryPage.ceiling.raising")} blocked={busy} success={t("memoryPage.ceiling.raised")} failure={t("memoryPage.ceiling.raiseFailed")} run={() => onAction({ action: "configure", ceiling: raisedCeiling(ceiling!), learningRevision: learning.revision })} />}
             {ceilingLine.follow === "advanced" && onOpenAdvanced && <button type="button" className={buttonClass} onClick={onOpenAdvanced}>{t("memoryPage.openAdvanced")}</button>}
@@ -139,7 +126,11 @@ export function MemorySectionContent({ status, bots, events, cursor, filter, bus
         </div>}
       </div>
     </Card></section>
-    {learning && settings && composite && <section aria-label={t("memoryPage.learn.title")}><Card><h2 id="memory-how-heading" className="text-[15px] font-medium">{t("memoryPage.learn.title")}</h2><div className="mt-3 space-y-1 text-[13px]">
+    </Part>
+    <Part id="memory.how-it-learns">
+    {learning && settings && composite && <section aria-label={t("memoryPage.learn.title")}><Card><h2 id="memory-how-title" className="text-[15px] font-medium">{t("memoryPage.learn.title")}</h2><div className="mt-3 space-y-1 text-[13px]">
+      <p className="text-ink-secondary">{learningStatusLine(status.mode, learning)}</p>
+      <p className="text-[12px] text-ink-secondary">Memory learning uses Flux to pick out what to remember from your chats when you have a Flux key.</p>
       <ActionSwitch settingControl="memory-how-heading" id="memory-learn-label" label={t("memoryPage.learn.asWeTalk")} hint={composite.partial ? t("memoryPage.learn.partly", { what: composite.partial }) : t("memoryPage.learn.asWeTalkHint")} checked={composite.on} disabled={busy}
         run={configure(learnAsWeTalkPatch(settings))} success={composite.on ? t("memoryPage.learn.asWeTalkOff") : t("memoryPage.learn.asWeTalkOn")} />
       <ActionSwitch id="memory-review-label" label={t("memoryPage.learn.review")} hint={t("memoryPage.learn.reviewHint")} checked={settings.reviewMode} disabled={busy}
@@ -149,20 +140,26 @@ export function MemorySectionContent({ status, bots, events, cursor, filter, bus
       <ActionSwitch id="memory-channels-label" label={t("memoryPage.learn.channels")} checked={settings.learnFrom.channels} disabled={busy}
         run={configure({ learnFrom: { ...settings.learnFrom, channels: !settings.learnFrom.channels } })} success={settings.learnFrom.channels ? t("memoryPage.learn.channelsOff") : t("memoryPage.learn.channelsOn")} />
     </div></Card></section>}
-    <section aria-label={t("memoryPage.bots.title")}><Card><h2 id="memory-bots-heading" className="text-[15px] font-medium">{t("memoryPage.bots.title")}</h2><p className="mt-1 text-[13px] text-ink-secondary">{t("memoryPage.bots.subtitle")}</p><ul className="mt-3 divide-y divide-hairline/40">{bots.map((bot, index) => <li key={bot.id} className="min-h-16 py-2 text-[13px]">
+    </Part>
+    <Part id="memory.bots">
+    <section aria-label={t("memoryPage.bots.title")}><Card><h2 id="memory-bots-title" className="text-[15px] font-medium">{t("memoryPage.bots.title")}</h2><p className="mt-1 text-[13px] text-ink-secondary">{t("memoryPage.bots.subtitle")}</p><ul className="mt-3 divide-y divide-hairline/40">{bots.map((bot, index) => <li key={bot.id} className="min-h-16 py-2 text-[13px]">
       <ActionSwitch settingControl={index === 0 ? "memory-bots-heading" : undefined} id={`memory-bot-${bot.id}`} label={bot.name} hint={t("memoryPage.bots.hint")} checked={Boolean(settings && !settings.botsPaused.includes(bot.id))} disabled={busy || !learning}
         run={() => onAction({ action: "learning-bot", botId: bot.id, enabled: settings!.botsPaused.includes(bot.id), learningRevision: learning!.revision })} success={settings?.botsPaused.includes(bot.id) ? t("memoryPage.bots.learningAgain", { name: bot.name }) : t("memoryPage.bots.paused", { name: bot.name })} />
     </li>)}</ul>{!bots.length && <p className="mt-3 text-[13px] text-ink-secondary">{t("memoryPage.bots.empty")}</p>}</Card></section>
-    <section aria-label={t("memoryPage.history.title")}><Card><h2 id="memory-learned-heading" className="text-[15px] font-medium">{t("memoryPage.history.title")}</h2><div className="mt-3 space-y-3">
+    </Part>
+    <Part id="memory.learned">
+    <section aria-label={t("memoryPage.history.title")}><Card><h2 id="memory-learned-title" className="text-[15px] font-medium">{t("memoryPage.history.title")}</h2><div className="mt-3 space-y-3">
       <label className="block space-y-1 text-[13px]">{t("memoryPage.history.filter")}<select data-setting-control="memory-learned-heading" className={`${memoryInputClass} min-h-11`} value={filter} disabled={busy} onChange={event => onFilter(event.target.value)}><option value="">{t("memoryPage.history.allBots")}</option>{bots.map(bot => <option key={bot.id} value={bot.id}>{bot.name}</option>)}</select></label>
       {historyBusy && <p role="status" className="text-[13px] text-ink-secondary">{t("memoryPage.history.loading")}</p>}
       <ul aria-label={t("memoryPage.history.listLabel")} className="space-y-3">{events.map(event => <EventRow key={event.id} event={event} busy={busy} refusal={refusals[event.id]} retried={retried?.has(event.id)} onRetried={() => onRetried?.(event.id)} onAction={onAction} onOpen={onOpen} />)}</ul>
       {!historyBusy && !events.length && <p className="text-[13px] text-ink-secondary">{t("memoryPage.history.empty")}</p>}
       {cursor && <ActionBtn label={t("memoryPage.history.seeAll")} pending={t("memoryPage.loading")} blocked={busy || historyBusy} success={null} failure={t("memoryPage.history.moreFailed")} run={onMore} />}
     </div></Card></section>
-    {learning && settings && ceiling && <InAdvanced>
+    </Part>
+    {learning && settings && ceiling && <>
+      <Part id="memory.mode">
       <section aria-label={t("memoryPage.mode.title")} className="rounded-lg border border-hairline/40 p-3 text-[13px]">
-        <h3 id="memory-mode-heading" className="text-[14px] font-medium">{t("memoryPage.mode.title")}</h3>
+        <h3 id="memory-mode-title" className="text-[14px] font-medium">{t("memoryPage.mode.title")}</h3>
         <div role="group" aria-label={t("memoryPage.mode.title")} className="mt-2 flex flex-wrap items-start gap-2">
           {([["active", t("memoryPage.mode.on")], ["capture", t("memoryPage.mode.capture")], ["paused", t("memoryPage.mode.paused")]] as const).map(([mode, label], index) => <ActionBtn key={mode} data-setting-control={index === 0 ? "memory-mode-heading" : undefined} label={label} aria-pressed={status.mode === mode} blocked={busy || status.mode === mode} className={`${buttonClass} ${status.mode === mode ? "border-focus bg-inset" : ""}`} success={t("memoryPage.mode.set", { label })} run={setMode(mode)} />)}
           {status.mode === "off" && <span className="inline-flex min-h-11 items-center px-2 text-ink-secondary">{t("memoryPage.mode.offNow")}</span>}
@@ -173,9 +170,10 @@ export function MemorySectionContent({ status, bots, events, cursor, filter, bus
           <ActionSwitch id="memory-procedures-label" label={t("memoryPage.mode.procedures")} checked={settings.automaticProcedures} disabled={busy} run={configure({ automaticProcedures: !settings.automaticProcedures })} success={settings.automaticProcedures ? t("memoryPage.mode.proceduresOff") : t("memoryPage.mode.proceduresOn")} />
         </div>
       </section>
-      <LimitCard ceiling={ceiling} busy={busy} onSave={next => onAction({ action: "configure", ceiling: next, learningRevision: learning.revision })} />
+      </Part>
+      <Part id="memory.connection">
       <section aria-label={t("memoryPage.connection.title")} className="rounded-lg border border-hairline/40 p-3 text-[13px]">
-        <h3 id="memory-connection-heading" className="text-[14px] font-medium">{t("memoryPage.connection.title")}</h3>
+        <h3 id="memory-connection-title" className="text-[14px] font-medium">{t("memoryPage.connection.title")}</h3>
         <div className="mt-2 space-y-2">
           <ConnectionSelect value={selected} run={next => onAction({ action: "configure", extractorInstanceId: next || null })} options={<>
             <option value="">{stored === "@murage/flux-fast" ? t("memoryPage.connection.fluxChosen") : fast?.eligible ? t("memoryPage.connection.fluxDefault") : t("memoryPage.connection.fluxAddKey")}</option>
@@ -186,28 +184,14 @@ export function MemorySectionContent({ status, bots, events, cursor, filter, bus
           {learning.connection.suggestion && <p className="flex flex-wrap items-center gap-2 text-ink-secondary">{t("memoryPage.connection.canUse", { name: learning.connection.suggestion.label })}<ActionBtn label={t("memoryPage.connection.use", { name: learning.connection.suggestion.label })} blocked={busy} success={t("memoryPage.connection.saved")} run={() => onAction({ action: "configure", extractorInstanceId: learning.connection.suggestion!.instanceId })} /></p>}
         </div>
       </section>
-    </InAdvanced>}
+      </Part>
+    </>}
     {workspace}
   </div>;
 }
-function LimitCard({ ceiling, busy, onSave }: { ceiling: NonNullable<MemoryLearning["ceiling"]>; busy: boolean; onSave: (next: { input: number; output: number }) => Promise<unknown> | unknown }) {
-  const [editing, setEditing] = useState(false);
-  const rows = [[t("memoryPage.limit.read"), ceiling.inputUsed, ceiling.input], [t("memoryPage.limit.written"), ceiling.outputUsed, ceiling.output]] as const;
-  return <section aria-label={t("memoryPage.limit.title")} className="rounded-lg border border-hairline/40 p-3 text-[13px]">
-    <h3 id="memory-limit-heading" className="text-[14px] font-medium">{t("memoryPage.limit.title")}</h3>
-    <p className="mt-1 text-[12px] text-ink-secondary">{t("memoryPage.limit.note")}</p>
-    <div className="mt-3 space-y-2">{rows.map(([name, used, limit]) => <div key={name}>
-      <p>{t("memoryPage.limit.row", { name, used: formatTokens(used), limit: formatTokens(limit) })}{" "}<span className="text-ink-secondary">{percentOf(used, limit)}%</span></p>
-      <progress aria-label={t("memoryPage.limit.thisMonth", { name })} className="h-2 w-full accent-accent" max={100} value={percentOf(used, limit)} />
-    </div>)}</div>
-    <p className="mt-2 text-[12px] text-ink-secondary">{t("memoryPage.limit.reset")}</p>
-    {!editing ? <button type="button" data-setting-control="memory-limit-heading" className={`${buttonClass} mt-2`} disabled={busy} onClick={() => setEditing(true)}>{t("memoryPage.limit.change")}</button>
-      : <CeilingEditor ceiling={ceiling} onCancel={() => setEditing(false)} onSave={async next => { await onSave(next); setEditing(false); }} />}
-  </section>;
-}
-
-export default function MemorySection({ advanced }: { advanced?: { section: SettingsPage; open: boolean; onOpenChange: (open: boolean) => void } } = {}) {
+export default function MemorySection({ advanced, cards = false }: { advanced?: { section: SettingsPage; open: boolean; onOpenChange: (open: boolean) => void }; cards?: boolean } = {}) {
   const desktop = useDesktopSurface(), { state, dispatch } = useStore();
+  const upgradeContext = useUpgradeContext();
   const waiting = useMemoryWaiting();
   const [localOpen, setLocalOpen] = useState(false);
   const adv = advanced ?? { section: "memory" as SettingsPage, open: localOpen, onOpenChange: setLocalOpen };
@@ -248,7 +232,7 @@ export default function MemorySection({ advanced }: { advanced?: { section: Sett
   const refresh = async () => {
     if (inFlight.current) return;
     inFlight.current = true; setWorking(true); setError(null);
-    try { await Promise.all([refreshStatus(), loadHistory(filter)]); if (mounted.current) { setConflict(false); setRefusals({}); } }
+    try { await Promise.all([refreshStatus(), loadHistory(filter)]); if (mounted.current) { setConflict(false); setRefusals({}); setMemoryRevision(n => n + 1); } }
     catch { throw new Error(t("memoryPage.refreshFailed")); }
     finally { inFlight.current = false; if (mounted.current) setWorking(false); }
   };
@@ -280,19 +264,18 @@ export default function MemorySection({ advanced }: { advanced?: { section: Sett
     if (!mounted.current) return;
     void loadHistory(filter, undefined, true).catch(() => { if (mounted.current) setError(t("memoryPage.historyFailed")); });
   };
-  const openAdvanced = () => {
-    adv.onOpenChange(true);
-    window.setTimeout(() => document.getElementById("memory-limit-heading")?.scrollIntoView?.({ block: "center" }), 60);
-  };
+  // The monthly learning limit lives on Usage now (it keeps its id, memory.limit): the way out of a paused or off month goes there.
+  const openAdvanced = () => dispatch({ type: "toggleAppSettings", open: true, section: "usage", anchor: LEARNING_LIMIT_ANCHOR });
   if (desktop !== true) return <p role="status" className="text-[13px] text-ink-secondary">{t("memoryPage.desktopOnly")}</p>;
-  return <AdvancedHost><div className="space-y-4">
+  const body = <div className="space-y-4">
     {error && <p role="alert" className="break-words text-[13px] text-danger">{error}</p>}
     {conflict && <ActionBtn label={t("memoryPage.refreshChanged")} pending={t("memoryPage.refreshing")} blocked={working} success={t("memoryPage.settingsUpToDate")} failure={t("memoryPage.refreshFailed")} run={refresh} />}
     {!status ? <><p role="status" className="text-[13px] text-ink-secondary">{t("memoryPage.settingsLoading")}</p>{error && <ActionBtn label={t("memoryPage.refreshSettings")} pending={t("memoryPage.refreshing")} blocked={working} success={t("memoryPage.settingsUpToDate")} failure={t("memoryPage.refreshFailed")} run={refresh} />}</> : <MemorySectionContent status={status} bots={state.bots.filter(bot => !bot.hidden)} events={events} cursor={cursor} filter={filter} busy={working || conflict} historyBusy={historyBusy} refusals={refusals} waiting={waiting.total}
-      retried={retried} onRetried={id => setRetried(previous => new Set(previous).add(id))} onAction={act} onFilter={setFilter} onRefresh={refresh} onOpenAdvanced={openAdvanced}
+      overviewMode={memoryModeDescription(upgradeContext, status)} retried={retried} onRetried={id => setRetried(previous => new Set(previous).add(id))} onAction={act} onFilter={setFilter} onRefresh={refresh} onOpenAdvanced={openAdvanced}
       onMore={async () => { if (!cursor) return; try { await loadHistory(filter, cursor); } catch { throw new Error(t("memoryPage.history.moreFailed")); } }}
       onOpen={source => { if (openDeepLink({ threadId: source.threadId, ...(source.messageId ? { messageId: source.messageId } : {}) }, state, dispatch)) dispatch({ type: "toggleAppSettings", open: false }); else setError(t("memoryPage.conversationGone")); }}
-      workspace={<MemorySettings refreshToken={memoryRevision} sharedStatus={status} onStatusChange={setStatus} onMutation={workspaceMutated} onNavigate={() => dispatch({ type: "toggleAppSettings", open: false })} />} />}
-    <AdvancedSection {...adv} summary={t("settings.l2.advanced.memory")}><AdvancedSlotTarget /></AdvancedSection>
-  </div></AdvancedHost>;
+      workspace={<MemorySettings refreshToken={memoryRevision} sharedStatus={status} onStatusChange={setStatus} onMutation={workspaceMutated} onNavigate={() => dispatch({ type: "toggleAppSettings", open: false })} cards={cards} />} />}
+    {!cards && <AdvancedSection {...adv} summary={t("settings.l2.advanced.memory")}><AdvancedSlotTarget /></AdvancedSection>}
+  </div>;
+  return cards ? body : <AdvancedHost>{body}</AdvancedHost>;
 }

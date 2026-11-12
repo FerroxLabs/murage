@@ -1,3 +1,4 @@
+import { type HeldPeerAuthority } from './held-peer-authority.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -29,6 +30,8 @@ import type { BotRecord, GroupRecord, Message, MessageMurage, Store } from "./st
 import type { WorkerMessage } from "./worker-message.ts";
 import type { ExecutionAudience } from "./work-admission.ts";
 import type { HumanPrincipal } from "./human-principals.ts";
+import type { PackAuthority } from "./delegation-pack/types.ts";
+import { isOwnerOrigin } from "./store.ts";
 
 /** Does this row record a step that failed or is being retried? Such a row is told to a bot as the kind of failure, never as its own words. */
 function failureOf(message: Message): WorkerMessage["failure"] {
@@ -67,6 +70,8 @@ export interface BoundaryStore {
   linkMessage(threadId: string, messageId: string, link: { to?: string[]; replyToId?: string }): void;
   /** Is this id a row of the conversation? One keyed read, never the conversation. */
   hasMessage(threadId: string, messageId: string): boolean;
+  /** Input provenance only; no stored words leave the adapter. Missing support means no pack. */
+  ownerInput?(threadId: string, messageId: string): boolean;
   /** Has the turn that answered this request already written its closing row here? Looked for among the rows written since the request was
    * made (a keyed range), never the conversation. */
   hasTerminalFor(threadId: string, request: Pick<RoomRequest, "id" | "createdAt">): boolean;
@@ -116,6 +121,10 @@ export function boundaryStore(store: Store): BoundaryStore {
     markGroupUnread: groupId => { store.patchGroup(groupId, { unread: true }); },
     linkMessage: (threadId, messageId, link) => { store.patchMessage(threadId, messageId, { ...(link.to ? { to: link.to } : {}), ...(link.replyToId ? { replyToId: link.replyToId } : {}) }); },
     hasMessage: (threadId, messageId) => store.messageById(threadId, messageId) !== undefined,
+    ownerInput: (threadId, messageId) => {
+      const row = store.messageById(threadId, messageId);
+      return !!row && row.role === "user" && row.kind === "text" && isOwnerOrigin(row.origin) && row.automation === undefined;
+    },
     // a row of a request is written after the request was made: looked for among the rows since then (a minute of slack for clocks)
     hasTerminalFor: (threadId, request) => store.scanSince(threadId, Math.max(0, request.createdAt - 60_000), message => message.requestId === request.id && Boolean(message.turnTerminal)),
     terminalFor: (threadId, request) => {
@@ -165,7 +174,7 @@ export interface BoundaryComms {
   reply(target: BotRecord, reply: Outbound, channel: GroupRecord | undefined, copyOf?: Message["copyOf"], inboundKind?: "action" | "question"): string | undefined;
   murageLine(channel: GroupRecord | undefined, text: Outbound, murage: MessageMurage, lineage?: { requestId?: string; replyToId?: string }): void;
   activity(from: BotRecord, channel: GroupRecord | undefined, name: Outbound, ok: boolean): void;
-  queueDelegation(from: BotRecord, item: DelegationItem, maxDepth: number, sourceThreadId: string): QueuedDelegation;
+  queueDelegation(from: BotRecord, item: DelegationItem, maxDepth: number, sourceThreadId: string, authority?: PackAuthority, held?: HeldPeerAuthority): QueuedDelegation;
   /** Drops a direct hand-off just queued whose asker wake could not be kept on disk (NOHOLD-DELEGATION.md); false once it is draining or gone. */
   dropQueuedDelegation(id: string, reason: Outbound): boolean;
   enqueueShared(input: SharedEnqueueInput): SharedEnqueueResult;
@@ -181,7 +190,7 @@ export function boundaryComms(bus: CommsBus): BoundaryComms {
     reply: (target, reply, channel, copyOf, inboundKind) => mirrorReply(bus, target, reply, channel, copyOf, inboundKind),
     murageLine: (channel, text, murage, lineage) => mirrorMurageLine(bus, channel, text, murage, lineage),
     activity: (from, channel, name, ok) => mirrorActivity(bus, from, channel, name, ok),
-    queueDelegation: (from, item, maxDepth, sourceThreadId) => queueDelegation(bus, from, item, maxDepth, sourceThreadId),
+    queueDelegation: (from, item, maxDepth, sourceThreadId, authority, held) => queueDelegation(bus, from, item, maxDepth, sourceThreadId, authority, held),
     dropQueuedDelegation: (id, reason) => dropQueuedDelegation(bus, id, reason),
     enqueueShared: input => {
       const queued = enqueueSharedWork(store, input);

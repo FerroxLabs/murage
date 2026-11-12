@@ -7,6 +7,7 @@ import { projectThreads } from "./project-memory-tools.ts";
 import { ProjectLateWrites } from "./project-run-events.ts";
 import { accountPresentedProjectEvent } from "./project-usage-dispatch.ts";
 import { noteStartupFileEvent } from "./engine-env.ts";
+import { Ledger } from "./turn-settle.ts";
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 const ast = ts.createSourceFile("index.ts", source, ts.ScriptTarget.Latest, true);
 function nodes(test: (node: ts.Node) => boolean) {
@@ -37,7 +38,7 @@ it("the watchdog waits only after folder-held approval presentation, including r
   const calls = nodes(n => ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === "subscribe"
     && (n.arguments[0]?.getText(ast).includes("watchdog.setWaitingOnHuman") || n.arguments[0]?.getText(ast).includes("deadline.setWaitingOnHuman")));
   expect(calls).toHaveLength(1);
-  const deps = { bus, presentedRequests, watchdog, shouldIgnoreProviderEvent: () => false, memoryDispatches: new Map(), lateProjectWrites: { complete: vi.fn() }, threadId: "room", providerTurnId: "turn" };
+  const deps = { bus, presentedRequests, watchdog, directRuns: { get: () => undefined }, shouldIgnoreProviderEvent: () => false, memoryDispatches: new Map(), lateProjectWrites: { complete: vi.fn() }, threadId: "room", providerTurnId: "turn" };
   calls.forEach(call => evaluate(call.getText(ast), deps));
   const begin = source.indexOf("const foldRuntimeEvent = (event: RuntimeEvent) => {");
   const end = source.indexOf("  const localVmTarget", begin);
@@ -71,8 +72,9 @@ it("retired provider output still releases only its matching late-write resource
     expect(callback).toBeDefined();
     const event = { type: "turn.completed", threadId: "room", turnId: "retired-turn" };
     const endHeldWriteWaits = vi.fn();
+    const ledger = new Ledger();
     evaluate(`const receive = ${callback.arguments[0].getText(ast)}; receive(event); receive(event);`, {
-      event, lateProjectWrites, endHeldWriteWaits, memoryDispatches: new Map(), shouldIgnoreProviderEvent: () => true,
+      event, lateProjectWrites, endHeldWriteWaits, botOutsideWrites: { ledger }, memoryDispatches: new Map(), shouldIgnoreProviderEvent: () => true,
       pendingRoomStops: new Map(), projectTurnLeases: { complete: vi.fn() }, internalCapabilities: { completeProviderTurn: vi.fn() }, internalTurnOwners: new Map(),
     });
     vi.advanceTimersByTime(250);

@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
 /**
@@ -81,7 +82,7 @@ export function helperEncode(test?: { env?: Record<string, string>; onChild?: (c
     if (!child) {
       const env: NodeJS.ProcessEnv = { ELECTRON_RUN_AS_NODE: '1', ...test?.env };
       for (const key of ['HOME', 'USERPROFILE', 'SystemRoot', 'TMPDIR']) if (process.env[key]) env[key] = process.env[key];
-      const current = fork(SPAWNED_PROXIES.panelAvatarEncoder, [], { execArgv: ['--experimental-strip-types'], stdio: ['ignore', 'ignore', 'pipe', 'ipc'], serialization: 'advanced', env });
+      const current = fork(SPAWNED_PROXIES.panelAvatarEncoder, [], withHideInherit({ execArgv: ['--experimental-strip-types'], stdio: ['ignore', 'ignore', 'pipe', 'ipc'], serialization: 'advanced', env }));
       child = current; current.stderr?.resume();
       current.on('message', (message: { id: number; out?: Buffer | null; unavailable?: boolean; error?: boolean }) => {
         if (child !== current) return;

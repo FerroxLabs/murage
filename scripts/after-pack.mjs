@@ -1,8 +1,14 @@
+import { proveAnchoredReadResource } from "./anchored-read-resource.mjs";
+import { assertPackagedShell } from "./check-os-shell.mjs";
+import { writePackageBuildProvenance } from './package-build-provenance.mjs';
+import { assertWindowsGui } from "./check-windows-gui.mjs";
+import { writeAppUpdate } from "./offline-update-metadata.mjs";
 import { lstatSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { chmod, lstat, open, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { validateEngineExclusionResource, loadEngineExclusionResource } from "./engine-exclusion-resource.mjs";
 import { ADDON_VERSION as ENGINE_EXCLUSION_ADDON_VERSION } from "../server/engine-exclusion.ts";
 import { validateNotificationAuthorizationResource } from "./notification-authorization-resource.mjs";
@@ -22,6 +28,9 @@ import { browserBundlePaths } from "../server/browser-bundle-release.ts";
 import { nativeAuthenticodeIn, verifyWindowsBrowserImage, verifyWindowsBrowserSignatures, WINDOWS_BROWSER_IMAGE_PINS } from "../server/browser-windows-identity.ts";
 import { verifyWindowsBackupTools } from "./prepare-windows-backup-tools.mjs";
 import { verifyGepaBundle } from "../server/gepa-resource.ts";
+
+/** Where scripts/build-engine-exclusion.mjs writes each target's addon and its build.json receipt (the folders electron-builder copies from). */
+const EXCLUSION_BUILD_ROOT = fileURLToPath(new URL("../dist-native/engine-exclusion/", import.meta.url));
 
 /** Intel Macs ship without a local semantic runtime (README "Current
  * boundaries"): native/gepa/build-mac.py builds only the runner's own arch and
@@ -371,14 +380,25 @@ export default async function afterPack(context) {
       ? path.join(context.appOutDir, "Murage.app", "Contents", "Resources")
       : path.join(context.appOutDir, "resources")
   );
+  if (context.packager && context.electronPlatformName === "win32") {
+    console.log("Windows Sentinel entry:", assertWindowsGui(await readFile(packagedElectronBinary(context))));
+  }
+  if (context.packager) console.log("OS shell package guard:", assertPackagedShell(context.appOutDir));
   validatePackagedGepa(resources, context);
   // A desktop without the production control-plane key refuses every production Cloud home: the packaged control-plane module must be byte-identical to the gate-tested source.
   if (context.packager) console.log("control-plane pin:", JSON.stringify(await validatePackagedProdPin(resources)));
   if(context.electronPlatformName==="darwin"&&context.packager){const arch=typeof context.arch==="string"?context.arch:({1:"x64",3:"arm64"})[context.arch];validateNotificationAuthorizationResource(resources,arch);await requireRegularFile(path.join(resources,"notification-authorization.node"),0o755);}
   // Without the engine-exclusion addon Murage cannot clean a deleted conversation out of the engines' files; refuse a package that lacks it.
   if (context.packager) {
+    if (context.electronPlatformName === "darwin" || context.electronPlatformName === "win32") {
+      const anchoredFile = path.join(resources, "anchored-read.node");
+      await requireRegularFile(anchoredFile, context.electronPlatformName === "win32" ? undefined : 0o755);
+      console.log(proveAnchoredReadResource(anchoredFile, packagedElectronBinary(context)));
+    }
     const exclusionArch = typeof context.arch === "string" ? context.arch : ({ 1: "x64", 3: "arm64" })[context.arch];
-    const exclusionFile = validateEngineExclusionResource(resources, context.electronPlatformName, exclusionArch);
+    // R16/R25: a Windows package must carry the release-CRT addon; the build script's own receipt for this target is mandatory here.
+    const exclusionReceipt = path.join(EXCLUSION_BUILD_ROOT, `${context.electronPlatformName}-${exclusionArch}`, "build.json");
+    const exclusionFile = validateEngineExclusionResource(resources, context.electronPlatformName, exclusionArch, exclusionReceipt);
     await requireRegularFile(exclusionFile, context.electronPlatformName === "win32" ? undefined : 0o755);
     // Loads it for real with the TARGET package's own Electron binary (run as Node); a package this machine cannot run is refused.
     console.log(`engine-exclusion addon: ${loadEngineExclusionResource(exclusionFile, context.electronPlatformName, exclusionArch, ENGINE_EXCLUSION_ADDON_VERSION, (command, args, env) => execFileSync(command, args, { timeout: 240000, env: { ...process.env, ...env } }), packagedElectronBinary(context))}`);
@@ -388,7 +408,7 @@ export default async function afterPack(context) {
   const fuigoProbe = await validateFuigoProbeResources(resources, context.electronPlatformName, Boolean(context.packager));
   // Every Windows native file we build ourselves may import only system DLLs: a /MD build once imported VCRUNTIME140.dll, so the addon
   // would not load on a clean Windows machine and every native feature failed closed (Murage 1.0.3).
-  if (context.packager && context.electronPlatformName === "win32") console.log("windows native imports:", JSON.stringify(assertWindowsNativeImports([path.join(resources, "engine-exclusion.node"), ...(fuigoProbe ? [fuigoProbe.file] : [])])));
+  if (context.packager && context.electronPlatformName === "win32") console.log("windows native imports:", JSON.stringify(assertWindowsNativeImports([path.join(resources, "engine-exclusion.node"), path.join(resources, "anchored-read.node"), ...(fuigoProbe ? [fuigoProbe.file] : [])])));
   await validatePackagedMemoryRuntime(resources, context.electronPlatformName, context.arch, Boolean(context.packager));
   // The bundled local model: exact manifest bytes on every target, Intel macOS included. A release build must carry it.
   if (context.packager) {
@@ -430,6 +450,7 @@ export default async function afterPack(context) {
     for (const [file, pin] of [[browser.engine, WINDOWS_BROWSER_IMAGE_PINS.engine], [browser.chrome, WINDOWS_BROWSER_IMAGE_PINS.chrome]]) {
       if (!verifyWindowsBrowserImage(await readFile(file), pin).signed) throw new Error("Packaged Windows browser signing left an unsigned image");
     }
+    if (context.packager) writePackageBuildProvenance(context.packager.projectDir, resources);
     verifyWindowsBackupTools(backupDirectory);
     // The packaged addon's own WinVerifyTrust check (no PowerShell anywhere: murage-releases #1); a package without it was refused above.
     const nativeSignatures = nativeAuthenticodeIn(resources);
@@ -438,6 +459,7 @@ export default async function afterPack(context) {
     if (fuigoProbe) await stampSignedFuigoProbe(fuigoProbe);
   }
 
+  await writeAppUpdate(context, resources);
   if (context.electronPlatformName !== "linux") return;
 
   await validatePackagedCage(resources, context.arch, Boolean(context.packager));

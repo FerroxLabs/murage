@@ -7,6 +7,10 @@
 // entries so the suite is deterministic with or without agent CLIs installed
 // and exercises the shadow-instance behavior end to end.
 // Part 4 of 4: the smaller API groups.
+// This file fires many revokes within a minute (bots, rooms and settings changes). The revoke marker's per-minute write budget and the drain pace
+// (server/memory/revoke-budget.ts) have their own tests; here both are lifted in the server child, exactly as index-2.test.ts does, so a turn is not
+// held behind marker work they are pacing. Set before the harness module starts the child.
+vi.hoisted(() => { process.env.MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET = "1"; });
 import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
 import { createHash } from "node:crypto";
 import { once } from "node:events";

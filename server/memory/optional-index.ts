@@ -1,7 +1,9 @@
+import { windowsHidePrelude } from "../../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Optional indexes over history-sized tables (memory_disclosures_live, and every later one): never built at open and never on the main
+// Deferred indexes over history-sized tables (including required ones with a bounded fallback): built after listen, unless marked preListen.
+// A missing preListen index is attempted at every open. Other indexes are never built at open or on the main
 // thread. A CREATE INDEX reads the whole table (hundreds of ms for the owner's 155,809 jobs / 186,697 records), so it runs in a worker thread on a
 // connection of its own (the root-set reclaim pattern), after the server listens. SQLite makes the index in ONE atomic statement, so an index
 // that exists IS complete: readiness is "the name is in sqlite_schema", and a reader that wants the index checks optionalIndexReady() and
@@ -14,6 +16,30 @@ export type OptionalIndex = { name: string; table: string; sql: string; minSchem
  * for a small partial index a turn's first read needs, whose build is cheap next to the walk its absence costs */ preListen?: boolean; /** also logs the build hold as `[<logTag>] index build ms=<n> ok=<0|1>` (a greppable line per owner of the index) */ logTag?: string };
 /** Every optional index. The exact text SQLite stores (sql without IF NOT EXISTS) is what validation accepts. */
 export const OPTIONAL_INDEXES: OptionalIndex[] = [];
+/** Required for the normal owner path. Failure keeps the bounded fallback active until a build succeeds. */
+export const REQUIRED_INDEXES: OptionalIndex[] = [];
+export function registerRequiredIndex(index: OptionalIndex): OptionalIndex {
+  if (!REQUIRED_INDEXES.some(item => item.name === index.name)) REQUIRED_INDEXES.push(index);
+  return index;
+}
+const registeredIndexes = () => [...REQUIRED_INDEXES, ...OPTIONAL_INDEXES];
+const pendingRequired = new WeakMap<DatabaseSync, Set<string>>();
+/** In memory only: owner writes never query schema or attempt CREATE INDEX. */
+export function requiredIndexRebuildPending(db: DatabaseSync, name: string): boolean {
+  return pendingRequired.get(db)?.has(name) ?? false;
+}
+function requiredBuildResult(db: DatabaseSync, index: OptionalIndex, ok: boolean, error?: unknown): void {
+  if (!REQUIRED_INDEXES.includes(index)) return;
+  if (ok) { pendingRequired.get(db)?.delete(index.name); return; }
+  let pending = pendingRequired.get(db);
+  if (!pending) { pending = new Set(); pendingRequired.set(db, pending); }
+  if (!pending.has(index.name)) {
+    const failure = error as { code?: string; errcode?: number; name?: string } | null;
+    const errorClass = ({ 5: 'SQLITE_BUSY', 6: 'SQLITE_LOCKED', 13: 'SQLITE_FULL' } as Record<number, string>)[Number(failure?.errcode) & 255] ?? failure?.code ?? failure?.name ?? 'Error';
+    console.warn(`[memory] required index build failed name=${index.name} class=${errorClass}; rebuild pending`);
+  }
+  pending.add(index.name);
+}
 export function registerOptionalIndex(index: OptionalIndex): OptionalIndex {
   if (!OPTIONAL_INDEXES.some(item => item.name === index.name)) OPTIONAL_INDEXES.push(index);
   return index;
@@ -31,7 +57,7 @@ try {
   parentPort.postMessage({ ok: true });
 } catch (error) {
   try { db && db.close(); } catch {}
-  parentPort.postMessage({ ok: false, message: String(error && error.message || error) });
+  parentPort.postMessage({ ok: false, message: String(error && error.message || error), code: error && error.code, errcode: error && error.errcode, name: error && error.name });
 }
 `;
 /** The file a connection is attached to, "" for an in-memory or temporary database. */
@@ -49,14 +75,15 @@ export const optionalIndexStats = { started: 0, built: 0, failed: 0, gated: 0 };
  * which a worker cannot open) builds on the caller's connection: tests only. */
 export function buildOptionalIndexOffThread(db: DatabaseSync, index: OptionalIndex, options: { retries?: number; retryMs?: number; inline?: boolean; canStart?: () => boolean; hold?: (on: boolean) => void } = {}): Promise<boolean> {
   if (index.minSchemaVersion > 0 && Number(db.prepare("SELECT schema_version AS v FROM memory_meta WHERE id=1").get()?.v) < index.minSchemaVersion) return Promise.resolve(false);
-  if (optionalIndexReady(db, index.name)) return Promise.resolve(true);
+  if (optionalIndexReady(db, index.name)) { requiredBuildResult(db, index, true); return Promise.resolve(true); }
   const file = databaseFile(db);
   const key = `${file}\0${index.name}`;
   const running = inFlight.get(key);
   if (running) return running;
   if (!file || options.inline) {
     const began = performance.now();
-    db.exec(index.sql);
+    try { db.exec(index.sql); requiredBuildResult(db, index, true); }
+    catch (error) { if (!REQUIRED_INDEXES.includes(index)) throw error; requiredBuildResult(db, index, false, error); return Promise.resolve(false); }
     if (index.logTag) console.log(`[${index.logTag}] index build ms=${Math.round(performance.now() - began)} ok=1 inline=1`);
     return Promise.resolve(true);
   }
@@ -69,7 +96,8 @@ export function buildOptionalIndexOffThread(db: DatabaseSync, index: OptionalInd
     const began = performance.now();
     console.log(`[memory] index build start name=${index.name}`);
     try { options.hold?.(true); } catch { /* not held */ }
-    const done = (ok: boolean) => {
+    const done = (ok: boolean, error?: unknown) => {
+      requiredBuildResult(db, index, ok, error);
       try { options.hold?.(false); } catch { /* released */ }
       const held = Math.round(performance.now() - began);
       console.log(`[memory] index build done name=${index.name} ms=${held}${ok ? "" : " failed"}`);
@@ -80,14 +108,14 @@ export function buildOptionalIndexOffThread(db: DatabaseSync, index: OptionalInd
       const timer = setTimeout(() => { void attempt(left - 1, pause * 2).then(resolve); }, pause); timer.unref?.();
     };
     try {
-      const worker = new Worker(WORKER_SOURCE, { eval: true, workerData: { file, sql: index.sql } });
+      const worker = new Worker(windowsHidePrelude + WORKER_SOURCE, { eval: true, workerData: { file, sql: index.sql } });
       let settled = false;
-      const finish = (ok: boolean) => { if (settled) return; settled = true; done(ok); };
-      worker.on("message", (message: { ok: boolean }) => finish(message.ok));
-      worker.on("error", () => finish(false));
+      const finish = (ok: boolean, error?: unknown) => { if (settled) return; settled = true; done(ok, error); };
+      worker.on("message", (message: { ok: boolean; code?: string; errcode?: number; name?: string }) => finish(message.ok, message));
+      worker.on("error", error => finish(false, error));
       worker.on("exit", () => finish(false));
       worker.unref();
-    } catch { done(false); }
+    } catch (error) { done(false, error); }
   });
   const promise = attempt(options.retries ?? 3, options.retryMs ?? 60_000).finally(() => { inFlight.delete(key); });
   inFlight.set(key, promise);
@@ -95,7 +123,7 @@ export function buildOptionalIndexOffThread(db: DatabaseSync, index: OptionalInd
 }
 /** Drops every registered optional index (a downgrade to a build that accepts none of them). */
 export function dropOptionalIndexes(db: DatabaseSync): void {
-  for (const index of OPTIONAL_INDEXES) db.exec(`DROP INDEX IF EXISTS ${index.name}`);
+  for (const index of registeredIndexes()) db.exec(`DROP INDEX IF EXISTS ${index.name}`);
 }
 
 let windowBuilt = false;
@@ -105,14 +133,16 @@ let windowBuilt = false;
  * back to their bounded path meanwhile, so waiting costs nothing. Resolves with the name built, or null. */
 export async function buildOptionalIndexesWhenIdle(db: DatabaseSync, gate: ReclaimGate, options: { idleMs?: number; inline?: boolean; retryMs?: number; hold?: (on: boolean) => void } = {}): Promise<string | null> {
   if (!reclaimAllowed(gate, options.idleMs)) { windowBuilt = false; return null; }
-  if (windowBuilt) return null;
-  for (const index of OPTIONAL_INDEXES) {
-    if (optionalIndexReady(db, index.name)) continue;
+  // Required retries precede the optional one-per-window budget, including a previous failed attempt.
+  for (const index of registeredIndexes()) {
+    const required = REQUIRED_INDEXES.includes(index);
+    if (!required && windowBuilt) return null;
+    if (optionalIndexReady(db, index.name)) { requiredBuildResult(db, index, true); continue; }
     // an index over a table this file does not have (a memory-only file) waits for it, without spending the window
     if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(index.table)) continue;
     if (index.minSchemaVersion > 0 && Number(db.prepare("SELECT schema_version AS v FROM memory_meta WHERE id=1").get()?.v) < index.minSchemaVersion) continue;
-    windowBuilt = true;
-    return (await buildOptionalIndexOffThread(db, index, options.inline ? { inline: true } : { canStart: () => reclaimAllowed(gate, options.idleMs), ...(options.retryMs !== undefined ? { retryMs: options.retryMs } : {}), ...(options.hold ? { hold: options.hold } : {}) })) ? index.name : null;
+    if (!required) windowBuilt = true;
+    return (await buildOptionalIndexOffThread(db, index, options.inline ? { inline: true } : { ...(required ? { retries: 0 } : {}), canStart: () => reclaimAllowed(gate, options.idleMs), ...(options.retryMs !== undefined ? { retryMs: options.retryMs } : {}), ...(options.hold ? { hold: options.hold } : {}) })) ? index.name : null;
   }
   return null;
 }
@@ -148,18 +178,27 @@ export function buildEagerIndexesBeforeListen(db: DatabaseSync, options: { log?:
 export function buildPreListenIndexes(db: DatabaseSync, options: { log?: boolean } = {}): string[] {
   return buildBeforeListen(db, index => Boolean(index.preListen), options);
 }
+/** True when this launch would build a preListen index: the caller keeps the start-up note moving for the build, which blocks the server thread. Two
+ * schema-table seeks, and any failure reads as nothing to build. */
+export function preListenIndexMissing(db: DatabaseSync): boolean {
+  try { return registeredIndexes().some(index => index.preListen && dueBeforeListen(db, index)); } catch { return false; }
+}
+function dueBeforeListen(db: DatabaseSync, index: OptionalIndex): boolean {
+  if (index.minSchemaVersion > 0 && Number(db.prepare("SELECT schema_version AS v FROM memory_meta WHERE id=1").get()?.v) < index.minSchemaVersion) return false;
+  return !optionalIndexReady(db, index.name);
+}
 function buildBeforeListen(db: DatabaseSync, pick: (index: OptionalIndex) => boolean, options: { log?: boolean }): string[] {
   const built: string[] = [];
-  for (const index of OPTIONAL_INDEXES) {
+  for (const index of registeredIndexes()) {
     if (!pick(index)) continue;
     try {
-      if (index.minSchemaVersion > 0 && Number(db.prepare("SELECT schema_version AS v FROM memory_meta WHERE id=1").get()?.v) < index.minSchemaVersion) continue;
-      if (optionalIndexReady(db, index.name)) continue;
+      if (!dueBeforeListen(db, index)) { requiredBuildResult(db, index, true); continue; }
       const began = performance.now();
       db.exec(index.sql);
+      requiredBuildResult(db, index, true);
       built.push(index.name);
       if (options.log !== false) console.log(`[memory] index build before listen name=${index.name} ms=${Math.round(performance.now() - began)}`);
-    } catch { /* left to the after-listen build (buildEagerIndexes) */ }
+    } catch (error) { requiredBuildResult(db, index, false, error); /* left to the next idle build or start */ }
   }
   return built;
 }

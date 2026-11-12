@@ -31,7 +31,7 @@ const mb = (bytes: number) => bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).to
 
 /** The site folder inside the bot's workspace, or a refusal. The folder must be a
  * relative path that stays inside the workspace after symlinks are resolved. */
-export function resolveSiteFolder(workspace: string, folder: string): string {
+export function resolveSiteFolder(workspace: string, folder: string, noLimits = false): string {
   const outside = () => new PublishError("outside", "The site folder has to be a folder inside this bot's own files. Put the site in a folder such as \"site\" and try again.");
   if (typeof folder !== "string" || !folder.trim() || folder.includes("\0") || folder.includes("\\") || isAbsolute(folder) || /^[A-Za-z]:/.test(folder)) throw outside();
   const base = realpathSync(workspace);
@@ -39,7 +39,7 @@ export function resolveSiteFolder(workspace: string, folder: string): string {
   if (target !== base && !target.startsWith(base + sep)) throw outside();
   if (target === base) throw outside();
   // The deny list covers the folders on the way in too: ".private/site" or "node_modules/x" is not a public site.
-  if (target.slice(base.length + 1).split(sep).some(isPrivateName)) throw new PublishError("outside", "That folder is private (its path has a hidden or protected name), so it cannot be published. Put the site in a plain folder such as \"site\".");
+  if (!noLimits && target.slice(base.length + 1).split(sep).some(isPrivateName)) throw new PublishError("outside", "That folder is private (its path has a hidden or protected name), so it cannot be published. Put the site in a plain folder such as \"site\".");
   let real: string;
   try { real = realpathSync(target); } catch { return target; }  // a missing folder is reported by listSite
   if (!real.startsWith(base + sep)) throw outside();
@@ -65,7 +65,7 @@ function snapshot(path: string, rel: string, root: string): Buffer {
   } finally { closeSync(fd); }
 }
 
-export function listSite(dir: string, limits: SiteLimits = SITE_LIMITS): SiteListing {
+export function listSite(dir: string, limits: SiteLimits = SITE_LIMITS, noLimits = false): SiteListing {
   let root;
   try { root = lstatSync(dir); } catch { throw new PublishError("no-folder", "I could not find the site folder. Make the site first, then publish it."); }
   if (root.isSymbolicLink()) throw new PublishError("symlink", "The site folder is a shortcut (symlink). Put the real files in a normal folder.");
@@ -76,13 +76,13 @@ export function listSite(dir: string, limits: SiteLimits = SITE_LIMITS): SiteLis
   const walk = (current: string, prefix: string) => {
     for (const name of readdirSync(current).sort()) {
       const path = join(current, name), rel = prefix ? `${prefix}/${name}` : name;
-      if (isPrivateName(name)) { skipped.push(rel); continue; }
+      if (!noLimits && isPrivateName(name)) { skipped.push(rel); continue; }
       const info = lstatSync(path);
       if (info.isSymbolicLink()) throw new PublishError("symlink", `"${rel}" is a shortcut (symlink), and a shortcut could point at a private file. Replace it with the real file and try again.`);
       if (info.isDirectory()) { walk(path, rel); continue; }
       if (!info.isFile()) throw new PublishError("not-a-file", `"${rel}" is not a regular file. Remove it and try again.`);
       found.push({ rel, size: info.size, path });
-      if (found.length > limits.maxFiles) throw new PublishError("too-many-files", `This folder has more than ${limits.maxFiles} files, which is more than a small site needs. Trim it to ${limits.maxFiles} or fewer.`);
+      if (!noLimits && found.length > limits.maxFiles) throw new PublishError("too-many-files", `This folder has more than ${limits.maxFiles} files, which is more than a small site needs. Trim it to ${limits.maxFiles} or fewer.`);
     }
   };
   walk(dir, "");
@@ -90,8 +90,8 @@ export function listSite(dir: string, limits: SiteLimits = SITE_LIMITS): SiteLis
   const bytes = found.reduce((sum, file) => sum + file.size, 0);
   const biggest = [...found].sort((a, b) => b.size - a.size || a.rel.localeCompare(b.rel)).slice(0, 5);
   const list = biggest.map(file => `${file.rel} (${mb(file.size)})`).join(", ");
-  if (biggest[0] && biggest[0].size > limits.maxFileBytes) throw new PublishError("too-large", `"${biggest[0].rel}" is ${mb(biggest[0].size)}, over the ${mb(limits.maxFileBytes)} limit for one file. The biggest files are: ${list}. Make them smaller or remove them.`);
-  if (bytes > limits.maxBytes) throw new PublishError("too-large", `The site is ${mb(bytes)}, over the ${mb(limits.maxBytes)} limit. The biggest files are: ${list}. Make them smaller or remove them.`);
+  if (!noLimits && biggest[0] && biggest[0].size > limits.maxFileBytes) throw new PublishError("too-large", `"${biggest[0].rel}" is ${mb(biggest[0].size)}, over the ${mb(limits.maxFileBytes)} limit for one file. The biggest files are: ${list}. Make them smaller or remove them.`);
+  if (!noLimits && bytes > limits.maxBytes) throw new PublishError("too-large", `The site is ${mb(bytes)}, over the ${mb(limits.maxBytes)} limit. The biggest files are: ${list}. Make them smaller or remove them.`);
   // Pass 2: the snapshot. The owner approves these bytes and these bytes are uploaded.
   const files: SiteFile[] = found.map(file => ({ ...file, data: snapshot(file.path, file.rel, realRoot) }));
   return { files, skipped, bytes };

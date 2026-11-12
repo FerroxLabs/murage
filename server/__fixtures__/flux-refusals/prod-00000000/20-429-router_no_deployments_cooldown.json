@@ -1,0 +1,59 @@
+{
+ "status": 429,
+ "headers": {
+  "date": "<HTTP-date>",
+  "server": "uvicorn",
+  "x-flux-alias": "deepseek-v4-flash",
+  "content-type": "application/json",
+  "x-frame-options": "DENY",
+  "content-security-policy": "frame-ancestors 'none'",
+  "x-content-type-options": "nosniff",
+  "connection": "close",
+  "content-length": "<n>"
+ },
+ "body": {
+  "error": {
+   "message": "Flux Router error: No deployments available for selected model, Try again in 60 seconds. Passed model=flux-fast. pre-call-checks=False, cooldown_list=['KEYHASH_REDACTED']",
+   "type": null,
+   "param": null,
+   "code": "429"
+  }
+ },
+ "endpoint": "/v1/chat/completions",
+ "per_endpoint": {
+  "/v1/messages": {
+   "status": 500,
+   "headers": {
+    "content-length": "228",
+    "content-type": "application/json"
+   },
+   "body": {
+    "type": "error",
+    "error": {
+     "type": "api_error",
+     "message": "Flux Router error: No deployments available for selected model, Try again in 60 seconds. Passed model=flux-fast. pre-call-checks=False, cooldown_list=['KEYHASH_REDACTED']"
+    }
+   },
+   "method": "from-code (rendered in fixture env with the real Flux renderer)",
+   "headers_note": "content-type and content-length are from the real renderer. The security headers seen on every live chat capture (x-frame-options, content-security-policy, x-content-type-options) are app-wide and expected here too, but these routes were NOT live-captured (staging does not mount the Flux /v1/messages and /v1/responses handlers). x-request-id is echoed on /v1/messages only when the client sent one."
+  },
+  "/v1/responses": {
+   "status": 502,
+   "headers": {
+    "content-length": "266",
+    "content-type": "application/json"
+   },
+   "body": {
+    "error": {
+     "message": "upstream provider error: RouterRateLimitError: No deployments available for selected model, Try again in 60 seconds. Passed model=flux-fast. pre-call-checks=False, cooldown_list=['KEYHASH_REDACTED']",
+     "type": "api_error",
+     "param": null,
+     "code": null
+    }
+   },
+   "method": "from-code (rendered in fixture env with the real Flux renderer)",
+   "headers_note": "content-type and content-length are from the real renderer. The security headers seen on every live chat capture (x-frame-options, content-security-policy, x-content-type-options) are app-wide and expected here too, but these routes were NOT live-captured (staging does not mount the Flux /v1/messages and /v1/responses handlers). x-request-id is echoed on /v1/messages only when the client sent one."
+  }
+ },
+ "notes": "Every deployment of the model group in cooldown. Chat: 429 only because LiteLLM's ProxyException re-codes 'No deployments available' messages; the cooldown retry-after (common_request_processing.py:2266-2268) is lost because the failure hook replaced the exception. /v1/messages: 500 api_error. /v1/responses: 502."
+}

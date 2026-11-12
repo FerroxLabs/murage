@@ -1,0 +1,47 @@
+--- a/package.json
++++ b/package.json
+@@ -47,7 +47,7 @@
+     "build": "tsc -b && tsc -p tsconfig.server.json && vite build",
+     "typecheck": "tsc -b && tsc -p tsconfig.server.json && tsc -p tools/flux-stream-conformance/tsconfig.json",
+     "test": "pnpm catalog:check && pnpm models:check && pnpm check:contrast && vitest run && pnpm broker:test && pnpm test:electron && pnpm test:packaged-server",
+-    "test:electron": "node --import ./server/testing/safe-wipe-preload.mjs --test \"electron/*.node-test.mjs\" \"shared/*.node-test.mjs\" \"scripts/windows-hide-posix.node-test.mjs\" \"scripts/check-os-shell.node-test.mjs\" \"scripts/patch-updater-no-shell-execute.node-test.mjs\" \"scripts/probes/native-deny/tests/*.test.mjs\"",
++    "test:electron": "node --import ./server/testing/safe-wipe-preload.mjs --test \"electron/*.node-test.mjs\" \"shared/*.node-test.mjs\" \"scripts/windows-hide-posix.node-test.mjs\" \"scripts/check-os-shell.node-test.mjs\" \"scripts/patch-updater-no-shell-execute.node-test.mjs\" \"scripts/probes/native-deny/tests/*.test.mjs\" \"scripts/no-limits-live/*.node-test.mjs\" \"scripts/nolim-replay/*.node-test.mjs\"",
+     "test:browser-extension-node": "node scripts/run-extension-node-tests.mjs",
+     "test:installer": "node --test \"installer/test/*.test.mjs\"",
+     "test:browser-extension-scripts": "node --test scripts/prepare-browser-extension.node-test.mjs scripts/browser-extension-build.node-test.mjs scripts/browser-extension-host-registration.node-test.mjs scripts/browser-extension-fixture-site/browser-extension-fixture-site.node-test.mjs scripts/browser-extension-x1.node-test.mjs scripts/browser-extension-idle.node-test.mjs extensions/murage-browser/sidepanel/sidepanel.node-test.mjs",
+--- a/ci/gate-tests.txt
++++ b/ci/gate-tests.txt
+@@ -2795,3 +2795,33 @@
+ server/highlevel/f3-required-contract.test.ts	all	Prevents absent F3 operations and unsafe single-recipient, upload and receipt contracts from passing the original-base RED gate.
+ server/highlevel/f3-copy-review.test.ts	all	Prevents shipping any conversation title without an independent review matching its exact locale text.
+ server/highlevel/operations/conversations-upload-anchored.test.ts	all	a workspace upload in a conversation never follows a swapped folder or link
++
++# No limits gate contracts; Node globs run in blocking quality.
++scripts/no-limits-live/baseline-f.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/no-limits-live/baseline.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/no-limits-live/cli.node-test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/no-limits-live/correction.node-test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/no-limits-live/field.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/no-limits-live/launch-api.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/no-limits-live/mandatory-powershell.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/no-limits-live/mandatory-ruling.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/no-limits-live/mandatory-unreadable.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/no-limits-live/mandatory-wipe.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/no-limits-live/oracle.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/no-limits-live/origin-api.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/no-limits-live/predicate.node-test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/no-limits-live/qualification.node-test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/no-limits-live/readers.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/no-limits-live/release-legs.node-test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/no-limits-live/release.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/no-limits-live/retry-observer.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/no-limits-live/review-blocks.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/no-limits-live/ruling-1019.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/no-limits-live/ruling.node-test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/no-limits-live/start-accounting.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/no-limits-live/workflows.node-test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/nolim-replay/j1-availability.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/nolim-replay/python.node-test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/nolim-replay/release-ruling.node-test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/nolim-replay/replay-contract.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
++scripts/nolim-replay/ruling.node-test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence

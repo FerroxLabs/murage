@@ -1,0 +1,285 @@
+[
+  {
+    "id": "terminal",
+    "tool": "terminal",
+    "input": {
+      "command": "printf s0-terminal"
+    }
+  },
+  {
+    "id": "execute-code",
+    "tool": "execute_code",
+    "input": {
+      "code": "print(sum(range(10)))"
+    }
+  },
+  {
+    "id": "execute-code-long",
+    "tool": "execute_code",
+    "input": {
+      "code": "# harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding harmless padding\nprint(\"s0-long-code\")"
+    }
+  },
+  {
+    "id": "write-file",
+    "tool": "write_file",
+    "input": {
+      "path": "/tmp/s0-work/edit.txt",
+      "content": "first\n"
+    }
+  },
+  {
+    "id": "patch",
+    "tool": "patch",
+    "input": {
+      "path": "/tmp/s0-work/edit.txt",
+      "old_string": "first",
+      "new_string": "second"
+    }
+  },
+  {
+    "id": "read-before-repeat",
+    "tool": "read_file",
+    "input": {
+      "path": "/tmp/s0-work/edit.txt"
+    }
+  },
+  {
+    "id": "write-repeat",
+    "tool": "write_file",
+    "input": {
+      "path": "/tmp/s0-work/edit.txt",
+      "content": "third\n"
+    }
+  },
+  {
+    "id": "patch-v4a",
+    "tool": "patch",
+    "input": {
+      "mode": "patch",
+      "patch": "*** Begin Patch\n*** Add File: /tmp/s0-work/v4a.txt\n+v4a\n*** End Patch"
+    }
+  },
+  {
+    "id": "shell-python-c",
+    "tool": "terminal",
+    "input": {
+      "command": "python3 -c \"print(42)\"",
+      "tool_name": "read_file"
+    }
+  },
+  {
+    "id": "shell-python-heredoc",
+    "tool": "terminal",
+    "input": {
+      "command": "python3 - <<'S0PY'\nprint('heredoc')\nS0PY"
+    }
+  },
+  {
+    "id": "shell-bash-c",
+    "tool": "terminal",
+    "input": {
+      "command": "bash -c 'printf s0-nested'"
+    }
+  },
+  {
+    "id": "mcp",
+    "tool": "mcp__s0__echo",
+    "input": {
+      "text": "s0-mcp"
+    }
+  },
+  {
+    "id": "read_file",
+    "tool": "read_file",
+    "input": {
+      "path": "/tmp/s0-work/seed.txt"
+    }
+  },
+  {
+    "id": "search_files",
+    "tool": "search_files",
+    "input": {
+      "path": "/tmp/s0-work",
+      "pattern": "alpha"
+    }
+  },
+  {
+    "id": "tool_describe",
+    "tool": "tool_describe",
+    "input": {
+      "names": [
+        "todo_list"
+      ]
+    }
+  },
+  {
+    "id": "skills_list",
+    "tool": "skills_list",
+    "input": {}
+  },
+  {
+    "id": "skill_view",
+    "tool": "skill_view",
+    "input": {
+      "name": "s0-missing"
+    }
+  },
+  {
+    "id": "session_search",
+    "tool": "session_search",
+    "input": {
+      "query": "s0-missing",
+      "limit": 1
+    }
+  },
+  {
+    "id": "todo_list",
+    "tool": "todo_list",
+    "input": {}
+  },
+  {
+    "id": "clarify",
+    "tool": "clarify",
+    "input": {
+      "questions": [
+        {
+          "question": "S0 fixture?",
+          "choices": [
+            "yes",
+            "no"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "web_search",
+    "tool": "web_search",
+    "input": {
+      "query": "s0-no-network"
+    }
+  },
+  {
+    "id": "web_extract",
+    "tool": "web_extract",
+    "input": {
+      "urls": [
+        "http://127.0.0.1:18080/page"
+      ]
+    }
+  },
+  {
+    "id": "vision_analyze",
+    "tool": "vision_analyze",
+    "input": {
+      "image_url": "/tmp/s0-work/missing.png",
+      "question": "s0"
+    }
+  },
+  {
+    "id": "video_analyze",
+    "tool": "video_analyze",
+    "input": {
+      "video_url": "/tmp/s0-work/missing.mp4",
+      "question": "s0"
+    }
+  },
+  {
+    "id": "show_tip",
+    "tool": "show_tip",
+    "input": {
+      "text": "s0",
+      "selector": "[data-tour=\"fixture\"]"
+    }
+  },
+  {
+    "id": "read_terminal",
+    "tool": "read_terminal",
+    "input": {}
+  },
+  {
+    "id": "read_window_below",
+    "tool": "read_window_below",
+    "input": {}
+  },
+  {
+    "id": "x_search",
+    "tool": "x_search",
+    "input": {
+      "query": ""
+    }
+  },
+  {
+    "id": "memory",
+    "tool": "memory",
+    "input": {
+      "action": "add",
+      "target": "memory",
+      "content": "S0 isolated fixture note."
+    }
+  },
+  {
+    "id": "write-accept_edits",
+    "mode": "accept_edits",
+    "tool": "write_file",
+    "input": {
+      "path": "/tmp/s0-work/accept_edits.txt",
+      "content": "before\n"
+    }
+  },
+  {
+    "id": "patch-accept_edits",
+    "tool": "patch",
+    "input": {
+      "path": "/tmp/s0-work/accept_edits.txt",
+      "old_string": "before",
+      "new_string": "after"
+    }
+  },
+  {
+    "id": "write-dont_ask",
+    "mode": "dont_ask",
+    "tool": "write_file",
+    "input": {
+      "path": "/tmp/s0-work/dont_ask.txt",
+      "content": "before\n"
+    }
+  },
+  {
+    "id": "patch-dont_ask",
+    "tool": "patch",
+    "input": {
+      "path": "/tmp/s0-work/dont_ask.txt",
+      "old_string": "before",
+      "new_string": "after"
+    }
+  },
+  {
+    "id": "write-default",
+    "mode": "default",
+    "tool": "write_file",
+    "input": {
+      "path": "/tmp/s0-work/default.txt",
+      "content": "before\n"
+    }
+  },
+  {
+    "id": "patch-default",
+    "tool": "patch",
+    "input": {
+      "path": "/tmp/s0-work/default.txt",
+      "old_string": "before",
+      "new_string": "after"
+    }
+  },
+  {
+    "id": "write-denied",
+    "tool": "write_file",
+    "answer": "deny",
+    "input": {
+      "path": "/tmp/s0-work/denied.txt",
+      "content": "must not exist"
+    }
+  }
+]

@@ -85,6 +85,7 @@ test("the quoted path survives a shell round-trip", { skip: posixShell }, () => 
       // `printf %s` echoes exactly one argument: what the shell parsed out of
       // our quoting has to be the path we meant, byte for byte.
       const parsed = execFileSync("/bin/sh", ["-c", `printf %s ${shellQuote(file)}`], {
+        windowsHide: true,
         encoding: "utf8",
       });
       assert.equal(parsed, file, `quoting mangled ${name}`);
@@ -103,7 +104,7 @@ test("the whole command parses into the arguments apt-get would receive", { skip
   const printed = execFileSync(
     "/bin/sh",
     ["-c", `set -- ${command.replace("sudo apt-get", "")}; for a in "$@"; do printf '%s\\n' "$a"; done`],
-    { encoding: "utf8" },
+    { windowsHide: true, encoding: "utf8" },
   );
 
   assert.deepEqual(printed.split("\n").filter(Boolean), ["install", "-y", file]);

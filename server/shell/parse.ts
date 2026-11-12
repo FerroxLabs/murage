@@ -435,6 +435,6 @@ class Parser {
 }
 
 /** The script, or `Unreadable`. */
-export function parse(text: string): Script {
-  return new Parser(lex(text)).parse();
+export function parse(text: string, unknownUnreadableWords = false): Script {
+  return new Parser(lex(text, unknownUnreadableWords)).parse();
 }

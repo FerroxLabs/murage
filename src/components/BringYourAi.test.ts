@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from "node:fs";
-import { Anchor } from "./SettingsAnchor";
+import { generalCards } from "./settings/pages/GeneralPage";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -25,18 +25,17 @@ describe("Bring what you already use", () => {
     expect(settings).toContain(en["bringYourAi.title"]);
     expect(settings).toContain(en["bringYourAi.grok"]);
     expect(settings).toContain(en["bringYourAi.learn"]);
-    // Read the production wrapper so this test catches a mark left on the
-    // non-focusable heading, a missing wrapper prop, or a duplicate mark.
-    const modal = readFileSync(new URL("./SettingsModal.tsx", import.meta.url), "utf8");
-    const wrapper = modal.match(/<Anchor id="bring-your-ai-heading"([^>]*)><BringYourAi \/><\/Anchor>/);
-    expect(wrapper).not.toBeNull();
-    const settingControl = wrapper![1].match(/settingControl="([^"]+)"/)?.[1];
-    expect(settingControl).toBe("bring-your-ai-heading");
-    const landing = renderToStaticMarkup(createElement(Anchor, {
-      id: "bring-your-ai-heading", settingControl, children: createElement(BringYourAi),
-    }));
+    // Render the production card so a missing, duplicated or non-focusable
+    // landing mark still fails after the General page moved out of the modal.
+    const cards = generalCards({ desktop: true, cloud: false }).filter(card => card.id === "general.bring-your-ai");
+    expect(cards).toHaveLength(1);
+    expect(cards[0].anchor).toBe("bring-your-ai-heading");
+    const landing = renderToStaticMarkup(cards[0].render());
+    expect(landing).toContain(en["bringYourAi.grok"]);
+    expect(landing).toContain(en["bringYourAi.learn"]);
+    expect(readFileSync(new URL("./settings/page-registry.tsx", import.meta.url), "utf8")).toContain('general: () => import("./pages/GeneralPage")');
     expect(landing.match(/data-setting-control="bring-your-ai-heading"/g)).toHaveLength(1);
-    expect(landing).toMatch(/<div\b[^>]*data-setting-control="bring-your-ai-heading"[^>]*tabindex="-1"/);
+    expect(landing).toMatch(/<div\b(?=[^>]*data-setting-control="bring-your-ai-heading")(?=[^>]*tabindex="-1")[^>]*>/);
     const row = renderToStaticMarkup(createElement(BringYourAiRow));
     expect(row).toContain('data-testid="bring-your-ai-row"');
     expect(row).toContain(en["bringYourAi.grok"]);

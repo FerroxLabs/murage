@@ -1,3 +1,6 @@
+import "../../shared/win-hide-child-process.mjs";
+import { NotModelRequest } from "../../shared/engine-transport.ts";
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 // First-party Android phone MCP server. It deliberately accepts physical USB
 // devices only: no emulators, wireless debugging, network ADB, or Tailscale.
 import { spawn } from "node:child_process";
@@ -64,7 +67,7 @@ async function runAdb(args: string[], options: { binary?: boolean; timeoutMs?: n
   const adb = resolveAdbPath();
   if (!adb) throw new Error("Android platform tools are unavailable. Reopen Murage or install adb.");
   return new Promise((resolve, reject) => {
-    const child = spawn(adb, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    const child = spawn(adb, [...args], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let size = 0;
@@ -326,9 +329,9 @@ async function callTool(name: string, args: Json): Promise<ToolResult> {
   throw new Error(`Unknown phone tool: ${name}`);
 }
 
-const send = (message: Json) => process.stdout.write(`${JSON.stringify(message)}\n`);
-const ok = (id: unknown, result: unknown) => send({ jsonrpc: "2.0", id, result });
-const rpcError = (id: unknown, code: number, message: string) => send({ jsonrpc: "2.0", id, error: { code, message } });
+const send = (message: Json) => NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", process.stdout.write(`${JSON.stringify(message)}\n`));
+const ok = (id: unknown, result: unknown) => NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", send({ jsonrpc: "2.0", id, result }));
+const rpcError = (id: unknown, code: number, message: string) => NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", send({ jsonrpc: "2.0", id, error: { code, message } }));
 
 async function handle(message: Json) {
   const id = message.id;
@@ -354,7 +357,7 @@ if (process.argv[1] && existsSync(process.argv[1]) && /phone-proxy\.(?:ts|js)$/.
   const lines = createInterface({ input: process.stdin, terminal: false });
   lines.on("line", (line) => {
     try {
-      const message = JSON.parse(line) as Json;
+      const message = registerBusyloopPayloadSite("read", JSON.parse(line)) as Json;
       void handle(message).catch((error) => rpcError(message.id, -32603, error instanceof Error ? error.message : String(error)));
     } catch {}
   });

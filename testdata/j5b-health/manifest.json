@@ -1,0 +1,41 @@
+{
+ "ack-control-0.json": {
+  "extended": false
+ },
+ "ack-with-control.json": {
+  "extended": true
+ },
+ "ack-without-control.json": {
+  "extended": false
+ },
+ "body-degraded-33.json": {
+  "items": 0,
+  "outboxDegraded": 0,
+  "valid": false
+ },
+ "body-degraded.json": {
+  "items": 2,
+  "outboxDegraded": 2,
+  "valid": true
+ },
+ "body-extra-key.json": {
+  "items": 0,
+  "outboxDegraded": 0,
+  "valid": false
+ },
+ "body-items-32.json": {
+  "items": 32,
+  "outboxDegraded": 0,
+  "valid": true
+ },
+ "body-items-33.json": {
+  "items": 0,
+  "outboxDegraded": 0,
+  "valid": false
+ },
+ "body-legacy-counter.json": {
+  "items": 0,
+  "outboxDegraded": 0,
+  "valid": false
+ }
+}

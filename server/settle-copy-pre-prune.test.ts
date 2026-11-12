@@ -12,7 +12,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { initializeMessageTables } from "./message-tables.ts";
 import { ftsSettled, settleFtsCopy } from "./settle-copy.ts";
 import { classifyDataDirEntry } from "./data-dir-inventory.ts";
-import { DELETED_TEXT, deleteThreadRows, fileHolds, headerIsRollback, holdMerges, keptRows, seedMixed, sidecarsOf } from "./testing/fts-copy-fixture.ts";
+import { seedCopyIntents, DELETED_TEXT, deleteThreadRows, fileHolds, headerIsRollback, holdMerges, keptRows, seedMixed, sidecarsOf } from "./testing/fts-copy-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
@@ -202,4 +202,40 @@ it("T11: a settle failure skips the prune: the rows stay and no copy is left und
   b.migration.reconcileProjectRecords(b.cold);
   expect(b.records.projectSettingsFor(b.db, b.gone.id)).not.toBeNull();
   expect(readdirSync(b.data).filter(name => name.startsWith("project-rows-before-prune-"))).toEqual([]);
+});
+
+it("T-COPY-PROJECT: real private-copy caller removes retired postings", async () => {
+  vi.doUnmock("./settle-copy.ts"); vi.resetModules();
+  const f = liveFile();
+  seedCopyIntents(f.db);
+  f.db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(t, tokenize='trigram', content='', contentless_delete=1, detail=none); ALTER TABLE messages_fts RENAME TO messages_fts_retired; CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(t, tokenize='trigram', content='', contentless_delete=1, detail=none); INSERT INTO messages_fts_retired(rowid,t) VALUES(9999999,'qzxretiredcanary')");
+  const { snapshotProjectRows } = await import("./project-migration.ts"); expect(snapshotProjectRows(f.db, NOW, f.dir)).toBe(true);
+  const copy = new DatabaseSync(f.target, { readOnly: true });
+  try { expect(copy.prepare("SELECT * FROM search_intents").all()).toEqual([]); expect(copy.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'messages_fts_retired%'").all()).toEqual([]); }
+  finally { copy.close(); }
+  expect(readFileSync(f.target).includes(Buffer.from("qzx"))).toBe(false);
+});
+
+it.each(["retired", "queue", "shadow"])("T-COPY-RETRY %s: remake an existing final copy with no legacy index or sidecars", async debt => {
+  const f = liveFile();
+  f.db.prepare("VACUUM INTO ?").run(f.target);
+  const old = new DatabaseSync(f.target);
+  try {
+    old.exec("DROP TABLE messages_fts");
+    if (debt === "queue") seedCopyIntents(old);
+    else if (debt === "shadow") old.exec("CREATE TABLE messages_fts_retired_8_data(id INTEGER PRIMARY KEY, block BLOB); INSERT INTO messages_fts_retired_8_data VALUES(11,x'717A78')");
+    else old.exec("CREATE VIRTUAL TABLE messages_fts_retired USING fts5(t, tokenize='trigram', content='', contentless_delete=1, detail=none); INSERT INTO messages_fts_retired(rowid,t) VALUES(9999999,'qzx')");
+  } finally { old.close(); }
+  expect(sidecarsOf(f.target)).toEqual([]);
+  const { snapshotProjectRows } = await import("./project-migration.ts");
+  expect(snapshotProjectRows(f.db, NOW, f.dir)).toBe(true);
+  await expectSettled(f.target);
+  const copy = new DatabaseSync(f.target, { readOnly: true });
+  try {
+    expect(copy.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'messages_fts_retired%'").all()).toEqual([]);
+    if (copy.prepare("SELECT 1 FROM sqlite_schema WHERE name='search_intents'").get()) expect(copy.prepare("SELECT * FROM search_intents").all()).toEqual([]);
+  } finally { copy.close(); }
+  const clean = readFileSync(f.target);
+  expect(snapshotProjectRows(f.db, NOW, f.dir)).toBe(true);
+  expect(readFileSync(f.target)).toEqual(clean);
 });

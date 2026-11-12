@@ -4,6 +4,7 @@
 // The Flux email client's outcome mapping, the capability probe (dark launch), the email secret store and the 3.3 decision.
 import { describe, expect, it } from "vitest";
 import { botKeysDark, classifyResponse, FluxEmailClient, parseFluxError } from "./flux-email-client.ts";
+import { createRemovalTransport } from "./removal-transport.ts";
 import { EmailCapabilityProbe, isEnabled } from "./capabilities.ts";
 import { credentialFingerprint, EMAIL_SECRETS_ENV, EmailSecretStore, emailCredentialProvider, sanitizeEmailSecrets } from "./email-secrets.ts";
 import { decideSend, distinctAddressesInText } from "./send-policy.ts";
@@ -101,8 +102,9 @@ describe("the client", () => {
     const mint = await c.mintBotKey({ botId: "b1" }, "murage-key:i:op");
     expect(botKeysDark(mint)).toBe(true);
     expect(fake.requests[0].body).toEqual({ bot_id: "b1", scopes: ["email:bot"] });
-    expect(botKeysDark(await c.revokeBotKey("key_1"))).toBe(true);
-    const missing = await c.revokeBotKey("key_2");
+    const transport = createRemovalTransport(c);
+    expect(botKeysDark(await transport.revokeBotKey("key_1"))).toBe(true);
+    const missing = await transport.revokeBotKey("key_2");
     expect(missing).toMatchObject({ kind: "refused", status: 404, code: "key_not_found" });
     expect(botKeysDark(missing)).toBe(false);
     expect(await c.createInbox({ botId: "b1", username: "juniper" }, "murage-inbox:i:op")).toMatchObject({ kind: "refused", code: "bot_not_found" });
@@ -110,7 +112,7 @@ describe("the client", () => {
     expect(create.body).toEqual({ bot_id: "b1", username: "juniper" });
     expect(create.headers.authorization).toBe("Bearer owner-token");
     expect(JSON.stringify(create.body)).not.toContain("bot_key_id");
-    expect(await c.deleteInbox("ibx_1")).toMatchObject({ kind: "held", body: { state: "closing", closing_until: "2026-12-01T00:00:00Z" } });
+    expect(await transport.deleteInbox("ibx_1")).toMatchObject({ kind: "held", body: { state: "closing", closing_until: "2026-12-01T00:00:00Z" } });
     expect(await c.restoreInbox("ibx_1", "b1")).toMatchObject({ kind: "ok", body: { state: "active" } });
     expect(fake.calls("POST", /\/restore$/)[0]).toMatchObject({ body: { bot_id: "b1" }, headers: { authorization: "Bearer owner-token" } });
     expect(fake.unexpected).toEqual([]);
@@ -127,6 +129,19 @@ describe("the client", () => {
 });
 
 describe("the capability probe (dark launch, F28)", () => {
+  it("answers off on a host that does not offer email (a Cloud home), and never asks Flux there", async () => {
+    const fake = new FakeFlux().on("GET", /capabilities$/, { status: 200, body: { enabled: true, available: true, eligible: true, account_state: "active" } });
+    const probe = new EmailCapabilityProbe({ client: client(fake), accountRef: () => "acct", offered: () => false });
+    expect(await probe.refresh()).toBeNull();
+    await probe.noteRefusal("email_not_enabled");
+    expect(probe.emailEnabled()).toBe(false);
+    expect(fake.calls("GET", /capabilities$/)).toHaveLength(0);
+    // the same answer on a desktop lights it up
+    const desktop = new EmailCapabilityProbe({ client: client(fake), accountRef: () => "acct", offered: () => true });
+    expect(isEnabled(await desktop.refresh())).toBe(true);
+    expect(desktop.emailEnabled()).toBe(true);
+  });
+
   it("is off unless the answer says enabled: true, and #33's available: false keeps it off", () => {
     expect(isEnabled(undefined)).toBe(false);
     expect(isEnabled({ enabled: false })).toBe(false);

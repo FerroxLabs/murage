@@ -1,0 +1,881 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "murage.nolim-replay.v1"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,95}$"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "synthetic",
+        "real-redacted"
+      ]
+    },
+    "diagnosticIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]{0,95}$"
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "receipt": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,95}$"
+        },
+        "records": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,95}$"
+          }
+        },
+        "fidelity": {
+          "type": "string",
+          "const": "verified"
+        },
+        "correlation": {
+          "type": "string",
+          "enum": [
+            "recorded-id",
+            "reviewed-unique",
+            "fabricated"
+          ]
+        }
+      },
+      "required": [
+        "receipt",
+        "records",
+        "fidelity",
+        "correlation"
+      ],
+      "additionalProperties": false
+    },
+    "actor": {
+      "type": "object",
+      "properties": {
+        "bot": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,95}$"
+        },
+        "originalLevel": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "auto",
+            "full",
+            "unlimited"
+          ]
+        },
+        "counterfactualLevel": {
+          "type": "string",
+          "const": "unlimited"
+        },
+        "routineCeiling": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "ask",
+                "auto",
+                "full",
+                "unlimited"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "grants": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "denyRecords": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,95}$"
+              },
+              "ownerReceipt": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,95}$"
+              },
+              "matcher": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,95}$"
+              }
+            },
+            "required": [
+              "id",
+              "ownerReceipt",
+              "matcher"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "draftOnly": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "bot",
+        "originalLevel",
+        "counterfactualLevel",
+        "routineCeiling",
+        "grants",
+        "denyRecords",
+        "draftOnly"
+      ],
+      "additionalProperties": false
+    },
+    "trigger": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "type": "string",
+          "enum": [
+            "desktop",
+            "phone",
+            "owner-channel",
+            "continuation",
+            "delegation",
+            "manual-routine",
+            "scheduled-routine",
+            "third-party",
+            "missing",
+            "conflicting"
+          ]
+        },
+        "initiator": {
+          "type": "string",
+          "enum": [
+            "owner",
+            "owner-channel",
+            "routine",
+            "other",
+            "missing",
+            "conflicting"
+          ]
+        },
+        "evidence": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,95}$"
+        },
+        "lineage": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,95}$"
+          }
+        }
+      },
+      "required": [
+        "route",
+        "initiator",
+        "evidence",
+        "lineage"
+      ],
+      "additionalProperties": false
+    },
+    "turn": {
+      "type": "object",
+      "properties": {
+        "storedOrigin": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "owner",
+                "owner-channel",
+                "routine",
+                "other",
+                "missing",
+                "conflicting"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ownerStarted": {
+          "type": "boolean"
+        },
+        "unattended": {
+          "type": "boolean"
+        },
+        "predecessors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "outside-read",
+                  "write",
+                  "read",
+                  "hop"
+                ]
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "web",
+                  "tool",
+                  "file",
+                  "owner",
+                  "routine"
+                ]
+              },
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,95}$"
+              }
+            },
+            "required": [
+              "kind",
+              "source",
+              "id"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "storedOrigin",
+        "ownerStarted",
+        "unattended",
+        "predecessors"
+      ],
+      "additionalProperties": false
+    },
+    "request": {
+      "type": "object",
+      "properties": {
+        "driver": {
+          "type": "string",
+          "enum": [
+            "acp",
+            "claude",
+            "codex",
+            "pi",
+            "antigravity",
+            "openai-chat",
+            "muse"
+          ]
+        },
+        "tool": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "summary": {
+          "type": "string"
+        },
+        "command": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shell": {
+          "type": "string",
+          "enum": [
+            "shell",
+            "pwsh",
+            "none"
+          ]
+        },
+        "toolCall": {
+          "$ref": "#/$defs/__schema0"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "inputMissing": {
+          "type": "boolean"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "local-computer"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "question": {
+          "type": "boolean"
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "frame": {
+          "$ref": "#/$defs/__schema1"
+        }
+      },
+      "required": [
+        "driver",
+        "tool",
+        "summary",
+        "command",
+        "shell",
+        "toolCall",
+        "truncated",
+        "inputMissing",
+        "scope",
+        "question",
+        "cwd",
+        "frame"
+      ],
+      "additionalProperties": false
+    },
+    "environment": {
+      "type": "object",
+      "properties": {
+        "home": {
+          "type": "string",
+          "const": "/fixture/home"
+        },
+        "work": {
+          "type": "string",
+          "const": "/fixture/work"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "content": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "target": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "path",
+              "content",
+              "target"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "envUnread": {
+          "type": "boolean"
+        },
+        "invalidCwd": {
+          "type": "boolean"
+        },
+        "realPathFailure": {
+          "type": "boolean"
+        },
+        "fault": {
+          "type": "string",
+          "enum": [
+            "none",
+            "reader-throw",
+            "response-reject",
+            "routine-record-write",
+            "partition-refusal"
+          ]
+        },
+        "localHold": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "home",
+        "work",
+        "files",
+        "envUnread",
+        "invalidCwd",
+        "realPathFailure",
+        "fault",
+        "localHold"
+      ],
+      "additionalProperties": false
+    },
+    "expected": {
+      "type": "object",
+      "properties": {
+        "primary": {
+          "type": "string",
+          "enum": [
+            "wipe-list",
+            "owner-explicit-deny",
+            "other-person-control",
+            "unproven-control",
+            "non-permission-control",
+            "policy-conflict",
+            "ordinary-owner",
+            "tainted-owner-control",
+            "non-owner-control",
+            "fault-control",
+            "unexpected"
+          ]
+        },
+        "exception": {
+          "type": "string",
+          "enum": [
+            "none",
+            "wipe-list",
+            "owner-explicit-deny"
+          ]
+        },
+        "exceptionProof": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,95}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "baseline": {
+          "type": "object",
+          "properties": {
+            "outcome": {
+              "type": "string",
+              "enum": [
+                "card",
+                "allow",
+                "deny-without-card",
+                "question",
+                "unanswered",
+                "error"
+              ]
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "always-ask",
+                "narrow",
+                "always-allow",
+                "exact-command",
+                "auto-mode",
+                "full-access",
+                "no-limits",
+                "own-workspace",
+                "own-files",
+                "own-tool-results",
+                "project-work-roots",
+                "own-unasked",
+                "stop-line",
+                "task-allowance",
+                "routine-allow",
+                "unattended-block",
+                "local-computer-block",
+                "destructive-guard",
+                "sensitive-guard",
+                "unread-call",
+                "prompt-guard",
+                "outside-turn",
+                "question-tool",
+                "no-grant",
+                "reader-failed",
+                "cwd-refusal",
+                "auto-fallback",
+                "partition-refusal",
+                "routine-record-failed"
+              ]
+            },
+            "rule": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "classification": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "ask",
+                    "deny"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "namedCatastrophe": {
+              "anyOf": [
+                {
+                  "type": "boolean",
+                  "const": true
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "allows": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "denies": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "acknowledgements": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "cards": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "notifications": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "audits": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "conversionAudits": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "attemptedAnswers": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "cleanupAnswers": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "terminal": {
+              "type": "string",
+              "enum": [
+                "completed",
+                "denied",
+                "failed",
+                "waiting"
+              ]
+            }
+          },
+          "required": [
+            "outcome",
+            "source",
+            "rule",
+            "reason",
+            "classification",
+            "namedCatastrophe",
+            "allows",
+            "denies",
+            "acknowledgements",
+            "cards",
+            "notifications",
+            "audits",
+            "conversionAudits",
+            "attemptedAnswers",
+            "cleanupAnswers",
+            "terminal"
+          ],
+          "additionalProperties": false
+        },
+        "candidate": {
+          "type": "object",
+          "properties": {
+            "outcome": {
+              "type": "string",
+              "enum": [
+                "card",
+                "allow",
+                "deny-without-card",
+                "question",
+                "unanswered",
+                "error"
+              ]
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "always-ask",
+                "narrow",
+                "always-allow",
+                "exact-command",
+                "auto-mode",
+                "full-access",
+                "no-limits",
+                "own-workspace",
+                "own-files",
+                "own-tool-results",
+                "project-work-roots",
+                "own-unasked",
+                "stop-line",
+                "task-allowance",
+                "routine-allow",
+                "unattended-block",
+                "local-computer-block",
+                "destructive-guard",
+                "sensitive-guard",
+                "unread-call",
+                "prompt-guard",
+                "outside-turn",
+                "question-tool",
+                "no-grant",
+                "reader-failed",
+                "cwd-refusal",
+                "auto-fallback",
+                "partition-refusal",
+                "routine-record-failed"
+              ]
+            },
+            "rule": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "classification": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "ask",
+                    "deny"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "namedCatastrophe": {
+              "anyOf": [
+                {
+                  "type": "boolean",
+                  "const": true
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "allows": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "denies": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "acknowledgements": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "cards": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "notifications": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "audits": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "conversionAudits": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "attemptedAnswers": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "cleanupAnswers": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "terminal": {
+              "type": "string",
+              "enum": [
+                "completed",
+                "denied",
+                "failed",
+                "waiting"
+              ]
+            }
+          },
+          "required": [
+            "outcome",
+            "source",
+            "rule",
+            "reason",
+            "classification",
+            "namedCatastrophe",
+            "allows",
+            "denies",
+            "acknowledgements",
+            "cards",
+            "notifications",
+            "audits",
+            "conversionAudits",
+            "attemptedAnswers",
+            "cleanupAnswers",
+            "terminal"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "primary",
+        "exception",
+        "exceptionProof",
+        "baseline",
+        "candidate"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema",
+    "id",
+    "kind",
+    "diagnosticIds",
+    "provenance",
+    "actor",
+    "trigger",
+    "turn",
+    "request",
+    "environment",
+    "expected"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/__schema0"
+          }
+        }
+      ]
+    },
+    "__schema1": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema1"
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/__schema1"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -420,7 +420,10 @@ it("a large index uses one-page merge budgets, resumes mid-merge, and erases raw
   expect(index.deletionScrubPending()).toBe(false);
 },120_000);
 
-it.each(["during-merge","awaiting-truncate"] as const)("a rolled-out then forgotten row advances the generation %s", phase => {
+it.each(["during-merge","awaiting-truncate"].flatMap(phase=>[false,true].map(legacy=>({phase,legacy}))))("a rolled-out then forgotten row advances the generation $phase (legacy=$legacy)", ({phase,legacy}) => {
+  // The old writer leaves tombstones; the new writer erases postings directly.
+  // Both must fence the later forget's generation through the final checkpoint.
+  if(legacy)(index as unknown as {db:DatabaseSync}).db.exec("INSERT INTO lexical(lexical,rank) VALUES('secure-delete',0)");
   const first="orchidfirstgeneration",later="orchidlatergeneration";
   const row=(id:string,text:string,deleted=false,rolled=false)=>({id,version:1,scopeId:"generation-fixture",text,deleted,rolled});
   index.upsert([row("first",first),row("later",later),row("retained","retained generation fixture")]);
@@ -440,7 +443,7 @@ it.each(["during-merge","awaiting-truncate"] as const)("a rolled-out then forgot
   index.upsert([row("later","",true)]);
   expect(scrubMeta("delete_generation")).toBe(generation);
   expect(index.scrubDeleted()).toBe(false);
-  expect(scrubMeta("delete_scrub_owed")).toBe("merge");
+  expect(scrubMeta("delete_scrub_owed")).toBe(!legacy&&phase==="awaiting-truncate"?"truncate":"merge");
   mergeToCheckpoint();
   expect(JSON.parse(scrubMeta("delete_scrub_merge")!).generation).toBe(Number(generation));
   expect(index.scrubDeleted()).toBe(false);

@@ -1,0 +1,20 @@
+{
+  "server/bot-review-notices.ts": {
+    "options": 1
+  },
+  "server/highlevel/review-cards.ts": {
+    "options": 1
+  },
+  "server/index.ts": {
+    "options": 3,
+    "mcpSignIn": 1,
+    "secret": 3,
+    "connector": 1
+  },
+  "server/routine-requests.ts": {
+    "options": 2
+  },
+  "server/store.ts": {
+    "options": 2
+  }
+}

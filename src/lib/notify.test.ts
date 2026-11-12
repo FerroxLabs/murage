@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { resetAttentionOffer, routeNotification, type AttentionBridge, type AttentionMessage } from "./attention-offer";
 
 const sounds = vi.hoisted(() => ({ enabled: true }));
 vi.mock("./notification-sounds", () => ({
@@ -40,8 +41,48 @@ function installNotification(permission: NotificationPermission, focused = false
 }
 
 afterEach(() => {
+  resetAttentionOffer();
   vi.unstubAllGlobals();
   sounds.enabled = true;
+});
+
+describe("S3R notification display fields", () => {
+  it.each(["darwin", "win32", "linux"])("presents through attention on %s without either renderer display path", async (platform) => {
+    const { notices } = installNotification("denied", true);
+    let push: ((message: AttentionMessage) => void) | undefined;
+    let session = "";
+    let ref = "";
+    const nativeShow = vi.fn();
+    const present = vi.fn(async (_payload: unknown) => ({ ok: true as const, kept: false, retired: [] }));
+    const attention: AttentionBridge = {
+      hello: async (payload) => { session = payload.session; return { ok: true, ledgerMax: 288, retired: [] }; },
+      offer: async (payload) => { if ("ref" in payload) ref = payload.ref; return { ok: true, decision: "notify", retired: [] }; },
+      present, gone: async () => ({ ok: true, retired: [] }), freed: vi.fn(),
+      visible: async () => ({ ok: true, retired: [] }),
+      onShow: (callback) => { push = callback; return () => {}; },
+    };
+    Object.assign(window, { muragebox: { platform, attention, approvalNotifications: { show: nativeShow } } });
+    sounds.enabled = false;
+    const approval = { ...frame, kind: "approval" as const, requestId: `router-${platform}`, messageId: "card" };
+    routeNotification(approval, (value) => showNotification(value as unknown as NotifyFrame, vi.fn(), "data:image/png;base64,YQ==", frame.threadId));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    push?.({ type: "show", session, ref, gen: 7, previews: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(present).toHaveBeenCalledWith({ session, ref, gen: 7, title: frame.title, body: frame.body, botId: frame.botId, threadId: frame.threadId, privatePreview: false, silent: true, icon: "data:image/png;base64,YQ==" });
+    expect(nativeShow).not.toHaveBeenCalled();
+    expect(notices).toHaveLength(0);
+  });
+
+  it("bounds display words and accepts only bounded PNG data icons, omitting private avatars", () => {
+    installNotification("granted");
+    Object.assign(window, { muragebox: { attention: {} } });
+    const words = { ...frame, title: "t".repeat(300), body: "b".repeat(1100) };
+    expect(showNotification(words, vi.fn(), "data:image/png;base64,YQ==")).toMatchObject({ title: "t".repeat(256), body: "b".repeat(1024), icon: "data:image/png;base64,YQ==", silent: false });
+    for (const icon of ["https://example.com/avatar.png", "data:image/svg+xml,svg", `data:image/png;base64,${"a".repeat(65536)}`]) {
+      expect(showNotification(words, vi.fn(), icon)).not.toHaveProperty("icon");
+    }
+    expect(showNotification({ ...words, privatePreview: true }, vi.fn(), "data:image/png;base64,YQ==")).not.toHaveProperty("icon");
+  });
 });
 
 describe("desktop notifications", () => {
@@ -224,4 +265,12 @@ describe("notification sounds", () => {
     showNotification(approval, vi.fn());
     expect(show).toHaveBeenCalledWith({ botId: frame.botId, threadId: frame.threadId, requestId: "muted-approval", messageId: "card", title: frame.title, body: frame.body, silent: true });
   });
+});
+
+it("deduplicates connector incidents in the browser fallback", () => {
+  const r = installNotification("granted");
+  const incident = { ...frame, kind: "connector-reconnect" as const, deliveryId: "browser-connector-test", title: "Buffer needs you to sign in again" };
+  showNotification(incident, () => {});
+  showNotification(incident, () => {});
+  expect(r.notices).toHaveLength(1);
 });

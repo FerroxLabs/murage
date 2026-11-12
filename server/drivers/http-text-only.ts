@@ -1,3 +1,6 @@
+import { registerBusyloopPayloadSite, fluxRouteFor } from "../../shared/flux-route.ts";
+import { inspectFluxResponse } from "./flux-busyloop-readers.ts";
+import { isTerminal } from "../../shared/flux-busyloop.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -17,6 +20,7 @@ import {
   RUN_BOUND_MS, assertSupportedSchema, fluxUsageReport, httpIsolationReport, httpVerdict, isReadMoved, isReportedOverLimit,
   type TextOnlyTurnInput, type TextOnlyTurnResult, type Verdict,
 } from "../memory/pip-transport.ts";
+import { authorizeFluxDispatch } from "../flux-start-gate.ts";
 
 export interface HttpTextOnlyOptions {
   /** Endpoint base; `/chat/completions` is appended. */
@@ -47,7 +51,7 @@ export function unwrapJsonFence(content: string, maxOutputBytes: number): string
 export function textOnlyBody(o: HttpTextOnlyOptions, turn: TextOnlyTurnInput, model: string): Record<string, unknown> {
   // Flux answers 502/422 to response_format json_schema on every model, so a Flux endpoint (the Flux preset or a custom
   // endpoint pointed at it) gets the schema in the prompt instead; the host validator stays the gate.
-  const toFlux = isFluxUrl(o.baseUrl);
+  const toFlux = fluxRouteFor(o.baseUrl).routed;
   const user = toFlux ? `${turn.text}\n\n${schemaPromptInstruction(turn.outputSchema)}` : turn.text;
   const body: Record<string, unknown> = {
     ...o.buildBody(model, [{ role: "system", content: turn.system }, { role: "user", content: user }]),
@@ -70,11 +74,12 @@ export async function httpTextOnlyTurn(turn: TextOnlyTurnInput, o: HttpTextOnlyO
   const bodyCap = o.maxBodyBytes ?? Math.max(65_536, turn.maxOutputBytes * 4);
   const signal = AbortSignal.any([turn.signal, AbortSignal.timeout(Math.max(1, deadlineAt - Date.now()))]);
   const request = JSON.stringify(textOnlyBody(o, turn, turn.model));
-  const toFlux = isFluxUrl(o.baseUrl);
+  const toFlux = fluxRouteFor(o.baseUrl).routed;
   const reportUsage = (usage: MemoryUsageReport) => reportMemoryUsage(toFlux ? fluxUsageReport(usage) : usage);
   const releasedBefore = gate.released;
   let response: Response;
   try {
+    if (isFluxUrl(o.baseUrl)) await authorizeFluxDispatch(o.apiKey); // spend gate: before the last await (the gate below needs none after it)
     const reach = await checkLocalServerUrl(endpoint);
     if (!reach.ok) return settled({ state: "refused", reason: "transient", detail: `address-${reach.code}`, counted: false });
     // the last await is behind us: the request is checked and released under the write lock through the call's gate
@@ -85,7 +90,7 @@ export async function httpTextOnlyTurn(turn: TextOnlyTurnInput, o: HttpTextOnlyO
       headers: { "content-type": "application/json", authorization: `Bearer ${o.apiKey}`, ...(isFluxUrl(o.baseUrl) ? fluxCallHeaders("pip-reflection", { usage: { botId: turn.context?.botId } }) : {}) },
       body: request, dispatcher: providerDispatcher(endpoint),
     } as RequestInit;
-    response = await gate.send(() => fetcher(endpoint, init));
+    response = await gate.send(() => fetcher(fluxRouteFor(endpoint).requestUrl, init));
   } catch (error) {
     // a moved read is not a provider failure: it reaches the caller as itself, never as a transient refusal
     if (isReadMoved(error) || isMemorySendBusy(error) || isMemorySendFenced(error)) throw error;
@@ -93,6 +98,22 @@ export async function httpTextOnlyTurn(turn: TextOnlyTurnInput, o: HttpTextOnlyO
     if (turn.signal.aborted) throw cancelled();
     return settled({ state: "refused", reason: "transient", detail: "request-failed", counted: false });
   }
+  const fluxResponse = await inspectFluxResponse(response, toFlux, signal, true);
+  if (turn.signal.aborted) {
+    if (toFlux) reportUsage({});
+    await response.body?.cancel().catch(() => {});
+    throw cancelled();
+  }
+  if (fluxResponse.decision && fluxResponse.decision.action !== "PASS") {
+    reportUsage({});
+    await response.body?.cancel().catch(() => {});
+    return settled(isTerminal(fluxResponse.decision)
+      ? {state:"unsupported", reason:"auth", detail:fluxResponse.decision.reason}
+      : {state:"refused", reason:"transient", detail:fluxResponse.decision.reason, counted:false}, {fluxDecision:fluxResponse.decision});
+  }
+  // Classification consumes a bounded structural projection. Keep the original
+  // wire size for the output cap even when diagnostic strings were shortened.
+  if (fluxResponse.rawBody !== undefined && response.body) response = new Response(fluxResponse.rawBody, {status:response.status, headers:{"content-length":String(fluxResponse.bytes)}});
   if (!response.ok || !response.body) {
     if (toFlux) reportUsage({});
     await response.body?.cancel().catch(() => {});
@@ -111,7 +132,7 @@ export async function httpTextOnlyTurn(turn: TextOnlyTurnInput, o: HttpTextOnlyO
   /** Only what the provider itself reported; an estimate never stands in for it on the ledger. */
   const readUsage = () => {
     try {
-      const body = JSON.parse(Buffer.concat(parts).toString("utf8"));
+      const body = registerBusyloopPayloadSite("read", JSON.parse(Buffer.concat(parts).toString("utf8")));
       return { inputTokens: num(body.usage?.prompt_tokens), outputTokens: num(body.usage?.completion_tokens) };
     } catch { return { inputTokens: undefined, outputTokens: undefined }; }
   };
@@ -119,7 +140,7 @@ export async function httpTextOnlyTurn(turn: TextOnlyTurnInput, o: HttpTextOnlyO
     const { inputTokens, outputTokens } = readUsage();
     let outputBytes = bytes;
     try {
-      const body = JSON.parse(Buffer.concat(parts).toString("utf8"));
+      const body = registerBusyloopPayloadSite("read", JSON.parse(Buffer.concat(parts).toString("utf8")));
       if (typeof body.choices?.[0]?.message?.content === "string") outputBytes = Buffer.byteLength(body.choices[0].message.content);
     } catch { /* partial body: account for received bytes */ }
     return { inputTokens, outputTokens: outputTokens ?? Math.ceil(outputBytes / 3.5) };
@@ -142,7 +163,7 @@ export async function httpTextOnlyTurn(turn: TextOnlyTurnInput, o: HttpTextOnlyO
   }
 
   let json: { choices?: Array<{ finish_reason?: unknown; message?: { content?: unknown; tool_calls?: unknown[] } }>; usage?: { prompt_tokens?: unknown; completion_tokens?: unknown } };
-  try { json = JSON.parse(Buffer.concat(parts).toString("utf8")); } catch { return settled({ state: "refused", reason: "bad-output", detail: "not-json", counted: true }); }
+  try { json = registerBusyloopPayloadSite("read", JSON.parse(Buffer.concat(parts).toString("utf8"))); } catch { return settled({ state: "refused", reason: "bad-output", detail: "not-json", counted: true }); }
   const choice = json.choices?.length === 1 ? json.choices[0] : undefined;
   const content = typeof choice?.message?.content === "string" ? choice.message.content : null;
   const finishReason = typeof choice?.finish_reason === "string" ? choice.finish_reason : null;
@@ -151,7 +172,7 @@ export async function httpTextOnlyTurn(turn: TextOnlyTurnInput, o: HttpTextOnlyO
   if (choice?.message?.tool_calls?.length) return { text: "", isolation, verdict: { state: "unsupported", reason: "tools", detail: "tool-call-in-response" }, usage };
   if (content === null) return { text: "", isolation, verdict: { state: "refused", reason: "bad-output", detail: "no-content", counted: true }, usage };
   // A schema-in-prompt reply may come back in one ```json fence; the object itself goes to the unchanged validator.
-  const verdict = httpVerdict({ finishReason, content: isFluxUrl(o.baseUrl) ? unwrapJsonFence(content, turn.maxOutputBytes) : content, outputSchema: turn.outputSchema, maxOutputBytes: turn.maxOutputBytes, exited: true });
+  const verdict = httpVerdict({ finishReason, content: toFlux ? unwrapJsonFence(content, turn.maxOutputBytes) : content, outputSchema: turn.outputSchema, maxOutputBytes: turn.maxOutputBytes, exited: true });
   return {
     text: verdict.state === "validated" ? JSON.stringify(verdict.structured) : "", isolation, verdict, usage,
     ...(isReportedOverLimit(num(json.usage?.completion_tokens), turn.maxOutputTokens) ? { reportedOverLimit: true } : {}),

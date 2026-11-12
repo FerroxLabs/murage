@@ -1,3 +1,4 @@
+import { fixturePlatformEnv, stopFixtureServer } from "./testing/platform-fixtures.ts";
 // Full access, end to end: the approval level above Auto.
 //
 // The unit tests in full-access.test.ts pin the RULES; these pin the WIRING
@@ -20,7 +21,7 @@ import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { makeTestHome, removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { makeTestHome, removeTempDir } from "./testing/cleanup.ts";
 import { assertSafeToWipe } from "./testing/safe-wipe.mjs";
 import { freePortBlock } from "./testing/ports.ts";
 import { raiseLevel } from "./testing/raise-level.ts";
@@ -98,7 +99,7 @@ async function deny(botId: string, threadId: string, requestId: string) {
   await waitIdle(botId, threadId);
 }
 
-describe.skipIf(process.platform === "win32")("Full access", () => {
+describe("Full access", () => {
   beforeAll(async () => {
     const port = await freePortBlock([0, 1], 18_799, 200);
     base = `http://127.0.0.1:${port}`;
@@ -135,8 +136,9 @@ describe.skipIf(process.platform === "win32")("Full access", () => {
       }),
     );
     child = spawn(process.execPath, ["--import", IDLE_LOAD_PRELOAD, join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
-      env: {
+      env: { ...fixturePlatformEnv(),
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         HOME: home,
         USERPROFILE: home,
@@ -144,7 +146,7 @@ describe.skipIf(process.platform === "win32")("Full access", () => {
         MURAGE_WEBHOOK_PORT: String(port + 1),
         MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
       },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
     child.stderr!.on("data", (c) => (stderr += c));
     const deadline = Date.now() + 20_000;
@@ -163,7 +165,7 @@ describe.skipIf(process.platform === "win32")("Full access", () => {
   }, 40_000);
 
   afterAll(async () => {
-    await waitForExit(child, { signal: "SIGTERM" });
+    await stopFixtureServer(child);
     await removeTempDir(home);
   });
 
@@ -297,7 +299,7 @@ describe.skipIf(process.platform === "win32")("Full access", () => {
       const card = await poll(() => liveCard(bot.threadId), 20_000);
       expect(card, `a delete outside its folder ran unasked under Full access. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
       expect(card.card.held).toBe("Delete 1 item outside its folder: ~/Documents/old");
-      expect(card.card.taskAllowKey).toMatch(/^stop:delete:\/.*\/Documents\/old$/);
+      expect(card.card.taskAllowKey).toBe(`stop:delete:${join(home, "Documents", "old").replaceAll("\\", "/").replace(/^([a-z]:)/i, "/$1")}`);
       // Always allow is scoped the same way, never the bare tool
       expect(card.card.allowKey).toBe(card.card.taskAllowKey);
 

@@ -114,7 +114,7 @@ describe("a contact turn and the saved library", () => {
 describe("the agents proxy on a contact turn", () => {
   const PROXY = join(import.meta.dirname, "drivers", "agents-proxy.ts");
   const list = async (env: Record<string, string>) => {
-    const child = spawn(process.execPath, [PROXY], { env: { ...process.env, MURAGE_HARNESS_URL: "http://127.0.0.1:9", MURAGE_BOT_ID: "b", MURAGE_THREAD_ID: "t", MURAGE_COMMS_TOKEN: "x", ...env }, stdio: ["pipe", "pipe", "ignore"] });
+    const child = spawn(process.execPath, [PROXY], { windowsHide: true, env: { ...process.env, MURAGE_HARNESS_URL: "http://127.0.0.1:9", MURAGE_BOT_ID: "b", MURAGE_THREAD_ID: "t", MURAGE_COMMS_TOKEN: "x", ...env }, stdio: ["pipe", "pipe", "ignore"] });
     const reply = new Promise<string>(resolve => { let out = ""; child.stdout.on("data", chunk => { out += chunk; if (out.includes("\n")) resolve(out.split("\n")[0]!); }); });
     child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })}\n`);
     const line = await reply; child.kill();

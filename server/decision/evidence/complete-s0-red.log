@@ -1,0 +1,1064 @@
+COMMAND node_modules/.bin/vitest run server/decision/authority-attacks.test.ts server/decision/base-parity.test.ts server/decision/budget.test.ts server/decision/cost.test.ts server/decision/exec-mode.test.ts server/decision/faults.test.ts server/decision/ingress.test.ts server/decision/inventory.test.ts server/decision/legacy-import.test.ts server/decision/record-presentation.test.ts server/decision/records-crash.test.ts server/decision/records-dedup.test.ts server/decision/routine-policy.test.ts server/decision/schema-lifecycle.test.ts server/decision/seam.test.ts server/decision/settle-states.test.ts server/decision/workflow-smoke.test.ts
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/seam.test.ts > A1 R2 M10 M11 M12 M15 M17 refuse unregistered final rows through real Store and raw SQL
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=64 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/seam.test.ts (5 tests | 5 failed) 2966ms
+   × A1 R2 M10 M11 M12 M15 M17 refuse unregistered final rows through real Store and raw SQL 698ms
+   × A1 M14 M16 action identity and unknown payload fields cannot change; terminal patches emitted 605ms
+   × A1 M18 emit-only forged permission patch is dropped; credentials cannot carry cards 540ms
+   × M40 invalid JSON on ordinary rows is admitted without parsing; permission erasure aborts 556ms
+   × M40 malformed options JSON is inert and can be repaired without a JSON parser error 557ms
+stdout | server/decision/ingress.test.ts > A2 R16 M19 M22 M47 M48 first capture binds input, aliases and conflicts
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=5
+[sqlite] storage file=1 wal=2 freelist=0
+
+stdout | server/decision/ingress.test.ts > A2 M49 claims alone supply service identity; spec/options are frozen and reserved fields rejected
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=51 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+
+ ❯ server/decision/ingress.test.ts (6 tests | 6 failed) 3689ms
+   × A2 R16 M19 M22 M47 M48 first capture binds input, aliases and conflicts 599ms
+   × A2 M49 claims alone supply service identity; spec/options are frozen and reserved fields rejected 623ms
+   × R16 actor substitution ignored and all authority objects frozen at registration 607ms
+   × R12 decision never reads message history 635ms
+   × service execution joins concurrent calls, retains frozen content and never uses caller mutations 636ms
+   × ingress duplicate event envelope metadata does not change input identity 584ms
+stdout | server/decision/records-crash.test.ts > A4a M53 queue-first crash, tx rollback, committed restart yield exactly one usable row
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=52 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/records-crash.test.ts (4 tests | 4 failed) 2587ms
+   × A4a M53 queue-first crash, tx rollback, committed restart yield exactly one usable row 652ms
+   × A4a M53 record and row roll back together when messageRewrite drops the row 625ms
+   × A4c M55 answer/answerId/pending survive crash before acceptance; restart never claims execution 656ms
+   × recovery refuses a missing queue adapter instead of reporting success 647ms
+stdout | server/decision/record-presentation.test.ts > A6 F5 terminal allow emits the persisted patch
+[memory] index build before listen name=memory_records_pinned ms=3
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=51 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/record-presentation.test.ts (6 tests | 6 failed) 3566ms
+   × A6 F5 terminal allow emits the persisted patch 608ms
+   × A6 F5 terminal deny emits the persisted patch 624ms
+   × A6 F5 terminal expired emits the persisted patch 644ms
+   × R17 queue→card consumes one record, accepts JSON round-trip, rejects wrong refs (M20) 640ms
+   × A6 F5 restart expires an engine record and emits its terminal patch after durable state 503ms
+   × A6 F5 legacy terminal patches reach the client 541ms
+stdout | server/decision/schema-lifecycle.test.ts > A5c M57 restore/downgrade cancellation settles record before same-action row
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=51 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/schema-lifecycle.test.ts (3 tests | 2 failed) 1296ms
+   ✓ A4 A5b M50 schema is registered once and migration DDL is atomic and restartable 15ms
+   × A5c M57 restore/downgrade cancellation settles record before same-action row 638ms
+   × A4 downgrade with open engine and queue records terminalizes both before dropping DDL 637ms
+stdout | server/decision/faults.test.ts > A5 M38 protected match wins before stored-source failure; reads run (M28)
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+stdout | server/decision/faults.test.ts > A5 M51 non-owner ask faults use frozen BASE callback
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=53 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+
+ ❯ server/decision/faults.test.ts (9 tests | 9 failed) 5600ms
+   × A5 M38 protected match wins before stored-source failure; reads run (M28) 622ms
+   × A5 stored browser fault refuses without inventing a card 452ms
+   × A5 M51 non-owner ask faults use frozen BASE callback 606ms
+   × A5 M51 non-owner auto faults use frozen BASE callback 602ms
+   × A5 M51 non-owner full faults use frozen BASE callback 657ms
+   × A5 M51 non-owner unlimited faults use frozen BASE callback 612ms
+   × R9 M23 M24 unproven owner does not mint BASE card; missing command runs 566ms
+   × R16 M21 deny revision is rechecked immediately before RUN delivery 636ms
+   × M23 reader throws: owner clean runs, guest retains BASE fault behavior 844ms
+stdout | server/decision/authority-attacks.test.ts > R2 M1 M3 M4 M6 M7 M8 forged, discarded and factory authority cannot present
+[memory] index build before listen name=memory_records_pinned ms=2
+[memory] index build before listen name=memory_source_lsn_created ms=2
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=63 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/authority-attacks.test.ts (4 tests | 4 failed) 2546ms
+   × R2 M1 M3 M4 M6 M7 M8 forged, discarded and factory authority cannot present 703ms
+   × R2 M13 insertMessageAfter patched[] aborts and leaves no permission rows 577ms
+   × R2 M15 rewrite-injected card is checked after transformations 624ms
+   × R2 M16 computed payload mutation after a real record cannot change action in raw SQL 636ms
+stdout | server/decision/budget.test.ts > R18 bounded registrations: 33rd same-thread request refuses and prior wipe survives
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+stdout | server/decision/budget.test.ts > A12a prune walks settled index in batches of 500
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=59 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+
+ ❯ server/decision/budget.test.ts (5 tests | 2 failed) 1449ms
+   ✓ A12a M64 50MB content hashes stably without an unbounded clone; depth/key bounds 100ms
+   × R18 bounded registrations: 33rd same-thread request refuses and prior wipe survives 622ms
+   × A12a prune walks settled index in batches of 500 624ms
+   ✓ M64 projection never calls structuredClone before enforcing bounds 7ms
+   ✓ M36 one cumulative reader budget covers outer scripts and all nested executables 92ms
+stdout | server/decision/cost.test.ts > A12a 10,000 settled records stay bounded; million-row pruning uses index and bounded batches
+[memory] index build before listen name=memory_records_pinned ms=2
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=56 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+[sqlite] storage file=1 wal=2 freelist=0
+
+stdout | server/decision/cost.test.ts > A12a 10,000 streamed text patches report trigger overhead ≤10%
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS app_trigger_bindings ( trigger_id TEXT PRIMARY  ms=56 source=exec:CREATE TABLE IF NOT EXISTS app_trigger_b
+
+ ❯ server/decision/cost.test.ts (2 tests | 2 failed) 1323ms
+   × A12a 10,000 settled records stay bounded; million-row pruning uses index and bounded batches 667ms
+   × A12a 10,000 streamed text patches report trigger overhead ≤10% 649ms
+stdout | server/decision/settle-states.test.ts > R9 never resolving transport retries same answerId, interrupts by 20s and ignores late completion
+[memory] index build before listen name=memory_records_pinned ms=0
+[memory] index build before listen name=memory_source_lsn_created ms=0
+[sqlite] storage file=1 wal=2 freelist=0
+
+stdout | server/decision/settle-states.test.ts > R8 R9 M33 X7 two questions retain FIFO; instructions remain a normal send
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=63 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+
+ ❯ server/decision/settle-states.test.ts (3 tests | 3 failed) 2024ms
+   × R9 never resolving transport retries same answerId, interrupts by 20s and ignores late completion 677ms
+   × R8 R9 M33 X7 two questions retain FIFO; instructions remain a normal send 657ms
+   × R19 Ask→No limits answers open owner BASE before returning; webhook stays BASE 683ms
+ ✓ server/decision/inventory.test.ts (3 tests) 4761ms
+   ✓ R2 M9 raw-writer and per-file producer inventory pins all existing sites  4687ms
+stdout | server/decision/exec-mode.test.ts > R1 Python evidence reaches real decision and sink: import shutil as s; s.rmtree('/')
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+stdout | server/decision/exec-mode.test.ts > R1 Python evidence reaches real decision and sink: from shutil import rmtree as r; r('/')
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=50 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+
+ ❯ server/decision/exec-mode.test.ts (25 tests | 25 failed) 2306ms
+   × R14 A8a M25 M26 M60 M61 executable/data benign printf '%s\n' 'mkfs.ext4 /dev/sda' 6ms
+   × R14 A8a M25 M26 M60 M61 executable/data benign echo "rm -rf ~" 1ms
+   × R14 A8a M25 M26 M60 M61 executable/data benign # rm -rf / 1ms
+   × R14 A8a M25 M26 M60 M61 executable/data benign cat <<EOF
+rm -rf ~
+EOF 1ms
+   × R14 A8a M25 M26 M60 M61 executable/data benign python3 -c "print('shutil.rmtree(\"/\")')" 1ms
+   × R14 A8a M25 M26 M60 M61 executable/data benign node -e "const s='rm -rf ~'" 1ms
+   × R14 A8a M25 M26 M60 M61 executable/data benign git commit -m "remove mkfs notes" 1ms
+   × R14 A8a M25 M26 M60 M61 executable/data benign printf '%s\n' '$(rm -rf ~)' 1ms
+   × R14 A8a M25 M26 M60 M61 executable/data benign echo \$(rm -rf ~) 1ms
+   × R14 A8a M25 M26 M60 M61 executable/data benign cat <<'EOF'
+$(rm -rf ~)
+EOF 1ms
+   × R15 A8a real twin mkfs.ext4 /dev/sda 1ms
+   × R15 A8a real twin sh -c 'rm -rf ~' 1ms
+   × R15 A8a real twin rm -rf / 1ms
+   × R15 A8a real twin bash <<EOF
+rm -rf ~
+EOF 1ms
+   × R15 A8a real twin python3 -c "import shutil;shutil.rmtree('/')" 1ms
+   × R15 A8a real twin node -e "require('child_process').execSync('rm -rf ~')" 1ms
+   × R15 A8a real twin dd if=/dev/zero of=/dev/sda 1ms
+   × R15 A8a real twin echo "$(rm -rf ~)" 1ms
+   × R15 A8a real twin echo `rm -rf ~` 1ms
+   × R15 A8a real twin cat <<EOF
+$(rm -rf ~)
+EOF 1ms
+   × R1 aliases retain nested Python wipe evidence 1ms
+   × R1 Python evidence reaches real decision and sink: import shutil as s; s.rmtree('/') 468ms
+   × R1 Python evidence reaches real decision and sink: from shutil import rmtree as r; r('/') 552ms
+   × R1 Python evidence reaches real decision and sink: __import__('shutil').rmtree('/') 636ms
+   × R1 Python evidence reaches real decision and sink: import subprocess; subprocess.run(['rm','-rf','/']) 616ms
+stdout | server/decision/routine-policy.test.ts > A7a core validates exact routine run source, bot and generation
+[memory] index build before listen name=memory_records_pinned ms=2
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+stdout | server/decision/routine-policy.test.ts > A7a core validates exact routine wake source, bot and generation
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=59 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+
+ ❯ server/decision/routine-policy.test.ts (5 tests | 4 failed) 2378ms
+   ✓ R4b R4c M29 owner routines override captured ceiling only while bot is unlimited; draft stays Ask 4ms
+   × A7a core validates exact routine run source, bot and generation 510ms
+   × A7a core validates exact routine wake source, bot and generation 621ms
+   × A7a core validates exact routine peer source, bot and generation 592ms
+   × A7a core validates exact routine project-room source, bot and generation 644ms
+stdout | server/decision/records-dedup.test.ts > A4b M54 terminal duplicate allow retains one tombstone and row
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+stdout | server/decision/records-dedup.test.ts > M54 terminal SQL tombstone rejects a second record with the same request key
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=61 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+
+ ❯ server/decision/records-dedup.test.ts (4 tests | 4 failed) 2298ms
+   × A4b M54 terminal duplicate allow retains one tombstone and row 634ms
+   × A4b M54 terminal duplicate deny retains one tombstone and row 456ms
+   × A4b M54 terminal duplicate expire retains one tombstone and row 555ms
+   × M54 terminal SQL tombstone rejects a second record with the same request key 644ms
+stdout | server/decision/base-parity.test.ts > R13 405 frozen 1.0.18 verdicts remain byte equal on BASE
+approvals: asked bot=unknown tool=Bash reason=no-grant origin=owner unattended=0 cmd=shell level=ask owner=0 suppressed=0
+approvals: asked bot=unknown tool=Bash reason=destructive-guard origin=owner unattended=0 cmd=shell level=ask owner=0 suppressed=0
+approvals: asked bot=unknown tool=Bash reason=unreadable origin=owner unattended=0 cmd=shell reader=held level=ask owner=0 held=unread suppressed=0 why=tokenizer
+approvals: asked bot=unknown tool=Bash reason=always-ask:delete-root origin=owner unattended=0 cmd=shell level=ask owner=0 suppressed=0
+approvals: asked bot=unknown tool=Bash reason=sensitive-guard origin=owner unattended=0 cmd=shell level=ask owner=0 held=key-row suppressed=0 row=ssh
+approvals: asked bot=unknown tool=Bash reason=stop-line:delete origin=routine unattended=0 cmd=shell level=ask owner=0 suppressed=0
+approvals: asked bot=unknown tool=Bash reason=unattended-block origin=owner-channel unattended=1 cmd=shell level=auto owner=0 suppressed=0
+
+stdout | server/decision/base-parity.test.ts > R10 outside-marked owner request runs: ssh host 'echo fixture'
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=2
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=54 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/base-parity.test.ts (5 tests | 4 failed) 2010ms
+   ✓ R13 405 frozen 1.0.18 verdicts remain byte equal on BASE 133ms
+   × R10 outside-marked owner request runs: ssh host 'echo fixture' 617ms
+   × R10 outside-marked owner request runs: cd d && ls 649ms
+   × R10 outside-marked owner request runs: git commit -am x && git push origin HEAD && rm -f /tmp/x.tmp 604ms
+   × R3 data fields never become executable evidence 3ms
+stdout | server/decision/legacy-import.test.ts > A5a M56 lazy legacy unanswered permission rows are terminal on import
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/legacy-import.test.ts (2 tests | 2 failed) 1069ms
+   × A5a M56 lazy legacy unanswered permission rows are terminal on import 534ms
+   × A5a malformed legacy JSON has no actionable presentation 528ms
+ ✓ server/decision/workflow-smoke.test.ts (1 test) 4064ms
+   ✓ isolated fake-engine fixture launches through the documented control surface  4059ms
+
+ Test Files  15 failed | 2 passed (17)
+      Tests  82 failed | 10 passed (92)
+   Start at  05:55:10
+   Duration  69.12s (transform 7.79s, setup 20.00s, import 900ms, tests 45.93s, environment 1ms)
+
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 82 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/authority-attacks.test.ts > R2 M1 M3 M4 M6 M7 M8 forged, discarded and factory authority cannot present
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/authority-attacks.test.ts:5:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/82]⎯
+
+ FAIL  server/decision/authority-attacks.test.ts > R2 M13 insertMessageAfter patched[] aborts and leaves no permission rows
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/authority-attacks.test.ts:13:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/82]⎯
+
+ FAIL  server/decision/authority-attacks.test.ts > R2 M15 rewrite-injected card is checked after transformations
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/authority-attacks.test.ts:17:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/82]⎯
+
+ FAIL  server/decision/authority-attacks.test.ts > R2 M16 computed payload mutation after a real record cannot change action in raw SQL
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/authority-attacks.test.ts:21:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/82]⎯
+
+ FAIL  server/decision/base-parity.test.ts > R10 outside-marked owner request runs: ssh host 'echo fixture'
+ FAIL  server/decision/base-parity.test.ts > R10 outside-marked owner request runs: cd d && ls
+ FAIL  server/decision/base-parity.test.ts > R10 outside-marked owner request runs: git commit -am x && git push origin HEAD && rm -f /tmp/x.tmp
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/base-parity.test.ts:11:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/82]⎯
+
+ FAIL  server/decision/base-parity.test.ts > R3 data fields never become executable evidence
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.describeAction server/decision/implementation.ts:20:96
+ ❯ Module.describeAction server/decision/api.ts:20:111
+ ❯ server/decision/base-parity.test.ts:14:81
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/82]⎯
+
+ FAIL  server/decision/budget.test.ts > R18 bounded registrations: 33rd same-thread request refuses and prior wipe survives
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/budget.test.ts:11:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/82]⎯
+
+ FAIL  server/decision/budget.test.ts > A12a prune walks settled index in batches of 500
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/budget.test.ts:14:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/82]⎯
+
+ FAIL  server/decision/cost.test.ts > A12a 10,000 settled records stay bounded; million-row pruning uses index and bounded batches
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/cost.test.ts:7:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/82]⎯
+
+ FAIL  server/decision/cost.test.ts > A12a 10,000 streamed text patches report trigger overhead ≤10%
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/cost.test.ts:15:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/82]⎯
+
+ FAIL  server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign printf '%s\n' 'mkfs.ext4 /dev/sda'
+ FAIL  server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign echo "rm -rf ~"
+ FAIL  server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign # rm -rf /
+ FAIL  server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign cat <<EOF
+rm -rf ~
+EOF
+ FAIL  server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign python3 -c "print('shutil.rmtree(\"/\")')"
+ FAIL  server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign node -e "const s='rm -rf ~'"
+ FAIL  server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign git commit -m "remove mkfs notes"
+ FAIL  server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign printf '%s\n' '$(rm -rf ~)'
+ FAIL  server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign echo \$(rm -rf ~)
+ FAIL  server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign cat <<'EOF'
+$(rm -rf ~)
+EOF
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.describeAction server/decision/implementation.ts:20:96
+ ❯ Module.describeAction server/decision/api.ts:20:111
+ ❯ server/decision/exec-mode.test.ts:5:90
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/82]⎯
+
+ FAIL  server/decision/exec-mode.test.ts > R15 A8a real twin mkfs.ext4 /dev/sda
+ FAIL  server/decision/exec-mode.test.ts > R15 A8a real twin sh -c 'rm -rf ~'
+ FAIL  server/decision/exec-mode.test.ts > R15 A8a real twin rm -rf /
+ FAIL  server/decision/exec-mode.test.ts > R15 A8a real twin bash <<EOF
+rm -rf ~
+EOF
+ FAIL  server/decision/exec-mode.test.ts > R15 A8a real twin python3 -c "import shutil;shutil.rmtree('/')"
+ FAIL  server/decision/exec-mode.test.ts > R15 A8a real twin node -e "require('child_process').execSync('rm -rf ~')"
+ FAIL  server/decision/exec-mode.test.ts > R15 A8a real twin dd if=/dev/zero of=/dev/sda
+ FAIL  server/decision/exec-mode.test.ts > R15 A8a real twin echo "$(rm -rf ~)"
+ FAIL  server/decision/exec-mode.test.ts > R15 A8a real twin echo `rm -rf ~`
+ FAIL  server/decision/exec-mode.test.ts > R15 A8a real twin cat <<EOF
+$(rm -rf ~)
+EOF
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.describeAction server/decision/implementation.ts:20:96
+ ❯ Module.describeAction server/decision/api.ts:20:111
+ ❯ server/decision/exec-mode.test.ts:6:57
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/82]⎯
+
+ FAIL  server/decision/exec-mode.test.ts > R1 aliases retain nested Python wipe evidence
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.describeAction server/decision/implementation.ts:20:96
+ ❯ Module.describeAction server/decision/api.ts:20:111
+ ❯ server/decision/exec-mode.test.ts:7:66
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/82]⎯
+
+ FAIL  server/decision/exec-mode.test.ts > R1 Python evidence reaches real decision and sink: import shutil as s; s.rmtree('/')
+ FAIL  server/decision/exec-mode.test.ts > R1 Python evidence reaches real decision and sink: from shutil import rmtree as r; r('/')
+ FAIL  server/decision/exec-mode.test.ts > R1 Python evidence reaches real decision and sink: __import__('shutil').rmtree('/')
+ FAIL  server/decision/exec-mode.test.ts > R1 Python evidence reaches real decision and sink: import subprocess; subprocess.run(['rm','-rf','/'])
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/exec-mode.test.ts:9:69
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/82]⎯
+
+ FAIL  server/decision/faults.test.ts > A5 M38 protected match wins before stored-source failure; reads run (M28)
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/faults.test.ts:4:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/82]⎯
+
+ FAIL  server/decision/faults.test.ts > A5 stored browser fault refuses without inventing a card
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/faults.test.ts:8:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/82]⎯
+
+ FAIL  server/decision/faults.test.ts > A5 M51 non-owner ask faults use frozen BASE callback
+ FAIL  server/decision/faults.test.ts > A5 M51 non-owner auto faults use frozen BASE callback
+ FAIL  server/decision/faults.test.ts > A5 M51 non-owner full faults use frozen BASE callback
+ FAIL  server/decision/faults.test.ts > A5 M51 non-owner unlimited faults use frozen BASE callback
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/faults.test.ts:12:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/82]⎯
+
+ FAIL  server/decision/faults.test.ts > R9 M23 M24 unproven owner does not mint BASE card; missing command runs
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/faults.test.ts:16:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/82]⎯
+
+ FAIL  server/decision/faults.test.ts > R16 M21 deny revision is rechecked immediately before RUN delivery
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/faults.test.ts:20:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/82]⎯
+
+ FAIL  server/decision/faults.test.ts > M23 reader throws: owner clean runs, guest retains BASE fault behavior
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/faults.test.ts:23:146
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/82]⎯
+
+ FAIL  server/decision/ingress.test.ts > A2 R16 M19 M22 M47 M48 first capture binds input, aliases and conflicts
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/ingress.test.ts:4:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/82]⎯
+
+ FAIL  server/decision/ingress.test.ts > A2 M49 claims alone supply service identity; spec/options are frozen and reserved fields rejected
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/ingress.test.ts:10:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22/82]⎯
+
+ FAIL  server/decision/ingress.test.ts > R16 actor substitution ignored and all authority objects frozen at registration
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/ingress.test.ts:17:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[23/82]⎯
+
+ FAIL  server/decision/ingress.test.ts > R12 decision never reads message history
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/ingress.test.ts:21:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[24/82]⎯
+
+ FAIL  server/decision/ingress.test.ts > service execution joins concurrent calls, retains frozen content and never uses caller mutations
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/ingress.test.ts:24:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[25/82]⎯
+
+ FAIL  server/decision/ingress.test.ts > ingress duplicate event envelope metadata does not change input identity
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/ingress.test.ts:28:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[26/82]⎯
+
+ FAIL  server/decision/legacy-import.test.ts > A5a M56 lazy legacy unanswered permission rows are terminal on import
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/legacy-import.test.ts:8:2
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[27/82]⎯
+
+ FAIL  server/decision/legacy-import.test.ts > A5a malformed legacy JSON has no actionable presentation
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/legacy-import.test.ts:11:68
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[28/82]⎯
+
+ FAIL  server/decision/record-presentation.test.ts > A6 F5 terminal allow emits the persisted patch
+ FAIL  server/decision/record-presentation.test.ts > A6 F5 terminal deny emits the persisted patch
+ FAIL  server/decision/record-presentation.test.ts > A6 F5 terminal expired emits the persisted patch
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/record-presentation.test.ts:4:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[29/82]⎯
+
+ FAIL  server/decision/record-presentation.test.ts > R17 queue→card consumes one record, accepts JSON round-trip, rejects wrong refs (M20)
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/record-presentation.test.ts:9:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[30/82]⎯
+
+ FAIL  server/decision/record-presentation.test.ts > A6 F5 restart expires an engine record and emits its terminal patch after durable state
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/record-presentation.test.ts:14:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[31/82]⎯
+
+ FAIL  server/decision/record-presentation.test.ts > A6 F5 legacy terminal patches reach the client
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/record-presentation.test.ts:17:84
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[32/82]⎯
+
+ FAIL  server/decision/records-crash.test.ts > A4a M53 queue-first crash, tx rollback, committed restart yield exactly one usable row
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/records-crash.test.ts:11:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[33/82]⎯
+
+ FAIL  server/decision/records-crash.test.ts > A4a M53 record and row roll back together when messageRewrite drops the row
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/records-crash.test.ts:18:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[34/82]⎯
+
+ FAIL  server/decision/records-crash.test.ts > A4c M55 answer/answerId/pending survive crash before acceptance; restart never claims execution
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/records-crash.test.ts:23:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[35/82]⎯
+
+ FAIL  server/decision/records-crash.test.ts > recovery refuses a missing queue adapter instead of reporting success
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/records-crash.test.ts:29:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[36/82]⎯
+
+ FAIL  server/decision/records-dedup.test.ts > A4b M54 terminal duplicate allow retains one tombstone and row
+ FAIL  server/decision/records-dedup.test.ts > A4b M54 terminal duplicate deny retains one tombstone and row
+ FAIL  server/decision/records-dedup.test.ts > A4b M54 terminal duplicate expire retains one tombstone and row
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/records-dedup.test.ts:4:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[37/82]⎯
+
+ FAIL  server/decision/records-dedup.test.ts > M54 terminal SQL tombstone rejects a second record with the same request key
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/records-dedup.test.ts:10:71
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[38/82]⎯
+
+ FAIL  server/decision/routine-policy.test.ts > A7a core validates exact routine run source, bot and generation
+ FAIL  server/decision/routine-policy.test.ts > A7a core validates exact routine wake source, bot and generation
+ FAIL  server/decision/routine-policy.test.ts > A7a core validates exact routine peer source, bot and generation
+ FAIL  server/decision/routine-policy.test.ts > A7a core validates exact routine project-room source, bot and generation
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/routine-policy.test.ts:8:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[39/82]⎯
+
+ FAIL  server/decision/schema-lifecycle.test.ts > A5c M57 restore/downgrade cancellation settles record before same-action row
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/schema-lifecycle.test.ts:14:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[40/82]⎯
+
+ FAIL  server/decision/schema-lifecycle.test.ts > A4 downgrade with open engine and queue records terminalizes both before dropping DDL
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/schema-lifecycle.test.ts:19:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[41/82]⎯
+
+ FAIL  server/decision/seam.test.ts > A1 R2 M10 M11 M12 M15 M17 refuse unregistered final rows through real Store and raw SQL
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/seam.test.ts:5:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[42/82]⎯
+
+ FAIL  server/decision/seam.test.ts > A1 M14 M16 action identity and unknown payload fields cannot change; terminal patches emitted
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/seam.test.ts:13:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[43/82]⎯
+
+ FAIL  server/decision/seam.test.ts > A1 M18 emit-only forged permission patch is dropped; credentials cannot carry cards
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/seam.test.ts:22:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[44/82]⎯
+
+ FAIL  server/decision/seam.test.ts > M40 invalid JSON on ordinary rows is admitted without parsing; permission erasure aborts
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/seam.test.ts:27:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[45/82]⎯
+
+ FAIL  server/decision/seam.test.ts > M40 malformed options JSON is inert and can be repaired without a JSON parser error
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/seam.test.ts:33:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[46/82]⎯
+
+ FAIL  server/decision/settle-states.test.ts > R9 never resolving transport retries same answerId, interrupts by 20s and ignores late completion
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/settle-states.test.ts:4:33
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[47/82]⎯
+
+ FAIL  server/decision/settle-states.test.ts > R8 R9 M33 X7 two questions retain FIFO; instructions remain a normal send
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/settle-states.test.ts:8:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[48/82]⎯
+
+ FAIL  server/decision/settle-states.test.ts > R19 Ask→No limits answers open owner BASE before returning; webhook stays BASE
+Error: NotBuilt
+ ❯ notBuilt server/decision/implementation.ts:9:36
+      7|   DecisionTransport, DecisionHost, QueueRecoverySource, TurnIdentity, …
+      8| } from './types.ts';
+      9| function notBuilt(): never { throw new Error('NotBuilt'); }
+       |                                    ^
+     10| export function openRequest(_source: RequestSource): RequestHandle { r…
+     11| export function decide(_handle: RequestHandle, _base: BaseVerdictFn): …
+ ❯ Module.installDecisionHost server/decision/implementation.ts:32:79
+ ❯ Module.installDecisionHost server/decision/api.ts:61:93
+ ❯ fixture server/decision/fixture.ts:23:5
+ ❯ server/decision/settle-states.test.ts:15:10
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[49/82]⎯
+

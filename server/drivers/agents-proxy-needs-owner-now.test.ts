@@ -24,7 +24,7 @@ async function start(env: Record<string, string>, status: number) {
   });
   await new Promise<void>(r => stub.listen(0, "127.0.0.1", () => r()));
   const port = (stub.address() as { port: number }).port;
-  const child = spawn(process.execPath, [PROXY], { env: { ...process.env, MURAGE_HARNESS_URL: `http://127.0.0.1:${port}`, MURAGE_BOT_ID: "scout", MURAGE_THREAD_ID: "t1",
+  const child = spawn(process.execPath, [PROXY], { windowsHide: true, env: { ...process.env, MURAGE_HARNESS_URL: `http://127.0.0.1:${port}`, MURAGE_BOT_ID: "scout", MURAGE_THREAD_ID: "t1",
     MURAGE_COMMS_TOKEN: "tok-bc109", MURAGE_TURN_DEPTH: "0", ...env }, stdio: ["pipe", "pipe", "inherit"] });
   open.push({ child, stub });
   const pending = new Map<number, (m: { result?: { tools?: Array<{ name: string }>; content?: Array<{ text: string }>; isError?: boolean } }) => void>();

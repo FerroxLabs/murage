@@ -8,6 +8,8 @@ import { BrowserExtensionApprovals, BROWSER_EXTENSION_APPROVAL_TOOL, CARD_LIFETI
 import type { ApprovalBus } from "./peer-approval.ts";
 import type { Message } from "./store.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { IndependentThreadRuns } from "./independent-thread-runs.ts";
+import { BrowserTurnExecution } from "./browser-turn-execution.ts";
 function fixture() {
   const messages = new Map<string, Message[]>(); let counter=0;
   const store = {
@@ -66,6 +68,33 @@ describe("T22 durable cards", () => {
     return { ...f, approvals, make, ask, continued, clock, refuse: () => { accept = false; }, take: () => { accept = true; } };
   }
   const query = (over: Partial<ApprovalBinding> = {}) => ({ bindingId: "binding", kind: "action" as const, binding: binding(over) });
+
+  it("preserves a durable continuation when sibling ownership outlasts reacquisition", async () => {
+    vi.useFakeTimers(); const f = durable();
+    const runs = new IndependentThreadRuns<object>();
+    const execution = new BrowserTurnExecution(runs);
+    const a = runs.admit("bot", "thread", {}, ["browser:profile"]);
+    const b = runs.admit("bot", "sibling", {});
+    execution.register(a, ["browser:profile"], ["browser:profile"]);
+    f.bus.onBrowserOwnerWait = (thread, id) => execution.approvalWaiting(thread, id);
+    const call = execution.begin(a, "tools/call", "agent_browser_click");
+    const result = call.within(() => f.ask()).catch(error => error);
+    expect(runs.claim(b, ["browser:profile"])).toBe(true);
+    await vi.advanceTimersByTimeAsync(6_001);
+    expect(await result).toMatchObject({ code: "browser_resume_timeout" });
+    call.finish(false);
+    expect(f.card().answered).toBeUndefined();
+    expect(f.card().dismissed).toBeFalsy();
+    // It is still answerable after reloading the private durable record.
+    const restored = f.make();
+    expect(restored.resolve("thread", f.card().requestId!, "allow")).toBe(true);
+    await restored.drain();
+    expect(f.continued).toHaveLength(1);
+    expect(restored.consume(query())).toBe(true);
+    expect(restored.consume(query())).toBe(false);
+    runs.release(b);
+    expect(runs.owns(a, "browser:profile")).toBe(false);
+  });
 
   it("after the in-turn wait the call gets 'waiting', the card stays live and a record is saved privately", async () => {
     vi.useFakeTimers(); const f = durable();
@@ -233,5 +262,32 @@ describe("C2b hasWaiting", () => {
     expect(f.approvals.hasWaiting("binding")).toBe(true); expect(f.approvals.hasWaiting("other")).toBe(false);
     f.approvals.resolve("thread", f.card().requestId!, "allow"); await result;
     expect(f.approvals.hasWaiting("binding")).toBe(false);
+  });
+});
+
+
+describe("browser ownership around extension approval waits", () => {
+  it.each(["allow", "deny"])("preserves the %s decision while ownership is reacquired", async behavior => {
+    const f = fixture(); let release!: () => void;
+    const owned = new Promise<void>(resolve => { release = resolve; });
+    const resume = vi.fn(() => owned);
+    f.bus.onBrowserOwnerWait = vi.fn(() => resume);
+    let completed = false;
+    const result = f.approvals.ask(f.input).then(state => { completed = true; return state; });
+    const id = f.card().requestId!;
+    expect(f.bus.onBrowserOwnerWait).toHaveBeenCalledWith("thread", id);
+    f.approvals.resolve("thread", id, behavior);
+    await Promise.resolve();
+    expect(f.card().answered).toBe(behavior);
+    expect(resume).toHaveBeenCalledWith(false, undefined);
+    expect(completed).toBe(false);
+    release(); expect(await result).toBe(behavior);
+  });
+  it("dismisses the card if its execution was revoked before it could park", async () => {
+    const f = fixture();
+    f.bus.onBrowserOwnerWait = () => { throw Error("turn ended"); };
+    expect(await f.approvals.ask(f.input)).toBe("cancelled");
+    expect(f.card()).toMatchObject({ answered: "unavailable", dismissed: true });
+    expect(f.onApproval).not.toHaveBeenCalled();
   });
 });

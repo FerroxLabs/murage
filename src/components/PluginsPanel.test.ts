@@ -810,7 +810,7 @@ describe("audit round 1, renderer", () => {
     expect(rows).toMatch(/if \(next\.width !== current\.width\) heights\.current\.clear\(\);/);
   });
   it("A10: the Browse all count is the count label, not a split claim", () => {
-    expect(panel).toContain("const countLabel = appCountLabel(catalog?.total);");
+    expect(panel).toContain("const browseAllParts = appCountParts(catalog?.total);");
     expect(panel).not.toMatch(/\.split\(","\)\[0\]/);
   });
 });

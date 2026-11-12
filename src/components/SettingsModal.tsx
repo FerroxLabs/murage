@@ -8,65 +8,28 @@ import { installerOffer } from "@/lib/update-card";
 // that each do one job. The section ids, their groups and their search words
 // live in lib/settings-sections.ts; this file owns the icons and the pages.
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
-import { effortLabel } from "@/lib/effort-label";
 import { t } from "@/lib/i18n";
 import { DISCARD_SETTINGS_CHANGES, settingsDrafts } from "@/lib/settings-drafts";
-import { SEND_KEYS, chooseSendKey, currentSendKey, isMacPlatform, sendKeyName, subscribeSendKey } from "@/lib/send-key";
 import { waitForAnchor } from "@/lib/anchor-wait";
 import { landOnSetting, type LandingElement } from "@/lib/settings-landing";
-import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Archive, BookOpen, Bot, Brain, ChevronRight, Coins, Globe, LifeBuoy, MessageCircle, Puzzle, Search, Smartphone, Trash2, User, Wrench, X } from "lucide-react";
+import { Suspense, useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Archive, BookOpen, Bot, Brain, Coins, Globe, LifeBuoy, Monitor, Phone, Puzzle, Search, Smartphone, Trash2, User, Users, Wrench, X } from "lucide-react";
 import { api, useStore, type AppSettingsSection, type Bot as BotRecord, type ConfigStatus } from "@/state/store";
 import type { BotSettingsLeave } from "./BotSettingsPane";
 import { loadBotSettingsPane, loadedBotSettingsPane } from "@/lib/bot-settings-pane-load";
 import { leaveBotPage, registerBotPageLeave } from "@/lib/settings-leave";
-import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
-import { inNativeShell } from "@/lib/native-shell";
 import { builtInBrowserEnabled, skillRecorderEnabled } from "@/lib/feature-flags";
-import { localeChoices } from "@/locales";
 import { useUpdaterState, type UpdaterState } from "@/lib/updater";
-import { AdvancedHost, AdvancedSection, AdvancedSlotTarget, Card, Switch } from "./SettingsPrimitives";
-import { PreviousVersionRow } from "./PreviousVersionRow";
-import { SettingsSearchResults, useShowToolCalls } from "./SettingsSearchResults";
-import { Anchor } from "./SettingsAnchor";
-import { BotsSettings } from "./BotsSettings";
-import { AiSettings } from "./AiSettings";
-import { ToolsSettings } from "./ToolsSettings";
-import { DevicesSettings } from "./DevicesSettings";
-import { UsageSection } from "./UsageSection";
-import { SkinPicker } from "./SkinPicker";
-import { SkillsSettings } from "./skills/SkillsSettings";
-import { cloudCardHidden, cloudSectionBlocked, ON_YOUR_COMPUTER_ONLY, ON_YOUR_COMPUTER_ONLY_DETAIL } from "@/lib/cloud-settings";
+import { Card, Switch } from "./SettingsPrimitives";
+import { SETTINGS_STUB_COPY } from "./SettingsStub";
+import { SettingsAskLine } from "./SettingsAskLine";
+import { SettingsSearchResults } from "./SettingsSearchResults";
+import { cloudSectionBlocked, ON_YOUR_COMPUTER_ONLY, ON_YOUR_COMPUTER_ONLY_DETAIL } from "@/lib/cloud-settings";
 import { isCloudOrigin } from "@/lib/cloud-workspace";
-import { homeMeta } from "@/lib/cloud-door";
-import { CloudDevicesSettings } from "./cloud/CloudDevicesSettings";
-import { CloudDisconnectComputer, DISCONNECT_COPY, cloudDisconnectBridge } from "./cloud/CloudDisconnectComputer";
-import { ScriptAccessSettings } from "./ScriptAccessSettings";
-import { AboutMeSettings } from "./AboutMeSettings";
-import { BringYourAi } from "./BringYourAi";
-import { TimeZoneSettings } from "./TimeZoneSettings";
-import { NotificationSettings } from "./NotificationSettings";
-import { CallsSettings } from "./CallsSettings";
-import { BackupSettings } from "./BackupSettings";
-import { DataFolderSettings } from "./DataFolderSettings";
-import { StorageSettings } from "./StorageSettings";
-import { StartupSettings } from "./StartupSettings";
-import { AnnouncementsSettings } from "./AnnouncementsSettings";
-import { NewsSignupSettings } from "./NewsSignupSettings";
-import { BotEmailAccountCard } from "./BotEmailSettings";
-import { HighLevelSettings } from "./HighLevelSettings";
-import { ComputerOnlyStub, SETTINGS_STUB_COPY } from "./SettingsStub";
-import { TelegramSettings } from "./TelegramSettings";
-import { SlackSettings } from "./SlackSettings";
-import { WhatsAppSettings } from "./WhatsAppSettings";
-import { DiscordSettings } from "./DiscordSettings";
-import { RemoteSignOut } from "./RemoteSignOut";
-import { PhoneNotifications } from "./PhoneNotifications";
-import { PhonePayCard } from "./phone/PhonePayCard";
 import { openFirstRun } from "@/lib/first-run";
 import { cn } from "@/lib/cn";
 import { BOX_PANES, BoxBody, BoxHead } from "./ui/BoxShell";
-import { useDesktopSurface, useSurfaceState } from "@/lib/use-surface";
+import { useSurfaceState } from "@/lib/use-surface";
 import {
   browserProfileDeletionBlockReason,
   browserProfilesForPatch,
@@ -86,41 +49,40 @@ import {
   settingsSectionNote,
   settingsSectionRedirect,
 } from "@/lib/settings-sections";
-import { SECTION_PAGES, resolveSettingsSection, type SettingsPage, type SettingsPageEntry } from "@/lib/settings-pages";
+import { BROWSE_BOTS_ROUTE, SECTION_PAGES, isSimpleTarget, resolveSettingsSection, type SettingsPage, type SettingsPageEntry } from "@/lib/settings-pages";
+import { selectorPageLabel, truncateAtWord } from "@/lib/settings-page-select";
+import { setSettingsMode, useSettingsMode } from "@/lib/settings-mode";
+import { sidebarBots } from "@/lib/settings-shell-bots";
+import { isAdvancedOnlyCard } from "@/lib/settings-simple-cards";
+import { sw } from "@/lib/settings-words";
+import { settingsPageLink } from "@/lib/settings-link";
+import { ADVANCED_MODE_ANCHOR } from "./settings/AdvancedModeCard";
+import { BrowseBotsPage } from "./settings/BrowseBotsPage";
+import { SettingsBreadcrumb } from "./settings/SettingsBreadcrumb";
+import { SettingsPageMount, hasPageFile } from "./settings/page-registry";
+import { SetInAdvancedLine } from "./settings/PageCards";
 import { cardForAnchor, type SettingsCard } from "@/lib/settings-cards";
-import { SETTINGS_CARDS } from "@/lib/settings-card-registry";
-import {
-  chooseAutoRail,
-  chooseSidebarDensity,
-  sidebarDensityState,
-  subscribeSidebarDensity,
-  type SidebarDensity,
-} from "@/lib/sidebar-preferences";
-import { copyVersionText } from "@/lib/about-version";
-import { APP_VERSION } from "@/lib/whats-new";
-import { sourceCodeLink, sourceVersionLabel } from "@/lib/source-code";
-import { openKeyboardShortcuts, openWhatsNew } from "@/lib/app-events";
-import { copyText } from "@/lib/copy-text";
-import { FONT_IDS, FONT_LABELS, applyFont, isFontId, readFont, type FontId } from "@/lib/fonts";
+import { SETTINGS_CARDS, resolveSettingsCard } from "@/lib/settings-card-registry";
+// Settings' own words, on this chunk rather than the first paint (1.0.19, SettingsCopy.lazy.test.ts).
+import "@/lib/settings-copy";
 
 export { sectionsForSurface, settingsSectionRedirect } from "@/lib/settings-sections";
 export { settingsSearchResults } from "@/lib/settings-search";
 
-const MemorySection = retryableLazy(() => import("./MemorySection"));
 // A bot's page of this window (S7): loaded with the window by the bot opener (BotSettingsDialog), on first use otherwise.
 const BotPane = retryableLazy(() => loadBotSettingsPane().then((module) => ({ default: module.BotSettingsPane })));
 // Settings > Connected apps > Phone calls (BOT-CALLS-1020): its screen and its 8-language words load the first time the page shows.
-const PhoneCallsSection = retryableLazy(() => import("./PhoneCallsSettings"));
 
 const PAGE_ICONS: Record<SettingsPage, typeof User> = {
   general: User,
-  botDefaults: Bot,
+  calls: Phone,
+  computer: Monitor,
+  botDefaults: Users,
   skills: BookOpen,
   memory: Brain,
   models: Globe,
   webSearch: Wrench,
   connections: Puzzle,
-  channels: MessageCircle,
   companion: Smartphone,
   backups: Archive,
   usage: Coins,
@@ -168,65 +130,6 @@ export function SetupAgainRow() {
   );
 }
 
-/** Name + email, persisted to /api/config {profile} on blur. */
-function ProfileFields() {
-  const { state, dispatch } = useStore();
-  const desktop = useDesktopSurface();
-  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [error, setError] = useState("");
-  const saving = useRef(false);
-  const [name, setName] = useState(state.config?.profile?.name ?? "");
-  const [email, setEmail] = useState(state.config?.profile?.email ?? "");
-  useEffect(() => {
-    setName(state.config?.profile?.name ?? "");
-    setEmail(state.config?.profile?.email ?? "");
-  }, [state.config?.profile?.name, state.config?.profile?.email]);
-
-  const save = async () => {
-    if (desktop !== true || saving.current) return;
-    const profile = { name: name.trim(), email: email.trim().toLowerCase() };
-    if (profile.name === state.config?.profile?.name && profile.email === state.config?.profile?.email) return;
-    saving.current = true;
-    setStatus("saving");
-    setError("");
-    try {
-      const config: ConfigStatus = await api("/api/config", { method: "PUT", body: JSON.stringify({ profile }) });
-      if (!config.profile || typeof config.profile.name !== "string" || typeof config.profile.email !== "string") {
-        throw new Error("The profile save could not be confirmed. Please retry.");
-      }
-      dispatch({ type: "configStatus", config });
-      setStatus("saved");
-    } catch (cause) {
-      setStatus("error");
-      setError(cause instanceof Error ? cause.message : "Could not save your profile. Please retry.");
-    } finally {
-      saving.current = false;
-    }
-  };
-
-  const inputClass =
-    "w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none";
-  return (
-    <div className="flex flex-col gap-3">
-      <input data-setting-control="profile-heading" aria-label="Your name" value={name} readOnly={desktop !== true} disabled={status === "saving"} onChange={(e) => { setName(e.target.value); setStatus("idle"); }} onBlur={() => void save()} placeholder="Your name" className={inputClass} />
-      <input
-        type="email"
-        value={email}
-        aria-label="Your email"
-        readOnly={desktop !== true}
-        disabled={status === "saving"}
-        onChange={(e) => { setEmail(e.target.value); setStatus("idle"); }}
-        onBlur={() => void save()}
-        placeholder="you@example.com"
-        className={inputClass}
-      />
-      {desktop !== true && <p className="text-[12px] text-ink-secondary">Change your profile in the desktop app.</p>}
-      {(status === "saving" || status === "saved") && <p role="status" className="text-[12px] text-ink-secondary">{status === "saving" ? "Saving…" : "Saved"}</p>}
-      {status === "error" && <div role="alert" className="text-[12px] text-danger">{error} <button type="button" onClick={() => void save()} className="rounded px-1 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Retry save</button></div>}
-    </div>
-  );
-}
-
 /** The Updates row's line. It leads with the running version: Linux has no
  * About panel, so this is the one place that version is shown. */
 export function updatesSubtitle(s: UpdaterState | null): string {
@@ -262,7 +165,7 @@ export function updatesStatusLine(s: UpdaterState | null): string {
 /** The one button for the update in hand: Check, Download, Restart and install, Try again. The About card carries it (the
  *  page's only update control since 1.0.10). UpdatesRow is no longer on a page; it stays exported because the update-state
  *  tests and the localization spec render it to check the shared button and status line. */
-function UpdateActionButton({ state: s }: { state: UpdaterState | null }) {
+export function UpdateActionButton({ state: s }: { state: UpdaterState | null }) {
   const installer=installerOffer(s);
   const updater = window.muragebox?.updater;
   // the download page did not open: the button stays pressable and a line says so
@@ -311,135 +214,6 @@ export function UpdatesRow() {
   );
 }
 
-/** Usage analytics, on by default and switchable here. Naming what is sent
- * matters more than the switch: people who cannot see the scope assume the
- * worst, and the worst — conversation text — is exactly what this never
- * sends (autocapture is off; see lib/analytics.ts). */
-function AnalyticsRow() {
-  const [on, setOn] = useState(analyticsEnabled);
-  return (
-    <Card
-      title="Usage analytics"
-      subtitle="Anonymous product events: app opened, which features get used. Never conversations, prompts, file contents, or bot output, and never your name or email."
-    >
-      <Switch
-        checked={on}
-        data-setting-control="analytics-heading" aria-label="Send usage analytics"
-        onClick={() => {
-          const next = !on;
-          setAnalyticsEnabled(next);
-          setOn(next);
-        }}
-      />
-    </Card>
-  );
-}
-
-function LanguageRow() {
-  const { state, dispatch } = useStore();
-  const current = state.config?.language ?? "";
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  const save = async (language: string) => {
-    if (saving) return;
-    setSaving(true);
-    setError("");
-    try {
-      const config: ConfigStatus = await api("/api/config", {
-        method: "PATCH",
-        body: JSON.stringify({ language }),
-      });
-      dispatch({ type: "configStatus", config });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not save the language.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Card
-      title="Language"
-      subtitle="The app follows your system language unless you pick one here. Only part of the interface is translated so far; untranslated text stays in English."
-    >
-      <select
-        value={current}
-        disabled={saving}
-        data-setting-control="language-heading" aria-label="App language"
-        onChange={(event) => void save(event.target.value)}
-        className="w-full max-w-[280px] rounded-lg border border-hairline/40 bg-inset px-2.5 py-1.5 text-[13.5px] text-ink disabled:cursor-wait disabled:opacity-50"
-      >
-        <option value="">System</option>
-        {localeChoices.map(({ code, label }) => (
-          <option key={code} value={code}>
-            {label}
-          </option>
-        ))}
-      </select>
-      {error ? <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p> : null}
-    </Card>
-  );
-}
-
-const NEW_BOT_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
-/** Effort for new bots (triage row 23): applied only where the new bot's
- *  engine offers that level; an explicit choice on the bot wins. */
-function NewBotEffortRow() {
-  const { state, dispatch } = useStore();
-  const [error, setError] = useState("");
-  const current = state.config?.newBots?.effort ?? "";
-  const change = async (value: string) => {
-    setError("");
-    try {
-      const config: ConfigStatus = await api("/api/config", { method: "PATCH", body: JSON.stringify({ newBots: { effort: value || null } }) });
-      dispatch({ type: "configStatus", config });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not save the effort for new bots.");
-    }
-  };
-  return (
-    <Card title="New bots" subtitle="The effort a new bot starts with, when its engine offers that level. You can change it on any bot later.">
-      <label className="flex items-center justify-between gap-4 text-[14px] text-ink">
-        Effort for new bots
-        <select data-setting-control="new-bot-effort-heading" value={current} onChange={(event) => void change(event.target.value)} className="rounded-md bg-inset px-2 py-1.5 text-[13px] text-ink">
-          <option value="">Engine default</option>
-          {NEW_BOT_EFFORTS.map((level) => <option key={level} value={level}>{effortLabel(level)}</option>)}
-        </select>
-      </label>
-      {error ? <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p> : null}
-    </Card>
-  );
-}
-
-function ToolCallsRow() {
-  const { enabled, saving, error, toggle } = useShowToolCalls();
-
-  return (
-    <Card
-      title="Tool calls"
-      subtitle="Show each tool a bot runs in the transcript. Off by default; the mascot already shows that work is happening."
-    >
-      <div className="flex items-center justify-between gap-4">
-        <div className="min-w-0">
-          <div className="text-[14px] font-medium text-ink">Show tool calls</div>
-          <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
-            Named chips for Bash, search, and other tools. Errors and bot-to-bot messages still appear.
-          </div>
-        </div>
-        <Switch
-          checked={enabled}
-          data-setting-control="tool-calls-heading" aria-label="Show tool calls in chat"
-          disabled={saving}
-          onClick={() => void toggle()}
-          className="disabled:cursor-wait disabled:opacity-50"
-        />
-      </div>
-      {error ? <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p> : null}
-    </Card>
-  );
-}
-
 export function WorkspaceFeatureRow({ feature }: { feature: "skillRecorder" | "browser" }) {
   const { state, dispatch } = useStore();
   const browser = feature === "browser";
@@ -482,11 +256,12 @@ export function WorkspaceFeatureRow({ feature }: { feature: "skillRecorder" | "b
           )}
         </div>
         <Switch
-          checked={enabled}
+          // Without the desktop browser bridge the built-in browser cannot run, so the switch says so: off and unavailable.
+          checked={enabled && (!browser || desktopBrowser)}
           data-setting-control={browser ? "browser-settings-heading" : "skill-recorder-heading"}
           aria-label={t(browser ? "settings.workspaceFeature.browser.aria" : "settings.workspaceFeature.recorder.aria")}
           // Until the saved switches load, the row cannot tell on from off, so it waits instead of saving a guess.
-          disabled={saving || state.config == null || (browser && !enabled && !desktopBrowser)}
+          disabled={saving || state.config == null || (browser && !desktopBrowser)}
           onClick={() => void toggle()}
           className="disabled:cursor-wait disabled:opacity-50"
         />
@@ -655,353 +430,12 @@ export function BrowserProfilesRow() {
   );
 }
 
-/** Health in Settings: one quiet line to the Health screen, the one place issues are shown. */
-function SettingsHealthRow() {
-  const { dispatch } = useStore();
-  return <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline/50 bg-panel p-4 text-[13px]">
-    <div className="min-w-0"><h2 className="text-[15px] font-semibold text-ink">{t("ux.l2a.health.title")}</h2><p className="mt-1 text-ink-secondary">{t("ux.l2b.health.settingsLine")}</p></div>
-    <button type="button" data-setting-control="health-heading" className="min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus" onClick={() => dispatch({ type: "showHealth" })}>{t("ux.l2b.health.openHealth")}</button>
-  </div>;
-}
 
-/** Writes a redacted diagnostics file to a location the user picks. The
- * report holds versions, configured-or-not booleans and the server.log tail —
- * never credential values (the desktop shell does not read secret fields). */
-function DiagnosticsRow() {
-  const [exporting, setExporting] = useState(false);
-  const [result, setResult] = useState<{ kind: "success" | "error"; message: string } | null>(null);
 
-  const exportDiagnostics = async () => {
-    if (!window.muragebox?.exportDiagnostics || exporting) return;
-    setExporting(true);
-    setResult(null);
-    try {
-      const path = await window.muragebox.exportDiagnostics();
-      if (path) setResult({ kind: "success", message: `Saved to ${path}` });
-    } catch (e) {
-      setResult({ kind: "error", message: e instanceof Error ? e.message : String(e) });
-    } finally {
-      setExporting(false);
-    }
-  };
 
-  return (
-    <Card
-      title="Diagnostics"
-      subtitle="Versions, configuration on/off state and a redacted server log tail. Review the file before sharing it."
-    >
-      <div className="flex min-w-0 flex-col items-end gap-2">
-        <button
-          onClick={() => void exportDiagnostics()}
-          disabled={exporting}
-          data-setting-control="diagnostics-heading" aria-label="Export diagnostics to a text file"
-          className="rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control disabled:opacity-40"
-        >
-          {exporting ? "Exporting…" : "Export Diagnostics…"}
-        </button>
-        {result ? (
-          <span
-            role={result.kind === "error" ? "alert" : "status"}
-            className={`max-w-64 break-all text-right text-[12px] ${result.kind === "error" ? "text-danger" : "text-success"}`}
-          >
-            {result.message}
-          </span>
-        ) : null}
-      </div>
-    </Card>
-  );
-}
 
-/** The interface font, apart from the skin (B86): this machine only, like the skin. */
-function FontRow() {
-  const [current, setCurrent] = useState<FontId>(readFont);
-  return (
-    <div className="mt-4 flex items-center justify-between gap-4 border-t border-hairline pt-4">
-      <div className="min-w-0">
-        <div id="settings-interface-font" className="text-[14px] font-medium text-ink">Interface font</div>
-        <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">The lettering across the app on this computer.</div>
-      </div>
-      <select
-        value={current}
-        aria-labelledby="settings-interface-font"
-        onChange={(event) => {
-          const id = event.target.value;
-          if (!isFontId(id)) return;
-          applyFont(id);
-          setCurrent(id);
-        }}
-        className="min-h-8 w-full max-w-[200px] rounded-lg border border-hairline bg-inset px-2.5 py-1.5 text-[13px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
-      >
-        {FONT_IDS.map((id) => (
-          <option key={id} value={id}>{FONT_LABELS[id]}</option>
-        ))}
-      </select>
-    </div>
-  );
-}
 
-const DENSITY_OPTIONS: readonly { id: SidebarDensity; label: () => string }[] = [
-  { id: "compact", label: () => t("settings.sidebar.standard") },
-  { id: "comfortable", label: () => t("settings.sidebar.roomy") },
-  { id: "icons", label: () => t("settings.sidebar.rail") },
-];
 
-/** Sidebar density, beside the skin (it used to be a menu in the sidebar's
- *  header, next to a Collapse button that did the same thing). */
-function SidebarDensityRow() {
-  const prefs = useSyncExternalStore(subscribeSidebarDensity, sidebarDensityState, sidebarDensityState);
-  return (
-    <div className="max-md:hidden">
-      <div id="settings-sidebar-density" className="text-[14px] font-medium text-ink">{t("settings.sidebar.label")}</div>
-      <div role="radiogroup" aria-labelledby="settings-sidebar-density" className="mt-2 grid grid-cols-3 overflow-hidden rounded-lg border border-hairline">
-        {DENSITY_OPTIONS.map(({ id, label }, index) => {
-          const selected = prefs.density === id;
-          return (
-            <button
-              key={id}
-              type="button"
-              role="radio"
-              aria-checked={selected}
-              tabIndex={selected ? 0 : -1}
-              onKeyDown={(event) => {
-                const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
-                if (!step) return;
-                event.preventDefault();
-                const at = (index + step + DENSITY_OPTIONS.length) % DENSITY_OPTIONS.length;
-                chooseSidebarDensity(DENSITY_OPTIONS[at].id);
-                event.currentTarget.parentElement?.querySelectorAll("button")[at]?.focus();
-              }}
-              data-setting-control={index === 0 ? "sidebar-density-heading" : undefined}
-              onClick={() => chooseSidebarDensity(id)}
-              className={cn(
-                "flex h-9 items-center justify-center px-3 text-[13px] transition-colors",
-                index > 0 && "border-l border-hairline",
-                selected
-                  ? "bg-control font-medium text-accent-text shadow-[inset_0_0_0_1px_var(--color-accent-border)]"
-                  : "text-ink-secondary hover:bg-control/50",
-              )}
-            >
-              {label()}
-            </button>
-          );
-        })}
-      </div>
-      <div className="mt-3 flex items-center justify-between gap-4">
-        <div className="min-w-0">
-          <div id="settings-auto-rail" className="text-[13.5px] text-ink">{t("settings.sidebar.autoRail")}</div>
-          <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{t("settings.sidebar.autoRailNote")}</div>
-        </div>
-        <Switch checked={prefs.autoRail} aria-labelledby="settings-auto-rail" onClick={() => chooseAutoRail(!prefs.autoRail)} />
-      </div>
-    </div>
-  );
-}
-
-/** The first card of About & updates: which Murage this is, where its update stands, and a line to paste into a support message. The release date
- * is left out: no build records one the app can read, and a guessed date would be worse than none. */
-function AboutVersionCard() {
-  const s = useUpdaterState();
-  const desktop = useDesktopSurface();
-  const { dispatch } = useStore();
-  const [copied, setCopied] = useState(false);
-  const [copyFailed, setCopyFailed] = useState(false);
-  const version = s?.currentVersion || APP_VERSION;
-  const copy = () => {
-    const line = copyVersionText(version, window.muragebox?.platform, window.muragebox?.arch);
-    void copyText(line).then((ok) => {
-      setCopyFailed(!ok);
-      if (!ok) return;
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    });
-  };
-  return (
-    <Card title={t("settings.about.versionTitle", { version })} subtitle={window.muragebox?.updater ? updatesStatusLine(s) : undefined}>
-      <div className="flex flex-wrap items-center gap-2">
-        {/* The page's one update control, as the sidebar footer has one: the version, where the update stands and the
-            action share this card. The "updates" search card lands here; a Cloud window has no updater, so it shows the this-computer stub (S1). */}
-        <Anchor id="updates-heading">{cloudCardHidden("updates-heading") ? <ComputerOnlyStub anchor="updates-heading" /> : <UpdateActionButton state={s} />}</Anchor>
-        {desktop === true && (
-          <button
-            type="button"
-            onClick={() => {
-              dispatch({ type: "toggleAppSettings", open: false });
-              openWhatsNew();
-            }}
-            className={secondaryButton}
-          >
-            {t("settings.about.whatsNewOpen")}
-          </button>
-        )}
-        <button type="button" data-setting-control="about-version-heading" onClick={copy} className={secondaryButton}>
-          {copyFailed ? t("copy.failed") : copied ? t("settings.about.versionCopied") : t("settings.about.versionCopy")}
-        </button>
-      </div>
-      <span role="status" className="sr-only">{copied ? t("settings.about.versionCopied") : ""}</span>
-    </Card>
-  );
-}
-
-/** Opens the page What's new showed after the last update. */
-function WhatsNewRow() {
-  const { dispatch } = useStore();
-  const desktop = useDesktopSurface();
-  // Always on the desktop: a version without a page opens its release notes.
-  if (desktop !== true) return null;
-  return (
-    <Card title={t("settings.about.whatsNewTitle")} subtitle={t("settings.about.whatsNewNote")}>
-      <button
-        data-setting-control="whats-new-heading"
-        type="button"
-        onClick={() => {
-          dispatch({ type: "toggleAppSettings", open: false });
-          openWhatsNew();
-        }}
-        className="min-h-11 rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
-      >
-        {t("settings.about.whatsNewOpen")}
-      </button>
-    </Card>
-  );
-}
-
-/** The source offer the GNU AGPL (section 13) asks for. Shown on every
- * surface, the browser door included: whoever uses Murage over a network is
- * told where the source of this version is. */
-function SourceCodeRow() {
-  return (
-    <Card title={t("settings.about.sourceTitle")} subtitle={`${t("settings.about.sourceNote")} ${sourceVersionLabel(APP_VERSION)}.`}>
-      <a
-        href={sourceCodeLink()}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex min-h-11 items-center rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
-      >
-        {t("settings.about.sourceOpen")}
-      </a>
-    </Card>
-  );
-}
-
-/** Which key sends a message. Enter stays the default, Japanese starts on
- *  Ctrl/Cmd+Enter (an input method confirms its candidate with Enter), and the
- *  choice is kept on this device. */
-function SendKeyRow() {
-  const mode = useSyncExternalStore(subscribeSendKey, currentSendKey, currentSendKey);
-  const mac = isMacPlatform();
-  return (
-    <Card title={t("settings.sendKey.title")} subtitle={t("settings.sendKey.note")}>
-      <div role="radiogroup" aria-label={t("settings.sendKey.title")} className="grid grid-cols-3 overflow-hidden rounded-lg border border-hairline">
-        {SEND_KEYS.map((id, index) => {
-          const selected = mode === id;
-          return (
-            <button
-              key={id}
-              type="button"
-              role="radio"
-              aria-checked={selected}
-              tabIndex={selected ? 0 : -1}
-              onKeyDown={(event) => {
-                const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
-                if (!step) return;
-                event.preventDefault();
-                const at = (index + step + SEND_KEYS.length) % SEND_KEYS.length;
-                chooseSendKey(SEND_KEYS[at]);
-                event.currentTarget.parentElement?.querySelectorAll("button")[at]?.focus();
-              }}
-              data-setting-control={index === 0 ? "send-key-heading" : undefined}
-              onClick={() => chooseSendKey(id)}
-              className={cn(
-                "flex h-9 items-center justify-center px-3 text-[13px] transition-colors",
-                index > 0 && "border-l border-hairline",
-                selected
-                  ? "bg-control font-medium text-accent-text shadow-[inset_0_0_0_1px_var(--color-accent-border)]"
-                  : "text-ink-secondary hover:bg-control/50",
-              )}
-            >
-              {sendKeyName(id, mac)}
-            </button>
-          );
-        })}
-      </div>
-    </Card>
-  );
-}
-
-function ShortcutsRow() {
-  const { dispatch } = useStore();
-  return (
-    <Card title={t("settings.about.shortcutsTitle")} subtitle={t("settings.about.shortcutsNote")}>
-      <button
-        data-setting-control="shortcuts-heading"
-        type="button"
-        onClick={() => {
-          dispatch({ type: "toggleAppSettings", open: false });
-          openKeyboardShortcuts();
-        }}
-        className="min-h-11 rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
-      >
-        {t("settings.about.shortcutsOpen")}
-      </button>
-    </Card>
-  );
-}
-
-const linkButton = "rounded px-0.5 font-medium text-accent-text underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus";
-const secondaryButton = "min-h-11 rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus";
-
-/** Settings > Connected apps: the key and the way into the panel. The apps
- *  themselves live in the panel (the sidebar's Apps place). */
-function ConnectedAppsSettings({ advancedOpen, onAdvancedOpenChange }: { advancedOpen: boolean; onAdvancedOpenChange: (open: boolean) => void }) {
-  const { state, dispatch } = useStore();
-  const go = (section: AppSettingsSection) => dispatch({ type: "toggleAppSettings", open: true, section });
-  const openPanel = (surface: "apps" | "mcp") => {
-    dispatch({ type: "toggleAppSettings", open: false });
-    dispatch({ type: "togglePlugins", open: true, surface });
-  };
-  return (
-    <>
-      <Anchor id="connections-heading">
-      <Card title={t("settings.section.connections")} subtitle={t("settings.connections.note")}>
-        <div className="flex flex-col gap-4">
-          {state.config?.composio.mode === "managed" ? (
-            <div className="rounded-lg border border-success/25 bg-success/10 px-3 py-2 text-[13px] text-success">
-              {t("settings.connections.ready")}
-            </div>
-          ) : null}
-          <div className="flex flex-wrap gap-2">
-            <button type="button" data-setting-control="connections-heading" onClick={() => openPanel("apps")} className={secondaryButton}>{t("settings.connections.openApps")}</button>
-          </div>
-        </div>
-      </Card>
-      </Anchor>
-      {/* 0.1.62 only: Image generation, web search and transcription keys
-          used to sit on this page, and an old notice or habit still lands
-          here looking for them. */}
-      <p className="px-1 text-[12.5px] leading-relaxed text-ink-secondary">
-        {t("settings.connections.moved")}{" "}
-        <button type="button" onClick={() => go("images")} className={linkButton}>{settingsSectionLabel("images")}</button>
-        {" · "}
-        <button type="button" onClick={() => go("webSearch")} className={linkButton}>{settingsSectionLabel("webSearch")}</button>
-        {" · "}
-        <button type="button" onClick={() => go("voice")} className={linkButton}>{settingsSectionLabel("voice")}</button>
-        {" · "}
-        <button type="button" onClick={() => go("models")} className={linkButton}>{t("settings.models.pasteTitle")}</button>
-      </p>
-      {/* The MCP servers panel runs this computer's servers (mcp-servers:*), which a Cloud window's bridge refuses: there the
-        * card is the "set this on your computer" stub (SETTINGS-UX-1011 S1). */}
-      <AdvancedSection section="connections" summary={t("settings.l1.advanced.connections")} open={advancedOpen} onOpenChange={onAdvancedOpenChange}>
-        <div id="mcp-servers-heading" tabIndex={-1} className="outline-none">
-          {cloudCardHidden("mcp-servers-heading") ? <ComputerOnlyStub anchor="mcp-servers-heading" /> : (
-            <Card title={t("settings.l1.mcp.title")} subtitle={t("settings.l1.mcp.note")}>
-              <button type="button" data-setting-control="mcp-servers-heading" onClick={() => openPanel("mcp")} className={secondaryButton}>{t("settings.connections.openMcp")}</button>
-            </Card>
-          )}
-        </div>
-      </AdvancedSection>
-    </>
-  );
-}
 
 /** Settings > Images: the setup, and the library of saved prompt blocks and
  *  reference packs as a tab of its own rather than a button inside a card. */
@@ -1045,20 +479,24 @@ export function inSettingsTabOrder(element: Pick<Element, "closest" | "parentEle
 export function SettingsModal({ bot, onBotClose }: { bot?: BotRecord; onBotClose?: () => void } = {}) {
   const { state, dispatch } = useStore();
   const botLeave = useRef<BotSettingsLeave | null>(null);
-  const [botsListOpen, setBotsListOpen] = useState(false);
+  const mode = useSettingsMode(state.config?.settingsDefaultMode);
   // The store keeps the id it was asked for (any of the 19); the page it lands on is `section` below, so the page
   // bodies read as they always have. An alias also names a card on that page (state.appSettingsAnchor).
   const requested = state.appSettingsSection;
   // A Cloud window: a page it cannot use matches none of the page bodies and shows the "on your computer only" card instead.
   const cloud = isCloudOrigin();
   const blocked = cloudSectionBlocked(requested);
-  const section = (blocked ? "" : resolveSettingsSection(requested).section) as SettingsPage;
-  // An alias the Cloud window may use can land on a page it may not (Images sits on Tools, whose search and voice keys
-  // are this computer's): that page then renders only the alias's own card.
-  const pageComputerOnly = !blocked && cloudSectionBlocked(section);
+  const browsing = !bot && requested === BROWSE_BOTS_ROUTE;
+  const resolved = (blocked || browsing ? "" : resolveSettingsSection(requested).section) as SettingsPage;
+  // A page with a file of its own (settings/page-registry.tsx) is mounted from there; `section` is what the legacy blocks
+  // below still match on, so it is empty for a page that has moved out. Pages leave the legacy blocks one at a time.
+  const mountedPage = resolved && hasPageFile(resolved) ? resolved : null;
+  const section = (mountedPage ? "" : resolved) as SettingsPage;
   // The nav marks the page the request lands on, blocked or not, so a Cloud window still shows where the person is.
-  const navPage = resolveSettingsSection(requested).section;
-  const anchor = state.appSettingsAnchor;
+  // Browse bots is a route, not a page: no page is marked while it shows (it would read as General).
+  const navPage = browsing ? null : resolveSettingsSection(requested).section;
+  const targetCard = state.appSettingsAnchor ? resolveSettingsCard(state.appSettingsAnchor) : undefined;
+  const anchor = targetCard?.anchor ?? state.appSettingsAnchor;
   const dialogRef = useRef<HTMLDivElement>(null);
   const settingsLayerOwner = useLayerOwner();
   const navRef = useRef<HTMLElement>(null);
@@ -1067,11 +505,21 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
   const [query, setQuery] = useState("");
   const q = query.trim();
   const { desktop, confirmed } = useSurfaceState();
-  const visiblePages = sectionsForSurface(PAGES, desktop);
-  const current = PAGES.find((entry) => entry.id === section);
+  // Browse bots (`browsing`, above) is a route of the Each bot group, not one of the 13 pages (settings-pages.ts BROWSE_BOTS_ROUTE).
+  // Simple lists the pages marked `simple` and nothing else; Advanced lists all 13. An opener that lands on a page Simple
+  // does not list turns Advanced mode on (below), so nothing is ever out of reach.
+  const visiblePages = sectionsForSurface(PAGES, desktop).filter((entry) => mode === "advanced" || entry.simple);
+  const current = PAGES.find((entry) => entry.id === resolved);
+  const botRows = sidebarBots(state.bots, bot?.id);
+  // The card an opener named stays "in view" for Copy link after the store has cleared the anchor, until the page changes.
+  const [landed, setLanded] = useState<{ section: AppSettingsSection; anchor: string } | null>(null);
+  // A page left and come back to without a card does not keep the old card for Copy link.
+  useEffect(() => { setLanded((now) => (anchor ? { section: requested, anchor } : now && now.section === requested ? now : null)); }, [anchor, requested]);
+  const pageLinkCard = landed && landed.section === requested ? cardForAnchor(SETTINGS_CARDS, landed.anchor) : undefined;
+  // A request for a page Simple does not list (a link, a What's new tile, a search result) turns Advanced mode on first.
+  useEffect(() => { if (!bot && mode === "simple" && !isSimpleTarget(requested)) setSettingsMode("advanced"); }, [bot, mode, requested]);
   // One Advanced per page, closed on a page change unless an opener opens it (below).
   const [advancedOpen, setAdvancedOpen] = useState<Record<SettingsPage, boolean>>(() => Object.fromEntries(SECTION_PAGES.map((entry) => [entry.id, false])) as Record<SettingsPage, boolean>);
-  const advancedFor = (page: SettingsPage) => ({ section: page, open: advancedOpen[page], onOpenChange: (open: boolean) => setAdvancedOpen((now) => ({ ...now, [page]: open })) });
 
   useEffect(() => {
     const visible = sectionsForSurface(SECTIONS, desktop);
@@ -1084,12 +532,16 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
 
   useEffect(() => {
     setAdvancedOpen((now) => (Object.values(now).some(Boolean) ? Object.fromEntries(SECTION_PAGES.map((entry) => [entry.id, false])) as Record<SettingsPage, boolean> : now));
-  }, [section]);
+  }, [resolved]);
 
   // Land on the card the opener named: its page's Advanced first when it lives there, then scroll, focus, highlight.
   useEffect(() => {
     if (!anchor || query || bot) return;
-    const card = cardForAnchor(SETTINGS_CARDS, anchor);
+    const card = resolveSettingsCard(anchor);
+    if (card && mode === "simple" && isAdvancedOnlyCard(card.section, card.id)) {
+      setSettingsMode("advanced");
+      return;
+    }
     if (card?.advanced && !advancedOpen[card.section]) {
       setAdvancedOpen((now) => ({ ...now, [card.section]: true }));
       return;
@@ -1100,11 +552,12 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
     const startedAt = anchorWaitRef.current.at;
     return waitForAnchor({
       startedAt,
-      find: () => document.getElementById(anchor),
+      // A retained tab panel can already contain the anchor while still hidden. Wait for its tab to activate too.
+      find: () => { const element = document.getElementById(anchor); return element?.closest("[hidden]") ? null : element; },
       onFound: (element) => { anchorWaitRef.current = null; if (settingsLayerOwner?.handle?.active) revealAnchor(element); dispatch({ type: "appSettingsAnchorDone" }); },
       onGiveUp: () => { anchorWaitRef.current = null; paneRef.current?.scrollTo?.({ top: 0 }); dispatch({ type: "appSettingsAnchorDone" }); },
     });
-  }, [anchor, query, advancedOpen, dispatch, bot]);
+  }, [anchor, query, advancedOpen, dispatch, bot, mode]);
 
   const openCard = (card: SettingsCard) => dispatch({ type: "toggleAppSettings", open: true, section: card.section, anchor: card.anchor });
 
@@ -1140,7 +593,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
 
   const layer = useLayerContainer(dialogRef, { onEscape: closeSettings, initialFocus: null, holdFocus: false });
 
-  // A handful of sections (a paired phone sees three) read better as plain
+  // A handful of sections (a paired phone sees four) read better as plain
   // chips on the phone strip than under headings that each hold one or two.
   const fewSections = visiblePages.length <= 4;
 
@@ -1191,12 +644,10 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
             "flex flex-col border-r border-hairline/40 px-3 pb-2 pt-3",
             // A window too short for every section scrolls the list, with the
             // app's always-visible scrollbar, rather than clipping it (G3).
-            // 240px: the longest label, "Phone and other devices", fits in Inter
+            // 272px: the longest label, "Search, images and dictation", fits in Inter
             // even beside the list's scrollbar on a short window.
-            "md:w-[240px] md:shrink-0 md:min-h-0 md:overflow-y-auto",
+            "md:w-[272px] md:shrink-0 md:min-h-0 md:overflow-y-auto",
             "max-md:w-full max-md:shrink-0 max-md:flex-row max-md:items-center max-md:gap-1.5 max-md:overflow-x-auto max-md:border-r-0 max-md:border-b max-md:px-4 max-md:py-2",
-            // On the phone strip, the right edge fades: there is more to swipe to.
-            "max-md:[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)]",
             // Typing on a bot's page, the phone strip gives its height to the page. Only there: the strip of the
             // app's own pages holds the search box, which the keyboard may be up for.
             bot && "max-md:keyboard-open:hidden",
@@ -1209,7 +660,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
             {t("settings.title")}
           </div>
           {/* The bot page has its own search, over that bot's settings. The app search is the anchor for its hint (L4C). */}
-          <div data-settings-search hidden={bot ? true : undefined} className={cn("mb-1 flex min-h-8 items-center gap-2 rounded-lg bg-control/70 px-2.5 max-md:mb-0 max-md:min-h-11 max-md:w-[9rem] max-md:shrink-0", bot && "hidden")}>
+          <div data-settings-search hidden={bot ? true : undefined} className={cn("mb-1 flex min-h-8 items-center gap-2 rounded-lg bg-control/70 px-2.5 max-md:mb-0 max-md:min-h-11 max-md:min-w-0 max-md:flex-1", bot && "hidden")}>
             <Search size={14} className="shrink-0 text-ink-secondary" aria-hidden="true" />
             <input
               value={query}
@@ -1228,20 +679,46 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
               className="w-full bg-transparent text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none"
             />
           </div>
+          {/* The phone: one page selector beside the search, as the locked mockup draws it, in place of a strip of chips
+            * that put Search off-screen. The chips below stay for the desktop list and are hidden here. */}
+          <select
+            data-settings-page-select
+            aria-label={t("settings.pageSelectAria")}
+            value={bot ? `bot:${bot.id}` : browsing ? BROWSE_BOTS_ROUTE : navPage ?? ""}
+            onChange={(e) => {
+              const value = e.target.value;
+              if (value.startsWith("bot:")) openBot(value.slice(4));
+              else if (value === BROWSE_BOTS_ROUTE) { setQuery(""); leave(() => dispatch({ type: "toggleAppSettings", open: true, section: BROWSE_BOTS_ROUTE })); }
+              else openPage(value as SettingsPage);
+            }}
+            className="hidden min-h-11 min-w-0 flex-1 rounded-lg border border-hairline/50 bg-control/70 px-2.5 text-[13.5px] text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus max-md:block"
+          >
+            {SETTINGS_GROUPS.map((group) => {
+              const entries = visiblePages.filter((entry) => entry.group === group);
+              const rows = group === "bots" ? botRows.rows : [];
+              if (entries.length === 0 && rows.length === 0) return null;
+              return (
+                <optgroup key={group} label={settingsGroupLabel(group)}>
+                  {entries.map(({ id }) => <option key={id} value={id} aria-label={selectorPageLabel(id, requested)}>{truncateAtWord(selectorPageLabel(id, requested))}</option>)}
+                  {rows.map((each) => <option key={`bot-${each.id}`} value={`bot:${each.id}`} aria-label={each.name}>{truncateAtWord(each.name)}</option>)}
+                  {group === "bots" && botRows.browse && desktop === true && <option value={BROWSE_BOTS_ROUTE}>{sw("settings.browse.toggle", { count: botRows.total })}</option>}
+                </optgroup>
+              );
+            })}
+          </select>
           {SETTINGS_GROUPS.map((group) => {
             const entries = visiblePages.filter((entry) => entry.group === group);
-            // Archived bots are not listed, except the one this window is showing. The group stays closed until asked,
-            // so many bots never bury the groups below: only the open bot's row, and a lone bot needs no toggle.
-            const bots = group === "bots" ? state.bots.filter((each) => !each.hidden || each.id === bot?.id) : [];
-            const rows = botsListOpen || bots.length === 1 ? bots : bots.filter((each) => each.id === bot?.id);
-            if (entries.length === 0 && bots.length === 0) return null;
+            // Each bot (LOCKED 2.1): up to five rows, the Chief first, the open bot always one of them; past five, the
+            // Browse bots row opens the list page. Archived bots are not listed, except the one this window is showing.
+            const rows = group === "bots" ? botRows.rows : [];
+            if (entries.length === 0 && group !== "bots") return null;
             return (
               <div
                 key={group}
                 role="group"
                 aria-labelledby={`settings-group-${group}`}
                 aria-description={settingsGroupNote(group)}
-                className="flex flex-col max-md:shrink-0 max-md:flex-row max-md:items-center max-md:gap-1.5"
+                className="flex flex-col max-md:hidden"
               >
                 <div
                   id={`settings-group-${group}`}
@@ -1273,22 +750,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                     <span className="min-w-0 truncate">{settingsPageLabel(id)}</span>
                   </button>
                 ))}
-                {bots.length > 1 && (
-                  <button
-                    type="button"
-                    data-settings-bots-toggle
-                    aria-expanded={botsListOpen}
-                    onClick={() => setBotsListOpen((open) => !open)}
-                    className={cn(
-                      "flex h-7 shrink-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-[13.5px] text-ink-secondary hover:bg-control/50 hover:text-ink",
-                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus",
-                      "max-md:h-11 max-md:whitespace-nowrap max-md:rounded-full max-md:px-3.5",
-                    )}
-                  >
-                    <ChevronRight size={15} className={cn("shrink-0 transition-transform", botsListOpen && "rotate-90")} aria-hidden="true" />
-                    <span className="min-w-0 truncate">{t("settings.botsToggle", { count: bots.length })}</span>
-                  </button>
-                )}
+                {group === "bots" && botRows.total === 0 && <p data-settings-no-bots className="px-2.5 py-1 text-[12.5px] leading-snug text-ink-secondary max-md:hidden">{sw("settings.browse.noBots")}</p>}
                 {rows.map((each) => (
                   <button
                     key={`bot-${each.id}`}
@@ -1308,9 +770,41 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                     <span className="min-w-0 truncate">{each.name}</span>
                   </button>
                 ))}
+                {group === "bots" && botRows.browse && desktop === true && (
+                  <button
+                    type="button"
+                    data-settings-section={BROWSE_BOTS_ROUTE}
+                    onClick={() => { setQuery(""); leave(() => dispatch({ type: "toggleAppSettings", open: true, section: BROWSE_BOTS_ROUTE })); }}
+                    aria-current={!bot && browsing ? "page" : undefined}
+                    className={cn(
+                      "flex h-7 shrink-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-[13.5px]",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus",
+                      "max-md:h-11 max-md:whitespace-nowrap max-md:rounded-full max-md:px-3.5",
+                      !bot && !q && browsing ? "bg-control font-medium text-ink" : "text-ink-secondary hover:bg-control/50 hover:text-ink",
+                    )}
+                  >
+                    <Users size={15} className="shrink-0" aria-hidden="true" />
+                    <span className="min-w-0 truncate">{sw("settings.browse.toggle", { count: botRows.total })}</span>
+                  </button>
+                )}
               </div>
             );
           })}
+          {/* Simple lists seven pages; one line at the bottom takes a person to the rest, so no page is out of reach. */}
+          {mode === "simple" && !bot && <div className="mt-2 px-1.5 max-md:hidden"><SetInAdvancedLine count={SECTION_PAGES.length - visiblePages.length} /></div>}
+          {/* On Advanced the bottom of the list says so and opens the one switch (LOCKED 2.5). */}
+          {mode === "advanced" && !bot && (
+            <button
+              type="button"
+              data-settings-mode-footer
+              // Its own name, led by "Settings", so it never reads as a second "Advanced" beside a page's Advanced section.
+              aria-label={`${t("settings.title")}: ${sw("settings.mode.footer")}. ${sw("settings.mode.footerChange")}`}
+              onClick={() => { setQuery(""); dispatch({ type: "toggleAppSettings", open: true, section: "general", anchor: ADVANCED_MODE_ANCHOR }); }}
+              className="mt-2 flex min-h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-left text-[12px] text-ink-secondary hover:bg-control/50 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus max-md:hidden"
+            >
+              <span>{sw("settings.mode.footer")}</span><span aria-hidden="true">·</span><span className="underline underline-offset-2">{sw("settings.mode.footerChange")}</span>
+            </button>
+          )}
         </nav>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -1318,7 +812,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
             <div className="min-w-0">
               {bot ? (
                 <>
-                  <span className="block truncate text-[15px] font-semibold text-ink"><span className="font-normal text-ink-secondary">{settingsGroupLabel("bots")}</span><span aria-hidden="true" className="px-1.5 font-normal text-ink-secondary">/</span><span>{bot.name}</span></span>
+                  <SettingsBreadcrumb crumbs={[{ label: settingsGroupLabel("bots") }, { label: bot.name, onClick: () => leave(() => dispatch({ type: "toggleSettings", open: true, botId: bot.id, intent: { section: "overview" } })) }]} link={null} />
                   <p data-settings-page-note className="mt-0.5 text-[12.5px] leading-snug text-ink-secondary">{`What ${bot.name} knows, can use and how it works.`}</p>
                 </>
               ) : q ? (
@@ -1328,12 +822,13 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 </>
               ) : (
                 <>
-                  <span className="block truncate text-[15px] font-semibold text-ink">
-                    {current && <><span className="font-normal text-ink-secondary">{settingsGroupLabel(current.group)}</span><span aria-hidden="true" className="px-1.5 font-normal text-ink-secondary">/</span></>}
-                    <span>{current ? settingsPageLabel(current.id) : null}</span>
-                  </span>
+                  {browsing ? (
+                    <SettingsBreadcrumb crumbs={[{ label: settingsGroupLabel("bots") }, { label: t("settings.page.browseBots") }]} link={settingsPageLink(BROWSE_BOTS_ROUTE)} />
+                  ) : (
+                    <SettingsBreadcrumb crumbs={current ? [{ label: settingsGroupLabel(current.group) }, { label: requested === "channels" ? t("settings.page.channels") : settingsPageLabel(current.id) }] : []} link={current ? settingsPageLink(current.id, pageLinkCard?.id) : null} />
+                  )}
                   {/* What the page is for, in one line (the grandma test). */}
-                  {current && <p data-settings-page-note className="mt-0.5 text-[12.5px] leading-snug text-ink-secondary">{settingsSectionNote(current.id)}</p>}
+                  {browsing ? <p data-settings-page-note className="mt-0.5 text-[12.5px] leading-snug text-ink-secondary">{t("settings.pageNote.browseBots")}</p> : current && <p data-settings-page-note className="mt-0.5 text-[12.5px] leading-snug text-ink-secondary">{settingsSectionNote(requested === "channels" ? "channels" : current.id)}</p>}
                 </>
               )}
             </div>
@@ -1353,8 +848,8 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
               </Suspense>
             </LazyBoundary>
           ) : (
-          <BoxBody ref={paneRef} className="flex flex-1 flex-col gap-4 px-5 pb-5 [--box-pad:1.25rem]">
-            {q && <SettingsSearchResults query={q} desktop={desktop} onOpen={openCard} />}
+          <BoxBody ref={paneRef} className="flex flex-1 flex-col gap-4 px-5 pb-5 [--box-pad:1.25rem]" data-settings-page={mountedPage || section || undefined}>
+            {q && <SettingsSearchResults query={q} desktop={desktop} onOpen={openCard} onLeave={() => setQuery("")} />}
             {/* A search hides the open page instead of unmounting it, so words typed and not yet
               * saved there (a skill being written, House rules) are still there when the search clears. */}
             <div data-settings-page-body hidden={q ? true : undefined} className={q ? "hidden" : "contents"}>
@@ -1363,107 +858,18 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 <p data-cloud-computer-only={requested} className="text-[13px] text-ink-secondary">{settingsSectionLabel(requested)}</p>
               </Card>
             )}
-            {section === "general" && (
-              <>
-                <Anchor id="profile-heading">
-                  <Card title={t("settings.l4.profile.title")} subtitle={desktop === true ? t("settings.l4.profile.noteDesktop") : t("settings.l4.profile.note")}>
-                    <ProfileFields />
-                  </Card>
-                </Anchor>
-                {desktop === true && <Anchor id="time-zone-heading"><TimeZoneSettings /></Anchor>}
-                {desktop === true && <AboutMeSettings />}
-                {desktop === true && <Anchor id="bring-your-ai-heading" settingControl="bring-your-ai-heading"><BringYourAi /></Anchor>}
-                <Anchor id="appearance-heading">
-                  <Card title={t("settings.appearance.title")} subtitle={t("settings.appearance.note")}>
-                    <SkinPicker />
-                    <FontRow />
-                  </Card>
-                </Anchor>
-                {desktop === true && <Anchor id="language-heading"><LanguageRow /></Anchor>}
-                {!inNativeShell() && <Anchor id="send-key-heading"><SendKeyRow /></Anchor>}
-                {desktop === true && <Anchor id="notifications-heading"><NotificationSettings /><CallsSettings /></Anchor>}
-                {desktop !== true && <p className="text-[12px] text-ink-secondary">{t("settings.general.remoteNote")}</p>}
-                {/* Confirmed remote only. `undefined` renders the neutral
-                  * thing, and the desktop has no session to sign out of: the
-                  * route lives on the browser door alone. */}
-                {desktop === false && <RemoteSignOut />}
-                {desktop === false && <PhoneNotifications />}
-                {/* UX L7 part 2: billing stays on the computer; the phone says so, with no purchase link. */}
-                {desktop === false && <PhonePayCard />}
-                {/* Headless installs have no desktop to make a script grant on; the owner's own browser door can (S1b R2). */}
-                {desktop === false && <ScriptAccessSettings bots={state.bots} />}
-                {/* The phone apps never send usage analytics and have no rail or startup, so a phone sees only what it has. */}
-                {(desktop === true || !inNativeShell()) && (
-                  <AdvancedSection {...advancedFor("general")} summary={t("settings.l4.advanced.general")}>
-                    {desktop === true && <Anchor id="startup-heading">{cloudCardHidden("startup-heading", cloud) ? <ComputerOnlyStub anchor="startup-heading" /> : <StartupSettings />}</Anchor>}
-                    {desktop === true && <Anchor id="sidebar-density-heading"><Card><SidebarDensityRow /></Card></Anchor>}
-                    {!inNativeShell() && <Anchor id="analytics-heading"><AnalyticsRow /></Anchor>}
-                  </AdvancedSection>
-                )}
-                {/* A Cloud home opened in a browser: the connected devices (the page carries the home id meta only on a Cloud home). */}
-                {/* The Cloud window of the desktop app: disconnect this computer from this home (design 2.5.4). */}
-                {cloud && cloudDisconnectBridge() && <Card title={DISCONNECT_COPY.title} subtitle={DISCONNECT_COPY.subtitle}><CloudDisconnectComputer /></Card>}
-                {desktop !== true && homeMeta(document).homeId && <Card title="Devices" subtitle="Browsers and computers connected to this Cloud home."><CloudDevicesSettings /></Card>}
-              </>
+            {mountedPage && <SettingsPageMount page={mountedPage} mode={mode} desktop={desktop} cloud={cloud} anchor={anchor} />}
+            {browsing && (
+              <BrowseBotsPage
+                bots={state.bots}
+                openId={null}
+                onOpen={openBot}
+              />
             )}
 
-            {desktop === true && section === "botDefaults" && (
-              <BotsSettings advanced={advancedFor("botDefaults")} effortRow={<NewBotEffortRow />} toolCallsRow={<ToolCallsRow />} />
-            )}
 
-            {desktop === true && section === "skills" && (
-              <AdvancedHost>
-                <Anchor id="skill-recorder-heading">{cloudCardHidden("skill-recorder-heading", cloud) ? <ComputerOnlyStub anchor="skill-recorder-heading" /> : <WorkspaceFeatureRow feature="skillRecorder" />}</Anchor>
-                <SkillsSettings />
-                <AdvancedSection {...advancedFor("skills")} summary={t("settings.l1.advanced.skills")}><AdvancedSlotTarget /></AdvancedSection>
-              </AdvancedHost>
-            )}
-
-            {desktop === true && section === "memory" && <Anchor id="memory-heading"><LazyBoundary inline onRetry={MemorySection.retry}><Suspense fallback={<p role="status" className="text-[13px] text-ink-secondary">Loading memory settings…</p>}><MemorySection.Component advanced={advancedFor("memory")} /></Suspense></LazyBoundary></Anchor>}
-
-            {desktop === true && section === "models" && <AiSettings advanced={advancedFor("models")} />}
-
-            {desktop === true && section === "webSearch" && <ToolsSettings advanced={advancedFor("webSearch")} cloudImagesOnly={pageComputerOnly} />}
-
-            {desktop === true && section === "connections" && <ConnectedAppsSettings advancedOpen={advancedOpen.connections} onAdvancedOpenChange={advancedFor("connections").onOpenChange} />}
-            {/* Settings > Bot email (1.0.9): always rendered; while the server does not say email is on, the card is its stub (SETTINGS-UX-1011 S1) */}
-            {desktop === true && section === "connections" && <Anchor id="bot-email-heading"><BotEmailAccountCard /></Anchor>}
-            {desktop === true && section === "connections" && <Anchor id="highlevel-heading"><HighLevelSettings /></Anchor>}
-            {desktop === true && section === "connections" && <Anchor id="phone-calls-heading"><LazyBoundary inline onRetry={PhoneCallsSection.retry}><Suspense fallback={null}><PhoneCallsSection.Component /></Suspense></LazyBoundary></Anchor>}
-
-            {desktop === true && section === "channels" && (
-              <AdvancedHost>
-                <div className="space-y-4"><TelegramSettings /><SlackSettings /><DiscordSettings /><WhatsAppSettings /></div>
-                <AdvancedSection {...advancedFor("channels")} summary={t("settings.l1.advanced.channels")}><AdvancedSlotTarget /></AdvancedSection>
-              </AdvancedHost>
-            )}
-
-            {desktop === true && section === "companion" && (
-              <DevicesSettings advanced={advancedFor("companion")} profileEmail={state.config?.profile?.email} bots={state.bots} browserProfiles={<><Anchor id="browser-settings-heading"><WorkspaceFeatureRow feature="browser" /></Anchor><BrowserProfilesRow /></>} />
-            )}
-
-            {desktop === true && section === "backups" && <div className="space-y-4"><DataFolderSettings /><BackupSettings /><div id="storage-heading"><StorageSettings /></div></div>}
-
-            {section === "usage" && <Anchor id="usage-heading"><UsageSection /></Anchor>}
-
-            {section === "about" && (
-              <>
-                <Anchor id="about-version-heading"><AboutVersionCard /></Anchor>
-                {desktop === true && <Anchor id="whats-new-heading"><WhatsNewRow /></Anchor>}
-                {desktop === true && <Anchor id="news-heading"><NewsSignupSettings /></Anchor>}
-                {desktop === true && <Anchor id="setup-heading">{cloudCardHidden("setup-heading", cloud) ? <ComputerOnlyStub anchor="setup-heading" /> : <SetupAgainRow />}</Anchor>}
-                <Anchor id="shortcuts-heading"><ShortcutsRow /></Anchor>
-                <Anchor id="previous-version-heading"><PreviousVersionRow /></Anchor>
-                <SourceCodeRow />
-                {/* Health (1.0.9 Sentinel) sits beside Diagnostics and outside every desktop-only guard: the Cloud and
-                    self-host owner see the same card. The summary route answers the owner only. */}
-                <Anchor id="health-heading"><SettingsHealthRow /></Anchor>
-                <AdvancedSection {...advancedFor("about")} summary={t("settings.l1.advanced.about")}>
-                  {desktop === true && <Anchor id="announcements-heading"><AnnouncementsSettings /></Anchor>}
-                  <Anchor id="diagnostics-heading">{cloudCardHidden("diagnostics-heading", cloud) ? <ComputerOnlyStub anchor="diagnostics-heading" /> : <DiagnosticsRow />}</Anchor>
-                </AdvancedSection>
-              </>
-            )}
+            {/* Every page ends with the one quiet way out (SETTINGS-LOCKED-1019 section 10). */}
+            <SettingsAskLine />
             </div>
           </BoxBody>
           )}

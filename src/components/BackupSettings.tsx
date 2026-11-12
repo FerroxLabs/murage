@@ -2,11 +2,13 @@
 // old General-section panels made, with the same revision checks, consent
 // resets, locks and credential clearing; the views only arrange them.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AdvancedSection, Switch } from "./SettingsPrimitives";
+import { setSettingsMode, type SettingsMode } from "@/lib/settings-mode";
+import { AdvancedSection, HowThisWorks, SetInAdvancedButton, Switch } from "./SettingsPrimitives";
 import { OffsiteCleanup, OffsiteDetails, OffsiteRecover, OffsiteRefresh, OffsiteStatus, useBackupRemote } from "./BackupRemoteSettings";
 import { enabledSchedule, scheduleCardNotice, scheduleDraft, scheduleError, scheduleNeedsReview, schedulePhase, closedJobLabel, closedResultLabel, type ScheduleDraft } from "./backup-schedule-ui";
 import { api, useStore } from "@/state/store";
 import { HeldAfterRestore } from "./HeldAfterRestore";
+import { RestoreJobCard } from "./RestoreJobCard";
 import { openInboxLink } from "@/lib/open-inbox-link";
 import { t } from "@/lib/i18n";
 import { backupWaitingSentence, type BackupWaitingBot } from "../../shared/backup-waiting";
@@ -20,13 +22,51 @@ const primaryButton = "min-h-11 rounded-lg bg-accent px-3 py-2 text-[13px] font-
 const checkbox = "mt-1 size-4 shrink-0 accent-accent focus-visible:ring-2 focus-visible:ring-accent-border";
 const switchFocus = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-border";
 
+/** SIMPLE-COPY 2 and 9 B6: the sentences each Backups card moves behind How this works, word for word, as pure
+ *  components so every branch can be rendered on its own. */
+export function BackupHeadlineHowThisWorks({interrupted,tryRestore=false}:{interrupted:boolean;tryRestore?:boolean}) {
+  return <>{tryRestore&&<p>To be sure a restore works, try one from Restore.</p>}{interrupted&&<><p>The last backup didn't finish; backups are paused until you clear it</p><p>The last backup stopped before Murage could confirm it, so backups are paused. Your workspace was not changed. Clear this to back up again. If it happens again, check that the backup folder and recovery key are still available.</p></>}</>;
+}
+export function ScheduleSetupHowThisWorks({refsChosen,existingKeyFlow,platform,closedSupported}:{refsChosen:boolean;existingKeyFlow:boolean;platform?:string;closedSupported:boolean}) {
+  return <>
+    <p>Set a time and limits, then tick the box.</p>
+    <p>Murage can save an encrypted copy of your settings, conversations, files and message history every day.</p>
+    {!refsChosen&&<p>{existingKeyFlow
+      ? "Pick a folder to keep your backups in. Murage makes your recovery key for you, keeps it somewhere outside that folder, and asks you once before switching daily backups on."
+      : "Choose the folder to keep your backups in, and the recovery key that opens them. Murage doesn't create that key yet: choose a key file you already have. No recovery key is created or exported here."}</p>}
+    {!refsChosen&&existingKeyFlow&&<p>Murage can use a key file you already keep instead of making a new one. You pick the folder, then the key file. Murage never shows or keeps the secret part.</p>}
+    {refsChosen&&<>
+      <p>Your recovery key opens your backups. Keep a copy somewhere other than the backup folder: without it nobody, including you, can open them.</p>
+      <p>Your computer's time zone is filled in. Start typing to pick another, such as Asia/Bangkok.</p>
+      <p>Only while you're signed in to this computer; it won't wake a sleeping computer. Turning this on sets up a background job for your user account.</p>
+      {!closedSupported&&<p>{platform==="win32"?"Backing up while Murage is closed isn't available on Windows yet. Backups while Murage is open work without it.":"Backing up while Murage is closed needs a supported desktop app, backup tool and your signed-in session. Backups while Murage is open work without it."}</p>}
+      <p>Allow Murage to close and reopen its own window when it's idle, so it can take the backup. Murage does that itself, so you never need to quit it.</p>
+      <p>To turn on, set a time and the backup limits, then tick the box above.</p>
+    </>}
+  </>;
+}
+export function RecoveryKeyHowThisWorks() {
+  return <p>It is the only thing that can open your backups: without it nobody, including you, can get your work back. Keep a copy somewhere else: a USB drive, another computer, or your password manager.</p>;
+}
+export function RestoreHowThisWorks({offsite,sftp,connection,listed,downloaded}:{offsite:boolean;sftp:boolean;connection?:string;listed:boolean;downloaded:boolean}) {
+  return <>
+    <p>{t("settings.l5.restore.existingHint")}</p>
+    <p>Backup mode closes this window and opens a separate recovery screen. There you can restore an encrypted backup into a new installation that stays paused for review, or make a one-off backup. Finish current work first.</p>
+    <p>Backups keep your settings, conversations, files and message history. Anything stored outside Murage, such as your own folders, is not included. Older recovery files still work but hold a smaller copy.</p>
+    {offsite&&<p>You can recover an off-site copy even if the original local backup is gone{sftp?", or on a new computer: add the SFTP destination there, add its new key to the server, choose the same off-site password file and test the connection":""}. Finding and downloading use your {connection??(sftp?"SFTP connection":"storage connection")}. Your current Murage data stays unchanged.</p>}
+    {listed&&<p>Listed copies are not verified yet. Download checks the selected copy and saves it in a new private folder.</p>}
+    {downloaded&&<p>Finish current work, then open Backup mode. Choose this backup.age file and your recovery key. It is restored into a new folder for you to review, and your current data stays as it is.</p>}
+  </>;
+}
+
 /** Restore from a backup on this computer (Backup mode). */
-export function BackupSettingsView({supported,busy,error,unavailable,onRestart,hideAction=false}:{supported:boolean;busy:boolean;error?:string;unavailable?:"tool"|"closing";onRestart:()=>void;hideAction?:boolean}) {
+export function BackupSettingsView({supported,busy,error,unavailable,onRestart,hideAction=false,pageMode}:{supported:boolean;busy:boolean;error?:string;unavailable?:"tool"|"closing";onRestart:()=>void;hideAction?:boolean;pageMode?:SettingsMode}) {
+  const piped=pageMode!==undefined;
   return <div className="space-y-3">
-    <h4 className="text-[13px] font-medium text-ink">From a backup on this computer</h4>
+    {!piped&&<><h4 className="text-[13px] font-medium text-ink">From a backup on this computer</h4>
     <p className="text-[13px] text-ink-secondary">Backup mode closes this window and opens a separate recovery screen. There you can restore an encrypted backup into a new installation that stays paused for review, or make a one-off backup. Finish current work first.</p>
-    <p className="text-[13px] text-ink-secondary">Backups cover settings, conversations, files and channel history. Native sessions, VM homes and external folders are not included. Older recovery ZIPs still work and hold a reduced recovery copy.</p>
-    {!supported&&<p role="status" className="text-[13px] text-ink-secondary">{unavailable?BACKUP_UNAVAILABLE_SENTENCES[unavailable]:"Encrypted backup requires a supported packaged app with its verified backup tool."}</p>}
+    <p className="text-[13px] text-ink-secondary">Backups keep your settings, conversations, files and message history. Anything stored outside Murage, such as your own folders, is not included. Older recovery files still work but hold a smaller copy.</p></>}
+    {!supported&&<p role="status" className="text-[13px] text-ink-secondary">{unavailable?BACKUP_UNAVAILABLE_SENTENCES[unavailable]:"Encrypted backups work in the Murage desktop app."}</p>}
     {error&&<p role="alert" className="text-[13px] text-danger">{error}</p>}
     {!hideAction&&<button type="button" disabled={!supported||busy} onClick={onRestart} className={scheduleButton}>{busy?"Preparing Backup mode…":"Restart into Backup mode"}</button>}
   </div>;
@@ -227,7 +267,7 @@ function ScheduleState({s,attention}:{s:ScheduleController;attention:readonly st
   const notice=scheduleCardNotice(local,status?.error,attention,status?.refs?.destinationLabel);
   return <>
     <p role="status" className="text-[13px] font-medium text-ink">{status?`Daily backups are ${status.enabled?"on":"off"}. ${schedulePhase(status.phase)}`:bridge?"Checking schedule status…":"Scheduling unavailable in this window"}</p>
-    {unavailable&&(!bridge||status)&&!status?.unavailable&&<p className="text-[13px] text-ink-secondary">Scheduled backup requires a supported packaged app with its verified backup tool.</p>}
+    {unavailable&&(!bridge||status)&&!status?.unavailable&&<p className="text-[13px] text-ink-secondary">Scheduled backups work in the Murage desktop app.</p>}
     {status?.pending&&<p role="status" className="text-[13px] text-ink-secondary">Backup work is pending. Settings are locked; status updates automatically.</p>}
     {stale&&<p role="alert" className="text-[13px] text-warning">Status refresh failed. The last confirmed state is shown; changes are locked. Refresh schedule status to try again.</p>}
     {closedStale&&<p role="alert" className="text-[12px] text-warning">Background job status could not be refreshed. The last confirmed state is shown; backing up while Murage is closed is blocked. Refresh schedule status to try again.</p>}
@@ -259,7 +299,8 @@ export function RecoveryKeyCloudNotice({s}:{s:ScheduleController}) {
 /** The key Murage just made, and the one thing left to do with it. Shown while
  * setup is still on screen AND after backups are on, because the key matters
  * far more than the schedule does. */
-export function RecoveryKeyKeepsafe({s}:{s:ScheduleController}) {
+export function RecoveryKeyKeepsafe({s,pageMode}:{s:ScheduleController;pageMode?:SettingsMode}) {
+  const piped=pageMode!==undefined;
   const {createdKey,keyCopy}=s;
   // Setup now takes the first backup at once, and that backup closes and
   // reopens the window, so the key note made during setup is gone before the
@@ -270,52 +311,57 @@ export function RecoveryKeyKeepsafe({s}:{s:ScheduleController}) {
     if(!saved||!s.saveKeyCopy)return null;
     return <div role="status" className="min-w-0 space-y-2 rounded-xl border border-warning/40 bg-warning/[0.06] p-4 text-[13px] text-ink">
       <p className="break-words text-[15px] font-medium">Save your recovery key</p>
-      <p className="break-words font-medium">Your recovery key is {saved}.</p>
-      <p className="text-ink-secondary">It is the only thing that can open your backups: without it nobody, including you, can get your work back. Keep a copy somewhere else: a USB drive, another computer, or your password manager.</p>
+      <p className="break-words font-medium">Your recovery key is <span data-copy-value="path">{saved}</span>.</p>
+      <p className="text-ink-secondary">{piped?"Without this key, nobody can open your backups. Keep a copy somewhere else.":"It is the only thing that can open your backups: without it nobody, including you, can get your work back. Keep a copy somewhere else: a USB drive, another computer, or your password manager."}</p>
       {keyCopy&&<p className="break-words text-ink-secondary">A copy was saved as {keyCopy}.</p>}
       <div className="flex flex-wrap gap-2">
-        <button type="button" className={primaryButton} disabled={s.busy} onClick={s.saveKeyCopy}>Save a copy…</button>
+        <button type="button" className={scheduleButton} disabled={s.busy} onClick={s.saveKeyCopy}>Save a copy…</button>
       </div>
+      {piped&&<HowThisWorks id="backup-key-how-this-works" mode={pageMode}><RecoveryKeyHowThisWorks/></HowThisWorks>}
     </div>;
   }
   return <div role="status" className="min-w-0 space-y-2 rounded-xl border border-warning/40 bg-warning/[0.06] p-4 text-[13px] text-ink">
     <p className="break-words text-[15px] font-medium">Save your recovery key</p>
-    <p className="break-words font-medium">Your recovery key is {createdKey.label}, saved in {createdKey.folder}.</p>
-    <p className="text-ink-secondary">It is the only thing that can open your backups: without it nobody, including you, can get your work back. Keep a copy somewhere else: a USB drive, another computer, or your password manager.</p>
+    <p className="break-words font-medium">Your recovery key is <span data-copy-value="path">{createdKey.label}</span>, saved in <span data-copy-value="path">{createdKey.folder}</span>.</p>
+    <p className="text-ink-secondary">{piped?"Without this key, nobody can open your backups. Keep a copy somewhere else.":"It is the only thing that can open your backups: without it nobody, including you, can get your work back. Keep a copy somewhere else: a USB drive, another computer, or your password manager."}</p>
     {keyCopy&&<p className="break-words text-ink-secondary">A copy was saved as {keyCopy}.</p>}
     {s.saveKeyCopy&&<div className="flex flex-wrap gap-2">
-      <button type="button" className={primaryButton} disabled={s.busy} onClick={s.saveKeyCopy}>Save a copy…</button>
+      <button type="button" className={scheduleButton} disabled={s.busy} onClick={s.saveKeyCopy}>Save a copy…</button>
     </div>}
     {createdKey.publicKey&&<div className="space-y-1"><p className="text-[12px] text-ink">Public key</p><p className="break-all font-mono text-[12px] text-ink-secondary">{createdKey.publicKey}</p></div>}
+    {piped&&<HowThisWorks id="backup-key-how-this-works" mode={pageMode}><RecoveryKeyHowThisWorks/></HowThisWorks>}
   </div>;
 }
 
 /** Shown while daily backups are off: one button, or — once a folder and key
  * are already chosen — the remaining settings. */
-export function ScheduleSetup({s,onSetLimits,attention=[]}:{s:ScheduleController;onSetLimits:()=>void;attention?:readonly string[]}) {
+export function ScheduleSetup({s,onSetLimits,attention=[],pageMode}:{s:ScheduleController;onSetLimits:()=>void;attention?:readonly string[];pageMode?:SettingsMode}) {
   const {status,draft,editingLocked,consent,setConsent,choices,closedBridge,closed,closedRegistered,closedAllowed,closedAction}=s;
   const zones=useMemo(()=>timeZoneChoices(),[]);
-  const closedReason=closedJobBlockedReason({bridge:Boolean(closedBridge),closed,stale:s.closedStale,setupFailed:s.closedSetupFailed});
+  const piped=pageMode!==undefined;
+  const platform=typeof window!=="undefined"?window.muragebox?.platform:undefined;
+  const closedUnsupported=!closedBridge||closed?.supported===false;
+  const closedReason=closedJobBlockedReason({bridge:Boolean(closedBridge),closed,stale:s.closedStale,setupFailed:s.closedSetupFailed,pageMode});
   const limitsSet=Boolean(draft.catchup.trim()&&draft.size.trim()&&draft.duration.trim());
   return <section aria-labelledby="backup-setup-title" className={card}>
     <h3 id="backup-setup-title" className="text-[15px] font-medium text-ink">Set up backups</h3>
-    <p className="text-[13px] text-ink-secondary">Murage can save an encrypted copy of your settings, conversations, files and channel history every day. Native sessions, VM homes and external folders are not included.</p>
+    <p className="text-[13px] text-ink-secondary">{piped?"Save a private copy of your chats, files and settings every day.":"Murage can save an encrypted copy of your settings, conversations, files and message history every day."}</p>
     <ScheduleState s={s} attention={attention}/>
     {status?.supported&&<>
-      <RecoveryKeyCloudNotice s={s}/><RecoveryKeyKeepsafe s={s}/>
+      <RecoveryKeyCloudNotice s={s}/><RecoveryKeyKeepsafe s={s} pageMode={pageMode}/>
       {!status.refs&&<div className="min-w-0 space-y-3">
-        <p className="text-[13px] text-ink-secondary">{s.setUp
+        {!piped&&<p className="text-[13px] text-ink-secondary">{s.setUp
           ? "Pick a folder to keep your backups in. Murage makes your recovery key for you, keeps it somewhere outside that folder, and asks you once before switching daily backups on."
-          : "Choose the folder to keep your backups in, and the recovery key that opens them. Murage doesn't create that key yet: choose a key file you already have. No recovery key is created or exported here."}</p>
+          : "Choose the folder to keep your backups in, and the recovery key that opens them. Murage doesn't create that key yet: choose a key file you already have. No recovery key is created or exported here."}</p>}
         <div className="flex flex-wrap gap-2">
           {s.setUp
             ?<button type="button" className={primaryButton} disabled={editingLocked} onClick={()=>s.setUp?.()}>Turn on backups</button>
             :<button type="button" className={primaryButton} disabled={editingLocked} onClick={s.selectReferences}>Choose backup folder and recovery key</button>}
         </div>
         {s.setUp&&<div className="space-y-2 text-[13px]">
-          <h4 className="font-medium text-ink">I already have a recovery key</h4>
+          {!piped&&<h4 className="font-medium text-ink">I already have a recovery key</h4>}
           <div className="space-y-2 pt-1">
-            <p className="text-ink-secondary">Murage can use a key file you already keep instead of making a new one. You pick the folder, then the key file. Murage never shows or keeps the secret part.</p>
+            {!piped&&<p className="text-ink-secondary">Murage can use a key file you already keep instead of making a new one. You pick the folder, then the key file. Murage never shows or keeps the secret part.</p>}
             <button type="button" className={scheduleButton} disabled={editingLocked} onClick={()=>s.setUp?.({existingKey:true})}>Use a key I already have</button>
           </div>
         </div>}
@@ -323,9 +369,9 @@ export function ScheduleSetup({s,onSetLimits,attention=[]}:{s:ScheduleController
       {status.refs&&<ol className="min-w-0 list-none space-y-4 p-0">
         <li className="space-y-2">
           <h4 className="text-[13px] font-medium text-ink">1. Where your backups go</h4>
-          <p className="break-words text-[13px] text-ink-secondary">Backup folder: {status.refs.destinationLabel}</p>
-          <p className="break-words text-[13px] text-ink-secondary">Recovery key: {status.refs.recoveryLabel}</p>
-          <p className="text-[13px] text-ink-secondary">Your recovery key opens your backups. Keep a copy somewhere other than the backup folder: without it nobody, including you, can open them.</p>
+          <p className="break-words text-[13px] text-ink-secondary">Backup folder: <span data-copy-value="path">{status.refs.destinationLabel}</span></p>
+          <p className="break-words text-[13px] text-ink-secondary">Recovery key: <span data-copy-value="path">{status.refs.recoveryLabel}</span></p>
+          {!piped&&<p className="text-[13px] text-ink-secondary">Your recovery key opens your backups. Keep a copy somewhere other than the backup folder: without it nobody, including you, can open them.</p>}
           <div className="flex flex-wrap gap-2">
             <button type="button" className={scheduleButton} disabled={editingLocked} onClick={()=>(s.setUp??s.selectReferences)()}>Choose a different folder</button>
           </div>
@@ -339,16 +385,17 @@ export function ScheduleSetup({s,onSetLimits,attention=[]}:{s:ScheduleController
               <label className="text-[13px] text-ink-secondary">Time zone<input value={draft.timezone} list="backup-timezones" maxLength={100} spellCheck={false} autoComplete="off" onChange={event=>s.edit("timezone",event.target.value)} className={scheduleInput} aria-describedby="backup-timezone-help"/></label>
               <datalist id="backup-timezones">{zones.map(zone=><option key={zone} value={zone}/>)}</datalist>
             </div>
-            <p id="backup-timezone-help" className="text-[12px] text-ink-secondary">Your computer's time zone is filled in. Start typing to pick another, such as Asia/Bangkok.</p>
+            <p id="backup-timezone-help" className="text-[12px] text-ink-secondary">{piped?"Filled in from your computer.":"Your computer's time zone is filled in. Start typing to pick another, such as Asia/Bangkok."}</p>
             {(closedBridge||draft.closedApp)&&<div className="flex min-h-11 items-center justify-between gap-3 py-2 text-[13px] text-ink">
               <span id="backup-closed-label">Also back up when Murage is closed</span>
               <Switch aria-labelledby="backup-closed-label" checked={draft.closedApp} disabled={editingLocked||(!draft.closedApp&&!closedAllowed)} onClick={()=>s.setClosedApp(!draft.closedApp)} className={switchFocus} aria-describedby={closedReason?"backup-closed-help backup-closed-reason":"backup-closed-help"}/>
             </div>}
-            {closedReason&&<p id="backup-closed-reason" className="text-[12px] text-warning">{closedReason}</p>}
-            {(closedBridge||draft.closedApp)&&<p id="backup-closed-help" className="text-[12px] text-ink-secondary">Only while you're signed in to this computer; it won't wake a sleeping computer. Turning this on sets up a background job for your user account.</p>}
+            {closedReason&&<p id="backup-closed-reason" tabIndex={-1} className="text-[12px] text-warning">{closedReason}{piped&&closed?.blocked==="app-file-shared"&&<> <SetInAdvancedButton anchor="backup-closed-reason" /></>}</p>}
+            {!piped&&(closedBridge||draft.closedApp)&&<p id="backup-closed-help" className="text-[12px] text-ink-secondary">Only while you're signed in to this computer; it won't wake a sleeping computer. Turning this on sets up a background job for your user account.</p>}
           </fieldset>
           {closedAction==="setup"&&<p role="status" className="text-[12px] text-ink-secondary">Setting up the background job…</p>}
-          {(!closedBridge||closed?.supported===false)&&<p className="text-[12px] text-ink-secondary">{typeof window!=="undefined"&&window.muragebox?.platform==="win32"?"Backing up while Murage is closed isn't available on Windows yet. Backups while Murage is open work without it.":"Backing up while Murage is closed needs a supported desktop app, backup tool and your signed-in session. Backups while Murage is open work without it."}</p>}
+          {closedUnsupported&&piped&&<p className="text-[12px] text-ink-secondary">{platform==="win32"?"Not available on Windows yet. Backups while Murage is open work without it.":"Not available on this computer yet. Backups while Murage is open work without it."}</p>}
+          {closedUnsupported&&!piped&&<p className="text-[12px] text-ink-secondary">{typeof window!=="undefined"&&window.muragebox?.platform==="win32"?"Backing up while Murage is closed isn't available on Windows yet. Backups while Murage is open work without it.":"Backing up while Murage is closed needs a supported desktop app, backup tool and your signed-in session. Backups while Murage is open work without it."}</p>}
           {draft.closedApp&&(!closedRegistered||status.closedAppSupported!==true)&&<p className="text-[12px] text-warning">Your choice to back up while Murage is closed is saved, but the background job isn't registered. Untick and tick the box to set it up, or leave it unticked to back up only while Murage is open.</p>}
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-[12px] text-ink-secondary">{limitsSet?"Backup limits are set. You can change them under Advanced.":"Backup limits aren't set yet. They are required the first time."}</p>
@@ -360,12 +407,13 @@ export function ScheduleSetup({s,onSetLimits,attention=[]}:{s:ScheduleController
       {status.refs&&<>
         <label className="flex min-h-11 items-start gap-3 py-2 text-[13px] text-ink">
           <input type="checkbox" checked={consent} disabled={editingLocked} onChange={event=>setConsent(event.target.checked)} className={checkbox}/>
-          <span>Allow Murage to close and reopen its own window when it's idle, so it can take the backup. Murage does that itself, so you never need to quit it.</span>
+          <span>{piped?"Let Murage close and reopen itself when idle to take the backup.":"Allow Murage to close and reopen its own window when it's idle, so it can take the backup. Murage does that itself, so you never need to quit it."}</span>
         </label>
-        {!choices&&<p className="text-[12px] text-ink-secondary">To turn on, set a time and the backup limits, then tick the box above.</p>}
+        {!choices&&!piped&&<p className="text-[12px] text-ink-secondary">To turn on, set a time and the backup limits, then tick the box above.</p>}
         <button type="button" className={primaryButton} disabled={editingLocked||!choices} onClick={s.enable}>Turn on daily backups</button>
       </>}
     </>}
+    {piped&&<HowThisWorks id="backup-setup-how-this-works" mode={pageMode}><ScheduleSetupHowThisWorks refsChosen={Boolean(status?.refs)} existingKeyFlow={Boolean(s.setUp)} platform={platform} closedSupported={!closedUnsupported}/></HowThisWorks>}
   </section>;
 }
 
@@ -468,13 +516,16 @@ function WaitingActions({held,onChanged}:{held:NonNullable<BackupScheduleStatus[
 
 /** The first card: whether backups are on, the last one that was checked, the
  * next step when something needs attention, and Back up now. */
-export function BackupHeadline({summary,s}:{summary:BackupSummary;s:ScheduleController}) {
+export function BackupHeadline({summary,s,pageMode}:{summary:BackupSummary;s:ScheduleController;pageMode?:SettingsMode}) {
   const head=backupHeadline(s.status);
+  const piped=pageMode!==undefined;
   const pending=Boolean(s.status?.pending);
-  return <section aria-labelledby="backups-heading" className={card}>
+  // SIMPLE-COPY 10.2: the interrupted-run attention item repeats the headline line, so Simple keeps it only in How this works.
+  const shownAttention=piped&&s.canClearReview?summary.attention.filter(item=>item!==schedulePhase("needs-review")):summary.attention;
+  return <section aria-labelledby="backups-title" className={card}>
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="min-w-0 space-y-1">
-        <h3 id="backups-heading" className="text-[16px] font-semibold text-ink">{head.title}</h3>
+        <h3 id="backups-title" className="text-[16px] font-semibold text-ink">{head.title}</h3>
         {head.lines.map((line,index)=><p key={line} role={index===0?"status":undefined} className="break-words text-[13px] text-ink-secondary">{index===0&&head.verified&&<span aria-hidden="true" className="mr-1 text-success">●</span>}{line}</p>)}
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -485,17 +536,18 @@ export function BackupHeadline({summary,s}:{summary:BackupSummary;s:ScheduleCont
       </div>
     </div>
     {s.confirmRun&&<p className="text-[13px] text-ink">Murage will close and reopen this window to take the backup.</p>}
-    {s.status?.supported&&s.status.enabled&&<p className="text-[12px] text-ink-secondary">To be sure a restore works, try one from Restore.</p>}
+    {s.status?.supported&&s.status.enabled&&!piped&&<p className="text-[12px] text-ink-secondary">To be sure a restore works, try one from Restore.</p>}
     {pending&&<p role="status" className="text-[13px] text-ink-secondary">Taking a backup. This page updates when it has been checked.</p>}
     {(summary.skipped?.length??0)>0&&<div className="text-[12px] text-ink-secondary">{summary.skipped!.map(line=><p key={line} className="break-words">{line}</p>)}</div>}
-    {summary.attention.length>0&&<div role="status" className="text-[13px] text-warning">
+    {shownAttention.length>0&&<div role="status" data-fault className="text-[13px] text-warning">
       <p className="font-medium">Needs attention</p>
-      <ul className="list-disc pl-5">{summary.attention.map(item=><li key={item}>{item}</li>)}</ul>
+      <ul className="list-disc pl-5">{shownAttention.map(item=><li key={item}>{item}</li>)}</ul>
     </div>}
     <BackupWaitingActions status={s.status} onChanged={()=>s.refreshNow("summary")}/>
-    {s.canClearReview&&<><p className="text-[13px] text-ink">The last backup stopped before Murage could confirm it, so backups are paused. Your workspace was not changed. Clear this to back up again. If it happens again, check that the backup folder and recovery key are still available.</p>
+    {s.canClearReview&&<><p className="text-[13px] text-ink">{piped?"Backups are paused: the last backup did not finish. Clear this to back up again.":"The last backup stopped before Murage could confirm it, so backups are paused. Your workspace was not changed. Clear this to back up again. If it happens again, check that the backup folder and recovery key are still available."}</p>
       <div><button type="button" className={primaryButton} disabled={s.busy} onClick={s.clearReview}>Clear and try again</button></div></>}
     <ScheduleMessages s={s} area="summary" attention={summary.attention}/>
+    {piped&&(s.canClearReview||Boolean(s.status?.supported&&s.status.enabled))&&<HowThisWorks id="backup-headline-how-this-works" mode={pageMode}><BackupHeadlineHowThisWorks interrupted={s.canClearReview} tryRestore={Boolean(s.status?.supported&&s.status.enabled)}/></HowThisWorks>}
   </section>;
 }
 
@@ -503,55 +555,65 @@ export function BackupHeadline({summary,s}:{summary:BackupSummary;s:ScheduleCont
  * and ALWAYS a way into Backup mode with a backup the person already has: a
  * fresh install, or one replacing a lost computer, has no receipt here yet and
  * is exactly who needs it (Settings L5). */
-export function LocalRestore({lastChecked,supported,busy,onRestart}:{lastChecked?:{verifiedAt:number};supported:boolean;busy:boolean;onRestart:()=>void}) {
+export function LocalRestore({lastChecked,supported,busy,onRestart,pageMode}:{lastChecked?:{verifiedAt:number};supported:boolean;busy:boolean;onRestart:()=>void;pageMode?:SettingsMode}) {
+  const piped=pageMode!==undefined;
   return <>
     {lastChecked
       ?<div className="flex flex-wrap items-center justify-between gap-3 border-t border-hairline/40 pt-3"><p className="text-[14px] text-ink">{new Date(lastChecked.verifiedAt).toLocaleString()} <span className="text-ink-secondary">· checked</span></p>
         <button type="button" className={scheduleButton} disabled={!supported||busy} onClick={onRestart}>{busy?"Preparing Backup mode…":"Restore"}</button></div>
       :<p className="border-t border-hairline/40 pt-3 text-[13px] text-ink-secondary">Restore points appear here once a backup has been taken and checked.</p>}
     <div className="flex flex-wrap items-center justify-between gap-3 border-t border-hairline/40 pt-3">
-      <p className="min-w-0 text-[13px] text-ink-secondary">{t("settings.l5.restore.existingHint")}</p>
+      {!piped&&<p className="min-w-0 text-[13px] text-ink-secondary">{t("settings.l5.restore.existingHint")}</p>}
       <button type="button" className={scheduleButton} disabled={!supported||busy} onClick={onRestart}>{busy?"Preparing Backup mode…":t("settings.l5.restore.existing")}</button>
     </div>
+    {piped&&<p className="text-[13px] text-ink-secondary">Restore closes this window and opens Backup mode.</p>}
   </>;
 }
 
 /** Settings → Backups. */
-export function BackupSettings() {
+/** `mode` is the page's Simple or Advanced (settings/pages/BackupsPage). Without it the card keeps its own Advanced fold. In Simple the
+ *  schedule, limits, off-site details and cleanup stay out and the "Set limits" and "Set up" buttons turn Advanced mode on. */
+export function BackupSettings({ mode: pageMode }: { mode?: SettingsMode } = {}) {
   const mode=useBackupMode(),s=useBackupSchedule(),r=useBackupRemote();
-  const [advancedOpen,setAdvancedOpen]=useState(false);
+  const [foldOpen,setFoldOpen]=useState(false);
+  const advancedOpen=pageMode?pageMode==="advanced":foldOpen;
+  const setAdvancedOpen=(open:boolean)=>{ if(pageMode){ if(open)setSettingsMode("advanced"); } else setFoldOpen(open); };
   const [focus,setFocus]=useState<string|null>(null);
   useEffect(()=>{
     if(!focus)return;const target=document.getElementById(focus);
-    target?.scrollIntoView?.({block:"start"});target?.focus();setFocus(null);
-  },[focus]);
-  const summary=backupSummary({scheduleBridge:Boolean(s.bridge),schedule:s.status,scheduleStale:s.stale,scheduleFailure:s.error,closed:s.closed,closedStale:s.closedStale,remoteBridge:Boolean(r.bridge),remote:r.status,remoteStale:r.stale,remoteFailure:r.error});
+    if(!target)return;
+    target.scrollIntoView?.({block:"start"});target.focus();setFocus(null);
+  },[focus,advancedOpen]);
+  const summary=backupSummary({scheduleBridge:Boolean(s.bridge),schedule:s.status,scheduleStale:s.stale,scheduleFailure:s.error,closed:s.closed,closedStale:s.closedStale,remoteBridge:Boolean(r.bridge),remote:r.status,remoteStale:r.stale,remoteFailure:r.error,pageMode});
   const stale=s.stale||s.closedStale||r.stale;
   const lastChecked=s.status?.lastVerified;
+  const [restoreCheck,setRestoreCheck]=useState(0);
   return <div className="min-w-0 space-y-4">
-    <BackupHeadline summary={summary} s={s}/>
-    {stale&&<div><button type="button" className={scheduleButton} disabled={s.busy||Boolean(r.busy)} onClick={()=>{s.refreshNow("summary");r.refreshNow();}}>Check again</button></div>}
-    {!s.status?.enabled&&<ScheduleSetup s={s} attention={summary.attention} onSetLimits={()=>{setAdvancedOpen(true);setFocus("backup-catchup");}}/>}
+    <BackupHeadline summary={summary} s={s} pageMode={pageMode}/>
+    {stale&&<div><button type="button" className={scheduleButton} disabled={s.busy||Boolean(r.busy)} onClick={()=>{s.refreshNow("summary");r.refreshNow();setRestoreCheck(n=>n+1);}}>Check again</button></div>}
+    {!s.status?.enabled&&<ScheduleSetup s={s} attention={summary.attention} pageMode={pageMode} onSetLimits={()=>{setAdvancedOpen(true);setFocus("backup-catchup");}}/>}
+    <RestoreJobCard refreshKey={restoreCheck}/>
     <RecoveryKeyCloudNotice s={s}/>
-    {s.status?.enabled&&<RecoveryKeyKeepsafe s={s}/>}
+    {s.status?.enabled&&<RecoveryKeyKeepsafe s={s} pageMode={pageMode}/>}
     <section aria-labelledby="backup-restore-title" className={card}>
       <div className="flex flex-wrap items-center justify-between gap-2"><h3 id="backup-restore-title" className="text-[16px] font-semibold text-ink">Restore</h3><span className="text-[13px] text-ink-secondary">Pick a point in time</span></div>
-      <LocalRestore lastChecked={lastChecked} supported={mode.supported} busy={mode.busy} onRestart={()=>void mode.restart()}/>
-      <BackupSettingsView supported={mode.supported} busy={mode.busy} error={mode.error} unavailable={mode.unavailable} onRestart={()=>void mode.restart()} hideAction/>
+      <LocalRestore lastChecked={lastChecked} supported={mode.supported} busy={mode.busy} onRestart={()=>void mode.restart()} pageMode={pageMode}/>
+      <BackupSettingsView supported={mode.supported} busy={mode.busy} error={mode.error} unavailable={mode.unavailable} onRestart={()=>void mode.restart()} hideAction pageMode={pageMode}/>
       <div className="space-y-3 border-t border-hairline/40 pt-3">
         <h4 className="text-[13px] font-medium text-ink">From the off-site copy</h4>
-        <OffsiteRecover r={r}/>
+        <OffsiteRecover r={r} mode={pageMode}/>
       </div>
       <HeldAfterRestore/>
+      {pageMode&&<HowThisWorks id="backup-restore-how-this-works" mode={pageMode}><RestoreHowThisWorks offsite={r.status?.supported===true&&r.status.configured===true&&!r.editing} sftp={r.status?.kind==="sftp"} listed={Boolean(r.available&&r.available.backups.length>0)} downloaded={Boolean(r.downloaded)}/></HowThisWorks>}
     </section>
     <section aria-labelledby="backup-offsite-title" className={card}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 space-y-1"><h3 id="backup-offsite-title" className="text-[16px] font-semibold text-ink">Off-site copy</h3><p className="text-[13px] text-ink-secondary">Also keep backups in your own cloud storage, in case this computer is lost.</p></div>
         {!r.configured&&<button type="button" className={scheduleButton} onClick={()=>{setAdvancedOpen(true);setFocus("backup-offsite-details");}}>Set up</button>}
       </div>
-      <OffsiteStatus r={r}/>
+      <OffsiteStatus r={r} mode={pageMode}/>
     </section>
-    <AdvancedSection section="backups" summary="How often, how long to keep, size limits, backup folder" open={advancedOpen} onOpenChange={setAdvancedOpen}>
+    {pageMode&&!advancedOpen?null:<AdvancedBody pageMode={pageMode} open={advancedOpen} onOpenChange={setAdvancedOpen}>
       {s.status?.enabled&&<ScheduleCard s={s} attention={summary.attention} keepsafe={false}/>}
       <ScheduleAdvanced s={s}/>
       <section id="backup-offsite-details" tabIndex={-1} aria-label="Off-site copy details" className="min-w-0 space-y-3"><h4 className="text-[13px] font-medium text-ink">Off-site copy details</h4><OffsiteDetails r={r}/></section>
@@ -561,6 +623,12 @@ export function BackupSettings() {
         <OffsiteRefresh r={r}/>
       </div>
       <ScheduleMessages s={s} area="advanced"/>
-    </AdvancedSection>
+    </AdvancedBody>}
   </div>;
+}
+
+/** The fold on its own; the page's Advanced mode shows the same content open and with no fold. */
+function AdvancedBody({pageMode,open,onOpenChange,children}:{pageMode?:SettingsMode;open:boolean;onOpenChange:(open:boolean)=>void;children:React.ReactNode}){
+  if(pageMode)return <div className="min-w-0 space-y-4">{children}</div>;
+  return <AdvancedSection section="backups" summary="How often, how long to keep, size limits, backup folder" open={open} onOpenChange={onOpenChange}>{children}</AdvancedSection>;
 }

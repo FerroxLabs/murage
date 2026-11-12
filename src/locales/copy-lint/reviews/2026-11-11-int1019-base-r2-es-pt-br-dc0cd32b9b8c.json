@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "int1019 base backlog round 2 (Sonnet fixes)",
+  "date": "2026-11-11",
+  "base": "9955459fc",
+  "scope": "int1019-base-backlog-r2-es-pt-br",
+  "strings": {
+    "es:gatewayBusy.repeated.title": {
+      "text": "{engine} sigue rechazando esta solicitud. Tu mensaje se conserva.",
+      "en": "{engine} keeps rejecting this request. Your message is saved. Try again or use another AI.",
+      "verdict": "fail",
+      "note": "Missing the next step. Fix: {engine} sigue rechazando esta solicitud. Tu mensaje se conserva. Inténtalo de nuevo o usa otra IA."
+    },
+    "es:gatewayBusy.tryAgain": {
+      "text": "Volver a intentar",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "es:gatewayBusy.useAnotherAI": {
+      "text": "Usar otra IA",
+      "en": "Use another AI",
+      "verdict": "pass"
+    },
+    "es:gatewayBusy.getHelp": {
+      "text": "Obtener ayuda",
+      "en": "Get help",
+      "verdict": "pass"
+    },
+    "es:engine.toolLimit.notice": {
+      "text": "Se omitieron algunas herramientas para esta solicitud: esta IA acepta como máximo {limit} herramientas.",
+      "en": "Some tools were left out for this request: this AI accepts at most {limit} tools.",
+      "verdict": "pass"
+    },
+    "es:engine.toolLimit.catalogUnknown": {
+      "text": "Murage no pudo confirmar la lista de herramientas de esta IA. El mensaje no se envió porque no se pudo comprobar cuántas herramientas acepta esta IA.",
+      "en": "Murage could not confirm this AI's tool list. Your message was not sent because Murage could not check how many tools this AI can accept. Choose another AI and try again.",
+      "verdict": "fail",
+      "note": "Missing the instruction to choose another AI and retry. Fix: Murage no pudo confirmar la lista de herramientas de esta IA. Tu mensaje no se envió porque Murage no pudo comprobar cuántas herramientas acepta esta IA. Elige otra IA e inténtalo de nuevo."
+    },
+    "es:engine.toolLimit.catalogChanged": {
+      "text": "La lista de herramientas cambió mientras Murage preparaba tu solicitud. Murage no pudo ajustar la lista al límite de herramientas de esta IA. Elige otra IA e inténtalo de nuevo.",
+      "en": "The tool list changed while Murage was preparing your request. Murage could not fit the list within this AI's tool limit. Choose another AI and try again.",
+      "verdict": "pass"
+    },
+    "es:engine.submission.afterSubmission": {
+      "text": "Tu mensaje original se envió. Murage no pudo volver a enviarlo porque no se superaron las comprobaciones previas al envío. No se volvió a enviar automáticamente. Revisa la conversación antes de intentarlo de nuevo.",
+      "en": "Your original message was sent. Murage could not send it again because the checks before sending did not pass. It was not sent again automatically. Check the conversation before trying again.",
+      "verdict": "pass"
+    },
+    "es:engine.submission.afterSubmissionUncertain": {
+      "text": "Murage puede haber empezado a enviar tu mensaje anterior. Murage no pudo volver a enviarlo porque no se superaron las comprobaciones previas al envío. No se volvió a enviar automáticamente. Revisa la conversación antes de intentarlo de nuevo.",
+      "en": "Murage may have started sending your earlier message. Murage could not send it again because the checks before sending did not pass. It was not sent again automatically. Check the conversation before trying again.",
+      "verdict": "pass"
+    },
+    "es:acp.defaultThinking": {
+      "text": "Configuración predeterminada de la IA",
+      "en": "AI's default setting",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.firstRun.bookmarkDoor": {
+      "text": "Guarda esta página en marcadores para poder volver. Siempre puedes volver en {site}/home/cloud.",
+      "en": "Bookmark this page so you can come back. You can always return at {site}/home/cloud.",
+      "verdict": "pass"
+    },
+    "pt-br:gatewayBusy.repeated.title": {
+      "text": "{engine} continua recusando este pedido. Sua mensagem está salva.",
+      "en": "{engine} keeps rejecting this request. Your message is saved. Try again or use another AI.",
+      "verdict": "fail",
+      "note": "Missing the next step. Fix: {engine} continua recusando este pedido. Sua mensagem está salva. Tente novamente ou use outra IA."
+    },
+    "pt-br:gatewayBusy.tryAgain": {
+      "text": "Tentar novamente",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "pt-br:gatewayBusy.useAnotherAI": {
+      "text": "Usar outra IA",
+      "en": "Use another AI",
+      "verdict": "pass"
+    },
+    "pt-br:gatewayBusy.getHelp": {
+      "text": "Obter ajuda",
+      "en": "Get help",
+      "verdict": "pass"
+    },
+    "pt-br:engine.toolLimit.notice": {
+      "text": "Algumas ferramentas foram omitidas para este pedido: esta IA aceita no máximo {limit} ferramentas.",
+      "en": "Some tools were left out for this request: this AI accepts at most {limit} tools.",
+      "verdict": "pass"
+    },
+    "pt-br:engine.toolLimit.catalogUnknown": {
+      "text": "O Murage não conseguiu confirmar a lista de ferramentas desta IA. Sua mensagem não foi enviada porque o Murage não conseguiu verificar quantas ferramentas esta IA aceita. Escolha outra IA e tente novamente.",
+      "en": "Murage could not confirm this AI's tool list. Your message was not sent because Murage could not check how many tools this AI can accept. Choose another AI and try again.",
+      "verdict": "pass"
+    },
+    "pt-br:engine.toolLimit.catalogChanged": {
+      "text": "A lista de ferramentas mudou enquanto o Murage preparava seu pedido. O Murage não conseguiu ajustar a lista ao limite de ferramentas desta IA. Escolha outra IA e tente novamente.",
+      "en": "The tool list changed while Murage was preparing your request. Murage could not fit the list within this AI's tool limit. Choose another AI and try again.",
+      "verdict": "pass"
+    },
+    "pt-br:engine.submission.afterSubmission": {
+      "text": "Sua mensagem original foi enviada. O Murage não conseguiu enviá-la novamente porque as verificações antes do envio não passaram. Ela não foi reenviada automaticamente. Confira a conversa antes de tentar de novo.",
+      "en": "Your original message was sent. Murage could not send it again because the checks before sending did not pass. It was not sent again automatically. Check the conversation before trying again.",
+      "verdict": "pass"
+    },
+    "pt-br:engine.submission.afterSubmissionUncertain": {
+      "text": "O Murage pode ter começado a enviar sua mensagem anterior. O Murage não conseguiu enviá-la novamente porque as verificações antes do envio não passaram. Ela não foi reenviada automaticamente. Confira a conversa antes de tentar de novo.",
+      "en": "Murage may have started sending your earlier message. Murage could not send it again because the checks before sending did not pass. It was not sent again automatically. Check the conversation before trying again.",
+      "verdict": "pass"
+    },
+    "pt-br:acp.defaultThinking": {
+      "text": "Configuração padrão da IA",
+      "en": "AI's default setting",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.firstRun.bookmarkDoor": {
+      "text": "Salve esta página nos favoritos para poder voltar. Você pode voltar a qualquer momento em {site}/home/cloud.",
+      "en": "Bookmark this page so you can come back. You can always return at {site}/home/cloud.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

@@ -13,3 +13,12 @@
 "Ask a bot" = "बॉट से पूछें";
 "Open my chat" = "मेरी चैट खोलें";
 "From" = "स्रोत";
+"Send to %@ as you" = "%@ को आपकी ओर से भेजें";
+"Send this to %@ as you?" = "इसे आपकी ओर से %@ को भेजें?";
+"Confirm in Murage" = "Murage में पुष्टि करें";
+"Sent to %@ without your recent chat." = "%@ को आपकी हाल की चैट के बिना भेज दिया।";
+"Sent to %@." = "%@ को भेज दिया।";
+"Sent to %@ without your recent chat (it waited too long)." = "%@ को आपकी हाल की चैट के बिना भेज दिया (इसे बहुत देर तक इंतज़ार करना पड़ा)।";
+"Sent to %@. Pair this phone again to include your recent chat." = "%@ को भेज दिया। अपनी हाल की चैट शामिल करने के लिए इस फ़ोन को दोबारा पेयर करें।";
+"Pair this phone again so %@ can see your recent chat when you send from it." = "इस फ़ोन को फिर से जोड़ें ताकि जब आप इससे भेजें तो %@ आपकी हाल की चैट देख सके।";
+"Couldn't reach your computer. Check it's on and try again." = "आपके कंप्यूटर तक नहीं पहुँच सका। जाँचें कि वह चालू है और फिर कोशिश करें।";

@@ -97,10 +97,8 @@ server/background-slices-busy.test.ts	extended
 server/backup-activity-fresh-install-api.test.ts	extended
 server/backup-exfat.test.ts	extended
 server/backup-failure-naming.test.ts	extended
-server/backup-failure-notice-api.test.ts	extended
 server/backup-many-files.test.ts	extended
 server/backup-real-full-disk.test.ts	extended
-server/backup-waiting-api.test.ts	extended
 server/backup-waiting.test.ts	extended
 server/blake3.test.ts	extended
 server/boot2-review-fixes.test.ts	extended
@@ -133,6 +131,7 @@ server/branch-index.test.ts	extended
 server/branching.test.ts	extended
 server/broker-socket-path.test.ts	extended
 server/browser-check-state.test.ts	extended
+server/browser-document-guard-oopif.real-chrome.test.ts	extended
 server/browser-extension-batch1.test.ts	extended
 server/browser-extension-check-availability.test.ts	extended
 server/browser-extension-desktop102.test.ts	extended
@@ -174,7 +173,6 @@ server/chief-of-staff-skill.test.ts	extended
 server/chief-of-staff.test.ts	extended
 server/claude-account-list.test.ts	extended
 server/claude-isolation-contract.test.ts	extended
-server/claude-update-route.test.ts	extended
 server/claude-update.test.ts	extended
 server/cli-version-cache.test.ts	extended
 server/cloud-backend.test.ts	extended
@@ -278,7 +276,6 @@ server/drivers/env-ms.test.ts	delete (pending review; runs here until then)
 server/drivers/headless-stop-failure.test.ts	extended
 server/drivers/headless-target-guard.real-chrome.test.ts	extended
 server/drivers/headless-text-only.audit2.test.ts	extended
-server/drivers/headless-text-only.windows.test.ts	extended
 server/drivers/http-text-only.audit2.test.ts	extended
 server/drivers/http-text-only.test.ts	extended
 server/drivers/isolation-cache.test.ts	extended
@@ -294,7 +291,6 @@ server/drivers/openai-compat.test.ts	extended
 server/drivers/phone-proxy.test.ts	extended
 server/drivers/pi-mcp-extension.test.ts	extended
 server/drivers/process-tree-hook-identity.test.ts	extended
-server/drivers/process-tree-win32.test.ts	extended
 server/drivers/provider-error-body.test.ts	extended
 server/drivers/provider-idle-cut.test.ts	extended
 server/drivers/remote-mcp-proxy-core.test.ts	extended
@@ -318,7 +314,6 @@ server/engine-plan-structure.test.ts	extended
 server/engine-sync-roots.test.ts	extended
 server/env-check-again.test.ts	extended
 server/env-fence.structure.test.ts	extended
-server/env-fence.test.ts	extended
 server/error-diagnostic-persistence.test.ts	extended
 server/exactness.test.ts	extended
 server/flux-contract-endpoints.test.ts	extended
@@ -360,7 +355,6 @@ server/image-fit.test.ts	extended
 server/image-generation-library.test.ts	extended
 server/image-library.test.ts	extended
 server/image-provider-name.test.ts	extended
-server/image-reference-resolver.test.ts	extended
 server/image-thumbnail.test.ts	extended
 server/images-left-out-api.test.ts	extended
 server/imported-team.test.ts	extended
@@ -385,7 +379,6 @@ server/index-bots-roster.test.ts	extended
 server/index-bots-task-window.test.ts	extended
 server/installed-playbooks.test.ts	extended
 server/intake-turn.test.ts	extended
-server/io-budget-win-counter.test.ts	extended
 server/io-budget.test.ts	extended
 server/launch-no-tty.structure.test.ts	extended
 server/leadership-admission.test.ts	extended
@@ -657,7 +650,6 @@ server/pm-sends-102-r30-pump.test.ts	extended
 server/procedure-review-host.test.ts	extended
 server/procedure-suggestions-cache.test.ts	extended
 server/procedure-suggestions-range.test.ts	extended
-server/procs-owned-windows.test.ts	extended
 server/project-attention-api.test.ts	extended
 server/project-audit-1.test.ts	extended
 server/project-audit-2.test.ts	extended
@@ -860,7 +852,6 @@ server/wayland-library.integration.test.ts	extended
 server/website-publisher.test.ts	extended
 server/whats-new-api.test.ts	extended
 server/whats-new.test.ts	extended
-server/windows-backup-pinned-ancestors.test.ts	extended
 server/working-context-scale.test.ts	extended
 server/writetime-rootsets-turn.test.ts	extended
 shared/agent-plan.test.ts	extended
@@ -895,6 +886,7 @@ shared/memory-learning-contract.test.ts	extended
 shared/message-actor.test.ts	extended
 shared/message-limits.test.ts	extended
 shared/model-label.test.ts	extended
+shared/murage-lockup.test.ts	extended
 shared/outcome-choices.test.ts	extended
 shared/plain-engine-error.test.ts	extended
 shared/plain-time-zone.test.ts	extended
@@ -986,6 +978,7 @@ src/components/EnginesSettings.test.ts	extended
 src/components/Files.test.ts	extended
 src/components/FirstRunBackups.test.ts	extended
 src/components/FirstRunPhases.test.ts	extended
+src/components/FirstRunWelcome.test.ts	extended
 src/components/FluxKeyProblemBanner.test.ts	extended
 src/components/FluxRouterConnection.test.ts	extended
 src/components/FolderTrustNote.test.ts	extended
@@ -1025,6 +1018,7 @@ src/components/MemorySection.test.ts	extended
 src/components/MemorySettings.test.ts	extended
 src/components/MemoryUpgradeDetail.test.ts	extended
 src/components/ModelPicker.test.ts	extended
+src/components/MurageLockup.real.test.ts	extended
 src/components/NewFromTemplateDialog.test.ts	extended
 src/components/NewProjectDialog.test.ts	extended
 src/components/NewTeamDialog.test.ts	extended
@@ -1079,6 +1073,7 @@ src/components/SidebarSectionHeader.test.ts	extended
 src/components/SidebarSharedRows.test.ts	extended
 src/components/SignedOutCard.test.ts	extended
 src/components/SkillAffordances.test.ts	extended
+src/components/StartupPictureWriter.dom.test.ts	extended
 src/components/StartupSettings.test.ts	extended
 src/components/StoppedRow.test.ts	extended
 src/components/StorageListView.test.ts	extended
@@ -1123,6 +1118,7 @@ src/components/copy-failure-banner.test.ts	extended
 src/components/delegation-label.test.ts	extended
 src/components/editor/emittedValues.test.ts	extended
 src/components/editor/slashMenu.test.ts	extended
+src/components/ember-default.test.ts	extended
 src/components/engine-swap-notes.test.ts	delete (pending review; runs here until then)
 src/components/held-queue-settled.test.ts	extended
 src/components/naming.test.ts	delete (pending review; runs here until then)
@@ -1229,7 +1225,9 @@ src/lib/field-focus.test.ts	extended
 src/lib/file-drop-zone.test.ts	extended
 src/lib/files-view.test.ts	extended
 src/lib/first-run-copy.test.ts	extended
+src/lib/first-run-hire-rows.test.ts	extended
 src/lib/first-run-jobs.test.ts	extended
+src/lib/first-run-pending.test.ts	extended
 src/lib/first-run-phone.test.ts	extended
 src/lib/first-run-surfaces.test.ts	delete (pending review; runs here until then)
 src/lib/flux-invite.test.ts	extended
@@ -1372,6 +1370,10 @@ src/lib/skill-recorder.test.ts	extended
 src/lib/skills-api.test.ts	extended
 src/lib/skins.test.ts	extended
 src/lib/starter-first-task.test.ts	extended
+src/lib/startup-picture-compose.test.ts	extended
+src/lib/startup-picture-schedule.test.ts	extended
+src/lib/startup-picture-team.test.ts	extended
+src/lib/startup-tips.test.ts	extended
 src/lib/storage-summary.test.ts	extended
 src/lib/stream-mic.test.ts	extended
 src/lib/stream-paint.test.ts	extended
@@ -1415,10 +1417,12 @@ src/lib/visual-viewport.test.ts	extended
 src/lib/voice-host.test.ts	extended
 src/lib/webhook-credentials.test.ts	extended
 src/lib/webhooks.test.ts	extended
+src/lib/whats-new-startup.test.ts	extended
 src/lib/window-confirm.test.ts	extended
 src/lib/working-time.test.ts	extended
 src/lib/workspace-pane.test.ts	extended
 src/lib/zod-config.test.ts	delete (pending review; runs here until then)
+src/locales/startup-tips/startup-tips-copy.test.ts	extended
 src/locales/terms-copy.test.ts	extended
 src/mermaid-frame/frame-page.test.ts	extended
 src/no-composio-in-user-text.test.ts	extended
@@ -1446,7 +1450,6 @@ tools/flux-stream-sim/providers/assemblyai.test.ts	extended
 tools/flux-stream-sim/sim.test.ts	extended
 server/chat-widgets-fence-api.test.ts	extended
 server/drivers/win-process-table.test.ts	extended
-server/memory/pip-reaper-win32.test.ts	extended
 server/memory/record-keys-budget.test.ts	the record-keys backfill write budget (perf-shaped io-hotpath check)
 server/browser-engine-windows-signed-real.test.ts	real signed Windows browser images from a packaged installer (needs WIN_SIGNED_BROWSER_RESOURCES; skipped otherwise)
 server/lee-phantom-scenario.test.ts	extended
@@ -1508,3 +1511,32 @@ server/memory/turnstart-r15-s1s2.test.ts	extended
 server/memory/turnstart-r15.test.ts	extended
 server/memory/verdict-store-r15.test.ts	extended
 server/launch-inventory-1018.test.ts	extended
+src/lib/notify-surfaces.test.ts	extended
+server/desktop-attention.test.ts	extended
+server/answered-where-attempt.test.ts	extended
+shared/notification-preferences-endsat.test.ts	extended
+server/desktop-attention-http.test.ts	extended
+shared/notification-drop.test.ts	extended
+src/attention-ui/AttentionPanel.test.tsx	extended
+src/components/PinToEdgeMenuItem.test.tsx	extended
+src/components/ShortcutRecorder.test.ts	extended
+src/float/FloatPanel.test.tsx	extended
+src/float/attention-single-reader.test.tsx	extended
+src/float/float-guard.test.ts	extended
+server/files-touched.test.ts	extended
+electron/attention-notice.electron.test.mjs	extended
+electron/setup-page.electron.test.mjs	extended
+server/static-ui-reason.test.ts	extended
+server/static-ui-setup-page.test.ts	extended
+server/static-ui-setup-page.e2e.test.ts	extended
+
+server/c11-refused-resend-api.test.ts
+
+server/drivers/acp/opencode-pinned-catalog.test.ts
+
+# Existing L9 regression coverage
+src/pill/Pill.test.tsx	extended
+src/pill/pill-guards.test.ts	extended
+server/drivers/acp/fuigo-bundled-real.test.ts	extended
+src/components/cloud/cloud-banner-waiting.test.ts	Presentation coverage; no data or authority boundary
+src/components/setup-feedback.dom.test.ts	Presentation coverage; no data or authority boundary

@@ -1,5 +1,8 @@
+import { removeMessageSearchFiles } from "./settle-copy.ts";
 import { mergeDestinationMemoryDeletions } from "./memory/restore.ts";
+import { mergeDestinationHighLevelMarks } from "./highlevel/thread-marks-restore.ts";
 import { detachRestoredLedgerAccounts, mergeDestinationConnectedLedger } from "./connected-app-journal.ts";
+import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { closeSync, fsyncSync, linkSync, lstatSync, openSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -110,8 +113,10 @@ export async function restoreInstallation(dataDir: string, archive: string, expe
     const tx = transactionPaths(paths.root, id);
     candidate = tx.candidate;
     const markerPath = join(prepared.stateDirectory, RESTORE_REVIEW_FILE);
+    const marksRetained = mergeDestinationHighLevelMarks(paths.root, prepared.stateDirectory);
     const memoryRestore = mergeDestinationMemoryDeletions(paths.root, prepared.stateDirectory);
     const marker = JSON.parse(readFileSync(markerPath, "utf8"));
+    if (marksRetained) marker.modifications.push({ component: "messages.db", action: `${marksRetained} permanent HighLevel conversation marks retained` });
     marker.modifications.push({component:"messages.db",action:`Memory restore: ${memoryRestore.history}; ${memoryRestore.merged} destination tombstones retained`});
     // Unknown-outcome app actions of the installation being replaced keep blocking their repeats.
     const ledgerRestore = mergeDestinationConnectedLedger(paths.root, prepared.stateDirectory);
@@ -131,6 +136,8 @@ export async function restoreInstallation(dataDir: string, archive: string, expe
     journal.phase = "original-moved";
     writeFileAtomic(paths.journal, JSON.stringify(journal) + "\n", { mode: 0o600 }); syncParent(paths.journal);
     await options.checkpoint?.("original-moved");
+    // The exclusive installation lease excludes live writers; keep the previous directory intact.
+    removeMessageSearchFiles(tx.candidate);
     move(tx.candidate, paths.root);
     await options.checkpoint?.("candidate-renamed");
     journal.phase = "candidate-installed";
@@ -148,6 +155,19 @@ export async function restoreInstallation(dataDir: string, archive: string, expe
     try { if (inspection) rmSync(inspection, { recursive: true, force: true }); }
     finally { lease.release(); }
   }
+}
+
+/** Remove the completed installation's prior notice before moving its receipt. */
+function dropUndoNotice(previous: string, journal: Journal): void {
+  let db: DatabaseSync | undefined;
+  try {
+    if (!journal.hadOriginal || !isOriginal(previous, journal)) return;
+    const path = join(previous, "messages.db"), st = entry(path);
+    if (!st?.isFile() || st.isSymbolicLink()) return;
+    db = new DatabaseSync(path, {timeout:1000});
+    db.exec("DROP TABLE IF EXISTS restore_boot_wait");
+  } catch (cause) {throw new InstallationSnapshotError("RESTORE_ROLLBACK_FAILED", {path: "messages.db", cause});}
+  finally {db?.close();}
 }
 
 /** Roll back an interrupted switch, or undo a completed restore still held
@@ -171,6 +191,7 @@ export function rollbackInstallationRestore(dataDir: string, options: { checkpoi
     // A completed restore's receipt must become a startup barrier BEFORE
     // any rollback rename. The root (and its review marker) may disappear.
     if (journalFile !== paths.journal) {
+      dropUndoNotice(tx.previous, journal);
       renameSync(journalFile, paths.journal); syncParent(paths.journal);
       journalFile = paths.journal;
     }
@@ -183,6 +204,7 @@ export function rollbackInstallationRestore(dataDir: string, options: { checkpoi
           move(paths.root, tx.retainedCandidate);
         }
         options.checkpoint?.("candidate-retained");
+        removeMessageSearchFiles(tx.previous);
         move(tx.previous, paths.root);
         options.checkpoint?.("original-restored");
       // The rename may have completed before the process died. Prove the

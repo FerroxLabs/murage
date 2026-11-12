@@ -7,6 +7,18 @@
 import { desktopCallerHeaders } from "./live-events";
 
 export const CLEANUP_PREF_KEY = "murage.cleanUpDictation";
+export const CLEANUP_NOTICE_KEY = "murage.dictationCleanupNoticeShown";
+export const CLEANUP_NOTICE = "Dictation is tidied by your AI model (Flux or your connected account) before you send. Turn this off in Settings > Voice.";
+
+const cleanupNoticeListeners = new Set<() => void>();
+let cleanupNoticeState: string | null = null;
+let cleanupNoticeUnpersisted = false;
+
+/** Observe notice requests from a recorder that outlived its composer. */
+export function subscribeCleanupNotice(listener: () => void): () => void {
+  cleanupNoticeListeners.add(listener);
+  return () => { cleanupNoticeListeners.delete(listener); };
+}
 
 type PrefStorage = Pick<Storage, "getItem"> & Partial<Pick<Storage, "setItem">>;
 
@@ -33,6 +45,58 @@ export function setCleanupEnabled(on: boolean, storage?: PrefStorage | null): vo
     storageOf(storage)?.setItem?.(CLEANUP_PREF_KEY, on ? "on" : "off");
   } catch {
     // a blocked store only means the choice is not remembered
+  }
+}
+
+/** Retain this renderer's state until a notice write reaches the device store. */
+function readCleanupNotice(storage?: PrefStorage | null): string | null {
+  try {
+    const store = storageOf(storage);
+    if (store) {
+      const stored = store.getItem(CLEANUP_NOTICE_KEY);
+      if (!cleanupNoticeUnpersisted) cleanupNoticeState = stored;
+    }
+  } catch {
+    // The recorder and replacement composer share the in-memory state.
+  }
+  return cleanupNoticeState;
+}
+
+/** Keep the notice pending until a composer displays it. */
+export function requestCleanupNotice(storage?: PrefStorage | null): boolean {
+  if (readCleanupNotice(storage) === "shown") return false;
+  cleanupNoticeState = "pending";
+  cleanupNoticeUnpersisted = true;
+  try {
+    const store = storageOf(storage);
+    if (store?.setItem) {
+      store.setItem(CLEANUP_NOTICE_KEY, cleanupNoticeState);
+      cleanupNoticeUnpersisted = false;
+    }
+  } catch {
+    // Dictation continues with the notice pending in this renderer.
+  }
+  for (const listener of cleanupNoticeListeners) listener();
+  return true;
+}
+
+/** Resume a notice requested by a clip that outlived its composer. */
+export function cleanupNoticePending(storage?: PrefStorage | null): boolean {
+  return readCleanupNotice(storage) === "pending";
+}
+
+/** Called after the inline notice is mounted. */
+export function markCleanupNoticeShown(storage?: PrefStorage | null): void {
+  cleanupNoticeState = "shown";
+  cleanupNoticeUnpersisted = true;
+  try {
+    const store = storageOf(storage);
+    if (store?.setItem) {
+      store.setItem(CLEANUP_NOTICE_KEY, cleanupNoticeState);
+      cleanupNoticeUnpersisted = false;
+    }
+  } catch {
+    // The notice remains shown in this renderer when storage is blocked.
   }
 }
 
@@ -78,6 +142,7 @@ export async function requestCleanup(
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ text: string; cleaned: boolean }> {
   const raw = { text, cleaned: false };
+  if (!cleanupEnabled()) return raw;
   try {
     const res = await fetchImpl("/api/voice/cleanup", {
       method: "POST",

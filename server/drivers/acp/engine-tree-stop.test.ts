@@ -85,7 +85,7 @@ const SESSION = "fake-acp-session";
 
 const zombie = (pid: number) => {
   try {
-    return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim().startsWith("Z");
+    return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { windowsHide: true, encoding: "utf8" }).trim().startsWith("Z");
   } catch {
     return false;
   }

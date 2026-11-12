@@ -35,7 +35,7 @@ export const ENGINE_LOGIN_CHANNELS = Object.freeze({
   closed: "cloud-home:engine-login:closed", // main -> renderer
 });
 
-export const ENGINE_LOGIN_ENGINES = Object.freeze(["codex", "claudeAgent", "grokAgent", "kimiAgent", "opencodeGo"]);
+export const ENGINE_LOGIN_ENGINES = Object.freeze(["codex", "claudeAgent", "antigravityAgent", "grokAgent", "kimiAgent", "opencodeGo"]);
 export const ENGINE_LOGIN_ACTIONS = Object.freeze(["login", "logout", "enroll-key"]);
 /** Engines that save a typed API key (`enroll-key`); OpenCode also names the key's provider. */
 export const ENGINE_KEY_ENGINES = Object.freeze(["codex", "opencodeGo"]);

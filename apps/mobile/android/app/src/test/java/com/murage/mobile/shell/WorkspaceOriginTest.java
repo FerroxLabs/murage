@@ -7,7 +7,7 @@ import org.json.JSONObject;
 import org.junit.Test;
 
 public class WorkspaceOriginTest {
-    private final WorkspaceOrigin saved = WorkspaceOrigin.parse("https://mac.tailnet123.ts.net");
+    private final WorkspaceOrigin saved = WorkspaceOrigin.parse("https://mac.tail000000.ts.net");
 
     @Test
     public void sharedOriginCases() throws Exception {
@@ -40,50 +40,50 @@ public class WorkspaceOriginTest {
     /** What WebMessageListener hands the listener as sourceOrigin. */
     @Test
     public void listenerSourceOrigins() {
-        assertEquals(saved, WorkspaceOrigin.parse("https://mac.tailnet123.ts.net"));
+        assertEquals(saved, WorkspaceOrigin.parse("https://mac.tail000000.ts.net"));
         assertNull(WorkspaceOrigin.parse("null")); // an opaque (sandboxed) frame
         assertNull(WorkspaceOrigin.parse(null));
-        assertNotEquals(saved, WorkspaceOrigin.parse("https://mac.tailnet123.ts.net:8444"));
-        assertNotEquals(saved, WorkspaceOrigin.parse("https://mac.tailnet123.ts.net."));
+        assertNotEquals(saved, WorkspaceOrigin.parse("https://mac.tail000000.ts.net:8444"));
+        assertNotEquals(saved, WorkspaceOrigin.parse("https://mac.tail000000.ts.net."));
     }
 
     @Test
     public void containsOnlyTheSameSchemeHostAndPort() {
-        WorkspaceOrigin other = WorkspaceOrigin.parse("https://mac.tailnet123.ts.net:8444");
-        assertTrue(other.contains("https://mac.tailnet123.ts.net:8444/enter"));
-        assertFalse(other.contains("https://mac.tailnet123.ts.net/"));
-        assertFalse(other.contains("https://mac.tailnet123.ts.net.evil.example:8444/"));
-        assertFalse(other.contains("http://mac.tailnet123.ts.net:8444/"));
-        assertFalse(other.contains("blob:https://mac.tailnet123.ts.net:8444/0b8e5c2a"));
+        WorkspaceOrigin other = WorkspaceOrigin.parse("https://mac.tail000000.ts.net:8444");
+        assertTrue(other.contains("https://mac.tail000000.ts.net:8444/enter"));
+        assertFalse(other.contains("https://mac.tail000000.ts.net/"));
+        assertFalse(other.contains("https://mac.tail000000.ts.net.evil.example:8444/"));
+        assertFalse(other.contains("http://mac.tail000000.ts.net:8444/"));
+        assertFalse(other.contains("blob:https://mac.tail000000.ts.net:8444/0b8e5c2a"));
         assertFalse(other.contains(null));
     }
 
     /** Only the authority decides: characters java.net.URI would choke on in a path or query do not matter. */
     @Test
     public void pathAndQueryDoNotAffectTheOrigin() {
-        assertEquals(saved, WorkspaceOrigin.parse("https://mac.tailnet123.ts.net/?q=a|b[1]"));
-        assertEquals(saved, WorkspaceOrigin.parse("https://mac.tailnet123.ts.net/ü"));
-        assertEquals(saved, WorkspaceOrigin.parse("https://mac.tailnet123.ts.net/a{b}^c`d"));
-        assertTrue(saved.contains("https://mac.tailnet123.ts.net/?q=a|b[1]"));
+        assertEquals(saved, WorkspaceOrigin.parse("https://mac.tail000000.ts.net/?q=a|b[1]"));
+        assertEquals(saved, WorkspaceOrigin.parse("https://mac.tail000000.ts.net/ü"));
+        assertEquals(saved, WorkspaceOrigin.parse("https://mac.tail000000.ts.net/a{b}^c`d"));
+        assertTrue(saved.contains("https://mac.tail000000.ts.net/?q=a|b[1]"));
         // The oracle's label rule: "xn--" ends with "-".
-        assertNull(WorkspaceOrigin.parse("https://xn--.tailnet123.ts.net"));
+        assertNull(WorkspaceOrigin.parse("https://xn--.tail000000.ts.net"));
     }
 
     /** Only ASCII is read as a host, before lower-casing (U+212A KELVIN SIGN lower-cases to "k"). */
     @Test
     public void refusesAHostThatOnlyLowerCasesToAscii() {
-        assertNull(WorkspaceOrigin.parse("https://Kac.tailnet123.ts.net"));
+        assertNull(WorkspaceOrigin.parse("https://Kac.tail000000.ts.net"));
     }
 
     /** Java-only pins: look-alike or invisible characters in the host are refused, never folded. */
     @Test
     public void refusesLookAlikeAndInvisibleHostCharacters() {
-        assertNull(WorkspaceOrigin.parse("https://mac.tailnet123.ts.net\uFF1A8444")); // fullwidth colon
-        assertNull(WorkspaceOrigin.parse("https://ma\u200Dc.tailnet123.ts.net")); // ZWJ
-        assertNull(WorkspaceOrigin.parse("https://ma\u200Bc.tailnet123.ts.net")); // ZWSP
-        assertNull(WorkspaceOrigin.parse("https://\u0131mac.tailnet123.ts.net")); // dotless i
-        assertEquals(saved, WorkspaceOrigin.parse("https://mac.tailnet123.ts.net:00443"));
-        assertEquals(saved, WorkspaceOrigin.parse("https://mac.tailnet123.ts.net:00443/x"));
+        assertNull(WorkspaceOrigin.parse("https://mac.tail000000.ts.net\uFF1A8444")); // fullwidth colon
+        assertNull(WorkspaceOrigin.parse("https://ma\u200Dc.tail000000.ts.net")); // ZWJ
+        assertNull(WorkspaceOrigin.parse("https://ma\u200Bc.tail000000.ts.net")); // ZWSP
+        assertNull(WorkspaceOrigin.parse("https://\u0131mac.tail000000.ts.net")); // dotless i
+        assertEquals(saved, WorkspaceOrigin.parse("https://mac.tail000000.ts.net:00443"));
+        assertEquals(saved, WorkspaceOrigin.parse("https://mac.tail000000.ts.net:00443/x"));
     }
 
     /** The launcher's typed input (P17 twin): Swift's whitespacesAndNewlines are trimmed first; the rule then applies. */

@@ -1,0 +1,54 @@
+import {readFileSync,writeFileSync,mkdirSync,copyFileSync,cpSync} from 'node:fs';
+import {spawnSync} from 'node:child_process';
+import {join,resolve} from 'node:path';
+const root=process.cwd(), evidence=resolve('.test-tmp/afix-winbox-gate');
+const source=readFileSync('scripts/windows/winbox-driver.mjs','utf8');
+const reviewed=readFileSync(join(evidence,'reviewed-driver.mjs'),'utf8');
+const report=resolve('scripts/windows/evidence');
+function run(name,cwd,files,expect=1) {
+  const r=spawnSync(process.execPath,['--test',...files],{cwd,encoding:'utf8'});
+  const output=(r.stdout||'')+(r.stderr||'');
+  writeFileSync(join(evidence,name+'.log'),output);
+  writeFileSync(join(report,'afix-'+name+'.log'),output.replace(/[ \t]+$/gm,''));
+  if(r.status!==expect || (expect===1 && (!output.includes('AssertionError [ERR_ASSERTION]') || /(?:ERR_)?MODULE_NOT_FOUND/.test(output))))throw new Error(`${name}: unexpected status ${r.status}`);
+  console.log(`${name}: ${expect===1?'behavioral RED / KILLED':'GREEN'} (exit ${r.status})`);
+}
+function fixture(name,driver) {
+  const dir=join(evidence,name);mkdirSync(join(dir,'scripts/windows'),{recursive:true});
+  writeFileSync(join(dir,'scripts/windows/winbox-driver.mjs'),driver);
+  copyFileSync('scripts/windows/winbox-driver.node-test.mjs',join(dir,'scripts/windows/winbox-driver.node-test.mjs'));
+  return dir;
+}
+if(process.argv[2]==='--audit-mutants') {
+  for(const name of ['evidence-citation','string-inventory']) {
+    const dir=join(evidence,'mutant-'+name);mkdirSync(join(dir,'scripts/windows'),{recursive:true});
+    for(const file of ['winbox-driver.mjs','winbox-driver.node-test.mjs','winbox-gate.ps1','winbox-sampler.cs','winbox-shell-mcp.mjs','winbox-proof-audit.node-test.mjs','winbox-strings.json'])copyFileSync('scripts/windows/'+file,join(dir,'scripts/windows',file));
+    cpSync(report,join(dir,'scripts/windows/evidence'),{recursive:true});
+    if(name==='evidence-citation') {
+      const file=join(dir,'scripts/windows/evidence/winbox-gate-verification.md');
+      writeFileSync(file,readFileSync(file,'utf8').replaceAll('afix-reviewed-red.log','removed-red-reference.log'));
+    } else {
+      const file=join(dir,'scripts/windows/winbox-strings.json'),inventory=JSON.parse(readFileSync(file));
+      inventory.files[0].strings.splice(inventory.files[0].strings.findIndex(row=>row.text.includes('Unresolved visible window owner')),1);
+      writeFileSync(file,JSON.stringify(inventory,null,2));
+    }
+    run('mutant-'+name,dir,['scripts/windows/winbox-proof-audit.node-test.mjs']);
+  }
+} else {
+  run('audit-red',join(evidence,'audit-red'),['scripts/windows/winbox-proof-audit.node-test.mjs']);
+  const base=join(evidence,'base-replay');mkdirSync(base,{recursive:true});
+  const unpack=spawnSync('tar',['-xf',join(evidence,'base-windows.tar'),'-C',base]);if(unpack.status!==0)throw new Error('base extraction failed');
+  fixture('base-replay',reviewed);
+  run('base-replay-red',base,['scripts/windows/winbox-driver.node-test.mjs']);
+  const replace=(from,to)=>{if(!source.includes(from))throw new Error('mutation anchor missing');return source.replace(from,to);};
+  const mutants={
+    'unknown-owner':replace('if (errors) errors.push(message);','if (errors) { /* mutant ignores unresolved owner */ }'),
+    'discard-offenders':replace('return [...offenders.values()];','return errors?.length ? [] : [...offenders.values()];'),
+    terminal:replace("const terminalClasses = new Set(['CASCADIA_HOSTING_WINDOW_CLASS', 'ConsoleWindowClass', 'PseudoConsoleWindow']);",'const terminalClasses = new Set();'),
+    child:replace("descendants.has(processKey(w)) ? 'murage-child-window'", "false ? 'murage-child-window'"),
+    'self-test':replace("verdict:errors.length ? 'FAIL':'PASS'", "verdict:selfTest ? 'PASS' : errors.length ? 'FAIL':'PASS'"),
+    workflow:replace("await phase('browser',browser);",'/* mutant omits browser phase */')
+  };
+  for(const [name,driver] of Object.entries(mutants))run('mutant-'+name,fixture('mutant-'+name,driver),['scripts/windows/winbox-driver.node-test.mjs']);
+  run('green',root,['scripts/windows/winbox-driver.node-test.mjs'],0);
+}

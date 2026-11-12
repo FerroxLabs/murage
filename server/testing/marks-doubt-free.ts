@@ -12,6 +12,7 @@ import { expect } from "vitest";
 import { alwaysAskCommand } from "../always-ask.ts";
 import { autoVerdict, type AutoContext } from "../auto-approve.ts";
 import { withoutDoubts } from "../shell/marks.ts";
+import { expectNoLimitsOwnerOutcome } from "./no-limits-1019.ts";
 
 type Shell = "pwsh" | undefined;
 const LEVELS: Array<[string, Parameters<typeof autoVerdict>[0]]> = [
@@ -30,10 +31,17 @@ function verdicts(cmd: string, cwd?: string, shell?: Shell) {
   return LEVELS.map(([level, bot]) => [level, autoVerdict(bot, shell === "pwsh" ? "PowerShell" : "Bash", cmd, context)] as const);
 }
 /** A protected-path row: the doubt-free read names it, the strict read cards, every level cards, Full access names it. */
-export function expectProtectedPath(cmd: string, cwd?: string, shell?: Shell): void {
+export function expectProtectedPath(cmd: string, cwd?: string, shell?: Shell, protectedWrite = false): void {
   expect(doubtFreeRule(cmd, cwd, shell), `doubt-free read of ${JSON.stringify(cmd)}`).toBe("protected-path");
   expect(strictRead(cmd, cwd, shell), `strict read of ${JSON.stringify(cmd)} cards`).not.toBeNull();
   for (const [level, verdict] of verdicts(cmd, cwd, shell)) {
+    // S1-B3 RULING (MAIN 2026-11-11 09:30Z): only fixture-declared protected writes supersede the inherited run assertion.
+    if (level === "No limits" && protectedWrite) {
+      expect(verdict, `No limits cards protected write ${JSON.stringify(cmd)}`).toMatchObject({ approve: null, source: "always-ask" });
+      continue;
+    }
+    // NOLIM 1.0.19: the owner's No limits turn runs a protected-path row (only the wipe list still asks)
+    if (level === "No limits") { expectNoLimitsOwnerOutcome(verdict, cmd, "protected-path", `No limits ${JSON.stringify(cmd)}`); continue; }
     expect(verdict.approve, `${level} cards ${JSON.stringify(cmd)}`).toBeNull();
     if (level === "Full access") expect(verdict, `Full access names protected-path for ${JSON.stringify(cmd)}`).toMatchObject({ source: "always-ask", rule: "protected-path" });
   }
@@ -43,7 +51,12 @@ export function expectProtectedPath(cmd: string, cwd?: string, shell?: Shell): v
 export function expectCardsEverywhere(cmd: string, cwd?: string, shell?: Shell): void {
   expect(doubtFree(cmd, cwd, shell), `doubt-free read of ${JSON.stringify(cmd)} cards`).not.toBeNull();
   expect(strictRead(cmd, cwd, shell), `strict read of ${JSON.stringify(cmd)} cards`).not.toBeNull();
-  for (const [level, verdict] of verdicts(cmd, cwd, shell)) expect(verdict.approve, `${level} cards ${JSON.stringify(cmd)}`).toBeNull();
+  const readerRule = doubtFree(cmd, cwd, shell)?.rule;
+  for (const [level, verdict] of verdicts(cmd, cwd, shell)) {
+    // NOLIM 1.0.19: the owner's No limits turn runs a reader card; only the wipe list still asks
+    if (level === "No limits") { expectNoLimitsOwnerOutcome(verdict, cmd, readerRule, `No limits ${JSON.stringify(cmd)}`); continue; }
+    expect(verdict.approve, `${level} cards ${JSON.stringify(cmd)}`).toBeNull();
+  }
 }
 /** The reader part of an ordinary row: the doubt-free read is clean; the strict read adds at most a closed-list doubt. */
 export function expectReaderOrdinary(cmd: string, cwd?: string, shell?: Shell, note?: string): void {

@@ -1,5 +1,6 @@
 import { MASK, splitSecretUrl } from "../shared/mcp-secret-url.mjs";
 import { emailSecretsEnv } from "./email-secrets.mjs";
+import { bankHoldsHomeKeyOutsideFlux, containsPrimaryFluxKey } from "../shared/flux-credential-scan.mjs";
 
 // Workspace credentials the desktop shell keeps OS-encrypted (credentials.bin
 // via safeStorage) instead of leaving in plaintext config.json — the same
@@ -74,14 +75,17 @@ export function migrateWorkspaceCredentials(config, credentials) {
  * The server treats each var as authoritative over its config.json field. */
 export function workspaceCredentialEnv(credentials) {
   const env = {};
+  // A Cloud home never restores the owner's primary Flux key, however deeply it is serialized (the provider bank is JSON text).
+  const home = process.env.MURAGE_CLOUD_ROLE === "home";
+  const refused = value => home && (containsPrimaryFluxKey(value) || bankHoldsHomeKeyOutsideFlux(value));
   for (const { name, env: envName } of WORKSPACE_CREDENTIALS) {
     const value = credentials?.[name];
-    if (typeof value === "string" && value) env[envName] = value;
+    if (typeof value === "string" && value && !refused(value)) env[envName] = value;
   }
   // Flux migration requires explicit user choice, so it is deliberately not
   // part of the boot-time overwrite table above. Blank is a managed disconnect.
-  if (credentials?.fluxConnectionManaged === "true") env.FLUX_API_KEY = credentials.fluxApiKey ?? "";
-  else if (typeof credentials?.fluxApiKey === "string") env.FLUX_API_KEY = credentials.fluxApiKey;
+  if (credentials?.fluxConnectionManaged === "true") env.FLUX_API_KEY = refused(credentials.fluxApiKey) ? "" : credentials.fluxApiKey ?? "";
+  else if (typeof credentials?.fluxApiKey === "string") env.FLUX_API_KEY = refused(credentials.fluxApiKey) ? "" : credentials.fluxApiKey;
   if (typeof credentials?.fluxConnectionAliases === "string") env.MURAGE_FLUX_CONNECTION_ALIASES = credentials.fluxConnectionAliases;
   const mcp = projectMcpServerSecrets(credentials?.mcpServerSecrets);
   if (Object.keys(mcp).length > 0) env.MURAGE_MCP_SERVER_SECRETS = JSON.stringify(mcp);

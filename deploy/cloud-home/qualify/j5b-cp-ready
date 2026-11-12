@@ -1,0 +1,4 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# j5b-cp-ready : ExecStartPost of j5b-cp.service. Blocks (120 s limit) until the local Worker answers, so "After/Before j5b-cp.service" implies readiness.
+exec timeout 120 sh -c 'until curl -fsS -o /dev/null http://127.0.0.1:8787/healthz; do sleep 1; done'

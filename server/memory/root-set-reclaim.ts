@@ -1,3 +1,4 @@
+import { windowsHidePrelude } from "../../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -76,7 +77,9 @@ function currentPlan(): ReclaimPlan {
   return { clear, indexes, tables };
 }
 
-const has = (db: DatabaseSync, type: "table" | "index", name: string) => Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE type=? AND name=?").get(type, name));
+const has = (db: DatabaseSync, type: "table" | "index", name: string) => engine.has(db, type, name);
+/** Shared with retired trigger installation: it must observe peer drops without probing each table on every turn. */
+export function rootSetTablePresent(db: DatabaseSync, name: string): boolean { return has(db, "table", name); }
 const pragma = (db: DatabaseSync, name: string) => { const row = db.prepare(`PRAGMA ${name}`).get() as Record<string, unknown> | undefined; return row ? Number(Object.values(row)[0] ?? 0) : 0; };
 
 /** The next step this file needs (read from the file itself): rows out in batches (the index goes down with them), then the emptied index
@@ -141,14 +144,29 @@ export function reclaimAllowed(gate: ReclaimGate, idleMs = RECLAIM_IDLE_MS): boo
 const ENGINE_SOURCE = `
 const MARK = ${JSON.stringify(DROPPED_MARK)};
 const pragma = (db, name) => { const row = db.prepare("PRAGMA " + name).get(); return row ? Number(Object.values(row)[0] || 0) : 0; };
-const has = (db, type, name) => Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE type=? AND name=?").get(type, name));
+// One schema snapshot per connection/schema version, shared by status polls and
+// the reclaim worker. Check the cookie so peer DDL and downgrades are visible.
+const schemas = new WeakMap();
+function schemaObjects(db) {
+  const version = pragma(db, "schema_version");
+  let cached = schemas.get(db);
+  if (!cached || cached.version !== version) {
+    cached = { version, names: new Set(db.prepare("SELECT type || ':' || name AS key FROM sqlite_schema WHERE type IN ('table','index')").all().map(row => row.key)) };
+    // A rolled-back CREATE can reuse its version for different DDL later.
+    // Never retain a speculative schema from inside a transaction.
+    if (!db.isTransaction) schemas.set(db, cached);
+  }
+  return cached.names;
+}
+const has = (db, type, name) => schemaObjects(db).has(type + ':' + name);
 const TARGET = ${RECLAIM_BATCH_MS};
 const MAX_ROWS = ${RECLAIM_MAX_BATCH_ROWS};
 const MAX_PAGES = ${RECLAIM_MAX_BATCH_PAGES};
 function nextStep(db, plan) {
-  for (const spec of plan.clear) if (has(db, "table", spec.name) && db.prepare("SELECT 1 FROM " + spec.name + " LIMIT 1").get()) return { kind: "clear", name: spec.name };
-  for (const name of plan.indexes) if (has(db, "index", name)) return { kind: "drop-index", name };
-  for (const name of plan.tables) if (has(db, "table", name)) return { kind: "drop-table", name };
+  const names = schemaObjects(db), present = (type, name) => names.has(type + ":" + name);
+  for (const spec of plan.clear) if (present("table", spec.name) && db.prepare("SELECT 1 FROM " + spec.name + " LIMIT 1").get()) return { kind: "clear", name: spec.name };
+  for (const name of plan.indexes) if (present("index", name)) return { kind: "drop-index", name };
+  for (const name of plan.tables) if (present("table", name)) return { kind: "drop-table", name };
   if (pragma(db, "auto_vacuum") !== 2) return { kind: "vacuum" };
   return pragma(db, "freelist_count") > 0 && pragma(db, "page_count") > 0 ? { kind: "shrink" } : { kind: "done" };
 }
@@ -186,7 +204,8 @@ function once(db, step, size, plan) {
 }
 const busy = error => /locked|busy/i.test(String(error && error.message || error));
 `;
-const engine = new Function("performance", `${ENGINE_SOURCE}; return { nextStep, once, busy };`)(performance) as {
+const engine = new Function("performance", `${ENGINE_SOURCE}; return { nextStep, once, busy, has };`)(performance) as {
+  has(db: DatabaseSync, type: "table" | "index", name: string): boolean;
   nextStep(db: DatabaseSync, plan: ReclaimPlan): ReclaimStep; once(db: DatabaseSync, step: ReclaimStep, size: { rows: number; pages: number; maxRows?: number; maxPages?: number }, plan: ReclaimPlan): number; busy(error: unknown): boolean;
 };
 const sizes = new WeakMap<DatabaseSync, { rows: number; pages: number }>();
@@ -299,7 +318,7 @@ function runWorker(source: string, workerData: Record<string, unknown>, poll?: (
     let settled = false, timer: ReturnType<typeof setInterval> | undefined;
     const finish = (value: { ok: boolean; stats?: ReclaimStats; ms?: number; message?: string }) => { if (settled) return; settled = true; if (timer) clearInterval(timer); resolve(value); };
     try {
-      const worker = new Worker(source, { eval: true, workerData });
+      const worker = new Worker(windowsHidePrelude + source, { eval: true, workerData });
       worker.on("message", (message: { ok: boolean; stats?: ReclaimStats; ms?: number; message?: string }) => finish(message));
       worker.on("error", (error: Error) => finish({ ok: false, message: error.message }));
       worker.on("exit", () => finish({ ok: false, message: "the worker ended early" }));

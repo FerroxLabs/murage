@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -66,7 +67,7 @@ export function scannerEnvironment(env = process.env) {
 export function defaultProbe({ executable, platform = process.platform, env = process.env, timeoutMs = 20_000 }) {
   return (descriptorPath, entry) => new Promise(resolve => {
     const args = [entry, descriptorPath, "--check-install", ...(platform === "linux" ? [APPRUN_NO_SANDBOX] : [])];
-    execFile(executable, args, { env: scannerEnvironment(env), timeout: timeoutMs, windowsHide: true, shell: false, maxBuffer: 64 * 1024 }, error => {
+    execFile(executable, [...args], withHideInherit({ env: scannerEnvironment(env), timeout: timeoutMs, windowsHide: true, shell: false, maxBuffer: 64 * 1024 }), error => {
       if (!error) { resolve(0); return; }
       resolve(typeof error.code === "number" && !error.killed ? error.code : null);
     });
@@ -77,7 +78,7 @@ export function defaultProbe({ executable, platform = process.platform, env = pr
 export function defaultSpawnWatcher({ executable, platform = process.platform, env = process.env }) {
   return (descriptorPath, entry) => {
     try {
-      const child = spawnProcess(executable, [entry, descriptorPath, "--watch", ...(platform === "linux" ? [APPRUN_NO_SANDBOX] : [])], { detached: true, stdio: "ignore", windowsHide: true, shell: false, env: scannerEnvironment(env) });
+      const child = spawnProcess(executable, [entry, descriptorPath, "--watch", ...(platform === "linux" ? [APPRUN_NO_SANDBOX] : [])], withHideInherit({ detached: true, stdio: "ignore", windowsHide: true, shell: false, env: scannerEnvironment(env) }));
       child.on("error", () => {});
       child.unref();
       return child.pid ?? null;

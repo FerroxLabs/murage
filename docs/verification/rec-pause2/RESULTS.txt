@@ -1,0 +1,39 @@
+PAUSE re-review recorded; record verification passed.
+
+Record: 2026-11-11-1019-pause-rereview-21dfa413171d
+Re-review of: 2026-11-11-1019-pause-95b6ea300928
+Reviewer: sol. Verdicts: 10 pass, 0 fail.
+
+sol-bundle.json is the exact sole fenced JSON block from
+/work/build/sol-pause-rr/last.txt.
+SHA256: 742782cd767947a80d91b6b3671c50537d3bc34a10228f3b58e011cf5af9c335
+The recorder added its required date and used the registered reviewer metadata.
+All supplied strings, English text, verdicts, author, base and scope are preserved.
+The original record remains immutable, including its 10 historical fail verdicts.
+The ledger gained exactly the 10 corrected string entries. No orphan records or
+same-date conflicts were reported. No locale source or acceptance hashes changed.
+
+The recorder has no verify subcommand. Its existing verify-record.mjs now checks
+the completed re-review: original bundle equality, both record hashes, exact
+re-review fields and verdicts, correction coverage, live text, English text,
+all 10 ledger entries, and equality with ledgerFromRecords. It passed.
+
+The command sequence is in run.sh. It ran through it-remote.sh with
+IT_JOB=rec-pause2, IT_W=/work/build/rec-pause/wt,
+IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh, NETARG='--network none'.
+One Node 24 container ran on murage-vt4; observed host load was 16.
+
+Tests: 343 passed, 5 failed, 348 total. All 133 recorder tests and all 27 tests
+in the two i18n files passed. Deterministic copy rules passed. The five failing
+test names and counts exactly match docs/verification/rec-pause/test-summary.json
+at the starting commit: two source-acceptance checks, two review-completeness
+checks, and the pinned-file check. generate-locale.mjs --check still exits 1 for
+source acceptance. These broader checks are not green. See test-summary.json.
+
+Raw tests.json, tests.log and locale-check.log are retained outside the worktree
+in /work/build/rec-pause2/evidence, beside container.log.
+The container removed its generated node_modules before exiting and was removed
+by Docker's --rm flag. No build outputs were created. Existing tracked build
+assets were preserved. No server or conversation change was made or claimed
+verified. No live app, Mac, provider or billable service was used.
+No ijfw_memory_prelude tool/command or project memory directory was available.

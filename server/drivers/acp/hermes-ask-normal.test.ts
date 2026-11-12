@@ -25,6 +25,7 @@ import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
 import { autoVerdict } from "../../auto-approve.ts";
+import { expectNoLimitsOwnerOutcome } from "../../testing/no-limits-1019.ts";
 import { classifyStopLine, type StopLinePlace } from "../../stop-line.ts";
 import { commandFromToolInput, commandCwdFromToolInput } from "../../../shared/exact-command.ts";
 import type { GrantCall } from "../../../shared/app-action-grant.ts";
@@ -51,7 +52,7 @@ const HermesAskDriver = createAcpDriver(HERMES_ASK_SUPPORT);
 
 /** What the hook program prints for one call, run as Hermes runs it (stdin JSON in, stdout JSON out). */
 const hookSays = (toolName: string, toolInput: unknown) => JSON.parse(spawnSync(process.execPath, ["-e", HERMES_ASK_HOOK_SOURCE],
-  { input: JSON.stringify({ hook_event_name: "pre_tool_call", tool_name: toolName, tool_input: toolInput }), encoding: "utf8" }).stdout);
+  { windowsHide: true, input: JSON.stringify({ hook_event_name: "pre_tool_call", tool_name: toolName, tool_input: toolInput }), encoding: "utf8" }).stdout);
 
 /** The permission request Hermes sends for a hook-approved call (permissions.py, approval.py). */
 const hermesRequest = (toolName: string, message: string) => ({
@@ -164,9 +165,16 @@ describe("HERMES-BUGS-1010: a Hermes hook ask is judged by its real command, who
       const verdict = autoVerdict({ autoApprove: true, fullAccess: true }, opened.tool, opened.summary, { call: callOf(opened) });
       expect(verdict.approve).toBeNull();
       expect(["unread-call", "always-ask"]).toContain(verdict.source);
-      // and at No limits on a turn the owner started: a call that did not arrive whole asks there too
+      // RULING-R3 R2: a protocol-truncated hook message cannot clear the wipe check.
       const owner = autoVerdict({ autoApprove: true, fullAccess: true, noLimits: true }, opened.tool, opened.summary, { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null, inputTruncated: opened.toolInputTruncated === true, call: callOf(opened) });
-      expect(owner.approve, id).toBeNull();
+      if (id === "hermes-cut") {
+        expect(owner.approve).toBeNull();
+        // The server also sees Hermes's placeholder command; it is not the missing full text.
+        expect(autoVerdict({ autoApprove: true, fullAccess: true, noLimits: true }, opened.tool, opened.summary, {
+          fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null,
+          inputTruncated: true, commandText: commandFromToolInput(opened.toolCall.input), call: callOf(opened),
+        }).approve).toBeNull();
+      } else expectNoLimitsOwnerOutcome(owner, opened.summary, undefined, id);
       await instance?.dispose();
       instance = undefined;
     }

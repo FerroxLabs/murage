@@ -79,6 +79,7 @@ describe("memory proxy reads its token from the credential file on every call", 
     await new Promise<void>((resolve) => stub.listen(0, "127.0.0.1", resolve));
     const address = stub.address() as { port: number };
     child = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./memory-proxy.ts", import.meta.url))], {
+      windowsHide: true,
       env: { ...process.env, MURAGE_HARNESS_URL: `http://127.0.0.1:${address.port}`, MURAGE_CRED_FILE: store.path, MURAGE_CRED_SERVER: "murage-memory", MURAGE_MEMORY_TOKEN: "" },
       stdio: ["pipe", "pipe", "pipe"],
     });

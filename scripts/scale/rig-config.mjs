@@ -5,6 +5,8 @@
 // server env declares, the fake engine env, the pooled/cold option, the recall success share, and reading one turn
 // out of the server log (its own trace, its own memory line, its sent bundle, its resets, a re-dispatch).
 
+import { createHash } from "node:crypto";
+
 /** The version shared/terms.ts asks for, read from its source so the next terms bump cannot silently break the rig. */
 export function termsVersionFrom(source) {
   return /export const TERMS_VERSION\s*=\s*["']([^"']+)["']/.exec(source ?? "")?.[1] ?? null;
@@ -40,7 +42,7 @@ export function recallSuccess(turns) {
  * matches, and neither does one that names no turn. */
 export function matchTurnEvent(ev, wait) {
   if (!ev || ev.threadId !== wait.threadId || !ev.turnId || wait.before.has(ev.turnId)) return null;
-  if (ev.type === "turn.started") return wait.turnId === undefined ? "started" : null;
+  if (ev.type === "turn.started") return wait.turnId === undefined || wait.logicalSend && wait.attemptEnded ? "started" : null;
   if (ev.type !== "turn.completed" && ev.type !== "turn.failed") return null;
   return wait.turnId === undefined || wait.turnId === ev.turnId ? "ended" : null;
 }
@@ -68,6 +70,7 @@ export function parseTurnLog(text) {
         let ph = byId[id];
         if (!ph) { ph = byId[id] = { id, bundles: [] }; order.push(id); }
         if (ph[p] === undefined) ph[p] = ms !== undefined ? { at, ms: Number(ms) } : at;
+        if (p === "received") ph.threadKey = detail(line, "threadKey");
         const hits = detail(line, "hits");
         if (p === "memory.bundle") ph.bundles.push({ ms: ms === undefined ? undefined : Number(ms), hits: hits === undefined ? undefined : Number(hits), overlapped: /\boverlapped=true\b/.test(line), outcome: detail(line, "outcome") });
         if (p === "memory.assemble" && hits !== undefined) ph.assembleHits = Number(hits);
@@ -116,26 +119,28 @@ export function openTraces(text) {
   return order.filter(id => byId[id].received !== undefined && byId[id]["turn.done"] === undefined);
 }
 
-/** One turn read from the log written since its own send. `exclude` holds trace ids other waits already own (a trace
- * names no thread). The turn's trace is the first one that started after the send; when the server re-dispatched it
- * (`… on thread <id>; re-preparing once`), the next trace is the re-dispatch, and its sent bundle is the one scored. */
+/** One turn read from the log written since its own send. `exclude` holds trace ids other waits already own (legacy traces name no thread). The turn's trace is the first one that started after the send; when the server re-dispatched it
+ * (`… on thread <id>; re-preparing …`), follow every attempt, and score the final sent bundle. */
 export function turnFromLog(text, threadId, exclude = new Set()) {
   const { byId, order } = parseTurnLog(text);
   const started = order.filter(id => byId[id].received !== undefined && !exclude.has(id));
-  const own = byId[started[0]];
   const esc = threadId.replace(/[^\w-]/g, "");
-  const redispatched = new RegExp(`on thread ${esc}; re-preparing once`).test(text);
+  const retries = [...text.matchAll(new RegExp(`on thread ${esc}; re-preparing (?:once|\\(\\d+ of \\d+[^\\n]*\\))`, "g"))].length;
+  const redispatched = retries > 0;
   const redispatchFailed = new RegExp(`late re-dispatch failed on thread ${esc}:`).test(text);
-  const follow = redispatched ? byId[started[1]] : undefined;
-  const final = follow ?? own;
+  const threadKey = createHash("sha256").update(threadId).digest("hex").slice(0, 16);
+  // New traces carry opaque thread identity. Legacy logs can follow consecutive retries, but cannot disambiguate concurrent traces.
+  const keyed = started.some(id => byId[id].threadKey !== undefined);
+  const attempts = keyed ? started.filter(id => byId[id].threadKey === threadKey) : started.slice(0, retries + 1);
+  const own = byId[attempts[0]], final = byId[attempts.at(-1)];
+  const follow = attempts.length > 1 ? final : undefined;
   const resets = resetLines(text, threadId);
   const recall = sentRecall(final, resets.length > 0);
-  const ownDone = own?.["turn.done"] !== undefined;
-  const done = ownDone && (!redispatched || redispatchFailed || follow?.["turn.done"] !== undefined);
+  const done = Boolean(own?.["turn.done"] !== undefined && (redispatchFailed || attempts.length > retries && final?.["turn.done"] !== undefined));
   const resumed = own?.mem?.resumed === undefined ? undefined : own.mem.resumed === "true";
   return {
-    traceId: own?.id, redispatchTraceId: follow?.id, redispatched, done,
-    foreignTraces: Math.max(0, started.length - 1 - (follow ? 1 : 0)),
+    traceId: own?.id, traceIds: attempts, redispatchTraceId: follow?.id, redispatched, done,
+    foreignTraces: Math.max(0, started.length - attempts.length),
     outcome: final?.outcome,
     // prep is the trace's dispatch.send and nothing else: memory's own `pre=` is a different measure
     prep: atOf(own, "dispatch.send"),

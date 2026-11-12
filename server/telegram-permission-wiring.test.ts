@@ -4,6 +4,7 @@ import { expect, it, vi } from "vitest";
 import { normalizeTelegramUpdate } from "./telegram-update.ts";
 import { isQuestionCard, questionsForCard } from "../shared/questions.ts";
 import { stripTypeScriptTypes } from "node:module";
+import { inertBot } from "./store.ts";
 // The actual channelApprovalActions expression from index.ts, types stripped.
 // It now resolves the verified channel human and acts only for the workspace
 // owner's task projection of the bot (owner-link gate), so those lookups are
@@ -20,8 +21,8 @@ function channelApprovalActions(store: object, askMessageByRequest: Map<string, 
   const channelHumanIsOwner = (id: string | undefined) => id === "owner";
   // audienceTask (execution-audience.ts) replaced humanTask here: the owner's task projection of the bot.
   const audienceTask = (_store: unknown, _botId: string, principal: typeof owner) => principal === owner ? { threadId: "thread" } : null;
-  return new Function("store", "askMessageByRequest", "createHash", "redactSecretsInText", "answerRequest", "isQuestionCard", "questionsForCard", "questionReply", "channelHumanIsOwner", "audienceTask", "resolveHumanBinding", `return ${expression}("bot", arguments[11]);`)(
-    store, askMessageByRequest, createHash, (text: string) => text, answerRequest, isQuestionCard, questionsForCard, questionReply, channelHumanIsOwner, audienceTask, resolveHumanBinding, binding);
+  return new Function("store", "askMessageByRequest", "createHash", "redactSecretsInText", "answerRequest", "isQuestionCard", "questionsForCard", "questionReply", "channelHumanIsOwner", "audienceTask", "resolveHumanBinding", "binding", "inertBot", `return ${expression}("bot", binding);`)(
+    store, askMessageByRequest, createHash, (text: string) => text, answerRequest, isQuestionCard, questionsForCard, questionReply, channelHumanIsOwner, audienceTask, resolveHumanBinding, binding, inertBot);
 }
 it("actual root approval actions bind live card, instance and thread and resolve only once", async () => {
   const bot = { id: "bot", name: "Fixture", threadId: "thread", modelSelection: { instanceId: "claude" } };
@@ -82,7 +83,7 @@ it("actual root approval actions publish a question with its questions and answe
   expect(await actions.resolve(offered, "allow")).toBe(false);
   expect(answerRequest).not.toHaveBeenCalled();
   expect(await actions.answer(offered, { behavior: "answer", answers: [{ id: "q1", selected: ["Detailed"] }] })).toEqual({ ok: true });
-  expect(questionReply).toHaveBeenCalledExactlyOnceWith("thread", "request", { behavior: "answer", answers: [{ id: "q1", selected: ["Detailed"] }] }, false);
+  expect(questionReply).toHaveBeenCalledExactlyOnceWith("thread", "request", { behavior: "answer", answers: [{ id: "q1", selected: ["Detailed"] }] }, false, true);
   expect(answerRequest).toHaveBeenCalledExactlyOnceWith("thread", "claude", "request", "answer", "Detailed", { id: "bot", name: "Ember" }, [{ id: "q1", selected: ["Detailed"] }]);
   // settled: the fingerprint no longer matches, so a second answer is refused
   expect(await actions.answer(offered, { behavior: "skip" })).toEqual({ ok: false, error: "This question is no longer open." });

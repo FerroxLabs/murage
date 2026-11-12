@@ -187,9 +187,14 @@ it("an upload that stops moving is ended after the stall limit, said plainly, an
   await new Promise<void>(resolve => raw.listen(0, "127.0.0.1", resolve));
   cleanups.push(() => { for (const socket of sockets) socket.destroy(); return new Promise<void>(resolve => raw.close(() => resolve())); });
   const fixture = { port: (raw.address() as { port: number }).port, requests: () => sockets.length };
+  // 3b621df46a stops the stall clock after the body is sent. Some Linux
+  // hosts buffer the entire old 8 MiB body even while the peer is paused
+  // (upload-probe.log records all 128 slices and the multipart terminator).
+  // Two valid 9 MiB references exceed that window and exercise a real stall.
+  const stalledReference = { bytes: Buffer.concat([png, Buffer.alloc(9 * 1024 * 1024)]), mime: "image/png" as const };
   const f = service(() => fixture.port, { uploadStallMs: 300 });
   const started = Date.now();
-  const error = await f.images.generate(edit, f.hooks(AbortSignal.timeout(8_000)), [bigReference]).then(() => null, (e: unknown) => e as generation.ImageGenerationError);
+  const error = await f.images.generate(edit, f.hooks(AbortSignal.timeout(8_000)), [stalledReference, stalledReference]).then(() => null, (e: unknown) => e as generation.ImageGenerationError);
   expect(Date.now() - started).toBeLessThan(5_000);
   expect(error).toMatchObject({ code: "upload-stalled", outcome: "uncertain" });
   expect(error!.message).toBe("The upload to Flux Router stalled: no image data moved for 20 seconds, so Murage stopped. The image may not have reached Flux Router. Nothing was retried automatically.");

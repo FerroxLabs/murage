@@ -15,7 +15,8 @@ import { connectionId, database } from "../database.ts";
 import { BACKGROUND_BUSY_MS, DEFAULT_BUSY_MS, isDatabaseBusy, noteBusy, setBusy } from "../db-busy.ts";
 import { txScopeBegin, txScopeEnd } from "../tx-scope.ts";
 import { noteIdentityEpoch } from "./provenance-stamp.ts";
-import { NOISY_SYSTEM_SUBJECTS, bumpLearningFence } from "./authority-epoch.ts";
+import { bumpLearningFence } from "./authority-epoch.ts";
+import { NOISY_SYSTEM_SUBJECTS } from "./noisy-subjects.ts";
 import { memoryLookup } from "./deny-read.ts";
 import { MemorySendFenced } from "./learning-send-fence.ts";
 

@@ -1,0 +1,11 @@
+--- server/composio.ts
++++ server/composio.ts
+@@ -1758,7 +1758,7 @@
+   if (!owner || !call.complete) return;
+   const outcomes = new Map<string, { slug: string; account: { id: string; alias?: string }; failed?: string; ok: boolean; unknown: boolean }>();
+   for (const row of call.rows) {
+-    const reading = readAppAnswer([row.tool], request.id, bytes, call.rows.length > 1 ? row.index : undefined);
++    const reading = readAppAnswer([row.tool], request.id, bytes, call.rows.length > 1 && call.rows.some((r,i) => call.rows.some((other,j) => i !== j && r.tool.split("_")[0] === other.tool.split("_")[0] && r.account !== other.account)) ? row.index : undefined);
+     if (reading.brokerAuth) return;
+     const slug = row.tool.split("_")[0]!.toLowerCase();
+     const status = reading.authStatus.get(slug);

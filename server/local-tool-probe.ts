@@ -1,3 +1,4 @@
+import { fluxRouteFor, registerBusyloopPayloadSite } from "../shared/flux-route.ts";
 // Tool-calling test for one local server + model (0.1.52 LM1, spec T1).
 //
 // A TypeScript port of the SeanBeast probe (0152-LOCAL-MODELS-PROBE-SEANBEAST.md)
@@ -120,7 +121,7 @@ function parseSse(text: string): unknown[] {
     const data = line.slice(5).trim();
     if (!data || data === "[DONE]") continue;
     try {
-      events.push(JSON.parse(data) as unknown);
+      events.push(registerBusyloopPayloadSite("read", JSON.parse(data)) as unknown);
     } catch {
       // A partial or non-JSON frame is ignored, as the script did.
     }
@@ -172,7 +173,7 @@ interface ToolCallRead {
 function readArguments(raw: unknown): { args: Record<string, unknown> | null; type?: "string" | "object" } {
   if (typeof raw === "string") {
     try {
-      return { args: record(JSON.parse(raw)), type: "string" };
+      return { args: record(registerBusyloopPayloadSite("read", JSON.parse(raw))), type: "string" };
     } catch {
       return { args: null, type: "string" };
     }
@@ -223,7 +224,7 @@ export async function runLocalToolProbe(input: LocalToolProbeInput): Promise<Loc
     if (!(await checkLocalServerUrl(base + path)).ok) return { kind: "failed", ms: now() - t0, detail: "network" };
     let response: Response;
     try {
-      response = await fetchImpl(base + path, {
+      response = await fetchImpl(fluxRouteFor(base + path).requestUrl, {
         method: "POST",
         redirect: "error",
         signal,
@@ -244,7 +245,7 @@ export async function runLocalToolProbe(input: LocalToolProbeInput): Promise<Loc
       if (stream && response.ok) return { kind: "stream", status: response.status, ms: now() - t0, events: parseSse(text), text };
       let json: unknown = null;
       try {
-        json = JSON.parse(text) as unknown;
+        json = registerBusyloopPayloadSite("read", JSON.parse(text)) as unknown;
       } catch {
         json = null;
       }

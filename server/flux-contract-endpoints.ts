@@ -42,7 +42,7 @@ export const FLUX_KNOWN_UNSERVED: readonly string[] = [
   "/v1/images/models",
   "/v1/images/jobs",
   "/v1/audio/transcriptions/stream",
-  // UX-L2C spend meter (1.0.18): Flux serves it only behind FLUX_KEY_LIMITS_ROUTE_ENABLED, still off in prod; the meter says "will show once
+  // UX-L2C spend meter (1.0.18): Flux serves it only behind a server-side rollout flag, still off in prod; the meter says "will show once
   // Flux reports it" until then. When Flux turns it on, move it to FLUX_ENDPOINTS as key.limits (probed) and list it on server/flux-limits.ts.
   "/v1/key/limits",
 ];
@@ -52,25 +52,25 @@ export const FLUX_KNOWN_UNSERVED: readonly string[] = [
 export const FLUX_CALLER_FILES: Readonly<Record<string, readonly string[]>> = {
   "server/avatar-image.ts": ["images.generations"],
   "server/browser-action-checker-connection.ts": ["chat.completions"],
+  // A Cloud home asks GET /v1/cloud-home/status with the key Flux issued for that one home (B4). Only that key can ask it, so the
+  // daily check, which holds the owner's key, has no probe that could answer it.
+  "server/cloud-home/flux-home-gate.ts": [],
   "server/composio.ts": ["composio.health", "composio.broker"],
   "server/decider/flux.ts": ["decide"],
   // Bot email (1.0.9) is dark until Flux serves /v1/email/capabilities with enabled: true; its /v1/email/* routes join the probed list
   // above (and the daily live check) when Flux ships them (BOT-EMAIL-FLUX-CONTRACT). Until then it reaches nothing a probe could answer.
   "server/email/runtime.ts": [],
-  // 1.0.18 voice-402 call budget: these two name the default Flux base only as the key of the shared budget memo (markBudgetReached) when a
-  // turn's own route carries no base. They make no request there: the turn itself reaches Flux through the files listed below and flux-routing.ts.
-  // docs/verification/voice-402-call-1018.md:22 (ACP and OpenAI adapters mark the existing memo on a known Flux route only).
-  "server/drivers/acp/core.ts": [],
-  "server/drivers/claude.ts": [],
+  // On a Cloud home this points the engine's FluxRouter provider at FLUX_OPENAI_BASE (b8ec33dd7); the engine then calls it.
+  "server/drivers/acp/fuigo.ts": ["chat.completions"],
   "server/drivers/acp/hermes.ts": ["chat.completions"],
   // On a Cloud home these two hand the launcher a Flux route to render (cloudTurnRender): the engine then calls that base itself.
   "server/drivers/acp/opencode-go.ts": ["chat.completions"],
   "server/drivers/codex.ts": ["responses"],
+  // Prepares headless child routing and accounts for its usage; the engine sends the request.
+  "server/drivers/headless-text-only.ts": [],
   "server/flux-key-health.ts": ["key.info"],
   // GET /v1/key/limits for the spend meter: known-unserved above until Flux turns the route on in prod (then ["key.limits"]).
   "server/flux-limits.ts": [],
-  // Recognises a Flux host so callers attach the memory headers; no request of its own.
-  "server/flux-memory-headers.ts": [],
   // Builds the usage tags (bot, feature, thread) and reads the served-model headers; recognises a Flux host so callers attach
   // them only there. No request of its own.
   "server/flux-usage-tags.ts": [],

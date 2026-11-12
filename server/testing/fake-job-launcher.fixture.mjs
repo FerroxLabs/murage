@@ -11,7 +11,7 @@ import { spawn } from "node:child_process";
 import { appendFileSync } from "node:fs";
 
 const [command, ...args] = process.argv.slice(2);
-const child = spawn(command, args, { stdio: "inherit" });
+const child = spawn(command, args, { windowsHide: true, stdio: "inherit" });
 child.on("spawn", () => {
   if (process.env.FAKE_LAUNCHER_LOG) appendFileSync(process.env.FAKE_LAUNCHER_LOG, `${process.pid} ${child.pid}\n`);
 });

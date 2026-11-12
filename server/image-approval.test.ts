@@ -7,8 +7,18 @@
 // guard. The harness wiring (server/index.ts) only gathers these facts; the
 // rules live here so every level, setting and guard has a row.
 import { describe, expect, it } from "vitest";
-import { IMAGE_ASK_AFTER_MAX, decideImageApproval, imageAskAfterOf, imageApprovalOf, type ImageApprovalFacts } from "./image-approval.ts";
+import { IMAGE_ASK_AFTER_MAX, decideImageApproval as readImageApproval, imageAskAfterOf, imageApprovalOf, type ImageApprovalFacts } from "./image-approval.ts";
 import type { FullAccessOrigin } from "./auto-approve.ts";
+
+
+// r1.3b P2: the legacy outcome assertions exercise the sole final gate.
+import { finalDecision } from "../shared/no-limits-decision.ts";
+const decideImageApproval = (facts: ImageApprovalFacts) => {
+  const read = readImageApproval(facts);
+  const decision = finalDecision(read.reads, "generate_image");
+  return decision.verdict === "run" && "basis" in read ? { ask: false as const, basis: read.basis }
+    : { ask: true as const, reason: "reason" in read ? read.reason : "level" };
+};
 
 const LEVELS = {
   ask: { autoApprove: false },

@@ -22,7 +22,7 @@
 
 import { isPlain, literalText, MAX_TEXT_CHARS, Unreadable, type Part, type Quote, type Word } from "./lex.ts";
 import { loadsCodeFirst, markLoaderRunner, markLoaderVariable, mentionsLoaderVariable, pythonModuleLoads, rReadsProfile } from "./loaders.ts";
-import { attachedInlineCode, candidatesOf, expandWord, fork, fromFileWord, INLINE_CODE, interpreterKey, MAX_DEPTH, PHYSICAL_DRIVE, resolveName, resolveWritten, runnerOption, runsRemote, simpleCommand, takesValue, walkForeignExecutor, type Provenance, type Visitor, type WalkContext } from "./walk.ts";
+import { attachedInlineCode, candidatesOf, expandWord, fork, newContext, fromFileWord, INLINE_CODE, interpreterKey, MAX_DEPTH, PHYSICAL_DRIVE, resolveName, resolveWritten, runnerOption, runsRemote, simpleCommand, takesValue, walkForeignExecutor, type Provenance, type Visitor, type WalkContext } from "./walk.ts";
 
 export const POWERSHELLS = new Set(["powershell", "powershell.exe", "pwsh", "pwsh.exe"]);
 const CMDS = new Set(["cmd", "cmd.exe"]);
@@ -60,6 +60,55 @@ interface Lexed {
   statements: Statement[];
   /** subexpressions and script blocks, each a script of its own */
   nested: string[];
+}
+
+/** Raw owner-only discovery, before `unmodelled` or legacy value rejection.
+ * This is opt-in and never runs from the legacy command visitor. */
+export function collectWindowsSyntax(text: string, dialect: 'cmd' | 'pwsh', sink: {
+  command(name: string, args: Word[], syntaxId: string, stdin?: Provenance): void;
+  redirect(word: Word, syntaxId: string): void;
+  nested(text: string, syntaxId: string, dialect: 'cmd' | 'pwsh' | 'posix'): void;
+}): void {
+  const aliases: Record<string,string> = {
+    ni:'new-item', mi:'move-item', mv:'move-item', move:'move-item',
+    cpi:'copy-item', cp:'copy-item', copy:'copy-item', rni:'rename-item', ren:'rename-item',
+    sc:'set-content', ac:'add-content', ri:'remove-item', sl:'set-location', cd:'set-location',
+  };
+  const emit = (words: Word[], id: string, stdin?: Provenance) => {
+    const assignment = dialect === 'pwsh' ? assignmentOf(words) : undefined;
+    const call = assignment ? assignment.rhs : words;
+    const offset = ['&','.'].includes(literalText(call[0] ?? {parts:[]}) ?? '') ? 1 : 0;
+    const head = literalText(call[offset] ?? {parts:[]});if(head === undefined)return;
+    const name = head.replaceAll('\\','/').split('/').at(-1)!.toLowerCase().replace(/\.exe$/,'');
+    const args = call.slice(offset+1);
+    sink.command(dialect==='pwsh' ? aliases[name] ?? name : name,args,id,stdin);
+    if(/^(?:cmd|powershell|pwsh|sh|bash)$/.test(name)){
+      const at=args.findIndex(w=>/^(?:\/c|\/k|-c|-command)$/i.test(literalText(w)??''));
+      const body=at<0?undefined:literalText(args[at+1]??{parts:[]});
+      if(body!==undefined)sink.nested(body,id+'/executor',name==='cmd'?'cmd':/^(sh|bash)$/.test(name)?'posix':'pwsh');
+    }
+  };
+  if(dialect==='pwsh'){
+    const parsed=lexPwsh(text);
+    for(const [i,body]of parsed.nested.entries())sink.nested(body,`block${i}`,'pwsh');
+    let carried: Provenance|undefined;
+    const context=newContext();
+    for(const [i,statement]of parsed.statements.entries()){
+      const input=statement.piped?carried:undefined;
+      for(const [j,target]of redirectTargets(statement.words).entries())sink.redirect(target,`${i}/redirect${j}`);
+      // Preserve actual pipeline provenance; unknown pipeline values remain unknown.
+      emit(statement.words,String(i),input);
+      try{carried=pwshOutputOf(statement.words,input,context);}catch{carried={kind:'value',why:'unavailable pipeline output'};}
+    }
+    return;
+  }
+  let words:Word[]=[],index=0;
+  for(const token of lexCmd(text)){
+    if(token.kind==='word')words.push(token.word);
+    else if(token.kind==='redirect'){if(token.target&&token.op!=='<')sink.redirect(token.target,`${index}/redirect`);}
+    else{emit(words,String(index++));words=[];}
+  }
+  emit(words,String(index));
 }
 
 /** `"~"`, `'~\x'`: a provider path PowerShell resolves to the home folder,
@@ -930,10 +979,11 @@ function scriptFile(spelled: string, name: string, dialect: "pwsh" | "cmd"): boo
 function unmodelled(name: string, spelled: string, args: Word[], stdin: Provenance | undefined, dialect: "pwsh" | "cmd", ctx: WalkContext, literalProgram: string | undefined): void {
   // Drive-relative Bash still launches code.
   const runner = powershellRunner(name) ?? (/^[a-z]:bash(?:\.exe)?$/i.test(name) ? "launcher" : undefined);
-  // The relief is for the exact bare word `bash` with exact literal argv the Bash reader supports (WIN-PWSH-1018 H1), resolved on the handed PATH in always-ask.ts; `bash.exe`,
-  // a drive, UNC or rooted path and every other spelling keep the launcher hold
-  const literalBash = literalProgram !== undefined && /^bash$/i.test(literalProgram);
-  if (runner === "launcher" && dialect === "pwsh" && ctx.windowsBash && literalBash && /^bash$/i.test(name)
+  // The owner Full access boundary admits a literal Bash executable and a
+  // single quoted -c payload. Relative and computed executables stay unread.
+  const literalBash = literalProgram !== undefined
+    && /^(?:bash(?:\.exe)?|(?:[a-z]:[\\/]|\\\\|\/).*?[\\/]bash(?:\.exe)?)$/i.test(literalProgram);
+  if (runner === "launcher" && dialect === "pwsh" && ctx.windowsBash && literalBash && /^bash(?:\.exe)?$/i.test(name)
       && !stdin && args.length === 2 && literalText(args[0]!) === "-c"
       && args[1]!.parts.every(part => part.kind === "lit" && part.quote === "single")) {
     const payload = literalText(args[1]!);

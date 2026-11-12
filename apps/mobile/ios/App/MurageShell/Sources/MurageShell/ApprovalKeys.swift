@@ -81,6 +81,15 @@ enum ApprovalKeys {
         return await signPresent(origin: request.origin, message: request.message, reason: PhoneJobStrings.text("ask_setup_title"))
     }
 
+    /// D8: sign one ask proof. The message arrives only inside the typed
+    /// AskProofSigning that Core builds after recomputing the digest from the
+    /// text the owner saw. Face ID or passcode every time (reuse duration 0).
+    static func signAskProof(signing: AskProofSigning) async -> Result<String, Failure> {
+        guard phoneJobsPoint(origin: signing.origin) != nil else { return .failure(.noKey) }
+        let reason = signing.faceIdReason
+        return await signPresent(origin: signing.origin, message: signing.message, reason: reason)
+    }
+
     // Only typed purpose-specific entries reach this primitive.
     private static func signPresent(origin: WorkspaceOrigin, message: Data, reason: String) async -> Result<String, Failure> {
         let context = LAContext()

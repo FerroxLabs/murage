@@ -20,7 +20,7 @@ const FIXTURE = fileURLToPath(new URL("./testing/child-pipe-quiet.fixture.mjs", 
 
 async function spawnFixture(mode: "guard" | "bare"): Promise<{ code: number; stdout: string; stderr: string }> {
   try {
-    const { stdout, stderr } = await run(process.execPath, [FIXTURE, mode], { timeout: 20_000 });
+    const { stdout, stderr } = await run(process.execPath, [FIXTURE, mode], { windowsHide: true, timeout: 20_000 });
     return { code: 0, stdout, stderr };
   } catch (error) {
     const failure = error as { code?: number; stdout?: string; stderr?: string };

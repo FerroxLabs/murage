@@ -14,12 +14,15 @@ export const isOwnerBrowser = (device: OwnerBrowserShape | undefined): boolean =
 /** The owner's PASSKEY browser only: the full-surface web owner. */
 export const isPasskeyOwnerBrowser = (device: OwnerBrowserShape | undefined): boolean =>
   isOwnerBrowser(device) && device!.factor === "passkey";
-/** The ACTING gate: the passkey browser, full stop. No per-request state can widen it (H1). */
-export const ownerBrowserActs = isPasskeyOwnerBrowser;
-/** The route scope a browser device carries: the passkey browser is `owner-browser`, a remembered owner is
- * `remembered-owner`, and anything else keeps its own scope. */
+/** The ACTING gate: any owner browser (a live passkey or remembered-owner factor). It opens the handlers that treat the
+ * request as the owner's (requestSurface answers "desktop"), exactly as the owner's phone does. It never makes the browser
+ * the computer: isDesktopApp, skipsFreshAuth, ownerSurface and requestFromComputer stay false for it, and the route policy
+ * gives it its own per-route table (browser-owner-policy.ts). No per-request state can widen it (H1). */
+export const ownerBrowserActs = isOwnerBrowser;
+/** The route scope a browser device carries: an owner browser of either factor kind is `remembered-owner` (a passkey row is
+ * legacy and inert: nothing creates one), and anything else keeps its own scope. */
 export const ownerBrowserScope = (device: OwnerBrowserShape | undefined): "owner-browser" | "remembered-owner" | CloudScope | undefined =>
-  isPasskeyOwnerBrowser(device) ? "owner-browser" : isOwnerBrowser(device) ? "remembered-owner" : device?.scope;
+  isOwnerBrowser(device) ? "remembered-owner" : device?.scope;
 const identities = new WeakMap<object, CloudRequestIdentity>();
 export const cloudIdentity = (headers: object): CloudRequestIdentity | undefined => identities.get(headers);
 export const setCloudIdentity = (headers: object, device: CloudRequestIdentity): void => { identities.set(headers,device); };

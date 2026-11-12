@@ -36,7 +36,7 @@ describe("mode selector", () => {
   });
   it("action check: Flux default, the bot's own engine, settings line, and the Ask each step note when unavailable", () => {
     const p = base(); const html = renderToStaticMarkup(createElement(BrowserApprovalModeView, p));
-    expect(html).toContain("Action check"); expect(html).toContain("Murage&#x27;s check service (default)"); expect(html).toContain("Mira&#x27;s own engine"); expect(html).toContain("compares the step with your request"); expect(html).not.toContain("Ask each step until the action check is available.");
+    expect(html).toContain("Action check"); expect(html).toContain("Murage&#x27;s check service (default)"); expect(html).toContain("Mira&#x27;s own engine"); expect(html).toContain("Turning this on sends your task and the page details to Flux to check browser actions."); expect(html).not.toContain("Ask each step until the action check is available.");
     find(BrowserApprovalModeView(p), i => i["data-check"] === "bot")!.onClick(); expect(p.onActionCheck).toHaveBeenCalledWith("bot");
     expect(renderToStaticMarkup(createElement(BrowserApprovalModeView, { ...p, checkerAvailable: false }))).toContain("Ask each step until the action check is available.");
   });
@@ -206,4 +206,15 @@ describe("a mode that is not known is never shown as the bot's", () => {
     expect(source).toContain('setRead("failed"); setDialogOpen(false); setTyped("");');
     expect(source).toContain('onReread={read === "failed" ?');
   });
+});
+
+it("ROOM-ROUTING-CONSENT the Flux checker choice renders its processing disclosure", () => {
+  const copy = "Turning this on sends your task and the page details to Flux to check browser actions.";
+  for (const actionCheck of ["flux", "bot"] as const) {
+    const html = renderToStaticMarkup(createElement(BrowserApprovalModeView, { ...base(), actionCheck }));
+    expect(html).toContain('data-check="flux"');
+    expect(html).toContain(copy);
+  }
+  const compact = renderToStaticMarkup(createElement(BrowserApprovalModeView, { ...base(), compact: true }));
+  expect(compact).not.toContain('data-check="flux"');
 });

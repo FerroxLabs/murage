@@ -112,6 +112,34 @@ async function waitUntil(check: () => unknown | Promise<unknown>, what: string, 
   const end = Date.now() + ms;
   while (!(await check())) { if (Date.now() > end) throw new Error(`timed out waiting for ${what}`); await sleep(50); }
 }
+/** Health is served before the after-listen lineage backfill completes. These cases start with a resumable database; they do not exercise an upgrade in progress. */
+async function waitForLineageReady(threadIds: string[]) {
+  await waitUntil(() => {
+    const db = new DatabaseSync(file("messages.db"), { readOnly: true });
+    try {
+      if (Number(db.prepare("SELECT ready FROM memory_lineage_cert WHERE id=1").get()?.ready ?? 0) !== 1) return false;
+      const thread = db.prepare("SELECT ready FROM memory_lineage_thread_ready WHERE thread_id=?");
+      return threadIds.every(id => Number(thread.get(id)?.ready ?? 1) === 1);
+    } finally { db.close(); }
+  }, "the fixture's lineage backfill to finish");
+}
+/** Wait for the seed chapter's derived search projection before starting the deliberately delayed engine session. No recall is released here. */
+async function waitForSearchReady() {
+  await waitUntil(() => {
+    if (!existsSync(file("search.db"))) return false;
+    const db = new DatabaseSync(file("messages.db"), { readOnly: true });
+    const search = new DatabaseSync(file("search.db"), { readOnly: true });
+    try {
+      const state = search.prepare("SELECT (SELECT v FROM search_state WHERE k='owner') AS owner,(SELECT v FROM search_state WHERE k='applied_seq') AS applied,EXISTS(SELECT 1 FROM search_state WHERE k='built') AS building").get()!;
+      const owner = String(db.prepare("SELECT done FROM transcript_index_state WHERE name='search_owner'").get()!.done);
+      const newest = Number(db.prepare("SELECT COALESCE(MAX(seq),0) AS n FROM search_intents").get()!.n);
+      return state.owner === owner && Number(state.building) === 0 && Number(state.applied) >= newest;
+    } catch (error) {
+      if (error instanceof Error && /no such table|database is locked/.test(error.message)) return false;
+      throw error;
+    } finally { search.close(); db.close(); }
+  }, "the seed chapter's search projection to catch up", 60_000);
+}
 const readJson = (path: string) => { try { return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null; } catch { return null; } };
 const serverLog = () => readFileSync(fixture.info.logPath, "utf8");
 const logged = () => (existsSync(file("seal-turns.jsonl")) ? readFileSync(file("seal-turns.jsonl"), "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as { botId: string | null; threadId: string | null; prompt?: string; steer?: string }) : []);
@@ -184,6 +212,7 @@ posixOnly("thread recall seal at dispatch (S2, S3, S4)", () => {
     for (const [key, instanceId] of [["cursor", "verification"], ["stripped", "verification"], ["fresh", "verification"], ["aud", "verification"], ["con", "verification"],
       ["switch", "verification"], ["rewind", "verification"], ["second", "second"], ["plain", "verification"], ["ten", "verification"], ["warmSealed", "warmable"], ["warmOpen", "warmable"],
       ["mixed", "verification"]] as const) bots[key] = await createBot(instanceId, key);
+    await waitForLineageReady(Object.values(bots).map(bot => bot.threadId));
     // a first, ordinary turn on the engine-backed bots: this is the session a recall later outlives
     for (const key of ["cursor", "stripped", "aud", "con", "switch", "rewind", "plain", "ten", "mixed"]) {
       await turn(bots[key]!, `PRE_${key} remember the word PELICAN_${key}`);
@@ -206,6 +235,7 @@ posixOnly("thread recall seal at dispatch (S2, S3, S4)", () => {
     });
     await fixture.restart();
     await authenticate();
+    await waitForLineageReady(Object.values(bots).map(bot => bot.threadId));
   }, 300_000);
 
   afterAll(async () => { await fixture?.close(); });
@@ -871,7 +901,7 @@ posixOnly("a session that starts after the release is carried by the real sessio
   };
   /** The memory capability of the turn on `threadId`, read from the mcp config the driver wrote for the engine that is still starting. */
   function startingTurnMemoryEnv(threadId: string) {
-    for (const line of execFileSync("ps", ["-axo", "args="], { encoding: "utf8" }).split("\n")) {
+    for (const line of execFileSync("ps", ["-axo", "args="], { windowsHide: true, encoding: "utf8" }).split("\n")) {
       if (!line.includes("fake-claude-cli")) continue;
       const path = /--mcp-config\s+(\S+)/.exec(line)?.[1];
       if (!path) continue;
@@ -895,6 +925,7 @@ posixOnly("a session that starts after the release is carried by the real sessio
     expect((await call("POST", `/api/bots/${bot.id}/messages`, { text: `${word} the other chapter`, threadId: task })).status).toBe(202);
     await busy(bot);
     await waitUntil(() => isIdle(bot), "the other conversation's turn to settle", 60_000);
+    await waitForSearchReady();
     const before = sessionCarryParents().filter((thread) => thread === task).length;
     // the first turn of the main conversation: its engine is still starting (nothing is read for 6.5 s), so no session exists yet
     expect((await call("POST", `/api/bots/${bot.id}/messages`, { text: "Start the main conversation", threadId: bot.threadId })).status).toBe(202);

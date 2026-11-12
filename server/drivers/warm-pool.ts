@@ -169,7 +169,7 @@ export function createPrewarmGate() {
  * MCP config, settings, warm identity), without the message, its attachments, the
  * replay transcript or the caller's per-turn callbacks. */
 export function spawnInputsOf(turn: SendTurnInput): SendTurnInput {
-  return { ...turn, text: "", images: undefined, engineCommand: undefined, transcript: undefined, prewarm: undefined, onToolSurface: undefined, beforeSubmit: undefined };
+  return { ...turn, text: "", images: undefined, engineCommand: undefined, transcript: undefined, prewarm: undefined, onToolSurface: undefined, beforePrepare: undefined, beforeSubmit: undefined };
 }
 
 /** The spawn inputs of each thread's last real (user) turn, held in memory only,

@@ -5,6 +5,7 @@
 // Each row goes through the whole auto-approve verdict. Rows named M-* are the witnesses of scripts/check-marks-mutations.py.
 // Red before (0d0d4a030): the H1, H2 and H3 rows and M5's runs. Fixture strings are inert data, never executed.
 import { describe, expect, it } from "vitest";
+import { expectNoLimitsOwnerOutcome } from "./testing/no-limits-1019.ts";
 
 process.env.HOME = "/home/tester";
 process.env.USERPROFILE = "/home/tester";
@@ -32,15 +33,19 @@ const cardsProtected = (bot: object, cmd: string, extra: Record<string, unknown>
   expect(verdict.approve, cmd).toBeNull();
   expect(verdict, cmd).toMatchObject({ source: "always-ask", rule: "protected-path" });
 };
+// NOLIM 1.0.19: the owner's No limits turn runs a protected-path row (only the wipe list still cards); Full access keeps the card
+const runsProtected = (cmd: string, extra: Record<string, unknown> = {}) => expectNoLimitsOwnerOutcome(call(NO_LIMITS, cmd, extra), cmd, "protected-path");
 
 describe("Astra r13 H1: a valued ln option moves the link, so no word is exempt", () => {
-  it.each(["ln -sf /tmp/blob /etc/marks-link -S .bak", "ln -sf /tmp/blob /etc/marks-link --suffix .bak"])("M-R13-ln-bare %s cards at Full access and No limits", cmd => {
+  it.each(["ln -sf /tmp/blob /etc/marks-link -S .bak", "ln -sf /tmp/blob /etc/marks-link --suffix .bak"])("M-R13-ln-bare %s cards at Full access and runs at No limits", cmd => {
     cardsProtected(FULL, cmd);
+    // S1-B3 RULING (MAIN 2026-11-11 09:30Z): writing the link inside a system folder still asks.
     cardsProtected(NO_LIMITS, cmd);
   });
-  it.each(["ln -sf /tmp/blob /etc/x", "ln -s -S .bak /tmp/blob /etc/x", "ln -s -t /etc /tmp/blob"])("the link in a system folder cards: %s", cmd => {
+  it.each(["ln -sf /tmp/blob /etc/x", "ln -s -S .bak /tmp/blob /etc/x", "ln -s -t /etc /tmp/blob"])("the link in a system folder cards at Full access, runs at No limits: %s", cmd => {
     expect(call(FULL, cmd).approve, cmd).toBeNull();
-    expect(call(NO_LIMITS, cmd).approve, cmd).toBeNull();
+    // S1-B3 RULING (MAIN 2026-11-11 09:30Z): writing the link inside a system folder still asks.
+    cardsProtected(NO_LIMITS, cmd);
   });
 });
 
@@ -49,7 +54,7 @@ describe("Astra r13 M5 (R4): the link text names a protected folder, and only th
     // MARKS R2 (MurageMain 11-08, MARKS-r14-DENY-CLASS.md:68 rule 4): a link whose text names a protected folder is a protected-path deny at the
     // owner No limits turn. R1 keeps Full access and every other origin byte-identical to NLH0, where the link runs.
     expect(call(FULL, cmd).approve, cmd).toBeTruthy();
-    cardsProtected(NO_LIMITS, cmd);
+    runsProtected(cmd);
   });
   it("a hard link keeps both as write targets", () => {
     expect(call(FULL, "ln /etc/hosts ./h").approve).toBeNull();
@@ -57,13 +62,18 @@ describe("Astra r13 M5 (R4): the link text names a protected folder, and only th
 });
 
 describe("Astra r13 H2: the owner-only reliefs need the owner-started proof", () => {
-  it.each(["node --version", "bash ./build.sh"])("M-R13-started %s on a turn the owner did not start keeps the card", cmd => {
+  // NOLIM 1.0.19 (N2.4): who started the work is the STORED origin; ownerStarted is never read. Stored "owner" runs; "other" or no stored
+  // origin keeps the card.
+  it.each(["node --version", "bash ./build.sh"])("M-R13-started %s runs for stored owner work, cards for another origin or none", cmd => {
     expect(call(NO_LIMITS, cmd).approve, `${cmd} on the owner's own turn`).toBeTruthy();
-    expect(call(NO_LIMITS, cmd, { ownerStarted: false }).approve, cmd).toBeNull();
-    expect(call(NO_LIMITS, cmd, { ownerStarted: undefined }).approve, cmd).toBeNull();
+    expect(call(NO_LIMITS, cmd, { ownerStarted: false }).approve, cmd).toBeTruthy();
+    expect(call(NO_LIMITS, cmd, { ownerStarted: undefined }).approve, cmd).toBeTruthy();
+    expect(call(NO_LIMITS, cmd, { fullAccessOrigin: "other" }).approve, `${cmd} other origin`).toBeNull();
+    expect(call(NO_LIMITS, cmd, { fullAccessOrigin: undefined }).approve, `${cmd} no stored origin`).toBeNull();
   });
-  it("M-R11-unseen-owner bash ./build.sh on a turn the owner did not start keeps the card", () => {
-    expect(call(NO_LIMITS, "bash ./build.sh", { ownerStarted: false }).approve).toBeNull();
+  it("M-R11-unseen-owner bash ./build.sh on stored owner work runs without ownerStarted, another origin keeps the card", () => {
+    expect(call(NO_LIMITS, "bash ./build.sh", { ownerStarted: false }).approve).toBeTruthy();
+    expect(call(NO_LIMITS, "bash ./build.sh", { ownerStarted: false, fullAccessOrigin: "other" }).approve).toBeNull();
   });
   // the always-ask.test.ts rows that run only on the owner's own No limits turn with its proof (MurageMain 11-07): the same
   // commands without the proof, from another origin, or at Full access keep their hold (shipped f28a6bad8 holds them too)
@@ -72,7 +82,11 @@ describe("Astra r13 H2: the owner-only reliefs need the owner-started proof", ()
     const exact = { exactCommand: { command: cmd, cwd: PROJECT, engine: "claude" } };
     const proof = { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null };
     expect(autoVerdict(NO_LIMITS as never, "Bash", cmd, { ...exact, ...proof } as unknown as Context).approve, `${cmd} with the proof`).toBeTruthy();
-    for (const extra of [{ ownerStarted: false }, { ownerStarted: undefined }, { fullAccessOrigin: "other", ownerStarted: false }]) {
+    // NOLIM 1.0.19 (N2.4): a stored owner origin runs without ownerStarted; another origin keeps the card
+    for (const extra of [{ ownerStarted: false }, { ownerStarted: undefined }]) {
+      expect(autoVerdict(NO_LIMITS as never, "Bash", cmd, { ...exact, ...proof, ...extra } as unknown as Context).approve, `${cmd} ${JSON.stringify(extra)}`).toBeTruthy();
+    }
+    for (const extra of [{ fullAccessOrigin: "other", ownerStarted: false }]) {
       expect(autoVerdict(NO_LIMITS as never, "Bash", cmd, { ...exact, ...proof, ...extra } as unknown as Context).approve, `${cmd} ${JSON.stringify(extra)}`).toBeNull();
       expect(autoVerdict(NO_LIMITS as never, "Bash", cmd, { ...proof, ...extra } as unknown as Context).approve, `${cmd} no cwd ${JSON.stringify(extra)}`).toBeNull();
     }
@@ -85,9 +99,9 @@ describe("Astra r13 H2: the owner-only reliefs need the owner-started proof", ()
 });
 
 describe("Astra r13 H3 (R2): a script a deny rule names cards at every level", () => {
-  it.each(["bash /etc/tool.sh", "bash /usr/share/tool.sh", "python3 /usr/lib/tool.py"])("M-R11-unseen-deny Full access %s keeps the card", cmd => {
+  it.each(["bash /etc/tool.sh", "bash /usr/share/tool.sh", "python3 /usr/lib/tool.py"])("M-R11-unseen-deny Full access %s keeps the card, No limits runs it", cmd => {
     cardsProtected(FULL, cmd);
-    cardsProtected(NO_LIMITS, cmd);
+    runsProtected(cmd);
   });
   it.each(["bash ./build.sh", "node tvcall.mjs"])("an allowed-shape script still runs at Full access: %s", cmd => {
     expect(call(FULL, cmd).approve, cmd).toBeTruthy();
@@ -95,7 +109,8 @@ describe("Astra r13 H3 (R2): a script a deny rule names cards at every level", (
 });
 
 describe("Astra r13 L7: a session file the reader cannot read holds in the doubt-free read too", () => {
-  it.each([FULL, NO_LIMITS])("python3 ./build.py with no bytes for ./build.py holds (%o)", bot => {
-    expect(call(bot, "python3 ./build.py", {}, { "/w/build.py": "unavailable" }).approve).toBeNull();
+  it("python3 ./build.py with no bytes for ./build.py holds at Full access and runs at No limits (could-not-read, not a wipe)", () => {
+    expect(call(FULL, "python3 ./build.py", {}, { "/w/build.py": "unavailable" }).approve).toBeNull();
+    expect(call(NO_LIMITS, "python3 ./build.py", {}, { "/w/build.py": "unavailable" }).approve).toBeTruthy();
   });
 });

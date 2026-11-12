@@ -78,11 +78,13 @@ static napi_value Query(napi_env env, napi_callback_info info, bool request) {
 }
 static napi_value Status(napi_env env, napi_callback_info info) { return Query(env, info, false); }
 static napi_value Request(napi_env env, napi_callback_info info) { return Query(env, info, true); }
+void RegisterBanners(napi_env env, napi_value exports);
 NAPI_MODULE_INIT() {
   napi_property_descriptor properties[] = {
     {"status", nullptr, Status, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"request", nullptr, Request, nullptr, nullptr, nullptr, napi_default, nullptr},
   };
   napi_define_properties(env, exports, 2, properties);
+  RegisterBanners(env, exports);
   return exports;
 }

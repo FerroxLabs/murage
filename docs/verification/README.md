@@ -46,6 +46,8 @@ Use only mapped, tested commands:
 - [Chat turns](chat-turns.md)
 - [Channels](channels.md)
 - [Engines and Doctor](engines.md)
+- [Custom ACP models and thinking](custom-acp-models.md)
+- [GitHub Copilot ACP](copilot-engine.md)
 - [Agent questions](questions.md)
 - [Full access stops](full-access-stops.md)
 

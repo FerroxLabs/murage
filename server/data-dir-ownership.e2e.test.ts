@@ -27,6 +27,7 @@ function fixture() {
 async function launch(home: string, data: string, extra: Record<string, string> = {}) {
   const port = await freePortBlock([0, 1]);
   const child = spawn(process.execPath, [join(serverDirectory, "index.ts")], {
+    windowsHide: true,
     cwd: root,
     env: {
       PATH: dirname(process.execPath),

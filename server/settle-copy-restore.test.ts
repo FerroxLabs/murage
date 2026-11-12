@@ -16,7 +16,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { initializeMessageTables } from "./message-tables.ts";
 import { inspectInstallationDatabase } from "./installation-database-snapshot.ts";
 import { ftsSettled } from "./settle-copy.ts";
-import { DELETED_TEXT, deleteThreadRows, fileHolds, ftsBlocksHold, headerIsRollback, holdMerges, keptRows, seedMixed, sidecarsOf } from "./testing/fts-copy-fixture.ts";
+import { seedCopyIntents, DELETED_TEXT, deleteThreadRows, fileHolds, ftsBlocksHold, headerIsRollback, holdMerges, keptRows, seedMixed, sidecarsOf } from "./testing/fts-copy-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
@@ -24,7 +24,7 @@ afterEach(() => { vi.doUnmock("./settle-copy.ts"); for (const root of roots.spli
 const sha = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 
 /** A hash-valid archive whose messages.db is a raw copy with an owed index (what a pre-R6 backup could hold). */
-async function preR6Archive() {
+async function preR6Archive(retired = false) {
   const parent = mkdtempSync(join(tmpdir(), "murage-settle-restore-")); roots.push(parent);
   const source = join(parent, "source.db");
   const db = new DatabaseSync(source);
@@ -37,6 +37,8 @@ async function preR6Archive() {
     db.exec("INSERT INTO thread_state VALUES ('kept', NULL)");
     expect(ftsSettled(db)).toBe("owed");
     expect(ftsBlocksHold(db, DELETED_TEXT.zh)).toBe(true);
+    if (retired) seedCopyIntents(db);
+    if (retired) db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(t, tokenize='trigram', content='', contentless_delete=1, detail=none); ALTER TABLE messages_fts RENAME TO messages_fts_retired; CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(t, tokenize='trigram', content='', contentless_delete=1, detail=none); INSERT INTO messages_fts_retired(rowid,t) VALUES(9999999,'qzxretiredcanary')");
     counts = inspectInstallationDatabase(db);
   } finally { db.close(); }
   const bytes = readFileSync(source);
@@ -94,4 +96,14 @@ it("C2 rig 7: a settle failure after remint discards its preparing marker and pe
   const retry = await (await import("./installation-restore-preparation.ts")).prepareInstallationRestore(a.archive, a.parent);
   expect(sidecarsOf(join(retry.stateDirectory, "messages.db"))).toEqual([]);
   expect(fileHolds(join(retry.stateDirectory, "messages.db"), DELETED_TEXT.zh)).toBe(false);
+});
+
+it("T-COPY-RESTORE: a raw older archive loses retired postings before candidate activation", async () => {
+  const a = await preR6Archive(true);
+  const { prepareInstallationRestore } = await import("./installation-restore-preparation.ts");
+  const result = await prepareInstallationRestore(a.archive, a.parent);
+  const file = join(result.stateDirectory, "messages.db"), db = new DatabaseSync(file, { readOnly: true });
+  try { expect(db.prepare("SELECT * FROM search_intents").all()).toEqual([]); expect(db.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'messages_fts_retired%'").all()).toEqual([]); }
+  finally { db.close(); }
+  expect(readFileSync(file).includes(Buffer.from("qzx"))).toBe(false);
 });

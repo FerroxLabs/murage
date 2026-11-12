@@ -1330,6 +1330,9 @@ describe("harness HTTP API", () => {
       expect([
         "(kind === \"not-started\" ? backupRefusalMessage(submissionBoundary.refusedWith) : undefined) ?? turnRefusedLine(engineNameOf(instance), kind)",
         "lateMemoryRefusalLine(engine)",
+        // refusalKind() answers one of the fixed TurnRefusedKind words, so no engine text reaches the line (the early-refusal path always has a kind).
+        "turnRefusedLine(engineNameOf(instance), refusalKind())",
+        "submissionBoundary.hasReleasedSubmission ? turnRefusedLine(engine, refusalKind()) : lateMemoryRefusalLine(engine)",
       ], `turn-failed banner body ${body}`).toContain(definition);
     }
     expect(backupRefusalMessage(new Error("engine refused: Authorization: Bearer sk-live-raw"))).toBeUndefined();
@@ -1935,9 +1938,15 @@ describe("harness HTTP API", () => {
     // curling loopback) could put a fresh Mac bot in Auto on the person's
     // own desktop with no warning at all. One rule now, on the RESOLVED
     // destination, for every path to Auto.
-    const bot = (await desktopApi("POST", "/api/bots")).body.bot;
+    const created = (await desktopApi("POST", "/api/bots")).body.bot;
+    // SETTINGS-LOCKED-1019 3.13 gives new bots an explicit app default. Exercise the retained unassigned-bot path.
+    const bot = (await desktopApi("PATCH", `/api/bots/${created.id}`, { computer: null })).body.bot;
     try {
-      expect(bot.computer).toBeUndefined();
+      // A new bot starts on "this computer" now (Default computer for new bots, a9e405c19 / d07962ed6): to have one that never chose, put it
+      // back on the automatic choice, which is what the fresh bot of the old behaviour was.
+      expect(bot.computer).toBe("local");
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: null })).status).toBe(200);
+      expect(((await api("GET", "/api/bots?messages=0")).body.bots.find((entry: { id: string }) => entry.id === bot.id) as { computer?: string }).computer).toBeUndefined();
       expect(bot.autoApprove).toBeFalsy();
       const mountsThisComputer = process.platform === "darwin";
       // FOLLOW5: the rule below runs on THIS process's platform, and the

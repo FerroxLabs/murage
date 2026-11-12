@@ -64,7 +64,9 @@ const DIRECTORY_SYNC_UNSUPPORTED = new Set(["EINVAL", "ENOTSUP", "EOPNOTSUPP", "
 
 /** fsync the directory holding `path`, so the rename that put the file there survives a power loss too.
  * Windows cannot open a directory for fsync, so there it is skipped; a filesystem that refuses a directory
- * sync is skipped the same way. Any other failure (an I/O error) is thrown like a failed write. */
+ * sync is skipped the same way. Any other failure (an I/O error) is thrown like a failed write.
+ * ACCEPTED LIMIT (Sean, 2026-11-10): on Windows a power loss right after a write can lose the newest rename, because Windows
+ * has no directory fsync. WhatsApp and Signal share this limit; it is stated in the design and in the channel settings text. */
 export function syncParentDirectory(path: string, platform: NodeJS.Platform = process.platform): void {
   if (platform === "win32") return;
   let fd: number;
@@ -91,7 +93,7 @@ export function syncParentDirectoryStatus(path: string, platform: NodeJS.Platfor
 
 /** `syncDir` (opt-in): also fsync the parent directory after the rename, for stores whose loss across a power
  * cut matters (the browser restore store). Off by default: every other caller keeps the file-only fsync. */
-export type WriteFileAtomicOptions = { mode?: number; syncDir?: boolean; rename?: (from: string, to: string) => void; platform?: NodeJS.Platform; /** test-only fault and order seams for the tmp file: open, write, fsync */ ops?: { open?: typeof openSync; write?: typeof writeFileSync; fsync?: typeof fsyncSync } };
+export type WriteFileAtomicOptions = { mode?: number; syncDir?: boolean; /** Opt-in custody protocols retain failed temporaries, including partial writes. */ keepFailedTemp?: boolean; rename?: (from: string, to: string) => void; platform?: NodeJS.Platform; /** test-only fault and order seams for the tmp file: open, write, fsync */ ops?: { open?: typeof openSync; write?: typeof writeFileSync; fsync?: typeof fsyncSync } };
 export function writeFileAtomic(path: string, data: string | Uint8Array, options: WriteFileAtomicOptions = {}): void {
   writeFileAtomicInner(path, data, options);
   atomicWriteCounts.set(path, (atomicWriteCounts.get(path) ?? 0) + 1);
@@ -118,10 +120,12 @@ function writeFileAtomicInner(path: string, data: string | Uint8Array, options: 
         /* best-effort cleanup */
       }
     }
-    try {
-      unlinkSync(tmp);
-    } catch {
-      /* best-effort cleanup */
+    if (!options.keepFailedTemp) {
+      try {
+        unlinkSync(tmp);
+      } catch {
+        /* best-effort cleanup */
+      }
     }
     throw e;
   }

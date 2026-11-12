@@ -82,7 +82,7 @@ describe("SL-E EXTENDED: a linked person's hand-offs on the Slack fixture (real 
     if (process.env.PATH) env.PATH = process.env.PATH;
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
     child = spawn(process.execPath, ["--import", pathToFileURL(join(SERVER_DIR, "testing", "slack-sdk-preload.mjs")).href, join(SERVER_DIR, "index.ts")],
-      { cwd: join(SERVER_DIR, ".."), env, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+      { windowsHide: true, cwd: join(SERVER_DIR, ".."), env, stdio: ["ignore", "pipe", "pipe", "ipc"] });
     child.stderr!.on("data", c => (stderr += c));
     child.stdout!.on("data", () => undefined);
     child.on("message", value => { if ((value as any)?.kind === "slack-fixture") traces.push(value as any); });

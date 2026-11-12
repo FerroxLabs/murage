@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { isOwnQuiet, isOwnUnasked, OWN_BUILTINS } from "../../shared/own-servers.ts";
-import { HIGHLEVEL_HELPER_NAMES, HIGHLEVEL_READ_TOOL_NAMES, HIGHLEVEL_WRITE_TOOLS } from "../../shared/highlevel.ts";
+import { HIGHLEVEL_HELPER_NAMES, HIGHLEVEL_FAMILY_TOOLS, HIGHLEVEL_WRITE_TOOLS } from "../../shared/highlevel.ts";
 import { buildMcpServers, piMountRecords } from "../drivers/mcp-mounts.ts";
 import type { SendTurnInput } from "../contracts.ts";
 import { HIGHLEVEL_CHECK_HOLD_MS, PrivateTokenLeaseSource, highlevelTokenFingerprint } from "./private-token.ts";
@@ -27,6 +27,18 @@ function setup(options: { status?: number; body?: unknown } = {}) {
 }
 
 describe("HighLevel Private Integration token source (HL-S2)", () => {
+  it("publishes only the scope proved by the location check, ignoring response scope claims", async () => {
+    const { source, setToken } = setup({ body: { scopes: ["contacts.write"], location: { id: "Loc12345", scopes: ["contacts.write"] } } });
+    const check = await source.check("Loc12345");
+    expect(check).toMatchObject({ scopes: ["locations.readonly"] });
+    source.confirm(check.opId);
+    expect(source.ownerView()).toMatchObject({ scopes: ["locations.readonly"] });
+    expect(await source.connection("hl_Loc12345")).toMatchObject({ scopes: ["locations.readonly"] });
+    setToken("pit-TEST-swapped");
+    expect(source.ownerView()).toMatchObject({ scopes: [] });
+    expect(await source.connection("hl_Loc12345")).toMatchObject({ scopes: [] });
+  });
+
   it("is not connected until the owner checks and then confirms a location", async () => {
     const { source, requests } = setup();
     expect(await source.connection("hl_Loc12345")).toBeUndefined();
@@ -115,9 +127,9 @@ describe("HighLevel Private Integration token source (HL-S2)", () => {
 });
 
 describe("native HighLevel mount (HL-S2 ruling 1)", () => {
-  it("every native read tool runs with no engine card; no change tool is pre-allowed on any engine (HL-S2 is read only)", () => {
+  it("family tools reach the host without an engine card; legacy change names stay unavailable", () => {
     expect(OWN_BUILTINS.highlevel).toBe("highlevel");
-    for (const tool of [...HIGHLEVEL_READ_TOOL_NAMES, ...HIGHLEVEL_HELPER_NAMES]) {
+    for (const tool of [...Object.values(HIGHLEVEL_FAMILY_TOOLS), ...HIGHLEVEL_HELPER_NAMES]) {
       expect(isOwnUnasked("own:highlevel", tool)).toBe(true);
       expect(isOwnQuiet("own:highlevel", tool)).toBe(true);
     }

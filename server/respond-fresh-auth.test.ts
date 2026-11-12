@@ -130,6 +130,7 @@ describe.skipIf(process.platform === "win32")("a high-risk Allow from a phone ne
       }),
     );
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

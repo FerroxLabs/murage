@@ -75,11 +75,12 @@ describe("with a real forked fixture child", () => {
   it("spawns like the memory worker and keeps the key out of argv and the environment", async () => {
     const calls: Array<Parameters<ForkFn>> = [];
     const { fork } = await import("node:child_process");
-    const h = harness({ env: { WA_FIXTURE_MODE: "engine" } }, (...args) => { calls.push(args); return (fork as unknown as ForkFn)(...args); });
+    const h = harness({ env: { WA_FIXTURE_MODE: "engine" } }, (script, argv, options) => { calls.push([script, argv, options]); return (fork as unknown as ForkFn)(script, argv, options); });
     await h.host.start();
     await until(() => states(h).includes("idle") && h.host.status().ready, "initialized idle");
     const [script, args, options] = calls[0];
     expect(script).toBe(FIXTURE);
+    expect(options).not.toHaveProperty("windowsHide");
     expect(options.stdio).toEqual(["ignore", "ignore", "ignore", "ipc"]);
     expect(options.env.ELECTRON_RUN_AS_NODE).toBe("1");
     expect(options.execArgv).toEqual(["--experimental-strip-types", "--max-old-space-size=512"]);

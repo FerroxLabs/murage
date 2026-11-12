@@ -4,7 +4,7 @@
 // B4 plan catalogue (b4-flux-config.ts) and the shared Flux link lookup (flux-link.ts), so b5-billing.ts can import it and re-export
 // FluxHookRetry without a cycle, and the stub-era cutover CLI loads it under Node's type stripping.
 //
-// ROUTES (flux-router-b4 src/cloud_home_grants_route.py, bearer FLUX_CLOUD_GRANTS_TOKEN only):
+// ROUTES (the Flux router's cloud grants route, bearer FLUX_CLOUD_GRANTS_TOKEN only):
 //   POST {FLUX_CLOUD_GRANTS_URL}/internal/cloud-home/credit-grants          frozen body (+ optional initial_target: grantWithTarget, Astra A-8 #2)
 //   POST {FLUX_CLOUD_GRANTS_URL}/internal/cloud-home/credit-grants/reverse  {grant_id, invoice_id, kind, home_id, reason}
 //   POST {FLUX_CLOUD_GRANTS_URL}/internal/cloud-home/credit-grants/reversal-target  {grant_id, invoice_id, kind, home_id, reason,
@@ -15,9 +15,9 @@
 // pre-B4 stub (the stub's grant/reversal path is not reachable from the default hooks any more), and ONE alert says why. The URL set with
 // the token absent is the quiesced state of the stub-era cutover (design section 7 (a)): claims are written with their frozen body, nothing
 // is sent anywhere.
-import { fluxRoutesEnabled, readFluxConfig, usdToMicrocents } from "./b4-flux-config.ts";
-import { ensureOwnerLinked, fluxRecipientOf, homeOwnerOf, linkRowOf } from "./flux-link.ts";
-import { abandonFenceRevision, allocateFenceRevision, allocationRefusal, claimGrantFence, fenceDue, fencesToReconcile, logicalOf, reconcileOne, releaseGrantFence, settleFenceRevision,
+import { fluxCredentialsMissing, fluxRoutesEnabled, fluxServing, readFluxConfig, usdToMicrocents } from "./b4-flux-config.ts";
+import { ensureOwnerLinked, fluxRecipientOf, homeOwnerOf, linkRowOf, STALE, UNPROVEN } from "./flux-link.ts";
+import { type AllocationDecision, abandonFenceRevision, allocateFenceRevision, claimGrantFence, fenceDue, fencesToReconcile, logicalOf, reconcileOne, releaseGrantFence, settleFenceRevision,
   type FenceOp, type FenceOutcome, type RemoteGrantState } from "./flux-grant-fence.ts";
 
 declare global {
@@ -31,6 +31,16 @@ declare global {
 export class FluxHookRetry extends Error { readonly code: string; constructor(code: string) { super(code); this.code = code; this.name = "FluxHookRetry"; } }
 /** The router answered 409 (recipient_mismatch, account_not_fresh, idempotency_conflict, grant_mismatch): a retry, plus a review alert from
  *  askGrant. Nothing is stamped. */
+/** A top-up grant the router refused for good (422 ceiling) or answered 409 account_not_fresh after the charge was taken: never retried as if it
+ *  were transient. askGrant suppresses the claim with this reason and raises an alert; the charge stays and ops decide. */
+export class FluxGrantPermanent extends Error {
+  constructor(readonly reason: "topup_ceiling" | "account_not_fresh") { super(`grant_permanent_${reason}`); this.name = "FluxGrantPermanent"; }
+}
+/** The router refused a reversal for good: 422 on /reverse or /reversal-target (its removal ceiling). Never retried; the caller records it and alarms. */
+export class FluxReversalPermanent extends Error {
+  readonly code: string;
+  constructor(code: string) { super(`reversal_permanent_${code}`); this.code = code; this.name = "FluxReversalPermanent"; }
+}
 export class FluxGrantHeld extends FluxHookRetry {
   readonly routerCode: string;
   constructor(routerCode: string) { super(`router_409_${routerCode}`.slice(0, 80)); this.routerCode = routerCode; this.name = "FluxGrantHeld"; }
@@ -70,13 +80,45 @@ export class FluxRevisionMismatch extends FluxTargetStale {
  *  or a retry (5xx, timeout: the existing backoff). */
 export class FluxEnsureRefused extends FluxHookRetry {
   readonly status: number;
-  constructor(status: number) { super(`ensure_account_${status}`); this.status = status; this.name = "FluxEnsureRefused"; }
+  /** Flux's error string on a 4xx, when it sent one (409 "link_email_mismatch": the id is linked at Flux under another email). */
+  readonly reason: string | null;
+  /** The address revision the call was asked on (set by flux-link.ts ensureOwnerLinked). */
+  revision?: number;
+  constructor(status: number, reason: string | null = null) {
+    super(`ensure_account_${status}`); this.status = status; this.reason = reason; this.name = "FluxEnsureRefused";
+  }
+}
+/** Contract (c): a 409 whose error is this means the Murage id is already linked at Flux to a DIFFERENT email (M-d). */
+export const LINK_EMAIL_MISMATCH = "link_email_mismatch";
+
+/** FLUX-ENSURE-EMAIL-VERIFIED (design-ev3 section 4, Grok r3 High 1): Flux answered 202 {status: "pending_verification"}: an existing Flux account
+ *  matches the owner's address and the address is not proven. A TYPED HOLD, deliberately NOT a FluxHookRetry (no failure counted, no retry
+ *  backoff) and NOT a FluxEnsureRefused (no refusal alert): ensureOwnerAccount turns it into "email_unverified" before any link row is written.
+ *  Control-plane name: email_unverified everywhere; "pending_verification" is only Flux's HTTP body string. */
+export class FluxEmailUnverified extends Error {
+  /** The address revision the 202 answered (set by flux-link.ts ensureOwnerLinked): its hold is written only while it is still current. */
+  revision?: number;
+  constructor() { super("email_unverified"); this.name = "FluxEmailUnverified"; }
+}
+/** The ensure-account outcomes (b5-billing.ts FluxEntitlementHooks.ensureAccount, b4-flux.ts issueKeyChecked). "stale": Flux answered, but the
+ *  state it was asked on moved in flight (flux-link.ts STALE): nothing linked, no failure, asked again on the next sweep through the hold below. */
+/** ITEM4-PROOF-CURRENT, the wake path only (opts.wake): "verified_refused" (Flux answered 202 to a TRUE call) and "link_email_mismatch" (a 409
+ *  link_email_mismatch, or its alert open) are TERMINAL there. Every other caller gets "email_unverified" and "refused" for them. */
+export type EnsureOutcome = "linked" | "held" | "unavailable" | "refused" | "email_unverified" | "stale" | "verified_refused" | "link_email_mismatch";
+/** M1: the account-level hold after a 202 (flux_email_hold, migration 0143): Flux is asked again at most every 15 minutes, whichever path asks. */
+export const EMAIL_HOLD_MS = 15 * 60_000;
+/** True while the account's hold deadline is in the future for its CURRENT address revision. */
+export async function emailHoldStanding(env: Env, accountId: string, now: number): Promise<boolean> {
+  return Boolean(await env.DB.prepare(`SELECT 1 AS x FROM flux_email_hold h JOIN supabase_identities s ON s.user_id=h.account_id
+    WHERE h.account_id=? AND h.until_at>? AND h.email_revision=s.email_revision`).bind(accountId, now).first());
 }
 
 export const GRANT_PATH = "/internal/cloud-home/credit-grants";
 /** Lane H1 (FluxMain's confirmed contract): POST {FLUX_APP_BASE}/api/internal/cloud-home/accounts/ensure {murage_account_id, email} ->
  *  {flux_account_id, created}, idempotent on murage_account_id, Bearer FLUX_CLOUD_SERVICE_TOKEN (never the grants token). */
 export const ENSURE_ACCOUNT_PATH = "/api/internal/cloud-home/accounts/ensure";
+/** Flux's staging app sits behind Vercel SSO. The bypass header goes to this host only, only from a staging Worker, never to the proxy or to prod. */
+export const STAGING_FLUX_APP_HOST = "app-staging.fluxrouter.ai";
 /** Lane H1: a 409 that names the revision fence: its code (stale_revision, or idempotency_mismatch / legacy revision_conflict) and the
  *  revision Flux holds (applied_revision, else latest_revision). Null for any other answer. */
 export function revisionRefusal(http: number, j: Record<string, unknown>): { code: "stale_revision" | "idempotency_mismatch"; routerCode: string; applied: number | null } | null {
@@ -109,7 +151,10 @@ export const grantsReady = (env: Pick<Env, "FLUX_CLOUD_GRANTS_URL" | "FLUX_CLOUD
 
 /** The facts a claim records (credit_grants: invoice_id, kind, home_id, plan, period_start, period_end, previous_plan). For an upgrade the
  *  period is the invoice's PRORATED interval (the debit line's period: from the quote's proration_date to the subscription period's end). */
-export interface GrantFacts { homeId: string; plan: string; invoiceId: string; kind?: "period" | "upgrade_delta"; periodStart: number;
+/** period: the monthly credit; upgrade_delta: the prorated credit of a plan upgrade; topup: credit bought by an auto top-up charge (no period). */
+export type GrantKind = "period" | "upgrade_delta" | "topup";
+export const grantKindOf = (k: string | null | undefined): GrantKind => (k === "upgrade_delta" || k === "topup" ? k : "period");
+export interface GrantFacts { homeId: string; plan: string; invoiceId: string; kind?: GrantKind; periodStart: number;
   periodEnd: number; previousPlan?: string }
 export interface FrozenBody { json: string; sha256: string }
 /** Why no body can be frozen now. The claim is HELD (kept, never sent): `recipient_unlinked` clears once the owner links Flux; the others
@@ -182,6 +227,7 @@ async function upgradeAmount(env: Pick<Env, "DB" | "FLUX_B4_CONFIG">, f: GrantFa
  *  body (held). Deterministic: no clock is read. */
 export async function composeFrozenBody(env: Pick<Env, "DB" | "FLUX_B4_CONFIG">, f: GrantFacts): Promise<FrozenBody | BodyHold> {
   const kind = f.kind ?? "period";
+  if (kind === "topup") return composeTopupGrantBody(env, f);
   if (!Number.isSafeInteger(f.periodStart) || !Number.isSafeInteger(f.periodEnd) || f.periodEnd <= f.periodStart) return { held: "grant_input_invalid" };
   const to = planCreditMicrocents(env, f.plan);
   if (typeof to !== "number") return to;
@@ -193,11 +239,49 @@ export async function composeFrozenBody(env: Pick<Env, "DB" | "FLUX_B4_CONFIG">,
     amount_microcents: amount, period_start: isoUtc(f.periodStart), period_end: isoUtc(f.periodEnd), expires_at: isoUtc(addOneMonthUtc(f.periodEnd)) });
   return { json, sha256: await sha256Hex(json) };
 }
+/** The router's answer to "would a grant to this account be accepted" (GET .../credit-grants/eligibility?account_id=, grants token). Only 200 with
+ *  eligible exactly true is "eligible". Everything else leaves a decision to the caller and means NO CHARGE: "ineligible" (200 eligible false,
+ *  with the router's reason), "refused" (400), "transient" (capability absent, 503, any other status, malformed JSON, a timeout, a network error,
+ *  Flux off or the token absent). It is a prediction; a grant refused after a charge goes through the failed-grant path. */
+export type GrantEligibility = { r: "eligible" } | { r: "ineligible"; reason: string } | { r: "refused" } | { r: "transient"; why: string };
+export const ELIGIBILITY_PATH = `${GRANT_PATH}/eligibility`;
+export async function readGrantEligibility(env: Env, accountId: string, doFetch: FetchLike = (u, i) => fetch(u, i)): Promise<GrantEligibility> {
+  if (!fluxRoutesEnabled(env)) return { r: "transient", why: "flux_off" };
+  // PRODFLUX r4 A: switched on with EITHER Flux credential missing (fluxServing false) a grant cannot be sent, so nothing may be charged:
+  // transient, which the top-up machine treats as any transient (no invoice made; an open one voided; the claim released).
+  if (!fluxServing(env)) return { r: "transient", why: "flux_not_ready" };
+  if ((await grantsGuard(env, "readGrantEligibility", Date.now())) !== null) return { r: "transient", why: "grants_unconfigured" };
+  try {
+    const caps = await call(env, doFetch, "GET", CAPABILITIES_PATH);
+    if (caps.http !== 200 || ((caps.json.capabilities ?? {}) as Json).grantEligibility !== true) return { r: "transient", why: "capability_absent" };
+    const { http, json } = await call(env, doFetch, "GET", `${ELIGIBILITY_PATH}?${new URLSearchParams({ account_id: accountId })}`);
+    if (http === 400) return { r: "refused" };
+    if (http !== 200) return { r: "transient", why: `http_${http}` };
+    if (json.eligible === true) return { r: "eligible" };
+    if (json.eligible === false) return { r: "ineligible", reason: typeof json.reason === "string" && json.reason !== "" ? json.reason.slice(0, 60) : "unknown" };
+    return { r: "transient", why: "malformed" };
+  } catch { return { r: "transient", why: "unreachable" }; }
+}
+
+/** Microcents of router credit per cent paid (1 USD = 1,000,000 microcents). */
+const MICROCENTS_PER_CENT = 10_000;
+/** THE top-up grant body (draft Flux contract, cloud-b: kind "topup"; period_start, period_end and expires_at MUST be absent, Flux answers 400
+ *  otherwise). One function so a contract change is one edit. The amount is the charged amount before tax, read from the attempt that
+ *  bought it (topup_attempts by invoice), never from a clock or the plan catalogue. Same bytes on every replay. */
+export async function composeTopupGrantBody(env: Pick<Env, "DB">, f: { homeId: string; invoiceId: string }): Promise<FrozenBody | BodyHold> {
+  const a = await env.DB.prepare("SELECT amount_cents FROM topup_attempts WHERE invoice_id=? AND home_id=? AND state IN ('paid','done')").bind(f.invoiceId, f.homeId).first<{ amount_cents: number }>();
+  if (!a || !(a.amount_cents > 0)) return { held: "amount_not_positive" };
+  const accountId = await fluxRecipientOf(env as Env, f.homeId);
+  if (accountId === null) return { held: "recipient_unlinked" };
+  const json = JSON.stringify({ grant_id: `${f.invoiceId}:topup`, invoice_id: f.invoiceId, kind: "topup", home_id: f.homeId, account_id: accountId, plan: "topup",
+    amount_microcents: a.amount_cents * MICROCENTS_PER_CENT });
+  return { json, sha256: await sha256Hex(json) };
+}
 export const isHold = (b: FrozenBody | BodyHold): b is BodyHold => "held" in b;
 
 // ---- preflight (runbook) -------------------------------------------------------------------------------------------------------------
 
-/** RUNBOOK PREFLIGHT, run before FLUX_CLOUD_GRANTS_ISSUE_ENABLED is turned on at the router (design section 7): the router may issue only
+/** RUNBOOK PREFLIGHT, run before the server-side rollout flag is turned on at the router (design section 7): the router may issue only
  *  when the control plane can send a valid frozen body to it. Fails (ok false, every problem listed) when the CP lacks grant config: the
  *  URL is missing or not https, the token is missing, shorter than 32 characters, reserved-prefixed or the keys token, or the plan
  *  catalogue is invalid or has no per-home plan. Never prints a secret. */
@@ -227,9 +311,12 @@ type Json = Record<string, unknown>;
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 const BLOCKS = ["monthly credit grants", "credit reversal", "credit reversal target", "usage page"];
 
-/** One open alert (home "billing"), whatever the number of asks. */
+/** One open alert (home "billing"), whatever the number of asks. PRODFLUX r4 D: one the healthy Flux sweep resolved (the secret came back)
+ *  opens again, as a new page, when the secret goes missing again. */
 async function configAlert(env: Env, kind: string, hook: string, now: number): Promise<void> {
-  await env.DB.prepare("INSERT INTO cloud_alerts (id,home_id,kind,severity,detail,raised_at) VALUES (?,?,?,?,?,?) ON CONFLICT DO NOTHING")
+  await env.DB.prepare(`INSERT INTO cloud_alerts (id,home_id,kind,severity,detail,raised_at) VALUES (?,?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET resolved_at=NULL,resolve_notice_due=NULL,delivered_at=NULL,delivery_attempts=0,raised_at=excluded.raised_at
+    WHERE cloud_alerts.resolved_at IS NOT NULL`)
     .bind(`alert:${kind}`, "billing", kind, "high", JSON.stringify({ hook, blocks: BLOCKS }), now).run();
 }
 /** D3, before ANY dispatch: the token absent (whatever the URL says), or the URL absent. Returns the retry code, or null when ready. */
@@ -237,6 +324,15 @@ export async function grantsGuard(env: Env, hook: string, now: number): Promise<
   if (!present(env.FLUX_CLOUD_GRANTS_TOKEN)) { await configAlert(env, "credit.grants_token_absent", hook, now); return "grants_token_absent"; }
   if (!present(env.FLUX_CLOUD_GRANTS_URL)) { await configAlert(env, "credit.grants_url_absent", hook, now); return "grants_url_absent"; }
   return null;
+}
+/** PRODFLUX (Astra HIGH 2): Flux switched on with a credential missing. Raises ONE config alert naming the missing secret (never a value)
+ *  and returns its code; null when Flux is off or both credentials are set. Callers hold their work BEFORE claiming or counting it. */
+export async function fluxCredentialsAlert(env: Env, hook: string, now: number): Promise<string | null> {
+  if (!fluxRoutesEnabled(env)) return null;
+  const missing = fluxCredentialsMissing(env);
+  if (missing === "flux_service_token_absent") await configAlert(env, "credit.flux_service_token_absent", hook, now);
+  else if (missing === "grants_token_absent") await configAlert(env, "credit.grants_token_absent", hook, now);
+  return missing;
 }
 const errorCode = (j: Json): string => {
   const e = (j.error ?? {}) as Json;
@@ -297,9 +393,14 @@ export async function fencedMutation(env: Env, doFetch: FetchLike, a: { grantId:
       const answer = remote && a.settled ? a.settled(remote) : null;
       if (answer) { await releaseGrantFence(env.DB, claim); return { http: 200, json: answer, wire: 0, remote }; }
     }
-    wire = await allocateFenceRevision(env.DB, claim, { op: a.op, bodySha: await sha256Hex(a.frozen), floor: a.floor, logical: a.logical, guard: a.guard });
+    const decision: AllocationDecision = {};
+    wire = await allocateFenceRevision(env.DB, claim, { op: a.op, bodySha: await sha256Hex(a.frozen), floor: a.floor, logical: a.logical, guard: a.guard, homeId: a.homeId, decision });
     // H2: a superseded logical revision (or a lapsed billing lease / a newer target journaled) is refused AT the allocation: nothing is sent.
-    if (wire === null) throw new FluxNotDispatched((await allocationRefusal(env.DB, claim)) === "superseded" ? "logical_revision_superseded" : "grant_owner_lost");
+    // DISPUTE-FENCE-ACCOUNT: so is a credit grant for an account with an open email-proof dispute (the grant stays owed and is held, not lost).
+    if (wire === null) {
+      const why = decision.refusal ?? "owner_lost"; // decided by the refusing batch itself (Opus L2), never by a later re-read
+      throw new FluxNotDispatched(why === "superseded" ? "logical_revision_superseded" : why === "account_disputed" ? "account_disputed" : "grant_owner_lost");
+    }
     if (a.onRevision) await a.onRevision(wire);
   } catch (e) {
     if (wire !== null) await abandonFenceRevision(env.DB, claim, wire).catch(() => undefined);
@@ -332,16 +433,59 @@ export async function fencedMutation(env: Env, doFetch: FetchLike, a: { grantId:
  *   alert. 409 (a known Murage account with a different email: never sent again for it), 422 (a disposable email) and any other 4xx: HELD
  *   with ONE high alert (flux.ensure_account_refused) and NO automatic retry while it is open (ops resolves it). 401/403: a configuration
  *   alert (flux.ensure_account_unauthorized), nothing dispatched for anyone, no retry loop while it is open.
- *  Returns "linked" (a link row exists now), "held" (no verified email, or the owner unlinked before: nothing called), "unavailable"
- *  (retry later) or "refused". */
+ *  Returns "linked" (a link row exists now), "held" (no stored email: nothing called), "unavailable"
+ *  (retry later), "refused", "email_unverified" (unproven: nothing called; a 202, a standing hold deadline, or an open dispute) or "stale" (answered in flight on a state
+ *  that moved: nothing linked, asked again next sweep). `opts.wake`: the wake-up after a proof, the one caller not stopped by the deadline. */
 export async function ensureOwnerAccount(env: Env, ownerId: string, homeId: string,
-  call: (a: { murageAccountId: string; email: string }) => Promise<{ fluxAccountId: string }>, now = Date.now()): Promise<"linked" | "held" | "unavailable" | "refused"> {
-  const blocked = await env.DB.prepare(`SELECT 1 AS x FROM cloud_alerts WHERE resolved_at IS NULL AND ((kind='flux.ensure_account_refused' AND subject=?)
-    OR (kind='flux.ensure_account_unauthorized' AND subject='ensure:config'))`).bind(`ensure:${ownerId}`).first();
-  if (blocked) return "refused";
+  call: (a: { murageAccountId: string; email: string; emailVerified: boolean }) => Promise<{ fluxAccountId: string; created?: boolean }>, now = Date.now(),
+  opts: { wake?: boolean } = {}): Promise<EnsureOutcome> {
+  // M-d: an open flux.link_email_mismatch_unlinked blocks this ONE account (the wake included) until Flux re-points the link and ops resolves it.
+  const blocked = await env.DB.prepare(`SELECT kind FROM cloud_alerts WHERE resolved_at IS NULL AND ((kind='flux.ensure_account_refused' AND subject=?1)
+    OR (kind='flux.ensure_account_unauthorized' AND subject='ensure:config') OR (kind='flux.link_email_mismatch_unlinked' AND subject=?2))
+    ORDER BY kind='flux.link_email_mismatch_unlinked' DESC LIMIT 1`).bind(`ensure:${ownerId}`, `account:${ownerId}`).first<{ kind: string }>();
+  if (blocked) return opts.wake && blocked.kind === "flux.link_email_mismatch_unlinked" ? "link_email_mismatch" : "refused";
+  // H2 (astra-code1): an open email-proof dispute for the account means no call to Flux at all, whatever the address now is: a hold, until
+  // support's dispute-clear. The same fence is in the link INSERT (flux-link.ts ensureOwnerLinked) for an ensure already in flight.
+  if (await env.DB.prepare("SELECT 1 AS x FROM flux_email_proof_disputes WHERE account_id=?").bind(ownerId).first()) return "email_unverified";
+  // M1: ONE account-level hold deadline (flux_email_hold), read by every caller (first key, B5 ask, B4 delivery) before Flux is asked. Only the
+  // wake-up after a proof asks through it (it carries the proof Flux waits for). Only a deadline for the CURRENT address revision holds.
+  if (!opts.wake && await emailHoldStanding(env, ownerId, now)) return "email_unverified";
   try {
-    return (await ensureOwnerLinked(env, ownerId, call)) ? "linked" : "held";
+    const r = await ensureOwnerLinked(env, ownerId, call);
+    // (P-call): unproven means Flux was not called. A LOCAL hold: no failure, no deadline, no alert (under flow A every new buyer starts here,
+    // so a page per buyer would page for every sale; the 24 h page is flux-email-proof.ts sweepFluxEmailStuck).
+    if (r === UNPROVEN) return "email_unverified";
+    return r === STALE ? "stale" : r ? "linked" : "held";
   } catch (e) {
+    // Caught BEFORE ensureOwnerLinked's insert (the throw comes out of `call`): no flux_links row, no failure counted, no refusal alert.
+    const rev = (e as { revision?: number } | null)?.revision ?? -1;
+    const fresh = `NOT EXISTS (SELECT 1 FROM flux_links WHERE owner_user_id=?1) AND EXISTS (SELECT 1 FROM supabase_identities WHERE user_id=?1 AND email_revision=?2)`;
+    if (e instanceof FluxEmailUnverified) {
+      // Every call carries email_verified: true (P-call), so a 202 is Flux refusing a PROVEN address. M1: the deadline moves ONLY on an actual
+      // 202, to now + 15 min, and only while the revision that got the 202 is still current and no link exists: a late 202 (the wake-up linked
+      // meanwhile, or the address moved) is discarded. ONE paging alert per account and revision (flux.ensure_verified_refused), under the same
+      // condition, resolved when the account links (flux-link.ts LINK_RESOLVES_SQL).
+      const [held] = await env.DB.batch([
+        env.DB.prepare(`INSERT INTO flux_email_hold (account_id,email_revision,until_at,updated_at) SELECT ?1,?2,?3+${EMAIL_HOLD_MS},?3 WHERE ${fresh}
+          ON CONFLICT(account_id) DO UPDATE SET email_revision=excluded.email_revision,until_at=excluded.until_at,updated_at=excluded.updated_at`)
+          .bind(ownerId, rev, now),
+        env.DB.prepare(`INSERT INTO cloud_alerts (id,home_id,kind,severity,detail,raised_at,subject) SELECT ?3,?4,'flux.ensure_verified_refused','high',?5,?6,?7
+          WHERE ${fresh} ON CONFLICT DO NOTHING`).bind(ownerId, rev, `alert:ensure_verified_refused:${ownerId}:${rev}`, homeId,
+          JSON.stringify({ accountId: ownerId, revision: rev, rule: "Flux answered pending_verification to an ensure that carried a proven email. No key is minted and no credit sent for this account until it links." }),
+          now, `account:${ownerId}`),
+      ]);
+      if ((held.meta.changes ?? 0) > 0) return opts.wake ? "verified_refused" : "email_unverified";
+      return (await linkRowOf(env, ownerId)) ? "linked" : "stale";
+    }
+    if (e instanceof FluxEnsureRefused && e.status === 409 && e.reason === LINK_EMAIL_MISMATCH) {
+      // M-d: the id is linked at Flux under another email and no Cloud link row exists (the accepted residual: a TRUE ensure committed at Flux and
+      // its local INSERT lost to an address move). ONE distinct page per account, the account id only; only this account is blocked (above).
+      await env.DB.prepare(`INSERT INTO cloud_alerts (id,home_id,kind,severity,detail,raised_at,subject) SELECT ?2,?3,'flux.link_email_mismatch_unlinked','high',?4,?5,?6
+        WHERE NOT EXISTS (SELECT 1 FROM flux_links WHERE owner_user_id=?1) ON CONFLICT DO NOTHING`)
+        .bind(ownerId, `alert:link_email_mismatch_unlinked:${ownerId}`, homeId, JSON.stringify({ accountId: ownerId }), now, `account:${ownerId}`).run();
+      if (await linkRowOf(env, ownerId)) return "linked";
+      return opts.wake ? "link_email_mismatch" : "refused";
+    }
     if (e instanceof FluxEnsureRefused) {
       const auth = e.status === 401 || e.status === 403;
       await env.DB.prepare(`INSERT INTO cloud_alerts (id,home_id,kind,severity,detail,raised_at,subject) VALUES (?,?,?,'high',?,?,?) ON CONFLICT DO NOTHING`)
@@ -359,7 +503,7 @@ export async function ensureOwnerAccount(env: Env, ownerId: string, homeId: stri
 
 /** Lane H1, item 1: ensure the owner's Flux account (FluxMain's ensure-account), Bearer FLUX_CLOUD_SERVICE_TOKEN. 4xx: FluxEnsureRefused;
  *  5xx, a timeout or an unusable answer: FluxHookRetry (retried with the existing backoff). The email is sent, never logged. */
-export async function ensureFluxAccount(env: Env, doFetch: FetchLike, input: { murageAccountId: string; email: string }): Promise<{ fluxAccountId: string; created: boolean }> {
+export async function ensureFluxAccount(env: Env, doFetch: FetchLike, input: { murageAccountId: string; email: string; emailVerified: boolean }): Promise<{ fluxAccountId: string; created: boolean }> {
   const token = (env.FLUX_CLOUD_SERVICE_TOKEN ?? "").trim();
   if (!token) throw new FluxNotDispatched("service_token_absent");
   let base: string;
@@ -368,18 +512,26 @@ export async function ensureFluxAccount(env: Env, doFetch: FetchLike, input: { m
     if (u.protocol !== "https:" || u.username || u.password || u.search || u.hash || u.pathname !== "/") throw new Error("bad");
     base = u.origin;
   } catch { throw new FluxNotDispatched("flux_app_base_invalid"); }
+  const bypass = (env.FLUX_STAGING_VERCEL_BYPASS ?? "").trim();
+  const stagingApp = bypass !== "" && (env as { MURAGE_ENV?: string }).MURAGE_ENV === "staging" && new URL(base).hostname === STAGING_FLUX_APP_HOST;
   let res: Response;
   try {
     res = await doFetch(`${base}${ENSURE_ACCOUNT_PATH}`, { method: "POST", redirect: "manual", signal: AbortSignal.timeout(15_000),
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({ murage_account_id: input.murageAccountId, email: input.email }) });
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json", ...(stagingApp ? { "x-vercel-protection-bypass": bypass } : {}) },
+      // email_verified is exactly true only for a proven address (flux-link.ts ownerEmailProofOf); anything else is false, never omitted.
+      body: JSON.stringify({ murage_account_id: input.murageAccountId, email: input.email, email_verified: input.emailVerified === true }) });
   } catch { throw new FluxHookRetry("ensure_account_unavailable"); }
   let j: Json = {};
   try { const v = await res.json(); if (v && typeof v === "object") j = v as Json; } catch { /* classified by status */ }
   if (res.status === 200 && typeof j.flux_account_id === "string" && j.flux_account_id.trim() !== "" && j.flux_account_id.length <= 128) {
     return { fluxAccountId: j.flux_account_id, created: j.created === true };
   }
-  if (res.status >= 400 && res.status < 500) throw new FluxEnsureRefused(res.status);
+  // The typed hold: ONLY a 202 whose body status is exactly "pending_verification". Any other 202 stays a retry (below).
+  if (res.status === 202 && j.status === "pending_verification") throw new FluxEmailUnverified();
+  if (res.status >= 400 && res.status < 500) {
+    const reason = typeof j.error === "string" ? j.error : typeof j.code === "string" ? j.code : null;
+    throw new FluxEnsureRefused(res.status, reason);
+  }
   throw new FluxHookRetry("ensure_account_unavailable");
 }
 
@@ -393,13 +545,15 @@ export function grantsHooks(doFetch: FetchLike = (u, i) => fetch(u, i), options:
   // wp5-p5 / Astra JOURNEY-A-8 #2: the router itself is asked (GET capabilities) before EVERY target and every grant that carries an initial
   // target: never cached, so a router downgraded meanwhile receives nothing it cannot apply atomically (a retry or a hold, nothing sent).
   /** The router's own capability answer. Any fault or a missing route reads as nothing advertised. */
-  type Caps = { reversalTargets: boolean; grantWithTarget: boolean; grantState: boolean; adoptLegacyReversal: boolean };
-  const NONE: Caps = { reversalTargets: false, grantWithTarget: false, grantState: false, adoptLegacyReversal: false };
+  type Caps = { reversalTargets: boolean; grantWithTarget: boolean; grantState: boolean; adoptLegacyReversal: boolean; topupGrants: boolean };
+  const NONE: Caps = { reversalTargets: false, grantWithTarget: false, grantState: false, adoptLegacyReversal: false, topupGrants: false };
   /** Astra JOURNEY-A-10 #1: Flux is OFF at launch. Before ANY grant or reversal request (and the capability read), Flux must be explicitly
-   *  switched on (CLOUD_FLUX_ROUTES_ENABLED "1") AND this client built for a qualified router ({ reversalTargets: true }); otherwise nothing
+   *  switched on (the Flux route switch "1") AND this client built for a qualified router ({ reversalTargets: true }); otherwise nothing
    *  is sent, whatever token and URL are configured, and ONE alert says why. Then the token guard (D3). */
   const dispatchGuard = async (env: Env, hook: string, now: number): Promise<string | null> => {
     if (!fluxRoutesEnabled(env) || options.reversalTargets !== true) { await configAlert(env, "credit.flux_off", hook, now); return "flux_off"; }
+    // PRODFLUX (Astra HIGH 2): both Flux credentials, not just the grants token (grantsGuard checks that one and the URL).
+    if (fluxCredentialsMissing(env) === "flux_service_token_absent") { await configAlert(env, "credit.flux_service_token_absent", hook, now); return "flux_service_token_absent"; }
     return grantsGuard(env, hook, now);
   };
   const readCapabilities = async (env: Env): Promise<Caps> => {
@@ -408,7 +562,7 @@ export function grantsHooks(doFetch: FetchLike = (u, i) => fetch(u, i), options:
       const { http, json } = await call(env, doFetch, "GET", CAPABILITIES_PATH);
       const caps = (json.capabilities ?? {}) as Json;
       const has = (k: string) => http === 200 && caps[k] === true;
-      return { reversalTargets: has("reversalTargets"), grantWithTarget: has("grantWithTarget"), grantState: has("grantState"), adoptLegacyReversal: has("adoptLegacyReversal") };
+      return { reversalTargets: has("reversalTargets"), grantWithTarget: has("grantWithTarget"), grantState: has("grantState"), adoptLegacyReversal: has("adoptLegacyReversal"), topupGrants: has("topupGrants") };
     } catch { return NONE; }
   };
   /** A receipt's echoed held target (Astra JOURNEY-A-9 #1), when the router says it. */
@@ -421,7 +575,7 @@ export function grantsHooks(doFetch: FetchLike = (u, i) => fetch(u, i), options:
      *  Astra JOURNEY-A-8 #2: `initialTarget` (the grant's pending refund target) goes IN THE SAME REQUEST (`initial_target`, applied by the
      *  router in the grant's own transaction: the grant is never live without it); the frozen bytes are unchanged (initial_target is outside
      *  the body hash). Sent only after the router advertised grantWithTarget on this very publish; the answer's target receipt is returned. */
-    async grantMonthlyCredits(env: Env, input: { homeId: string; invoiceId: string; kind?: "period" | "upgrade_delta";
+    async grantMonthlyCredits(env: Env, input: { homeId: string; invoiceId: string; kind?: GrantKind;
       initialTarget?: { targetRemovedMicrocents: number; revision: number } },
       /** H3 (Astra H2 #4): the B5 billing lease the caller holds. The wire revision is allocated only while it is held AND the grant's CURRENT
        *  intent is still the one published (one atomic statement): with an initial target, the reversal row's current target revision is still
@@ -435,6 +589,8 @@ export function grantsHooks(doFetch: FetchLike = (u, i) => fetch(u, i), options:
         .first<{ body_json: string | null; body_sha256: string | null }>();
       if (!row?.body_json || !row.body_sha256) throw new FluxNotDispatched("grant_body_missing");
       if ((await sha256Hex(row.body_json)) !== row.body_sha256) throw new FluxNotDispatched("grant_body_corrupt");
+      // A top-up is sent only to a router that advertises topupGrants on this very call; otherwise it is held and retried (alarmed after 2 hours).
+      if (kind === "topup" && !(await readCapabilities(env)).topupGrants) throw new FluxHookRetry("router_topup_grants_absent");
       const it = input.initialTarget;
       if (it && !(await readCapabilities(env)).grantWithTarget) throw new FluxGrantTargetUnsupported("router_grant_with_target_absent");
       const grantId = `${input.invoiceId}:${kind}`;
@@ -459,11 +615,19 @@ export function grantsHooks(doFetch: FetchLike = (u, i) => fetch(u, i), options:
       }
       // A router that does not implement initial_target refuses the unknown field (400) before any state change: nothing applied, held.
       if (it && http === 400) throw new FluxGrantTargetUnsupported(`router_400_${errorCode(json)}`.slice(0, 80));
+      // A top-up is paid before it is granted: a 409 account_not_fresh is reachable here. It is alarmed, never retried as a transient error.
+      if (kind === "topup" && http === 409 && errorCode(json) === "account_not_fresh") throw new FluxGrantPermanent("account_not_fresh");
       if (http === 409) throw new FluxGrantHeld(errorCode(json));
       if (http === 503) throw new FluxHookRetry(retryCode(json));
+      // 422 on a top-up: the router's ceiling refused credit the customer already paid for. One alert per grant, then the plain error as before.
+      if (kind === "topup" && http === 422) {
+        await env.DB.prepare("INSERT INTO cloud_alerts (id,home_id,kind,severity,detail,raised_at) VALUES (?,?,?,?,?,?) ON CONFLICT DO NOTHING")
+          .bind(`alert:topup_ceiling:${grantId}`, "billing", "credit.topup_ceiling", "high", JSON.stringify({ homeId: input.homeId, grantId, code: errorCode(json) }), Date.now()).run();
+        throw new FluxGrantPermanent("topup_ceiling"); // permanent: the claim is suppressed, never asked again
+      }
       throw new Error(`grants_router_${http}_${errorCode(json)}`);
     },
-    async revokeCredits(env: Env, input: { homeId: string; invoiceId: string; kind: "period" | "upgrade_delta"; grantId: string; reason: string }): Promise<{ status: string }> {
+    async revokeCredits(env: Env, input: { homeId: string; invoiceId: string; kind: GrantKind; grantId: string; reason: string }): Promise<{ status: string }> {
       const refused = await dispatchGuard(env, "revokeCredits", Date.now());
       if (refused) throw new FluxHookRetry(refused);
       const body = JSON.stringify({ grant_id: input.grantId, invoice_id: input.invoiceId, kind: input.kind, home_id: input.homeId, reason: input.reason.slice(0, 500) });
@@ -473,13 +637,14 @@ export function grantsHooks(doFetch: FetchLike = (u, i) => fetch(u, i), options:
       if (http === 200 && ["reversed", "already_reversed", "no_grant"].includes(status)) return { status };
       if (http === 409) throw new FluxHookRetry(`router_409_${errorCode(json)}`.slice(0, 80));
       if (http === 503) throw new FluxHookRetry(retryCode(json));
+      if (http === 422) throw new FluxReversalPermanent(errorCode(json));
       throw new Error(`grants_router_${http}_${errorCode(json)}`);
     },
     /** Astra JOURNEY-A-6 #2: sets ONE grant's cumulative removal target at a revision (the contract file). Resolves only with a receipt the
      *  router answered for exactly this grant: {grantId, revision, removedMicrocents} (the caller applies it only if the revision is still its
      *  latest). 409 stale_revision (the router holds a newer revision) and every other 409, 404 grant_not_found (the grant has not landed at the
      *  router) and 503 are retries; anything else throws (infrastructure). */
-    async setReversalTarget(env: Env, input: { homeId: string; invoiceId: string; kind: "period" | "upgrade_delta"; grantId: string; reason: string;
+    async setReversalTarget(env: Env, input: { homeId: string; invoiceId: string; kind: GrantKind; grantId: string; reason: string;
       targetRemovedMicrocents: number; revision: number; adoptLegacyReversal?: boolean },
       /** H2: the B5 billing lease the caller holds: the wire revision is allocated only while it is held AND the reversal row's current target
        *  revision is still `revision` (one atomic statement), so an obsolete target never receives a newer wire revision. */
@@ -520,18 +685,20 @@ export function grantsHooks(doFetch: FetchLike = (u, i) => fetch(u, i), options:
       if (http === 409) throw new FluxHookRetry(`router_409_${errorCode(json)}`.slice(0, 80));
       if (http === 404 && errorCode(json) === "grant_not_found") throw new FluxHookRetry("router_grant_not_found");
       if (http === 503) throw new FluxHookRetry(retryCode(json));
+      if (http === 422) throw new FluxReversalPermanent(errorCode(json));
       throw new Error(`grants_router_${http}_${errorCode(json)}`);
     },
     /** Lane H1, item 1: before the FIRST grant of an owner with no Flux link, the owner's Flux account is ensured (FluxMain's ensure-account,
      *  idempotent on the Murage account id) and the link row written (link_id = the Flux account id, version 1) through flux-link.ts, so keys
      *  and grants resolve the same account. Flux off, or a token absent: nothing is called. A refusal (4xx) throws FluxEnsureRefused (the
      *  caller alerts; nothing is dispatched for the owner); a 5xx/timeout throws FluxHookRetry (retried with the existing backoff). */
-    async ensureAccount(env: Env, input: { homeId: string }): Promise<void> {
+    async ensureAccount(env: Env, input: { homeId: string }): Promise<EnsureOutcome | void> {
       if (await dispatchGuard(env, "ensureAccount", Date.now())) return;
       if (!present(env.FLUX_CLOUD_SERVICE_TOKEN)) return;
       const owner = await homeOwnerOf(env, input.homeId);
       if (owner === null || (await linkRowOf(env, owner)) !== null) return;
-      await ensureOwnerAccount(env, owner, input.homeId, (a) => ensureFluxAccount(env, doFetch, a));
+      // The typed result reaches askGrant: "email_unverified" is a LOCAL hold there (grant_held:email_unverified), before any router call.
+      return ensureOwnerAccount(env, owner, input.homeId, (a) => ensureFluxAccount(env, doFetch, a));
     },
     /** Lane H1, item 3 (F4): reads back every grant whose last fenced outcome is unknown, superseded or a mismatch (bounded). Flux off: nothing. */
     async reconcileFences(env: Env, limit = 20): Promise<number> {
@@ -547,7 +714,7 @@ export function grantsHooks(doFetch: FetchLike = (u, i) => fetch(u, i), options:
     /** Astra JOURNEY-A-9 #2: the router's account of ONE grant (GET state, capability grantState), read before a legacy refund-backed /reverse
      *  row is converted. Resolves {state: active | reversed | tombstoned | not_found, removedMicrocents, consumedMicrocents}; no capability,
      *  a 409 or a 503 is a retry (the row stays pending); anything else throws. */
-    async grantReversalState(env: Env, input: { homeId: string; invoiceId: string; kind: "period" | "upgrade_delta"; grantId: string }): Promise<{
+    async grantReversalState(env: Env, input: { homeId: string; invoiceId: string; kind: GrantKind; grantId: string }): Promise<{
       state: "active" | "reversed" | "tombstoned" | "not_found"; removedMicrocents: number; consumedMicrocents: number }> {
       const refused = await dispatchGuard(env, "grantReversalState", Date.now());
       if (refused) throw new FluxHookRetry(refused);

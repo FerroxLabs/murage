@@ -120,9 +120,28 @@ export async function savePhoneSettings(call: PhoneApi, settings: PhoneSettings)
   return typeof body?.revision === "number" ? body.revision : 0;
 }
 
-export async function recentCalls(call: PhoneApi): Promise<PhoneCallCard[]> {
-  const body = await call(PHONE_ROUTE) as { calls?: PhoneCallCard[] } | null;
+export async function recentCalls(call: PhoneApi, signal?: AbortSignal): Promise<PhoneCallCard[]> {
+  const body = await call(PHONE_ROUTE, signal ? { signal } : undefined) as { calls?: PhoneCallCard[] } | null;
   return Array.isArray(body?.calls) ? body.calls : [];
+}
+
+/** Refresh while Settings is mounted. One request at a time, at most once every five seconds. */
+export function watchRecentCalls(call: PhoneApi, onCalls: (calls: PhoneCallCard[]) => void): () => void {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let loaded = false;
+  const refresh = async () => {
+    try {
+      const calls = await recentCalls(call, controller.signal);
+      if (!controller.signal.aborted) { loaded = true; onCalls(calls); }
+    } catch {
+      if (!controller.signal.aborted && !loaded) onCalls([]);
+    } finally {
+      if (!controller.signal.aborted) timer = setTimeout(() => { void refresh(); }, 5000);
+    }
+  };
+  void refresh();
+  return () => { controller.abort(); clearTimeout(timer); };
 }
 
 export async function cancelScheduledCall(call: PhoneApi, id: string): Promise<void> {

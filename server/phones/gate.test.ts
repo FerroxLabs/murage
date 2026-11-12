@@ -54,11 +54,11 @@ describe("ensurePhonesTables", () => {
     expect(opened).toBe(0);
     expect(tables(db)).toEqual([]);
   });
-  it("creates both tables with the flag on, and is idempotent", () => {
+  it("creates the phone tables with the flag on, and is idempotent", () => {
     const db = new DatabaseSync(":memory:");
     expect(ensurePhonesTables(() => db, { phoneTools: true })).toBe(true);
     expect(ensurePhonesTables(() => db, { phoneTools: true })).toBe(true);
-    expect(tables(db)).toEqual(["phone_registrations", "phone_revocations"]);
+    expect(tables(db)).toEqual(["phone_ask_optins", "phone_registrations", "phone_revocations"]);
   });
 });
 

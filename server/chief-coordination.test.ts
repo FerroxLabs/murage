@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CoordinationBudget, MAX_HANDOFFS_PER_ROOT } from "./coordination-budget.ts";
+import { CoordinationBudget, coordinationTraceSchema, MAX_HANDOFFS_PER_ROOT } from "./coordination-budget.ts";
 import { resolveCoordinationTarget } from "./coordination-target.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
@@ -111,5 +111,23 @@ describe("Murage target identity", () => {
   it("never lets a wake start from a root that was not the asker's", () => {
     const budget = new CoordinationBudget(join(directory, "budget.json"));
     expect(() => budget.advance({ rootId: "made-up-root", path: ["lead"] }, "lead", "mate")).toThrow("ALLOWANCE_UNAVAILABLE");
+  });
+});
+
+
+describe("No limits coordination review regressions", () => {
+  it("keeps the lower-level wire schema capped at three entries", () => {
+    expect(coordinationTraceSchema.safeParse({rootId:"root",path:["a","b","c","d"]}).success).toBe(false);
+  });
+  it("admits deeper No limits handoffs with compact queue-safe ancestry", () => {
+    const budget = new CoordinationBudget(join(directory,"no-limits.json"));
+    let trace = budget.begin("bot-0");
+    for (let n=1;n<=65;n++) {
+      trace = budget.advance(trace,`bot-${n-1}`,`bot-${n}`,true);
+      expect(trace.path.length).toBeLessThanOrEqual(3);
+      expect(coordinationTraceSchema.safeParse(trace).success).toBe(true);
+      expect(trace.path.at(-1)).toBe(`bot-${n}`);
+    }
+    expect(() => budget.advance(trace,"bot-65","lower-level")).toThrow("ALLOWANCE_UNAVAILABLE");
   });
 });

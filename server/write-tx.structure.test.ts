@@ -43,6 +43,10 @@ const ALLOWED: Record<string, { count: number; why: string; guarded?: true }> = 
   "memory/provenance-stamp.ts": { count: 1, why: "worker source: one read-only snapshot for the provenance recompute" },
   "health/stats-publisher.ts": { count: 1, why: "worker source: a new private snapshot file no other connection opens" },
   "skill-search.ts": { count: 2, why: "the skill index temp file and an in-memory team index: private to this process, no other writer" },
+  // Reviewed 5d5a791f19: the serving connection retires legacy names inside
+  // its existing/immediate transaction; search candidates use a read-only DB.
+  "message-search-index.ts": { count: 2, why: "one nested legacy-retirement SAVEPOINT and one read-only search.db snapshot; separately pinned below" },
+  "search-index-worker.ts": { count: 3, why: "three snapshots on read-only connection B; every FTS write uses BEGIN IMMEDIATE on A" },
 };
 
 const DEFERRED_START = /^\s*(?:SAVEPOINT\b|BEGIN\b(?!\s+(?:IMMEDIATE|EXCLUSIVE)\b))/i;
@@ -202,6 +206,36 @@ describe("write transactions claim the write lock up front (DBBUSY-1018)", () =>
   it("every nested-only file keeps its SAVEPOINT on the nested branch of an isTransaction guard (a removed or inverted guard fails here)", () => {
     const bare = Object.entries(ALLOWED).filter(([, entry]) => entry.guarded).flatMap(([file]) => (unguarded.get(file) ?? []).map(line => `${file}:${line}`));
     expect(bare).toEqual([]);
+  });
+
+  it("reviewed search exceptions retain read-only snapshots and an immediate outer retirement transaction", () => {
+    const main = readFileSync(join(server, "message-search-index.ts"), "utf8");
+    const worker = readFileSync(join(server, "search-index-worker.ts"), "utf8");
+    const retirementLocked = (text: string) => {
+      const file = ts.createSourceFile("search.ts", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+      const retirement = file.statements.find((node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node) && node.name?.text === "settleInheritedSearchMerge");
+      if (!retirement?.body) return false;
+      const statements = retirement.body.statements;
+      const acquire = statements.findIndex(node => {
+        if (!ts.isIfStatement(node) || nestingPolarity(node.expression, "db") !== false || node.elseStatement) return false;
+        const branch = node.thenStatement;
+        if (!ts.isExpressionStatement(branch) || !ts.isCallExpression(branch.expression)) return false;
+        const call = branch.expression;
+        return ts.isPropertyAccessExpression(call.expression) && receiverText(call.expression.expression) === "db"
+          && call.expression.name.text === "exec" && call.arguments.length === 1
+          && ts.isStringLiteral(call.arguments[0]!) && call.arguments[0]!.text === "BEGIN IMMEDIATE";
+      });
+      const work = statements.findIndex(ts.isTryStatement);
+      return acquire >= 0 && work > acquire && statements[work]!.getText().includes('db.exec("SAVEPOINT search_retire_name")');
+    };
+    expect(retirementLocked(main)).toBe(true);
+    expect(retirementLocked(main.replace("const own = !db.isTransaction", "const own = db.isTransaction"))).toBe(false);
+    expect(retirementLocked(main.replace('if (own) db.exec("BEGIN IMMEDIATE")', 'if (!own) db.exec("BEGIN IMMEDIATE")'))).toBe(false);
+    expect(retirementLocked(main.replace('if (own) db.exec("BEGIN IMMEDIATE")', 'db.exec("BEGIN")'))).toBe(false);
+    expect(main).toContain('run.reader = new DatabaseSync(join(dirname(run.file), SEARCH_FILES[0]), { readOnly: true })');
+    expect(worker).toContain('b = new DatabaseSync(file, { readOnly: true })');
+    expect(worker).toContain("b.exec('PRAGMA busy_timeout=0; PRAGMA query_only=ON')");
+    expect(worker).toContain("a.exec('BEGIN IMMEDIATE')");
   });
 
   it("the scan sees what it must: a deferred SAVEPOINT, a bare BEGIN in a worker source, and not BEGIN IMMEDIATE or comments", () => {

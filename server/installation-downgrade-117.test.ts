@@ -13,9 +13,13 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
+import { APPROVAL_OBJECTS } from "./decision/records.ts";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
+import { stopSearchIndex } from "./message-search-index.ts";
+import { stopWalMaintenance } from "./wal-maintenance.ts";
 import { checkPhoneCallsForDowngrade, downgradeInstallationMemorySchema, preservePhoneCallsForDowngrade, removeDataDirNamesAfter102 } from "./installation-memory-downgrade.ts";
+import { downgradeDelegationPacks } from "./installation-app-schema-downgrade.ts";
 import { LEXICAL_AGE_SCHEMA } from "./memory/age-index.ts";
 import { ftsProbeBoth, ftsSettled } from "./settle-copy.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
@@ -42,9 +46,18 @@ const objectNames = (file: string) => {
   const db = new DatabaseSync(file, { readOnly: true });
   try { return (db.prepare("SELECT name FROM sqlite_schema WHERE substr(name,1,7)<>'sqlite_' ORDER BY name").all() as Array<{ name: string }>).map(row => row.name); } finally { db.close(); }
 };
-/** closeDatabase() stops the WAL checkpointer without waiting (database.ts stopWalMaintenance): its connection leaves the file a moment later and takes
- * -wal and -shm with it. Wait until both have been absent for a stretch, so a byte-for-byte tree read is not racing it. */
+/** Join the workers closeDatabase() asks to stop, then prove the offline file has no sidecars before a byte-for-byte tree read. */
 async function quiesce(dir: string) {
+  // Search now owns a read-only messages connection (5d5a791f19). Join it as well as the checkpointer.
+  expect(await stopSearchIndex()).toBe(true);
+  expect(await stopWalMaintenance()).toBe(true);
+  // A read-only last closer can leave sidecars. Checkpoint/close folds them without deleting files.
+  const checkpoint = new DatabaseSync(join(dir, "messages.db"));
+  try {
+    const folded = checkpoint.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
+    expect(folded?.busy).toBe(0);
+    expect(folded?.log).toBe(folded?.checkpointed);
+  } finally { checkpoint.close(); }
   const names = ["messages.db-wal", "messages.db-shm"].map(name => join(dir, name));
   let quiet = 0;
   for (let waited = 0; quiet < 8 && waited < 10_000; waited += 40) {
@@ -79,6 +92,31 @@ it.each(["in_progress", "ringing", "scheduled", "uncertain"])("a phone call stil
   expect(preservedSiblings(DATA_DIR)).toEqual(siblings);
 });
 
+it("downgrade to 13 keeps cancelled phone sends and attachments while removing newer ask authority", async () => {
+  openedBy118();
+  const db = database();
+  db.prepare(`INSERT INTO owner_sends(kind,owner_id,thread_id,queue_id,fingerprint,text,status,created_at,updated_at,via,queue_only,via_device,attachments,via_proof)
+    VALUES('bot','b1','t1','q1','fingerprint','','cancelled',1,2,'ask-intent',1,'phone1','[{"name":"kept.txt"}]','{"version":1}')`).run();
+  closeDatabase(); await quiesce(DATA_DIR);
+  downgradeInstallationMemorySchema(DATA_DIR, 13);
+  const copy = new DatabaseSync(join(DATA_DIR, "messages.db"));
+  try {
+    expect(copy.prepare("PRAGMA table_info(owner_sends)").all().map(column => column.name)).not.toContain("via_proof");
+    expect(copy.prepare("SELECT queue_id,status,text,via,queue_only,via_device,attachments FROM owner_sends WHERE queue_id='q1'").get()).toEqual({queue_id:'q1',status:'cancelled',text:'',via:'ask-intent',queue_only:1,via_device:'phone1',attachments:'[{"name":"kept.txt"}]'});
+  } finally { copy.close(); }
+  expect(downgradeInstallationMemorySchema(DATA_DIR, 13)).toMatchObject({status:'already-v13'});
+});
+
+it("a pending send carrying only ask proof refuses downgrade to 13 before changing its data", async () => {
+  openedBy118();
+  database().prepare(`INSERT INTO owner_sends(kind,owner_id,thread_id,queue_id,fingerprint,text,status,created_at,updated_at,via_proof)
+    VALUES('bot','b1','t1','q1','fingerprint','owner words','queued',1,2,'{"version":1}')`).run();
+  closeDatabase(); await quiesce(DATA_DIR);
+  const before = tree(DATA_DIR);
+  expect(() => downgradeInstallationMemorySchema(DATA_DIR, 13)).toThrow(expect.objectContaining({code:'DOWNGRADE_WORK_PENDING'}));
+  expect(tree(DATA_DIR)).toEqual(before);
+});
+
 // once 1.0.1's step alone: now in the preflight of every target (rule note), so the step back to 1.0.17 refuses too, before any write
 it("a hand-off held for the owner refuses memory-downgrade --to 13 with DOWNGRADE_HANDOFFS_HELD and changes nothing", async () => {
   openedBy118();
@@ -95,7 +133,7 @@ it("a hand-off held for the owner refuses memory-downgrade --to 13 with DOWNGRAD
   expect(preservedSiblings(DATA_DIR)).toEqual(siblings);
 });
 
-it("the real CLI --to 13 with every call ended: phone-calls.db stays in place, a private copy is kept beside the folder, and \"removed\" names only 1.0.18 objects", async () => {
+it("the real CLI --to 13 with every call ended: phone-calls.db stays in place, a private copy is kept beside the folder, and \"removed\" names only newer app objects", async () => {
   openedBy118();
   phoneCalls(DATA_DIR, "ended");
   const calls = readFileSync(join(DATA_DIR, "phone-calls.db"));
@@ -105,21 +143,28 @@ it("the real CLI --to 13 with every call ended: phone-calls.db stays in place, a
   const indexObjects = objectNames(indexFile);
   expect(indexObjects).toEqual(expect.arrayContaining(["lexical_age", "lexical_age_keys"]));
   const file = join(DATA_DIR, "messages.db"), objects = objectNames(file);
-  const out = JSON.parse((await exec(process.execPath, [cli, "memory-downgrade", "--data-dir", DATA_DIR, "--to", "13"], { timeout: 60_000 })).stdout);
+  const out = JSON.parse((await exec(process.execPath, [cli, "memory-downgrade", "--data-dir", DATA_DIR, "--to", "13"], { windowsHide: true, timeout: 60_000 })).stdout);
   expect(objectNames(indexFile)).toEqual(indexObjects);
   roots.push(out.phoneCallsPreservedAt);
   const after = objectNames(file);
   // the existing keys stay; "removed" is added: exactly what left, sorted
   expect(out).toEqual({ ok: true, operation: "memory-downgrade", status: "downgraded", from: 13, to: 13, phoneCallsPreservedAt: expect.any(String), removed: objects.filter(name => !after.includes(name)) });
   expect(out.removed).toContain("memory_source_lsn_created");
-  for (const name of out.removed) expect(name).toMatch(/^(memory_source_lsn_created|memory_owner_.*|thread_summar.*|chats_.*|venue_posts.*|room_shares.*|speech_.*)$/);
-  expect(after.filter(name => !objects.includes(name))).toEqual([]);
+  // 2de8a7c65c removes the new reference queue on every supported downgrade target.
+  expect(out.removed).toContain("search_intents");
+  expect(after).not.toContain("search_intents");
+  expect(out.removed).toEqual(expect.arrayContaining(["delegation_packs", "delegation_packs_source", "delegation_packs_destination", "highlevel_thread_marks"]));
+  for (const name of out.removed.filter((name:string) => !Object.values(APPROVAL_OBJECTS).some(names => (names as readonly string[]).includes(name)))) expect(name).toMatch(/^(search_intents|memory_capture_deferred(?:_order)?|memory_source_lsn_created|memory_evidence_source_version|memory_revoke_jobs_state_kind_phase|memory_owner_.*|thread_summar.*|chats_.*|venue_posts.*|room_shares.*|speech_.*|delegation_packs.*|highlevel_thread_marks)$/);
+  // Separate-file search is newer than 1.0.17. Its legacy FTS schema is
+  // recreated empty and the fill marker reset so the old build can rebuild.
+  const legacyFts = ["messages_fts", "messages_fts_config", "messages_fts_data", "messages_fts_docsize", "messages_fts_idx"];
+  expect(after.filter(name => !objects.includes(name))).toEqual(legacyFts.filter(name => !objects.includes(name)));
   expect(readFileSync(join(DATA_DIR, "phone-calls.db"))).toEqual(calls);
   expect(basename(out.phoneCallsPreservedAt).startsWith(PRESERVED)).toBe(true);
   expect(readFileSync(join(out.phoneCallsPreservedAt, "phone-calls.db"))).toEqual(calls);
   // the step back to 1.0.17 leaves the search index file as it is (1.0.17 has its objects)
   // a second run finds nothing more to remove (it keeps another private copy: registered for cleanup)
-  const again = JSON.parse((await exec(process.execPath, [cli, "memory-downgrade", "--data-dir", DATA_DIR, "--to", "13"], { timeout: 60_000 })).stdout);
+  const again = JSON.parse((await exec(process.execPath, [cli, "memory-downgrade", "--data-dir", DATA_DIR, "--to", "13"], { windowsHide: true, timeout: 60_000 })).stdout);
   roots.push(again.phoneCallsPreservedAt);
   expect(again).toMatchObject({ status: "already-v13", removed: [] });
 }, 120_000);
@@ -127,10 +172,11 @@ it("the real CLI --to 13 with every call ended: phone-calls.db stays in place, a
 it("the real CLI --to 12 reports the schema objects and the data-folder names it removed", async () => {
   openedBy118();
   phoneCalls(DATA_DIR, "ended");
+  await quiesce(DATA_DIR);
   const copy = join(mkdtempSync(join(tmpdir(), "murage-down12-")), "data"); roots.push(dirname(copy));
   cpSync(DATA_DIR, copy, { recursive: true });
   const objects = objectNames(join(copy, "messages.db"));
-  const out = JSON.parse((await exec(process.execPath, [cli, "memory-downgrade", "--data-dir", copy, "--to", "12"], { timeout: 60_000 })).stdout);
+  const out = JSON.parse((await exec(process.execPath, [cli, "memory-downgrade", "--data-dir", copy, "--to", "12"], { windowsHide: true, timeout: 60_000 })).stdout);
   roots.push(out.phoneCallsPreservedAt);
   const after = objectNames(join(copy, "messages.db"));
   expect(out).toMatchObject({ ok: true, operation: "memory-downgrade", status: "downgraded", from: 13, to: 12 });
@@ -193,8 +239,10 @@ const shape = (dir: string) => ({
   index: existsSync(join(dir, "memory-index.db")) ? objectNames(join(dir, "memory-index.db")) : null,
 });
 /** A 1.0.18 folder with an ended phone call (a data-folder name that leaves) and the search index file with 1.0.18's age tables in it. */
-function buildFolderWithIndexAndNames() {
+async function buildFolderWithIndexAndNames() {
   openedBy118();
+  // closeDatabase requests worker shutdown; join it before offline fixture writes.
+  await quiesce(DATA_DIR);
   phoneCalls(DATA_DIR, "ended");
   const index = new DatabaseSync(join(DATA_DIR, "memory-index.db"));
   index.exec(LEXICAL_AGE_SCHEMA); index.exec("INSERT INTO lexical_age_keys VALUES('r1',1,1)"); index.close();
@@ -209,7 +257,7 @@ const cloneOfData = (): string => {
 };
 const PHASES = ["optimized", "config-restored", "index-file-removed", "names-removed", "checkpointed", "marker-deleted"] as const;
 it.each(PHASES)("a stop at %s leaves 1.0.17 refusing the folder only while the stamp is up, and a rerun ends exactly where an uninterrupted run ends", async point => {
-  buildFolderWithIndexAndNames();
+  await buildFolderWithIndexAndNames();
   await quiesce(DATA_DIR);
   const reference = cloneOfData();
   const uninterrupted = downgradeInstallationMemorySchema(reference, 12);
@@ -303,4 +351,24 @@ it("a phone log a reader keeps busy refuses the downgrade with nothing removed",
     expect(() => removeDataDirNamesAfter102(dir)).toThrow("WAL_CHECKPOINT_INCOMPLETE");
     expect(readdirSync(dir).sort()).toEqual(before);
   } finally { try { reader.exec("ROLLBACK"); } catch {} reader.close(); holder.close(); }
+});
+
+
+it("delegation downgrade removes owner proof while preserving queue rows, rowids and dependent guards atomically", () => {
+  const db = database();
+  db.exec("INSERT INTO pending_delegations(rowid,id,source_thread_id,to_bot_id,phase,item,owner_rooted) VALUES(42,'kept','source','target','fresh','{}',1)");
+  const before = db.prepare("SELECT rowid,* FROM pending_delegations").all().map(({ owner_rooted: _proof, ...row }) => row);
+  const dependencies = () => db.prepare("SELECT name,sql FROM sqlite_schema WHERE sql IS NOT NULL AND (type='trigger' OR (type='index' AND tbl_name='pending_delegations')) ORDER BY name").all();
+  const guarded = dependencies();
+  db.exec("BEGIN IMMEDIATE");
+  downgradeDelegationPacks(db);
+  expect(db.prepare("PRAGMA table_info(pending_delegations)").all().map(row => row.name)).not.toContain("owner_rooted");
+  expect(db.prepare("SELECT rowid,* FROM pending_delegations").all()).toEqual(before);
+  expect(dependencies()).toEqual(guarded);
+  db.exec("ROLLBACK");
+  expect(db.prepare("SELECT owner_rooted FROM pending_delegations WHERE id='kept'").get()).toEqual({ owner_rooted: 1 });
+  downgradeDelegationPacks(db);
+  downgradeDelegationPacks(db);
+  expect(db.prepare("SELECT rowid,* FROM pending_delegations").all()).toEqual(before);
+  expect(dependencies()).toEqual(guarded);
 });

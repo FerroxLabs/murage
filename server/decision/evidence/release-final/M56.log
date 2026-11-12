@@ -1,0 +1,32 @@
+COMMAND node_modules/.bin/vitest run server/decision/legacy-import.test.ts -t M56
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/legacy-import.test.ts > A5a M56 lazy legacy unanswered permission rows are terminal on import
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/legacy-import.test.ts (2 tests | 1 failed | 1 skipped) 584ms
+   × A5a M56 lazy legacy unanswered permission rows are terminal on import 580ms
+   ↓ A5a malformed legacy JSON has no actionable presentation
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 skipped (2)
+   Start at  07:42:34
+   Duration  8.43s (transform 6.19s, setup 7.40s, import 293ms, tests 584ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/legacy-import.test.ts > A5a M56 lazy legacy unanswered permission rows are terminal on import
+Error: card-without-approval
+ ❯ assertCardAuthorized server/decision/records.ts:74:245
+
+ ❯ replaceRow server/message-db.ts:811:3
+ ❯ importLegacy server/message-db.ts:777:7
+ ❯ readThread server/message-db.ts:97:10
+ ❯ server/decision/legacy-import.test.ts:9:13
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

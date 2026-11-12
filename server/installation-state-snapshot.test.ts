@@ -1,5 +1,6 @@
+import { fixtureLink } from "./testing/platform-fixtures.ts";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -101,13 +102,13 @@ it.each(["cancel", "quota", "corruption"])("cleans only owned staging on %s and 
   lease.release();
 });
 
-it.skipIf(process.platform === "win32")("never follows app-owned symlinks into external content", async () => {
+it("never follows app-owned symlinks into external content", async () => {
   const f = fixture();
   mkdirSync(join(f.data, "workspaces"));
-  symlinkSync(join(f.parent, "external"), join(f.data, "workspaces", "outside"));
+  fixtureLink(join(f.parent, "external"), join(f.data, "workspaces", "outside"), "dir");
   const result = await stageInstallationState(f.data, f.parent);
   // Stored as a shortcut (0.1.60 audit A-01), never followed.
-  expect(result.manifest.links).toEqual([{ path: "workspaces/outside", target: join(f.parent, "external"), type: expect.any(String) }]);
+  expect(result.manifest.links).toEqual([{ path: "workspaces/outside", target: readlinkSync(join(f.data, "workspaces", "outside")), type: "dir" }]);
   expect(result.manifest.files.some(file => file.path.includes("untouched"))).toBe(false);
 });
 

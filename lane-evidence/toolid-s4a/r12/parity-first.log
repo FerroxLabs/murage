@@ -1,0 +1,114 @@
+
+ RUN  v4.1.12 /work
+
+ ✓ server/no-limits-code.test.ts > pins the original r1.2 corpus bytes and row count 2ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W1' ('card:root'): 'shell-out past 4,100 chars of padding…' 5ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W2' ('card:home'): 'shell=True string twin rm -rf ~ names…' 1ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W3a' ('card:root'): 'literal rmtree target / -> rm -rf -- /' 1ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W3b' ('card:home'): 'expanduser(\'~\') resolves to ~' 1ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W3c' ('card:home'): 'module alias + Path.home() resolve to…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W3d' ('card:root'): 'from-import alias + one-level single …' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W3e' ('card:root'): 'escape decoded by the literal reader:…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W3f' ('card:root'): 'literal + folded: rm -rf /' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'N1' ('card:root'): 'node -e hop; rmSync recursive twin rm…' 2ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'N2' ('card:home'): 'os.homedir() resolves to ~' 1ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'N3' ('card:home'): 'execSync string is an sh hop: rm -rf ~' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W5a' ('card:home'): 'python -c hop then os.system hop' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W5b' ('card:root'): 'bash -c hop' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W5c' ('card:root'): 'heredoc fed to python is a py hop' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W6' ('card:word'): 'depth-5 code is not extracted, but th…' 1ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W9' ('card:cut'): 'hook message truncated:true always ca…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W10' ('card:root'): 'string leaf 6,000 chars deep names rm…' 1ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W7' ('run'): 'no effect call, no device, 10 KiB of …' 8ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W8' ('run'): 'plain read' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W11' ('run'): 'argv twin ls -la' 1ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W11b' ('run'): 'shell=True twin ls (Astra H6: no card…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W11c' ('run'): 'exec literal is a py hop with no effe…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W11d' ('run'): 'sys.executable -> python3; twin pytho…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W12' ('run'): 'unresolved shell-out twin "$MURAGE_U1…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W15' ('run'): 'no whole-code plainWipe on Python: li…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'W6b' ('run'): 'depth cap runs; nothing in the root r…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'P1code' ('card:word'): 'twin rm -rf -- build: plainWipe proxy…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'P1sh' ('card:word'): 'terminal twin of P1code: plainWipe wo…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'P2code' ('card:word'): 'computed target -> rm -f -- "$MURAGE_…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'P2sh' ('card:word'): 'terminal twin of P2code' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'P3code' ('card:word'): 'env target unresolved; rm -rf -- "$MU…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'P3sh' ('card:word'): 'terminal twin of P3code' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'P4code' ('run'): 'exec of a computed value: no hop, no …' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'P4sh' ('run'): 'terminal twin of P4code: no wipe word…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1py' ('card:word'): 'os.truncate twin truncate -s 0 -- /tm…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1js' ('card:word'): 'fs.truncateSync twin truncate -s 0 --…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1sh' ('card:word'): 'the terminal twin itself' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1pyRoot' ('card:system'): 'truncate of a system folder classifie…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1run' ('run'): 'harmless arithmetic: minus and slash …' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1runJs' ('run'): 'harmless arithmetic in node' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1pathlib' ('card:word'): 'Path(T).unlink() twin rm -f -- /tmp/i…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1pathHome' ('card:home'): 'Path.home().rmdir() twin rmdir -- ~' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1unlinkJs' ('card:word'): 'fs.unlinkSync twin rm -f' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1rmSyncFile' ('card:word'): 'named import rmSync without recursive…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1rimraf' ('card:root'): 'rimraf.sync(\'/\') -> rm -rf -- /' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1promises' ('card:home'): 'fs.promises.rm recursive on a home fo…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1dyn' ('card:word'): 'unresolved callee on shutil -> rm -rf…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1dynJs' ('card:word'): 'unresolved fs callee -> rm -rf -- "$M…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1getattrLit' ('card:root'): 'getattr with a literal name resolves' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1import' ('card:system'): '__import__ literal module; /usr is a …' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1removedirs' ('card:system'): 'os.path.join resolves to /var' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1home' ('card:home'): 'os.environ[\'HOME\'] -> $HOME -> home' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1getenv' ('card:home'): 'os.getenv(\'HOME\') -> $HOME' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1fstr' ('card:root'): 'f-string with literal parts only' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1div' ('card:system'): 'Path / literal joins to /etc' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1twoLevel' ('card:word'): 'only one level of assignment resolves…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'A1reassigned' ('card:word'): 'a reassigned name never resolves (unr…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'D1sh' ('card:disk'): 'dd onto a device' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'D1py' ('card:disk'): 'dd-style write to a device: target-fr…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'D1js' ('card:disk'): 'device write in node' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'D1fold' ('card:disk'): 'folded literal names a device' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'D2sh' ('card:disk'): 'format of a drive root' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'D2py' ('card:disk'): 'argv twin cmd /c format D:' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'D3py' ('card:disk'): 'mkfs twin' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'D3sh' ('card:disk'): 'mkfs in the terminal' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'D4py' ('card:fork'): 'fork bomb shell-out' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'D4sh' ('card:fork'): 'fork bomb' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'D5ok' ('run'): '/dev/null is a plain stream' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'D6js' ('card:disk'): 'execFileSync argv twin: diskutil is a…' 1ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'S1' ('card:home'): 'home with trailing slash' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'S2' ('card:root'): 'everything in root' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'S3' ('card:word'): 'shred on a file inside /etc: word, no…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'S4' ('card:home'): 'find -delete from home' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'S5' ('card:system'): 'deleting mirror into /usr' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'S6' ('card:word'): 'git clean is on the plainWipe list' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'S7' ('card:system'): 'PowerShell delete of C:\Windows' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'S8' ('card:home'): 'ANSI-C quoted rm' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'S9' ('card:system'): 'sudo prefix stripped' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'S10' ('run'): 'no wipe word' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'S11' ('card:word'): 'terminal is read whole by plainWipe: …' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'S12' ('card:root'): 'eval hop' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'S13' ('card:home'): 'command substitution hop' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'H1js' ('card:root'): 'spawnSync argv twin rm -rf /' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'H2js' ('card:root'): 'eval literal is a js hop' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'H3js' ('card:root'): 'one-level const resolves' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'H4js' ('run'): 'unresolved exec twin runs like sh -c …' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'H5py' ('card:home'): 'os.execvp argv twin' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'H6py' ('run'): 'harmless shell-out' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'H7py' ('card:root'): 'exec literal hop' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'H8py' ('card:word'): 'popen twin with truncate' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'H9py' ('run'): 'a plain write is not on the wipe list…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'H9sh' ('run'): 'terminal twin of H9py' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'H10py' ('run'): 'a literal mentioning rm on a non-clas…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'H11py' ('card:root'): 'a literal that names a root wipe card…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'H12py' ('run'): 'unparseable Python runs nothing (Synt…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'H13py' ('card:root'): 'parse or not, a qualified effect call…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'M0' ('run'): 'empty-input MCP call: nothing to read…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'M0b' ('run'): 'empty input as a JSON string' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'M1' ('run'): 'S0 MCP call' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'M2' ('card:word'): 'today\'s commandArgument reads comman…' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'M3' ('run'): 'prose leaf: no word model on text' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'M4' ('card:root'): 'argv command argument joined' 0ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'M5' ('card:disk'): 'a device in any leaf' 1ms
+ ✓ server/no-limits-code.test.ts > r1.2 judge.py port parity > 'M6' ('run'): 'S0 polished tool input' 0ms
+
+ Test Files  1 passed (1)
+      Tests  105 passed (105)
+   Start at  21:30:59
+   Duration  5.04s (transform 3.96s, setup 4.79s, import 60ms, tests 52ms, environment 0ms)
+

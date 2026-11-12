@@ -1,3 +1,4 @@
+import { fixturePlatformEnv, stopFixtureServer } from "./testing/platform-fixtures.ts";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -5,7 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { freePortBlock } from "./testing/ports.ts";
-import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 import { openSse, type SseRecorder } from "./testing/sse.ts";
 
 // Every wait in these tests ends on the state it names, or on a definitive
@@ -48,28 +49,36 @@ function processAlive(pid: number): boolean {
 }
 
 async function startFixture(signal: AbortSignal, options: { env?: Record<string, string>; gateRestore?: boolean } = {}): Promise<Fixture> {
-  const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+  const realGit = execFileSync(process.platform === "win32" ? "where.exe" : "which", [process.platform === "win32" ? "git.exe" : "git"], { windowsHide: true, encoding: "utf8" }).trim().split(/\r?\n/)[0]!;
   const root = mkdtempSync(join(tmpdir(), "murage-restore-admission-"));
   const data = join(root, "data"), bin = join(root, "bin"), project = join(root, "project");
   const ready = join(root, "restore-ready"), release = join(root, "restore-release"), dump = join(root, "fake-engine.json");
   for (const path of [data, bin, project]) mkdirSync(path);
   const marker = join(project, "work.txt"); writeFileSync(marker, "checkpoint contents");
-  // Only this fixture's child PATH uses the wrapper. Every real Git operation
+  // Only this fixture's execFile preload uses the wrapper. Every real Git operation
   // delegates unchanged, except restore waits at an explicit readiness gate.
   // The gate holds until the test releases it (the finally block always
   // does) or until the server that spawned it is gone. Tests that only need
   // "the restore reached Git" pre-open the gate and keep the ready marker.
   if (!options.gateRestore) writeFileSync(release, "open");
-  writeFileSync(join(bin, "git"), `#!${process.execPath}\nconst fs=require('node:fs');const cp=require('node:child_process');(async()=>{const args=process.argv.slice(2);if(args[0]==='restore'){const parent=process.ppid;fs.writeFileSync(${JSON.stringify(ready)},'ready');while(!fs.existsSync(${JSON.stringify(release)})){if(process.ppid!==parent){process.stderr.write('fixture restore gate lost its server');process.exit(2);}await new Promise(r=>setTimeout(r,10));}}const result=cp.spawnSync(${JSON.stringify(realGit)},args,{stdio:'inherit',env:process.env});process.exit(result.status??1);})().catch(()=>process.exit(2));\n`, { mode: 0o700 });
+  const gate = join(bin, "git-gate.cjs");
+  writeFileSync(gate, `const fs=require('node:fs');const cp=require('node:child_process');(async()=>{const args=process.argv.slice(2);if(args[0]==='restore'){const parent=process.ppid;fs.writeFileSync(${JSON.stringify(ready)},'ready');while(!fs.existsSync(${JSON.stringify(release)})){try{process.kill(parent,0);}catch{process.stderr.write('fixture restore gate lost its server');process.exit(2);}await new Promise(r=>setTimeout(r,10));}}const result=cp.spawnSync(${JSON.stringify(realGit)},args,{stdio:'inherit',env:process.env,windowsHide:true});process.exit(result.status??1);})().catch(()=>process.exit(2));\n`, { mode: 0o700 });
+  // Patch only this fixture process's execFile entry. A .cmd on PATH cannot be
+  // execFile'd on Windows; this keeps the real Git args, cwd, env and callback.
+  const preload = join(bin, "git-gate.mjs");
+  writeFileSync(preload, `import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';
+const original=cp.execFile;
+cp.execFile=function(file,args,...rest){return file==='git'?original.call(this,process.execPath,[${JSON.stringify(gate)},...args],...rest):original.call(this,file,args,...rest)};
+syncBuiltinESMExports();`);
   const fakeCli = fileURLToPath(new URL("./testing/fake-claude-cli.ts", import.meta.url));
   writeFileSync(join(data, "config.json"), JSON.stringify({ engineDiscovery: "explicit", instances: { fixture: { driver: "claudeAgent", config: { cli: fakeCli } } } }));
   const port = await freePortBlock([0, 1]), secret = "7".repeat(64);
   const desktop = { "x-murage-surface": "desktop", "x-murage-surface-secret": secret };
-  const child = spawn(process.execPath, [fileURLToPath(new URL("./index.ts", import.meta.url))], { cwd: fileURLToPath(new URL("..", import.meta.url)), env: {
-    HOME: root, USERPROFILE: root, PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`, MURAGE_DATA_DIR: data,
+  const child = spawn(process.execPath, ["--import", preload, fileURLToPath(new URL("./index.ts", import.meta.url))], { windowsHide: true, cwd: fileURLToPath(new URL("..", import.meta.url)), env: { ...fixturePlatformEnv(),
+    HOME: root, USERPROFILE: root, PATH: process.env.PATH, MURAGE_DATA_DIR: data,
     MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: secret, FAKE_CLAUDE_MODE: "hang", FAKE_CLAUDE_DUMP: dump,
     ...options.env,
-  }, stdio: ["ignore", "ignore", "pipe"] });
+  }, stdio: ["ignore", "ignore", "pipe", "ipc"] });
   let stderr = ""; child.stderr!.on("data", chunk => { stderr += chunk; });
   const api: Api = async (method, path, body) => {
     const response = await fetch(`http://127.0.0.1:${port}${path}`, { method, signal, headers: { ...desktop, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
@@ -90,7 +99,7 @@ async function startFixture(signal: AbortSignal, options: { env?: Record<string,
     events = await openSse(`http://127.0.0.1:${port}/api/events`, desktop);
   } catch (error) {
     events?.close();
-    await waitForExit(child, { signal: "SIGTERM" });
+    await stopFixtureServer(child);
     await removeTempDir(root);
     throw error;
   }
@@ -133,13 +142,15 @@ async function stopFixture(fixture: Fixture | undefined, pending: Array<Promise<
   writeFileSync(fixture.release, "cleanup");
   fixture.events.close();
   for (const promise of pending) await promise?.catch(() => undefined);
-  await waitForExit(fixture.child, { signal: "SIGTERM" });
+  await stopFixtureServer(fixture.child);
   await removeTempDir(fixture.root);
 }
 
-const posix = it.skipIf(process.platform === "win32");
+// Windows TerminateProcess has no catchable SIGTERM. Only tests of that
+// POSIX signal handler use this guard; admission and the Windows stop twin run.
+const delayedSigterm = it.skipIf(process.platform === "win32");
 
-posix("does not dispatch a new project writer while the actual restore is held inside Git", async ({ signal }) => {
+it("does not dispatch a new project writer while the actual restore is held inside Git", async ({ signal }) => {
   let fixture: Fixture | undefined;
   let restore: Promise<Answer> | undefined;
   try {
@@ -180,7 +191,7 @@ posix("does not dispatch a new project writer while the actual restore is held i
   expect(fixture!.child.exitCode, fixture!.stderr()).toBe(0);
 }, 30000);
 
-posix("Stop then an immediate Restore waits for the stopped turn's engine to close, then restores", async ({ signal }) => {
+delayedSigterm("Stop then an immediate Restore waits for the stopped turn's engine to close, then restores", async ({ signal }) => {
   let fixture: Fixture | undefined;
   let restore: Promise<Answer> | undefined;
   try {
@@ -216,7 +227,7 @@ posix("Stop then an immediate Restore waits for the stopped turn's engine to clo
   expect(fixture!.child.exitCode, fixture!.stderr()).toBe(0);
 }, 30000);
 
-posix("a restore while a live (not stopped) turn holds the project folder is refused at once", async ({ signal }) => {
+it("a restore while a live (not stopped) turn holds the project folder is refused at once", async ({ signal }) => {
   let fixture: Fixture | undefined;
   try {
     fixture = await startFixture(signal, { env: { FAKE_CLAUDE_SIGTERM_DELAY_MS: "2000" } });
@@ -246,7 +257,7 @@ posix("a restore while a live (not stopped) turn holds the project folder is ref
   expect(fixture!.child.exitCode, fixture!.stderr()).toBe(0);
 }, 30000);
 
-posix("a stopped turn that does not close within the engine's budget refuses the restore as still closing, and a retry after the close succeeds", async ({ signal }) => {
+delayedSigterm("a stopped turn that does not close within the engine's budget refuses the restore as still closing, and a retry after the close succeeds", async ({ signal }) => {
   let fixture: Fixture | undefined;
   try {
     // A 1 s close budget (the isolated fixture may shorten it, never disable
@@ -278,4 +289,23 @@ posix("a stopped turn that does not close within the engine's budget refuses the
     await stopFixture(fixture, []);
   }
   expect(fixture!.child.exitCode, fixture!.stderr()).toBe(0);
+}, 30000);
+
+// Windows stops the process tree immediately instead of delivering a POSIX
+// signal to the fake. Prove the same lease boundary and restored bytes there.
+it.runIf(process.platform === "win32")("Windows Stop then Restore joins the engine close before restoring", async ({ signal }) => {
+  let fixture: Fixture | undefined;
+  try {
+    fixture = await startFixture(signal);
+    const { api, until, project, marker } = fixture;
+    const bot = await fixture.create();
+    const { threadId, pid } = await fixture.holdTurn(bot.id, "create fixture checkpoint");
+    const checkpoint = await fixture.checkpointOf(bot.id);
+    writeFileSync(marker, "newer project contents");
+    expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
+    await until("the stopped engine's terminal event", () => fixture!.terminalFrame(threadId));
+    expect(processAlive(pid)).toBe(false);
+    expect(await api("POST", `/api/bots/${bot.id}/checkpoints/restore`, { cwd: project, hash: checkpoint })).toMatchObject({ status: 200, body: { ok: true } });
+    expect(readFileSync(marker, "utf8")).toBe("checkpoint contents");
+  } finally { await stopFixture(fixture, []); }
 }, 30000);

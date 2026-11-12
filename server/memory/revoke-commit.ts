@@ -190,7 +190,7 @@ export function commitRevoke(tx: DatabaseSync, root: RevokeRoot, options: Revoke
       break;
     }
     case "bot": {
-      setMeta(tx, "epoch_bump_lsn", now); setMeta(tx, "policy_bump_lsn", now);
+      // Scope roots and their dependency closure carry this deletion; global policy watermarks belong to global changes.
       const scopes = st(tx, "SELECT id FROM memory_scopes WHERE kind='bot' AND (owner_key=? OR substr(owner_key,1,?)=?)").all(root.botId, root.botId.length + 1, `${root.botId}#`).map(row => String(row.id));
       for (const threadId of root.threadIds) {
         writeRange(tx, R, threadId, FIRST_LSN, now, reason);

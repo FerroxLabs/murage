@@ -37,7 +37,7 @@ describe.skipIf(!runs)("F16 on Windows with the real addon", () => {
 
   /** A child that keeps `file` open (node opens with read, write and delete sharing) until it is killed; resolves once it has it open. */
   function holdOpen(program: string, file: string, extra: string[] = [], env: NodeJS.ProcessEnv = process.env): Promise<ChildProcess> {
-    const child = spawn(program, ["-e", `require("fs").openSync(${JSON.stringify(file)}, "r"); process.stdout.write("open\\n"); setInterval(() => {}, 1e6);`, ...extra], { stdio: ["ignore", "pipe", "ignore"], env });
+    const child = spawn(program, ["-e", `require("fs").openSync(${JSON.stringify(file)}, "r"); process.stdout.write("open\\n"); setInterval(() => {}, 1e6);`, ...extra], { windowsHide: true, stdio: ["ignore", "pipe", "ignore"], env });
     children.push(child);
     return new Promise((resolve, reject) => {
       child.stdout!.on("data", (chunk: Buffer) => { if (chunk.toString().includes("open")) resolve(child); });

@@ -18,7 +18,7 @@ export function resolveNotificationPreferences(value?: unknown): NotificationPre
   return notificationPreferencesSchema.parse(value === undefined || value === null ? {} : value);
 }
 export interface PreferenceNotification {
-  kind: "approval" | "question" | "takeover" | "done" | "routine-failed" | "turn-failed" | "backup-waiting" | "memories-waiting" | "email-digest" | "email-status";
+  kind: "connector-reconnect" | "approval" | "question" | "takeover" | "done" | "routine-failed" | "turn-failed" | "backup-waiting" | "memories-waiting" | "email-digest" | "email-status";
   botId: string;
   threadId: string;
   title: string;
@@ -29,6 +29,11 @@ export interface PreferenceNotification {
   requestId?: string;
   messageId?: string;
   requestTurnId?: string;
+  /** done frames (NOTIFY-EVERYWHERE-1019 2.2): an id and a number, no content, so they survive previews off. */
+  deliveryId?: string;
+  durationMs?: number;
+  /** The receipt's own words (engine, files, what was sent): content, so it never survives previews off. */
+  receipt?: { engineLabel: string; filesTouched: number; sent: string | null };
 }
 const minutes = (value: string) => Number(value.slice(0, 2)) * 60 + Number(value.slice(3));
 /** Whether the owner's quiet hours cover `now` (the one quiet-hours rule: notifications here, bot calls in
@@ -41,6 +46,19 @@ export function quietHoursActive(currentPrefs: unknown, now: Date): boolean {
   const start = minutes(quiet.start), end = minutes(quiet.end);
   return start < end ? current >= start && current < end : current >= start || current < end;
 }
+/** When the quiet hours that cover `now` end (epoch ms, to the minute), or null when they are off or do not cover `now`. The router sets its
+ * one wake-up timer from this, so main needs no quiet-hours code of its own. */
+export function quietHoursEndsAt(currentPrefs: unknown, now: Date): number | null {
+  if (!quietHoursActive(currentPrefs, now)) return null;
+  // Quiet hours recur daily, so "active" is not monotonic ahead of now: scan forward minute by minute (real instants, so a DST change is
+  // honoured) to the first inactive minute. The horizon is bounded (25 hours); a window that never ends (start equals end) answers with the
+  // horizon, and the router asks again when that comes round.
+  const minute = 60_000, horizon = 25 * 60;
+  const base = Math.floor(now.getTime() / minute) * minute;
+  for (let ahead = 1; ahead <= horizon; ahead++) if (!quietHoursActive(currentPrefs, new Date(base + ahead * minute))) return base + ahead * minute;
+  return base + horizon * minute;
+}
+
 /** Whether `now` falls inside the owner's enabled quiet hours. */
 export function inQuietHours(prefs: NotificationPreferences, now: Date): boolean {
   const quiet = prefs.quietHours;
@@ -76,13 +94,22 @@ export function applyHealthPagePreferences(notification: Omit<HealthPageNotifica
   return { kind: "health-page", installationId: notification.installationId, deliveryId: notification.deliveryId, titleKey: notification.titleKey,
     bodyKey: notification.bodyKey, route: "health", title: HEALTH_PAGE_TITLE, body: HEALTH_PAGE_BODY };
 }
+/** Why a frame was dropped: "category" (that category is off; tested first), "quiet" (quiet hours were the ONLY reason) or null (it passes). */
+export function notificationDropReason(notification: PreferenceNotification, currentPrefs: unknown, now: Date): "category" | "quiet" | null {
+  const prefs = resolveNotificationPreferences(currentPrefs);
+  const category = notification.kind === "done" ? "completion"
+    : notification.kind === "memories-waiting" ? "memories"
+    : notification.kind === "connector-reconnect" || notification.kind === "routine-failed" || notification.kind === "turn-failed" ? "failures" : "attention";
+  if (!prefs[category]) return "category";
+  return quietHoursActive(prefs, now) ? "quiet" : null;
+}
 /** A pure delivery filter: suppression does not queue work, replay alerts,
  * approve a request, or affect the conversation's own pending cards. */
 export function applyNotificationPreferences<T extends PreferenceNotification>(notification: T, currentPrefs: unknown, now: Date): T | null {
   const prefs = resolveNotificationPreferences(currentPrefs);
   const category = notification.kind === "done" ? "completion"
     : notification.kind === "memories-waiting" ? "memories"
-    : notification.kind === "routine-failed" || notification.kind === "turn-failed" ? "failures" : "attention";
+    : notification.kind === "connector-reconnect" || notification.kind === "routine-failed" || notification.kind === "turn-failed" ? "failures" : "attention";
   if (!prefs[category]) return null;
   if (quietHoursActive(prefs, now)) return null;
   if (prefs.previewContent) return notification;
@@ -92,6 +119,8 @@ export function applyNotificationPreferences<T extends PreferenceNotification>(n
     ...(notification.requestId ? { requestId: notification.requestId } : {}),
     ...(notification.messageId ? { messageId: notification.messageId } : {}),
     ...(notification.requestTurnId ? { requestTurnId: notification.requestTurnId } : {}),
+    ...(notification.deliveryId ? { deliveryId: notification.deliveryId } : {}),
+    ...(typeof notification.durationMs === "number" ? { durationMs: notification.durationMs } : {}),
     botName: "", title: "Murage", body: category === "attention" ? "Your attention is needed."
       : category === "memories" ? "Memories are waiting for you."
       : category === "completion" ? "A task has finished." : "A task needs review after a failure.",

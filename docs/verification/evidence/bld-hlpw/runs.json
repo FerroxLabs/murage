@@ -1,0 +1,68 @@
+[
+  {
+    "log": "red.log",
+    "exit": 1,
+    "result": "9 Vitest assertions failed, 4 node assertions failed; missing exports before implementation",
+    "sha256": "51cbacb077b6dbd2d21740baf0afeedde447805483d4a539d874b25d5f6c64b5"
+  },
+  {
+    "log": "red-ui-leak.log",
+    "exit": 1,
+    "result": "6 assertions failed; missing exports before dialog/leak implementation",
+    "sha256": "6f0aa3f0c8d93cb7e823a5f50faeecd02867cb5d8a671091a45392dfa1f49f39"
+  },
+  {
+    "log": "red-identity.log",
+    "exit": 1,
+    "result": "3 assertions failed; missing identity exports before implementation",
+    "sha256": "e9c0ffcf54bf062393b66e446e7cfccf423d2808e1f97910ef055b1782857543"
+  },
+  {
+    "log": "green-1.log",
+    "exit": 1,
+    "result": "INVALID Vitest evidence: module not found on local fallback; 4 node tests passed",
+    "sha256": "7cfa20ad4f0587c15a743ad1ecdb80b0456bb81fccea4eff2da8a57f2395f406"
+  },
+  {
+    "log": "green-2.log",
+    "exit": 1,
+    "result": "13 passed, 2 failed: jsdom spellcheck property and Unicode echo",
+    "sha256": "b996384e8300fe4330cd6db83848b3f5855b1d289bc266b3b16efd7d604238ee"
+  },
+  {
+    "log": "identity-typecheck-1.log",
+    "exit": 1,
+    "result": "3 identity tests passed; typecheck failed on typed-array crypto signature",
+    "sha256": "c2877ab6488f2b4a6dd2b65b558987a4fc455443f23dd92d9e000c29be706708"
+  },
+  {
+    "log": "green-3.log",
+    "exit": 0,
+    "result": "primitive rerun passed",
+    "sha256": "2f22a4e55c410efa6604f0775a2d5ce6d1f93f7d9b6caecfe1d876bddba3b1cd"
+  },
+  {
+    "log": "gates-1.log",
+    "exit": 0,
+    "result": "160 Vitest + 4 node tests passed; full typecheck passed on earlier source",
+    "sha256": "c0e0af5b1da6c6c6279caab9e53d62b45a22bc39b42b7a194f51fa486955c599"
+  },
+  {
+    "log": "green-4.log",
+    "exit": 0,
+    "result": "20 primitive tests passed after auth/focus/claim hardening",
+    "sha256": "4488b5156775efda2ed61a3f32d81a622437b03dc7ea47a8560e52249f34f27d"
+  },
+  {
+    "log": "fixture.log",
+    "exit": 0,
+    "result": "isolated fake-engine readiness; cleanup confirmed",
+    "sha256": "ee02b644442fd177ab53bf92d362eddf7bab01ce7f727c407ef5917f50931311"
+  },
+  {
+    "log": "final-gates-1.log",
+    "exit": 0,
+    "result": "162 Vitest + 5 node tests passed; 16 primitive mutants killed; full typecheck passed",
+    "sha256": "f7a1b2152ca9ff75c4ca95ef14315f3b1930475d8478062ee1f250c271e9a815"
+  }
+]

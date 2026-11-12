@@ -51,8 +51,9 @@
 import fs from "node:fs";
 import { endianness } from "node:os";
 import type { DatabaseSync } from "node:sqlite";
-import { headFlipCost, MARKER_STEP_RESERVE, markerSlice, totalChanges, type MarkerSliceOptions } from "./revoke-marker.ts";
+import { headFlipCost, receiptFlipCost, MARKER_STEP_RESERVE, markerSlice, markerSliceDetailed, totalChanges, type MarkerSliceOptions, type MarkerSliceOutcome } from "./revoke-marker.ts";
 import { darwinWrittenBytes } from "../os-disk-written.ts";
+import { walResetFence } from "../wal-maintenance.ts";
 
 /** The budget: bytes per sliding minute (about 20 MB). Tests may lower it. */
 export const REVOKE_WRITE_BUDGET = { bytesPerMinute: 20 * 1024 * 1024 };
@@ -114,6 +115,7 @@ const COPY_POLL_MS = 1000;
 export const COPY_PROOF_MAX_MS = REVOKE_WRITE_WINDOW_MS;
 /** The drain-owned transaction being measured now (beginRevokeMeasure), 0 when none. */
 let currentTx = 0, nextTx = 0;
+let currentTxDb: DatabaseSync | null = null;
 /** C: the estimated WAL bytes a changed row costs (S2). Process-wide, as the ledger is; null until a handle seeds it at its ceiling. */
 let cost: number | null = null;
 /** The measured write and copy of the latest drain-owned commit that changed rows (r3.6): what the next admission needs room for. A
@@ -141,7 +143,7 @@ export const revokePaceTestHooks: { unmeasurable: boolean; osUnknown: boolean; b
 /** Test hooks: a fake clock (none: the wall clock), and an empty ledger with C back at its seed. */
 export function setRevokeBudgetClock(next?: () => number): void { clock = next ?? (() => Date.now()); }
 export function resetRevokeWriteBudget(): void {
-  ledger.length = 0; spent = 0; paced.length = 0; paceSpent = 0; copyHeld = 0; copySince = 0; copyMark = { salt: null, lastFrame: 0 }; lateHeld = 0; lateSalt = null; lateLastFrame = 0; currentTx = 0; txStartChanges = null; cost = null; lastCommitBytes = 0; lastCommitRows = 0; copyDeferred = false; lateDeferred = false; paceNeedNow = 0;
+  ledger.length = 0; spent = 0; paced.length = 0; paceSpent = 0; copyHeld = 0; copySince = 0; copyMark = { salt: null, lastFrame: 0 }; lateHeld = 0; lateSalt = null; lateLastFrame = 0; currentTx = 0; currentTxDb = null; txStartChanges = null; cost = null; lastCommitBytes = 0; lastCommitRows = 0; copyDeferred = false; lateDeferred = false; paceNeedNow = 0;
   for (const key of Object.keys(revokeWriteMeter) as Array<keyof typeof revokeWriteMeter>) revokeWriteMeter[key] = 0;
 }
 
@@ -228,6 +230,78 @@ export function revokeMinuteChanges(db: DatabaseSync): number {
 function needRows(db: DatabaseSync, opts: Pick<MarkerSliceOptions, "only">): number {
   return Math.max(MARKER_STEP_RESERVE + MIN_SLICE_CHANGES, opts.only === undefined ? headFlipCost(db) : 0);
 }
+export type SliceTarget =
+  | { kind: "global" }
+  | { kind: "only"; revokeId: number }
+  | { kind: "flips" }
+  | { kind: "flows" };
+export type SlicePolicy = "inline" | "drain";
+export type { BlockedCause } from "./revoke-marker.ts";
+export type SliceResult =
+  | { admitted: false; refused: "ledger" | "pace" }
+  | ({ admitted: true; changed: number } & MarkerSliceOutcome);
+
+/** One calculation for drain waiting and admission, including the precise empty-minute escape. */
+function targetNeed(db: DatabaseSync, target: SliceTarget) {
+  let flipTerm: number;
+  switch (target.kind) {
+    case "global": flipTerm = headFlipCost(db); break;
+    case "flips": flipTerm = receiptFlipCost(db); break;
+    case "only": case "flows": flipTerm = 0; break;
+    default: throw new Error("MEMORY_REVOKE_TARGET");
+  }
+  const per = revokeCostPerChange(db), rows = Math.max(MARKER_STEP_RESERVE + MIN_SLICE_CHANGES, flipTerm);
+  const escape = rows === flipTerm && flipTerm > revokeMinuteChanges(db);
+  const bytes = Math.ceil(per * rows);
+  return { per, rows, flipTerm, escape, bytes: escape ? Math.min(bytes, REVOKE_WRITE_BUDGET.bytesPerMinute) : bytes };
+}
+/** A targeted drain waits for both ledgers. An impossible minute is not a zero wait or an escape. */
+export function revokeSettleWaitMs(db: DatabaseSync, target: SliceTarget): number {
+  const paceNeed = revokePaceNeed(db);
+  const need = targetNeed(db, target);
+  const now = clock(); // copy accounting may have consumed time or charged new bytes
+  if (need.bytes > REVOKE_WRITE_BUDGET.bytesPerMinute) return Number.POSITIVE_INFINITY;
+  return revokeWriteWaitMs(need.bytes, now, paceNeed);
+}
+
+/** Target-specific admission, deliberately not wired into legacy callers. */
+export function admitMarkerSlice(db: DatabaseSync, rows: number, ms: number, late: Parameters<typeof markerSlice>[3], target: SliceTarget, policy: SlicePolicy): SliceResult {
+  if (policy !== "drain" && policy !== "inline" || policy === "inline" && target.kind !== "only") throw new Error("MEMORY_REVOKE_POLICY");
+  const measured = currentTx !== 0 && currentTxDb === db;
+  if (!db.isTransaction || (policy === "drain" ? !measured : measured)) throw new Error("MEMORY_REVOKE_TRANSACTION");
+  const deadline = performance.now() + ms;
+  if (policy === "drain") revokePaceNeed(db);
+  trim(clock());
+  const need = targetNeed(db, target);
+  let room = Math.floor((REVOKE_WRITE_BUDGET.bytesPerMinute - spent) / need.per);
+  if (room < need.rows) {
+    if (!(spent === 0 && need.escape)) return { admitted: false, refused: "ledger" };
+    room = need.rows;
+  }
+  if (policy === "drain") {
+    if (!paceAdmits()) { revokeWriteMeter.paceWaits++; return { admitted: false, refused: "pace" }; }
+    const left = Math.max(REVOKE_PACE_COMMIT.rows, need.flipTerm - MARKER_STEP_RESERVE) - txRows(db);
+    room = Math.min(room, MARKER_STEP_RESERVE + Math.max(0, left));
+  }
+  const remaining = deadline - performance.now();
+  // Admission's accounting shares the caller's slice allowance; never start new marker work after it expires.
+  if (!(remaining > 0)) return { admitted: true, outcome: "idle", changed: 0 };
+  const opts: MarkerSliceOptions = target.kind === "only" ? { only: target.revokeId }
+    : target.kind === "flips" ? { flipsOnly: true } : target.kind === "flows" ? { flowsOnly: true } : {};
+  const before = totalChanges(db);
+  try {
+    const result = markerSliceDetailed(db, rows, remaining, late, room - MARKER_STEP_RESERVE, opts);
+    return { admitted: true, ...result, changed: Math.max(0, totalChanges(db) - before) };
+  } finally {
+    const changed = Math.max(0, totalChanges(db) - before);
+    if (changed > 0) {
+      const bytes = Math.ceil(changed * need.per);
+      revokeWriteMeter.slices++; revokeWriteMeter.charged += bytes;
+      noteRevokeBytes(bytes, clock());
+    }
+  }
+}
+
 /** Bytes a slice needs room for before it is admitted (budgetedMarkerSlice admits it the same way): its least rows at C. At most the whole
  * budget: a flip never costs more than an empty minute holds (revokeMinuteChanges), so the wait for room always ends. */
 export function revokeSliceNeed(db: DatabaseSync): number {
@@ -348,6 +422,34 @@ function resetCopiedLog(db: DatabaseSync, salt: string, mxFrame: number): void {
   let timeout: number;
   try { timeout = Number((db.prepare("PRAGMA busy_timeout").get() as { timeout?: number } | undefined)?.timeout); } catch { return; }
   if (!Number.isSafeInteger(timeout) || timeout < 0) return;
+  // C2 r3.8: the reset enters wal-maintenance's fence before it reads its guard. enter() never blocks the server thread (r3.6): false means
+  // a checkpointer pass is in flight, so the reset defers: it is skipped now and the next drain step tries again (this function never
+  // waits). Never starved: a deferred reset leaves its intent up for at most FENCE_HOLD_MS, so the worker holds back the next timed pass
+  // (it yields to a pending resetWant, capped at 250 ms there) and the retry at the next step finds the worker idle. The intent is dropped
+  // in the finally on a run, and by the timer when no retry comes.
+  const fence = walResetFence();
+  if (!fence.enter()) {
+    revokeWriteMeter.logResetsSkipped++;
+    // leaves through a fresh fence: the worker may have restarted since the skip
+    if (fenceHold === null) {
+      fenceHoldFire = () => { fenceHold = null; fenceHoldFire = null; walResetFence().leave(); };
+      fenceHold = setTimeout(fenceHoldFire, resetFenceTestHooks.holdMs); fenceHold.unref();
+    }
+    return;
+  }
+  if (fenceHold !== null) { clearTimeout(fenceHold); fenceHold = null; fenceHoldFire = null; }
+  try { resetCopiedLogFenced(db, salt, mxFrame, timeout); } finally { fence.leave(); }
+}
+const FENCE_HOLD_MS = 250;
+/** Test only: the hold of a deferred reset's intent (default FENCE_HOLD_MS). */
+export const resetFenceTestHooks: { holdMs: number; fireNow(): void } = {
+  holdMs: FENCE_HOLD_MS,
+  /** Runs the pending hold-timer callback now (no wall clock in tests). */
+  fireNow() { const fire = fenceHoldFire; if (fire !== null) { if (fenceHold !== null) clearTimeout(fenceHold); fire(); } },
+};
+let fenceHoldFire: (() => void) | null = null;
+let fenceHold: ReturnType<typeof setTimeout> | null = null;
+function resetCopiedLogFenced(db: DatabaseSync, salt: string, mxFrame: number, timeout: number): void {
   try {
     db.exec("PRAGMA busy_timeout=0");
     revokePaceTestHooks.beforeResetGuard?.();
@@ -518,11 +620,14 @@ export type RevokeMeasure = { mark: WalIndexMark | null; changes: number; os: nu
 export function beginRevokeMeasure(db: DatabaseSync): RevokeMeasure {
   let inside = false;
   try { inside = db.isTransaction; } catch { inside = false; }
-  const tx = inside ? ++nextTx : 0;
-  currentTx = tx;
+  // Obtain every fallible input before publishing ownership of the measurement.
   const unreadable = revokePaceTestHooks.unmeasurable, changes = totalChanges(db);
+  const mark = inside && !unreadable ? walIndexMark(db) : null;
+  const os = inside && !unreadable && !revokePaceTestHooks.osUnknown ? txOsBlocks() : null;
+  const tx = inside ? ++nextTx : 0;
+  currentTx = tx; currentTxDb = inside ? db : null;
   txStartChanges = inside ? changes : null;
-  return { mark: inside && !unreadable ? walIndexMark(db) : null, changes, os: inside && !unreadable && !revokePaceTestHooks.osUnknown ? txOsBlocks() : null, charged: revokeWriteMeter.charged, tx };
+  return { mark, changes, os, charged: revokeWriteMeter.charged, tx };
 }
 /** Right after that transaction's own COMMIT (or its ROLLBACK: `cost` false), before anything else runs on this thread.
  * The pace (r3.6), for every such transaction, charged now: a write half = the most of its OS bytes (Linux thread / macOS process;
@@ -534,48 +639,52 @@ export function beginRevokeMeasure(db: DatabaseSync): RevokeMeasure {
  * marker's slice and nothing else (`cost`), its OS bytes beyond them are charged too and the frames over the rows it changed go into C
  * (noteRevokeCost, same salt only). The measured log bytes, or null. */
 export function endRevokeMeasure(db: DatabaseSync, from: RevokeMeasure, cost: boolean = true, committed: boolean = true): number | null {
-  // First, before anything else runs on this thread: what the transaction cost the OS counter.
-  const unreadable = revokePaceTestHooks.unmeasurable;
-  const os = from.os === null || unreadable ? null : txOsBlocks();
-  const osBytes = os !== null && from.os !== null && os >= from.os ? (os - from.os) * 512 : null;
-  const rows = Math.max(0, totalChanges(db) - from.changes);
-  // frames: only under the salt of the mark, never fewer than at the mark. ANY restart in between is rows x W (r3.6c: the restart rule is
-  // gone; no generation is ever attributed to the drain): another connection can checkpoint the drain's frames and restart the log smaller
-  // after its COMMIT (Astra r3.6b High). The drain's own copy resets a copied log before its next BEGIN (resetCopiedLog), so its commits
-  // append under the salt they marked.
-  let bytes: number | null = null;
-  const index = !unreadable ? walIndexMark(db) : null;
-  if (from.mark && index && index.salt === from.mark.salt && index.mxFrame >= from.mark.mxFrame) {
-    bytes = (index.mxFrame - from.mark.mxFrame) * frameBytes(db) + (from.mark.mxFrame === 0 && index.mxFrame > 0 ? 32 : 0);
+  try {
+    // First, before anything else runs on this thread: what the transaction cost the OS counter.
+    const unreadable = revokePaceTestHooks.unmeasurable;
+    const os = from.os === null || unreadable ? null : txOsBlocks();
+    const osBytes = os !== null && from.os !== null && os >= from.os ? (os - from.os) * 512 : null;
+    const rows = Math.max(0, totalChanges(db) - from.changes);
+    // frames: only under the salt of the mark, never fewer than at the mark. ANY restart in between is rows x W (r3.6c: the restart rule is
+    // gone; no generation is ever attributed to the drain): another connection can checkpoint the drain's frames and restart the log smaller
+    // after its COMMIT (Astra r3.6b High). The drain's own copy resets a copied log before its next BEGIN (resetCopiedLog), so its commits
+    // append under the salt they marked.
+    let bytes: number | null = null;
+    const index = !unreadable ? walIndexMark(db) : null;
+    if (from.mark && index && index.salt === from.mark.salt && index.mxFrame >= from.mark.mxFrame) {
+      bytes = (index.mxFrame - from.mark.mxFrame) * frameBytes(db) + (from.mark.mxFrame === 0 && index.mxFrame > 0 ? 32 : 0);
+    }
+    const now = clock();
+    trim(now); // the open transaction's entries are still protected here (trim), so none ages out before it is taken
+    const strict = rows * revokeChangeCeiling(db);
+    const ledgerHeld = from.tx ? takeTx(ledger, from.tx) : 0;
+    spent -= ledgerHeld;
+    if (currentTx === from.tx) { currentTx = 0; currentTxDb = null; txStartChanges = null; }
+    const osTerm = process.platform === "win32" ? 0 : osBytes ?? strict;
+    const frameTerm = bytes ?? strict;
+    const write = Math.ceil(Math.max(osTerm, frameTerm)), copy = Math.ceil(frameTerm);
+    if (osBytes === null && process.platform !== "win32" || bytes === null) revokeWriteMeter.paceUnmeasured += write + copy;
+    else revokeWriteMeter.paceMeasured += write + copy;
+    notePace(write, now, 0);
+    if (committed) lastCommitRows = rows;
+    if (rows > 0 && (committed || write + copy > lastCommitBytes)) lastCommitBytes = write + copy;
+    if (copy > 0) { copyHeld += copy; copySince = now; copyMark = index !== null ? { salt: index.salt, lastFrame: index.mxFrame } : { salt: null, lastFrame: 0 }; copyDeferred = index === null; }
+    // the drain proves its own copy (r3.6c, H-a), with or without a checkpointer thread: right after its COMMIT, outside the transaction, it
+    // copies the log itself (PASSIVE: it never waits on a reader) and resets it when that left it completely copied. A reader that pins the
+    // copy leaves the debt held; every later wait decision tries again, and COPY_PROOF_MAX_MS bounds it
+    settleCopies(db, now);
+    // admission: the transaction's charges dated at its COMMIT (they and its overhead leave the minute together), then the overhead
+    if (ledgerHeld > 0) { push(ledger, ledgerHeld, now, 0); spent += ledgerHeld; }
+    if (!cost) return null;
+    if (osBytes !== null) {
+      revokeWriteMeter.osMeasured += osBytes;
+      const beyond = Math.max(0, osBytes - Math.max(0, revokeWriteMeter.charged - from.charged));
+      if (beyond > 0) { revokeWriteMeter.osBeyond += beyond; revokeWriteMeter.charged += beyond; noteRevokeBytes(beyond, now); }
+    }
+    if (bytes === null || !(rows > 0) || !(bytes > 0)) return null;
+    noteRevokeCost(db, bytes, rows);
+    return bytes;
+  } finally {
+    if (currentTx === from.tx) { currentTx = 0; currentTxDb = null; txStartChanges = null; }
   }
-  const now = clock();
-  trim(now); // the open transaction's entries are still protected here (trim), so none ages out before it is taken
-  const strict = rows * revokeChangeCeiling(db);
-  const ledgerHeld = from.tx ? takeTx(ledger, from.tx) : 0;
-  spent -= ledgerHeld;
-  if (currentTx === from.tx) { currentTx = 0; txStartChanges = null; }
-  const osTerm = process.platform === "win32" ? 0 : osBytes ?? strict;
-  const frameTerm = bytes ?? strict;
-  const write = Math.ceil(Math.max(osTerm, frameTerm)), copy = Math.ceil(frameTerm);
-  if (osBytes === null && process.platform !== "win32" || bytes === null) revokeWriteMeter.paceUnmeasured += write + copy;
-  else revokeWriteMeter.paceMeasured += write + copy;
-  notePace(write, now, 0);
-  if (committed) lastCommitRows = rows;
-  if (rows > 0 && (committed || write + copy > lastCommitBytes)) lastCommitBytes = write + copy;
-  if (copy > 0) { copyHeld += copy; copySince = now; copyMark = index !== null ? { salt: index.salt, lastFrame: index.mxFrame } : { salt: null, lastFrame: 0 }; copyDeferred = index === null; }
-  // the drain proves its own copy (r3.6c, H-a), with or without a checkpointer thread: right after its COMMIT, outside the transaction, it
-  // copies the log itself (PASSIVE: it never waits on a reader) and resets it when that left it completely copied. A reader that pins the
-  // copy leaves the debt held; every later wait decision tries again, and COPY_PROOF_MAX_MS bounds it
-  settleCopies(db, now);
-  // admission: the transaction's charges dated at its COMMIT (they and its overhead leave the minute together), then the overhead
-  if (ledgerHeld > 0) { push(ledger, ledgerHeld, now, 0); spent += ledgerHeld; }
-  if (!cost) return null;
-  if (osBytes !== null) {
-    revokeWriteMeter.osMeasured += osBytes;
-    const beyond = Math.max(0, osBytes - Math.max(0, revokeWriteMeter.charged - from.charged));
-    if (beyond > 0) { revokeWriteMeter.osBeyond += beyond; revokeWriteMeter.charged += beyond; noteRevokeBytes(beyond, now); }
-  }
-  if (bytes === null || !(rows > 0) || !(bytes > 0)) return null;
-  noteRevokeCost(db, bytes, rows);
-  return bytes;
 }

@@ -841,7 +841,8 @@
       "askId": "ask_0001_abcdefghij",
       "threadId": "6c1e2f40-5b7d-4a93-8e16-0f2d9a7b3c58",
       "id": "m-0002",
-      "notify": true
+      "notify": true,
+      "proven": false
     },
     "errors": [
       {

@@ -43,7 +43,7 @@ it("a Slack channel turn that meets its engine's limit gets the plain limit line
     const env: NodeJS.ProcessEnv = { HOME: home, USERPROFILE: home, MURAGE_DATA_DIR: data, MURAGE_STATIC_DIR: staticDir, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1),
       MURAGE_DEV_DESKTOP_SECRET: secret, PATH: process.env.PATH };
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
-    child = spawn(process.execPath, ["--import", pathToFileURL(join(root, "server/testing/slack-sdk-preload.mjs")).href, join(root, "server/index.ts")], { cwd: root, env, stdio: ["ignore", "ignore", "pipe", "ipc"] });
+    child = spawn(process.execPath, ["--import", pathToFileURL(join(root, "server/testing/slack-sdk-preload.mjs")).href, join(root, "server/index.ts")], { windowsHide: true, cwd: root, env, stdio: ["ignore", "ignore", "pipe", "ipc"] });
     child.stderr!.on("data", chunk => { stderr += chunk; }); child.on("message", value => { if ((value as Trace)?.kind === "slack-fixture") traces.push(value as Trace); });
     await expect.poll(async () => { if (child!.exitCode !== null) throw new Error("Fixture exited: " + stderr); try { return (await request("GET", "/api/health")).status; } catch { return 0; } }, { timeout: 20000 }).toBe(200);
     const candidate = (await request("GET", "/api/bots")).body.bots[0];

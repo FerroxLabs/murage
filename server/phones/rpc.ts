@@ -1,3 +1,4 @@
+import { serviceNoLimits } from '../service-no-limits.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -44,16 +45,18 @@ function isTool(name: unknown): name is PhoneToolName {
 }
 
 /** The phone a tool would run on, or null: the registry's pick for the tool's capability, if that phone's report and the grant allow the tool. */
-export function phoneForTool(grant: PhoneApps, registry: PhoneRegistry, tool: PhoneToolName): PhoneRegistration | null {
+export function phoneForTool(grant: PhoneApps, registry: PhoneRegistry, tool: PhoneToolName, noLimits = false): PhoneRegistration | null {
   const reg = registry.chooseFor(PHONE_ACTIONS[tool].capability);
   if (reg === null) return null;
-  return phoneTools(grant, reg.capabilities).includes(tool) ? reg : null;
+  return phoneTools(noLimits ? unrestrictedPhoneGrant : grant, reg.capabilities).includes(tool) ? reg : null;
 }
 
-/** The tools a turn may be offered right now: grant intersected with what a registered phone reports, in catalog order. */
-export function offeredPhoneTools(grant: PhoneApps, registry: PhoneRegistry): PhoneToolName[] {
-  return PHONE_TOOL_NAMES.filter((tool) => phoneForTool(grant, registry, tool) !== null);
+/** Available device tools in catalog order. No limits ignores saved grants and retains the device report. */
+export function offeredPhoneTools(grant: PhoneApps, registry: PhoneRegistry, noLimits = false): PhoneToolName[] {
+  return PHONE_TOOL_NAMES.filter((tool) => phoneForTool(grant, registry, tool, noLimits) !== null);
 }
+
+export const unrestrictedPhoneGrant: PhoneApps = { calendar: "change", reminders: "change", contacts: "read", location: "precise", alarms: "set", messages: "compose", calls: "dial" };
 
 const refuse = (copy: PhoneRpcCopy, code: RpcRefusal, log?: (code: string) => void): PhoneRpcResult => {
   log?.(code);
@@ -68,15 +71,18 @@ export async function phoneRpc(claim: InternalCapability, call: { tool: PhoneToo
     // 1. the authority is live for this very generation, on this thread and this bot
     const authority = deps.authorities.live(claim.generation);
     if (authority === null || authority.generation !== claim.generation || authority.threadId !== claim.threadId || authority.botId !== claim.botId) return no("refused");
-    // 2. F5: the turn was dispatched with no automation source, from the owner's desktop or companion
+    // 2. Lower levels require a direct owner dispatch; No limits uses the authenticated live turn policy.
+    const noLimits = serviceNoLimits(claim.generation, claim.threadId, claim.botId);
     const facts = deps.dispatchFacts(claim.generation);
-    if (facts === null || (facts.automationSource !== undefined && facts.automationSource !== null)) return no("refused");
-    if (facts.origin !== "desktop" && facts.origin !== "companion") return no("refused");
-    // 3. F1: the tool is one the grant allows on a phone that reports it
+    if (!noLimits && (facts === null || (facts.automationSource !== undefined && facts.automationSource !== null))) return no("refused");
+    if (!noLimits && facts?.origin !== "desktop" && facts?.origin !== "companion") return no("refused");
+    // 3. The phone must report the capability. Saved granular grants apply below No limits.
     if (!isTool(call.tool)) return no("refused");
-    const grant = deps.grant(claim.botId);
-    const phone = phoneForTool(grant, deps.registry, call.tool);
-    if (phone === null) return no("refused");
+    const grant = noLimits ? unrestrictedPhoneGrant : deps.grant(claim.botId);
+    const phone = phoneForTool(grant, deps.registry, call.tool, noLimits);
+    if (phone === null) return noLimits
+      ? { ok: false, code: "unsupported", text: "That phone capability is off or unavailable. Enable it in Murage on your phone or in your phone's app permissions." }
+      : no("refused");
     // 4. the arguments parse, and a location ask is no more precise than the grant and the report allow
     const action = PHONE_ACTIONS[call.tool];
     const parsed = actionArgsSchema[action.action].safeParse(call.args);
@@ -84,7 +90,9 @@ export async function phoneRpc(claim: InternalCapability, call: { tool: PhoneToo
     if (call.tool === "phone_location_get") {
       const allowed = locationPrecision(grant, phone.capabilities);
       const asked = (parsed.data as { precision: "approximate" | "precise" }).precision;
-      if (allowed === null || (asked === "precise" && allowed !== "precise")) return no("refused");
+      if (allowed === null || (asked === "precise" && allowed !== "precise")) return noLimits
+        ? { ok: false, code: "unsupported", text: "Precise location is off on your phone. Enable it in your phone's app permissions." }
+        : no("refused");
     }
     const identity = deps.identity(claim.botId, claim.threadId);
     if (identity === null) return no("refused");

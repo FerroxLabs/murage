@@ -25,6 +25,32 @@ export type FluxLimitsReading =
 
 const PENDING: FluxLimitsReading = { state: "pending" };
 
+/** The spend_basis values this meter accepts. Flux confirmed (2026-11-11) "customer_billed_sale" is the ONLY value it sends,
+ *  a constant on every key kind. One named set, so a contract change is one line. Anything else is pending AND said out loud. */
+export const ACCEPTED_SPEND_BASES: ReadonlySet<string> = new Set(["customer_billed_sale"]);
+
+const seenBasisDrift = new Set<string>();
+/** Tests only: forget which unknown values were already reported. */
+export function resetSpendBasisDriftLog(): void { seenBasisDrift.clear(); }
+
+/** The only spend_basis words the drift log may print raw: the accepted contract word and the retired bare "billed_sale"
+ *  (Flux confirmed it is gone). Every other value, whatever its shape, prints as its length only. */
+const LOGGABLE_BASES: ReadonlySet<string> = new Set(["customer_billed_sale", "billed_sale"]);
+
+/** True when `value` is an accepted spend_basis. An unknown value is reported ONCE per distinct RAW value as a server-log line
+ *  (the log tail is what the support bundle carries). The line names the field and, only for a known Flux contract word, the value:
+ *  anything else (an id, a key, a long string) prints as its length. Never a key id, a key or an account. */
+export function spendBasisAccepted(value: unknown): boolean {
+  if (typeof value === "string" && ACCEPTED_SPEND_BASES.has(value)) return true;
+  const shown = typeof value === "string" ? (LOGGABLE_BASES.has(value) ? value : `<unrecognised, ${value.length} chars>`) : value === undefined ? "<absent>" : `<${value === null ? "null" : typeof value}>`;
+  const identity = createHash("sha256").update(`${typeof value}:${JSON.stringify(value) ?? "undefined"}`).digest("hex");
+  if (!seenBasisDrift.has(identity) && seenBasisDrift.size < 50) {
+    seenBasisDrift.add(identity);
+    console.warn(`[flux-limits] contract drift: spend_basis="${shown}" is not the accepted value; the spend meter stays pending`);
+  }
+  return false;
+}
+
 const money = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null);
 const stamp = (value: unknown): string | null => (typeof value === "string" && value.trim() !== "" && Number.isFinite(Date.parse(value)) ? value : null);
 
@@ -37,7 +63,7 @@ export function parseFluxLimits(body: unknown): FluxLimitsReading {
   const resetsAt = stamp(raw.resets_at);
   if (spentUsd === null || asOf === null || resetsAt === null) return PENDING;
   // Only Flux's billed figure is money we show; any other basis is not this meter's.
-  if (raw.spend_basis !== "billed_sale") return PENDING;
+  if (!spendBasisAccepted(raw.spend_basis)) return PENDING;
   const budget = raw.key_monthly_budget_usd;
   if (budget !== undefined && budget !== null && money(budget) === null) return PENDING;
   const reading: FluxLimitsReading = { state: "ok", spentUsd, asOf, resetsAt, keyBudgetUsd: money(budget) };

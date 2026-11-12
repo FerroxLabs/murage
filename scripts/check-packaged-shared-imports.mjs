@@ -68,7 +68,7 @@ export function missingFromPackage() {
 // every other shipped electron/ file: preloads, workers and helpers load on their own) through `import ... from`, `export ... from`,
 // `import "..."`, a literal `import("...")` or a literal `require("...")` must be matched by electron-builder.yml's `files:`
 // list. The server is not in this graph: it ships as the esbuild bundle (scripts/bundle-server.mjs, bundle: true), which inlines
-// every relative import, shared/ included; serverBundleInlinesRelativeImports() checks that no relative path is made external.
+// every relative import, shared/ included; the server build also stages the external Windows hide preload (tested by win-hide-bundles.test.mjs).
 
 const SPECIFIERS = [
   /\bimport\s+(?:[\w*{}\s,$]+\s+from\s+)?["']([^"']+)["']/g,
@@ -145,7 +145,7 @@ export function unpackagedMainProcessModules() {
   const patterns = builderFilePatterns();
   return { unpackaged: graph.files.filter((file) => !isPackaged(file, patterns)), missing: graph.missing, reached: graph.files };
 }
-/** The server bundle makes no relative module external, so every shared/ (or other relative) import of server code is inside it. */
+/** Explicit external lists contain no relative modules. The Windows hide build plugin separately stages its two tested preload files. */
 export function serverBundleInlinesRelativeImports(bundleScript = join(root, "scripts", "bundle-server.mjs")) {
   const source = readFileSync(bundleScript, "utf8");
   const externals = [...source.matchAll(/\bexternal:\s*\[([^\]]*)\]/g)].flatMap((match) => [...match[1].matchAll(/["']([^"']+)["']/g)].map((item) => item[1]));

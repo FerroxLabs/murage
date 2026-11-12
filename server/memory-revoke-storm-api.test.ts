@@ -201,7 +201,7 @@ describe.skipIf(process.platform === "win32")("1.0.3 revoke storm", () => {
     const all = await messages(room.threadId);
     expect(all.filter(isReply)).toHaveLength(3);
     expect(errorLines(all)).toEqual([]);
-    expect(all.some(message => /without remembered context/.test(String(message.tool?.name ?? "")))).toBe(false);
+    expect(all.some(message => /remembered context left out/.test(String(message.tool?.name ?? "")))).toBe(false);
     const text = log();
     expect(count(text, `context revoked during dispatch on thread ${room.threadId}`)).toBe(0);
     expect(count(text, `context revoked at a late submission on thread ${room.threadId}`)).toBe(0);
@@ -231,7 +231,7 @@ describe.skipIf(process.platform === "win32")("1.0.3 revoke storm", () => {
     expect(all.some(message => /MEMORY_CONTEXT_REVOKED/.test(String(message.tool?.name ?? "")))).toBe(false);
     const text = log().slice(before.length);
     const reprepares = count(text, `context revoked during dispatch on thread ${room.threadId}; re-preparing`);
-    const lastRebuilds = all.filter(message => /without remembered context/.test(String(message.tool?.name ?? ""))).length;
+    const lastRebuilds = all.filter(message => /remembered context left out/.test(String(message.tool?.name ?? ""))).length;
     const fenceLines = text.split("\n").filter(line => line.includes("[memory] send fence refused"));
     // counts only: the refused parts by kind and verdict, never a thread, an id or any text
     for (const line of fenceLines) expect(line).toMatch(/send fence refused \([a-z]+:[a-z-]+, (content|audience) reader\): \d+ of \d+ parts; refused refs: [a-z0-9 ,-]+; verdicts: [a-z0-9 ,:-]+/);
@@ -240,7 +240,7 @@ describe.skipIf(process.platform === "win32")("1.0.3 revoke storm", () => {
     const refusedKinds = fenceLines.map(line => /refused refs: ([^;]*);/.exec(line)?.[1] ?? "?");
     console.log(`REPREPARE ${JSON.stringify({ turns, reprepares, lastRebuilds, fenceRefusals: fenceLines.length, refusedKinds })}`);
     // at most the bounded rebuilds per turn: every turn completes
-    expect(reprepares).toBeLessThanOrEqual(turns * 3);
+    expect(reprepares).toBeLessThanOrEqual(turns * 2);
     expect(fenceLines.length).toBeGreaterThanOrEqual(reprepares);
     expect(pendingLegacy()).toBe(LEGACY_JOBS);
   }, 300000);
@@ -252,9 +252,9 @@ describe.skipIf(process.platform === "win32")("1.0.3 revoke storm", () => {
     const room = await newRoom("Rebuild room", bot.id);
     const warned = count(log(), "re-preparing");
     await api("POST", `/api/groups/${room.id}/messages`, { threadId: room.threadId, text: "a room question under the storm" });
-    // a revoke lands after each attempt's prompt was built and before the engine submits it: the first three are refused (proven unwritten)
-    // and re-dispatched, and the fourth, the last rebuild, still passes
-    for (let attempt = 1; attempt <= 4; attempt++) {
+    // a revoke lands after each attempt's prompt was built and before the engine submits it: the first two are refused (proven unwritten)
+    // and re-dispatched, and the third, the last rebuild, still passes
+    for (let attempt = 1; attempt <= 3; attempt++) {
       await expect.poll(() => existsSync(join(fixture.info.dataDir, `hold-${attempt}.waiting`)), { timeout: 60000 }).toBe(true);
       expect(readFileSync(join(fixture.info.dataDir, `hold-${attempt}.waiting`), "utf8")).toBe(room.threadId);
       await api("PATCH", `/api/bots/${bot.id}`, { section: `Revoke before submission ${attempt}` });
@@ -265,15 +265,15 @@ describe.skipIf(process.platform === "win32")("1.0.3 revoke storm", () => {
     await new Promise(resolve => setTimeout(resolve, 500));
     const text = log();
     const mine = rowsOf(plainDump).filter(row => row.threadId === room.threadId);
-    expect(existsSync(join(fixture.info.dataDir, "hold-5.waiting"))).toBe(false);
+    expect(existsSync(join(fixture.info.dataDir, "hold-4.waiting"))).toBe(false);
     const all = await messages(room.threadId);
-    // refused at dispatch, re-prepared three times, then the last rebuild ran: four dispatches, one reply
-    expect(count(text, `context revoked during dispatch on thread ${room.threadId}; re-preparing (1 of 3, room member`)).toBe(1);
-    expect(count(text, `context revoked during dispatch on thread ${room.threadId}; re-preparing (3 of 3, room member`)).toBe(1);
-    expect(count(text, `re-preparing`) - warned).toBe(3);
-    expect(mine).toHaveLength(4);
+    // refused at dispatch, re-prepared twice, then the last rebuild ran: three dispatches, one reply
+    expect(count(text, `context revoked during dispatch on thread ${room.threadId}; re-preparing (1 of 2, room member`)).toBe(1);
+    expect(count(text, `context revoked during dispatch on thread ${room.threadId}; re-preparing (2 of 2, room member`)).toBe(1);
+    expect(count(text, `re-preparing`) - warned).toBe(2);
+    expect(mine).toHaveLength(3);
     expect(all.filter(isReply)).toHaveLength(1);
-    expect(all.filter(message => message.role === "bot" && message.kind === "activity" && /without remembered context/.test(String(message.tool?.name ?? "")))).toHaveLength(1);
+    expect(all.filter(message => message.role === "bot" && message.kind === "activity" && /remembered context left out/.test(String(message.tool?.name ?? "")))).toHaveLength(1);
     expect(errorLines(all)).toEqual([]);
     expect(all.some(message => /MEMORY_CONTEXT_REVOKED/.test(String(message.tool?.name ?? "")))).toBe(false);
     expect(pendingLegacy()).toBe(LEGACY_JOBS);
@@ -281,7 +281,7 @@ describe.skipIf(process.platform === "win32")("1.0.3 revoke storm", () => {
 
   // 1.0.4 SETUP-LAST-RESORT (Sean, 1.0.3): a long existing chat whose turn is refused at its send, before anything was written, at every
   // attempt (a revoke walk still pending, a revoke before each submission) ended with "could not start this reply. Send it again.": the
-  // direct setup path rebuilt three times with memory and never ran the last resort the late path and rooms run. Now the third rebuild is
+  // direct setup path rebuilt three times with memory and never ran the last resort the late path and rooms run. Now the second rebuild is
   // the last resort: a fresh session (no resume, sessionReset), no memory frame, no memory or thread tools, and the reply runs.
   it("direct: a long chat refused at setup at every attempt ends with a reply from the last resort, a fresh session with no memory", async () => {
     await ensureLegacyJobs();
@@ -308,16 +308,16 @@ describe.skipIf(process.platform === "win32")("1.0.3 revoke storm", () => {
     const warned = count(log(), "re-preparing");
     await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "the question that kept being refused" });
     // a revoke lands after each attempt's prompt was built and before the engine submits it: the first and two rebuilds are refused (proven
-    // unwritten), and the third rebuild, the last resort, still passes
-    for (let attempt = 1; attempt <= 4; attempt++) await release(`Revoke before direct submission ${attempt}`);
+    // unwritten), and the second rebuild, the last resort, still passes
+    for (let attempt = 1; attempt <= 3; attempt++) await release(`Revoke before direct submission ${attempt}`);
     await expect.poll(async () => await replies(bot.threadId), { timeout: 60000 }).toBe(4);
     await expect.poll(async () => await botIdle(bot.id), { timeout: 15000 }).toBe(true);
     await new Promise(resolve => setTimeout(resolve, 500));
     const text = log();
     const all = await messages(bot.threadId);
     const rows = rowsOf(dump).filter(row => row.threadId === bot.threadId);
-    // three earlier dispatches and four for the refused turn; no fifth
-    expect(rows).toHaveLength(7);
+    // three earlier dispatches and three for the refused turn; no fourth
+    expect(rows).toHaveLength(6);
     expect(existsSync(`${hold(held + 1)}.waiting`)).toBe(false);
     // it was a long chat: the earlier turns after the first resumed the kept session, memory on
     expect(rows[1]).toMatchObject({ resumed: true, sessionReset: false });
@@ -325,16 +325,15 @@ describe.skipIf(process.platform === "win32")("1.0.3 revoke storm", () => {
     const refused = rows.slice(3);
     expect(refused[0]).toMatchObject({ memory: true });
     expect(refused[1]).toMatchObject({ memory: true });
-    expect(refused[2]).toMatchObject({ memory: true });
     // the last resort carries no revoked memory: no memory frame, no memory or thread tools, and no retained session to carry it
-    expect(refused[3]).toMatchObject({ memoryContext: false, memory: false, sessionReset: true, resumed: false });
-    expect(count(text, `context revoked during dispatch on thread ${bot.threadId}; re-preparing (1 of 3)`)).toBe(1);
-    expect(count(text, `context revoked during dispatch on thread ${bot.threadId}; re-preparing (3 of 3)`)).toBe(1);
-    expect(count(text, `re-preparing`) - warned).toBe(3);
+    expect(refused[2]).toMatchObject({ memoryContext: false, memory: false, sessionReset: true, resumed: false });
+    expect(count(text, `context revoked during dispatch on thread ${bot.threadId}; re-preparing (1 of 2)`)).toBe(1);
+    expect(count(text, `context revoked during dispatch on thread ${bot.threadId}; re-preparing (2 of 2)`)).toBe(1);
+    expect(count(text, `re-preparing`) - warned).toBe(2);
     expect(count(text, `context revoked during dispatch on thread ${bot.threadId} after`)).toBe(0);
     // one reply for the refused turn, one plain line saying it ran without remembered context, never the card or the raw code
     expect(all.filter(isReply)).toHaveLength(4);
-    expect(all.filter(message => message.role === "bot" && message.kind === "activity" && /without remembered context/.test(String(message.tool?.name ?? "")))).toHaveLength(1);
+    expect(all.filter(message => message.role === "bot" && message.kind === "activity" && /remembered context left out/.test(String(message.tool?.name ?? "")))).toHaveLength(1);
     expect(errorLines(all)).toEqual([]);
     expect(all.some(message => /could not start this reply|MEMORY_CONTEXT_REVOKED/.test(String(message.tool?.name ?? "")))).toBe(false);
     expect(pendingLegacy()).toBe(LEGACY_JOBS);
@@ -359,7 +358,7 @@ describe.skipIf(process.platform === "win32")("1.0.3 revoke storm", () => {
   const userMessageId = async (threadId: string, text: string) => (await messages(threadId)).find(message => message.role === "user" && message.text === text)?.id as string;
   const editSendId = (tag: string) => `edit-${tag}-${Date.now()}-0000000000`.slice(0, 64);
 
-  it("direct: an edit refused at the send check forks once, revokes once for the branch change, and the last resort replies on rebuild 3", async () => {
+  it("direct: an edit refused at the send check forks once, revokes once for the branch change, and the last resort replies on rebuild 2", async () => {
     await ensureLegacyJobs();
     const dump = join(fixture.info.dataDir, "editkeep-dump");
     rmSync(dump, { force: true });
@@ -375,8 +374,8 @@ describe.skipIf(process.platform === "win32")("1.0.3 revoke storm", () => {
     const edited = "the edited question that kept being refused";
     const editing = api("POST", `/api/bots/${bot.id}/messages/${source}/edit`, { threadId: bot.threadId, text: edited, sendId: editSendId("once") });
     // a revoke lands after each attempt's prompt was built and before the engine submits it: the edit's first send and two rebuilds are
-    // refused (proven unwritten), and the third rebuild, the last resort, still passes
-    for (let attempt = 1; attempt <= 4; attempt++) await releaseHold(hold, attempt + 1, bot.threadId, bot.id, `Revoke before edited submission ${attempt}`);
+    // refused (proven unwritten), and the second rebuild, the last resort, still passes
+    for (let attempt = 1; attempt <= 3; attempt++) await releaseHold(hold, attempt + 1, bot.threadId, bot.id, `Revoke before edited submission ${attempt}`);
     await editing;
     const answeredAfterEdit = async () => { const all = await messages(bot.threadId); const at = all.findIndex(message => message.role === "user" && message.text === edited); return at >= 0 && all.slice(at + 1).some(isReply); };
     await expect.poll(answeredAfterEdit, { timeout: 60000 }).toBe(true);
@@ -384,27 +383,27 @@ describe.skipIf(process.platform === "win32")("1.0.3 revoke storm", () => {
     await new Promise(resolve => setTimeout(resolve, 500));
     const text = log().slice(before.length);
     const rows = rowsOf(dump).filter(row => row.threadId === bot.threadId);
-    // one earlier dispatch and four for the edit; no fifth
-    expect(rows).toHaveLength(5);
-    expect(existsSync(`${hold(6)}.waiting`)).toBe(false);
+    // one earlier dispatch and three for the edit; no fourth
+    expect(rows).toHaveLength(4);
+    expect(existsSync(`${hold(5)}.waiting`)).toBe(false);
     // ONE copy of the edit, and ONE branch-change revoke: the edit's own fork, never one per rebuild
     expect(editForks(bot.threadId, edited)).toBe(1);
     expect(editForks(bot.threadId, "the question before the edit")).toBe(1);
     expect(count(text, BRANCH_CHANGE)).toBe(1);
-    expect(count(text, `context revoked during dispatch on thread ${bot.threadId}; re-preparing (1 of 3)`)).toBe(1);
-    expect(count(text, `context revoked during dispatch on thread ${bot.threadId}; re-preparing (3 of 3)`)).toBe(1);
+    expect(count(text, `context revoked during dispatch on thread ${bot.threadId}; re-preparing (1 of 2)`)).toBe(1);
+    expect(count(text, `context revoked during dispatch on thread ${bot.threadId}; re-preparing (2 of 2)`)).toBe(1);
     expect(count(text, `context revoked during dispatch on thread ${bot.threadId} after`)).toBe(0);
     const refused = rows.slice(1);
     expect(refused[0]).toMatchObject({ memory: true });
     // the rebuilds keep the rewind the edit's first send had (no resumed session of the abandoned branch)
     expect(refused.every(row => row.resumed === false)).toBe(true);
-    expect(refused[3]).toMatchObject({ memoryContext: false, memory: false, sessionReset: true, resumed: false });
+    expect(refused[2]).toMatchObject({ memoryContext: false, memory: false, sessionReset: true, resumed: false });
     // the visible branch: the edit and its one reply, one plain line for the last resort, never the card
     const all = await messages(bot.threadId);
     const afterEdit = all.slice(all.findIndex(message => message.role === "user" && message.text === edited) + 1);
     expect(all.filter(message => message.role === "user").at(-1)?.text).toBe(edited);
     expect(afterEdit.filter(isReply)).toHaveLength(1);
-    expect(afterEdit.filter(message => message.role === "bot" && message.kind === "activity" && /without remembered context/.test(String(message.tool?.name ?? "")))).toHaveLength(1);
+    expect(afterEdit.filter(message => message.role === "bot" && message.kind === "activity" && /remembered context left out/.test(String(message.tool?.name ?? "")))).toHaveLength(1);
     expect(errorLines(all)).toEqual([]);
     expect(all.some(message => /could not start this reply|MEMORY_CONTEXT_REVOKED/.test(String(message.tool?.name ?? "")))).toBe(false);
     expect(pendingLegacy()).toBe(LEGACY_JOBS);
@@ -422,19 +421,19 @@ describe.skipIf(process.platform === "win32")("1.0.3 revoke storm", () => {
     const before = log();
     const asked = "a room question refused at every send check";
     await api("POST", `/api/groups/${room.id}/messages`, { threadId: room.threadId, text: asked });
-    for (let attempt = 1; attempt <= 4; attempt++) await releaseHold(hold, attempt, room.threadId, bot.id, `Revoke before room submission ${attempt}`);
+    for (let attempt = 1; attempt <= 3; attempt++) await releaseHold(hold, attempt, room.threadId, bot.id, `Revoke before room submission ${attempt}`);
     await expect.poll(async () => await replies(room.threadId), { timeout: 60000 }).toBe(1);
     await expect.poll(async () => await botIdle(bot.id), { timeout: 15000 }).toBe(true);
     await new Promise(resolve => setTimeout(resolve, 500));
     const text = log().slice(before.length);
-    expect(rowsOf(dump).filter(row => row.threadId === room.threadId)).toHaveLength(4);
-    expect(existsSync(`${hold(5)}.waiting`)).toBe(false);
+    expect(rowsOf(dump).filter(row => row.threadId === room.threadId)).toHaveLength(3);
+    expect(existsSync(`${hold(4)}.waiting`)).toBe(false);
     expect(editForks(room.threadId, asked)).toBe(1);
     expect(count(text, BRANCH_CHANGE)).toBe(0);
-    expect(count(text, `context revoked during dispatch on thread ${room.threadId}; re-preparing (3 of 3, room member`)).toBe(1);
+    expect(count(text, `context revoked during dispatch on thread ${room.threadId}; re-preparing (2 of 2, room member`)).toBe(1);
     const all = await messages(room.threadId);
     expect(all.filter(isReply)).toHaveLength(1);
-    expect(all.filter(message => message.role === "bot" && message.kind === "activity" && /without remembered context/.test(String(message.tool?.name ?? "")))).toHaveLength(1);
+    expect(all.filter(message => message.role === "bot" && message.kind === "activity" && /remembered context left out/.test(String(message.tool?.name ?? "")))).toHaveLength(1);
     expect(errorLines(all)).toEqual([]);
     expect(pendingLegacy()).toBe(LEGACY_JOBS);
   }, 300000);
@@ -481,12 +480,13 @@ describe.skipIf(process.platform === "win32")("1.0.3 revoke storm", () => {
     await expect.poll(() => existsSync(`${unknownGate}.waiting`), { timeout: 20000 }).toBe(true);
     await api("PATCH", `/api/bots/${bot.id}`, { section: "Revoke while the boundary is unknown" });
     writeFileSync(unknownGate, "");
-    const line = "error: Context changed; previous attempt may have started. Review its output before trying again.";
-    await expect.poll(async () => (await messages(room.threadId)).some(message => String(message.tool?.name ?? "") === line), { timeout: 30000 }).toBe(true);
+    // This fixture never reports a submission boundary: preserve the exact unknown-submission warning.
+    const isLine = (message: any) => String(message.tool?.name ?? "") === "error: Context changed; previous attempt may have started. Review its output before trying again.";
+    await expect.poll(async () => (await messages(room.threadId)).some(isLine), { timeout: 30000 }).toBe(true);
     await new Promise(resolve => setTimeout(resolve, 1500));
     const all = await messages(room.threadId);
-    expect(all.filter(message => String(message.tool?.name ?? "") === line)).toHaveLength(1);
-    expect(all.some(message => /without remembered context/.test(String(message.tool?.name ?? "")))).toBe(false);
+    expect(all.filter(isLine)).toHaveLength(1);
+    expect(all.some(message => /remembered context left out/.test(String(message.tool?.name ?? "")))).toBe(false);
     expect(all.filter(isReply)).toHaveLength(0);
     // one dispatch only, and no re-preparation for this thread
     expect(rowsOf(unknownDump).filter(row => row.threadId === room.threadId && !row.prompt)).toHaveLength(1);

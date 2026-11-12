@@ -37,7 +37,7 @@ def reason(fn, *a):
     except Refused as e: return e.reason
     except ConfigError as e: return "config:" + str(e)
 `;
-const py = (code: string, args: string[] = []) => execFileSync("python3", ["-I", "-c", prelude + code, proxy, ...args], { encoding: "utf8", timeout: 20000 }).trim();
+const py = (code: string, args: string[] = []) => execFileSync("python3", ["-I", "-c", prelude + code, proxy, ...args], { windowsHide: true, encoding: "utf8", timeout: 20000 }).trim();
 const pyJson = (code: string) => JSON.parse(py(code));
 
 describe("SNI parser", () => {
@@ -165,6 +165,64 @@ asyncio.run(main())`);
   });
 });
 
+describe("sign-in engines never reach Flux", () => {
+  const harness = `
+allow = M["parse_allowlist"](json.dumps({"engines": {"claudeAgent": ["api.anthropic.com"], "codex": ["api.openai.com"], "fuigoAgent": ["api.fluxrouter.ai"]}, "extra": ["*.fluxrouter.ai", "fluxrouter.ai"]}))
+async def echo(r, w):
+    w.write(await r.read(-1)); await w.drain(); w.close()
+async def session(engine, sni, resolved, calls):
+    up = await asyncio.start_server(echo, "127.0.0.1", 0)
+    uport = up.sockets[0].getsockname()[1]
+    async def resolve(host): resolved.append(host); return ["93.184.216.34"]
+    async def connect(address, port):
+        calls.append(address); return await asyncio.open_connection("127.0.0.1", uport)
+    result = []
+    async def handler(r, w):
+        result.append(await M["serve_connection"](engine, allow, r, w, resolve, connect, M["RefusalLog"](emit=lambda line: None)))
+    srv = await asyncio.start_server(handler, "127.0.0.1", 0)
+    r, w = await asyncio.open_connection("127.0.0.1", srv.sockets[0].getsockname()[1])
+    w.write(hello(sni)); await w.drain(); w.write_eof()
+    await asyncio.wait_for(r.read(-1), 10); await asyncio.sleep(0.05)
+    srv.close(); up.close()
+    return result[0]
+`;
+  it("egress refuses Flux hosts for sign-in engines", () => {
+    const out = pyJson(`${harness}
+async def main():
+    resolved = []; calls = []; res = {}
+    for engine in ("claudeAgent", "codex"):
+        for sni in ("api.fluxrouter.ai", "fluxrouter.ai", "x.fluxrouter.ai", "FLUXROUTER.AI.", "A.B.FluxRouter.ai"):
+            res[engine + ":" + sni] = await session(engine, sni, resolved, calls)
+    fuigo = await session("fuigoAgent", "api.fluxrouter.ai", resolved, calls)
+    print(json.dumps({"res": res, "fuigo": fuigo, "resolvedOnlyFuigo": resolved == ["api.fluxrouter.ai"], "calls": calls}))
+asyncio.run(main())`);
+    expect(Object.values(out.res)).toHaveLength(10);
+    for (const reason of Object.values(out.res)) expect(reason).toBe("flux-forbidden");
+    expect(out.fuigo).toBeNull();
+    expect(out.resolvedOnlyFuigo).toBe(true); expect(out.calls).toEqual(["93.184.216.34"]);
+  });
+  it("allowlist matching and parsing keep Flux out of sign-in engines even when owner extras or lists name it", () => {
+    const out = pyJson(`
+a = M["parse_allowlist"](json.dumps({"engines": {"fuigoAgent": ["api.fluxrouter.ai"]}, "extra": ["*.fluxrouter.ai"]}))
+print(json.dumps({
+ "claude": a.allows("claudeAgent", "api.fluxrouter.ai"), "codex": a.allows("codex", "x.fluxrouter.ai"), "fuigo": a.allows("fuigoAgent", "api.fluxrouter.ai"), "pi": a.allows("pi", "x.fluxrouter.ai"),
+ "listed": [reason(M["parse_allowlist"], json.dumps({"engines": {e: [h]}})) for e in ("claudeAgent", "codex") for h in ("api.fluxrouter.ai", "*.fluxrouter.ai", "fluxrouter.ai")],
+ "fuigoListed": reason(M["parse_allowlist"], json.dumps({"engines": {"fuigoAgent": ["*.fluxrouter.ai"]}}))[:3],
+}))`);
+    expect(out.claude).toBe(false); expect(out.codex).toBe(false); expect(out.fuigo).toBe(true); expect(out.pi).toBe(true);
+    for (const item of out.listed) expect(item).toBe("config:a sign-in engine may not list a Flux host");
+    expect(out.fuigoListed).toBe("ok:");
+  });
+  it("the nft ruleset gives a turn no path to the internet except the engine's own proxy port", () => {
+    const nft = read("murage-egress.nft");
+    const turnRules = nft.split("\n").filter(line => /meta skuid "murage-turn"/.test(line) && !/chain|#/.test(line.trim().slice(0, 1)));
+    const accepts = turnRules.filter(line => /\baccept\b/.test(line));
+    // every accept for a turn is loopback (DNS stub, the local server on 8799, or an engine proxy port); never a public address, port 80, UDP/443 or IPv6 beyond ::1
+    for (const line of accepts) expect(line).toMatch(/127\.0\.0\.53|127\.0\.0\.0\/8 tcp dport 8799|::1 tcp dport 8799|ip daddr 127\.0\.0\.1 tcp dport 88\d\d/);
+    expect(turnRules.some(line => /^\s*meta skuid "murage-turn" counter drop$/.test(line))).toBe(true);
+  });
+});
+
 describe("accepted-connection bounds", () => {
   const code = `
 allow = M["parse_allowlist"](json.dumps({"engines": {"claudeAgent": ["api.anthropic.com"], "codex": ["api.anthropic.com"]}, "extra": []}))
@@ -217,7 +275,7 @@ describe("allowlist file", () => {
     try {
       const path = join(dir, "allow.json");
       if (text !== null) writeFileSync(path, text);
-      const run = spawnSync("python3", ["-I", proxy, path], { encoding: "utf8", timeout: 10000 });
+      const run = spawnSync("python3", ["-I", proxy, path], { windowsHide: true, encoding: "utf8", timeout: 10000 });
       return { status: run.status, stderr: run.stderr };
     } finally { removeTempDirSync(dir); }
   };
@@ -236,6 +294,8 @@ describe("allowlist file", () => {
     expect(doc.extra).toEqual([]); expect(doc.engines.fuigoAgent).toEqual(["api.fluxrouter.ai"]);
     expect(doc.engines.antigravity).toEqual(["cloudcode-pa.googleapis.com", "oauth2.googleapis.com"]); expect(doc.engines.antigravity).not.toContain("www.googleapis.com");
     expect(Object.keys(doc.engines).sort()).toEqual(["antigravity", "claudeAgent", "codex", "cursorAgent", "fuigoAgent", "geminiAgent", "grokAgent", "kimiAgent", "opencodeGo"]);
+    // agy 1.4.4: its updater, flag service and telemetry hosts stay refused.
+    expect(py(`a = M["load_allowlist"](sys.argv[2]); print(a.allows("antigravity","oauth2.googleapis.com"), a.allows("antigravity","antigravity-unleash.goog"), a.allows("antigravity","play.googleapis.com"), a.allows("antigravity","antigravity-cli-auto-updater-974169037036.us-central1.run.app"))`, [deploy("egress-allow.json")])).toBe("True False False False");
     expect(py(`a = M["load_allowlist"](sys.argv[2]); print(a.allows("codex","sdmntprwestus.oaiusercontent.com"), a.allows("codex","oaiusercontent.com"), a.allows("codex","evil-oaiusercontent.com"), a.allows("claudeAgent","x.oaiusercontent.com"))`, [deploy("egress-allow.json")])).toBe("True False False False");
     expect(py(`a = M["load_allowlist"](sys.argv[2]); print(a.allows("claudeAgent","api.anthropic.com"), a.allows("claudeAgent","example.com"))`, [deploy("egress-allow.json")])).toBe("True False");
   });
@@ -277,6 +337,21 @@ describe("nft policy", () => {
     for (const line of accepts) expect(line.replace(" ct original ip daddr 127.0.0.53", "")).not.toContain("127.0.0.53");
     for (const line of accepts) expect(line).not.toMatch(/daddr !=/);
     expect(accepts.filter(line => line.includes("tcp dport 443") && !line.includes("127.0.0.1"))).toEqual([]);
+  });
+  it("lets murage-turn open exactly these loopback ports and drops every other loopback destination, after them", () => {
+    const loopback = turn.filter(line => line.endsWith("accept") && /ip6? daddr (127\.|::1)/.test(line));
+    const ports = new Set<string>();
+    for (const line of loopback) ports.add(/(tcp|udp) dport (\d+)/.exec(line)!.slice(1).join("/"));
+    const want = new Set(["tcp/8799"]);
+    for (let i = 0; i < 14; i++) { want.add(`tcp/${8810 + i}`); want.add(`udp/${5310 + i}`); }
+    expect(ports).toEqual(want);
+    const v4 = lines.indexOf('meta skuid "murage-turn" ip daddr 127.0.0.0/8 counter drop');
+    const v6 = lines.indexOf('meta skuid "murage-turn" ip6 daddr ::1 counter drop');
+    expect(v4).toBeGreaterThan(-1);
+    expect(v6).toBeGreaterThan(-1);
+    for (const line of loopback) { expect(lines.indexOf(line)).toBeLessThan(line.includes("ip6") ? v6 : v4); }
+    // established return traffic is matched by the answering uid, never by the turn: no turn rule keys on ct state except the nat provenance and the new-connection meter
+    expect(turn.filter(line => /ct state (established|related)/.test(line))).toEqual([]);
   });
   it("redirects only murage-turn tcp 443 in a nat output chain keyed by gid", () => {
     expect(nft).toMatch(/chain turn_nat \{\n\s+type nat hook output priority -100;/);
@@ -347,7 +422,7 @@ def parse(reply):
 allow = M["load_allowlist"](SHIPPED)
 dns = lambda engine, pkt: M["dns_respond"](engine, allow, pkt)
 `;
-  const run = (code: string) => JSON.parse(execFileSync("python3", ["-I", "-c", prelude + dnsPrelude + code, proxy, deploy("egress-allow.json")], { encoding: "utf8", timeout: 60000 }).trim());
+  const run = (code: string) => JSON.parse(execFileSync("python3", ["-I", "-c", prelude + dnsPrelude + code, proxy, deploy("egress-allow.json")], { windowsHide: true, encoding: "utf8", timeout: 60000 }).trim());
 
   it("answers an allowed A query with exactly one synthetic record, echoing id, question case and RD", () => {
     const out = run(`
@@ -524,7 +599,7 @@ asyncio.run(main())`);
     try {
       const path = join(dir, "allow.json");
       if (text !== null) writeFileSync(path, text as string);
-      const result = spawnSync("python3", ["-I", proxy, "dns", path], { encoding: "utf8", timeout: 10000 });
+      const result = spawnSync("python3", ["-I", proxy, "dns", path], { windowsHide: true, encoding: "utf8", timeout: 10000 });
       expect(result.status).toBe(78); expect(result.stderr).toContain("refuses to start");
     } finally { removeTempDirSync(dir); }
   });
@@ -575,6 +650,11 @@ asyncio.run(main())`);
     expect(udpGuard).toBeGreaterThan(-1); expect(tcpGuard).toBeGreaterThan(-1);
     const firstAccept = lines.findIndex(l => l.endsWith("accept"));
     expect(udpGuard).toBeLessThan(firstAccept); expect(tcpGuard).toBeLessThan(firstAccept);
+    // The engine egress proxy ports get the same early guard: only the turn's redirected tcp/443 reaches them.
+    const proxyGuard = lines.indexOf('meta skuid != "murage-turn" ip daddr 127.0.0.0/8 tcp dport 8810-8823 counter drop');
+    const proxyGuard6 = lines.indexOf('meta skuid != "murage-turn" ip6 daddr ::1 tcp dport 8810-8823 counter drop');
+    expect(proxyGuard).toBeGreaterThan(-1); expect(proxyGuard6).toBeGreaterThan(-1);
+    expect(proxyGuard).toBeLessThan(firstAccept); expect(proxyGuard6).toBeLessThan(firstAccept);
     const meter = lines.findIndex(l => l.includes("update @engine_connections"));
     const dnsAccepts = lines.map((l, i) => [l, i] as const).filter(([l]) => /udp dport 53\d\d ct status dnat ct original ip daddr 127\.0\.0\.53 counter accept$/.test(l));
     expect(dnsAccepts).toHaveLength(14);
@@ -606,3 +686,32 @@ asyncio.run(main())`);
     expect(launcher).not.toMatch(/"search |\bsearch \S+\\n/);
   });
 });
+describe("Flux hosts resolve over IPv4 only", () => {
+  it("asks for AF_INET for fluxrouter.ai hosts, drops IPv6 answers, and leaves other hosts alone", () => {
+    const out = pyJson(`
+import socket
+async def main():
+    loop = asyncio.get_running_loop(); asked = []
+    v4 = (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
+    v6 = (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2606:2800:220:1:248:1893:25c8:1946", 443, 0, 0))
+    async def fake(host, port, **kw):
+        asked.append([host, kw.get("family")]); return [v6, v4]
+    loop.getaddrinfo = fake
+    resolve = M["default_resolve"]
+    flux = await resolve("api.fluxrouter.ai"); upper = await resolve("API.FluxRouter.AI."); sub = await resolve("eu.fluxrouter.ai")
+    other = await resolve("api.anthropic.com")
+    print(json.dumps({"asked": asked, "flux": flux, "upper": upper, "sub": sub, "other": other,
+                      "isflux": [M["is_flux_host"](h) for h in ("fluxrouter.ai", "x.fluxrouter.ai", "notfluxrouter.ai", "fluxrouter.ai.evil.com")]}))
+asyncio.run(main())`);
+    const v4 = socketFamilies();
+    expect(out.asked.slice(0, 3).map((row: [string, number]) => row[1])).toEqual([v4, v4, v4]);
+    expect(out.asked[3][1]).toBe(0);
+    expect(out.flux).toEqual(["93.184.216.34"]);
+    expect(out.upper).toEqual(["93.184.216.34"]);
+    expect(out.sub).toEqual(["93.184.216.34"]);
+    expect(out.other).toEqual(["2606:2800:220:1:248:1893:25c8:1946", "93.184.216.34"]);
+    expect(out.isflux).toEqual([true, true, false, false]);
+  });
+});
+// AF_INET is 2 on Linux, where the proxy runs and these tests do.
+function socketFamilies(): number { return 2; }

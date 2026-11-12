@@ -1,0 +1,382 @@
+== GREEN before server/email/reconnect-r32h.test.ts server/email/reconnect-r32k.test.ts OK total=48
+== GREEN before server/email/reconnect-r32h.test.ts server/email/reconnect-r32k.test.ts server/email/bindi OK total=82
+== GREEN before server/email/exec-spec/keystore/r32h-product.test.ts server/email/exec-spec/keystore/r32h. OK total=33
+== GREEN before server/email/exec-spec/keystore/witness-pass.test.ts OK total=13
+== MUTANT newId-per-press RED
+     × crash before setBotKey: restored, no key; boot replays the op and finishes 21ms
+     × crash after setBotKey, before the key is durable: still restored (never active on a key that is not durable); boot finishes 9ms
+     × crash after durable, before the commit: the key is durable, the binding restored; boot commits it 8ms
+     × a key that is not acknowledged: 503 save_pending, the binding stays restored, and the next press (same op) finishes 2ms
+     × saved-op reuse boundary: a Reconnect press does not reuse a saved op exactly 24 h old (new op id); one millisecond younger it does 7ms
+     × (a) a crash between the mint and the key save, then a second press: the same op, exactly one key at Flux, that key saved 13ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  6 failed | 42 passed (48)
+== MUTANT skip-stray-delete RED
+     × M4: four 409s in one press: three own strays deleted, the 4th holds with the owner line (never the raw code), no 4th delete 8ms
+     × (c) a stray X this home minted, past 24 h: deleted, a fresh op is saved, the mint is tried once more and that key is saved 8ms
+     × records leave by age only: an own stray survives 25 later mints and is then deleted by Reconnect 4ms
+     × Astra 4: the mint after a stray delete that meets another key Y gets the same rule: the other-key line, no second delete 3ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  4 failed | 44 passed (48)
+== MUTANT hold-skipped-revokes RED
+     × X is the key the bot holds now: alert rotation_live_conflict names the key and offers one action; nothing is revoked, nothing is overwritten 6ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 47 passed (48)
+== MUTANT alert-no-key RED
+     × M4: four 409s in one press: three own strays deleted, the 4th holds with the owner line (never the raw code), no 4th delete 8ms
+     × L1: an own key older than 24 h that a rotation intent still protects (its old key) holds: owner line, 0 DELETEs 2ms
+     × (c2) the same key X this home minted but inside the 24 h window: held with the owner line, 0 DELETEs 7ms
+     × (d) an X this home never minted (another install on the same Flux account): alert naming the key with its one owner action, a hold, 0 DELETEs 3ms
+     × held key, unknown key and own key inside 24 h each show their own line; the two lines differ and carry no dashes 2ms
+     × a 409 that carries the key secret: the owner line and the whole result hold the key id and no 8+ character piece of the secret 2ms
+     × Astra 4: the mint after a stray delete that meets another key Y gets the same rule: the other-key line, no second delete 2ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 7 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  7 failed | 41 passed (48)
+== MUTANT delete-unknown-X RED
+     × (d) an X this home never minted (another install on the same Flux account): alert naming the key with its one owner action, a hold, 0 DELETEs 10ms
+     × held key, unknown key and own key inside 24 h each show their own line; the two lines differ and carry no dashes 4ms
+     × a 409 that carries the key secret: the owner line and the whole result hold the key id and no 8+ character piece of the secret 2ms
+     × Astra 4: the mint after a stray delete that meets another key Y gets the same rule: the other-key line, no second delete 2ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  4 failed | 44 passed (48)
+== MUTANT revoke-inside-24h RED
+     × (c2) the same key X this home minted but inside the 24 h window: held with the owner line, 0 DELETEs 7ms
+     × held key, unknown key and own key inside 24 h each show their own line; the two lines differ and carry no dashes 2ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  2 failed | 46 passed (48)
+== MUTANT copy-lines-swapped RED
+     × M4: four 409s in one press: three own strays deleted, the 4th holds with the owner line (never the raw code), no 4th delete 8ms
+     × L1: an own key older than 24 h that a rotation intent still protects (its old key) holds: owner line, 0 DELETEs 2ms
+     × (d) an X this home never minted (another install on the same Flux account): alert naming the key with its one owner action, a hold, 0 DELETEs 7ms
+     × X is the key the bot holds now: alert rotation_live_conflict names the key and offers one action; nothing is revoked, nothing is overwritten 2ms
+     × held key, unknown key and own key inside 24 h each show their own line; the two lines differ and carry no dashes 2ms
+     × Astra 4: the mint after a stray delete that meets another key Y gets the same rule: the other-key line, no second delete 2ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  6 failed | 42 passed (48)
+== MUTANT owner-line-shows-secret RED
+     × M4: four 409s in one press: three own strays deleted, the 4th holds with the owner line (never the raw code), no 4th delete 9ms
+     × L1: an own key older than 24 h that a rotation intent still protects (its old key) holds: owner line, 0 DELETEs 2ms
+     × (d) an X this home never minted (another install on the same Flux account): alert naming the key with its one owner action, a hold, 0 DELETEs 6ms
+     × held key, unknown key and own key inside 24 h each show their own line; the two lines differ and carry no dashes 3ms
+     × a 409 that carries the key secret: the owner line and the whole result hold the key id and no 8+ character piece of the secret 2ms
+     × Astra 4: the mint after a stray delete that meets another key Y gets the same rule: the other-key line, no second delete 2ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  6 failed | 42 passed (48)
+== MUTANT minted-after-save-setup RED
+     × setup: at the moment the key is saved, the minted record already names it 5ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 81 passed (82)
+== MUTANT rotation-order RED
+     × rotation: at the moment the new key is saved, the minted record already names it 5ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 47 passed (48)
+== MUTANT reconnect-order RED
+     × (c) a stray X this home minted, past 24 h: deleted, a fresh op is saved, the mint is tried once more and that key is saved 8ms
+     × Reconnect: at the moment the key is saved, the minted record already names it 2ms
+     × Astra 1: a late answer of a replaced op never saves its key 2ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  3 failed | 45 passed (48)
+== MUTANT restamp-at-on-renote RED
+     × a key noted again keeps its FIRST time (the spec's logMint) 6ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 47 passed (48)
+== MUTANT count-cap-20 RED
+     × records leave by age only: an own stray survives 25 later mints and is then deleted by Reconnect 6ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 47 passed (48)
+== MUTANT no-serialize RED
+     × a Reconnect pressed while a rotation is in flight waits for it (one mint at a time) 19ms
+     × Astra 1: two Reconnects at once run one after the other; the second finds nothing to reconnect 7ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  2 failed | 46 passed (48)
+== MUTANT no-current-op-check RED
+     × Astra 1: a late answer of a replaced op never saves its key 7ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 47 passed (48)
+== MUTANT second-409-unrouted RED
+     × M4: four 409s in one press: three own strays deleted, the 4th holds with the owner line (never the raw code), no 4th delete 14ms
+     × Astra 4: the mint after a stray delete that meets another key Y gets the same rule: the other-key line, no second delete 7ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  2 failed | 46 passed (48)
+== MUTANT spec-stray-inside-24h RED
+     × r3.2i DRIVEN: an own X minted inside 24 h (not held) HOLDS with rotation_live_conflict, no stray, no DELETE 12ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 32 passed (33)
+== MUTANT spec-no-alert-unknown-X RED
+     × r3.2i DRIVEN: an X this home never minted holds with rotation_live_conflict (twin marker stays), no stray, no DELETE 6ms
+     × L2/Astra 3: an X known only from disk.prev (never minted here) gets the twin marker, the alert and the hold; no mint is queued, no DELETE 2ms
+     × M3: the DURABLE key X with no mint-log entry (a copied foreign credential) gets the twin marker, the alert, no DELETE and no further mint 2ms
+     × r3.2n (Fable L1): a NON-current 409 that commits the marker while the current op is unknown (unk) raises the current-operation alert; the marker still blocks, and no unk means no new alert 2ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  4 failed | 29 passed (33)
+== MUTANT resolveUnknown-last-send RED
+     × DRIVEN: a rotate sent at 0 whose last attempt was at 10 h is not resent with the old idem at DAY+1; the owner repair stays 7ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 32 passed (33)
+== MUTANT spec-L1-protected-not-held RED
+     × L1: an own X minted long ago but still protected in memory (not the disk key) holds with the alert, no stray, no DELETE 9ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 32 passed (33)
+== MUTANT spec-L1-guard-restored RED
+     × L1: an own X minted long ago but still protected in memory (not the disk key) holds with the alert, no stray, no DELETE 11ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 32 passed (33)
+== MUTANT spec-L2-ownKnown-silent RED
+     × L2: an own minted X that is already tombstoned (handled) still shows the owner line: alert, no stray, no DELETE 10ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 32 passed (33)
+== MUTANT spec-L2-ownKnown-no-alert-at-all RED
+     × L2: an own minted X that is already tombstoned (handled) still shows the owner line: alert, no stray, no DELETE 9ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 32 passed (33)
+== MUTANT spec-prev-X-not-twin RED
+     × L2/Astra 3: an X known only from disk.prev (never minted here) gets the twin marker, the alert and the hold; no mint is queued, no DELETE 6ms
+     × M3: the DURABLE key X with no mint-log entry (a copied foreign credential) gets the twin marker, the alert, no DELETE and no further mint 1ms
+     × M2 DRIVEN: a queued re-send of the same mint is in the outbox when the 409 for an unknown X lands: the twin marker drops it (no call for b1 in the outbox, one mint op) 2ms
+     × M2 (c409.twin): a queued RECONCILE call for the marked bot is dropped when the marker commits (not only auto calls) 1ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  4 failed | 29 passed (33)
+== MUTANT spec-hold-queues-DELETE RED
+     × r3.2i DRIVEN: an own X minted inside 24 h (not held) HOLDS with rotation_live_conflict, no stray, no DELETE 6ms
+     × L1: an own X minted long ago but still protected in memory (not the disk key) holds with the alert, no stray, no DELETE 1ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  2 failed | 31 passed (33)
+== MUTANT k-h1-no-generation-check RED
+     × belt and braces: even if the old op were somehow current again, a replaced generation never saves (the generation check alone) 17ms
+     × Reconnect generation check ALONE (before the save): a replacement that is itself restored, with the old op cursor reinstated, never receives the old press's key 9ms
+     × Reconnect generation check ALONE (after the durable await): same replacement, op cursor reinstated while the key is being made durable: the replacement is not flipped active 9ms
+     × M3: Remove pressed while the Reconnect awaits its mint: the press fails closed (503), the row stays removing and is never flipped to active; the removal then finishes 17ms
+     × sameBinding op id ALONE (Reconnect, before the save): a replacement identical in inbox and key ref but made by another setup op never receives the old press's key 9ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  5 failed | 43 passed (48)
+== MUTANT k-h1-no-clear-on-removal RED
+     × a removal clears reconnect-op:<bot> and rotate:<bot>; a new setup clears both of an earlier generation 6ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 47 passed (48)
+== MUTANT k-h1-no-clear-on-setup RED
+     × a removal clears reconnect-op:<bot> and rotate:<bot>; a new setup clears both of an earlier generation 12ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 47 passed (48)
+== MUTANT k-h2-no-durable-wait RED
+     × a removal that lands while the key is being made durable: the press recheck fails closed, nothing is committed 20ms
+     × crash before setBotKey: restored, no key; boot replays the op and finishes 8ms
+     × crash after setBotKey, before the key is durable: still restored (never active on a key that is not durable); boot finishes 8ms
+     × crash after durable, before the commit: the key is durable, the binding restored; boot commits it 7ms
+     × crash after the commit: active on a durable key; boot changes nothing and mints nothing 3ms
+     × a key that is not acknowledged: 503 save_pending, the binding stays restored, and the next press (same op) finishes 2ms
+     × Reconnect generation check ALONE (after the durable await): same replacement, op cursor reinstated while the key is being made durable: the replacement is not flipped active 9ms
+     × a removal during durable(): the secrets that end up durable hold no key for b1 (the removed generation's key is not resurrected) 9ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  8 failed | 40 passed (48)
+== MUTANT k-h2-no-boot-resume RED
+     × crash before setBotKey: restored, no key; boot replays the op and finishes 20ms
+     × crash after setBotKey, before the key is durable: still restored (never active on a key that is not durable); boot finishes 10ms
+     × crash after durable, before the commit: the key is durable, the binding restored; boot commits it 9ms
+     × pending-op age (control): the same op inside the window IS resumed by boot 5ms
+     × pending-op age boundary: a saved Reconnect op exactly 24 h old is NOT resumed by boot; one millisecond younger IS 3ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  5 failed | 43 passed (48)
+== MUTANT k-h2-no-clear-after-commit RED
+     × past the 24 h window a press starts a new op (the setup re-op) 6ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 47 passed (48)
+== MUTANT k-h2-no-recheck-after-durable RED
+     × a removal that lands while the key is being made durable: the press recheck fails closed, nothing is committed 12ms
+     × Reconnect generation check ALONE (after the durable await): same replacement, op cursor reinstated while the key is being made durable: the replacement is not flipped active 10ms
+     × a removal during durable(): the secrets that end up durable hold no key for b1 (the removed generation's key is not resurrected) 7ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  3 failed | 45 passed (48)
+== MUTANT k-m1-rotate-not-serial RED
+     × a Reconnect pressed while a rotation is in flight waits for it (one mint at a time) 18ms
+     × boot's finishRotation waits for a rotateKey in flight 13ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  2 failed | 46 passed (48)
+== MUTANT k-m1-boot-rotation-not-serial RED
+     × boot's finishRotation waits for a rotateKey in flight 27ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 47 passed (48)
+== MUTANT k-m1-rotation-no-current-op-check RED
+     × a stale ROTATION answer (remove, new setup) never saves its key over the replacement's 23ms
+     × rotation generation check ALONE (before the save): a replacement binding with the rotate cursor reinstated (same op id) gets none of the old rotation's key 8ms
+     × rotation current-op check ALONE (before the save): same generation, but the rotate intent was replaced by another op while the mint was out: the key is not saved 7ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  3 failed | 45 passed (48)
+== MUTANT k-m4-no-cap RED
+     × M4: four 409s in one press: three own strays deleted, the 4th holds with the owner line (never the raw code), no 4th delete 8ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 47 passed (48)
+== MUTANT k-l1-intent-key-unprotected RED
+     × L1: an own key older than 24 h that a rotation intent still protects (its old key) holds: owner line, 0 DELETEs 7ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 47 passed (48)
+== MUTANT k-spec-m3-durable-X-bare-hold RED
+     × M3: the DURABLE key X with no mint-log entry (a copied foreign credential) gets the twin marker, the alert, no DELETE and no further mint 9ms
+     × M2 DRIVEN: a queued re-send of the same mint is in the outbox when the 409 for an unknown X lands: the twin marker drops it (no call for b1 in the outbox, one mint op) 3ms
+     × M2 (c409.twin): a queued RECONCILE call for the marked bot is dropped when the marker commits (not only auto calls) 2ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  3 failed | 30 passed (33)
+== MUTANT k-spec-i13-24h-dropped-from-predicate RED
+     × runs all 163 witnesses (step + live); mismatches equal the pinned list 27ms
+     × is not vacuous: inverting every predicate makes every step witness fail 12ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  2 failed | 11 passed (13)
+== MUTANT k-spec-i13-unminted-allowed RED
+     × runs all 163 witnesses (step + live); mismatches equal the pinned list 29ms
+     × is not vacuous: inverting every predicate makes every step witness fail 14ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  2 failed | 11 passed (13)
+== MUTANT l-m1-list-twin-no-drop RED
+     × M1 (list.twin): a list answer for b1 that marks b2 also drops b2's queued automatic DELETE (two-bot home); b2's owner call and b1's calls are kept 4ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 32 passed (33)
+== MUTANT l-m2-c409-twin-no-drop RED
+     × M2 DRIVEN: a queued re-send of the same mint is in the outbox when the 409 for an unknown X lands: the twin marker drops it (no call for b1 in the outbox, one mint op) 7ms
+     × M2 (c409.twin): a queued RECONCILE call for the marked bot is dropped when the marker commits (not only auto calls) 1ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  2 failed | 31 passed (33)
+== MUTANT l-m3-no-state-clause RED
+     × M3: Remove pressed while the Reconnect awaits its mint: the press fails closed (503), the row stays removing and is never flipped to active; the removal then finishes 30ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 47 passed (48)
+== MUTANT l-reconnect-no-sameBinding-either-check RED
+     × Reconnect generation check ALONE (before the save): a replacement that is itself restored, with the old op cursor reinstated, never receives the old press's key 16ms
+     × Reconnect generation check ALONE (after the durable await): same replacement, op cursor reinstated while the key is being made durable: the replacement is not flipped active 8ms
+     × sameBinding op id ALONE (Reconnect, before the save): a replacement identical in inbox and key ref but made by another setup op never receives the old press's key 7ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  3 failed | 45 passed (48)
+== MUTANT l-reconnect-no-presave-check RED
+     × remove, then a NEW setup that saves its own key Y; the late answer of the old press: nothing saved, Y untouched, the revoked X never installed 22ms
+     × belt and braces: even if the old op were somehow current again, a replaced generation never saves (the generation check alone) 10ms
+     × remove only (no new setup): the late answer saves no key and the binding stays gone 8ms
+     × Reconnect generation check ALONE (before the save): a replacement that is itself restored, with the old op cursor reinstated, never receives the old press's key 8ms
+     × M3: Remove pressed while the Reconnect awaits its mint: the press fails closed (503), the row stays removing and is never flipped to active; the removal then finishes 14ms
+     × sameBinding op id ALONE (Reconnect, before the save): a replacement identical in inbox and key ref but made by another setup op never receives the old press's key 8ms
+     × Astra 1: a late answer of a replaced op never saves its key 5ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 7 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  7 failed | 41 passed (48)
+== MUTANT l-rot-no-sameBinding-presave RED
+     × rotation generation check ALONE (before the save): a replacement binding with the rotate cursor reinstated (same op id) gets none of the old rotation's key 16ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 47 passed (48)
+== MUTANT l-rot-no-opcheck-presave RED
+     × rotation current-op check ALONE (before the save): same generation, but the rotate intent was replaced by another op while the mint was out: the key is not saved 23ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 47 passed (48)
+== MUTANT l-m4-no-recheck-after-durable RED
+     × M4 rotation generation check ALONE (after the durable await): a replacement with the cursor reinstated keeps its key ref and its rotate cursor 20ms
+     × M4 rotation current-op check ALONE (after the durable await): same generation, intent replaced during durable(): no ref write, the new intent stays 9ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  2 failed | 46 passed (48)
+== MUTANT l-m4-no-sameBinding-after-durable RED
+     × M4 rotation generation check ALONE (after the durable await): a replacement with the cursor reinstated keeps its key ref and its rotate cursor 21ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 47 passed (48)
+== MUTANT l-m4-no-opcheck-after-durable RED
+     × M4 rotation current-op check ALONE (after the durable await): same generation, intent replaced during durable(): no ref write, the new intent stays 15ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 47 passed (48)
+== MUTANT l-pending-op-age-dropped RED
+     × pending-op age: a saved Reconnect op older than Flux's 24 h window is NOT resumed by boot (no mint) 9ms
+     × pending-op age boundary: a saved Reconnect op exactly 24 h old is NOT resumed by boot; one millisecond younger IS 3ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  2 failed | 46 passed (48)
+== MUTANT l-i13-via409-not-propagated RED
+     × I13 provenance across a restart: the 409 provenance (from409) is durable, so the stray DELETE after a power crash and boot still carries cause.via409 7ms
+     × I13 provenance DRIVEN: the real reducer's 409 stray DELETE carries cause.via409 (a mutant that stops recording from409 or drops via409 dies here) 1ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  2 failed | 31 passed (33)
+== MUTANT l-i13-from409-not-recorded RED
+     × I13 provenance across a restart: the 409 provenance (from409) is durable, so the stray DELETE after a power crash and boot still carries cause.via409 3ms
+     × I13 provenance DRIVEN: the real reducer's 409 stray DELETE carries cause.via409 (a mutant that stops recording from409 or drops via409 dies here) 3ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  2 failed | 31 passed (33)
+== MUTANT m-m1-no-state-after-durable RED
+     × M1 (Astra interleaving): rotation saves X and awaits durable(); Remove starts and awaits the inbox deletion; durable() completes: no emailKeyRef write, the removal finishes 21ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 47 passed (48)
+== MUTANT m-m1-no-state-before-save RED
+     × M1 (before the save): Remove begins while the rotation's candidate check is out: the new key is not saved 27ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 47 passed (48)
+== MUTANT m-m2-no-removed-guard RED
+     × r3.2m (Astra M2, Fable L2): a late foreign-key 409 for a REMOVED binding commits no twin marker, and the removed binding's own stray DELETE still goes out 4ms
+     × r3.2m: the removed binding's drain proceeds after the late 409 (a DELETE for its stray is queued, nothing blocks it) 1ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  2 failed | 31 passed (33)
+== MUTANT m-i6c-409-no-live-filter RED
+     × runs all 163 witnesses (step + live); mismatches equal the pinned list 30ms
+     × is not vacuous: inverting every predicate makes every step witness fail 14ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  2 failed | 11 passed (13)
+== MUTANT m-i14-always-true RED
+     × runs all 163 witnesses (step + live); mismatches equal the pinned list 29ms
+     × is not vacuous: inverting every predicate makes every step witness fail 11ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  2 failed | 11 passed (13)
+== MUTANT m-pending-boundary-le-boot RED
+     × pending-op age boundary: a saved Reconnect op exactly 24 h old is NOT resumed by boot; one millisecond younger IS 12ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 47 passed (48)
+== MUTANT m-pending-boundary-le-reuse RED
+     × saved-op reuse boundary: a Reconnect press does not reuse a saved op exactly 24 h old (new op id); one millisecond younger it does 15ms
+     × past the 24 h window a press starts a new op (the setup re-op) 7ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  2 failed | 46 passed (48)
+== MUTANT m-list-twin-auto-only RED
+     × M1 (list.twin): a list answer for b1 that marks b2 also drops b2's queued automatic DELETE (two-bot home); b2's owner call and b1's calls are kept 4ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 32 passed (33)
+== MUTANT m-c409-twin-auto-only RED
+     × M2 (c409.twin): a queued RECONCILE call for the marked bot is dropped when the marker commits (not only auto calls) 8ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 32 passed (33)
+== MUTANT m-sameBinding-no-opId RED
+     × sameBinding op id ALONE (Reconnect, before the save): a replacement identical in inbox and key ref but made by another setup op never receives the old press's key 11ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 47 passed (48)
+== MUTANT m-from409-lost-on-boot RED
+     × I13 provenance across a restart: the 409 provenance (from409) is durable, so the stray DELETE after a power crash and boot still carries cause.via409 4ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 32 passed (33)
+== MUTANT n-l1-no-unk-alert RED
+     × r3.2n (Fable L1): a NON-current 409 that commits the marker while the current op is unknown (unk) raises the current-operation alert; the marker still blocks, and no unk means no new alert 4ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 32 passed (33)
+== MUTANT n-l1-alert-without-unk RED
+     × r3.2n (Fable L1): a NON-current 409 that commits the marker while the current op is unknown (unk) raises the current-operation alert; the marker still blocks, and no unk means no new alert 6ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 32 passed (33)
+== MUTANT n-l3-oracle-trusts-flag RED
+     × runs all 163 witnesses (step + live); mismatches equal the pinned list 28ms
+     × is not vacuous: inverting every predicate makes every step witness fail 18ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  2 failed | 11 passed (13)
+== MUTANT n-l3-oracle-only-prev-ops RED
+     × runs all 163 witnesses (step + live); mismatches equal the pinned list 29ms
+     × is not vacuous: inverting every predicate makes every step witness fail 14ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  2 failed | 11 passed (13)
+== MUTANT n-l3-reducer-flag-wrong-key RED
+     × I13 provenance across a restart: the 409 provenance (from409) is durable, so the stray DELETE after a power crash and boot still carries cause.via409 5ms
+     × I13 provenance DRIVEN: the real reducer's 409 stray DELETE carries cause.via409 (a mutant that stops recording from409 or drops via409 dies here) 3ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  2 failed | 31 passed (33)
+== MUTANT n-l3-reducer-flag-cause-dropped RED
+     × I13 provenance across a restart: the 409 provenance (from409) is durable, so the stray DELETE after a power crash and boot still carries cause.via409 7ms
+     × I13 provenance DRIVEN: the real reducer's 409 stray DELETE carries cause.via409 (a mutant that stops recording from409 or drops via409 dies here) 1ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  2 failed | 31 passed (33)
+== MUTANT o-l1-alert-mint-only RED
+     × r3.2n (Fable L1): a NON-current 409 that commits the marker while the current op is unknown (unk) raises the current-operation alert; the marker still blocks, and no unk means no new alert 7ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  1 failed | 32 passed (33)
+== MUTANT o-l3-oracle-any-home RED
+     × runs all 163 witnesses (step + live); mismatches equal the pinned list 20ms
+     × is not vacuous: inverting every predicate makes every step witness fail 13ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+      Tests  2 failed | 11 passed (13)
+== GREEN after server/email/reconnect-r32h.test.ts server/email/reconnect-r32k.test.ts OK total=48
+== GREEN after server/email/reconnect-r32h.test.ts server/email/reconnect-r32k.test.ts server/email/bindi OK total=82
+== GREEN after server/email/exec-spec/keystore/r32h-product.test.ts server/email/exec-spec/keystore/r32h. OK total=33
+== GREEN after server/email/exec-spec/keystore/witness-pass.test.ts OK total=13
+MUTANT SUMMARY killed=72/72 bad=0

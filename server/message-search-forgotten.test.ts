@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { database } from "./database.ts";
 import { closeMessageDb, deleteThread, searchMessagesWithMeta } from "./message-db.ts";
-import { rebuildMessageSearchIndex } from "./message-search-index.ts";
+import { rebuildSearchFixture, pendingSearchFixture } from "./testing/message-search-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 beforeEach(() => {
@@ -51,13 +51,13 @@ const ids = (r: ReturnType<typeof searchMessagesWithMeta>) => r.hits.map((hit) =
 
 describe("excludeForgotten", () => {
   for (const indexed of [false, true]) {
-    it(`leaves every forgotten line out for the owner too (${indexed ? "trigram index" : "window walk"})`, () => {
+    it(`leaves every forgotten line out for the owner too (${indexed ? "trigram index" : "window walk"})`, async () => {
       seed();
       deletedSource("B", "deleted");
       // A fresh database trusts its (empty) index at open, and these rows are written past it: rebuild it, or reopen so the rows past
       // the index are searched by the window walk while the fill has not run.
-      if (indexed) rebuildMessageSearchIndex(database());
-      else closeMessageDb();
+      if (indexed) await rebuildSearchFixture(database());
+      else await pendingSearchFixture();
       const chats = searchMessagesWithMeta("austin lease", 40, undefined, { owner: true, excludeForgotten: true });
       expect(ids(chats)).toEqual(["kept", "withheld"]);
       // scoped to a thread as well
@@ -69,19 +69,19 @@ describe("excludeForgotten", () => {
     });
   }
 
-  it("counts the page in rows this view may show, so a forgotten line never takes a hit's place", () => {
+  it("counts the page in rows this view may show, so a forgotten line never takes a hit's place", async () => {
     for (let i = 0; i < 5; i++) put("A", `f${i}`, 10_000 + i, `the austin lease forgotten ${i}`, { withheldFromBots: "forgotten" });
     put("A", "kept", 1000, "the austin lease, kept");
     put("A", "kept2", 900, "the austin lease, kept too");
-    closeMessageDb();
+    await rebuildSearchFixture();
     const page = searchMessagesWithMeta("austin lease", 2, undefined, { owner: true, excludeForgotten: true });
     expect(page.hits.map((hit) => hit.messageId)).toEqual(["kept", "kept2"]);
     expect(page.partial).toBe(false);
   });
 
-  it("changes nothing for a reader that is not the owner", () => {
+  it("changes nothing for a reader that is not the owner", async () => {
     seed();
-    closeMessageDb();
+    await pendingSearchFixture();
     const before = ids(searchMessagesWithMeta("austin lease", 40, undefined, {}));
     expect(before).not.toContain("stamped");
     const withOption = ids(searchMessagesWithMeta("austin lease", 40, undefined, { excludeForgotten: true }));
@@ -89,18 +89,18 @@ describe("excludeForgotten", () => {
     expect(withOption).not.toContain("owner-forget");
   });
 
-  it("does not return deleted conversations even when their text was indexed", () => {
+  it("does not return deleted conversations even when their text was indexed", async () => {
     seed();
-    rebuildMessageSearchIndex(database());
+    await rebuildSearchFixture(database());
     deleteThread("A");
     expect(searchMessagesWithMeta("austin lease", 40, undefined, { owner: true, excludeForgotten: true }).hits.some(hit => hit.threadId === "A")).toBe(false);
   });
 });
 
-it.each([false, true])("RULE path 16 non-owner excludes every forgotten source and deleted row, indexed=%s", indexed => {
+it.each([false, true])("RULE path 16 non-owner excludes every forgotten source and deleted row, indexed=%s", async indexed => {
   seed(); deletedSource("B", "deleted");
   put("A", "removed", 8000, "the austin lease removed");
-  if (indexed) rebuildMessageSearchIndex(database()); else closeMessageDb();
+  if (indexed) await rebuildSearchFixture(database()); else await pendingSearchFixture();
   database().prepare("DELETE FROM messages WHERE id='removed'").run();
   expect(ids(searchMessagesWithMeta("austin lease", 40, undefined, {}))).toEqual(["kept"]);
   expect(ids(searchMessagesWithMeta("austin lease", 40, undefined, {owner:true}))).toEqual(["deleted", "kept", "other", "owner-forget", "stamped", "supporting", "withheld"]);
@@ -114,7 +114,7 @@ it("RULE Case B applies rendered predicates before pagination in both search wal
   database().prepare("INSERT INTO messages(thread_id,id,at,role,kind,json) VALUES('A','expired',3,'bot','activity',?)")
     .run(JSON.stringify({id:"expired",kind:"activity",at:3,folderPrompt:{folder:"Desktop",done:true},tool:{name:"needle expired"}}));
   for(const indexed of [false,true]) {
-    if(indexed) rebuildMessageSearchIndex(database()); else closeMessageDb();
+    if(indexed) await rebuildSearchFixture(database()); else await pendingSearchFixture();
     const rendered = (_thread:string, row: import('./store.ts').Message) => searchRowRendered(row,false);
     expect(ids(searchMessagesWithMeta("needle",1,undefined,{owner:true,rendered}))).toEqual(["visible"]);
     expect(ids(searchMessagesWithMeta("needle",10,undefined,{owner:true,rendered:(_thread,row)=>searchRowRendered(row,true)}))).toEqual(["hidden","visible"]);

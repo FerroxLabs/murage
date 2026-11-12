@@ -40,7 +40,7 @@ async function fixture(options:{timeoutMs?:number;maintenance?:"separate"|"share
   const legacy=async(job:string)=>{
     const stage=join(root,`legacy-${job}`);mkdirSync(stage);writeFileSync(join(stage,"backup.age"),randomBytes(64*1024));writeFileSync(join(stage,"receipt.json"),"{}");
     const env={HOME:root,PATH:"",TMPDIR:root,RESTIC_REPOSITORY:`s3:${s3.endpoint}/${s3.bucket}/${prefix}`,AWS_DEFAULT_REGION:s3.region,AWS_ACCESS_KEY_ID:writer.accessKeyId,AWS_SECRET_ACCESS_KEY:writer.secretAccessKey};
-    const child=spawn(tool!,["--cacert",s3.caFile,"--json","--no-cache","-o","s3.bucket-lookup=path","backup","--host","murage","--tag",`murage-job:${job.repeat(64)}`,"backup.age","receipt.json"],{cwd:stage,env,stdio:["pipe","pipe","ignore"]});
+    const child=spawn(tool!,["--cacert",s3.caFile,"--json","--no-cache","-o","s3.bucket-lookup=path","backup","--host","murage","--tag",`murage-job:${job.repeat(64)}`,"backup.age","receipt.json"],{ windowsHide: true,cwd:stage,env,stdio:["pipe","pipe","ignore"]});
     let stdout="";child.stdout.on("data",chunk=>{stdout+=chunk;});child.stdin.on("error",()=>{});child.stdin.end(password+"\n");
     expect(await new Promise(resolve=>child.once("close",resolve))).toBe(0);
     const summary=stdout.trim().split("\n").map(line=>{try{return JSON.parse(line);}catch{return {};}}).find(row=>row.message_type==="summary");

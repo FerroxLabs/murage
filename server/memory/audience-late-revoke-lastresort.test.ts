@@ -1,8 +1,9 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// LASTRESORT-MIN M1 (designs/LASTRESORT-AUDIENCE-1018-MINIMAL.md), from the 1.0.17 probe (fake data only): a NON-OWNER direct turn on the
-// LAST-RESORT replay path (index.ts memoryLastResort: ownReplayRefs + noneRef("murage") instead of the prefix ref). An audience-only revoke
+// The listed replay privacy contract from the 1.0.17 probe (fake data only).
+// Recovery now uses selective replay at tier 1 and no stored replay at tier 2.
+// Legacy ownReplayRefs consumers keep their original audience/content rules. An audience-only revoke
 // lands between prepare and the send fence. The real send fence (assertSendFence) must refuse, so no revoked bytes (built.text) reach the
 // engine writer. The owner's own replay is tagged `judge: "content"` (direct owner: reader { audience: null }; owner room: ownReplayRefs
 // "content"), so an audience-only mark never refuses it.
@@ -37,7 +38,7 @@ function run(reader: LineageReader, when: When, kind: Kind, tag?: "content") {
   const judged = denyLookup(f.db, { threadId: "D", lines: ["g1", "g2"].map(messageId => ({ messageId, author: "generated" as const })) }, reader);
   const shown = ["o1", ...["g1", "g2"].filter(id => judged.get(id)?.state === "shown")];
   const turn = openTurnLineage(f.db, { threadId: "D", turnId: "direct-last-resort" });
-  // index.ts last resort: [...ownReplayRefs(threadId, ownShownIds, ownerAudience ? "content" : undefined), noneRef("murage")]
+  // A legacy listed replay part: every shown line remains fenced by its reader.
   const built = buildPrompt(turn, [promptPart(shown.map(id => text[id]).join("\n"), [...ownReplayRefs("D", shown, tag), noneRef("murage")])]);
   if (when === "late") land(); // after prepare, before the send fence
   const sent: string[] = []; // bytes handed to a fake engine writer

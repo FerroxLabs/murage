@@ -9,7 +9,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { browserEngineRefusesHost } from "./browser-host.ts";
 import { once } from "node:events";
 import { createServer, request, type Server } from "node:http";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -114,6 +114,43 @@ export const holdBoxSlowValidation = () => {
 export let boxStubPort = 0;
 export let connectorAliasFixture: { accounts: { id: string; alias: string; status: string; toolkit: { slug: string } }[]; links: { toolkit: string; alias?: string }[]; calls: number; refuseTakenLabels?: boolean; refuseAfterMs?: number; statusAfterMs?: number } | undefined;
 export let home: string;
+let lineageStateDir = "";
+/** Test-only: `skip` sends the fixture turn without the lineage readiness wait (the row that proves the product launches, or lands on the no-memory last resort, anyway). */
+export const lineageWaitControl = { skip: false };
+const lineageWaiters = new Map<string, number>();
+let lineageRevision = 0;
+const publishLineageWaiters = () => {
+  const revision = ++lineageRevision;
+  writeFileSync(join(lineageStateDir, "threads.tmp"), JSON.stringify({ revision, threads: [...lineageWaiters.keys()] }));
+  renameSync(join(lineageStateDir, "threads.tmp"), join(lineageStateDir, "threads.json"));
+  return revision;
+};
+/** Wait for a fresh reading of this turn's lineage. Only active waits are sampled, independent of earlier turns. */
+export const waitForLineageSettled = async (threadId: string, timeout = 15_000) => {
+  if (lineageWaitControl.skip) return;
+  lineageWaiters.set(threadId, (lineageWaiters.get(threadId) ?? 0) + 1);
+  const revision = publishLineageWaiters();
+  let lastState = "no reading yet";
+  const giveUpAt = Date.now() + timeout;
+  try {
+    for (;;) {
+      try {
+        const snapshot = JSON.parse(readFileSync(join(lineageStateDir, "lineage-state.json"), "utf8"));
+        const reading = snapshot.revision >= revision ? snapshot.states?.[threadId]?.state as string | undefined : undefined;
+        if (reading !== undefined) {
+          lastState = reading;
+          if (reading === "warm" || reading === "retired") return;
+        }
+      } catch { /* the preload has not written yet */ }
+      if (Date.now() >= giveUpAt) throw new Error(`lineage never settled for thread ${threadId} within ${timeout} ms (last state: ${lastState})`);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  } finally {
+    const remaining = (lineageWaiters.get(threadId) ?? 1) - 1;
+    if (remaining) lineageWaiters.set(threadId, remaining); else lineageWaiters.delete(threadId);
+    publishLineageWaiters();
+  }
+};
 export let staticDir: string;
 export let fakeClaudeDump: string;
 export let stderr = "";
@@ -318,6 +355,7 @@ export const startInternalFixtureTurn = async (botId: string, groupId?: string, 
   const selected = (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: { id: string }) => bot.id === botId);
   const modelSelection = { instanceId: "claude", model: "claude-sonnet-5" };
   expect((await desktopApi("PATCH", (selected.tasks?.length ?? 1) > 1 ? `/api/bots/${botId}/tasks/${selected.threadId}` : `/api/bots/${botId}`, { modelSelection })).status).toBe(200);
+  await waitForLineageSettled(selected.threadId);
   rmSync(fakeClaudeDump, { force: true });
   const target = groupId ? `/api/groups/${groupId}/messages` : `/api/bots/${botId}/messages`;
   const started = await send("POST", target, groupId ? { text } : { text, threadId: selected.threadId });
@@ -694,8 +732,12 @@ beforeAll(async () => {
   // production never gains an authorization bypass or test mint endpoint.
   // A test file that sets MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET=1 before this harness starts gets a child with the revoke marker's
   // per-minute write budget lifted (revoke-budget-preload.mjs); every other file runs the child exactly as before.
+  // The fixture-turn harness waits for the thread lineage to leave "checking"/"pending" before it sends (lineage-state-preload.mjs reads
+  // the state in the server process). The directory is outside the data dir (home/.murage) and removed with the harness.
+  lineageStateDir = mkdtempSync(join(tmpdir(), "murage-lineage-state-"));
   const revokeBudgetPreload = process.env.MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET === "1" ? ["--import", pathToFileURL(join(SERVER_DIR, "testing", "revoke-budget-preload.mjs")).href] : [];
-  child = spawn(process.execPath, ["--import", browserFixturePrelude, "--import", pathToFileURL(join(SERVER_DIR, "testing", "search-fetch-preload.mjs")).href, ...revokeBudgetPreload, process.env.MURAGE_IDENTITY_CONTROL_ENTRY ?? join(SERVER_DIR, "index.ts")], {
+  child = spawn(process.execPath, ["--import", browserFixturePrelude, "--import", pathToFileURL(join(SERVER_DIR, "testing", "search-fetch-preload.mjs")).href, "--import", pathToFileURL(join(SERVER_DIR, "testing", "lineage-state-preload.mjs")).href, ...revokeBudgetPreload, process.env.MURAGE_IDENTITY_CONTROL_ENTRY ?? join(SERVER_DIR, "index.ts")], {
+    windowsHide: true,
     cwd: ROOT,
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -715,6 +757,8 @@ beforeAll(async () => {
       } : {}),
       ...(process.env.MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET === "1" ? { MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET: "1" } : {}),
       MURAGE_STATIC_DIR: staticDir,
+      MURAGE_TEST_LINEAGE_STATE_DIR: lineageStateDir,
+      MURAGE_TEST_LINEAGE_STATE_DB: join(home, ".murage", "messages.db"),
       // The preload isolates only native execution; authority uses the real harness.
       MURAGE_AGENT_BROWSER_PATH: process.execPath,
       MURAGE_BROWSER_FIXTURE_URL: `http://127.0.0.1:${boxStubPort}/fixture-browser-event`,
@@ -766,6 +810,7 @@ afterAll(async () => {
   // an exit that is actually waited for before the delete begins.
   await waitForExit(child, { signal: "SIGTERM" });
   await removeTempDir(home);
+  if (lineageStateDir) await removeTempDir(lineageStateDir);
   for (const directory of deferredCheckpointDirectories) expect(existsSync(directory), "owned checkpoint fixture must be removed after server shutdown").toBe(false);
 });
 

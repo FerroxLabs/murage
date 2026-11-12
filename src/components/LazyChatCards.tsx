@@ -7,12 +7,14 @@
 // the first paint, the way ProjectSinceYouLeftLazy does it.
 import { Suspense, type ComponentProps } from "react";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
+import type { FirstRunCard as FirstRunCardView } from "./FirstRunCard";
 import type { PublishCard as PublishCardView } from "./PublishCard";
 import type { BrowserSetupCard as BrowserSetupCardView } from "./BrowserSetupCard";
 import type { McpSignInCard as McpSignInCardView } from "./McpSignInCard";
 import type { McpEnableCard as McpEnableCardView } from "./McpEnableCard";
 import type { RoomShareAsk as RoomShareAskView, RoomShareCard as RoomShareCardView } from "./RoomShareCard";
 
+const FirstRun = retryableLazy(() => import("./FirstRunCard").then((module) => ({ default: module.FirstRunCard })));
 const Publish = retryableLazy(() => import("./PublishCard").then((module) => ({ default: module.PublishCard })));
 const McpSignIn = retryableLazy(() => import("./McpSignInCard").then((module) => ({ default: module.McpSignInCard })));
 const McpEnable = retryableLazy(() => import("./McpEnableCard").then((module) => ({ default: module.McpEnableCard })));
@@ -43,4 +45,9 @@ export function RoomShareCard(props: ComponentProps<typeof RoomShareCardView>) {
 
 export function RoomShareAsk(props: ComponentProps<typeof RoomShareAskView>) {
   return <LazyBoundary inline onRetry={RoomShareEntry.retry}><Suspense fallback={null}><RoomShareEntry.Component {...props} /></Suspense></LazyBoundary>;
+}
+
+// Guided setup loads with its first transcript card, including its job and app pickers.
+export function FirstRunCard(props: ComponentProps<typeof FirstRunCardView>) {
+  return <LazyBoundary inline onRetry={FirstRun.retry}><Suspense fallback={null}><FirstRun.Component {...props} /></Suspense></LazyBoundary>;
 }

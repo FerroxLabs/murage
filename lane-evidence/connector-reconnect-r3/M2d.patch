@@ -1,0 +1,11 @@
+--- shared/connected-app-calls.ts
++++ shared/connected-app-calls.ts
+@@ -211,7 +211,7 @@
+   const entry = (tool: string, body: Json, index: number): NormalizedCallRow => ({ index, tool, ...(typeof body.account === "string" ? { account: body.account } : {}) });
+   if (call.wellFormed && call.target) {
+     if (call.target === "COMPOSIO_MULTI_EXECUTE_TOOL") return { rows: call.rows.map((row, index) => entry(slugOf(row)!, row, index)), complete: true };
+-    if (call.target && !/^COMPOSIO_/.test(call.target) && !WRAPPER_TOOLS.has(call.target)) return { rows: [entry(call.target, call.body ?? {}, 0)], complete: true };
++    if (call.target && !/^COMPOSIO_/.test(call.target) && !WRAPPER_TOOLS.has(call.target)) return { rows: [entry(call.target, {}, 0)], complete: true };
+     return { rows: [], complete: true };
+   }
+   const outer = object(args);

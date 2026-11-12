@@ -280,7 +280,7 @@ describe("temp root and route binding", () => {
   };
   // Real git, when the host has it; null when git is not installed.
   const gitToplevel = (cwd: string): string | null => {
-    const r = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8", env: { PATH: process.env.PATH ?? "", HOME: base } });
+    const r = spawnSync("git", ["rev-parse", "--show-toplevel"], { windowsHide: true, cwd, encoding: "utf8", env: { PATH: process.env.PATH ?? "", HOME: base } });
     if (r.error) return null;
     expect(r.status).toBe(0);
     return realpathSync(r.stdout.trim());
@@ -299,7 +299,7 @@ describe("temp root and route binding", () => {
   it("an owner home that is itself a git repository is never reached: discovery from cwd still stops at cwd", () => {
     const owner = join(base, "owner");
     mkdirSync(owner);
-    const init = spawnSync("git", ["init", "-q", owner], { encoding: "utf8", env: { PATH: process.env.PATH ?? "", HOME: base } });
+    const init = spawnSync("git", ["init", "-q", owner], { windowsHide: true, encoding: "utf8", env: { PATH: process.env.PATH ?? "", HOME: base } });
     if (init.error) markReflectionGitRoot(owner); else expect(init.status).toBe(0);
     const tmp = join(owner, ".murage", "pip-tmp");
     const t = createTempRoot(tmp, "rungit2", 1, "p");
@@ -340,6 +340,10 @@ describe("temp root and route binding", () => {
     // spread last: a binding cannot reopen them
     const reopened = buildReflectionEnv("fuigo", "/usr/bin", t.home, t.root, { ...b.env, FUIGO_WORKFLOWS: "1", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "1", FUIGO_GOAL: "1" });
     for (const name of ["FUIGO_WORKFLOWS", "FUIGO_SCHEDULER_BACKGROUND_LOOPS", "FUIGO_GOAL"]) expect([name, reopened[name]]).toEqual([name, "0"]);
+    // a trusted folder's .envrc never runs in reflection, and a binding cannot turn it back on
+    expect(env.FUIGO_ENVRC_TIMEOUT_SECS).toBe("0");
+    expect(buildReflectionEnv("fuigo", "/usr/bin", t.home, t.root, { ...b.env, FUIGO_ENVRC_TIMEOUT_SECS: "30" }).FUIGO_ENVRC_TIMEOUT_SECS).toBe("0");
+    expect(buildReflectionEnv("grok", "/usr/bin", t.home, t.root, { GROK_ENVRC_TIMEOUT_SECS: "30" }).GROK_ENVRC_TIMEOUT_SECS).toBe("0");
     expect(Object.keys(env)).not.toContain("FUIGO_AGENT");
     const named = buildReflectionEnv("fuigo", "/usr/bin", t.home, t.root, { ...b.env, FUIGO_AGENT: "general-purpose", fuigo_workspace_rewind_git: "1" });
     expect(Object.keys(named).filter((name) => /^fuigo_(agent|workspace_rewind_git)$/i.test(name))).toEqual([]);

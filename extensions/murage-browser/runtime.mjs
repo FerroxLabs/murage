@@ -884,7 +884,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     // A pause that names a handoff is the Your turn state: the page is released and the owner presses Continue (T25).
     if (req.operation === 'stop' || req.operation === 'pause') return fence(b, req.operation === 'stop' ? 'stopped' : 'paused', req.operation === 'stop' ? 'stopped' : 'paused', req.operation === 'pause' && req.params.reason === 'handoff' ? { text: req.params.handoff } : undefined);
     // The app's own Continue (the owner at the desktop) answers a hand-over; every other resume stays the owner's action in the browser.
-    if (req.operation === 'resume') { if (req.params?.reason === 'continue' && handoffWaiting(b)) return ownerResume(b); fail('owner_action_required'); }
+    if (req.operation === 'resume') { if (req.params?.reason === 'continue' && handoffWaiting(b)) return ownerResume(b, req.params.noLimits === true); fail('owner_action_required'); }
     active(b, req.generation);
     if (req.operation === 'share') fail('owner_action_required');
     if (req.operation === 'unshare') return unshare(b, req.params.tabId);
@@ -902,14 +902,27 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     if (req.operation !== 'cdp') fail('unsupported_operation');
     const { method, params = {} } = req.params;
     if (method === 'Target.getTargets') return { targetInfos: summary(b).tabs.map(t => ({ targetId: String(t.tabId), type: 'page', attached: b.attached.has(t.tabId), url: t.url })) };
+    // BRLOCK19: Page.getFrameTree cannot see a frame that lives in another process, so the page lock asks the browser for every frame
+    // of the tab. Read-only, scoped to a shared and approved tab, and any failure is an error the lock treats as "locked".
+    if (method === 'Murage.getAllFrames') {
+      active(b, req.generation);
+      const t = await checkedTab(b, req.params);
+      const frames = await api.webNavigation.getAllFrames({ tabId: t.tabId });
+      active(b, req.generation);
+      if (!Array.isArray(frames)) fail('frames_unavailable');
+      await checkedTab(b, req.params);
+      // Only live documents: a back/forward-cached or prerendered one is not on the page. An unreadable url goes through as missing, so the lock reads it as doubt.
+      const live = frames.filter(f => f.documentLifecycle === undefined || f.documentLifecycle === 'active');
+      return { result: { frames: live.map(f => ({ frameId: f.frameId, parentFrameId: f.parentFrameId, ...(typeof f.url === 'string' ? { url: f.url } : {}) })) }, tabId: t.tabId, navigationEpoch: t.navigationEpoch, origin: t.origin, url: t.url };
+    }
     if (!METHODS.has(method) || params.sessionId || params.targetId || params.uniqueContextId) fail('method_denied');
-    if (isClipboardInput(method, params)) fail('clipboard_denied');
+    if (req.params.noLimits !== true && isClipboardInput(method, params)) fail('clipboard_denied');
     const t = await checkedTab(b, req.params, BOOTSTRAP_METHODS.has(method));
     // A page showing a dialog is blocked: answering it must not evaluate anything in that page.
     const dialog = method === 'Page.handleJavaScriptDialog', isInput = method.startsWith('Input.');
     const contextId = params.executionContextId ?? params.contextId;
     if (contextId !== undefined && contextId !== t.contextId && !t.contextIds?.has(contextId)) fail('context_denied');
-    if (method === 'Page.navigate' && (!b.approvedOrigins.includes(originOf(params.url)) || params.frameId)) fail('site_denied');
+    if (method === 'Page.navigate' && (!b.approvedOrigins.includes(originOf(params.url)) || (params.frameId && req.params.noLimits !== true))) fail('site_denied');
     // One in-flight trusted command per profile: includes reads to avoid hidden writes in engine scripts.
     // The one exception is the answer to a dialog: a click that made the page open an alert blocks its own command until the
     // dialog is answered, so the answer has to pass while that command is in flight. It never takes or clears the busy flag then.
@@ -950,7 +963,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
       if (isInput) {
         active(b, req.generation); if (b.tabs.get(t.tabId) !== t || t.navigationEpoch !== req.params.navigationEpoch) fail('stale_document');
         // Round 9 (R8-10): the owner changed the approved sites or settings while this input waited: it does not dispatch, and the site is looked at again, synchronously.
-        if ((b.bindEpoch ?? 0) !== bindEpoch || !b.approvedOrigins.includes(t.origin)) fail('site_denied');
+        if (req.params.noLimits !== true && ((b.bindEpoch ?? 0) !== bindEpoch || !b.approvedOrigins.includes(t.origin))) fail('site_denied');
       }
       // Each operation has its own deadline. Only a command that may have acted (input, a function
       // call on a node) is "uncertain" and pauses; a read that is simply slow fails that call alone.
@@ -1056,17 +1069,17 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     finally { if (reads) { reader.reading = Math.max(0, (reader.reading ?? 1) - 1); if (reader.reading === 0) pushStatus(); } if (inFlight?.id === req.id) { inFlight = undefined; saveSoon(); } }
   }
   // The owner takes the task back: sites are looked at again, the generation moves on and the app is told (event 'resumed').
-  async function ownerResume(b) {
+  async function ownerResume(b, noLimits = false) {
     if (!connected) fail('host_offline');
     const generation = b.generation, seen = [];
-    for (const t of b.tabs.values()) { const tab = await api.tabs.get(t.tabId); if (tab.incognito) fail('incognito_denied'); const origin = tab.url === 'about:blank' ? 'null' : originOf(tab.url); if (origin !== 'null' && !b.approvedOrigins.includes(origin)) fail('site_denied'); seen.push([t, origin, tab.url]); }
+    for (const t of b.tabs.values()) { const tab = await api.tabs.get(t.tabId); if (tab.incognito) fail('incognito_denied'); const origin = tab.url === 'about:blank' ? 'null' : originOf(tab.url); if (!noLimits && origin !== 'null' && !b.approvedOrigins.includes(origin)) fail('site_denied'); seen.push([t, origin, tab.url]); }
     // The page was read across awaits: a Stop, Pause or disconnect that landed meanwhile wins, and nothing here brings the task back.
     if (!connected || b.state === 'stopped' || b.generation !== generation || bindings.get(b.id) !== b) fail('binding_inactive');
     for (const [t, origin, url] of seen) { t.origin = origin; t.url = url; t.navigationEpoch++; }
     // 1.0.1: resumedAt is the generation this Resume made, recorded at the bump and never changed. The app takes a Resume in only
     // through it (the event's own generation is stamped at emit, after the awaits below, and an unshare meanwhile moves it).
     b.generation++; const resumedAt = b.generation; b.state = 'active'; b.ready = false; delete b.pausedReason; delete b.handoff; delete b.yourTurn;
-    await save(); await indicator(b); event(b, 'resumed', { ...summary(b), resumedAt }); return summary(b);
+    await save(); await indicator(b); if (!noLimits) event(b, 'resumed', { ...summary(b), resumedAt }); return summary(b);
   }
   async function handlePanel(action) {
     if (action.action === 'status') return statusSnapshot();

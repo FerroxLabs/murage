@@ -261,6 +261,9 @@ export const ORDER_WORDS = {
   paymentRenewsOn: { en: "Your plan renews on {date}.", de: "Ihr Plan verlängert sich am {date}." },
   paymentFailed: { en: "Your payment did not go through, so your order was cancelled and nothing was charged. You can start again from your account page.", de: "Ihre Zahlung ist nicht durchgegangen. Deshalb wurde Ihre Bestellung storniert, und es wurde nichts abgebucht. Sie können auf Ihrer Kontoseite neu starten." },
   paymentFailedSubject: { en: "Murage Cloud: your payment did not go through", de: "Murage Cloud: Ihre Zahlung ist nicht durchgegangen" },
+  // Auto top-up held because the Flux account cannot take credit (nothing was charged). The English is Sean's exact copy. GERMAN NEEDS REVIEW.
+  topupIneligibleSubject: { en: "Your auto top-up didn't run", de: "Ihre automatische Aufladung wurde nicht ausgeführt" },
+  topupIneligible: { en: "We tried to top up your Murage Cloud credits, but your Flux Router account can't take them right now. Nothing was charged. Reply to this email and we'll sort it out with you.", de: "Wir haben versucht, Ihre Murage-Cloud-Guthaben aufzuladen, aber Ihr Flux-Router-Konto kann sie im Moment nicht annehmen. Es wurde nichts abgebucht. Antworten Sie auf diese E-Mail, dann klären wir das gemeinsam mit Ihnen." },
 } as const satisfies Record<string, Words>;
 export type OrderWord = keyof typeof ORDER_WORDS;
 /** Every order string that still has no German (a launch gate: Sean has them written and reviewed before release). */

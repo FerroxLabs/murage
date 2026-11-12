@@ -94,6 +94,7 @@ export type Verdict =
   | { state: "uncertain-transport"; reason: string };
 
 export interface TextOnlyTurnResult {
+  fluxDecision?: import("../../shared/flux-busyloop.ts").Decision;
   /** JSON text of the validated body; empty unless verdict is validated. */
   text: string;
   usage?: { inputTokens?: number; outputTokens?: number };
@@ -334,8 +335,14 @@ export const FUIGO_OFF_SWITCHES = { FUIGO_TELEMETRY_ENABLED: "0", FUIGO_SUBAGENT
   // Fuigo 1.0.32: workflow runs, background scheduler loops and goal runs each spawn `general-purpose`, which a
   // workspace `.fuigo/agents/general-purpose.md` can redefine with its own permissionMode; FUIGO_SUBAGENTS=0 does
   // not reach them (fuigo.ts FUIGO_AGENT_SPAWNS_OFF, not imported for the reason below).
-  FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "0", FUIGO_GOAL: "0" } as const;
-export const GROK_OFF_SWITCHES = { GROK_TELEMETRY_ENABLED: "0", GROK_SUBAGENTS: "0", GROK_MEMORY: "0", GROK_MANAGED_CONFIG: "0", GROK_DISABLE_AUTOUPDATER: "1" } as const;
+  FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "0", FUIGO_GOAL: "0",
+  // Fuigo runs a trusted folder's .envrc (direnv style) at session start and applies its exports to the session
+  // and its shell; 0 disables it (fuigo-workspace envrc.rs: "0 disables"). Same pin as Cloud
+  // (deploy/cloud-home/murage-turn-launch.py FUIGO_ENVRC_TIMEOUT_SECS).
+  FUIGO_ENVRC_TIMEOUT_SECS: "0" } as const;
+export const GROK_OFF_SWITCHES = { GROK_TELEMETRY_ENABLED: "0", GROK_SUBAGENTS: "0", GROK_MEMORY: "0", GROK_MANAGED_CONFIG: "0", GROK_DISABLE_AUTOUPDATER: "1",
+  // Grok Build has the same .envrc loader (xai-grok-workspace envrc.rs: GROK_ENVRC_TIMEOUT_SECS, "0 disables").
+  GROK_ENVRC_TIMEOUT_SECS: "0" } as const;
 
 /**
  * Every owner-import compat cell (Claude Code, Cursor, Codex and ~/.agents: MCP, skills, rules, agents, hooks,
@@ -524,7 +531,7 @@ function takeStructuredBlocks(line: Record<string, unknown>, knownIds: Set<strin
 const num = (v: unknown): number | undefined => typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined;
 
 /** NDJSON parser for streaming-messages-json (Fuigo, Grok) and Claude stream-json. */
-export function parseHeadlessMessages(stdout: Buffer | string): ParsedRun {
+export function parseHeadlessMessages(stdout: Buffer | string, observe?: (frame: Record<string, unknown>) => void): ParsedRun {
   const run: ParsedRun = { initCount: 0, resultCount: 0, malformed: 0, tools: null, mcpServers: null, toolCallLines: 0, structuredCalls: [], structuredResults: 0, initSeq: null, resultSeq: null };
   const knownIds = new Set<string | null>();
   let seq = -1;
@@ -535,6 +542,7 @@ export function parseHeadlessMessages(stdout: Buffer | string): ParsedRun {
     let line: Record<string, unknown>;
     try { const v = JSON.parse(text); if (!v || typeof v !== "object" || Array.isArray(v)) { run.malformed++; continue; } line = v as Record<string, unknown>; }
     catch { run.malformed++; continue; }
+    observe?.(line);
     if (line.type === "system" && line.subtype === "init") {
       run.initCount++;
       if (run.initSeq === null) run.initSeq = seq;

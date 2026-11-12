@@ -1,5 +1,5 @@
 {
-  "@source": "57c41d0f4509791921344f3d826b6015ceced077",
+  "@source": "500fec5c01dbd58f272383f9dc5a866d959cfd15",
   "label.cloudPairing": "Adicionar um novo dispositivo à sua casa na Cloud",
   "label.cloudDevicesAccount": "Alterar os dispositivos ou a conta da sua casa na Cloud",
   "label.modelSigninStart": "Iniciar um login de modelo na sua casa na Cloud",
@@ -8,6 +8,7 @@
   "label.modelSigninRemove": "Remover uma conexão de modelo da sua casa na Cloud",
   "label.ownServer": "Alterar o servidor que seus bots usam como computador",
   "label.engineLogin": "Entrar ou sair de um mecanismo na sua casa na Cloud",
+  "label.engineSigninCode": "Concluir um login no Antigravity para um bot na sua página inicial do Cloud",
   "label.botCreate": "Criar um bot",
   "label.botDelete": "Excluir um bot e suas conversas",
   "label.botSettings": "Alterar as configurações de um bot",
@@ -59,6 +60,7 @@
   "label.localModels": "Alterar os modelos locais",
   "label.claudeAccounts": "Alterar uma conta do Claude",
   "label.chatChannels": "Alterar uma conexão com Telegram, Slack ou Discord",
+  "label.signal": "Alterar a conexão do Signal",
   "label.whatsapp": "Alterar a conexão com o WhatsApp",
   "label.memory": "Alterar a memória",
   "label.skillsCollection": "Alterar a coleção de habilidades",
@@ -131,5 +133,6 @@
   "dialog.close": "Fechar",
   "prepare.voiceFinishing": "O Murage está terminando uma resposta por voz.",
   "prepare.voiceFinishingDetail": "Tente de novo em cerca de {minutes} min. Suas conversas e memórias continuam como estavam.",
-  "prepare.quit": "Sair"
+  "prepare.quit": "Sair",
+  "label.claudeCodeImport": "Importar habilidades e servidores de ferramentas do Claude Code"
 }

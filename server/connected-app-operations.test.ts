@@ -24,6 +24,7 @@ let delayMs = 0;
 /** When set, the next tools/call is answered with exactly this (and cleared). */
 let override: { status: number; body: unknown; sse?: boolean; raw?: string } | null = null;
 const hung: Array<() => void> = [];
+let dispatchGate: Promise<void> | undefined;
 
 beforeAll(async () => {
   server = createServer(async (req, res) => {
@@ -32,6 +33,7 @@ beforeAll(async () => {
     const message = body ? JSON.parse(body) : {};
     res.setHeader("content-type", "application/json");
     if (message.method !== "tools/call") { res.end(JSON.stringify({ jsonrpc: "2.0", id: message.id ?? null, result: {} })); return; }
+    await dispatchGate;
     dispatched.push({ id: message.id, name: message.params?.name, args: message.params?.arguments });
     const count = dispatched.length;
     const answer = () => res.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: `sent #${count}` }] } }));
@@ -83,6 +85,7 @@ beforeEach(() => {
   mode = "answer";
   delayMs = 0;
   override = null;
+  dispatchGate = undefined;
 });
 
 const send = (id: number, args: unknown) => ({ jsonrpc: "2.0", id, method: "tools/call", params: { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: args } });
@@ -323,8 +326,14 @@ describe("1.0.2 round 2: replay protection holds through restart, eviction and a
 
   it("restart through the relay: the same email is not sent again", async () => {
     mode = "hang";
+    let arrive!: () => void;
+    dispatchGate = new Promise<void>((resolve) => { arrive = resolve; });
     const first = await relay(send(1, sendEmail), { waitMs: 20, lifetimeMs: 60_000 });
     const handle = handleOf(first);
+    // The caller's wait can end before the local HTTP request arrives. Restart
+    // only once the broker has received it and is holding its response.
+    arrive();
+    await vi.waitFor(() => expect(dispatched).toHaveLength(1));
     expect(dispatched).toHaveLength(1);
     restartConnectedAppOperations();
     mode = "answer";

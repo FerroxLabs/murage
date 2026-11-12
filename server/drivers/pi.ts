@@ -1,3 +1,11 @@
+import { noLimitsPowerFallbackActive, takeNoLimitsPowerFallbackNotice } from "../host-power.ts";
+import { NotModelRequest } from "../../shared/engine-transport.ts";
+import { registerBusyloopRequestSite, fluxRouteFor } from "../../shared/flux-route.ts";
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
+import { guardEngineRelease } from '../decision/provider-release.ts';
+import { deliverNative, type NativeAskSlot, type AskMode } from './native-ask.ts';
+import { RequestTransport } from './request-transport.ts';
+import { withRequestDelivery } from "./request-delivery.ts";
 import { probeFolder } from "../probe-folder.ts";
 import { botFolderOrThrow } from "../bot-folder.ts";
 import { cliSig, engineLaunchFile, knownCliVersion, memoDeps, noteVersionProbe, pathExists, rememberCliVersion, versionProbeAllowed } from "./isolation-cache.ts";
@@ -271,7 +279,7 @@ export function parsePiCatalog(stdout: string, fallbackDefault = ""): ModelCatal
     if (!line.trim()) continue;
     let msg: unknown;
     try {
-      msg = JSON.parse(line);
+      msg = registerBusyloopPayloadSite("read", JSON.parse(line));
     } catch {
       continue;
     }
@@ -356,7 +364,7 @@ export function ensurePiInjectModel(
   let root: Record<string, unknown> = { providers: {} };
   if (existsSync(path)) {
     try {
-      const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+      const parsed = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(path, "utf8"))) as unknown;
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         root = parsed as Record<string, unknown>;
       } else {
@@ -450,7 +458,7 @@ export function removePiLocalHost(
 function readPiDefaultModel(env: Record<string, string | undefined>): string {
   const home = env.HOME || env.USERPROFILE || homedir();
   try {
-    const s = JSON.parse(readFileSync(`${home}/.pi/agent/settings.json`, "utf8")) as {
+    const s = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(`${home}/.pi/agent/settings.json`, "utf8"))) as {
       defaultProvider?: string;
       defaultModel?: string;
     };
@@ -458,6 +466,22 @@ function readPiDefaultModel(env: Record<string, string | undefined>): string {
   } catch {
     return "";
   }
+}
+
+/** Resolve only the URL configured for this model; provider labels never decide Flux scope. */
+export function piRequestUrl(model: string | null, env: Record<string, string | undefined>): string | undefined {
+  const selected = model || readPiDefaultModel(env);
+  const injected = decodeInjectId(selected);
+  if (injected) return localHost(injected.host)?.baseUrl;
+  const choice = splitPiModel(selected);
+  if (!choice) return undefined;
+  try {
+    const settings = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(join(piAgentDir(env), "models.json"), "utf8")));
+    const provider = settings?.providers?.[choice.provider];
+    const row = provider?.models?.find((item: { id?: unknown }) => item.id === choice.modelId);
+    const url = row?.baseUrl ?? provider?.baseUrl;
+    return typeof url === "string" ? url : undefined;
+  } catch { return undefined; }
 }
 
 /** Probe the live catalog by spawning `pi --mode rpc --no-session`, sending
@@ -503,7 +527,7 @@ export async function fetchPiModels(
     child.on("error", () => finish({ default: "", options: [] }));
     child.on("close", () => finish({ default: "", options: [] }));
     try {
-      child.stdin.write(JSON.stringify({ id: "catalog", type: "get_available_models" }) + "\n");
+      NotModelRequest("Pi get_available_models catalog probe; no prompt is submitted", child.stdin.write(JSON.stringify({ id: "catalog", type: "get_available_models" }) + "\n"));
     } catch {
       finish({ default: "", options: [] });
     }
@@ -591,7 +615,7 @@ interface PiEvent {
 
 /** Settles one pi extension_ui_request. A question's `answer` carries the
  * owner's validated picks (0.1.52 ASK3); `deny` on a question is a skip. */
-type PiAskAnswer = (decision: { behavior: "allow" | "deny" | "answer"; message?: string; answers?: QuestionAnswer[] }) => void;
+type PiAskAnswer = (decision: { behavior: "allow" | "deny" | "answer"; message?: string; answers?: QuestionAnswer[]; updatedInput?:Record<string,unknown> }, mode?: AskMode, source?: "user" | "system" | "timeout") => Promise<boolean>;
 
 function piEnvironment(source: Record<string, string | undefined>): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = { ...cloudTurnEnvironment("pi", source, ["MURAGE_MCP_CONFIG", "MURAGE_PI_GATE", "MURAGE_PI_GATE_PREFIXES", "MURAGE_PI_GATE_ONLY"]), PATH: augmentedPath() };
@@ -652,7 +676,7 @@ export function piGateAsk(message: string, mounts: readonly McpMountRecord[] = [
   const ask = piGateCall(message, mounts);
   // 1.0.4 09-1: the gate's own key-file verdict (it follows links); it can only add a hold
   let hold: unknown;
-  try { hold = (JSON.parse(message) as { sensitive?: unknown } | null)?.sensitive; } catch { hold = undefined; }
+  try { hold = (registerBusyloopPayloadSite("read", JSON.parse(message)) as { sensitive?: unknown } | null)?.sensitive; } catch { hold = undefined; }
   return typeof hold === "string" && hold ? { ...ask, localHold: hold.slice(0, 80) } : ask;
 }
 
@@ -660,7 +684,7 @@ function piGateCall(message: string, mounts: readonly McpMountRecord[]): PiGateA
   let parsed: { tool?: unknown; input?: unknown; truncated?: unknown; mount?: unknown; mcpTool?: unknown; note?: unknown } = {};
   let readable = false;
   try {
-    const value: unknown = JSON.parse(message);
+    const value: unknown = registerBusyloopPayloadSite("read", JSON.parse(message));
     if (value && typeof value === "object" && !Array.isArray(value)) { parsed = value as typeof parsed; readable = true; }
   } catch {
     // unreadable: a cut call, below
@@ -761,6 +785,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
   defaultConfig: () => decodeConfig({}),
 
   async create(input: DriverCreateInput<PiConfig>): Promise<ProviderInstance> {
+
     /** `pi --version` as last probed (snapshot or a turn); decides the isolation flags. */
     let piVersion = "";
     // The CLI file the version came from: replaced by an update, it is re-probed; otherwise never.
@@ -792,6 +817,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
 
     const listeners = new Set<RuntimeEventListener>();
     // one active turn per thread
+    const answerTransport = new RequestTransport();
     const active = new Map<string, {
       /** "asked": interruptTurn or stopAll, the turn ends as Stop. "closing": dispose, the turn ends as the engine closing. */
       stop: (why: "asked" | "closing") => void;
@@ -807,6 +833,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
     // Settlement emits the terminal event; Stop lets abort finish before
     // termination. The child remains owned until close is confirmed (A2).
     const teardowns = new TurnTeardowns();
+    const powerSession = {};
     // Pi's abort response follows its session flush; the close budget starts after that bounded grace.
     const piStopBudget = (): TeardownWait => stopBudget(CLI_TERM_GRACE_MS);
 
@@ -831,7 +858,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       const entry = stopGate.enter(threadId, { turnId: newId() });
       return stopGate.run(entry, () => runTurn(turn, entry), () => null);
     };
-    const runTurn = async (turn: SendTurnInput, e: GateEntry): Promise<{ turnId: string }> => {
+    const runTurn = async (turn: SendTurnInput, e: GateEntry, powerRetried = false): Promise<{ turnId: string }> => {
+      const originalTurn = turn;
       const { threadId } = turn;
       // Host control always routes through the permission card; full-auto must
       // never get unapproved hands on the user's machine (same guard as the
@@ -849,6 +877,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       const pending = new Map<string, PiAskAnswer>();
       const scopedRequests = new Set<string>();
       let settled = false;
+      let retryingPower = false;
       // Token use summed over every model round of this turn (adapted from OpenMausBot 97d7c6df3). A round is counted at
       // the first place pi reports it, normally its message_end, which precedes the round's tools.
       let turnUsage: { input: number; output: number; cachedInput?: number } | undefined;
@@ -914,7 +943,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       // access could not stop before a delete, a payment or a new contact.
       // Off only when the instance skips asks and this turn requests neither
       // broker enforcement nor the stop line.
-      const gateSecret = !skipPermissions || turn.proposalOnly === true ? randomBytes(24).toString("hex") : null;
+      const gateSecret = !skipPermissions || (turn.permissionNow?.() ?? turn).noLimits === true || turn.proposalOnly === true ? randomBytes(24).toString("hex") : null;
       let mcpTempDir: string | null = null;
       if (mcpServers) {
         // Pi is not in a Cloud home's engine manifest, and the launcher renders no Pi config.
@@ -970,6 +999,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           ...(process.env.MURAGE_CLOUD_ROLE === "home" ? {} : instanceEnv),
           ...(mcpServers && mcpTempDir ? { MURAGE_MCP_CONFIG: join(mcpTempDir, "mcp.json") } : {}),
           ...(gateSecret ? { MURAGE_PI_GATE: gateSecret } : {}),
+          ...((turn.permissionNow?.() ?? turn).noLimits === true ? { MURAGE_PI_NO_LIMITS: "1" } : {}),
           // The Chief's proposal turn: the agents server's propose tool, as
           // pi-mcp-extension.ts names it, is the one tool that runs unasked.
           ...(gateSecret && turn.proposalOnly ? { MURAGE_PI_GATE_ONLY: "agents_project_propose" } : {}),
@@ -998,7 +1028,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
             stdio: ["pipe", "pipe", "pipe"],
             cwd: botFolderOrThrow(turn),
             env: handed.env,
-          }, engineJob(), undefined, threadId);
+          }, engineJob({ noLimits: (turn.permissionNow?.() ?? turn).noLimits === true, powerSession }), undefined, threadId);
         } catch (err) {
           if (mcpTempDir) {
             try {
@@ -1010,6 +1040,14 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           throw err;
         }
       });
+      if ((turn.permissionNow?.() ?? turn).noLimits === true) {
+        const title = takeNoLimitsPowerFallbackNotice(powerSession);
+        if (title) {
+          const itemId = `power-fallback-${turnId}`;
+          emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", toolKind: "notice", title });
+          emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: true });
+        }
+      }
       const teardown = teardowns.track(threadId, turnId, child);
       teardown.onClosed(() => {
         if (mcpTempDir) {
@@ -1046,11 +1084,23 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         });
       /** The bounded reason a one-shot RPC failed, for a user-facing error. */
       const rpcFailure = (err: unknown) => (err instanceof Error ? err.message : String(err)).slice(0, 500);
-      child.stdin.on("error", () => rejectWaiters(new Error(`${ENGINE} stopped taking input.`)));
+      child.stdin.on("error", () => {
+        // EPIPE can arrive before close has classified a Seatbelt refusal.
+        // Keep startup pending until that exact child's close confirms the cause.
+        if (!powerRetried && !sessionReady && (turn.permissionNow?.() ?? turn).noLimits === true) {
+          void teardown.wait(stopBudget(0)).then(() => {
+            if (hostPowerRefused(child) && noLimitsPowerFallbackActive(powerSession)) retryingPower = true;
+            rejectWaiters(new Error(`${ENGINE} stopped taking input.`));
+          });
+        } else rejectWaiters(new Error(`${ENGINE} stopped taking input.`));
+      });
       const send = (obj: Record<string, unknown>) => {
         const line = JSON.stringify(obj);
         appendNative(threadId, { dir: "out", source: "pi.rpc", msg: obj }, { rawChars: line.length });
-        child.stdin.write(line + "\n");
+        const receipt = new Promise<boolean>(resolve => {
+          try { child.stdin.write(line + '\n', error => resolve(!error)); } catch { resolve(false); }
+        });
+        return receipt;
       };
 
       /** Emit buffered assistant text as its own item, then clear it. */
@@ -1090,7 +1140,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       const closeTurn = (end: TurnEnd): boolean => {
         if (settled) return false;
         settled = true;
-        pending.clear();
+        for (const answer of pending.values()) void answer({behavior:'deny'}, 'retire', 'system');
         scopedRequests.clear();
         for (const timer of askTimers) timer.clear();
         askTimers.clear();
@@ -1132,7 +1182,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       /** A Stop with a card open: pi's abort waits for the dialog, which has no abort listener of its own. */
       const cancelOpenAsks = () => {
         for (const id of pending.keys()) {
-          try { send({ type: "extension_ui_response", id, cancelled: true }); } catch { /* pi is gone: nothing is waiting */ }
+          try { NotModelRequest("Pi session setup, model/effort selection, abort or extension UI reply; no prompt is submitted", send({ type: "extension_ui_response", id, cancelled: true })); } catch { /* pi is gone: nothing is waiting */ }
         }
       };
       const stop = (why: "asked" | "closing") => {
@@ -1143,7 +1193,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         const completed = awaitResponse("abort", CLI_TERM_GRACE_MS);
         void completed.catch(() => {}).then(terminate);
         try {
-          send({ type: "abort" });
+          NotModelRequest("Pi session setup, model/effort selection, abort or extension UI reply; no prompt is submitted", send({ type: "abort" }));
         } catch {
           rejectWaiters(new Error(`${ENGINE} stopped taking input.`));
         }
@@ -1159,7 +1209,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         // After the end only what a graceful Stop needs still counts: the abort's response, and a dialog pi would otherwise wait on.
         if (settled && evt.type !== "response") {
           if (aborting && evt.type === "extension_ui_request" && evt.id && PI_DIALOGS.has(String(evt.method))) {
-            try { send({ type: "extension_ui_response", id: evt.id, cancelled: true }); } catch { /* pi is gone */ }
+            try { NotModelRequest("Pi session setup, model/effort selection, abort or extension UI reply; no prompt is submitted", send({ type: "extension_ui_response", id: evt.id, cancelled: true })); } catch { /* pi is gone */ }
           }
           return;
         }
@@ -1294,7 +1344,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
                 // a dialog the owner cannot be shown is cancelled at once,
                 // and the owner sees why, instead of a card nobody can answer
                 emit({ ...base(threadId, turnId), type: "runtime.error", message: `${ENGINE} asked a question Murage could not show (${question.error}); it was cancelled` });
-                send({ type: "extension_ui_response", id: reqId, cancelled: true });
+                NotModelRequest("Pi session setup, model/effort selection, abort or extension UI reply; no prompt is submitted", send({ type: "extension_ui_response", id: reqId, cancelled: true }));
                 return;
               }
               const questions: QuestionSpec[] | null = question ? question.questions : null;
@@ -1316,10 +1366,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               // awake time (1.0.10 C3): a sleep with the question open does not count toward its deadline
               const timer: { clear: () => void } | null = questions && turn.unattendedAskNote
                 ? wakeAwareTimeout(() => {
-                    if (timer) askTimers.delete(timer);
-                    if (!pending.delete(reqId)) return;
-                    send({ type: "extension_ui_response", id: reqId, cancelled: true });
-                    emit({ ...base(threadId, turnId), requestId: reqId, type: "request.resolved", behavior: "deny", source: "timeout" });
+                    void pending.get(reqId)?.({behavior:'deny'}, 'retire', 'timeout');
                   }, QUESTION_TIMEOUT_MS)
                 : null;
               if (timer) askTimers.add(timer);
@@ -1331,9 +1378,9 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               // Murage's own gate, recognised by this turn's secret: the call it
               // carries is what the stop line and the card read.
               const gate = isGateAsk ? piGateAsk(typeof evt.prefill === "string" ? evt.prefill : "", mountRecords) : null;
-              pending.set(reqId, (decision) => {
-                timer?.clear();
-                if (timer) askTimers.delete(timer);
+              const slot: NativeAskSlot = {closed:false};
+              pending.set(reqId, (decision, mode = 'answer', source = 'user') => {
+                const response = (): Record<string,unknown> => {
                 if (questions) {
                   // validated picks first; a one-string client (voice) still works
                   const value = decision.behavior !== "answer"
@@ -1341,9 +1388,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
                     : decision.answers?.length
                       ? toPiValue(questions, decision.answers)
                       : (decision.message ?? "").trim();
-                  if (value) send({ type: "extension_ui_response", id: reqId, value });
-                  else send({ type: "extension_ui_response", id: reqId, cancelled: true });
-                  return;
+                  return value ? {type:"extension_ui_response",id:reqId,value} : {type:"extension_ui_response",id:reqId,cancelled:true};
                 }
                 if (isGateAsk) {
                   // Rule 73d: Allow echoes the input the gate sent (a rewrite,
@@ -1354,15 +1399,21 @@ export const PiDriver: ProviderDriver<PiConfig> = {
                   // Allow then tells the gate to run the call it holds.
                   const allowed = decision.behavior === "allow" && gate?.gateInput !== undefined && !gate.truncated;
                   const reply = allowed
-                    ? { allow: true, input: gate!.gateInput }
+                    ? { allow: true, input: (turn.permissionNow?.()??turn).noLimits===true?decision.updatedInput??gate!.gateInput:gate!.gateInput }
                     : decision.behavior === "allow"
                       ? { allow: true, keep: true }
                       : { deny: true, reason: decision.message?.trim() || "The owner did not allow this in Murage." };
-                  send({ type: "extension_ui_response", id: reqId, value: JSON.stringify(reply) });
-                  return;
+                  return { type: "extension_ui_response", id: reqId, value: JSON.stringify(reply) };
                 }
-                if (decision.behavior === "deny") send({ type: "extension_ui_response", id: reqId, cancelled: true });
-                else send({ type: "extension_ui_response", id: reqId, confirmed: true });
+                return decision.behavior === 'deny' ? {type:'extension_ui_response',id:reqId,cancelled:true} : {type:'extension_ui_response',id:reqId,confirmed:true};
+                };
+                const frame=response();
+                return deliverNative(slot,mode,JSON.stringify(frame),()=>send(frame),()=>child.stdin.writable && !child.stdin.destroyed,accepted=>{
+                  pending.delete(reqId); const wasScoped=scopedRequests.delete(reqId);
+                  timer?.clear(); if(timer) askTimers.delete(timer);
+                  answerTransport.confirm(threadId,reqId,Promise.resolve(accepted));
+                  emit({...base(threadId,turnId),requestId:reqId,type:'request.resolved',behavior:accepted?decision.behavior:'deny',source:accepted?source:'unavailable',...(wasScoped?{approvalScope:'local-computer' as const}:{})});
+                },()=>decision.behavior!=='allow'||(turn.permissionNow?.()??turn).noLimits!==true||answerTransport.guardRelease(threadId,reqId,()=>guardEngineRelease({threadId,turnId,requestId:reqId,providerInstanceId:instanceId},decision.updatedInput)));
               });
               // F12 when the card opens (Rule 74d): the check of the generation the card opens in, computed for this ask
               const open = (execEnv: ExecEnv) => {
@@ -1429,7 +1480,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         onLine: (line) => {
           if (!line.trim()) return;
           try {
-            onEvent(JSON.parse(line) as PiEvent, line.length);
+            onEvent(registerBusyloopPayloadSite("read", JSON.parse(line)) as PiEvent, line.length);
           } catch {
             /* skip non-JSON line */
           }
@@ -1480,6 +1531,11 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         clearTimeout(stdoutEndTimer);
         // S4 power (design sections 2 and 8): bwrap or sandbox-exec refused before pi ran; nothing it was sent was delivered.
         if (!settled && hostPowerRefused(child)) {
+          if (!sessionReady && !powerRetried && (turn.permissionNow?.() ?? turn).noLimits === true && noLimitsPowerFallbackActive(powerSession)) {
+            retryingPower = true;
+            rejectWaiters(new Error("power startup retry"));
+            return;
+          }
           turn.notWritten?.();
           closeTurn(failed(hostPowerMessage()));
           rejectWaiters(new Error(hostPowerMessage()));
@@ -1512,7 +1568,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         // and that turn never ends. A slow answer is waited for, and after PI_SESSION_SLOW_MS the chat says so; Stop, a
         // refusal or pi closing still end the wait.
         const hsPromise = awaitResponse(command, Infinity);
-        send(sessionPath ? { type: "switch_session", sessionPath } : { type: "new_session" });
+        NotModelRequest("Pi session setup, model/effort selection, abort or extension UI reply; no prompt is submitted", send(sessionPath ? { type: "switch_session", sessionPath } : { type: "new_session" }));
         const slow = setTimeout(() => {
           if (settled || sessionWaitItem) return;
           sessionWaitItem = `pi-session-wait-${turnId}`;
@@ -1533,6 +1589,14 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           model: turn.model ?? null,
         });
       } catch (err) {
+        if (retryingPower) {
+          const closed = await stopGate.step(e, teardown.wait(stopBudget(0)));
+          if (closed.closeConfirmed) {
+            active.delete(threadId); e.live = false; e.stopLive = undefined;
+            return stopGate.step(e, runTurn(originalTurn, e, true));
+          }
+          console.warn(`${ENGINE} power fallback: refused startup could not be stopped`);
+        }
         // A failed handshake is not a fresh start. Prompting anyway would run
         // this turn without the thread's conversation (a resumed thread would
         // silently lose its history), or talk to a child that is already gone.
@@ -1549,7 +1613,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       if (chosen && requestedModel) {
         try {
           const modelPromise = awaitResponse("set_model");
-          send({ type: "set_model", provider: chosen.provider, modelId: chosen.modelId });
+          NotModelRequest("Pi session setup, model/effort selection, abort or extension UI reply; no prompt is submitted", send({ type: "set_model", provider: chosen.provider, modelId: chosen.modelId }));
           await stopGate.step(e, modelPromise);
         } catch (err) {
           // Never fall back to pi's default model: that can move a local or
@@ -1565,7 +1629,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       if (turn.effort) {
         try {
           const levelPromise = awaitResponse("set_thinking_level");
-          send({ type: "set_thinking_level", level: piThinkingLevel(turn.effort) });
+          NotModelRequest("Pi session setup, model/effort selection, abort or extension UI reply; no prompt is submitted", send({ type: "set_thinking_level", level: piThinkingLevel(turn.effort) }));
           await stopGate.step(e, levelPromise);
         } catch {
           /* keep going on the engine default */
@@ -1580,7 +1644,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       try { turn.beforeSubmit?.(); } catch { return { turnId }; }
       if (settled) return { turnId };
       try {
-        stopGate.launch(e, () => send({ type: "prompt", message }));
+        stopGate.launch(e, () => registerBusyloopRequestSite(fluxRouteFor(piRequestUrl(requestedModel, turnEnv)), send({ type: "prompt", message })));
       } catch {
         failBeforePrompt(`${ENGINE} stopped before it took this message. Send your message again.`);
       }
@@ -1642,7 +1706,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       return snapshotVersionOf(answer.err, answer.out);
     }
 
-    return {
+    return withRequestDelivery({
       instanceId,
       driverKind: DRIVER_KIND,
       displayName: input.displayName,
@@ -1699,17 +1763,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           const entry = active.get(threadId);
           const answer = entry?.pending.get(requestId);
           if (!entry || !answer) return "unavailable";
-          entry.pending.delete(requestId);
-          const scoped = entry.scopedRequests.delete(requestId);
-          answer({ behavior: decision.behavior, message: decision.message, answers: decision.answers });
-          emit({
-            ...base(threadId, entry.turnId),
-            requestId,
-            type: "request.resolved",
-            behavior: decision.behavior,
-            source: "user",
-            ...(scoped ? { approvalScope: "local-computer" as const } : {}),
-          });
+          if (!(await answer({ behavior: decision.behavior, message: decision.message, answers: decision.answers, updatedInput:decision.updatedInput }))) return 'unavailable';
           return decision.behavior === "allow" ? "allowed-once" : decision.behavior === "answer" ? "answered" : "rejected";
         },
         hasSession: (threadId) => active.has(threadId),
@@ -1733,6 +1787,6 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         if (!result.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, result);
         listeners.clear();
       },
-    };
+    }, answerTransport);
   },
 };

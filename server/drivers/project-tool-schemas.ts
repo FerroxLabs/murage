@@ -171,6 +171,13 @@ export const ASK_OWNER_TO_SHARE_TOOL = {
  *  so the bot posts where the owner picked without guessing among its rooms. Listing is presentation; server/venue-post.ts still refuses
  *  any other venue (Q5b). */
 export function venuePostToolFor(pick: { venueId: string; venueThreadId?: string } | null): typeof VENUE_POST_TOOL {
+  if (pick?.venueId === "") return { ...VENUE_POST_TOOL,
+    description: "Post a message as yourself in the requested project or channel. Use its venue_id and, for a task, venue_thread_id. Write the requested post in text.",
+    inputSchema: { ...VENUE_POST_TOOL.inputSchema, properties: { ...VENUE_POST_TOOL.inputSchema.properties,
+      venue_id: { ...VENUE_POST_TOOL.inputSchema.properties.venue_id, description: "The requested project or channel id." },
+      venue_thread_id: { ...VENUE_POST_TOOL.inputSchema.properties.venue_thread_id, description: "The requested task thread, or omit for the venue's main chat." },
+    } },
+  };
   if (!pick || typeof pick.venueId !== "string" || !pick.venueId) return VENUE_POST_TOOL;
   const thread = typeof pick.venueThreadId === "string" && pick.venueThreadId ? ` and venue_thread_id ${JSON.stringify(pick.venueThreadId)}` : " (its main chat: omit venue_thread_id)";
   return { ...VENUE_POST_TOOL, description: `${VENUE_POST_TOOL.description} For this message the owner picked venue_id ${JSON.stringify(pick.venueId)}${thread}.` };

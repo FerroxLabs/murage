@@ -1,3 +1,4 @@
+import * as cloudBrowserProcess from "./cloud-home/browser-process.ts";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -25,7 +26,7 @@ describe("optional browser resolver and installation", () => {
     writeFileSync(join(bundle, "chrome/chrome-headless-shell-mac-arm64/chrome-headless-shell"), "signed Chrome", { mode: 0o700 });
     const options = { platform: "darwin" as const, arch: "arm64", env: { MURAGE_RESOURCES_PATH: resources, PATH: bundle } };
     macAdmission.mockReturnValue(true);
-    expect(browserEngineStatus(options)).toMatchObject({ kind: "ready", version: AGENT_BROWSER_VERSION, runtimeVerified: false });
+    expect(browserEngineStatus(options)).toMatchObject({ kind: "ready", version: `${AGENT_BROWSER_VERSION}-omb.2`, runtimeVerified: false });
     expect(macAdmission).toHaveBeenCalledWith(resources, expect.any(String), true);
     macAdmission.mockReturnValue(false);
     expect(resolveAgentBrowserBinary(options)).toBeNull();
@@ -333,9 +334,10 @@ describe("optional browser resolver and installation", () => {
       const asset = resolveAgentBrowserReleaseAsset(platform, arch, musl)!;
       expect(asset.sha256).toMatch(/^[a-f0-9]{64}$/u);
       expect(asset.bytes).toBeGreaterThan(12_000_000);
-      expect(agentBrowserReleaseUrl(asset)).toBe(platform === "win32"
-        ? "https://github.com/milind-soni/OpenMausBot/releases/download/browser-engine-v0.36.0-omb.1/agent-browser-win32-x64-0.36.0-omb.1.exe"
-        : `https://github.com/vercel-labs/agent-browser/releases/download/v0.36.0/${asset.asset}`);
+      const revision = platform === "win32" ? "0.36.0-omb.3" : "0.36.0-omb.2"; // Windows alone carries the no-console patch
+      expect(asset.version).toBe(revision);
+      expect(agentBrowserReleaseUrl(asset)).toBe(`https://github.com/FerroxLabs/murage/releases/download/browser-engine-v${revision}/${asset.asset}`);
+      expect(asset.asset).toBe(`agent-browser-${asset.target}-${revision}${platform === "win32" ? ".exe" : ""}`);
     }
   });
   it("promotes only exact size/digest downloads, preserving an existing binary on rejection", async () => {
@@ -543,3 +545,31 @@ it("the browser prompt says what the bot must not do in plain words", () => {
   expect(UNIFIED_BROWSER_SYSTEM_PROMPT).not.toMatch(/safeguard|\bsafe|unsafe|safety|\u2014/i);
   expect(UNIFIED_BROWSER_SYSTEM_PROMPT).toContain("turn off a protection");
 });
+
+for (const arch of ["x64", "arm64"] as const) {
+  it.skipIf(process.platform !== "linux")(`verifies the Cloud ${arch} binary's actual reported version`, async () => {
+    // Exercise the real fake executable; the privileged Cloud transport is covered by browser-launcher.test.ts.
+    const transport = vi.spyOn(cloudBrowserProcess, "spawnCloudBrowser").mockReturnValue(null);
+    const previousRole = process.env.MURAGE_CLOUD_ROLE;
+    const descriptor = Object.getOwnPropertyDescriptor(process, "arch")!;
+    try {
+      process.env.MURAGE_CLOUD_ROLE = "home";
+      Object.defineProperty(process, "arch", { ...descriptor, value: arch });
+      const asset = resolveAgentBrowserReleaseAsset("linux", arch)!;
+      expect(asset.target).toBe(`linux-${arch}`);
+      expect(asset.version).toBe("0.38.1-omb.2");
+      const dataDir = temporary();
+      const good = join(dataDir, "cloud-engine");
+      const old = join(dataDir, "old-engine");
+      writeFileSync(good, "#!/bin/sh\necho 'agent-browser 0.38.1'\n", { mode: 0o700 });
+      writeFileSync(old, "#!/bin/sh\necho 'agent-browser 0.38.0'\n", { mode: 0o700 });
+      await expect(verifyAgentBrowserBinary(good, { PATH: "/bin" })).resolves.toBeUndefined();
+      await expect(verifyAgentBrowserBinary(old, { PATH: "/bin" })).rejects.toThrow(/required/);
+    } finally {
+      if (previousRole === undefined) delete process.env.MURAGE_CLOUD_ROLE;
+      else process.env.MURAGE_CLOUD_ROLE = previousRole;
+      Object.defineProperty(process, "arch", descriptor);
+      transport.mockRestore();
+    }
+  });
+}

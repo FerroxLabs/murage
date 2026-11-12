@@ -15,6 +15,8 @@ import { t } from "@/lib/i18n";
 import { canAccept, isTermsRefusal, PRIVACY_URL, TERMS_URL } from "@/lib/terms";
 import { openAnnouncementLink } from "@/lib/announcements";
 import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
+import { homeMeta } from "@/lib/cloud-home-meta";
+import { uxCloud } from "@/lib/cloud-ux-copy";
 
 function ExternalLink({ href, children }: { href: string; children: ReactNode }) {
   return (
@@ -107,7 +109,46 @@ export function TermsUnreachable({ onRetry, hint = false }: { onRetry: () => voi
   );
 }
 
-export function TermsScreen({ updated, onAccept, onRecheck }: { updated: boolean; onAccept: () => Promise<void>; onRecheck?: () => void }) {
+/** On a Cloud home the customer agrees on the site (the control plane records it, the home never does): Agree opens the
+ *  My Cloud page in this tab, and Check again asks the home to look once more. */
+function SiteAgreement({ site, updated, onRecheck }: { site: string; updated: boolean; onRecheck?: () => void }) {
+  const titleId = useId();
+  return (
+    <Frame titleId={titleId} title={<h2 id={titleId} className="text-[18px] font-medium text-ink">{t("terms.title")}</h2>} foot={<>
+      <div className="flex flex-col gap-2 sm:flex-row-reverse">
+        <button
+          type="button"
+          data-terms-site-agree
+          onClick={() => window.location.assign(`${site}/home/cloud`)}
+          className="h-11 flex-1 rounded-xl bg-accent px-4 text-[14px] font-medium text-white focus-visible:ring-2 focus-visible:ring-accent/70"
+        >
+          {uxCloud("ux.cloud.terms.agreeOnSite")}
+        </button>
+        {onRecheck && (
+          <button
+            type="button"
+            data-terms-recheck
+            onClick={onRecheck}
+            className="h-11 flex-1 rounded-xl border border-hairline/60 px-4 text-[14px] font-medium text-ink hover:bg-inset focus-visible:ring-2 focus-visible:ring-accent/70"
+          >
+            {uxCloud("ux.cloud.terms.checkAgain")}
+          </button>
+        )}
+      </div>
+    </>}>
+      <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{updated ? t("terms.updatedIntro") : uxCloud("ux.cloud.terms.siteIntro")}</p>
+      <p className="mt-3 text-[13px] leading-relaxed text-ink-secondary">{agreement()}</p>
+    </Frame>
+  );
+}
+
+export function TermsScreen(props: { updated: boolean; onAccept: () => Promise<void>; onRecheck?: () => void }) {
+  const meta = typeof document === "undefined" ? null : homeMeta(document);
+  if (meta?.homeId && meta.siteOrigin) return <SiteAgreement site={meta.siteOrigin} updated={props.updated} onRecheck={props.onRecheck} />;
+  return <DeviceTermsScreen {...props} />;
+}
+
+function DeviceTermsScreen({ updated, onAccept, onRecheck }: { updated: boolean; onAccept: () => Promise<void>; onRecheck?: () => void }) {
   const [ticked, setTicked] = useState(false);
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState<false | "retry" | "elsewhere">(false);

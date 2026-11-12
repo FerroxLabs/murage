@@ -1,0 +1,1 @@
+["node_modules/.bin/vitest", "run", "server/connected-app-health.test.ts", "-t", "ACTIVE inventory cannot hide"]

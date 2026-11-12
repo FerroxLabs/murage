@@ -24,7 +24,7 @@ const steerPrompt = (text: string) => buildPrompt(undefined, [promptPart(text, [
 const databases: DatabaseSync[] = [];
 const executors: Array<{ stop(): void }> = [];
 afterEach(() => { for (const executor of executors.splice(0)) executor.stop(); for (const db of databases.splice(0)) db.close(); });
-function setup(goalState?: "awaiting_plan_ok", liveGoalId?: string, file?: string) {
+function setup(goalState?: "awaiting_plan_ok", liveGoalId?: string, file?: string, ready?: (request: any) => boolean) {
   const db = new DatabaseSync(file ?? ":memory:"); databases.push(db); if (file) db.exec("PRAGMA journal_mode=WAL"); initializeProjectTables(db);
   db.exec("INSERT INTO project_settings(group_id,mode,lead_bot_id,updated_at) VALUES('g','ongoing','lead',1)");
   let now = 10000;
@@ -41,7 +41,7 @@ function setup(goalState?: "awaiting_plan_ok", liveGoalId?: string, file?: strin
   const executor = createProjectCardExecutor({ db: () => db, admission, now: () => now, open: () => true,
     context: () => ({ groupId: "g", isProject: true, closed: false, runState: "running", mode: "ongoing", leadBotId: "lead", boardOn: true, parallelCards: 1, ...(goalState ? {goalState, goalId:"goal-fixture"} : {}),
       ...(liveGoalId ? { goalId: liveGoalId, goalState: (db.prepare("SELECT state FROM project_goals WHERE id=?").get(liveGoalId) as { state: ProjectGoalState }).state } : {}) }),
-    usable: () => true, desk: (request) => `desk-${request.toBotId}`, writerRoot: () => undefined, start, hooks, changed: vi.fn() });
+    ready, usable: () => true, desk: (request) => `desk-${request.toBotId}`, writerRoot: () => undefined, start, hooks, changed: vi.fn() });
   executors.push(executor);
   function card() {
     const made = createProjectCard(db, { groupId: "g", title: "Reconcile payments", assigneeBotId: "jax", actor: { kind: "owner" }, memberIds: ["lead", "jax"], now });
@@ -444,4 +444,19 @@ it("a dispatch that meets a held write lock stays queued and goes out once the l
     for (const db of databases.splice(0)) { try { db.close(); } catch { /* closed */ } }
     removeTempDirSync(dir);
   }
+});
+
+it('a staged assignment keeps its original durable request until activation, then dispatches once', () => {
+  let staged = true;
+  const held: any[] = [];
+  const f = setup(undefined, undefined, undefined, request => { if (staged) held.push(request); return !staged; });
+  const card = f.card();
+  const original = roomRequest(f.db, card.requestId);
+  f.executor.pump(); f.executor.pump();
+  expect(f.start).not.toHaveBeenCalled();
+  expect(roomRequest(f.db, card.requestId)).toEqual(original);
+  expect(held.map(r => r.id)).toEqual([card.requestId, card.requestId]);
+  staged = false; f.executor.pump(); f.executor.pump();
+  expect(f.start).toHaveBeenCalledTimes(1);
+  expect(f.start.mock.calls[0][0]).toMatchObject({ id: original!.id, rootId: original!.rootId, rootThreadId: original!.rootThreadId, origin: original!.origin, unattended: original!.unattended });
 });

@@ -44,7 +44,7 @@ describe("GATE strip-types loadability", () => {
       expect(targets.length, "relative .ts imports").toBeGreaterThan(0);
       const script = `for (const t of ${JSON.stringify(targets)}) await import(t);`;
       const run = spawnSync(process.execPath, ["--experimental-strip-types", "--no-warnings", "--input-type=module", "-e", script],
-        { cwd: ROOT, encoding: "utf8", timeout: 60_000, env: { ...process.env, NODE_OPTIONS: "" } });
+        { windowsHide: true, cwd: ROOT, encoding: "utf8", timeout: 60_000, env: { ...process.env, NODE_OPTIONS: "" } });
       expect({ status: run.status, stderr: run.stderr.split("\n").slice(0, 8).join("\n") }).toEqual({ status: 0, stderr: "" });
     }, 90_000);
   }

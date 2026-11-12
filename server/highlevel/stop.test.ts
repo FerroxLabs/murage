@@ -1,3 +1,4 @@
+import { r4HighLevelHarness as highLevelHarness } from '../testing/highlevel-r4-fixtures.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -5,7 +6,7 @@
 // HIGHLEVEL-CRASH-ROTATION; upstream b075d6be4 and 746a718f4). stop() does what index.ts revokeInternalGeneration
 // does for HighLevel: revoke the turn's capability and fire highlevelCalls.turnEnded(generation).
 import { describe, expect, it } from "vitest";
-import { FAKE_CONNECTION_ID, FAKE_LOCATION_ID, highLevelHarness, rateLimited, scriptCrm, until } from "../testing/fake-highlevel.ts";
+import { FAKE_CONNECTION_ID, FAKE_LOCATION_ID,  rateLimited, scriptCrm, until } from "../testing/fake-highlevel.ts";
 import { BUDGET_CALLS, type HighLevelCallContext } from "./client.ts";
 
 const NOTE = { contactId: "contact_1", body: "Fixture note" };
@@ -20,8 +21,11 @@ describe("Stop cancels a call waiting on rate admission (H3, HIGHLEVEL-WRITE-OUT
   it("Stop during a rate wait sends nothing, releases the reservation and records the change not_applied/stopped_before_send", async () => {
     const h = highLevelHarness({ manualSleep: true });
     scriptCrm(h.api);
-    await fillBudget(h);
     const pending = h.host.call(h.claim, "HIGHLEVEL_ADD_NOTE", NOTE);
+    await until(() => h.reviews.length > 0);
+    // Recovery preparation performs no collection read; fill every rate slot.
+    const live = { connection: h.leases.views.get(FAKE_CONNECTION_ID)!, signal: new AbortController().signal, assertActive() {} };
+    for (let i = 0; i < BUDGET_CALLS; i++) (await h.client.gate.admit(FAKE_LOCATION_ID, live)).spend();
     const review = await h.approveNext();
     await until(() => h.sleeps.length > 0);
     expect(h.api.requests).toEqual([]);
@@ -184,7 +188,9 @@ describe("Stop is checked before any lease request that could start a refresh (H
     const live = h.turn("gen_live", {}, "thread_2");
     h.stop();
     expect(await stopped).toMatchObject({ structuredContent: { stopped: true } });
+    h.advance(3_000); h.releaseSleeps();
     const pending = h.host.call(live, "HIGHLEVEL_ADD_NOTE", NOTE);
+    await until(() => { h.releaseSleeps(); return h.reviews.length > 0; });
     await h.approveNext();
     expect(await h.settle(pending)).toMatchObject({ structuredContent: { outcome: "applied" } });
     expect(h.api.calls("POST", /\/notes$/u)).toHaveLength(1);

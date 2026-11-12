@@ -462,6 +462,15 @@ describe("the rest of the walk", () => {
 describe("a reopened step's card comes back live", () => {
   const jobs = setupCardKey("chat", "jobs");
   const cardFor = async (key: string) => (await setupCards()).find((card) => card.key === key);
+  // 1.0.19: the jobs card is withheld until the notification chooser and the hire card are settled. The person does
+  // that with the one route that settles them, and each settle appends the next card in the same response.
+  const settleOwed = async () => {
+    for (const key of ["flux:notify", "chat:hire"]) {
+      await api("GET", "/api/setup", undefined, desktop);
+      await api("POST", "/api/setup/card", { key, action: "settle" }, desktop);
+    }
+    await api("GET", "/api/setup", undefined, desktop);
+  };
 
   it("asks the question again in the thread it was asked in", async () => {
     // Put `chat` back on the list, which is what the do-it card's two back
@@ -469,6 +478,7 @@ describe("a reopened step's card comes back live", () => {
     const reopened = await api("POST", "/api/setup/reopen", { step: "chat" }, desktop);
     expect(reopened.status).toBe(200);
     expect((reopened.body as SetupView).next).toBe("chat");
+    await settleOwed();
     expect(await cardFor(jobs), "the Chief never asked what to take off your plate").toBeTruthy();
 
     const answered = await api("POST", "/api/setup/answer", { step: "chat", answer: "notes" }, desktop);

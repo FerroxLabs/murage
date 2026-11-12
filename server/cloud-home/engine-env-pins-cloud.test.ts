@@ -71,7 +71,7 @@ describe("a Cloud-home spawn carries the Rule 74 pins", () => {
     const hostile: Record<string, string> = {};
     for (const name of posixPins().keys()) hostile[name] = "/fixture/evil";
     for (const name of ABSENT_PINS) hostile[name] = "/fixture/evil";
-    const out = JSON.parse(execFileSync("python3", ["-I", "-c", pinsScript, launcher, JSON.stringify(hostile), JSON.stringify(CLOUD_TURN_ENGINES)], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+    const out = JSON.parse(execFileSync("python3", ["-I", "-c", pinsScript, launcher, JSON.stringify(hostile), JSON.stringify(CLOUD_TURN_ENGINES)], { windowsHide: true, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
     // one table with ENV_PINS: every POSIX value pin but TERM (a COMMON_ENV name the hand sends as "dumb")
     const expected = Object.fromEntries([...posixPins()].filter(([name]) => name !== "TERM"));
     expect(out.table).toEqual(expected);

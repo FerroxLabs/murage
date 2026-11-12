@@ -123,6 +123,20 @@ describe("Murage's computer service asks for an engine that runs the computer mo
     expect(await instance!.adapter.askHostAction!("t-host-ask", { name: "click" })).toBeNull();
   }, 30000);
 
+  it("BLOCK1 host action confirms the explicit in-process answer receipt", async () => {
+    const shell = await running(ServiceAsks, "t-host-receipt");
+    const action = instance!.adapter.askHostAction!("t-host-receipt", { name: "click", arguments: { x: 1, y: 2 } });
+    const opened = await recorder!.until(e => e.type === "request.opened" && e.tool === "mcp__computer__click");
+    const receipt = instance!.adapter.respondToRequest("t-host-receipt", String(opened.requestId), { behavior: "allow" }, { answerId: "host-answer" });
+    expect(await action).toBe("allow");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      expect(await Promise.race([receipt, new Promise(resolve => { timer = setTimeout(() => resolve("missing in-process receipt"), 500); })])).toEqual({ state: "accepted" });
+    } finally { clearTimeout(timer); }
+    await instance!.adapter.respondToRequest("t-host-receipt", shell.requestId, { behavior: "deny" });
+    await recorder!.until(e => e.type === "turn.completed");
+  }, 30000);
+
   it("asks nothing for an engine that asks for the computer itself (one card, never two)", async () => {
     const shell = await running(EngineAsks, "t-engine-asks");
     expect(await instance!.adapter.askHostAction!("t-engine-asks", { name: "click" })).toBeNull();

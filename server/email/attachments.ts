@@ -46,7 +46,7 @@ export type AttachmentResult = { ok: true; files: DraftAttachment[] } | { ok: fa
 
 /** Reads the attachments of one email call. `root` is the turn's workspace (selectFileWorkspace), `bot` the stored bot (for its
  *  partition). Every refusal is one Murage line; nothing here calls Flux. */
-export function readEmailAttachments(input: { root: string | undefined; bot: BotRecord | undefined; threadId: string; paths: unknown }): AttachmentResult {
+export function readEmailAttachments(input: { root: string | undefined; bot: BotRecord | undefined; threadId: string; paths: unknown; noLimits?: boolean }): AttachmentResult {
   if (input.paths === undefined || input.paths === null) return { ok: true, files: [] };
   if (!Array.isArray(input.paths) || input.paths.some(path => typeof path !== "string")) return { ok: false, line: ATTACHMENT_LINES.workspace };
   const paths = input.paths as string[];
@@ -57,12 +57,12 @@ export function readEmailAttachments(input: { root: string | undefined; bot: Bot
   const checked: Array<{ path: string; type: string; magic?: readonly number[] }> = [];
   try {
     for (const path of paths) {
-      artifactRelativePathParts(path);
+      artifactRelativePathParts(path, input.noLimits);
       const allowed = ALLOWED[extname(path).toLowerCase()];
       if (!allowed) return { ok: false, line: ATTACHMENT_LINES.blocked };
       checked.push({ path, ...allowed });
     }
-    if (input.bot) {
+    if (input.bot && !input.noLimits) {
       const denied = partitionFileRefusal(input.bot, input.threadId, paths, input.root);
       if (denied) return { ok: false, line: denied };
     }
@@ -70,7 +70,7 @@ export function readEmailAttachments(input: { root: string | undefined; bot: Bot
     const files: DraftAttachment[] = [];
     let used = 0;
     for (const item of checked) {
-      const source = verifiedArtifactSource(root, item.path);
+      const source = verifiedArtifactSource(root, item.path, input.noLimits);
       if (used + source.stat.size > ATTACHMENT_BUDGET_BYTES) return { ok: false, line: ATTACHMENT_LINES.budget };
       const bytes = readVerifiedArtifactFile(source.path, ATTACHMENT_BUDGET_BYTES - used, source.stat);
       if (source.observed.some(([path, stat]) => !sameArtifactStat(stat, lstatSync(path)))) throw new ArtifactError(409, "The file location changed during verification.");

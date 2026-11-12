@@ -1,3 +1,4 @@
+import "../shared/win-hide-child-process.mjs";
 // Transparent stdio bridge into Cua Driver's official MCP server inside the
 // Local VM. This process defines no tools and parses no MCP messages; the
 // piping, drain-safe exit, and watchdog live in mcp-bridge.ts, shared with

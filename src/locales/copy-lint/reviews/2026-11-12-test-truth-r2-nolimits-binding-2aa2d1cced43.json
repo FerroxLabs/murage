@@ -1,0 +1,1215 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "nolim-copy",
+  "date": "2026-11-12",
+  "base": "ee812e8af5",
+  "scope": "No limits 1.0.19 binding ruling: owner deny, explicit bot choice, missing origin and wipe-only permission",
+  "strings": {
+    "en:ux.l1.level.unlimitedDetail": {
+      "text": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "en:ux.l1.level.underTable": {
+      "text": "At No limits, protected files can change and only a likely wipe or catastrophe asks first. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. Your never switches, saved deny rules and channel messages off still apply.",
+      "en": "At No limits, protected files can change and only a likely wipe or catastrophe asks first. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. Your never switches, saved deny rules and channel messages off still apply.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "en:ux.l1.confirm.unlimitedBody": {
+      "text": "{level} lets {bot} run commands and tools without asking. Outside content and commands Murage cannot read also run. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "en": "{level} lets {bot} run commands and tools without asking. Outside content and commands Murage cannot read also run. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "en:ux.lcopyb.level.unlimitedHere": {
+      "text": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count. This includes clicking and typing on this computer.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count. This includes clicking and typing on this computer.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "en:ux.lcopyb.level.unlimited": {
+      "text": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "en:ux.lcopyb.level.channelHint": {
+      "text": "On unless you turn it off. At No limits, your own channel messages run without asking. Other people's chats stay at Ask unless you explicitly set that bot's level. Trigger links from other apps and routines use the bot's level.",
+      "en": "On unless you turn it off. At No limits, your own channel messages run without asking. Other people's chats stay at Ask unless you explicitly set that bot's level. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "Reviewed owner channel messages, explicit bot choices for other people, unchanged lower-level asking, and webhook/routine bot-level treatment against the binding ruling."
+    },
+    "en:ux.lcopyb.level.peerSkip": {
+      "text": "On, but {level} skips this in your own chats and in routines at that level. Trigger links from other apps still ask at Full access. At No limits, trigger links from other apps and routines use the bot's level. Switch to Auto to be asked each time.",
+      "en": "On, but {level} skips this in your own chats and in routines at that level. Trigger links from other apps still ask at Full access. At No limits, trigger links from other apps and routines use the bot's level. Switch to Auto to be asked each time.",
+      "verdict": "pass",
+      "note": "Reviewed owner channel messages, explicit bot choices for other people, unchanged lower-level asking, and webhook/routine bot-level treatment against the binding ruling."
+    },
+    "en:noLimits.v1.warning": {
+      "text": "No limits: Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count. Chats with no known sender stay at Ask. An unclear delete runs unless Murage can see it would wipe the whole computer, your home folder or system folders.",
+      "en": "No limits: Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count. Chats with no known sender stay at Ask. An unclear delete runs unless Murage can see it would wipe the whole computer, your home folder or system folders.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "en:noLimits.v1.outsideNote": {
+      "text": "This chat read outside content ({source}). At No limits, only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply.",
+      "en": "This chat read outside content ({source}). At No limits, only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "en:noLimits.v1.openclaw": {
+      "text": "OpenClaw runs its own commands. Murage can check for a likely wipe or catastrophe only when OpenClaw sends it a request. Your OpenClaw settings still apply.",
+      "en": "OpenClaw runs its own commands. Murage can check for a likely wipe or catastrophe only when OpenClaw sends it a request. Your OpenClaw settings still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "en:noLimits.v1.windows": {
+      "text": "No limits works the same in bash, zsh, PowerShell and cmd. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply.",
+      "en": "No limits works the same in bash, zsh, PowerShell and cmd. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "en:noLimits.v1.engineAsks": {
+      "text": "{engine} uses its own tools and settings. At No limits, Murage adds no permission cards except for a likely wipe or catastrophe in requests it receives. Your never switches and saved deny rules still apply.",
+      "en": "{engine} uses its own tools and settings. At No limits, Murage adds no permission cards except for a likely wipe or catastrophe in requests it receives. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "en:permissionMenu.ownTools": {
+      "text": "{engine} uses its own tools. At Ask, it only reads and answers. At other levels, your {engine} settings still apply. At No limits, Murage asks only about a likely wipe or catastrophe in requests it receives. Your never switches and saved deny rules still apply.",
+      "en": "{engine} uses its own tools. At Ask, it only reads and answers. At other levels, your {engine} settings still apply. At No limits, Murage asks only about a likely wipe or catastrophe in requests it receives. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "en:highlevel.canChangeHelp": {
+      "text": "You approve each change on this computer first. At No limits, changes run without asking, except for a likely wipe or catastrophe. Your never switches and saved deny rules still apply.",
+      "en": "You approve each change on this computer first. At No limits, changes run without asking, except for a likely wipe or catastrophe. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed the HighLevel action scope, including deleting, publishing, documents, invoices and payments; No limits keeps only catastrophe questions and honours owner never switches and stored deny rules."
+    },
+    "en:highlevel.fullHelp": {
+      "text": "Full control also allows deleting, publishing, sending documents, invoices and payments, and changing users and plans. At No limits, only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply. Trigger links from other apps and routines use the bot's level.",
+      "en": "Full control also allows deleting, publishing, sending documents, invoices and payments, and changing users and plans. At No limits, only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "Reviewed the HighLevel action scope, including deleting, publishing, documents, invoices and payments; No limits keeps only catastrophe questions and honours owner never switches and stored deny rules."
+    },
+    "en:noLimits.followers.title": {
+      "text": "Bots and routines at No limits",
+      "en": "Bots and routines at No limits",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "en:noLimits.followers.counts": {
+      "text": "{bots} bots and {routines} routines follow No limits",
+      "en": "{bots} bots and {routines} routines follow No limits",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "en:noLimits.followers.lower": {
+      "text": "Explicit lower levels",
+      "en": "Explicit lower levels",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "en:noLimits.followers.useAll": {
+      "text": "Use No limits for all",
+      "en": "Use No limits for all",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "en:noLimits.followers.upgradeTitle": {
+      "text": "No limits has changed",
+      "en": "No limits has changed",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "en:noLimits.followers.upgradeBody": {
+      "text": "Bots and chats you set lower keep their levels. Routines use their bot's level. You can keep those bot and chat choices or use No limits.",
+      "en": "Bots and chats you set lower keep their levels. Routines use their bot's level. You can keep those bot and chat choices or use No limits.",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "en:noLimits.followers.keep": {
+      "text": "Keep current levels",
+      "en": "Keep current levels",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "en:noLimits.followers.bot": {
+      "text": "bot",
+      "en": "bot",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "en:noLimits.followers.routine": {
+      "text": "routine",
+      "en": "routine",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "en:noLimits.followers.chat": {
+      "text": "chat",
+      "en": "chat",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "de:noLimits.v1.warning": {
+      "text": "Keine Grenzen: Deine Bots führen Befehle und Tools ohne Nachfrage aus, auch mit Inhalten von außen oder Befehlen, die Murage nicht lesen kann. Dabei können sie geschützte Dateien ändern und Schlüssel und Passwörter lesen oder senden. Nur bei einer wahrscheinlichen vollständigen Löschung oder einer Katastrophe wird vorher gefragt. Deine Nie-Einstellungen und gespeicherten Verbote blockieren Aktionen weiterhin, ohne Karte und mit einer klaren Zeile an dich. Ausgeschaltete Kanalnachrichten bleiben aus. Trigger-Links aus anderen Apps und Routinen verwenden die Stufe des Bots. Chats anderer Personen bleiben bei „Fragen“, außer du hast die Stufe dieses Bots ausdrücklich festgelegt. Eine Vollzugriff-Einstellung aus 1.0.18 zählt nicht. Chats ohne bekannten Absender bleiben bei „Fragen“. Ein unklarer Löschbefehl läuft, außer Murage erkennt, dass er den ganzen Computer, deinen persönlichen Ordner oder Systemordner leeren würde.",
+      "en": "No limits: Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count. Chats with no known sender stay at Ask. An unclear delete runs unless Murage can see it would wipe the whole computer, your home folder or system folders.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "de:noLimits.v1.outsideNote": {
+      "text": "Dieser Chat hat Inhalte von außen gelesen ({source}). Mit „Keine Grenzen“ wird nur vor einer wahrscheinlichen vollständigen Löschung oder einer Katastrophe gefragt. Deine Nie-Einstellungen und gespeicherten Verbote gelten weiterhin.",
+      "en": "This chat read outside content ({source}). At No limits, only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "de:noLimits.v1.openclaw": {
+      "text": "OpenClaw führt seine eigenen Befehle aus. Murage kann nur dann auf eine wahrscheinliche vollständige Löschung oder eine Katastrophe prüfen, wenn OpenClaw eine Anfrage sendet. Deine OpenClaw-Einstellungen gelten weiterhin.",
+      "en": "OpenClaw runs its own commands. Murage can check for a likely wipe or catastrophe only when OpenClaw sends it a request. Your OpenClaw settings still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "de:noLimits.v1.windows": {
+      "text": "Keine Grenzen funktioniert in bash, zsh, PowerShell und cmd gleich. Nur bei einer wahrscheinlichen vollständigen Löschung oder einer Katastrophe wird vorher gefragt. Deine Nie-Einstellungen und gespeicherten Verbote gelten weiterhin.",
+      "en": "No limits works the same in bash, zsh, PowerShell and cmd. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "de:noLimits.v1.engineAsks": {
+      "text": "{engine} verwendet eigene Tools und Einstellungen. Mit „Keine Grenzen“ zeigt Murage nur bei einer wahrscheinlichen vollständigen Löschung oder einer Katastrophe in eingehenden Anfragen eine Berechtigungskarte. Deine Nie-Einstellungen und gespeicherten Verbote gelten weiterhin.",
+      "en": "{engine} uses its own tools and settings. At No limits, Murage adds no permission cards except for a likely wipe or catastrophe in requests it receives. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "de:permissionMenu.ownTools": {
+      "text": "{engine} verwendet eigene Tools. Mit „Fragen“ liest und antwortet es nur. Bei anderen Stufen gelten weiterhin deine {engine}-Einstellungen. Mit „Keine Grenzen“ fragt Murage nur nach einer wahrscheinlichen vollständigen Löschung oder einer Katastrophe in eingehenden Anfragen. Deine Nie-Einstellungen und gespeicherten Verbote gelten weiterhin.",
+      "en": "{engine} uses its own tools. At Ask, it only reads and answers. At other levels, your {engine} settings still apply. At No limits, Murage asks only about a likely wipe or catastrophe in requests it receives. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "de:ux.l1.level.unlimitedDetail": {
+      "text": "Deine Bots führen Befehle und Tools ohne Nachfrage aus, auch mit Inhalten von außen oder Befehlen, die Murage nicht lesen kann. Dabei können sie geschützte Dateien ändern und Schlüssel und Passwörter lesen oder senden. Nur bei einer wahrscheinlichen vollständigen Löschung oder einer Katastrophe wird vorher gefragt. Deine Nie-Einstellungen und gespeicherten Verbote blockieren Aktionen weiterhin, ohne Karte und mit einer klaren Zeile an dich. Ausgeschaltete Kanalnachrichten bleiben aus. Trigger-Links aus anderen Apps und Routinen verwenden die Stufe des Bots. Chats anderer Personen bleiben bei „Fragen“, außer du hast die Stufe dieses Bots ausdrücklich festgelegt. Eine Vollzugriff-Einstellung aus 1.0.18 zählt nicht.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "de:ux.l1.level.underTable": {
+      "text": "Mit „Keine Grenzen“ können geschützte Dateien geändert werden. Nur bei einer wahrscheinlichen vollständigen Löschung oder einer Katastrophe wird vorher gefragt. Trigger-Links aus anderen Apps und Routinen verwenden die Stufe des Bots. Chats anderer Personen bleiben bei „Fragen“, außer du hast die Stufe dieses Bots ausdrücklich festgelegt. Deine Nie-Einstellungen, gespeicherten Verbote und ausgeschalteten Kanalnachrichten gelten weiterhin.",
+      "en": "At No limits, protected files can change and only a likely wipe or catastrophe asks first. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. Your never switches, saved deny rules and channel messages off still apply.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "de:ux.l1.confirm.unlimitedBody": {
+      "text": "Mit {level} kann {bot} Befehle und Tools ohne Nachfrage ausführen. Inhalte von außen und Befehle, die Murage nicht lesen kann, laufen ebenfalls weiter. Dabei können sie geschützte Dateien ändern und Schlüssel und Passwörter lesen oder senden. Nur bei einer wahrscheinlichen vollständigen Löschung oder einer Katastrophe wird vorher gefragt. Deine Nie-Einstellungen und gespeicherten Verbote blockieren Aktionen weiterhin, ohne Karte und mit einer klaren Zeile an dich. Ausgeschaltete Kanalnachrichten bleiben aus. Trigger-Links aus anderen Apps und Routinen verwenden die Stufe des Bots. Chats anderer Personen bleiben bei „Fragen“, außer du hast die Stufe dieses Bots ausdrücklich festgelegt. Eine Vollzugriff-Einstellung aus 1.0.18 zählt nicht.",
+      "en": "{level} lets {bot} run commands and tools without asking. Outside content and commands Murage cannot read also run. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "de:ux.lcopyb.level.unlimitedHere": {
+      "text": "Deine Bots führen Befehle und Tools ohne Nachfrage aus, auch mit Inhalten von außen oder Befehlen, die Murage nicht lesen kann. Dabei können sie geschützte Dateien ändern und Schlüssel und Passwörter lesen oder senden. Nur bei einer wahrscheinlichen vollständigen Löschung oder einer Katastrophe wird vorher gefragt. Deine Nie-Einstellungen und gespeicherten Verbote blockieren Aktionen weiterhin, ohne Karte und mit einer klaren Zeile an dich. Ausgeschaltete Kanalnachrichten bleiben aus. Trigger-Links aus anderen Apps und Routinen verwenden die Stufe des Bots. Chats anderer Personen bleiben bei „Fragen“, außer du hast die Stufe dieses Bots ausdrücklich festgelegt. Eine Vollzugriff-Einstellung aus 1.0.18 zählt nicht. Das schließt Klicken und Tippen auf diesem Computer ein.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count. This includes clicking and typing on this computer.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "de:ux.lcopyb.level.unlimited": {
+      "text": "Deine Bots führen Befehle und Tools ohne Nachfrage aus, auch mit Inhalten von außen oder Befehlen, die Murage nicht lesen kann. Dabei können sie geschützte Dateien ändern und Schlüssel und Passwörter lesen oder senden. Nur bei einer wahrscheinlichen vollständigen Löschung oder einer Katastrophe wird vorher gefragt. Deine Nie-Einstellungen und gespeicherten Verbote blockieren Aktionen weiterhin, ohne Karte und mit einer klaren Zeile an dich. Ausgeschaltete Kanalnachrichten bleiben aus. Trigger-Links aus anderen Apps und Routinen verwenden die Stufe des Bots. Chats anderer Personen bleiben bei „Fragen“, außer du hast die Stufe dieses Bots ausdrücklich festgelegt. Eine Vollzugriff-Einstellung aus 1.0.18 zählt nicht.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "de:ux.lcopyb.level.channelHint": {
+      "text": "An, solange du es nicht ausschaltest. Mit „Keine Grenzen“ laufen deine eigenen Kanalnachrichten ohne Nachfrage. Chats anderer Personen bleiben bei „Fragen“, außer du hast die Stufe dieses Bots ausdrücklich festgelegt. Trigger-Links aus anderen Apps und Routinen verwenden die Stufe des Bots.",
+      "en": "On unless you turn it off. At No limits, your own channel messages run without asking. Other people's chats stay at Ask unless you explicitly set that bot's level. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "Reviewed owner channel messages, explicit bot choices for other people, unchanged lower-level asking, and webhook/routine bot-level treatment against the binding ruling."
+    },
+    "de:ux.lcopyb.level.peerSkip": {
+      "text": "An, aber {level} überspringt das in deinen eigenen Chats und in Routinen auf dieser Stufe. Trigger-Links aus anderen Apps fragen bei Vollzugriff weiterhin nach. Mit „Keine Grenzen“ verwenden Trigger-Links aus anderen Apps und Routinen die Stufe des Bots. Wechsle zu Automatisch, um jedes Mal gefragt zu werden.",
+      "en": "On, but {level} skips this in your own chats and in routines at that level. Trigger links from other apps still ask at Full access. At No limits, trigger links from other apps and routines use the bot's level. Switch to Auto to be asked each time.",
+      "verdict": "pass",
+      "note": "Reviewed owner channel messages, explicit bot choices for other people, unchanged lower-level asking, and webhook/routine bot-level treatment against the binding ruling."
+    },
+    "de:highlevel.canChangeHelp": {
+      "text": "Du genehmigst jede Änderung zuerst auf diesem Computer. Mit „Keine Grenzen“ laufen Änderungen ohne Nachfrage, außer bei einer wahrscheinlichen vollständigen Löschung oder einer Katastrophe. Deine Nie-Einstellungen und gespeicherten Verbote gelten weiterhin.",
+      "en": "You approve each change on this computer first. At No limits, changes run without asking, except for a likely wipe or catastrophe. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed the HighLevel action scope, including deleting, publishing, documents, invoices and payments; No limits keeps only catastrophe questions and honours owner never switches and stored deny rules."
+    },
+    "de:highlevel.fullHelp": {
+      "text": "Volle Kontrolle erlaubt auch Löschen, Veröffentlichen, das Senden von Dokumenten, Rechnungen und Zahlungen sowie Änderungen an Benutzern und Tarifen. Keine Grenzen: Nur bei einer wahrscheinlichen vollständigen Löschung oder einer Katastrophe wird vorher gefragt. Deine Nie-Einstellungen und gespeicherten Verbote gelten weiterhin. Trigger-Links aus anderen Apps und Routinen verwenden die Stufe des Bots.",
+      "en": "Full control also allows deleting, publishing, sending documents, invoices and payments, and changing users and plans. At No limits, only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "Reviewed the HighLevel action scope, including deleting, publishing, documents, invoices and payments; No limits keeps only catastrophe questions and honours owner never switches and stored deny rules."
+    },
+    "de:noLimits.followers.title": {
+      "text": "Bots und Routinen mit Keine Grenzen",
+      "en": "Bots and routines at No limits",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "de:noLimits.followers.counts": {
+      "text": "{bots} Bots und {routines} Routinen folgen Ohne Limits",
+      "en": "{bots} bots and {routines} routines follow No limits",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "de:noLimits.followers.lower": {
+      "text": "Ausdrücklich niedrigere Stufen",
+      "en": "Explicit lower levels",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "de:noLimits.followers.useAll": {
+      "text": "Ohne Limits für alle verwenden",
+      "en": "Use No limits for all",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "de:noLimits.followers.upgradeTitle": {
+      "text": "Ohne Limits hat sich geändert",
+      "en": "No limits has changed",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "de:noLimits.followers.upgradeBody": {
+      "text": "Bots und Chats mit einer von dir gewählten niedrigeren Stufe behalten sie. Routinen verwenden die Stufe ihres Bots. Du kannst diese Bot- und Chat-Einstellungen behalten oder Keine Grenzen wählen.",
+      "en": "Bots and chats you set lower keep their levels. Routines use their bot's level. You can keep those bot and chat choices or use No limits.",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "de:noLimits.followers.keep": {
+      "text": "Aktuelle Stufen beibehalten",
+      "en": "Keep current levels",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "de:noLimits.followers.bot": {
+      "text": "Bot",
+      "en": "bot",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "de:noLimits.followers.routine": {
+      "text": "Routine",
+      "en": "routine",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "de:noLimits.followers.chat": {
+      "text": "Chat",
+      "en": "chat",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "es:noLimits.v1.warning": {
+      "text": "Sin límites: Tus bots ejecutan comandos y herramientas sin preguntar, incluso con contenido externo o comandos que Murage no puede leer. Esto puede cambiar archivos protegidos y leer o enviar claves y contraseñas. Solo se pregunta antes de un probable borrado total o una catástrofe. Tus opciones de nunca permitir y tus reglas de bloqueo guardadas siguen bloqueando acciones, sin tarjeta y con una línea clara para ti. Si desactivas los mensajes de canal, siguen desactivados. Los enlaces de activación de otras apps y las rutinas usan el nivel del bot. Los chats de otras personas siguen en Preguntar, salvo que hayas elegido expresamente el nivel de ese bot. Una opción de Acceso total de 1.0.18 no cuenta. Los chats sin remitente conocido siguen en Preguntar. Un borrado con destino incierto se ejecuta, salvo que Murage vea que borraría todo el ordenador, tu carpeta personal o carpetas del sistema.",
+      "en": "No limits: Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count. Chats with no known sender stay at Ask. An unclear delete runs unless Murage can see it would wipe the whole computer, your home folder or system folders.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "es:noLimits.v1.outsideNote": {
+      "text": "Este chat leyó contenido externo ({source}). En Sin límites, solo se pregunta antes de un probable borrado total o una catástrofe. Tus opciones de nunca permitir y tus reglas de bloqueo guardadas siguen vigentes.",
+      "en": "This chat read outside content ({source}). At No limits, only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "es:noLimits.v1.openclaw": {
+      "text": "OpenClaw ejecuta sus propios comandos. Murage solo puede comprobar si hay un probable borrado total o una catástrofe cuando OpenClaw le envía una solicitud. Tus ajustes de OpenClaw siguen vigentes.",
+      "en": "OpenClaw runs its own commands. Murage can check for a likely wipe or catastrophe only when OpenClaw sends it a request. Your OpenClaw settings still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "es:noLimits.v1.windows": {
+      "text": "Sin límites funciona igual en bash, zsh, PowerShell y cmd. Solo se pregunta antes de un probable borrado total o una catástrofe. Tus opciones de nunca permitir y tus reglas de bloqueo guardadas siguen vigentes.",
+      "en": "No limits works the same in bash, zsh, PowerShell and cmd. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "es:noLimits.v1.engineAsks": {
+      "text": "{engine} usa sus propias herramientas y ajustes. En Sin límites, Murage solo muestra tarjetas de permiso ante un probable borrado total o una catástrofe en las solicitudes que recibe. Tus opciones de nunca permitir y tus reglas de bloqueo guardadas siguen vigentes.",
+      "en": "{engine} uses its own tools and settings. At No limits, Murage adds no permission cards except for a likely wipe or catastrophe in requests it receives. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "es:permissionMenu.ownTools": {
+      "text": "{engine} usa sus propias herramientas. En Preguntar, solo lee y responde. En los demás niveles, se siguen aplicando tus ajustes de {engine}. En Sin límites, Murage solo pregunta por un probable borrado total o una catástrofe en las solicitudes que recibe. Tus opciones de nunca permitir y tus reglas de bloqueo guardadas siguen vigentes.",
+      "en": "{engine} uses its own tools. At Ask, it only reads and answers. At other levels, your {engine} settings still apply. At No limits, Murage asks only about a likely wipe or catastrophe in requests it receives. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "es:ux.l1.level.unlimitedDetail": {
+      "text": "Tus bots ejecutan comandos y herramientas sin preguntar, incluso con contenido externo o comandos que Murage no puede leer. Esto puede cambiar archivos protegidos y leer o enviar claves y contraseñas. Solo se pregunta antes de un probable borrado total o una catástrofe. Tus opciones de nunca permitir y tus reglas de bloqueo guardadas siguen bloqueando acciones, sin tarjeta y con una línea clara para ti. Si desactivas los mensajes de canal, siguen desactivados. Los enlaces de activación de otras apps y las rutinas usan el nivel del bot. Los chats de otras personas siguen en Preguntar, salvo que hayas elegido expresamente el nivel de ese bot. Una opción de Acceso total de 1.0.18 no cuenta.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "es:ux.l1.level.underTable": {
+      "text": "En Sin límites, se pueden cambiar archivos protegidos y solo se pregunta antes de un probable borrado total o una catástrofe. Los enlaces de activación de otras apps y las rutinas usan el nivel del bot. Los chats de otras personas siguen en Preguntar, salvo que hayas elegido expresamente el nivel de ese bot. Tus opciones de nunca permitir, tus reglas de bloqueo guardadas y la desactivación de mensajes de canal siguen vigentes.",
+      "en": "At No limits, protected files can change and only a likely wipe or catastrophe asks first. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. Your never switches, saved deny rules and channel messages off still apply.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "es:ux.l1.confirm.unlimitedBody": {
+      "text": "{level} permite que {bot} ejecute comandos y herramientas sin preguntar. El contenido externo y los comandos que Murage no puede leer también se ejecutan. Esto puede cambiar archivos protegidos y leer o enviar claves y contraseñas. Solo se pregunta antes de un probable borrado total o una catástrofe. Tus opciones de nunca permitir y tus reglas de bloqueo guardadas siguen bloqueando acciones, sin tarjeta y con una línea clara para ti. Si desactivas los mensajes de canal, siguen desactivados. Los enlaces de activación de otras apps y las rutinas usan el nivel del bot. Los chats de otras personas siguen en Preguntar, salvo que hayas elegido expresamente el nivel de ese bot. Una opción de Acceso total de 1.0.18 no cuenta.",
+      "en": "{level} lets {bot} run commands and tools without asking. Outside content and commands Murage cannot read also run. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "es:ux.lcopyb.level.unlimitedHere": {
+      "text": "Tus bots ejecutan comandos y herramientas sin preguntar, incluso con contenido externo o comandos que Murage no puede leer. Esto puede cambiar archivos protegidos y leer o enviar claves y contraseñas. Solo se pregunta antes de un probable borrado total o una catástrofe. Tus opciones de nunca permitir y tus reglas de bloqueo guardadas siguen bloqueando acciones, sin tarjeta y con una línea clara para ti. Si desactivas los mensajes de canal, siguen desactivados. Los enlaces de activación de otras apps y las rutinas usan el nivel del bot. Los chats de otras personas siguen en Preguntar, salvo que hayas elegido expresamente el nivel de ese bot. Una opción de Acceso total de 1.0.18 no cuenta. Esto incluye hacer clic y escribir en este ordenador.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count. This includes clicking and typing on this computer.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "es:ux.lcopyb.level.unlimited": {
+      "text": "Tus bots ejecutan comandos y herramientas sin preguntar, incluso con contenido externo o comandos que Murage no puede leer. Esto puede cambiar archivos protegidos y leer o enviar claves y contraseñas. Solo se pregunta antes de un probable borrado total o una catástrofe. Tus opciones de nunca permitir y tus reglas de bloqueo guardadas siguen bloqueando acciones, sin tarjeta y con una línea clara para ti. Si desactivas los mensajes de canal, siguen desactivados. Los enlaces de activación de otras apps y las rutinas usan el nivel del bot. Los chats de otras personas siguen en Preguntar, salvo que hayas elegido expresamente el nivel de ese bot. Una opción de Acceso total de 1.0.18 no cuenta.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "es:ux.lcopyb.level.channelHint": {
+      "text": "Activado salvo que lo desactives. En Sin límites, tus propios mensajes de canal se ejecutan sin preguntar. Los chats de otras personas siguen en Preguntar, salvo que hayas elegido expresamente el nivel de ese bot. Los enlaces de activación de otras apps y las rutinas usan el nivel del bot.",
+      "en": "On unless you turn it off. At No limits, your own channel messages run without asking. Other people's chats stay at Ask unless you explicitly set that bot's level. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "Reviewed owner channel messages, explicit bot choices for other people, unchanged lower-level asking, and webhook/routine bot-level treatment against the binding ruling."
+    },
+    "es:ux.lcopyb.level.peerSkip": {
+      "text": "Activado, pero {level} omite esta pregunta en tus propios chats y en las rutinas de ese nivel. Los enlaces de activación de otras apps siguen preguntando en Acceso total. En Sin límites, los enlaces de activación de otras apps y las rutinas usan el nivel del bot. Cambia a Automático para que pregunte cada vez.",
+      "en": "On, but {level} skips this in your own chats and in routines at that level. Trigger links from other apps still ask at Full access. At No limits, trigger links from other apps and routines use the bot's level. Switch to Auto to be asked each time.",
+      "verdict": "pass",
+      "note": "Reviewed owner channel messages, explicit bot choices for other people, unchanged lower-level asking, and webhook/routine bot-level treatment against the binding ruling."
+    },
+    "es:highlevel.canChangeHelp": {
+      "text": "Apruebas primero cada cambio en este ordenador. En Sin límites, los cambios se ejecutan sin preguntar, salvo un probable borrado total o una catástrofe. Tus opciones de nunca permitir y tus reglas de bloqueo guardadas siguen vigentes.",
+      "en": "You approve each change on this computer first. At No limits, changes run without asking, except for a likely wipe or catastrophe. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed the HighLevel action scope, including deleting, publishing, documents, invoices and payments; No limits keeps only catastrophe questions and honours owner never switches and stored deny rules."
+    },
+    "es:highlevel.fullHelp": {
+      "text": "El control total también permite borrar, publicar, enviar documentos, facturas y pagos, y cambiar usuarios y planes. Sin límites: Solo se pregunta antes de un probable borrado total o una catástrofe. Tus opciones de nunca permitir y tus reglas de bloqueo guardadas siguen vigentes. Los enlaces de activación de otras apps y las rutinas usan el nivel del bot.",
+      "en": "Full control also allows deleting, publishing, sending documents, invoices and payments, and changing users and plans. At No limits, only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "Reviewed the HighLevel action scope, including deleting, publishing, documents, invoices and payments; No limits keeps only catastrophe questions and honours owner never switches and stored deny rules."
+    },
+    "es:noLimits.followers.title": {
+      "text": "Bots y rutinas en Sin límites",
+      "en": "Bots and routines at No limits",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "es:noLimits.followers.counts": {
+      "text": "{bots} bots y {routines} rutinas siguen Sin límites",
+      "en": "{bots} bots and {routines} routines follow No limits",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "es:noLimits.followers.lower": {
+      "text": "Niveles inferiores elegidos",
+      "en": "Explicit lower levels",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "es:noLimits.followers.useAll": {
+      "text": "Usar Sin límites para todos",
+      "en": "Use No limits for all",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "es:noLimits.followers.upgradeTitle": {
+      "text": "Sin límites ha cambiado",
+      "en": "No limits has changed",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "es:noLimits.followers.upgradeBody": {
+      "text": "Los bots y chats que configuraste con un nivel inferior lo conservan. Las rutinas usan el nivel de su bot. Puedes mantener esas opciones de bots y chats o usar Sin límites.",
+      "en": "Bots and chats you set lower keep their levels. Routines use their bot's level. You can keep those bot and chat choices or use No limits.",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "es:noLimits.followers.keep": {
+      "text": "Mantener los niveles actuales",
+      "en": "Keep current levels",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "es:noLimits.followers.bot": {
+      "text": "asistente",
+      "en": "bot",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "es:noLimits.followers.routine": {
+      "text": "rutina",
+      "en": "routine",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "es:noLimits.followers.chat": {
+      "text": "conversación",
+      "en": "chat",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "fr:noLimits.v1.warning": {
+      "text": "Sans limites: Tes bots exécutent commandes et outils sans demander, même avec du contenu extérieur ou des commandes que Murage ne peut pas lire. Cela peut modifier des fichiers protégés et lire ou envoyer des clés et des mots de passe. Seul un effacement total probable ou une catastrophe déclenche une demande préalable. Tes choix de ne jamais autoriser et tes règles de refus enregistrées bloquent toujours les actions, sans carte, avec une ligne claire pour toi. Les messages de canal désactivés restent désactivés. Les liens de déclenchement d’autres applis et les routines utilisent le niveau du bot. Les chats des autres restent sur Demander, sauf si tu as choisi explicitement le niveau de ce bot. Un réglage Accès complet de 1.0.18 ne compte pas. Les chats sans expéditeur connu restent sur Demander. Une suppression dont la cible est inconnue s’exécute, sauf si Murage voit qu’elle effacerait tout l’ordinateur, ton dossier personnel ou des dossiers système.",
+      "en": "No limits: Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count. Chats with no known sender stay at Ask. An unclear delete runs unless Murage can see it would wipe the whole computer, your home folder or system folders.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "fr:noLimits.v1.outsideNote": {
+      "text": "Ce chat a lu du contenu extérieur ({source}). En Sans limites, seul un effacement total probable ou une catastrophe déclenche une demande préalable. Tes choix de ne jamais autoriser et tes règles de refus enregistrées restent en vigueur.",
+      "en": "This chat read outside content ({source}). At No limits, only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "fr:noLimits.v1.openclaw": {
+      "text": "OpenClaw exécute ses propres commandes. Murage peut vérifier le risque d’effacement total ou de catastrophe uniquement quand OpenClaw lui envoie une demande. Tes réglages OpenClaw restent en vigueur.",
+      "en": "OpenClaw runs its own commands. Murage can check for a likely wipe or catastrophe only when OpenClaw sends it a request. Your OpenClaw settings still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "fr:noLimits.v1.windows": {
+      "text": "Sans limites fonctionne de la même façon dans bash, zsh, PowerShell et cmd. Seul un effacement total probable ou une catastrophe déclenche une demande préalable. Tes choix de ne jamais autoriser et tes règles de refus enregistrées restent en vigueur.",
+      "en": "No limits works the same in bash, zsh, PowerShell and cmd. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "fr:noLimits.v1.engineAsks": {
+      "text": "{engine} utilise ses propres outils et réglages. En Sans limites, Murage ajoute une carte d’autorisation uniquement pour un effacement total probable ou une catastrophe dans les demandes qu’il reçoit. Tes choix de ne jamais autoriser et tes règles de refus enregistrées restent en vigueur.",
+      "en": "{engine} uses its own tools and settings. At No limits, Murage adds no permission cards except for a likely wipe or catastrophe in requests it receives. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "fr:permissionMenu.ownTools": {
+      "text": "{engine} utilise ses propres outils. En Demander, il lit et répond seulement. Aux autres niveaux, tes réglages {engine} restent en vigueur. En Sans limites, Murage demande uniquement pour un effacement total probable ou une catastrophe dans les demandes qu’il reçoit. Tes choix de ne jamais autoriser et tes règles de refus enregistrées restent en vigueur.",
+      "en": "{engine} uses its own tools. At Ask, it only reads and answers. At other levels, your {engine} settings still apply. At No limits, Murage asks only about a likely wipe or catastrophe in requests it receives. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "fr:ux.l1.level.unlimitedDetail": {
+      "text": "Tes bots exécutent commandes et outils sans demander, même avec du contenu extérieur ou des commandes que Murage ne peut pas lire. Cela peut modifier des fichiers protégés et lire ou envoyer des clés et des mots de passe. Seul un effacement total probable ou une catastrophe déclenche une demande préalable. Tes choix de ne jamais autoriser et tes règles de refus enregistrées bloquent toujours les actions, sans carte, avec une ligne claire pour toi. Les messages de canal désactivés restent désactivés. Les liens de déclenchement d’autres applis et les routines utilisent le niveau du bot. Les chats des autres restent sur Demander, sauf si tu as choisi explicitement le niveau de ce bot. Un réglage Accès complet de 1.0.18 ne compte pas.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "fr:ux.l1.level.underTable": {
+      "text": "En Sans limites, les fichiers protégés peuvent être modifiés et seul un effacement total probable ou une catastrophe déclenche une demande préalable. Les liens de déclenchement d’autres applis et les routines utilisent le niveau du bot. Les chats des autres restent sur Demander, sauf si tu as choisi explicitement le niveau de ce bot. Tes choix de ne jamais autoriser, tes règles de refus enregistrées et la désactivation des messages de canal restent en vigueur.",
+      "en": "At No limits, protected files can change and only a likely wipe or catastrophe asks first. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. Your never switches, saved deny rules and channel messages off still apply.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "fr:ux.l1.confirm.unlimitedBody": {
+      "text": "{level} permet à {bot} d’exécuter commandes et outils sans demander. Le contenu extérieur et les commandes que Murage ne peut pas lire sont aussi exécutés. Cela peut modifier des fichiers protégés et lire ou envoyer des clés et des mots de passe. Seul un effacement total probable ou une catastrophe déclenche une demande préalable. Tes choix de ne jamais autoriser et tes règles de refus enregistrées bloquent toujours les actions, sans carte, avec une ligne claire pour toi. Les messages de canal désactivés restent désactivés. Les liens de déclenchement d’autres applis et les routines utilisent le niveau du bot. Les chats des autres restent sur Demander, sauf si tu as choisi explicitement le niveau de ce bot. Un réglage Accès complet de 1.0.18 ne compte pas.",
+      "en": "{level} lets {bot} run commands and tools without asking. Outside content and commands Murage cannot read also run. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "fr:ux.lcopyb.level.unlimitedHere": {
+      "text": "Tes bots exécutent commandes et outils sans demander, même avec du contenu extérieur ou des commandes que Murage ne peut pas lire. Cela peut modifier des fichiers protégés et lire ou envoyer des clés et des mots de passe. Seul un effacement total probable ou une catastrophe déclenche une demande préalable. Tes choix de ne jamais autoriser et tes règles de refus enregistrées bloquent toujours les actions, sans carte, avec une ligne claire pour toi. Les messages de canal désactivés restent désactivés. Les liens de déclenchement d’autres applis et les routines utilisent le niveau du bot. Les chats des autres restent sur Demander, sauf si tu as choisi explicitement le niveau de ce bot. Un réglage Accès complet de 1.0.18 ne compte pas. Cela inclut les clics et la saisie sur cet ordinateur.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count. This includes clicking and typing on this computer.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "fr:ux.lcopyb.level.unlimited": {
+      "text": "Tes bots exécutent commandes et outils sans demander, même avec du contenu extérieur ou des commandes que Murage ne peut pas lire. Cela peut modifier des fichiers protégés et lire ou envoyer des clés et des mots de passe. Seul un effacement total probable ou une catastrophe déclenche une demande préalable. Tes choix de ne jamais autoriser et tes règles de refus enregistrées bloquent toujours les actions, sans carte, avec une ligne claire pour toi. Les messages de canal désactivés restent désactivés. Les liens de déclenchement d’autres applis et les routines utilisent le niveau du bot. Les chats des autres restent sur Demander, sauf si tu as choisi explicitement le niveau de ce bot. Un réglage Accès complet de 1.0.18 ne compte pas.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "fr:ux.lcopyb.level.channelHint": {
+      "text": "Activé sauf si tu le désactives. En Sans limites, tes propres messages de canal s’exécutent sans demander. Les chats des autres restent sur Demander, sauf si tu as choisi explicitement le niveau de ce bot. Les liens de déclenchement d’autres applis et les routines utilisent le niveau du bot.",
+      "en": "On unless you turn it off. At No limits, your own channel messages run without asking. Other people's chats stay at Ask unless you explicitly set that bot's level. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "Reviewed owner channel messages, explicit bot choices for other people, unchanged lower-level asking, and webhook/routine bot-level treatment against the binding ruling."
+    },
+    "fr:ux.lcopyb.level.peerSkip": {
+      "text": "Activé, mais {level} saute cette demande dans tes propres chats et les routines de ce niveau. Les liens de déclenchement d’autres applis demandent toujours en Accès complet. En Sans limites, les liens de déclenchement d’autres applis et les routines utilisent le niveau du bot. Passe à Automatique pour être consulté à chaque fois.",
+      "en": "On, but {level} skips this in your own chats and in routines at that level. Trigger links from other apps still ask at Full access. At No limits, trigger links from other apps and routines use the bot's level. Switch to Auto to be asked each time.",
+      "verdict": "pass",
+      "note": "Reviewed owner channel messages, explicit bot choices for other people, unchanged lower-level asking, and webhook/routine bot-level treatment against the binding ruling."
+    },
+    "fr:highlevel.canChangeHelp": {
+      "text": "Tu approuves chaque modification sur cet ordinateur. En Sans limites, les modifications se font sans demander, sauf en cas d’effacement total probable ou de catastrophe. Tes choix de ne jamais autoriser et tes règles de refus enregistrées restent en vigueur.",
+      "en": "You approve each change on this computer first. At No limits, changes run without asking, except for a likely wipe or catastrophe. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed the HighLevel action scope, including deleting, publishing, documents, invoices and payments; No limits keeps only catastrophe questions and honours owner never switches and stored deny rules."
+    },
+    "fr:highlevel.fullHelp": {
+      "text": "Le contrôle total permet aussi de supprimer, publier, envoyer des documents, des factures et des paiements, et modifier les utilisateurs et les offres. Sans limites: Seul un effacement total probable ou une catastrophe déclenche une demande préalable. Tes choix de ne jamais autoriser et tes règles de refus enregistrées restent en vigueur. Les liens de déclenchement d’autres applis et les routines utilisent le niveau du bot.",
+      "en": "Full control also allows deleting, publishing, sending documents, invoices and payments, and changing users and plans. At No limits, only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "Reviewed the HighLevel action scope, including deleting, publishing, documents, invoices and payments; No limits keeps only catastrophe questions and honours owner never switches and stored deny rules."
+    },
+    "fr:noLimits.followers.title": {
+      "text": "Bots et routines en Sans limites",
+      "en": "Bots and routines at No limits",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "fr:noLimits.followers.counts": {
+      "text": "{bots} bots et {routines} routines suivent Sans limites",
+      "en": "{bots} bots and {routines} routines follow No limits",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "fr:noLimits.followers.lower": {
+      "text": "Niveaux inférieurs choisis",
+      "en": "Explicit lower levels",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "fr:noLimits.followers.useAll": {
+      "text": "Utiliser Sans limites pour tous",
+      "en": "Use No limits for all",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "fr:noLimits.followers.upgradeTitle": {
+      "text": "Sans limites a changé",
+      "en": "No limits has changed",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "fr:noLimits.followers.upgradeBody": {
+      "text": "Les bots et chats que tu as réglés plus bas gardent leur niveau. Les routines utilisent le niveau de leur bot. Tu peux conserver ces choix de bots et de chats ou utiliser Sans limites.",
+      "en": "Bots and chats you set lower keep their levels. Routines use their bot's level. You can keep those bot and chat choices or use No limits.",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "fr:noLimits.followers.keep": {
+      "text": "Garder les niveaux actuels",
+      "en": "Keep current levels",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "fr:noLimits.followers.bot": {
+      "text": "assistant",
+      "en": "bot",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "fr:noLimits.followers.routine": {
+      "text": "tâche planifiée",
+      "en": "routine",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "fr:noLimits.followers.chat": {
+      "text": "conversation",
+      "en": "chat",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "hi:noLimits.v1.warning": {
+      "text": "कोई सीमा नहीं: आपके बॉट कमांड और टूल बिना पूछे चलाते हैं, बाहरी सामग्री या ऐसी कमांड के साथ भी जिन्हें Murage पढ़ नहीं सकता। इससे सुरक्षित रखी गई फ़ाइलें बदल सकती हैं और कुंजियाँ व पासवर्ड पढ़े या भेजे जा सकते हैं। केवल सारा डेटा मिटने या बड़ी तबाही की आशंका होने पर पहले पूछा जाता है। आपके कभी अनुमति न देने वाले विकल्प और सहेजे गए रोकने के नियम अब भी कार्रवाई रोकते हैं, बिना कार्ड के, आपको एक साफ़ पंक्ति में बताते हुए। चैनल संदेश बंद हैं तो बंद ही रहते हैं। दूसरे ऐप के ट्रिगर लिंक और रूटीन बॉट का स्तर इस्तेमाल करते हैं। दूसरों की चैट पूछें पर रहती हैं, जब तक आपने उस बॉट का स्तर साफ़ तौर पर न चुना हो। 1.0.18 की पूरी पहुँच सेटिंग को ऐसा चुनाव नहीं माना जाता। जिन चैट का भेजने वाला ज्ञात नहीं है, वे पूछें पर रहती हैं। मिटाने की कमांड का लक्ष्य स्पष्ट न हो, तब भी वह चलती है, जब तक Murage को यह न दिखे कि वह पूरा कंप्यूटर, आपका होम फ़ोल्डर या सिस्टम फ़ोल्डर मिटा देगी।",
+      "en": "No limits: Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count. Chats with no known sender stay at Ask. An unclear delete runs unless Murage can see it would wipe the whole computer, your home folder or system folders.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "hi:noLimits.v1.outsideNote": {
+      "text": "इस चैट ने बाहरी सामग्री पढ़ी है ({source})। कोई सीमा नहीं पर केवल सारा डेटा मिटने या बड़ी तबाही की आशंका होने पर पहले पूछा जाता है। आपके कभी अनुमति न देने वाले विकल्प और सहेजे गए रोकने के नियम अब भी लागू हैं।",
+      "en": "This chat read outside content ({source}). At No limits, only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "hi:noLimits.v1.openclaw": {
+      "text": "OpenClaw अपनी कमांड खुद चलाता है। Murage सारा डेटा मिटने या बड़ी तबाही की आशंका तभी जाँच सकता है जब OpenClaw उसे अनुरोध भेजता है। आपकी OpenClaw सेटिंग अब भी लागू हैं।",
+      "en": "OpenClaw runs its own commands. Murage can check for a likely wipe or catastrophe only when OpenClaw sends it a request. Your OpenClaw settings still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "hi:noLimits.v1.windows": {
+      "text": "कोई सीमा नहीं bash, zsh, PowerShell और cmd में एक ही तरह काम करता है। केवल सारा डेटा मिटने या बड़ी तबाही की आशंका होने पर पहले पूछा जाता है। आपके कभी अनुमति न देने वाले विकल्प और सहेजे गए रोकने के नियम अब भी लागू हैं।",
+      "en": "No limits works the same in bash, zsh, PowerShell and cmd. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "hi:noLimits.v1.engineAsks": {
+      "text": "{engine} अपने टूल और सेटिंग इस्तेमाल करता है। कोई सीमा नहीं पर Murage केवल उसे मिले अनुरोधों में सारा डेटा मिटने या बड़ी तबाही की आशंका होने पर अनुमति कार्ड दिखाता है। आपके कभी अनुमति न देने वाले विकल्प और सहेजे गए रोकने के नियम अब भी लागू हैं।",
+      "en": "{engine} uses its own tools and settings. At No limits, Murage adds no permission cards except for a likely wipe or catastrophe in requests it receives. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "hi:permissionMenu.ownTools": {
+      "text": "{engine} अपने टूल इस्तेमाल करता है। पूछें पर वह केवल पढ़ता और जवाब देता है। बाकी स्तरों पर आपकी {engine} सेटिंग लागू रहती हैं। कोई सीमा नहीं पर Murage केवल उसे मिले अनुरोधों में सारा डेटा मिटने या बड़ी तबाही की आशंका होने पर पूछता है। आपके कभी अनुमति न देने वाले विकल्प और सहेजे गए रोकने के नियम अब भी लागू हैं।",
+      "en": "{engine} uses its own tools. At Ask, it only reads and answers. At other levels, your {engine} settings still apply. At No limits, Murage asks only about a likely wipe or catastrophe in requests it receives. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "hi:ux.l1.level.unlimitedDetail": {
+      "text": "आपके बॉट कमांड और टूल बिना पूछे चलाते हैं, बाहरी सामग्री या ऐसी कमांड के साथ भी जिन्हें Murage पढ़ नहीं सकता। इससे सुरक्षित रखी गई फ़ाइलें बदल सकती हैं और कुंजियाँ व पासवर्ड पढ़े या भेजे जा सकते हैं। केवल सारा डेटा मिटने या बड़ी तबाही की आशंका होने पर पहले पूछा जाता है। आपके कभी अनुमति न देने वाले विकल्प और सहेजे गए रोकने के नियम अब भी कार्रवाई रोकते हैं, बिना कार्ड के, आपको एक साफ़ पंक्ति में बताते हुए। चैनल संदेश बंद हैं तो बंद ही रहते हैं। दूसरे ऐप के ट्रिगर लिंक और रूटीन बॉट का स्तर इस्तेमाल करते हैं। दूसरों की चैट पूछें पर रहती हैं, जब तक आपने उस बॉट का स्तर साफ़ तौर पर न चुना हो। 1.0.18 की पूरी पहुँच सेटिंग को ऐसा चुनाव नहीं माना जाता।",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "hi:ux.l1.level.underTable": {
+      "text": "कोई सीमा नहीं पर सुरक्षित रखी गई फ़ाइलें बदल सकती हैं और केवल सारा डेटा मिटने या बड़ी तबाही की आशंका होने पर पहले पूछा जाता है। दूसरे ऐप के ट्रिगर लिंक और रूटीन बॉट का स्तर इस्तेमाल करते हैं। दूसरों की चैट पूछें पर रहती हैं, जब तक आपने उस बॉट का स्तर साफ़ तौर पर न चुना हो। आपके कभी अनुमति न देने वाले विकल्प, सहेजे गए रोकने के नियम और चैनल संदेश बंद रखने का विकल्प अब भी लागू हैं।",
+      "en": "At No limits, protected files can change and only a likely wipe or catastrophe asks first. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. Your never switches, saved deny rules and channel messages off still apply.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "hi:ux.l1.confirm.unlimitedBody": {
+      "text": "{level} पर {bot} कमांड और टूल बिना पूछे चला सकता है। बाहरी सामग्री और वे कमांड भी चलती हैं जिन्हें Murage पढ़ नहीं सकता। इससे सुरक्षित रखी गई फ़ाइलें बदल सकती हैं और कुंजियाँ व पासवर्ड पढ़े या भेजे जा सकते हैं। केवल सारा डेटा मिटने या बड़ी तबाही की आशंका होने पर पहले पूछा जाता है। आपके कभी अनुमति न देने वाले विकल्प और सहेजे गए रोकने के नियम अब भी कार्रवाई रोकते हैं, बिना कार्ड के, आपको एक साफ़ पंक्ति में बताते हुए। चैनल संदेश बंद हैं तो बंद ही रहते हैं। दूसरे ऐप के ट्रिगर लिंक और रूटीन बॉट का स्तर इस्तेमाल करते हैं। दूसरों की चैट पूछें पर रहती हैं, जब तक आपने उस बॉट का स्तर साफ़ तौर पर न चुना हो। 1.0.18 की पूरी पहुँच सेटिंग को ऐसा चुनाव नहीं माना जाता।",
+      "en": "{level} lets {bot} run commands and tools without asking. Outside content and commands Murage cannot read also run. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "hi:ux.lcopyb.level.unlimitedHere": {
+      "text": "आपके बॉट कमांड और टूल बिना पूछे चलाते हैं, बाहरी सामग्री या ऐसी कमांड के साथ भी जिन्हें Murage पढ़ नहीं सकता। इससे सुरक्षित रखी गई फ़ाइलें बदल सकती हैं और कुंजियाँ व पासवर्ड पढ़े या भेजे जा सकते हैं। केवल सारा डेटा मिटने या बड़ी तबाही की आशंका होने पर पहले पूछा जाता है। आपके कभी अनुमति न देने वाले विकल्प और सहेजे गए रोकने के नियम अब भी कार्रवाई रोकते हैं, बिना कार्ड के, आपको एक साफ़ पंक्ति में बताते हुए। चैनल संदेश बंद हैं तो बंद ही रहते हैं। दूसरे ऐप के ट्रिगर लिंक और रूटीन बॉट का स्तर इस्तेमाल करते हैं। दूसरों की चैट पूछें पर रहती हैं, जब तक आपने उस बॉट का स्तर साफ़ तौर पर न चुना हो। 1.0.18 की पूरी पहुँच सेटिंग को ऐसा चुनाव नहीं माना जाता। इसमें इस कंप्यूटर पर क्लिक करना और टाइप करना भी शामिल है।",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count. This includes clicking and typing on this computer.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "hi:ux.lcopyb.level.unlimited": {
+      "text": "आपके बॉट कमांड और टूल बिना पूछे चलाते हैं, बाहरी सामग्री या ऐसी कमांड के साथ भी जिन्हें Murage पढ़ नहीं सकता। इससे सुरक्षित रखी गई फ़ाइलें बदल सकती हैं और कुंजियाँ व पासवर्ड पढ़े या भेजे जा सकते हैं। केवल सारा डेटा मिटने या बड़ी तबाही की आशंका होने पर पहले पूछा जाता है। आपके कभी अनुमति न देने वाले विकल्प और सहेजे गए रोकने के नियम अब भी कार्रवाई रोकते हैं, बिना कार्ड के, आपको एक साफ़ पंक्ति में बताते हुए। चैनल संदेश बंद हैं तो बंद ही रहते हैं। दूसरे ऐप के ट्रिगर लिंक और रूटीन बॉट का स्तर इस्तेमाल करते हैं। दूसरों की चैट पूछें पर रहती हैं, जब तक आपने उस बॉट का स्तर साफ़ तौर पर न चुना हो। 1.0.18 की पूरी पहुँच सेटिंग को ऐसा चुनाव नहीं माना जाता।",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "hi:ux.lcopyb.level.channelHint": {
+      "text": "जब तक आप बंद न करें, यह चालू रहता है। कोई सीमा नहीं पर आपके अपने चैनल संदेश बिना पूछे चलते हैं। दूसरों की चैट पूछें पर रहती हैं, जब तक आपने उस बॉट का स्तर साफ़ तौर पर न चुना हो। दूसरे ऐप के ट्रिगर लिंक और रूटीन बॉट का स्तर इस्तेमाल करते हैं।",
+      "en": "On unless you turn it off. At No limits, your own channel messages run without asking. Other people's chats stay at Ask unless you explicitly set that bot's level. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "Reviewed owner channel messages, explicit bot choices for other people, unchanged lower-level asking, and webhook/routine bot-level treatment against the binding ruling."
+    },
+    "hi:ux.lcopyb.level.peerSkip": {
+      "text": "चालू है, लेकिन {level} आपकी अपनी चैट और उस स्तर के रूटीन में यह सवाल नहीं पूछता। पूरी पहुँच पर दूसरे ऐप के ट्रिगर लिंक अब भी पूछते हैं। कोई सीमा नहीं पर दूसरे ऐप के ट्रिगर लिंक और रूटीन बॉट का स्तर इस्तेमाल करते हैं। हर बार पूछे जाने के लिए स्वचालित चुनें।",
+      "en": "On, but {level} skips this in your own chats and in routines at that level. Trigger links from other apps still ask at Full access. At No limits, trigger links from other apps and routines use the bot's level. Switch to Auto to be asked each time.",
+      "verdict": "pass",
+      "note": "Reviewed owner channel messages, explicit bot choices for other people, unchanged lower-level asking, and webhook/routine bot-level treatment against the binding ruling."
+    },
+    "hi:highlevel.canChangeHelp": {
+      "text": "आप पहले इस कंप्यूटर पर हर बदलाव को मंज़ूरी देते हैं। कोई सीमा नहीं पर बदलाव बिना पूछे होते हैं, सिवाय सारा डेटा मिटने या बड़ी तबाही की आशंका के। आपके कभी अनुमति न देने वाले विकल्प और सहेजे गए रोकने के नियम अब भी लागू हैं।",
+      "en": "You approve each change on this computer first. At No limits, changes run without asking, except for a likely wipe or catastrophe. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed the HighLevel action scope, including deleting, publishing, documents, invoices and payments; No limits keeps only catastrophe questions and honours owner never switches and stored deny rules."
+    },
+    "hi:highlevel.fullHelp": {
+      "text": "पूरे नियंत्रण में मिटाना, प्रकाशित करना, दस्तावेज़, बिल और भुगतान भेजना तथा उपयोगकर्ता और प्लान बदलना भी शामिल है। कोई सीमा नहीं: केवल सारा डेटा मिटने या बड़ी तबाही की आशंका होने पर पहले पूछा जाता है। आपके कभी अनुमति न देने वाले विकल्प और सहेजे गए रोकने के नियम अब भी लागू हैं। दूसरे ऐप के ट्रिगर लिंक और रूटीन बॉट का स्तर इस्तेमाल करते हैं।",
+      "en": "Full control also allows deleting, publishing, sending documents, invoices and payments, and changing users and plans. At No limits, only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "Reviewed the HighLevel action scope, including deleting, publishing, documents, invoices and payments; No limits keeps only catastrophe questions and honours owner never switches and stored deny rules."
+    },
+    "hi:noLimits.followers.title": {
+      "text": "कोई सीमा नहीं पर बॉट और रूटीन",
+      "en": "Bots and routines at No limits",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "hi:noLimits.followers.counts": {
+      "text": "{bots} बॉट और {routines} रूटीन कोई सीमा नहीं का अनुसरण करते हैं",
+      "en": "{bots} bots and {routines} routines follow No limits",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "hi:noLimits.followers.lower": {
+      "text": "चुने हुए निचले स्तर",
+      "en": "Explicit lower levels",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "hi:noLimits.followers.useAll": {
+      "text": "सभी के लिए कोई सीमा नहीं",
+      "en": "Use No limits for all",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "hi:noLimits.followers.upgradeTitle": {
+      "text": "कोई सीमा नहीं बदल गया है",
+      "en": "No limits has changed",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "hi:noLimits.followers.upgradeBody": {
+      "text": "जिन बॉट और चैट का स्तर आपने कम रखा था, वह बना रहेगा। रूटीन अपने बॉट का स्तर इस्तेमाल करते हैं। आप बॉट और चैट के ये विकल्प रख सकते हैं या कोई सीमा नहीं चुन सकते हैं।",
+      "en": "Bots and chats you set lower keep their levels. Routines use their bot's level. You can keep those bot and chat choices or use No limits.",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "hi:noLimits.followers.keep": {
+      "text": "मौजूदा स्तर रखें",
+      "en": "Keep current levels",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "hi:noLimits.followers.bot": {
+      "text": "बॉट",
+      "en": "bot",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "hi:noLimits.followers.routine": {
+      "text": "रूटीन",
+      "en": "routine",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "hi:noLimits.followers.chat": {
+      "text": "चैट",
+      "en": "chat",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "ja:noLimits.v1.warning": {
+      "text": "制限なし：あなたのボットは、外部のコンテンツやMurageが読み取れないコマンドでも、確認なしでコマンドやツールを実行します。保護されたファイルを変更したり、キーやパスワードを読み取って送信したりすることもあります。全消去や重大な破壊の可能性が高い場合だけ、実行前に確認します。「許可しない」設定と保存済みの拒否ルールは引き続き操作を止めます。カードは出さず、あなたにわかりやすく1行で伝えます。チャンネルのメッセージをオフにしていれば、そのままオフです。他のアプリからのトリガーリンクとルーティンはボットの権限を使います。他の人のチャットは、あなたがそのボットの権限を明示的に設定していない限り、「確認する」のままです。1.0.18のフルアクセス設定は、明示的な設定に含まれません。送信者が不明なチャットは「確認する」のままです。削除先が不明なコマンドも実行します。ただし、コンピューター全体、ホームフォルダー、システムフォルダーを全消去するとMurageが判断した場合は確認します。",
+      "en": "No limits: Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count. Chats with no known sender stay at Ask. An unclear delete runs unless Murage can see it would wipe the whole computer, your home folder or system folders.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "ja:noLimits.v1.outsideNote": {
+      "text": "このチャットは外部のコンテンツを読みました（{source}）。制限なしでは、全消去や重大な破壊の可能性が高い場合だけ、実行前に確認します。「許可しない」設定と保存済みの拒否ルールは引き続き適用されます。",
+      "en": "This chat read outside content ({source}). At No limits, only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "ja:noLimits.v1.openclaw": {
+      "text": "OpenClawは独自のコマンドを実行します。Murageが全消去や重大な破壊の可能性を確認できるのは、OpenClawからリクエストを受け取った場合だけです。あなたのOpenClaw設定は引き続き適用されます。",
+      "en": "OpenClaw runs its own commands. Murage can check for a likely wipe or catastrophe only when OpenClaw sends it a request. Your OpenClaw settings still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "ja:noLimits.v1.windows": {
+      "text": "制限なしの動作はbash、zsh、PowerShell、cmdで同じです。全消去や重大な破壊の可能性が高い場合だけ、実行前に確認します。「許可しない」設定と保存済みの拒否ルールは引き続き適用されます。",
+      "en": "No limits works the same in bash, zsh, PowerShell and cmd. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "ja:noLimits.v1.engineAsks": {
+      "text": "{engine}は独自のツールと設定を使います。制限なしでは、Murageが受け取ったリクエストで全消去や重大な破壊の可能性が高い場合だけ、許可カードを表示します。「許可しない」設定と保存済みの拒否ルールは引き続き適用されます。",
+      "en": "{engine} uses its own tools and settings. At No limits, Murage adds no permission cards except for a likely wipe or catastrophe in requests it receives. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "ja:permissionMenu.ownTools": {
+      "text": "{engine}は独自のツールを使います。「確認する」では、読み取りと返答だけを行います。他の権限では、あなたの{engine}設定が引き続き適用されます。制限なしでは、Murageが受け取ったリクエストで全消去や重大な破壊の可能性が高い場合だけ確認します。「許可しない」設定と保存済みの拒否ルールは引き続き適用されます。",
+      "en": "{engine} uses its own tools. At Ask, it only reads and answers. At other levels, your {engine} settings still apply. At No limits, Murage asks only about a likely wipe or catastrophe in requests it receives. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "ja:ux.l1.level.unlimitedDetail": {
+      "text": "あなたのボットは、外部のコンテンツやMurageが読み取れないコマンドでも、確認なしでコマンドやツールを実行します。保護されたファイルを変更したり、キーやパスワードを読み取って送信したりすることもあります。全消去や重大な破壊の可能性が高い場合だけ、実行前に確認します。「許可しない」設定と保存済みの拒否ルールは引き続き操作を止めます。カードは出さず、あなたにわかりやすく1行で伝えます。チャンネルのメッセージをオフにしていれば、そのままオフです。他のアプリからのトリガーリンクとルーティンはボットの権限を使います。他の人のチャットは、あなたがそのボットの権限を明示的に設定していない限り、「確認する」のままです。1.0.18のフルアクセス設定は、明示的な設定に含まれません。",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "ja:ux.l1.level.underTable": {
+      "text": "制限なしでは、保護されたファイルも変更できます。全消去や重大な破壊の可能性が高い場合だけ、実行前に確認します。他のアプリからのトリガーリンクとルーティンはボットの権限を使います。他の人のチャットは、あなたがそのボットの権限を明示的に設定していない限り、「確認する」のままです。「許可しない」設定、保存済みの拒否ルール、チャンネルのメッセージをオフにする設定は引き続き適用されます。",
+      "en": "At No limits, protected files can change and only a likely wipe or catastrophe asks first. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. Your never switches, saved deny rules and channel messages off still apply.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "ja:ux.l1.confirm.unlimitedBody": {
+      "text": "{level}では、{bot}は確認なしでコマンドやツールを実行できます。外部のコンテンツやMurageが読み取れないコマンドでも実行します。保護されたファイルを変更したり、キーやパスワードを読み取って送信したりすることもあります。全消去や重大な破壊の可能性が高い場合だけ、実行前に確認します。「許可しない」設定と保存済みの拒否ルールは引き続き操作を止めます。カードは出さず、あなたにわかりやすく1行で伝えます。チャンネルのメッセージをオフにしていれば、そのままオフです。他のアプリからのトリガーリンクとルーティンはボットの権限を使います。他の人のチャットは、あなたがそのボットの権限を明示的に設定していない限り、「確認する」のままです。1.0.18のフルアクセス設定は、明示的な設定に含まれません。",
+      "en": "{level} lets {bot} run commands and tools without asking. Outside content and commands Murage cannot read also run. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "ja:ux.lcopyb.level.unlimitedHere": {
+      "text": "あなたのボットは、外部のコンテンツやMurageが読み取れないコマンドでも、確認なしでコマンドやツールを実行します。保護されたファイルを変更したり、キーやパスワードを読み取って送信したりすることもあります。全消去や重大な破壊の可能性が高い場合だけ、実行前に確認します。「許可しない」設定と保存済みの拒否ルールは引き続き操作を止めます。カードは出さず、あなたにわかりやすく1行で伝えます。チャンネルのメッセージをオフにしていれば、そのままオフです。他のアプリからのトリガーリンクとルーティンはボットの権限を使います。他の人のチャットは、あなたがそのボットの権限を明示的に設定していない限り、「確認する」のままです。1.0.18のフルアクセス設定は、明示的な設定に含まれません。このコンピューターでのクリックや入力も含まれます。",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count. This includes clicking and typing on this computer.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "ja:ux.lcopyb.level.unlimited": {
+      "text": "あなたのボットは、外部のコンテンツやMurageが読み取れないコマンドでも、確認なしでコマンドやツールを実行します。保護されたファイルを変更したり、キーやパスワードを読み取って送信したりすることもあります。全消去や重大な破壊の可能性が高い場合だけ、実行前に確認します。「許可しない」設定と保存済みの拒否ルールは引き続き操作を止めます。カードは出さず、あなたにわかりやすく1行で伝えます。チャンネルのメッセージをオフにしていれば、そのままオフです。他のアプリからのトリガーリンクとルーティンはボットの権限を使います。他の人のチャットは、あなたがそのボットの権限を明示的に設定していない限り、「確認する」のままです。1.0.18のフルアクセス設定は、明示的な設定に含まれません。",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "ja:ux.lcopyb.level.channelHint": {
+      "text": "オフにしない限りオンです。制限なしでは、あなた自身のチャンネルのメッセージは確認なしで実行します。他の人のチャットは、あなたがそのボットの権限を明示的に設定していない限り、「確認する」のままです。他のアプリからのトリガーリンクとルーティンはボットの権限を使います。",
+      "en": "On unless you turn it off. At No limits, your own channel messages run without asking. Other people's chats stay at Ask unless you explicitly set that bot's level. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "Reviewed owner channel messages, explicit bot choices for other people, unchanged lower-level asking, and webhook/routine bot-level treatment against the binding ruling."
+    },
+    "ja:ux.lcopyb.level.peerSkip": {
+      "text": "オンですが、{level}では、あなた自身のチャットと、その権限のルーティンでこの確認を省略します。フルアクセスでは他のアプリからのトリガーリンクは引き続き確認します。制限なしでは他のアプリからのトリガーリンクとルーティンはボットの権限を使います。毎回確認したい場合は「自動」に切り替えてください。",
+      "en": "On, but {level} skips this in your own chats and in routines at that level. Trigger links from other apps still ask at Full access. At No limits, trigger links from other apps and routines use the bot's level. Switch to Auto to be asked each time.",
+      "verdict": "pass",
+      "note": "Reviewed owner channel messages, explicit bot choices for other people, unchanged lower-level asking, and webhook/routine bot-level treatment against the binding ruling."
+    },
+    "ja:highlevel.canChangeHelp": {
+      "text": "変更は毎回、まずこのコンピューターであなたが許可します。制限なしでは、全消去や重大な破壊の可能性が高い場合を除き、確認なしで変更します。「許可しない」設定と保存済みの拒否ルールは引き続き適用されます。",
+      "en": "You approve each change on this computer first. At No limits, changes run without asking, except for a likely wipe or catastrophe. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed the HighLevel action scope, including deleting, publishing, documents, invoices and payments; No limits keeps only catastrophe questions and honours owner never switches and stored deny rules."
+    },
+    "ja:highlevel.fullHelp": {
+      "text": "フルコントロールでは、削除、公開、文書・請求書・支払いの送信、ユーザーやプランの変更もできます。制限なし：全消去や重大な破壊の可能性が高い場合だけ、実行前に確認します。「許可しない」設定と保存済みの拒否ルールは引き続き適用されます。他のアプリからのトリガーリンクとルーティンはボットの権限を使います。",
+      "en": "Full control also allows deleting, publishing, sending documents, invoices and payments, and changing users and plans. At No limits, only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "Reviewed the HighLevel action scope, including deleting, publishing, documents, invoices and payments; No limits keeps only catastrophe questions and honours owner never switches and stored deny rules."
+    },
+    "ja:noLimits.followers.title": {
+      "text": "制限なしのボットとルーティン",
+      "en": "Bots and routines at No limits",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "ja:noLimits.followers.counts": {
+      "text": "{bots} 個のボットと {routines} 個のルーティンが制限なしを継承",
+      "en": "{bots} bots and {routines} routines follow No limits",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "ja:noLimits.followers.lower": {
+      "text": "自分で設定した低い権限",
+      "en": "Explicit lower levels",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "ja:noLimits.followers.useAll": {
+      "text": "すべて制限なしを継承",
+      "en": "Use No limits for all",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "ja:noLimits.followers.upgradeTitle": {
+      "text": "制限なしが変わりました",
+      "en": "No limits has changed",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "ja:noLimits.followers.upgradeBody": {
+      "text": "低い権限に設定したボットとチャットは、その権限を保ちます。ルーティンは、そのボットの権限を使います。ボットとチャットの現在の設定を維持するか、制限なしを使うかを選べます。",
+      "en": "Bots and chats you set lower keep their levels. Routines use their bot's level. You can keep those bot and chat choices or use No limits.",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "ja:noLimits.followers.keep": {
+      "text": "現在の権限を維持",
+      "en": "Keep current levels",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "ja:noLimits.followers.bot": {
+      "text": "ボット",
+      "en": "bot",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "ja:noLimits.followers.routine": {
+      "text": "ルーティン",
+      "en": "routine",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "ja:noLimits.followers.chat": {
+      "text": "チャット",
+      "en": "chat",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "pt-br:noLimits.v1.warning": {
+      "text": "Sem limites: Seus bots executam comandos e ferramentas sem perguntar, mesmo com conteúdo externo ou comandos que o Murage não consegue ler. Isso pode alterar arquivos protegidos e ler ou enviar chaves e senhas. Só pede confirmação antes de um provável apagamento total ou de uma catástrofe. Suas opções de nunca permitir e regras de bloqueio salvas continuam bloqueando ações, sem cartão e com uma linha clara para você. Mensagens de canal desativadas continuam desativadas. Links de acionamento de outros apps e rotinas usam o nível do bot. Os chats de outras pessoas continuam em Perguntar, a menos que você tenha definido explicitamente o nível desse bot. Uma opção de Acesso total da versão 1.0.18 não conta. Chats sem remetente conhecido continuam em Perguntar. Um comando de exclusão com destino incerto é executado, a menos que o Murage veja que apagaria todo o computador, sua pasta pessoal ou pastas do sistema.",
+      "en": "No limits: Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count. Chats with no known sender stay at Ask. An unclear delete runs unless Murage can see it would wipe the whole computer, your home folder or system folders.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "pt-br:noLimits.v1.outsideNote": {
+      "text": "Este chat leu conteúdo externo ({source}). Em Sem limites, só pede confirmação antes de um provável apagamento total ou de uma catástrofe. Suas opções de nunca permitir e regras de bloqueio salvas continuam valendo.",
+      "en": "This chat read outside content ({source}). At No limits, only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "pt-br:noLimits.v1.openclaw": {
+      "text": "O OpenClaw executa seus próprios comandos. O Murage só pode verificar se há um provável apagamento total ou uma catástrofe quando o OpenClaw envia uma solicitação. Suas configurações do OpenClaw continuam valendo.",
+      "en": "OpenClaw runs its own commands. Murage can check for a likely wipe or catastrophe only when OpenClaw sends it a request. Your OpenClaw settings still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "pt-br:noLimits.v1.windows": {
+      "text": "Sem limites funciona da mesma forma em bash, zsh, PowerShell e cmd. Só pede confirmação antes de um provável apagamento total ou de uma catástrofe. Suas opções de nunca permitir e regras de bloqueio salvas continuam valendo.",
+      "en": "No limits works the same in bash, zsh, PowerShell and cmd. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "pt-br:noLimits.v1.engineAsks": {
+      "text": "{engine} usa suas próprias ferramentas e configurações. Em Sem limites, o Murage só mostra cartões de permissão para um provável apagamento total ou uma catástrofe nas solicitações que recebe. Suas opções de nunca permitir e regras de bloqueio salvas continuam valendo.",
+      "en": "{engine} uses its own tools and settings. At No limits, Murage adds no permission cards except for a likely wipe or catastrophe in requests it receives. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "pt-br:permissionMenu.ownTools": {
+      "text": "{engine} usa suas próprias ferramentas. Em Perguntar, só lê e responde. Nos outros níveis, suas configurações de {engine} continuam valendo. Em Sem limites, o Murage só pergunta sobre um provável apagamento total ou uma catástrofe nas solicitações que recebe. Suas opções de nunca permitir e regras de bloqueio salvas continuam valendo.",
+      "en": "{engine} uses its own tools. At Ask, it only reads and answers. At other levels, your {engine} settings still apply. At No limits, Murage asks only about a likely wipe or catastrophe in requests it receives. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "pt-br:ux.l1.level.unlimitedDetail": {
+      "text": "Seus bots executam comandos e ferramentas sem perguntar, mesmo com conteúdo externo ou comandos que o Murage não consegue ler. Isso pode alterar arquivos protegidos e ler ou enviar chaves e senhas. Só pede confirmação antes de um provável apagamento total ou de uma catástrofe. Suas opções de nunca permitir e regras de bloqueio salvas continuam bloqueando ações, sem cartão e com uma linha clara para você. Mensagens de canal desativadas continuam desativadas. Links de acionamento de outros apps e rotinas usam o nível do bot. Os chats de outras pessoas continuam em Perguntar, a menos que você tenha definido explicitamente o nível desse bot. Uma opção de Acesso total da versão 1.0.18 não conta.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "pt-br:ux.l1.level.underTable": {
+      "text": "Em Sem limites, arquivos protegidos podem ser alterados e só pede confirmação antes de um provável apagamento total ou de uma catástrofe. Links de acionamento de outros apps e rotinas usam o nível do bot. Os chats de outras pessoas continuam em Perguntar, a menos que você tenha definido explicitamente o nível desse bot. Suas opções de nunca permitir, regras de bloqueio salvas e mensagens de canal desativadas continuam valendo.",
+      "en": "At No limits, protected files can change and only a likely wipe or catastrophe asks first. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. Your never switches, saved deny rules and channel messages off still apply.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "pt-br:ux.l1.confirm.unlimitedBody": {
+      "text": "{level} permite que {bot} execute comandos e ferramentas sem perguntar. Conteúdo externo e comandos que o Murage não consegue ler também são executados. Isso pode alterar arquivos protegidos e ler ou enviar chaves e senhas. Só pede confirmação antes de um provável apagamento total ou de uma catástrofe. Suas opções de nunca permitir e regras de bloqueio salvas continuam bloqueando ações, sem cartão e com uma linha clara para você. Mensagens de canal desativadas continuam desativadas. Links de acionamento de outros apps e rotinas usam o nível do bot. Os chats de outras pessoas continuam em Perguntar, a menos que você tenha definido explicitamente o nível desse bot. Uma opção de Acesso total da versão 1.0.18 não conta.",
+      "en": "{level} lets {bot} run commands and tools without asking. Outside content and commands Murage cannot read also run. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "pt-br:ux.lcopyb.level.unlimitedHere": {
+      "text": "Seus bots executam comandos e ferramentas sem perguntar, mesmo com conteúdo externo ou comandos que o Murage não consegue ler. Isso pode alterar arquivos protegidos e ler ou enviar chaves e senhas. Só pede confirmação antes de um provável apagamento total ou de uma catástrofe. Suas opções de nunca permitir e regras de bloqueio salvas continuam bloqueando ações, sem cartão e com uma linha clara para você. Mensagens de canal desativadas continuam desativadas. Links de acionamento de outros apps e rotinas usam o nível do bot. Os chats de outras pessoas continuam em Perguntar, a menos que você tenha definido explicitamente o nível desse bot. Uma opção de Acesso total da versão 1.0.18 não conta. Isso inclui clicar e digitar neste computador.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count. This includes clicking and typing on this computer.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "pt-br:ux.lcopyb.level.unlimited": {
+      "text": "Seus bots executam comandos e ferramentas sem perguntar, mesmo com conteúdo externo ou comandos que o Murage não consegue ler. Isso pode alterar arquivos protegidos e ler ou enviar chaves e senhas. Só pede confirmação antes de um provável apagamento total ou de uma catástrofe. Suas opções de nunca permitir e regras de bloqueio salvas continuam bloqueando ações, sem cartão e com uma linha clara para você. Mensagens de canal desativadas continuam desativadas. Links de acionamento de outros apps e rotinas usam o nível do bot. Os chats de outras pessoas continuam em Perguntar, a menos que você tenha definido explicitamente o nível desse bot. Uma opção de Acesso total da versão 1.0.18 não conta.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "pt-br:ux.lcopyb.level.channelHint": {
+      "text": "Ativado, a menos que você desative. Em Sem limites, suas próprias mensagens de canal são executadas sem perguntar. Os chats de outras pessoas continuam em Perguntar, a menos que você tenha definido explicitamente o nível desse bot. Links de acionamento de outros apps e rotinas usam o nível do bot.",
+      "en": "On unless you turn it off. At No limits, your own channel messages run without asking. Other people's chats stay at Ask unless you explicitly set that bot's level. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "Reviewed owner channel messages, explicit bot choices for other people, unchanged lower-level asking, and webhook/routine bot-level treatment against the binding ruling."
+    },
+    "pt-br:ux.lcopyb.level.peerSkip": {
+      "text": "Ativado, mas {level} pula essa pergunta nos seus próprios chats e nas rotinas desse nível. Links de acionamento de outros apps continuam perguntando em Acesso total. Em Sem limites, links de acionamento de outros apps e rotinas usam o nível do bot. Mude para Automático para ser consultado a cada vez.",
+      "en": "On, but {level} skips this in your own chats and in routines at that level. Trigger links from other apps still ask at Full access. At No limits, trigger links from other apps and routines use the bot's level. Switch to Auto to be asked each time.",
+      "verdict": "pass",
+      "note": "Reviewed owner channel messages, explicit bot choices for other people, unchanged lower-level asking, and webhook/routine bot-level treatment against the binding ruling."
+    },
+    "pt-br:highlevel.canChangeHelp": {
+      "text": "Você aprova cada alteração primeiro neste computador. Em Sem limites, as alterações são feitas sem perguntar, exceto em caso de provável apagamento total ou catástrofe. Suas opções de nunca permitir e regras de bloqueio salvas continuam valendo.",
+      "en": "You approve each change on this computer first. At No limits, changes run without asking, except for a likely wipe or catastrophe. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed the HighLevel action scope, including deleting, publishing, documents, invoices and payments; No limits keeps only catastrophe questions and honours owner never switches and stored deny rules."
+    },
+    "pt-br:highlevel.fullHelp": {
+      "text": "O controle total também permite apagar, publicar, enviar documentos, faturas e pagamentos, e alterar usuários e planos. Sem limites: Só pede confirmação antes de um provável apagamento total ou de uma catástrofe. Suas opções de nunca permitir e regras de bloqueio salvas continuam valendo. Links de acionamento de outros apps e rotinas usam o nível do bot.",
+      "en": "Full control also allows deleting, publishing, sending documents, invoices and payments, and changing users and plans. At No limits, only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "Reviewed the HighLevel action scope, including deleting, publishing, documents, invoices and payments; No limits keeps only catastrophe questions and honours owner never switches and stored deny rules."
+    },
+    "pt-br:noLimits.followers.title": {
+      "text": "Bots e rotinas em Sem limites",
+      "en": "Bots and routines at No limits",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "pt-br:noLimits.followers.counts": {
+      "text": "{bots} bots e {routines} rotinas seguem Sem limites",
+      "en": "{bots} bots and {routines} routines follow No limits",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "pt-br:noLimits.followers.lower": {
+      "text": "Níveis inferiores escolhidos",
+      "en": "Explicit lower levels",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "pt-br:noLimits.followers.useAll": {
+      "text": "Usar Sem limites para todos",
+      "en": "Use No limits for all",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "pt-br:noLimits.followers.upgradeTitle": {
+      "text": "Sem limites mudou",
+      "en": "No limits has changed",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "pt-br:noLimits.followers.upgradeBody": {
+      "text": "Bots e chats que você definiu em um nível inferior mantêm esse nível. As rotinas usam o nível do bot. Você pode manter essas escolhas de bots e chats ou usar Sem limites.",
+      "en": "Bots and chats you set lower keep their levels. Routines use their bot's level. You can keep those bot and chat choices or use No limits.",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "pt-br:noLimits.followers.keep": {
+      "text": "Manter os níveis atuais",
+      "en": "Keep current levels",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "pt-br:noLimits.followers.bot": {
+      "text": "assistente",
+      "en": "bot",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "pt-br:noLimits.followers.routine": {
+      "text": "rotina",
+      "en": "routine",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "pt-br:noLimits.followers.chat": {
+      "text": "conversa",
+      "en": "chat",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "zh:noLimits.v1.warning": {
+      "text": "无限制：你的机器人运行命令和工具时不会询问，即使涉及外部内容或 Murage 无法读取的命令也会运行。这可能更改受保护的文件，也可能读取或发送密钥和密码。只有可能清空全部数据或造成灾难性破坏时，才会先询问。你设置的永不允许选项和已保存的拒绝规则仍会阻止操作，不显示卡片，并用一句话向你说清楚。频道消息关闭后仍保持关闭。其他应用的触发链接 和例行任务使用机器人的权限级别。其他人的聊天保持在询问级别，除非你明确设置了该机器人的权限级别。1.0.18 的完全访问设置不算明确设置。发送者不明的聊天保持在询问级别。删除目标不明的命令也会运行，除非 Murage 能看出它会清空整台电脑、你的主文件夹或系统文件夹。",
+      "en": "No limits: Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count. Chats with no known sender stay at Ask. An unclear delete runs unless Murage can see it would wipe the whole computer, your home folder or system folders.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "zh:noLimits.v1.outsideNote": {
+      "text": "此聊天读取了外部内容（{source}）。在无限制级别，只有可能清空全部数据或造成灾难性破坏时，才会先询问。你设置的永不允许选项和已保存的拒绝规则仍然有效。",
+      "en": "This chat read outside content ({source}). At No limits, only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "zh:noLimits.v1.openclaw": {
+      "text": "OpenClaw 运行自己的命令。只有 OpenClaw 向 Murage 发送请求时，Murage 才能检查是否可能清空全部数据或造成灾难性破坏。你的 OpenClaw 设置仍然有效。",
+      "en": "OpenClaw runs its own commands. Murage can check for a likely wipe or catastrophe only when OpenClaw sends it a request. Your OpenClaw settings still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "zh:noLimits.v1.windows": {
+      "text": "无限制在 bash、zsh、PowerShell 和 cmd 中的规则相同。只有可能清空全部数据或造成灾难性破坏时，才会先询问。你设置的永不允许选项和已保存的拒绝规则仍然有效。",
+      "en": "No limits works the same in bash, zsh, PowerShell and cmd. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "zh:noLimits.v1.engineAsks": {
+      "text": "{engine}使用自己的工具和设置。在无限制级别，Murage 仅在收到的请求可能清空全部数据或造成灾难性破坏时显示权限卡片。你设置的永不允许选项和已保存的拒绝规则仍然有效。",
+      "en": "{engine} uses its own tools and settings. At No limits, Murage adds no permission cards except for a likely wipe or catastrophe in requests it receives. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "zh:permissionMenu.ownTools": {
+      "text": "{engine}使用自己的工具。在询问级别，它只读取和回答。在其他级别，你的{engine}设置仍然有效。在无限制级别，Murage 仅在收到的请求可能清空全部数据或造成灾难性破坏时询问。你设置的永不允许选项和已保存的拒绝规则仍然有效。",
+      "en": "{engine} uses its own tools. At Ask, it only reads and answers. At other levels, your {engine} settings still apply. At No limits, Murage asks only about a likely wipe or catastrophe in requests it receives. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed native-engine/request boundaries, equal shell and Windows treatment, wipe-only questions, retained owner settings and stored deny rules, and engine placeholder preservation."
+    },
+    "zh:ux.l1.level.unlimitedDetail": {
+      "text": "你的机器人运行命令和工具时不会询问，即使涉及外部内容或 Murage 无法读取的命令也会运行。这可能更改受保护的文件，也可能读取或发送密钥和密码。只有可能清空全部数据或造成灾难性破坏时，才会先询问。你设置的永不允许选项和已保存的拒绝规则仍会阻止操作，不显示卡片，并用一句话向你说清楚。频道消息关闭后仍保持关闭。其他应用的触发链接 和例行任务使用机器人的权限级别。其他人的聊天保持在询问级别，除非你明确设置了该机器人的权限级别。1.0.18 的完全访问设置不算明确设置。",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "zh:ux.l1.level.underTable": {
+      "text": "在无限制级别，受保护的文件也可以更改，只有可能清空全部数据或造成灾难性破坏时才会先询问。其他应用的触发链接 和例行任务使用机器人的权限级别。其他人的聊天保持在询问级别，除非你明确设置了该机器人的权限级别。你设置的永不允许选项、已保存的拒绝规则和关闭频道消息的设置仍然有效。",
+      "en": "At No limits, protected files can change and only a likely wipe or catastrophe asks first. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. Your never switches, saved deny rules and channel messages off still apply.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "zh:ux.l1.confirm.unlimitedBody": {
+      "text": "{level}允许{bot}不经询问就运行命令和工具。外部内容和 Murage 无法读取的命令也会运行。这可能更改受保护的文件，也可能读取或发送密钥和密码。只有可能清空全部数据或造成灾难性破坏时，才会先询问。你设置的永不允许选项和已保存的拒绝规则仍会阻止操作，不显示卡片，并用一句话向你说清楚。频道消息关闭后仍保持关闭。其他应用的触发链接 和例行任务使用机器人的权限级别。其他人的聊天保持在询问级别，除非你明确设置了该机器人的权限级别。1.0.18 的完全访问设置不算明确设置。",
+      "en": "{level} lets {bot} run commands and tools without asking. Outside content and commands Murage cannot read also run. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "zh:ux.lcopyb.level.unlimitedHere": {
+      "text": "你的机器人运行命令和工具时不会询问，即使涉及外部内容或 Murage 无法读取的命令也会运行。这可能更改受保护的文件，也可能读取或发送密钥和密码。只有可能清空全部数据或造成灾难性破坏时，才会先询问。你设置的永不允许选项和已保存的拒绝规则仍会阻止操作，不显示卡片，并用一句话向你说清楚。频道消息关闭后仍保持关闭。其他应用的触发链接 和例行任务使用机器人的权限级别。其他人的聊天保持在询问级别，除非你明确设置了该机器人的权限级别。1.0.18 的完全访问设置不算明确设置。这包括在这台电脑上点击和输入。",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count. This includes clicking and typing on this computer.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "zh:ux.lcopyb.level.unlimited": {
+      "text": "你的机器人运行命令和工具时不会询问，即使涉及外部内容或 Murage 无法读取的命令也会运行。这可能更改受保护的文件，也可能读取或发送密钥和密码。只有可能清空全部数据或造成灾难性破坏时，才会先询问。你设置的永不允许选项和已保存的拒绝规则仍会阻止操作，不显示卡片，并用一句话向你说清楚。频道消息关闭后仍保持关闭。其他应用的触发链接 和例行任务使用机器人的权限级别。其他人的聊天保持在询问级别，除非你明确设置了该机器人的权限级别。1.0.18 的完全访问设置不算明确设置。",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still block actions, without a card, with one clear line to you. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A Full access setting from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "Reviewed wipe-only questions, protected/key/outside/unreadable actions running, owner never switches and stored denies without cards, channel off, explicit guest bot choices and the 1.0.18 exception. Missing-sender and unknown-delete clauses, where present, match the binding ruling. All placeholders preserved."
+    },
+    "zh:ux.lcopyb.level.channelHint": {
+      "text": "默认开启，除非你将它关闭。在无限制级别，你自己的频道消息无需询问就会执行。其他人的聊天保持在询问级别，除非你明确设置了该机器人的权限级别。其他应用的触发链接 和例行任务使用机器人的权限级别。",
+      "en": "On unless you turn it off. At No limits, your own channel messages run without asking. Other people's chats stay at Ask unless you explicitly set that bot's level. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "Reviewed owner channel messages, explicit bot choices for other people, unchanged lower-level asking, and webhook/routine bot-level treatment against the binding ruling."
+    },
+    "zh:ux.lcopyb.level.peerSkip": {
+      "text": "已开启，但{level}在你自己的聊天和该级别的例行任务中会跳过此询问。在完全访问级别，其他应用的触发链接 仍会询问。在无限制级别，其他应用的触发链接 和例行任务使用机器人的权限级别。切换到自动级别，即可每次都先询问。",
+      "en": "On, but {level} skips this in your own chats and in routines at that level. Trigger links from other apps still ask at Full access. At No limits, trigger links from other apps and routines use the bot's level. Switch to Auto to be asked each time.",
+      "verdict": "pass",
+      "note": "Reviewed owner channel messages, explicit bot choices for other people, unchanged lower-level asking, and webhook/routine bot-level treatment against the binding ruling."
+    },
+    "zh:highlevel.canChangeHelp": {
+      "text": "你先在这台电脑上批准每项更改。在无限制级别，更改无需询问就会执行，可能清空全部数据或造成灾难性破坏的情况除外。你设置的永不允许选项和已保存的拒绝规则仍然有效。",
+      "en": "You approve each change on this computer first. At No limits, changes run without asking, except for a likely wipe or catastrophe. Your never switches and saved deny rules still apply.",
+      "verdict": "pass",
+      "note": "Reviewed the HighLevel action scope, including deleting, publishing, documents, invoices and payments; No limits keeps only catastrophe questions and honours owner never switches and stored deny rules."
+    },
+    "zh:highlevel.fullHelp": {
+      "text": "完全控制还允许删除、发布、发送文档、发票和付款，以及更改用户和套餐。无限制：只有可能清空全部数据或造成灾难性破坏时，才会先询问。你设置的永不允许选项和已保存的拒绝规则仍然有效。其他应用的触发链接 和例行任务使用机器人的权限级别。",
+      "en": "Full control also allows deleting, publishing, sending documents, invoices and payments, and changing users and plans. At No limits, only a likely wipe or catastrophe asks first. Your never switches and saved deny rules still apply. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "Reviewed the HighLevel action scope, including deleting, publishing, documents, invoices and payments; No limits keeps only catastrophe questions and honours owner never switches and stored deny rules."
+    },
+    "zh:noLimits.followers.title": {
+      "text": "使用无限制的机器人和例行任务",
+      "en": "Bots and routines at No limits",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "zh:noLimits.followers.counts": {
+      "text": "{bots} 个机器人和 {routines} 个例程继承无限制",
+      "en": "{bots} bots and {routines} routines follow No limits",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "zh:noLimits.followers.lower": {
+      "text": "手动设置的较低权限",
+      "en": "Explicit lower levels",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "zh:noLimits.followers.useAll": {
+      "text": "全部使用无限制",
+      "en": "Use No limits for all",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "zh:noLimits.followers.upgradeTitle": {
+      "text": "无限制已更改",
+      "en": "No limits has changed",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "zh:noLimits.followers.upgradeBody": {
+      "text": "你设置为较低权限的机器人和聊天会保留原级别。例行任务使用其机器人的级别。你可以保留这些机器人和聊天的设置，也可以使用无限制。",
+      "en": "Bots and chats you set lower keep their levels. Routines use their bot's level. You can keep those bot and chat choices or use No limits.",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "zh:noLimits.followers.keep": {
+      "text": "保持当前权限",
+      "en": "Keep current levels",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "zh:noLimits.followers.bot": {
+      "text": "机器人",
+      "en": "bot",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "zh:noLimits.followers.routine": {
+      "text": "例程",
+      "en": "routine",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    },
+    "zh:noLimits.followers.chat": {
+      "text": "聊天",
+      "en": "chat",
+      "verdict": "pass",
+      "note": "Reviewed the localized bot/routine/chat labels, numeric placeholders, preserved lower bot/chat choices, and routines using their bot level against English."
+    }
+  },
+  "files": {}
+}

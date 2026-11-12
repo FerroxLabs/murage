@@ -14,7 +14,7 @@ plan["mountArgs"]=module.browser_mount_args([("/fixture/anchor",plan["home"])],p
 print(json.dumps(plan))`;
 function request() { return { mode: "browser", bot: "bot-1", args: ["mcp", "--tools", "core", "--no-webmcp"], settings: {
   AGENT_BROWSER_SESSION: "fixture", AGENT_BROWSER_ENCRYPTION_KEY: "a".repeat(64), AGENT_BROWSER_RESTORE_SAVE: "never" } }; }
-function check(input: unknown) { return JSON.parse(execFileSync("python3", ["-I", "-c", validate, launcher, JSON.stringify(input)], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })); }
+function check(input: unknown) { return JSON.parse(execFileSync("python3", ["-I", "-c", validate, launcher, JSON.stringify(input)], { windowsHide: true, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })); }
 afterEach(() => vi.unstubAllEnvs());
 it("validates browser UID and grants only the selected private profile writable", () => {
   const result = check(request());
@@ -63,13 +63,38 @@ it("carries validated session settings over the private request and separates ho
   } finally { Object.defineProperty(process, "platform", platform); }
 });
 
+it("passes the generated control token through both Cloud launch boundaries, with no ambient environment", () => {
+  vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  try {
+    Object.defineProperty(process, "platform", { ...platform, value: "darwin" });
+    const spec = agentBrowserIntegration({ binaryPath: "/fixture/browser", botId: "bot-1", session: "fixture", encryptionKey: "a".repeat(64), dataDir: "/fixture", realmId: "fixture" });
+    const token = spec.env.AGENT_BROWSER_CONTROL_TOKEN;
+    expect(token).toMatch(/^[a-f0-9]{64}$/);
+    const wire = cloudBrowserRequest(spec.args, { ...spec.env, LD_PRELOAD: "/fixture/forbidden" });
+    expect(wire.settings.AGENT_BROWSER_CONTROL_TOKEN).toBe(token);
+    expect(check(wire).env.AGENT_BROWSER_CONTROL_TOKEN).toBe(token);
+    expect(check(wire).env).not.toHaveProperty("LD_PRELOAD");
+    for (const mode of ["browser-restore", "browser-restore-mark"] as const) {
+      expect(cloudBrowserRequest([], spec.env, mode).settings).not.toHaveProperty("AGENT_BROWSER_CONTROL_TOKEN");
+    }
+  } finally { Object.defineProperty(process, "platform", platform); }
+});
+it("the launcher admits only a bounded hexadecimal control token", () => {
+  const valid = { ...request(), settings: { ...request().settings, AGENT_BROWSER_CONTROL_TOKEN: "b".repeat(64) } };
+  expect(check(valid).env.AGENT_BROWSER_CONTROL_TOKEN).toBe("b".repeat(64));
+  for (const token of ["", "b".repeat(63), "b".repeat(65), "g".repeat(64), "b".repeat(63) + "\\n", 12, null]) {
+    expect(() => check({ ...valid, settings: { ...valid.settings, AGENT_BROWSER_CONTROL_TOKEN: token } })).toThrow();
+  }
+});
+
 // The relay runs inside the bot's namespace as the browser user. These drive its
 // internals (endpoint derivation and the byte pipe) with an injected fake CLI.
 const relayHarness = `import importlib.util,json,sys
 spec=importlib.util.spec_from_file_location("relay_fixture",sys.argv[1])
 module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
 exec(sys.argv[2])`;
-function relayPython(code: string) { return execFileSync("python3", ["-I", "-c", relayHarness, launcher, code], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
+function relayPython(code: string) { return execFileSync("python3", ["-I", "-c", relayHarness, launcher, code], { windowsHide: true, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
 it("the relay accepts only a loopback endpoint from the CLI and refuses anything else", () => {
   const out = relayPython(`
 good=['{"success":true,"data":{"cdpUrl":"ws://127.0.0.1:41909/devtools/browser/abc"}}','{"data":"ws://127.0.0.1:41909/devtools/browser/abc"}','{"cdp_url":"ws://127.0.0.1:41909/devtools/page/1"}']

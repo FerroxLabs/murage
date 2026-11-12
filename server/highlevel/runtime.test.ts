@@ -1,3 +1,5 @@
+import { fixtureActionDetail } from '../testing/highlevel-r4-fixtures.ts';
+import { fixtureHeld, fixtureSpec } from '../testing/highlevel-r4-fixtures.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -7,8 +9,9 @@
 import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { HIGHLEVEL_HELPER_NAMES, HIGHLEVEL_READ_TOOL_NAMES, HIGHLEVEL_WRITE_TOOLS, readOnlyHighLevelAccess } from "../../shared/highlevel.ts";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { HIGHLEVEL_HELPER_NAMES, HIGHLEVEL_READ_TOOL_NAMES, HIGHLEVEL_WRITE_TOOLS, effectiveHighLevelAccess } from "../../shared/highlevel.ts";
+import { accessRoleBinding } from "../bot-access-role.ts";
 import { OWN_UNASKED, PHONE_PREALLOWED, isOwnQuiet, isOwnUnasked } from "../../shared/own-servers.ts";
 import { HERMES_OWN_UNASKED_TOOLS } from "../drivers/acp/hermes.ts";
 import { claudeOwnUnaskedTools } from "../drivers/claude.ts";
@@ -18,16 +21,28 @@ import { HighLevelActions, type ActionIntent, type ActionJournal } from "./actio
 import { FileActionJournal, defaultHighLevelJournalFile } from "./journal-file.ts";
 import { HIGHLEVEL_NOT_CONNECTED, createHighLevelRuntime, ownerReadGrant } from "./runtime.ts";
 
-function runtime(options: { dataDir?: string; connected?: boolean } = {}) {
-  const h = highLevelHarness();
+import * as registry from './operations/registry.ts';
+import { z } from 'zod';
+// Supply the future family read contract while S0/F1 are still in separate lanes.
+beforeEach(() => {
+  const original = registry.operationSpec;
+  vi.spyOn(registry, 'operationSpec').mockImplementation(id => id === 'contacts.search' ? fixtureSpec({ id, family: 'contacts', risk: 'R', nested: false, preflight: [], args: z.object({ query: z.string() }).strict(), recordRefs: () => [], fields: () => [], targets: () => 1, project: (v: unknown) => v }, (a, ctx) => ({ path: '/contacts/search', resource: '', body: { kind: 'json', value: { query: a.query, locationId: ctx.locationId } } })) as any : original(id));
+});
+afterEach(() => vi.restoreAllMocks());
+
+function runtime(options: { dataDir?: string; connected?: boolean; threadMarkState?: (threadId: string) => "marked" | "unmarked" | "unreadable" } = {}) {
+  const h = highLevelHarness({ legacy: true });
   scriptCrm(h.api);
+  (h.leases.views.values().next().value! as any).scopes = ['contacts.readonly'];
   const dataDir = options.dataDir ?? mkdtempSync(join(tmpdir(), "hl-s2-"));
   const puts: ActionIntent[] = [];
   const journal: ActionJournal = { put: (intent) => { puts.push(intent); }, delete: () => {}, all: () => [] };
-  const rt = createHighLevelRuntime({
-    dataDir, capabilities: h.capabilities, signals: h.signals, bot: (id) => (id === h.bot.id ? h.bot : undefined), journal,
+  const runtimeOptions = {
+    threadMarkState: options.threadMarkState ?? (() => "marked" as const),
+    dataDir, capabilities: h.capabilities, signals: h.signals, bot: (id: string) => (id === h.bot.id ? h.bot : undefined), journal,
     ...(options.connected === false ? {} : { leases: h.leases }), fetch: h.api.fetch,
-  });
+  };
+  const rt = createHighLevelRuntime(runtimeOptions);
   return { h, rt, puts, dataDir };
 }
 
@@ -40,7 +55,7 @@ const listed = async (rt: ReturnType<typeof runtime>["rt"], h: ReturnType<typeof
 describe("HL-S2: production HighLevel stays closed until a location is connected", () => {
   it("with no connection source every call answers not connected and nothing reaches the network", async () => {
     const { h, rt } = runtime({ connected: false });
-    const read = await rt.host.call(h.claim, "HIGHLEVEL_SEARCH_CONTACTS", { query: "ada" });
+    const read = await rt.host.call(h.claim, "HIGHLEVEL_CONTACTS", { operation: "contacts.search", args: { query: "ada" } });
     expect(read.isError).toBe(true);
     expect(h.api.requests).toHaveLength(0);
     expect(await rt.mountsFor(h.bot.id)).toBe(false);
@@ -64,7 +79,9 @@ describe("HL-S2 is read only: no change reaches HighLevel", () => {
     const { h, rt } = runtime();
     // Fuigo, Flux Router, Codex, Pi and every other ACP or MCP engine get their HighLevel tools from this one tools/list
     const names = await listed(rt, h);
-    expect(names).toEqual([...HIGHLEVEL_READ_TOOL_NAMES, ...HIGHLEVEL_HELPER_NAMES]);
+    // C2: the twenty legacy names leave tools/list; operation families are populated by their slices.
+    for (const helper of HIGHLEVEL_HELPER_NAMES) expect(names).toContain(helper);
+    expect(names.some(name => (HIGHLEVEL_READ_TOOL_NAMES as readonly string[]).includes(name))).toBe(false);
     expect(names.some((name) => WRITES.includes(name))).toBe(false);
     // ACP (Fuigo, Grok, Codex ACP) and every own-map engine: a change name is never unasked or quiet
     for (const tool of WRITES) { expect(isOwnUnasked("own:highlevel", tool)).toBe(false); expect(isOwnQuiet("own:highlevel", tool)).toBe(false); }
@@ -92,13 +109,13 @@ describe("HL-S2 is read only: no change reaches HighLevel", () => {
 
   it("an old stored change grant reads as read: reads still work and the grant shows as read", async () => {
     const { h, rt } = runtime();
-    const read = await rt.host.call(h.claim, "HIGHLEVEL_SEARCH_CONTACTS", { query: "ada" });
+    const read = await rt.host.call(h.claim, "HIGHLEVEL_CONTACTS", { operation: "contacts.search", args: { query: "ada" } });
     expect(read.isError).not.toBe(true);
-    const view = readOnlyHighLevelAccess(h.bot.highlevelAccess) as { grants: { ceiling: string; tools: string[] }[] };
-    expect(view.grants).toEqual([expect.objectContaining({ ceiling: "read", tools: [...HIGHLEVEL_READ_TOOL_NAMES] })]);
+    const view = effectiveHighLevelAccess(h.bot.highlevelAccess, { id: h.bot.id, roleBinding: accessRoleBinding(h.bot) });
+    expect(view!.grants).toEqual([expect.objectContaining({ ceiling: "propose", legacy: true, operations: expect.objectContaining({ contacts: expect.arrayContaining(["contacts.search", "contacts.get"]) }) })]);
     // a stored grant holding only change tools grants nothing at all
     h.saveAccess([{ ...h.grant(), tools: ["HIGHLEVEL_ADD_NOTE"] }]);
-    expect((readOnlyHighLevelAccess(h.bot.highlevelAccess) as { grants: unknown[] }).grants).toEqual([]);
+    expect(effectiveHighLevelAccess(h.bot.highlevelAccess, { id: h.bot.id, roleBinding: accessRoleBinding(h.bot) })?.grants).toEqual([]);
     expect(await rt.mountsFor(h.bot.id)).toBe(false);
     expect(await listed(rt, h)).toEqual([]);
   });
@@ -122,7 +139,7 @@ describe("HL-S2: the action journal library stays durable for the later change s
     const actions = new HighLevelActions({ journal, now: () => now });
     const context = { botId: "bot_1", threadId: "thread_1", turnGeneration: "gen_1", connectionId: "hl_conn_1", connectionEpoch: 1, locationId: "loc", companyId: "co",
       grantRevision: 1, accessRevision: 1, policyRevision: 0, roleBinding: "r" };
-    const review = actions.propose(context, "HIGHLEVEL_ADD_NOTE", { contactId: "c1", body: "x" }, { recordRefs: ["contactId:c1"], fields: ["body"] });
+    const review = actions.propose(context, "HIGHLEVEL_ADD_NOTE", { contactId: "c1", body: "x" }, fixtureActionDetail({ recordRefs: ["contactId:c1"], fields: ["body"], held: fixtureHeld("contacts.notes.create") }, context));
     actions.approve(review.actionId, review.reviewDigest);
     actions.beginDispatch(review.actionId, context);
     actions.recordAttempt(review.actionId, 1, context);
@@ -143,14 +160,15 @@ describe("HL-S2: the action journal library stays durable for the later change s
     const held: unknown[] = [];
     const h = highLevelHarness();
     scriptCrm(h.api);
-    const rt = createHighLevelRuntime({ dataDir, capabilities: h.capabilities, signals: h.signals, bot: (id) => (id === h.bot.id ? h.bot : undefined),
+  (h.leases.views.values().next().value! as any).scopes = ['contacts.readonly'];
+    const rt = createHighLevelRuntime({ threadMarkState: () => "marked", dataDir, capabilities: h.capabilities, signals: h.signals, bot: (id: string) => (id === h.bot.id ? h.bot : undefined),
       leases: h.leases, fetch: h.api.fetch, onJournalHeld: (error) => { held.push(error); } });
     expect(rt.journalHeld).toBe(true);
     expect(held).toHaveLength(1);
     const write = await rt.host.call(h.claim, "HIGHLEVEL_ADD_NOTE", { contactId: "contact_1", body: "x" });
     expect(write.isError).toBe(true);
     expect(h.api.calls("POST", /\/notes$/u)).toHaveLength(0);
-    const read = await rt.host.call(h.claim, "HIGHLEVEL_SEARCH_CONTACTS", { query: "ada" });
+    const read = await rt.host.call(h.claim, "HIGHLEVEL_CONTACTS", { operation: "contacts.search", args: { query: "ada" } });
     expect(read.isError).not.toBe(true);
   });
 
@@ -162,7 +180,7 @@ describe("HL-S2: the action journal library stays durable for the later change s
     const context = { botId: "bot_1", threadId: "thread_1", turnGeneration: "gen_1", connectionId: "hl_conn_1", connectionEpoch: 1, locationId: "loc", companyId: "co",
       grantRevision: 1, accessRevision: 1, policyRevision: 0, roleBinding: "r" };
     for (let i = 0; i < 400; i++) {
-      const review = actions.propose({ ...context, turnGeneration: `gen_${i}` }, "HIGHLEVEL_ADD_NOTE", { contactId: "c1", body: `n${i}` }, { recordRefs: [], fields: ["body"] });
+      const review = actions.propose({ ...context, turnGeneration: `gen_${i}` }, "HIGHLEVEL_ADD_NOTE", { contactId: "c1", body: `n${i}` }, fixtureActionDetail({ recordRefs: [], fields: ["body"] }, { ...context, turnGeneration: `gen_${i}` }));
       actions.deny(review.actionId);
     }
     const lines = readFileSync(file, "utf8").trim().split("\n").length;
@@ -171,12 +189,14 @@ describe("HL-S2: the action journal library stays durable for the later change s
   });
 });
 
-describe("HL-S2: native HighLevel mounts on the owner's own direct turns only", () => {
+describe("HL-S2: native HighLevel mounts on authenticated No limits turns or a direct owner proof", () => {
   // HL-RO allow gate (1.0.17): the deny list is gone; one allow proof, judged once at admission, is the only guard
-  it("the mount reads only highlevelProof, and there is exactly one mount", () => {
+  it("the mount accepts authenticated No limits policy or the legacy proof, and there is exactly one mount", () => {
     const index = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
     expect(index.match(/integrations\.highlevel = /g) ?? []).toHaveLength(1);
-    expect(index).toContain("if (highlevelProof && highlevelEngine && await highlevel.mountsFor(bot.id)) {\n        integrations.highlevel = highlevelIntegration(bot.id, threadId, dispatchClaimId);");
+    expect(index).toContain("if (highlevelAdmission && highlevelEngine && await highlevel.mountsFor(bot.id)) {\n        integrations.highlevel = highlevelIntegration(bot.id, threadId, dispatchClaimId);");
+    expect(index).toContain("const highlevelAdmission = highlevelProof || (directOwnerAudience");
+    expect(index).toContain("readTurnPolicy({ threadId, generation: dispatchClaimId })?.permission.noLimits === true");
     expect(index).not.toContain("highlevelOwnTurn");
     expect(index.match(/const highlevelProof = rebuiltFromProven && highlevelOwnerTurn\(/g) ?? []).toHaveLength(1);
     expect(index.match(/highlevelOwnerTurn\(/g) ?? []).toHaveLength(1);
@@ -192,17 +212,45 @@ describe("HL-S2: native HighLevel mounts on the owner's own direct turns only", 
     expect(index).toContain("&& phoneCarry === undefined && currentAtStart.threadId === threadId;");
     // Astra hlro5 H2: a memory rebuild hands the same options on (the two re-dispatch literals stay exactly the spread the hand-off
     // structure lint and pm-sends r26 read), and is proven only when the turn it rebuilds was, so a failed proof is never upgraded
-    expect(index.match(/startTurn\(botId, text, \{ \.\.\.opts, threadId, userMessage, memoryRedispatch: attempt, rebuildOf \}\)/g) ?? []).toHaveLength(2);
+    expect(index.match(/startTurn\(botId, text, \{ \.\.\.opts, threadId, userMessage, memoryRedispatch: attempt, rebuildOf, \.\.\.\(packRefusedHere \? \{ packSuppressed: true as const \} : \{\}\) \}\)/g) ?? []).toHaveLength(2);
     expect(index).not.toContain("hlTicket: highlevelProof");
     expect(index).toContain("const rebuiltFromProven = rebuildOf === undefined || highlevelProvenRuns.delete(rebuildOf);");
     expect(index).toContain("const highlevelProof = rebuiltFromProven && highlevelOwnerTurn({");
     expect(index).toMatch(/if \(highlevelProof\) \{\n[^\n]*\n    highlevelProvenRuns\.add\(run\.generation\);\n  \}/);
     expect(index.match(/highlevelProvenRuns\.(add|delete)\(/g) ?? []).toHaveLength(4); // the record, the rebuild's read, the bound, the release
     // a released run leaves no proof behind (HL-S2-RO 1.0.18): the same release hook that clears ownerStartedRuns
-    expect(index).toContain("directRuns.onReleased = (threadId, botId, generation) => { ownerStartedRuns.delete(generation); highlevelProvenRuns.delete(generation);");
+    const releaseHook = /directRuns\.onReleased = \(threadId, botId, generation\) => \{([^\n]+)\};/.exec(index)?.[1];
+    expect(releaseHook).toBeDefined();
+    expect(releaseHook).toContain("ownerStartedRuns.delete(generation);");
+    expect(releaseHook).toContain("highlevelProvenRuns.delete(generation);");
     // the routine on the thread is read before the owner-send branch clears it
     const capture = index.indexOf("const routineLiveOnThread = routinePeerSources.has(threadId);");
     expect(capture).toBeGreaterThan(0);
     expect(capture).toBeLessThan(index.indexOf("    routinePeerSources.delete(threadId);"));
   });
+});
+
+it("withholds an already-mounted native capability when the mark store becomes unreadable", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const marks = await import("./thread-marks.ts");
+  const db = new DatabaseSync(":memory:");
+  marks.initializeHighLevelThreadMarks(db);
+  const threadMarkState = (id: string) => marks.highLevelThreadMarked(db, id);
+  const { h, rt } = runtime({ threadMarkState });
+  try {
+    expect(marks.markHighLevelThread(db, h.claim.threadId)).toBe(true);
+    expect(await rt.mountsFor(h.bot.id)).toBe(true);
+    const message = { jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "HIGHLEVEL_CONTACTS", arguments: { operation: "contacts.search", args: { query: "ada" } } } };
+    const first = await rt.host.handle(h.claim, message);
+    expect(first.error).toBeUndefined();
+    expect(h.api.requests).toHaveLength(1);
+    db.exec("ALTER TABLE highlevel_thread_marks RENAME TO held_marks");
+    const held = await rt.host.handle(h.claim, message);
+    expect(held.error).toMatchObject({ code: -32001 });
+    expect(h.api.requests).toHaveLength(1);
+    expect(h.leases.leaseRequests).toHaveLength(1);
+    db.exec("ALTER TABLE held_marks RENAME TO highlevel_thread_marks");
+    expect((await rt.host.handle(h.claim, message)).error).toBeUndefined();
+    expect(h.api.requests).toHaveLength(2);
+  } finally { db.close(); }
 });

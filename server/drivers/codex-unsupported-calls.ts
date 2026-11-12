@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -69,7 +70,7 @@ const outputText = (output: unknown): string =>
 function refusedTool(line: string): string | undefined {
   let record: { type?: unknown; payload?: { type?: unknown; output?: unknown } };
   try {
-    record = JSON.parse(line);
+    record = registerBusyloopPayloadSite("read", JSON.parse(line));
   } catch {
     return undefined;
   }

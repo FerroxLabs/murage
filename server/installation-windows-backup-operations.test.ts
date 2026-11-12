@@ -13,6 +13,8 @@ vi.mock("./windows-backup-resources.ts", () => ({ createWindowsBackupResourceRes
 // The work folder's owner-only ACL is Windows tooling (icacls, Get-Acl); the
 // source fixture records the call instead (D4, backup-local-work.ts).
 vi.mock("../electron/backup-windows-acl.mjs", () => ({ currentUserSid: () => "S-1-5-21-1-2-3-1001", readAcl: () => ({ owner: "S-1-5-21-1-2-3-1001", protected: true, rules: [{ allow: true, sid: "S-1-5-21-1-2-3-1001", mask: 0x1f01ff, inherited: false }] }), aclIsOwnerOnly: () => true, restrictToOwner: () => {} }));
+// Simulated Windows uses the same options seam as procs-owned-windows.test.ts.
+vi.mock("../shared/win-hide-child-process.mjs", () => ({ withHideInherit: <T,>(options: T) => options }));
 vi.mock("node:child_process", async original => ({ ...await original<typeof import("node:child_process")>(), spawn: mocks.spawn }));
 import * as encryption from "./installation-backup-encryption.ts";
 import * as archives from "./installation-archive.ts";

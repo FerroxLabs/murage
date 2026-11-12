@@ -10,7 +10,7 @@ import { expect, it } from "vitest";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 it.each([["parallel-card", false], ["cancel-ack", true], ["parallel-card-retry", false], ["parallel-card-retry", true]] as const)("%s publishes prompt acceptance while held (cancel: %s)", async (mode, cancel) => {
   const root = mkdtempSync(join(tmpdir(), "parallel-proof-"));
-  const child = spawn(process.execPath, [fileURLToPath(new URL("./testing/fake-acp-cli.ts", import.meta.url))], { env: { ...process.env, FAKE_ACP_MODE: mode, FAKE_ACP_ACCEPT_DIR: root, FAKE_ACP_GATE_FILE: join(root, "finish"), FAKE_ACP_FAIL_ONCE_FILE: join(root, "failed") }, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [fileURLToPath(new URL("./testing/fake-acp-cli.ts", import.meta.url))], { windowsHide: true, env: { ...process.env, FAKE_ACP_MODE: mode, FAKE_ACP_ACCEPT_DIR: root, FAKE_ACP_GATE_FILE: join(root, "finish"), FAKE_ACP_FAIL_ONCE_FILE: join(root, "failed") }, stdio: ["pipe", "pipe", "pipe"] });
   const messages: any[] = []; let buffer = "";
   child.stdout.on("data", chunk => { buffer += chunk.toString(); let i: number; while ((i = buffer.indexOf("\n")) >= 0) { const line = buffer.slice(0, i); buffer = buffer.slice(i + 1); if (line) messages.push(JSON.parse(line)); } });
   const prompt = (id: number) => child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method: "session/prompt", params: { sessionId: "desk", prompt: [{ type: "text", text: cancel ? "Work on card 1\n__fixture_cancel_ack__" : "Work on card 1" }] } }) + "\n");

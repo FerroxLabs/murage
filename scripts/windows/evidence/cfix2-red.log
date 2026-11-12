@@ -1,0 +1,267 @@
+✖ MAIN 1: suspended job has no breakaway and verifies empty after owner close (1.996974ms)
+✖ MAIN 2: full task snapshots and prefix-only new-task cleanup (1.327809ms)
+✖ MAIN 3: HTTPS dispatch is handoff only; Desktop keeps refusal rows (0.272202ms)
+✖ MAIN 4: registration diff is Handoff-only and guarded by machine (0.189562ms)
+✖ MAIN 5: only operator finalizes after cleanup; receipt needs cleanup proof (6.696817ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 0
+ℹ fail 5
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 72.149066
+
+✖ failing tests:
+
+test at scripts/windows/ownership.node-test.mjs:5:1
+✖ MAIN 1: suspended job has no breakaway and verifies empty after owner close (1.996974ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /QueryInformationJobObject/. Input:
+  
+  '# Windows Job Object: the gate and all descendants die with this handle,\n' +
+    '# including if Task Scheduler terminates the wrapper on its deadline. Start\n' +
+    '# suspended so no descendant can escape before assignment. No breakaway flag.\n' +
+    'function Initialize-OwnedProcess {\n' +
+    "  if ('MurageGateProcess' -as [type]) { return }\n" +
+    "  Add-Type -TypeDefinition @'\n" +
+    'using System;\n' +
+    'using System.ComponentModel;\n' +
+    'using System.Runtime.InteropServices;\n' +
+    'using System.Text;\n' +
+    'public static class MurageGateProcess {\n' +
+    '  [StructLayout(LayoutKind.Sequential)] struct STARTUPINFO {\n' +
+    '    public int cb; public IntPtr reserved, desktop, title;\n' +
+    '    public int x,y,xSize,ySize,xChars,yChars,fill,flags;\n' +
+    '    public short show,reserved2; public IntPtr reservedPtr,input,output,error;\n' +
+    '  }\n' +
+    '  [StructLayout(LayoutKind.Sequential)] struct PROCESS_INFORMATION {\n' +
+    '    public IntPtr process,thread; public uint pid,tid;\n' +
+    '  }\n' +
+    '  [StructLayout(LayoutKind.Sequential)] struct BASIC_LIMIT {\n' +
+    '    public long processTime,jobTime; public uint flags;\n' +
+    '    public UIntPtr minWorking,maxWorking; public uint active;\n' +
+    '    public UIntPtr affinity; public uint priority,scheduling;\n' +
+    '  }\n' +
+    '  [StructLayout(LayoutKind.Sequential)] struct IO_COUNTERS {\n' +
+    '    public ulong readOps,writeOps,otherOps,readBytes,writeBytes,otherBytes;\n' +
+    '  }\n' +
+    '  [StructLayout(LayoutKind.Sequential)] struct EXTENDED_LIMIT {\n' +
+    '    public BASIC_LIMIT basic; public IO_COUNTERS io;\n' +
+    '    public UIntPtr processMemory,jobMemory,peakProcessMemory,peakJobMemory;\n' +
+    '  }\n' +
+    '  [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr CreateJobObject(IntPtr attributes,string name);\n' +
+    '  [DllImport("kernel32.dll", SetLastError=true)] static extern bool SetInformationJobObject(IntPtr job,int kind,ref EXTENDED_LIMIT limits,uint length);\n' +
+    '  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool CreateProcess(string app,StringBuilder command,IntPtr pa,IntPtr ta,bool inherit,uint flags,IntPtr env,string cwd,ref STARTUPINFO si,out PROCESS_INFORMATION pi);\n' +
+    '  [DllImport("kernel32.dll", SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr job,IntPtr process);\n' +
+    '  [DllImport("kernel32.dll", SetLastError=true)] static extern uint ResumeThread(IntPtr thread);\n' +
+    '  [DllImport("kernel32.dll", SetLastError=true)] static extern uint WaitForSingleObject(IntPtr handle,uint ms);\n' +
+    '  [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetExitCodeProcess(IntPtr process,out uint code);\n' +
+    '  [DllImport("kernel32.dll")] static extern bool TerminateProcess(IntPtr process,uint code);\n' +
+    '  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);\n' +
+    '  [DllImport("kernel32.dll", SetLastError=true)] static extern bool TerminateJobObject(IntPtr job,uint code);\n' +
+    '  static readonly object jobsGuard=new object();\n' +
+    '  static readonly System.Collections.Generic.List<IntPtr> jobs=new System.Collections.Generic.List<IntPtr>();\n' +
+    '  public static void CancelAll() { lock(jobsGuard) { foreach(var job in jobs) Check(TerminateJobObject(job,1)); } }\n' +
+    '  static void Check(bool ok) { if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error()); }\n' +
+    '  public static System.Threading.Tasks.Task<int> RunInBackground(string exe,string args,string cwd,int timeoutSeconds,bool visible) {\n' +
+    '    return System.Threading.Tasks.Task.Factory.StartNew(() => RunCore(exe,args,cwd,timeoutSeconds,visible));\n' +
+    '  }\n' +
+    '  public static int Run(string exe,string args,string cwd,int timeoutSeconds) { return RunCore(exe,args,cwd,timeoutSeconds,false); }\n' +
+    '  static int RunCore(string exe,string args,string cwd,int timeoutSeconds,bool visible) {\n' +
+    '    IntPtr job=CreateJobObject(IntPtr.Zero,null);\n' +
+    '    Check(job!=IntPtr.Zero);\n' +
+    '    lock(jobsGuard) { jobs.Add(job); }\n' +
+    '    PROCESS_INFORMATION pi=new PROCESS_INFORMATION();\n' +
+    '    bool assigned=false;\n' +
+    '    try {\n' +
+    '      EXTENDED_LIMIT limits=new EXTENDED_LIMIT(); limits.basic.flags=0x2000;\n' +
+    '      Check(SetInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(limits)));\n' +
+    '      STARTUPINFO si=new STARTUPINFO(); si.cb=Marshal.SizeOf(si);\n' +
+    '      Check(CreateProcess(exe,new StringBuilder("\\""+exe+"\\" "+args),IntPtr.Zero,IntPtr.Zero,false,visible?0x00000014u:0x08000004u,IntPtr.Zero,cwd,ref si,out pi));\n' +
+    '      Check(AssignProcessToJobObject(job,pi.process)); assigned=true;\n' +
+    '      Check(ResumeThread(pi.thread)!=0xffffffff);\n' +
+    '      uint waited=WaitForSingleObject(pi.process,checked((uint)timeoutSeconds*1000));\n' +
+    '      if(waited==258) throw new TimeoutException("Desktop gate exceeded its deadline");\n' +
+    '      Check(waited==0);\n' +
+    '      uint code; Check(GetExitCodeProcess(pi.process,out code));\n' +
+    '      return unchecked((int)code);\n' +
+    '    } finally {\n' +
+    '      if(pi.process!=IntPtr.Zero && !assigned) TerminateProcess(pi.process,1);\n' +
+    '      lock(jobsGuard) { jobs.Remove(job); CloseHandle(job); }\n' +
+    '      if(pi.thread!=IntPtr.Zero) CloseHandle(pi.thread);\n' +
+    '      if(pi.process!=IntPtr.Zero) CloseHandle(pi.process);\n' +
+    '    }\n' +
+    '  }\n' +
+    '}\n' +
+    "'@\n" +
+    '}\n' +
+    '\n' +
+    'function ConvertTo-WindowsArgument([string]$Value) {\n' +
+    "  if ($Value -match '[\\x00\\r\\n]') { throw 'Invalid command argument' }\n" +
+    '  # CommandLineToArgvW quoting, including backslashes before quotes or the end.\n' +
+    `  '"' + [regex]::Replace([regex]::Replace($Value, '(\\\\*)"', '$1$1\\"'), '(\\\\+)$', '$1$1') + '"'\n` +
+    '}\n' +
+    '\n' +
+    'function Invoke-WindowsNative([string]$File, [string[]]$ArgumentList) {\n' +
+    "  # Avoid Windows PowerShell 5.1's native argument re-quoting of /TR. Close\n" +
+    '  # stdin so an unexpected schtasks prompt cannot ask for a credential.\n' +
+    '  $info = New-Object Diagnostics.ProcessStartInfo\n' +
+    '  $info.FileName = $File\n' +
+    "  $info.Arguments = ($ArgumentList | ForEach-Object { ConvertTo-WindowsArgument $_ }) -join ' '\n" +
+    '  $info.UseShellExecute = $false\n' +
+    '  $info.CreateNoWindow = $true\n' +
+    '  $info.RedirectStandardInput = $true\n' +
+    '  $info.RedirectStandardOutput = $true\n' +
+    '  $info.RedirectStandardError = $true\n' +
+    '  $process = New-Object Diagnostics.Process\n' +
+    '  $process.StartInfo = $info\n' +
+    '  try {\n' +
+    '    if (-not $process.Start()) { throw "Could not start $File" }\n' +
+    '    $process.StandardInput.Close()\n' +
+    '    $stdout = $process.StandardOutput.ReadToEndAsync()\n' +
+    '    $stderr = $process.StandardError.ReadToEndAsync()\n' +
+    '    if (-not $process.WaitForExit(30000)) {\n' +
+    '      $process.Kill(); $process.WaitForExit()\n' +
+    '      throw "Native command timed out: $File"\n' +
+    '    }\n' +
+    '    @{ ExitCode=$process.ExitCode; Stdout=$stdout.GetAwaiter().GetResult(); Stderr=$stderr.GetAwaiter().GetResult() }\n' +
+    '  } finally { $process.Dispose() }\n' +
+    '}\n'
+  
+      at TestContext.<anonymous> (file:///work/scripts/windows/ownership.node-test.mjs:9:9)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: `# Windows Job Object: the gate and all descendants die with this handle,\n# including if Task Scheduler terminates the wrapper on its deadline. Start\n# suspended so no descendant can escape before assignment. No breakaway flag.\nfunction Initialize-OwnedProcess {\n  if ('MurageGateProcess' -as [type]) { return }\n  Add-Type -TypeDefinition @'\nusing System;\nusing System.ComponentModel;\nusing System.Runtime.InteropServices;\nusing System.Text;\npublic static class MurageGateProcess {\n  [StructLayout(LayoutKind.Sequential)] struct STARTUPINFO {\n    public int cb; public IntPtr reserved, desktop, title;\n    public int x,y,xSize,ySize,xChars,yChars,fill,flags;\n    public short show,reserved2; public IntPtr reservedPtr,input,output,error;\n  }\n  [StructLayout(LayoutKind.Sequential)] struct PROCESS_INFORMATION {\n    public IntPtr process,thread; public uint pid,tid;\n  }\n  [StructLayout(LayoutKind.Sequential)] struct BASIC_LIMIT {\n    public long processTime,jobTime; public uint flags;\n    public UIntPtr minWorking,maxWorking; public uint active;\n    public UIntPtr affinity; public uint priority,scheduling;\n  }\n  [StructLayout(LayoutKind.Sequential)] struct IO_COUNTERS {\n    public ulong readOps,writeOps,otherOps,readBytes,writeBytes,otherBytes;\n  }\n  [StructLayout(LayoutKind.Sequential)] struct EXTENDED_LIMIT {\n    public BASIC_LIMIT basic; public IO_COUNTERS io;\n    public UIntPtr processMemory,jobMemory,peakProcessMemory,peakJobMemory;\n  }\n  [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr CreateJobObject(IntPtr attributes,string name);\n  [DllImport("kernel32.dll", SetLastError=true)] static extern bool SetInformationJobObject(IntPtr job,int kind,ref EXTENDED_LIMIT limits,uint length);\n  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool CreateProcess(string app,StringBuilder command,IntPtr pa,IntPtr ta,bool inherit,uint flags,IntPtr env,string cwd,ref STARTUPINFO si,out PROCESS_INFORMATION pi);\n  [DllImport("kernel32.dll", SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr job,IntPtr process);\n  [DllImport("kernel32.dll", SetLastError=true)] static extern uint ResumeThread(IntPtr thread);\n  [DllImport("kernel32.dll", SetLastError=true)] static extern uint WaitForSingleObject(IntPtr handle,uint ms);\n  [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetExitCodeProcess(IntPtr process,out uint code);\n  [DllImport("kernel32.dll")] static extern bool TerminateProcess(IntPtr process,uint code);\n  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);\n  [DllImport("kernel32.dll", SetLastError=true)] static extern bool TerminateJobObject(IntPtr job,uint code);\n  static readonly object jobsGuard=new object();\n  static readonly System.Collections.Generic.List<IntPtr> jobs=new System.Collections.Generic.List<IntPtr>();\n  public static void CancelAll() { lock(jobsGuard) { foreach(var job in jobs) Check(TerminateJobObject(job,1)); } }\n  static void Check(bool ok) { if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error()); }\n  public static System.Threading.Tasks.Task<int> RunInBackground(string exe,string args,string cwd,int timeoutSeconds,bool visible) {\n    return System.Threading.Tasks.Task.Factory.StartNew(() => RunCore(exe,args,cwd,timeoutSeconds,visible));\n  }\n  public static int Run(string exe,string args,string cwd,int timeoutSeconds) { return RunCore(exe,args,cwd,timeoutSeconds,false); }\n  static int RunCore(string exe,string args,string cwd,int timeoutSeconds,bool visible) {\n    IntPtr job=CreateJobObject(IntPtr.Zero,null);\n    Check(job!=IntPtr.Zero);\n    lock(jobsGuard) { jobs.Add(job); }\n    PROCESS_INFORMATION pi=new PROCESS_INFORMATION();\n    bool assigned=false;\n    try {\n      EXTENDED_LIMIT limits=new EXTENDED_LIMIT(); limits.basic.flags=0x2000;\n      Check(SetInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(limits)));\n      STARTUPINFO si=new STARTUPINFO(); si.cb=Marshal.SizeOf(si);\n      Check(CreateProcess(exe,new StringBuilder("\\""+exe+"\\" "+args),IntPtr.Zero,IntPtr.Zero,false,visible?0x00000014u:0x08000004u,IntPtr.Zero,cwd,ref si,out pi));\n      Check(AssignProcessToJobObject(job,pi.process)); assigned=true;\n      Check(ResumeThread(pi.thread)!=0xffffffff);\n      uint waited=WaitForSingleObject(pi.process,checked((uint)timeoutSeconds*1000));\n      if(waited==258) throw new TimeoutException("Desktop gate exceeded its deadline");\n      Check(waited==0);\n      uint code; Check(GetExitCodeProcess(pi.process,out code));\n      return unchecked((int)code);\n    } finally {\n      if(pi.process!=IntPtr.Zero && !assigned) TerminateProcess(pi.process,1);\n      lock(jobsGuard) { jobs.Remove(job); CloseHandle(job); }\n      if(pi.thread!=IntPtr.Zero) CloseHandle(pi.thread);\n      if(pi.process!=IntPtr.Zero) CloseHandle(pi.process);\n    }\n  }\n}\n'@\n}\n\nfunction ConvertTo-WindowsArgument([string]$Value) {\n  if ($Value -match '[\\x00\\r\\n]') { throw 'Invalid command argument' }\n  # CommandLineToArgvW quoting, including backslashes before quotes or the end.\n  '"' + [regex]::Replace([regex]::Replace($Value, '(\\\\*)"', '$1$1\\"'), '(\\\\+)$', '$1$1') + '"'\n}\n\nfunction Invoke-WindowsNative([string]$File, [string[]]$ArgumentList) {\n  # Avoid Windows PowerShell 5.1's native argument re-quoting of /TR. Close\n  # stdin so an unexpected schtasks prompt cannot ask for a credential.\n  $info = New-Object Diagnostics.ProcessStartInfo\n  $info.FileName = $File\n  $info.Arguments = ($ArgumentList | ForEach-Object { ConvertTo-WindowsArgument $_ }) -join ' '\n  $info.UseShellExecute = $false\n  $info.CreateNoWindow = $true\n  $info.RedirectStandardInput = $true\n  $info.RedirectStandardOutput = $true\n  $info.RedirectStandardError = $true\n  $process = New-Object Diagnostics.Process\n  $process.StartInfo = $info\n  try {\n    if (-not $process.Start()) { throw "Could not start $File" }\n    $process.StandardInput.Close()\n    $stdout = $process.StandardOutput.ReadToEndAsync()\n    $stderr = $process.StandardError.ReadToEndAsync()\n    if (-not $process.WaitForExit(30000)) {\n      $process.Kill(); $process.WaitForExit()\n      throw "Native command timed out: $File"\n    }\n    @{ ExitCode=$process.ExitCode; Stdout=$stdout.GetAwaiter().GetResult(); Stderr=$stderr.GetAwaiter().GetResult() }\n  } finally { $process.Dispose() }\n}\n`,
+    expected: /QueryInformationJobObject/,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at scripts/windows/ownership.node-test.mjs:13:1
+✖ MAIN 2: full task snapshots and prefix-only new-task cleanup (1.327809ms)
+  AssertionError [ERR_ASSERTION]: ownership snapshot boundary missing
+      at TestContext.<anonymous> (file:///work/scripts/windows/ownership.node-test.mjs:14:2)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at scripts/windows/ownership.node-test.mjs:21:1
+✖ MAIN 3: HTTPS dispatch is handoff only; Desktop keeps refusal rows (0.272202ms)
+  AssertionError [ERR_ASSERTION]: Desktop dispatch forbidden
+      at TestContext.<anonymous> (file:///work/scripts/windows/ownership.node-test.mjs:24:2)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at scripts/windows/ownership.node-test.mjs:28:1
+✖ MAIN 4: registration diff is Handoff-only and guarded by machine (0.189562ms)
+  AssertionError [ERR_ASSERTION]: registration boundary missing
+      at TestContext.<anonymous> (file:///work/scripts/windows/ownership.node-test.mjs:29:2)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at scripts/windows/ownership.node-test.mjs:34:1
+✖ MAIN 5: only operator finalizes after cleanup; receipt needs cleanup proof (6.696817ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /validateCleanup/. Input:
+  
+  "import {validateObservation} from './observation.mjs';\n" +
+    "import { validateIdentity } from './package-identity.mjs';\n" +
+    "import assert from 'node:assert/strict';\n" +
+    "import { readFileSync, existsSync, statSync, realpathSync, writeFileSync } from 'node:fs';\n" +
+    "import { resolve, dirname, relative, isAbsolute } from 'node:path';\n" +
+    "import { pathToFileURL } from 'node:url';\n" +
+    "export const desktopGroups = ['bot-turns', 'tools', 'sentinel', 'mcp', 'browser', 'updates-isolated'];\n" +
+    'export function validateReceipt(r) {\n' +
+    '  validateIdentity(r);\n' +
+    "  assert(['desktop','handoff'].includes(r.kind), 'receipt kind');\n" +
+    '  assert.match(r.commit, /^[a-f0-9]{40}$/i); assert.match(r.sha256, /^[a-f0-9]{64}$/i);\n' +
+    '  assert.match(r.updateSha256, /^[a-f0-9]{64}$/i);\n' +
+    "  assert.equal(r.candidateVersion, '1.0.19'); assert.match(r.updateVersion, /^\\d+\\.\\d+\\.\\d+$/);\n" +
+    "  assert.match(r.updateVersion,/^1\\.0\\.[1-9]\\d*$/);assert(Number(r.updateVersion.split('.')[2])>19&&Number(r.updateVersion.split('.')[2])<=65535,'higher fixture patch version');\n" +
+    "  assert.equal(r.isolated, r.kind === 'desktop'); assert.equal(r.fakeProvidersOnly, true);\n" +
+    "  assert.equal(typeof r.machine,'string');assert(r.machine.length);if(r.kind==='handoff')assert.equal(r.machine,'gate-win-nogit');\n" +
+    "  assert.equal(typeof r.user, 'string'); assert(r.user.length); if(r.kind==='handoff') assert.equal(r.user,'murage-gate');\n" +
+    '  assert.match(r.fixture, /^[A-Za-z]:\\\\/); assert.match(r.executable, /^[A-Za-z]:\\\\.*\\.exe$/i);\n' +
+    "  const expected = r.kind === 'desktop' ? desktopGroups : ['updates-handoff'];\n" +
+    "  assert.deepEqual(r.groups.map(g=>g.name).sort(), [...expected].sort(), 'all mandatory groups exactly once');\n" +
+    '  for (const g of r.groups) {\n' +
+    '    assert(Number.isSafeInteger(g.passed) && g.passed > 0); assert.equal(g.failed,0); assert.equal(g.skipped,0);\n' +
+    '    assert(Array.isArray(g.artifacts) && g.artifacts.length); assert.equal(new Set(g.artifacts).size,g.artifacts.length);\n' +
+    "    for(const p of g.artifacts) assert(typeof p==='string' && p.length && !/[:\\x00-\\x1f]/.test(p) && !/^[\\\\/]/.test(p) && !p.split(/[\\\\/]/).some(x=>!x||x==='.'||x==='..'), 'safe evidence path');\n" +
+    '  }\n' +
+    '  assert(Number.isSafeInteger(r.observer.samples) && r.observer.samples>=4);\n' +
+    '  assert(Number.isFinite(r.observer.maxGapMs) && r.observer.maxGapMs>=0 && r.observer.maxGapMs<=1000);\n' +
+    '  assert.deepEqual(r.observer.visible,[]); assert.deepEqual(r.observer.enumerationErrors,[]);\n' +
+    '  validateObservation(r.observer,r.groups);\n' +
+    '  return r;\n' +
+    '}\n' +
+    'export function pairReceipts(receipts) {\n' +
+    "  assert.equal(receipts.length,2,'BOTH receipts required');\n" +
+    '  const sorted=receipts.map(validateReceipt).sort((a,b)=>a.kind.localeCompare(b.kind));\n' +
+    "  assert.deepEqual(sorted.map(r=>r.kind),['desktop','handoff']);\n" +
+    "  for(const key of ['commit','packageSha256','sha256','candidateVersion','updateVersion','updateSha256']) assert.equal(sorted[0][key].toLowerCase(),sorted[1][key].toLowerCase(),`same ${key} required`);\n" +
+    "  assert.deepEqual(sorted[0].appManifest,sorted[1].appManifest,'same full staged app manifest required');\n" +
+    '  return {packageSha256:sorted[0].packageSha256,appManifest:sorted[0].appManifest,commit:sorted[0].commit,sha256:sorted[0].sha256,updateVersion:sorted[0].updateVersion};\n' +
+    '}\n' +
+    'export function readReceipt(file) {\n' +
+    "  const r=validateReceipt(JSON.parse(readFileSync(file,'utf8').replace(/^\\uFEFF/,'')));\n" +
+    '  // A copied receipt travels with its evidence directory; never dereference a remote fixture path.\n' +
+    '  for(const g of r.groups) for(const p of g.artifacts) {\n' +
+    '    const artifact=resolve(dirname(file),p), rel=relative(dirname(file),artifact);\n' +
+    "    assert(!isAbsolute(rel)&&!rel.startsWith('..')); assert(existsSync(artifact)&&statSync(artifact).isFile()&&statSync(artifact).size>0,`missing evidence ${artifact}`);\n" +
+    "    const real=relative(realpathSync(dirname(file)),realpathSync(artifact));assert(!isAbsolute(real)&&!real.startsWith('..'),'evidence symlink escaped fixture');\n" +
+    '  }\n' +
+    '  return r;\n' +
+    '}\n' +
+    'if(process.argv[1] && import.meta.url===pathToFileURL(resolve(process.argv[1])).href) {\n' +
+    "  const [desktop,handoff,output]=process.argv.slice(2); assert(desktop&&handoff&&output,'usage: receipt-pair.mjs desktop.json handoff.json NEW-pair.json');\n" +
+    '  const result=pairReceipts([readReceipt(desktop),readReceipt(handoff)]);\n' +
+    "  writeFileSync(output,JSON.stringify({status:'PASS',...result,receipts:[desktop,handoff]},null,2),{flag:'wx'});\n" +
+    '  console.log(`PASS winhide commit=${result.commit} sha256=${result.sha256} BOTH receipts`);\n' +
+    '}\n'
+  
+      at TestContext.<anonymous> (file:///work/scripts/windows/ownership.node-test.mjs:36:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: "import {validateObservation} from './observation.mjs';\nimport { validateIdentity } from './package-identity.mjs';\nimport assert from 'node:assert/strict';\nimport { readFileSync, existsSync, statSync, realpathSync, writeFileSync } from 'node:fs';\nimport { resolve, dirname, relative, isAbsolute } from 'node:path';\nimport { pathToFileURL } from 'node:url';\nexport const desktopGroups = ['bot-turns', 'tools', 'sentinel', 'mcp', 'browser', 'updates-isolated'];\nexport function validateReceipt(r) {\n  validateIdentity(r);\n  assert(['desktop','handoff'].includes(r.kind), 'receipt kind');\n  assert.match(r.commit, /^[a-f0-9]{40}$/i); assert.match(r.sha256, /^[a-f0-9]{64}$/i);\n  assert.match(r.updateSha256, /^[a-f0-9]{64}$/i);\n  assert.equal(r.candidateVersion, '1.0.19'); assert.match(r.updateVersion, /^\\d+\\.\\d+\\.\\d+$/);\n  assert.match(r.updateVersion,/^1\\.0\\.[1-9]\\d*$/);assert(Number(r.updateVersion.split('.')[2])>19&&Number(r.updateVersion.split('.')[2])<=65535,'higher fixture patch version');\n  assert.equal(r.isolated, r.kind === 'desktop'); assert.equal(r.fakeProvidersOnly, true);\n  assert.equal(typeof r.machine,'string');assert(r.machine.length);if(r.kind==='handoff')assert.equal(r.machine,'gate-win-nogit');\n  assert.equal(typeof r.user, 'string'); assert(r.user.length); if(r.kind==='handoff') assert.equal(r.user,'murage-gate');\n  assert.match(r.fixture, /^[A-Za-z]:\\\\/); assert.match(r.executable, /^[A-Za-z]:\\\\.*\\.exe$/i);\n  const expected = r.kind === 'desktop' ? desktopGroups : ['updates-handoff'];\n  assert.deepEqual(r.groups.map(g=>g.name).sort(), [...expected].sort(), 'all mandatory groups exactly once');\n  for (const g of r.groups) {\n    assert(Number.isSafeInteger(g.passed) && g.passed > 0); assert.equal(g.failed,0); assert.equal(g.skipped,0);\n    assert(Array.isArray(g.artifacts) && g.artifacts.length); assert.equal(new Set(g.artifacts).size,g.artifacts.length);\n    for(const p of g.artifacts) assert(typeof p==='string' && p.length && !/[:\\x00-\\x1f]/.test(p) && !/^[\\\\/]/.test(p) && !p.split(/[\\\\/]/).some(x=>!x||x==='.'||x==='..'), 'safe evidence path');\n  }\n  assert(Number.isSafeInteger(r.observer.samples) && r.observer.samples>=4);\n  assert(Number.isFinite(r.observer.maxGapMs) && r.observer.maxGapMs>=0 && r.observer.maxGapMs<=1000);\n  assert.deepEqual(r.observer.visible,[]); assert.deepEqual(r.observer.enumerationErrors,[]);\n  validateObservation(r.observer,r.groups);\n  return r;\n}\nexport function pairReceipts(receipts) {\n  assert.equal(receipts.length,2,'BOTH receipts required');\n  const sorted=receipts.map(validateReceipt).sort((a,b)=>a.kind.localeCompare(b.kind));\n  assert.deepEqual(sorted.map(r=>r.kind),['desktop','handoff']);\n  for(const key of ['commit','packageSha256','sha256','candidateVersion','updateVersion','updateSha256']) assert.equal(sorted[0][key].toLowerCase(),sorted[1][key].toLowerCase(),`same ${key} required`);\n  assert.deepEqual(sorted[0].appManifest,sorted[1].appManifest,'same full staged app manifest required');\n  return {packageSha256:sorted[0].packageSha256,appManifest:sorted[0].appManifest,commit:sorted[0].commit,sha256:sorted[0].sha256,updateVersion:sorted[0].updateVersion};\n}\nexport function readReceipt(file) {\n  const r=validateReceipt(JSON.parse(readFileSync(file,'utf8').replace(/^\\uFEFF/,'')));\n  // A copied receipt travels with its evidence directory; never dereference a remote fixture path.\n  for(const g of r.groups) for(const p of g.artifacts) {\n    const artifact=resolve(dirname(file),p), rel=relative(dirname(file),artifact);\n    assert(!isAbsolute(rel)&&!rel.startsWith('..')); assert(existsSync(artifact)&&statSync(artifact).isFile()&&statSync(artifact).size>0,`missing evidence ${artifact}`);\n    const real=relative(realpathSync(dirname(file)),realpathSync(artifact));assert(!isAbsolute(real)&&!real.startsWith('..'),'evidence symlink escaped fixture');\n  }\n  return r;\n}\nif(process.argv[1] && import.meta.url===pathToFileURL(resolve(process.argv[1])).href) {\n  const [desktop,handoff,output]=process.argv.slice(2); assert(desktop&&handoff&&output,'usage: receipt-pair.mjs desktop.json handoff.json NEW-pair.json');\n  const result=pairReceipts([readReceipt(desktop),readReceipt(handoff)]);\n  writeFileSync(output,JSON.stringify({status:'PASS',...result,receipts:[desktop,handoff]},null,2),{flag:'wx'});\n  console.log(`PASS winhide commit=${result.commit} sha256=${result.sha256} BOTH receipts`);\n}\n",
+    expected: /validateCleanup/,
+    operator: 'match',
+    diff: 'simple'
+  }

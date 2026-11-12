@@ -1,0 +1,49 @@
+// Run from the worktree root: node --input-type=module < this file.
+// Only the patched assertion declarations execute; the packaged app never starts.
+import check from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {runInNewContext} from 'node:vm';
+import ts from 'typescript';
+import {scanSource} from './scripts/windows/scan-native.mjs';
+const source=readFileSync('scripts/windows/packaged-scenario.mjs','utf8');
+const start=source.indexOf('let assertionCount=0,lastRecordedAssertion=0;');
+const end=source.indexOf("import { _electron }");
+check(start>0&&end>start);
+runInNewContext(source.slice(start,end)+`
+const cases=[
+ ['assert',()=>assert(true),()=>assert(false)],
+ ['assert.equal',()=>assert.equal(2,2),()=>assert.equal(1,2)],
+ ['assert.match',()=>assert.match('ok',/ok/),()=>assert.match('no',/ok/)],
+];
+for(let round=0;round<2;round++)for(const [name,pass,fail] of cases){
+ const before=assertionCount;
+ check.equal(pass(),undefined);
+ check.equal(assertionCount,before+1,name+' must count exactly once');
+ check.throws(fail,{code:'ERR_ASSERTION'});
+ check.equal(assertionCount,before+1,name+' failure must not count');
+}
+check.equal(assertionCount,6);
+`,{nodeAssert:check,check});
+console.log('PASS assertion wrappers: 6/6 passing assertions count exactly once; 6/6 failing assertions throw without counting');
+const ast=ts.createSourceFile('packaged-scenario.mjs',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
+const counts={assert:0,'assert.equal':0,'assert.match':0};
+const direct=[];
+function visit(node){
+ if(ts.isCallExpression(node)){
+  const call=node.expression.getText(ast);
+  if(call==='assert'||call.startsWith('assert.')||call.startsWith('assert[')){
+   check(Object.hasOwn(counts,call),'unwrapped assertion form: '+call);
+   counts[call]++;
+  }
+  if(call==='nodeAssert'||call.startsWith('nodeAssert.'))direct.push({line:ast.getLineAndCharacterOfPosition(node.getStart(ast)).line+1,call,text:node.getText(ast)});
+ }
+ ts.forEachChild(node,visit);
+}
+visit(ast);
+check.deepEqual(direct.map(x=>x.line),[5,6,7,122]);
+check.equal(direct[3].text,'nodeAssert(passed>0)');
+console.log('Wrapped scenario assertion call sites: '+JSON.stringify(counts));
+console.log('Direct nodeAssert uses: '+JSON.stringify(direct));
+console.log('Line 122 is the pre-existing group-accounting invariant; retained by the approved patch, excluded from scenario assertion counts. Lines 5-7 implement the wrappers. No other direct assertion use remains.');
+check.deepEqual(scanSource(source,'packaged-scenario.mjs'),[]);
+console.log('PASS patched driver has zero JavaScript scanner findings');

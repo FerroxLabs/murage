@@ -1,3 +1,5 @@
+import "../shared/win-hide-child-process.mjs";
+import { withHideInherit } from '../shared/win-hide-child-process.mjs';
 import {spawn} from "node:child_process";
 import path from "node:path";
 import {pathToFileURL} from "node:url";
@@ -13,7 +15,7 @@ const statuses=new Set(["disabled","not-due","busy","verified","needs-review","u
 export function launchClosedCapture(invocation:any,{spawnChild=spawn,timeoutMs=CLOSED_BACKUP_PROCESS_LIMIT_MS}:any={}){
   return new Promise<{status:string;confirmed:boolean}>(resolve=>{
     let child:any,bytes=0,text="",failed=false,force:ReturnType<typeof setTimeout>|undefined;
-    try{child=spawnChild(invocation.executable,invocation.args,{env:invocation.env,stdio:["ignore","pipe","pipe"],windowsHide:true});}catch{resolve({status:"unavailable",confirmed:false});return;}
+    try{child=spawnChild(invocation.executable,[...invocation.args],withHideInherit({env:invocation.env,stdio:["ignore","pipe","pipe"],windowsHide:true}));}catch{resolve({status:"unavailable",confirmed:false});return;}
     const stop=()=>{failed=true;child.kill("SIGTERM");force=setTimeout(()=>child.kill("SIGKILL"),10000);force.unref?.();};
     const timer=setTimeout(stop,timeoutMs);timer.unref?.();
     const collect=(chunk:Buffer,stdout:boolean)=>{

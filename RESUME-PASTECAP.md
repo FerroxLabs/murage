@@ -2,8 +2,8 @@
 
 Base: 7c5807db7 (feat/104-learn-about-me). Design: 0161/lanes/release104/designs/PASTE-CAPTURE-FIX.md, r2 (line 305 on) supersedes.
 Decisions: S8 mask MEMORY.md at load, file untouched. S7 nothing beyond the flux_capture_hold.
-Base suite: DONE (31 failures incl. chunk 07 rerun) on build-host lane pc104-base (worktree /Volumes/Scratch/work/104-pastecap-base, results /root/mb-0161-hz/pc104-base/src/full).
-build host lane for this branch: pc104 (/root/mb-0161-hz/pc104). Helpers in .hzpc/ (untracked, info/exclude).
+Base suite: DONE (31 failures incl. chunk 07 rerun) on build-host lane pc104-base (worktree /mnt/Scratch/work/104-pastecap-base, results /work/mb-0161-hz/pc104-base/src/full).
+build host lane for this branch: pc104 (/work/mb-0161-hz/pc104). Helpers in .hzpc/ (untracked, info/exclude).
 
 ## Milestones
 - [x] M1 shared/financial-ids.ts + vectors.json + test; redact.ts FINANCIAL_ID rule; redact.test S1, chain idempotence, financial clocks

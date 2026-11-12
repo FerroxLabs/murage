@@ -252,7 +252,9 @@ describe("T10: the packaging gate loads the real addon for the target and refuse
     writeFileSync(join(target, "engine-exclusion.node"), readFileSync(built));
     const platform = process.platform as "linux" | "darwin" | "win32";
     const host = process.arch as "x64" | "arm64";
-    expect(validateEngineExclusionResource(target, platform, host)).toMatch(/engine-exclusion\.node$/);
+    const receipt = join(target, "build.json");
+    writeFileSync(receipt, JSON.stringify({ crt: "MT" })); // Windows requires the build's /MT receipt (R16/R25); this case is about the image's machine
+    expect(validateEngineExclusionResource(target, platform, host, platform === "win32" ? receipt : undefined)).toMatch(/engine-exclusion\.node$/);
     if (platform === "linux") expect(() => validateEngineExclusionResource(target, platform, host === "x64" ? "arm64" : "x64")).toThrow(/MISMATCH/);
   });
 
@@ -286,9 +288,9 @@ describe("T10: the packaging gate loads the real addon for the target and refuse
     expect([...WINDOWS_ADDON_FUNCTIONS].sort()).toEqual([...new Set(["openFile", "handleRead", "handleWrite", "handleSync", "handleLock", "handleMarkDelete", "handleId", "handleSize", "handleClose", "removeTree", ...WINDOWS_NATIVE_FUNCTIONS, "environment", "cwdOf"])].sort());
     // for real: this machine's Node loads the built addon
     if (built && process.platform !== "win32") {
-      const text = loadEngineExclusionResource(built, process.platform, process.arch, ADDON_VERSION, (command, args, env) => spawnSync(command, args, { env: { ...process.env, ...env }, encoding: "utf8" }).stdout, process.execPath);
+      const text = loadEngineExclusionResource(built, process.platform, process.arch, ADDON_VERSION, (command, args, env) => spawnSync(command, args, { windowsHide: true, env: { ...process.env, ...env }, encoding: "utf8" }).stdout, process.execPath);
       expect(text).toBe("loaded");
-      expect(() => loadEngineExclusionResource(built, process.platform, process.arch, 4, (command, args, env) => spawnSync(command, args, { env: { ...process.env, ...env }, encoding: "utf8" }).stdout, process.execPath)).toThrow(/VERSION/);
+      expect(() => loadEngineExclusionResource(built, process.platform, process.arch, 4, (command, args, env) => spawnSync(command, args, { windowsHide: true, env: { ...process.env, ...env }, encoding: "utf8" }).stdout, process.execPath)).toThrow(/VERSION/);
     }
   });
 });

@@ -1,0 +1,41 @@
+COMMAND node_modules/.bin/vitest run server/decision/settle-states.test.ts -t M33
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/settle-states.test.ts > R8 R9 M33 X7 two questions retain FIFO; instructions remain a normal send
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/settle-states.test.ts (8 tests | 1 failed | 7 skipped) 347ms
+   ↓ R9 never resolving transport retries same answerId, interrupts by 20s and ignores late completion
+   × R8 R9 M33 X7 two questions retain FIFO; instructions remain a normal send 343ms
+   ↓ R19 Ask→No limits answers open owner BASE before returning; webhook stays BASE
+   ↓ R19 a retained wipe card is reclassified when owner moves into No limits
+   ↓ native request.resolved retires the captured generation and preserves its replacement
+   ↓ native turn.completed retires the captured generation and preserves its replacement
+   ↓ R19 non-owner open BASE records stay untouched on a move into No limits
+   ↓ R18 ninth question refuses under a bounded reply and leaves the eight FIFO records intact
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 7 skipped (8)
+   Start at  08:17:55
+   Duration  4.84s (transform 3.46s, setup 4.09s, import 283ms, tests 347ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/settle-states.test.ts > R8 R9 M33 X7 two questions retain FIFO; instructions remain a normal send
+AssertionError: expected [ { …(14) } ] to have a length of 2 but got 1
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ server/decision/settle-states.test.ts:9:122
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

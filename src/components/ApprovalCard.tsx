@@ -1,3 +1,5 @@
+import { BotReviewSheet } from './BotReviewSheet';
+import { BotCallFields } from './BotCallFields';
 // The approval box: what the bot wants to do, and three ways to answer.
 //
 // Deliberately not the lettered A/B/C list the onboarding card uses — an
@@ -12,6 +14,7 @@ import { cn } from "@/lib/cn";
 import { SkillRequestPreview } from "@/components/SkillRequestPreview";
 import { ApprovalDetailBody } from "@/components/ApprovalDetailBody";
 import { CollapsibleText } from "@/components/CollapsibleText";
+import { HighLevelReviewValues, highlevelReviewId } from "@/components/HighLevelReviewValues";
 import { approvalTitle, isAcpPermissionKind, isPendingApprovalMessage, knownToolAction, pendingOf, toolLabel, whyLine } from "@/lib/pending-approval";
 import { focusApprovalPanel } from "@/lib/approval-focus";
 import { plainApproval, usePlainApprovalReady } from "@/lib/plain-approval";
@@ -260,11 +263,18 @@ function AutomationUndo({ message }: { message: Message }) {
   );
 }
 
+// Private until S1-CA3 supplies the shared predicate.
+function isAllowedAnswer(answered: unknown): boolean {
+  return answered === "Allowed" || answered === "allow";
+}
+
 /** Undo shows while the change is applied, not undone, undoable, and inside its 7 days. */
 function automationUndoOffered(card: NonNullable<Message["card"]>, now = Date.now()): boolean {
   const request = card.routineRequest;
-  return Boolean(request && card.answered === "allow" && !card.undone && automationActionUndoable(request.operation.action)
-    && typeof request.appliedAt === "number" && now - request.appliedAt <= AUTOMATION_UNDO_WINDOW_MS);
+  const appliedAt = 'approvalId' in card && card.approvalId
+    ? ('answeredAt' in card ? card.answeredAt : undefined) : request?.appliedAt;
+  return Boolean(request && isAllowedAnswer(card.answered) && !card.undone && automationActionUndoable(request.operation.action)
+    && typeof appliedAt === "number" && now - appliedAt <= AUTOMATION_UNDO_WINDOW_MS);
 }
 
 const SKILL_SETTLED_LABEL = {
@@ -291,6 +301,7 @@ export function ApprovalCard({
   const card = message.card;
   const grantAdded = useGrantAdded(card?.requestId);
   if (!card) return null;
+  if (card.botReviewId) return card.answered ? <p>Bot review complete.</p> : <BotReviewSheet botIds={[card.botReviewId]} />;
   const browser = browserCardData(card);
   if (browser) return <BrowserApprovalBody message={message} data={browser} onAnswer={onAnswer} />;
   // APPROVAL-ONE-CARD: while the composer panel holds the card, the chat
@@ -367,6 +378,10 @@ export function ApprovalCard({
         )}
       </details>
 
+      {/* a HighLevel change: every value it would send, read live from the open review (never stored in the chat) */}
+      {!settled && highlevelReviewId(card.requestId) && <HighLevelReviewValues reviewId={highlevelReviewId(card.requestId)!} />}
+      {card.botAuthority && <BotCallFields authority={card.botAuthority} />}
+
       {/* one reason sentence: the held note only when there is no why-line */}
       {card.held && !settled && !whyLine(card) && (
         <div className="mt-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12.5px] text-warning">
@@ -377,18 +392,18 @@ export function ApprovalCard({
       {/* The decision lives in the composer (one place to answer, and it
           can't be scrolled past); here we only record what happened. */}
       <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[13px] text-ink-secondary" data-card-outcome={settled ?? "waiting"}>
-        {settled === "allow" && isRoutineRequest && card.undone ? (
+        {isRoutineRequest && (settled === "undone" || (isAllowedAnswer(settled) && card.undone)) ? (
           <>
             <Undo2 size={14} /> {t("automations.undone")}
           </>
-        ) : settled === "allow" && automationUndoOffered(card) ? (
+        ) : isAllowedAnswer(settled) && automationUndoOffered(card) ? (
           <AutomationUndo message={message} />
-        ) : settled === "allow" && (isRoutineRequest || isSkillRequest) ? (
+        ) : isAllowedAnswer(settled) && (isRoutineRequest || isSkillRequest) ? (
           <>
             <Check size={14} className="text-success" />
             {skillSettledLabel ?? routineSettledLabel ?? (isRoutineRequest ? "Routine confirmed" : "Skill confirmed")}
           </>
-        ) : settled === "allow" ? (
+        ) : isAllowedAnswer(settled) ? (
           // UX-TRUST-MOMENTS-1012 1.1: what the server knows (the answer was
           // delivered); the tool result says Sent or Paid when the engine does.
           // After a fold row, the line names what was added, with Undo (1.3).
@@ -424,7 +439,8 @@ function ApprovalWaitingRow({ bot, message }: { bot?: Bot; message: Message }) {
   usePlainApprovalReady();
   const who = bot?.name ?? message.from?.name ?? t("ux.l1.outcome.botFallback");
   const title = approvalTitle(pendingOf(message), who);
-  return (
+  const highlevel = highlevelReviewId(message.card?.requestId);
+  const row = (
     <div data-approval-waiting={message.card?.requestId} className="flex w-full max-w-[840px] items-center gap-2.5 rounded-xl border border-accent/40 bg-card py-1.5 pl-3.5 pr-1.5 text-[14px]">
       <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-accent" />
       <span role="status" className="min-w-0 flex-1 text-ink">{t("ux.l1.card.waiting", { bot: who })}</span>
@@ -439,4 +455,7 @@ function ApprovalWaitingRow({ bot, message }: { bot?: Bot; message: Message }) {
       </button>
     </div>
   );
+  // a HighLevel change: its values show here too, read live from the open review (HL-S2-WRITES (a)3)
+  if (!highlevel) return row;
+  return <div className="w-full max-w-[840px]">{row}<HighLevelReviewValues reviewId={highlevel} /></div>;
 }

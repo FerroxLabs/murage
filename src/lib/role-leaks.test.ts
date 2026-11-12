@@ -28,6 +28,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ALLOWED: Record<string, string> = {
   "state/store.tsx": "the client's copy of the record — it owns the fields",
   "state/bot-patch-queue.ts": "names the field as a PATCH key, does not render it",
+  "lib/startup-tips.ts": "reads the Chief flag and first teammates only to name them in a tip, through botRole; never renders the raw field",
   "lib/bot-role.ts": "defines the mapping every other reader must use",
   "lib/sidebar-layout.ts": "reads BOTH flag and scope together to place the one top row",
   "lib/team-map.ts": "reads BOTH flag and scope together to build the chart",
@@ -41,6 +42,8 @@ const ALLOWED: Record<string, string> = {
   "components/BotRoleControl.tsx":
     "seats this bot in the chair on a copy of the roster (flag and scope together) so the shared handover rule " +
     "(shared/chief-handover.ts) can say what the former Chief becomes; the role it renders comes from botRole()",
+  "components/settings/BrowseBotsPage.tsx":
+    "names the raw fields in its row type only; the role it renders comes from botRole()",
   "components/Sidebar.tsx":
     "the archive/restore round-trip sends the flag back over the wire verbatim; every " +
     "rendered role in this file goes through botRole()",

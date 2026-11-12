@@ -1,6 +1,7 @@
+import { fluxRouteFor, registerBusyloopPayloadSite } from "../shared/flux-route.ts";
 import { checkFluxBudget, FluxBudgetReached } from "./voice/flux-budget.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { fluxCallHeaders } from "./flux-memory-headers.ts";
+import { fluxCallHeaders, isFluxUrl } from "./flux-memory-headers.ts";
 import { z } from "zod";
 import { redactSecretsInText } from "./redact.ts";
 import { IMAGE_GENERATION_REFERENCE_MAX, IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES } from "../shared/media-assets.ts";
@@ -17,6 +18,7 @@ import { loadCrop, type CropImage } from "./image-fit.ts";
 import { sniffMedia } from "./media-assets.ts";
 import { IMAGE_PROMPT_BLOCKS_MAX } from "./image-library.ts";
 import { UPLOAD_STALL_MS, imageDispatcher, watchRequestStart } from "./provider-dispatcher.ts";
+import { authorizeFluxDispatch } from "./flux-start-gate.ts";
 
 export type ImageProvider = "openai" | "flux" | "openrouter" | "xai" | "google";
 /** Each provider as the owner reads it (Settings' names, not a connection's
@@ -321,7 +323,7 @@ async function boundedJson(response: Response, limit: number): Promise<unknown> 
   const reader = response.body!.getReader(); const chunks: Uint8Array[] = []; let size = 0;
   try {
     for (;;) { const next = await reader.read(); if (next.done) break; size += next.value.byteLength; if (size > limit) { await reader.cancel(); fail("oversized-response", "The image provider response was too large.", "uncertain"); } chunks.push(next.value); }
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    return registerBusyloopPayloadSite("read", JSON.parse(Buffer.concat(chunks).toString("utf8")));
   } catch (error) { if (error instanceof ImageGenerationError) throw error; return fail("invalid-response", "The image provider returned an unreadable response.", "uncertain"); }
   finally { reader.releaseLock(); }
 }
@@ -645,7 +647,7 @@ export class ImageGenerationService {
     const url = `https://openrouter.ai/api/v1/images/models/${modelId.split("/").map(encodeURIComponent).join("/")}/endpoints`;
     const timeout = AbortSignal.timeout(ENDPOINT_TIMEOUT_MS);
     try {
-      const response = await this.fetcher(url, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: "error" });
+      const response = await this.fetcher(fluxRouteFor(url).requestUrl, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: "error" });
       if (!response.ok) { void response.body?.cancel(); throw new Error("endpoint record unavailable"); }
       return await boundedJson(response, MAX_CATALOG_BYTES);
     } catch { return fail("catalog-unavailable", "Could not verify this image model’s endpoint capabilities."); }
@@ -660,7 +662,7 @@ export class ImageGenerationService {
     try {
       assertCredentialOrigin("flux", FLUX_CATALOGUE_URL);
       const timeout = AbortSignal.timeout(ENDPOINT_TIMEOUT_MS);
-      const response = await this.fetcher(FLUX_CATALOGUE_URL, { headers: { authorization: `Bearer ${connection.apiKey}`, ...fluxCallHeaders("image-generation") }, signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: "error" });
+      const response = await this.fetcher(fluxRouteFor(FLUX_CATALOGUE_URL).requestUrl, { headers: { authorization: `Bearer ${connection.apiKey}`, ...fluxCallHeaders("image-generation") }, signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: "error" });
       if (response.ok) value = parseFluxImageCatalogue(await boundedJson(response, MAX_CATALOG_BYTES));
       else { void response.body?.cancel(); if (response.status >= 500 || response.status === 429) ttl = FLUX_CATALOGUE_RETRY_MS; }
     } catch { value = null; ttl = FLUX_CATALOGUE_RETRY_MS; }
@@ -678,7 +680,7 @@ export class ImageGenerationService {
     try {
       assertCredentialOrigin("flux", FLUX_MODELS_URL);
       const timeout = AbortSignal.timeout(ENDPOINT_TIMEOUT_MS);
-      const response = await this.fetcher(FLUX_MODELS_URL, { headers: { authorization: `Bearer ${connection.apiKey}`, ...fluxCallHeaders("image-generation") }, signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: "error" });
+      const response = await this.fetcher(fluxRouteFor(FLUX_MODELS_URL).requestUrl, { headers: { authorization: `Bearer ${connection.apiKey}`, ...fluxCallHeaders("image-generation") }, signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: "error" });
       if (response.ok) {
         const body = await boundedJson(response, MAX_CATALOG_BYTES);
         const ids = record(body) && Array.isArray(body.data) ? body.data.flatMap(item => record(item) && typeof item.id === "string" && /^flux-image[a-z0-9._-]{0,110}$/.test(item.id) ? [item.id] : []) : [];
@@ -720,7 +722,7 @@ export class ImageGenerationService {
       return offered ? markOffered(full, offered) : full;
     }
     if (connection.provider !== "openrouter") return catalog;
-    const response = await this.fetcher("https://openrouter.ai/api/v1/images/models", { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000), redirect: "error" });
+    const response = await this.fetcher(fluxRouteFor("https://openrouter.ai/api/v1/images/models").requestUrl, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000), redirect: "error" });
     if (!response.ok) fail("catalog-unavailable", "Could not refresh the image model catalog. Try again later.");
     const models = parseOpenRouterImageCatalog(await boundedJson(response, MAX_CATALOG_BYTES));
     if (discoverEdits) {
@@ -757,7 +759,8 @@ export class ImageGenerationService {
         const url = URLS.flux;
         assertCredentialOrigin("flux", url);
         const timeout = AbortSignal.timeout(ENDPOINT_TIMEOUT_MS);
-        const response = await this.fetcher(url, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${connection.apiKey}`, ...fluxCallHeaders("image-generation") },
+        await authorizeFluxDispatch(connection.apiKey); // spend gate: inside an admitted turn the entitlement passes, otherwise a start
+        const response = await this.fetcher(fluxRouteFor(url).requestUrl, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${connection.apiKey}`, ...fluxCallHeaders("image-generation") },
           body: JSON.stringify({ model: modelId, probe: true }), signal: options.signal ? AbortSignal.any([options.signal, timeout]) : timeout, redirect: "error" });
         active();
         if (!response.ok) {const detail=await providerErrorDetail(response, connection.provider === "flux" ? connection.apiKey : undefined);active();return done({ ok: false, free: true, errorCode: "provider-error", errorMessage: `Flux answered HTTP ${response.status}${detail}.` });}
@@ -992,7 +995,7 @@ export class ImageGenerationService {
           fatal: error => error instanceof ImageGenerationError || error instanceof FluxBudgetReached,
           get: async pollSignal => {
             active();
-            const response = await this.fetcher(url, { headers: auth, signal: pollSignal, redirect: "error" });
+            const response = await this.fetcher(fluxRouteFor(url).requestUrl, { headers: auth, signal: pollSignal, redirect: "error" });
             // Classify bounded error bodies before the delivery helper converts
             // HTTP failures or failed-job envelopes into generic image errors.
             if (!response.ok) {
@@ -1029,8 +1032,9 @@ export class ImageGenerationService {
           const post = async (): Promise<Response> => {
             // The upload has its own stall clock (no body byte moving for
             // UPLOAD_STALL_MS); it stops once the body is sent.
+            if (isFluxUrl(outbound.url)) await authorizeFluxDispatch(connection.apiKey); // spend gate
             const watch = watchRequestStart(imageDispatcher(outbound.url, this.options.connectTimeoutMs), { stallMs: this.options.uploadStallMs });
-            try { return await this.fetcher(outbound.url, { method: "POST", headers: { ...outbound.headers, ...auth }, body: outbound.body, signal: AbortSignal.any([postSignal, watch.signal]), redirect: "error", dispatcher: watch.dispatcher } as RequestInit); }
+            try { return await this.fetcher(fluxRouteFor(outbound.url).requestUrl, { method: "POST", headers: { ...outbound.headers, ...auth }, body: outbound.body, signal: AbortSignal.any([postSignal, watch.signal]), redirect: "error", dispatcher: watch.dispatcher } as RequestInit); }
             catch (error) {
               if (watch.stalled()) { uploadStalled = true; throw error; }
               // One retry, only when this request provably never left: it

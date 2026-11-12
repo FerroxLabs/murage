@@ -1,6 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-export interface CloudHomeFetchInit { method?: string; headers?: Record<string, string>; body?: string | Uint8Array | object; signal?: AbortSignal }
+export interface CloudHomeFetchInit { method?: string; headers?: Record<string, string>; body?: string | Uint8Array | object; signal?: AbortSignal; /** fetch only: called synchronously, in the same tick, immediately before every network send (first, 401 retry, step-up retry); a throw stops the send. */ beforeSend?: () => void }
 export interface CloudHomeClient {
   /** Always false: an unreachable home fails the call at once; nothing is queued. */
   readonly queuesWrites: false;
@@ -9,6 +9,8 @@ export interface CloudHomeClient {
   /** Main-driven step-up for a write the home refused with 403 "step-up required": native confirm, sign over main's bytes, ONE retry. */
   stepUpRetry(homeId: string, path: string, init?: CloudHomeFetchInit): Promise<Response>;
   /** Read-only lookup for an open step-up confirm: one GET with the in-memory token, never connects, refreshes or steps up. Parsed JSON or undefined. */
+  /** Bumped when a session is established, replaced, refreshed or removed; a per-request connect that reuses it leaves it unchanged. */
+  sessionGeneration(homeId: string): number;
   fetchHomeInfo(homeId: string, path: "/api/bots?messages=0", init?: { signal?: AbortSignal }): Promise<unknown>;
   pairedHomes(): Promise<{ homeId: string; origin: string }[]>;
   /** Pin + version + token check for the Cloud window's banner. Never throws. */

@@ -1,3 +1,4 @@
+import { withHideInherit } from '../shared/win-hide-child-process.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
@@ -8,6 +9,7 @@ import { launchSecretVia, sendLaunchSecretParent } from './launch-secret.mjs';
 import { closedControlDirectory } from './backup-closed-controller.mjs';
 import { desktopFluxEnvironment } from './workspace-credentials.mjs';
 import { openInstallationRecoveryWindow } from './installation-recovery-window.mjs';
+import { MEMORY_INDEX_STOPPED, upgradeTimeoutCode } from './memory-upgrade-status.mjs';
 
 const source = readFileSync(new URL('./main.mjs', import.meta.url), 'utf8');
 const between = (a,b) => source.slice(source.indexOf(a), source.indexOf(b, source.indexOf(a)));
@@ -19,6 +21,7 @@ for (const outcome of ['timeout', 'exited']) test(`BF-B2: ${outcome} during upgr
   const proc = Object.assign(new EventEmitter(), { pid: 12, postMessage() {} });
   const owner = { utilityServerLeaseEnvironment:()=>({MURAGE_INTERNAL_DATA_DIR_LEASE:"private-fixture-capability"}) };
   const scope = {
+    MEMORY_INDEX_STOPPED, upgradeTimeoutCode, withHideInherit,
     path, process:{platform:"linux",env:{},resourcesPath:"/fixture/resources"},restoredConnections:null,restoredHarnessEnvironment:env=>env,
     app:{isPackaged:true,getVersion:()=>"1.0.0",getPath:()=>"/fixture/user-data",getAppPath:()=>"/fixture/resources/app.asar"}, companionToken:"private-companion",
     modelProviderCommitToken:"private-model-provider-commit",

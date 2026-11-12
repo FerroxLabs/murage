@@ -31,6 +31,7 @@ function start(env: Record<string, string>) {
   // Each bridge gets its own remembered-list folder unless a test names one.
   const toolsCache = env.MURAGE_CONNECTOR_TOOLS_CACHE_DIR ?? mkdtempSync(join(tmpdir(), "murage-proxy-cache-"));
   child = spawn(process.execPath, ["--experimental-strip-types", ENTRY], {
+    windowsHide: true,
     // Windows trusts a cache folder only when the harness verified its ACL; the test folders are private temp ones.
     env: { ...process.env, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: toolsCache, ...(process.platform === "win32" ? { MURAGE_CONNECTOR_TOOLS_CACHE_PRIVATE: "1" } : {}), ...env },
     stdio: ["pipe", "pipe", "pipe"],
@@ -164,6 +165,34 @@ describe("connector MCP bridge", () => {
     expect(received.authorization).toBe("Bearer bridge-secret");
     expect(received.body).toMatchObject({ botId: "bot-1", threadId: "thread-1", slugs: ["gmail"] });
     expect(received.body.resumeKey).toMatch(/^[\w-]{8,100}$/);
+  });
+
+  it("reads live connection posture after a level change in the same child", async () => {
+    let unlimited = true;
+    const requests: any[] = [];
+    const harness = await listen((request, response) => {
+      let raw = "";
+      request.on("data", chunk => { raw += chunk; });
+      request.on("end", () => {
+        expect(request.headers.authorization).toBe("Bearer live-policy");
+        requests.push(JSON.parse(raw));
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(unlimited ? { pending: false, message: "Live No limits disconnected line" } : { pending: true }));
+      });
+    });
+    const lines = start({ MURAGE_HARNESS_URL: harness, MURAGE_CONNECTORS_TOKEN: "live-policy", MURAGE_CONNECTORS_NO_LIMITS: "1" });
+    const call = async (id: number, name: string) => {
+      const reply = nextJson(lines);
+      child!.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: { toolkits: ["GMAIL"] } } }) + "\n");
+      return (await reply).result.content[0].text;
+    };
+    expect(await call(1, "COMPOSIO_WAIT_FOR_CONNECTIONS")).toBe("Live No limits disconnected line");
+    unlimited = false;
+    expect(await call(2, "COMPOSIO_WAIT_FOR_CONNECTIONS")).toContain("will continue the task automatically");
+    expect(await call(3, "COMPOSIO_MANAGE_CONNECTIONS")).toContain("secure connection card");
+    unlimited = true;
+    expect(await call(4, "COMPOSIO_MANAGE_CONNECTIONS")).toBe("Live No limits disconnected line");
+    expect(requests.map(r => r.statusOnly)).toEqual([true, true, false, false]);
   });
 
   it("answers initialize locally so a missing or failing upstream cannot fail the MCP handshake", async () => {

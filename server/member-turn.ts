@@ -7,9 +7,11 @@ import type { EffortLevel, ModelSelection } from "./contracts.ts";
 export function memberTurnSelection(selection: ModelSelection): {
   model: string;
   effort?: EffortLevel;
+  variant?: string;
 } {
   return {
     model: selection.model,
     ...(selection.effort ? { effort: selection.effort } : {}),
+    ...(selection.variant ? { variant: selection.variant } : {}),
   };
 }

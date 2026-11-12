@@ -1,0 +1,30 @@
+{
+  "server/highlevel/binding-json.ts": [
+    "export function canonicalBindingJson(value: unknown): Uint8Array;"
+  ],
+  "server/highlevel/returned-identities.ts": [
+    "export type ReturnedIdentityResult = {\n    readonly status: \"applied\";\n} | {\n    readonly status: \"not_applied\";\n    readonly reason: \"negative_confirmation\";\n} | {\n    readonly status: \"conflict\";\n    readonly reason: \"request_binding\" | \"unknown_identity\" | \"identity_mismatch\" | \"follower_set\" | \"unconfirmed\" | \"malformed_response\";\n    readonly keys: readonly string[];\n};",
+    "export interface BoundReturnedIdentitySchema {\n    readonly operation: FrozenRequest[\"operation\"];\n    readonly requestDigest: string;\n    readonly schema: ReturnedIdentitySchema;\n}",
+    "export function prepareReturnedIdentitySchema(held: HeldRequest, locationId: string): BoundReturnedIdentitySchema;",
+    "export function returnedIdentitySchemaFor(frozen: FrozenRequest): BoundReturnedIdentitySchema;",
+    "export function bindReturnedIdentities(response: unknown, frozen: FrozenRequest, opSchema: BoundReturnedIdentitySchema): ReturnedIdentityResult;"
+  ],
+  "server/highlevel/operations/returned-identity-schemas.ts": [
+    "export interface CreatedIdentitySlot {\n    readonly path: string;\n    readonly role: string;\n    readonly when: \"always\" | \"new\" | \"missing_request_id\";\n}",
+    "export interface ApprovedIdentitySource {\n    readonly path: string;\n    readonly role: string;\n}",
+    "export interface ReturnedIdentitySchema {\n    readonly operation: OperationId;\n    readonly primary: string;\n    readonly identities: Readonly<Record<string, string>>;\n    readonly sources: readonly ApprovedIdentitySource[];\n    readonly created: readonly CreatedIdentitySlot[];\n    readonly passThrough: Readonly<{\n        locationId: \"connectedLocation\";\n    }>;\n    readonly followers: boolean;\n}",
+    "export function isReturnedIdentityKey(key: string): boolean;",
+    "export function returnedIdentityRole(key: string, path: readonly string[], primary: string): string;",
+    "export const HIGHLEVEL_RETURNED_IDENTITY_SCHEMAS: Readonly<Record<OperationId, ReturnedIdentitySchema>> = Object.freeze(Object.fromEntries(schemas));"
+  ],
+  "server/highlevel/approval-idempotency.ts": [
+    "export type ApprovalConflictReason = \"approval_binding\" | \"identity_conflict\" | \"negative_confirmation\" | \"unconfirmed\" | \"authority_changed\";",
+    "export type ApprovalOutcome = {\n    readonly status: \"applied\";\n    readonly result: unknown;\n} | {\n    readonly status: \"conflict\";\n    readonly reason: ApprovalConflictReason;\n};",
+    "export type ApprovalIdempotencyRecord = {\n    readonly approvalId: string;\n    readonly requestDigest: string;\n} & ({\n    readonly state: \"pending\";\n} | {\n    readonly state: \"applied\";\n    readonly result: unknown;\n} | {\n    readonly state: \"conflict\";\n    readonly reason: ApprovalConflictReason;\n});",
+    "export interface ApprovalJournal {\n    readonly key: string;\n    get(approvalId: string): ApprovalIdempotencyRecord | undefined;\n    claim(approvalId: string, requestDigest: string): boolean;\n    settle(approvalId: string, requestDigest: string, outcome: ApprovalOutcome): ApprovalOutcome;\n}",
+    "class FileApprovalJournal   implements ApprovalJournal {\nreadonly key: string;\nconstructor(directory: string);\nget(approvalId: string): ApprovalIdempotencyRecord | undefined;\nclaim(approvalId: string, requestDigest: string): boolean;\nsettle(approvalId: string, requestDigest: string, outcome: ApprovalOutcome): ApprovalOutcome;\n}",
+    "export interface ApprovedWriteCallbacks {\n    dispatch(): Promise<ApprovalOutcome>;\n    reconcile(): Promise<ApprovalOutcome>;\n}",
+    "export function runApprovedWrite(journal: ApprovalJournal, approvalId: string, requestDigest: string, callbacks: ApprovedWriteCallbacks): Promise<ApprovalOutcome>;"
+  ],
+  "server/highlevel/operations/returned-identity-policy.json": "ff074f404e7a51c1ba05cf95cf5bfb60da5c49022915d102975acbfe513f2dfb"
+}

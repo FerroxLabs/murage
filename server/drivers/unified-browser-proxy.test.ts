@@ -26,6 +26,7 @@ async function route(status: number, body: unknown): Promise<string> {
 /** Run the proxy over stdio exactly as an engine does and collect replies. */
 async function exchange(base: string, requests: unknown[]): Promise<any[]> {
   const child = spawn(process.execPath, [PROXY], {
+    windowsHide: true,
     env: { PATH: process.env.PATH, MURAGE_CONTROL_URL: base, MURAGE_CONTROL_TOKEN: "fixture-token", MURAGE_BOT_ID: "bot", MURAGE_THREAD_ID: "thread" },
     stdio: ["pipe", "pipe", "inherit"],
   });

@@ -1,0 +1,27 @@
+{
+  "contract": "murage-signal-runtime-input-evidence/1.0",
+  "builderCommit": "94cbfa2a609f96c65a5693b5723ba0cee3041b6c",
+  "builders": {
+    "S3": "bld-sig-s3",
+    "W2": "w2-signal"
+  },
+  "builderContainers": {
+    "S3": "hz-sa-bld-sig-s3-final-build-169085",
+    "W2": "w2-signal-r11-builder-2"
+  },
+  "sha256sumsSha256": "c31be41252a7b2247a590025835a1cdcd9b64ecc64cf8326c02ab7c02a2eaa9d",
+  "fragments": {
+    "pin-fragment-darwin-arm64.json": "0bfc4b40b4604aaf72a1390d93a7f05774093ed72e1ac7d6e07a1656fa3c5883",
+    "pin-fragment-linux-x64.json": "32838f9cf510323ee1059df5aa83647d928c7b48ccb31ec728831a0a0f3dc014",
+    "pin-fragment-win32-x64.json": "c43cf7b9a049dc52d227a120fc3708bd72d91fbf903d8cb5749bcf4b4a6d4054"
+  },
+  "sources": {
+    "S3": "swarm-b/sig-s3/evidence/W2-HANDOFF.txt",
+    "W2": "swarm-b/sig-w2/evidence/RESULT.txt"
+  },
+  "assemblyCommit": "2e015f0e508e79f30c5d21e60dd6abd9fdb65731",
+  "toolchain": {
+    "image": "node:24-bookworm@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4",
+    "gradleDistributionSha256": "21bd5da2de49b642904077f38c0efdc7778e92b3ed0889392dca61b97e389607"
+  }
+}

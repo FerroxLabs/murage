@@ -161,38 +161,42 @@ describe("No limits, the level above Full access", () => {
 
   it("lets the stop line go on a turn the owner is at", () => {
     for (const stop of [outside, pay]) {
-      expect(autoVerdict(unlimited, "Bash", "x", { stopLine: stop })).toMatchObject({ source: "no-limits", approve: "auto-approved Bash (no limits)" });
+      expect(autoVerdict(unlimited, "Bash", "x", { ...OWNER,stopLine: stop })).toMatchObject({ source: "no-limits", approve: "auto-approved Bash (no limits)" });
     }
-    // `rm -rf build` runs on the owner's clean turn; without the owner's proof No limits keeps the strict read
+    // Missing origin has Ask policy, even when the bot is explicitly No limits.
     expect(autoVerdict(unlimited, "Bash", "rm -rf build", OWNER).source).toBe("no-limits");
-    expect(autoVerdict(unlimited, "Bash", "rm -rf build", { stopLine: null })).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
+    const ask = autoVerdict({autoApprove:false}, "Bash", "rm -rf build", {stopLine:null});
+    expect(ask).toMatchObject({approve:null,source:"destructive-guard",rule:String.raw`\brm\s+(-[a-z]*\s+)*-[a-z]*[rf]`});
+    expect(autoVerdict(unlimited, "Bash", "rm -rf build", { stopLine: null })).toEqual(ask);
   });
 
-  it("runs a key read and a key delete on the owner's clean turn, recorded by their gate row", () => {
-    expect(autoVerdict(unlimited, "Bash", "cat ~/.zshrc", OWNER)).toMatchObject({ approve: "auto-approved Bash (no limits)", source: "no-limits", rule: "held=gate:shell-rc" });
-    expect(autoVerdict(unlimited, "Bash", "rm ~/.ssh/id_rsa", { ...OWNER, stopLine: outside })).toMatchObject({ approve: "auto-approved Bash (no limits)", source: "no-limits", rule: "held=gate:ssh" });
+  it("runs a key read and a key delete without a gate row at No limits", () => {
+    expect(autoVerdict(unlimited, "Bash", "cat ~/.zshrc", OWNER)).toMatchObject({ approve: "auto-approved Bash (no limits)", source: "no-limits" });
+    expect(autoVerdict(unlimited, "Bash", "rm ~/.ssh/id_rsa", { ...OWNER, stopLine: outside })).toMatchObject({ approve: "auto-approved Bash (no limits)", source: "no-limits" });
   });
 
-  it("still stops before a key on every turn that is not the owner's clean one", () => {
+  // Sean 2026-11-12 02:05/02:50Z: only wipes card on admitted No limits turns.
+  it("runs key work on marked, delegated and admitted unattended turns", () => {
     for (const [command, stopLine] of [["cat ~/.zshrc", null], ["rm ~/.ssh/id_rsa", outside]] as const) {
-      // no proof, another origin, unattended, automated, a marked turn (outsideRead absent or a web read)
       for (const context of [
-        { stopLine }, { ...OWNER, stopLine, ownerStarted: undefined }, { ...OWNER, stopLine, fullAccessOrigin: "other" as const }, { ...OWNER, stopLine, unattended: true },
-        { ...OWNER, stopLine, automated: true }, { ...OWNER, stopLine, outsideRead: undefined }, { ...OWNER, stopLine, outsideRead: ["web page" as const] },
-      ]) {
-        const v = autoVerdict(unlimited, "Bash", command, context);
-        expect(v.approve, `${command} ${JSON.stringify(context)}`).toBeNull();
-        expect(["always-ask", "sensitive-guard", "outside-turn"], `${command} ${JSON.stringify(context)}`).toContain(v.source);
-      }
-      // Full access still cards the key rows, with the owner's proof too
+        { ...OWNER, stopLine, fullAccessOrigin: "other" as const },
+        { ...OWNER, stopLine, noLimitsOrigin:"unattended" as const, unattended:true },
+        { ...OWNER, stopLine, noLimitsOrigin:"webhook" as const, automated:true },
+        { ...OWNER, stopLine, ownerStarted: undefined },
+        { ...OWNER, stopLine, outsideRead: undefined },
+        { ...OWNER, stopLine, outsideRead: ["web page" as const] },
+      ]) { const result=autoVerdict({...unlimited,permissionExplicit:true},"Bash",command,context);expect(result).toMatchObject({approve:expect.any(String),source:"no-limits"});expect(result.rule).toBeUndefined(); }
+      expect(autoVerdict(unlimited,"Bash",command,{...OWNER,stopLine,fullAccessOrigin:"other"})).toMatchObject({approve:null});
+      // Full access keeps exactly its existing key-row behavior.
       expect(autoVerdict(full, "Bash", command, { ...OWNER, stopLine })).toMatchObject({ approve: null, source: "sensitive-guard" });
     }
   });
 
-  it("covers the same turns as Full access and no others", () => {
+  it("keeps legacy unproven fallback and covers admitted unattended turns", () => {
     expect(autoVerdict(unlimited, "Bash", "x", { stopLine: outside, automated: true }).source).toBe("stop-line");
     expect(autoVerdict(unlimited, "Bash", "x", { stopLine: outside, unattended: true }).approve).toBeNull();
-    expect(autoVerdict({ ...unlimited, fullAccessChannelMessages: true }, "Bash", "x", { stopLine: outside, unattended: true, automated: true, channelOwner: true }).source).toBe("no-limits");
+    expect(autoVerdict({ ...unlimited, fullAccessChannelMessages: true }, "Bash", "x", { stopLine: outside, unattended: true, automated: true, channelOwner: true,noLimitsOrigin:"owner-channel" }).source).toBe("no-limits");
+    expect(autoVerdict(unlimited, "Bash", "x", {stopLine:outside,unattended:true,noLimitsOrigin:"unattended"}).source).toBe("no-limits");
     expect(autoVerdict(unlimited, "AskUserQuestion", "Which?").source).toBe("question-tool");
   });
 

@@ -48,3 +48,9 @@ test("the downgrade summary retains only a valid preserved phone history path", 
   assert.equal(recoveryDesktopSummary(result).phoneCallsPreservedAt, result.phoneCallsPreservedAt);
   assert.throws(() => recoveryDesktopSummary({ ...result, phoneCallsPreservedAt: 42 }), /INVALID_RECOVERY_RESULT/);
 });
+
+test("the downgrade summary retains only a valid preserved request and archive path", () => {
+  const result = { ok: true, operation: "memory-downgrade", status: "downgraded", from: 11, to: 10, applicationDataPreservedAt: "/fixture/request-data" };
+  assert.equal(recoveryDesktopSummary(result).applicationDataPreservedAt, result.applicationDataPreservedAt);
+  assert.throws(() => recoveryDesktopSummary({ ...result, applicationDataPreservedAt: 42 }), /INVALID_RECOVERY_RESULT/);
+});

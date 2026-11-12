@@ -1,0 +1,6 @@
+{
+  "highlevel.policy.appsOff": "HighLevel is off for this bot. Turn on Connected apps in Bot settings.",
+  "highlevel.policy.familyOff": "HighLevel {family} is off for this bot. Turn it on in Bot settings → Apps → HighLevel.",
+  "highlevel.policy.accountOff": "HighLevel is off because this account is disconnected. Turn it on in Settings → Apps → HighLevel.",
+  "highlevel.policy.capacity": "HighLevel is at capacity. Try again after the current changes finish."
+}

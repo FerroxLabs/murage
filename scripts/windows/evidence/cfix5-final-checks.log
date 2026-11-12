@@ -1,0 +1,41 @@
+0.51 1.61 2.27 1/673 11
+PASS successful cleanup publishes bounded diff after exact-name removal
+PASS earlier launcher exception still writes actionable FAIL after successful cleanup
+PASS expired cleanup never starts a native worker
+PASS worker timeout propagates without an unbounded fallback
+PASS schtasks operation over 30 seconds receives owned helper deadline
+PASS native timeout propagates failure through owned helper
+CSHARP owned-process, console-observer, visible-control, task-bridge: compiled only
+PASS Linux dry check: syntax, C# compilation and receipt schema only; no Windows workflow executed
+PASS gate HTTPS browser survivor recorded
+PASS job membership checked before escape classification
+PASS validator-failure
+PASS pair-failure
+PASS child with actual job membership admitted
+PASS spoofed environment without job membership refused
+PASS publication newer than tested run start
+PASS direct launch without ownership context refused
+PASS fixed broker clock supplies bounded owned-helper timeout
+PASS fixed broker records native failure without inventing job proof
+UNCHANGED p11c.node-test.mjs
+UNCHANGED p11c-deadline-check.ps1
+UNCHANGED p11c-native-check.ps1
+UNCHANGED every p11c PowerShell assertion; historical setup executor relocated only
+UNCHANGED all 27 prior hostile scanner fixtures
+UNCHANGED native ownership C# implementation
+RED enumeration-before-removal (assertion failure, exit 1)
+RED cleanup-without-deadline (assertion failure, exit 1)
+RED node-native-kill (assertion failure, exit 1)
+RED taskkill-in-test (assertion failure, exit 1)
+RED allow-breakaway (assertion failure, exit 1)
+RED delete-unprefixed-task (assertion failure, exit 1)
+RED desktop-https-dispatch (assertion failure, exit 1)
+RED finalize-inside-child (assertion failure, exit 1)
+RED preserve-running-wrapper (assertion failure, exit 1)
+RED native-outside-job (assertion failure, exit 1)
+RED skip-launcher-cleanup: tests rejected mutant (exit 1)
+RED accept-junction: tests rejected mutant (exit 1)
+RED compare-only-exe: tests rejected mutant (exit 1)
+RED accept-reparse-powershell: actual PowerShell ancestor guard rejected mutant
+RED regex-only scanner: exact crev4 assertion failed (exit 1)
+Native ownership scanner: 0 violations; parse failures: 0

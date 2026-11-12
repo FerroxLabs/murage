@@ -87,7 +87,7 @@ it("the upgrade from v8 creates no index on a table that holds rows, and the tri
   const after = db.prepare("SELECT name,type,tbl_name,sql FROM sqlite_schema").all() as Array<{ name: string; type: string; tbl_name: string; sql: string | null }>;
   // (revoke-bounded r3's late objects are made at every open from v9 on, beside the versioned text: schema.ts REVOKE_LATE_SQL)
   // (1.0.3 lane 2's derived objects, the age-key table and its company, are made empty at every v10 open too: schema.ts ensureRecordKeys)
-  const revokeLate = new Set([...ownerTailObjects, ...LANE2_DERIVED_NAMES, "memory_deny", "memory_revocation_targets", "memory_evidence_by_source", "memory_source_origins", "memory_late_build", "memory_revoke_fold", "memory_revoke_fold_bulk", "memory_evidence_by_source_insert", "memory_evidence_by_source_delete", "memory_source_origins_insert"]);
+  const revokeLate = new Set(["memory_capture_deferred", "memory_capture_deferred_order", ...ownerTailObjects, ...LANE2_DERIVED_NAMES, "memory_deny", "memory_revocation_targets", "memory_evidence_by_source", "memory_source_origins", "memory_late_build", "memory_revoke_fold", "memory_revoke_fold_bulk", "memory_evidence_by_source_insert", "memory_evidence_by_source_delete", "memory_source_origins_insert"]);
   // (v13's source stamps and last-flow stamps, two tables and their triggers on memory_source_versions and memory_thread_flow, are created
   // empty in the same step: schema.ts SOURCE_LSN_SCHEMA)
   const sourceLsn = new Set(["memory_source_lsn", "memory_source_lsn_insert", "memory_thread_flow_last", "memory_thread_flow_last_insert"]);
@@ -265,7 +265,7 @@ it("a build stopped part-way resumes from its persisted cursor on a new connecti
 it("a process killed in the middle of the build leaves a correct file; the next start resumes and finishes", async () => {
   const { db, file } = upgradedFile(8_000, 200);
   db.close(); dbs.splice(dbs.indexOf(db), 1);
-  const child = fork(join(import.meta.dirname, "testing", "open-turns-child.ts"), [file], { execArgv: ["--experimental-strip-types", "--no-warnings"], stdio: ["ignore", "ignore", "pipe", "ipc"] });
+  const child = fork(join(import.meta.dirname, "testing", "open-turns-child.ts"), [file], { windowsHide: true, execArgv: ["--experimental-strip-types", "--no-warnings"], stdio: ["ignore", "ignore", "pipe", "ipc"] });
   // the child's stderr is kept, so a child that dies (a load error under strip-types) fails with its own message, not a timeout
   let stderr = "";
   child.stderr!.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });

@@ -5,7 +5,7 @@
   "commands": {
     "restart_service": { "reason": "customer" },
     "safe_mode": { "reason": "customer" },
-    "update_software": { "keep": ["files", "settings", "logins"], "reason": "customer" },
+    "update_software": { "keep": ["files", "settings", "logins"], "reason": "customer", "sequence": 5 },
     "reset_from_backup": { "resetId": "0b1c2d3e-aaaa-4bbb-8ccc-123456789abc", "from": "last_good_backup", "snapshotFirst": true,
       "snapshotTag": "murage-pre-reset-0b1c2d3e-aaaa-4bbb-8ccc-123456789abc", "keepSnapshotDays": 9 },
     "undo_reset": { "resetId": "0b1c2d3e-aaaa-4bbb-8ccc-123456789abc", "snapshotTag": "murage-pre-reset-0b1c2d3e-aaaa-4bbb-8ccc-123456789abc" },
@@ -13,7 +13,10 @@
     "export_archive": { "requestId": "export-0b1c2d3e-aaaa-4bbb-8ccc-123456789abc", "deliverBy": 1800000000000, "format": "tar.zst.age",
       "path": "exports/export-0b1c2d3e-aaaa-4bbb-8ccc-123456789abc/archive.tar.zst.age", "maxBytes": 107374182400 }
   },
+  "optionalPayloadFields": { "update_software": ["sequence"] },
   "homeBodies": {
+    "update-state": ["generation", "installedSequence", "lastResult", "stuck"],
+    "updateLastResult": ["commandId", "outcome", "reason"],
     "commands/ack": ["generation", "commandId", "outcome"],
     "ackOutcomes": ["done", "failed", "unsupported"],
     "logs": ["generation", "commandId", "chunk", "final", "lines"],
@@ -59,11 +62,12 @@
     "Cloud door page: (?:no_ticket|device_load|device_save|device_forget|refresh|bounce|v1_record|unexpected|unknown) (?:none|NotAllowedError|AbortError|InvalidStateError|SecurityError|NotSupportedError|ConstraintError|UnknownError|DataError|QuotaExceededError|TimeoutError|TypeError|NetworkError|OperationError|VersionError|ReadOnlyError|SyntaxError|unknown)",
     "Cloud door page: device_open (?:timeout|blocked|error|unknown) (?:chrome|safari|firefox|edge|other|unknown)",
     "Cloud owner factor: (?:owner_factor_issued|owner_factor_renewed|owner_factor_withheld)(?: (?:stale_proof|proof_kind_after_revoke))?",
+    "\\[ui-canary\\](?: (?:(?:stale-instance|teardown-unconfirmed|cleanup-busy-exit-75|instance-write-failed)|launch gen=\\d{1,9} result=(?:ok|failed)(?: error=(?:(?:open|cdp-url|close|relay|browser|cdp)-(?:session-not-running|session-did-not-start|(?:session|endpoint-lookup|connect)-(?:timed-out|refused|failed)|unreachable|busy|stale-instance|launcher-refused|spawn-refused|spawn-error|unavailable|no-endpoint|no-page|error|disconnected|other|exit-(?:\\d{1,3}|signal))|no-ui|timed-out|halted|aborted|other))?)){1,8}",
     "(?:Error|TypeError|RangeError|ReferenceError|SyntaxError|AbortError|TimeoutError)(?: \\[ERR_[A-Z0-9_]{1,60}\\])?",
     "at (?:(?:async )?[A-Za-z0-9_$.<>\\[\\] ]{1,100} )?\\(?(?:/opt/murage/[A-Za-z0-9_./@-]{1,200}|node:[a-z_/]{1,80}):\\d{1,7}:\\d{1,7}\\)?",
     "\\[\\d{1,4} lines? omitted\\]"
   ],
-  "logEventsKept": ["server started on port 8799", "Cloud door enter: ticket_expired", "Cloud door enter: ticket_bad_signature", "Cloud door enter: signed_in_first", "Cloud door state: state_answered", "Cloud door enter: device_limit", "Cloud door page: bounce NotAllowedError", "Cloud door page: unknown unknown", "Cloud door page: device_open timeout chrome", "started scheduler in 120 ms", "backup finished: 42 files, 3 MB", "Self-service command reset_from_backup: done", "    at Server.listen (/opt/murage/dist-server/index.js:12:5)", "TypeError [ERR_INVALID_ARG_TYPE]"],
-  "logEventsPrivate": ["Cloud door enter: ticket_expired account=owner-1", "Cloud door page: bounce my bank pin is 4321", "Cloud door page: device_open blocked Mozilla/5.0", "Cloud door enter: eyJhbGciOiJFUzI1NiJ9", "Cloud door enter: signed_in_first 0f9b1c2d", "prompt=\"diary pin 4321\"", "turn prompt=\"please summarise my diary entry for today\" done", "user said: my bank pin is 4321", "server started on port 8799 prompt=diary"],
+  "logEventsKept": ["[ui-canary] launch gen=1 result=failed error=open-launcher-refused", "[ui-canary] instance-write-failed launch gen=12 result=ok", "[ui-canary] launch gen=3 result=failed error=cdp-url-session-not-running stale-instance teardown-unconfirmed cleanup-busy-exit-75", "server started on port 8799", "Cloud door enter: ticket_expired", "Cloud door enter: ticket_bad_signature", "Cloud door enter: signed_in_first", "Cloud door state: state_answered", "Cloud door enter: device_limit", "Cloud door page: bounce NotAllowedError", "Cloud door page: unknown unknown", "Cloud door page: device_open timeout chrome", "started scheduler in 120 ms", "backup finished: 42 files, 3 MB", "Self-service command reset_from_backup: done", "    at Server.listen (/opt/murage/dist-server/index.js:12:5)", "TypeError [ERR_INVALID_ARG_TYPE]"],
+  "logEventsPrivate": ["[ui-canary] launch gen=1 result=failed error=pin-4321", "[ui-canary] launch gen=1 result=failed error=open-launcher-refused-4321", "[ui-canary] launch gen=1 result=failed error=my bank pin is 4321", "[ui-canary] launch gen=1 result=failed error=Open-Refused", "[ui-canary] launch gen=x result=ok", "[ui-canary] launch gen=1 result=failed error=https://evil.example/a?t=1", "[ui-canary] prompt=diary", "[ui-canary] ", "Cloud door enter: ticket_expired account=owner-1", "Cloud door page: bounce my bank pin is 4321", "Cloud door page: device_open blocked Mozilla/5.0", "Cloud door enter: eyJhbGciOiJFUzI1NiJ9", "Cloud door enter: signed_in_first 0f9b1c2d", "prompt=\"diary pin 4321\"", "turn prompt=\"please summarise my diary entry for today\" done", "user said: my bank pin is 4321", "server started on port 8799 prompt=diary"],
   "pairDeviceDigestVector": {"$comment": "SHA-256 hex of \"murage-pair-device-v1\\n<scope>\\n<publicKey>\\n<assertionKey>\": the device a pair hold is spent on (pairing.ts, cloud-request-auth.ts).", "device": {"scope": "owner-desktop", "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAfixturepublickeyfixturepublickeyfixtur=\n-----END PUBLIC KEY-----\n", "assertionKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAfixtureassertionkeyfixtureassertionke=\n-----END PUBLIC KEY-----\n"}, "digest": "8f63b23dc25ba6b066f8c272ae0fd0c1581a02c5040f11f2872b5eaa0df238e7"}
 }
