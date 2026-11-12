@@ -29,7 +29,7 @@ export function systemVoicesAvailable(platform: string = process.platform): bool
 
 export type Runner = (file: string, args: string[], timeout: number) => Promise<{ stdout: string }>;
 
-const defaultRun: Runner = (file, args, timeout) => execFileAsync(file, args, { timeout, maxBuffer: 4 * 1024 * 1024 });
+const defaultRun: Runner = (file, args, timeout) => execFileAsync(file, [...args], { timeout, maxBuffer: 4 * 1024 * 1024 });
 
 /** Parse `say -v ?` output. Lines look like:
  * `Albert              en_US    # Hello! My name is Albert.`

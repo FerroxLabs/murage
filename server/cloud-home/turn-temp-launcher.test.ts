@@ -13,7 +13,7 @@ home = sys.argv[2]
 render = m["validate_render"]("claudeAgent", {"systemPrompt": "x"}, "0123456789abcdef")
 argv, blobs = m["turn_mount_args"]("claudeAgent", [], home, home, "claude", [], render, [], (10, 20))
 print(json.dumps(argv))
-`, launcher, HOME], { encoding: "utf8" });
+`, launcher, HOME], { windowsHide: true, encoding: "utf8" });
 it("mounts a turn render file inside the turn's private /tmp tmpfs, never under the engine home", () => {
   const argv = JSON.parse(plan()) as string[];
   const path = "/tmp/murage-render-0123456789abcdef/prompt.txt";
@@ -34,6 +34,6 @@ m = runpy.run_path(sys.argv[1])
 paths = ["/tmp/murage-render-0123456789abcdef/mcp.json", "/tmp/murage-render-0123456789abcdef/prompt.txt", "/tmp/evil.json", "/tmp/murage-render-0123456789abcdef/../../etc/x",
          "/tmp/murage-render-0123456789abcdef/other.json", "/tmp/murage-render-xyz/mcp.json", "/tmp/x/murage-render-0123456789abcdef/mcp.json", "/tmp/murage-mcp-0123456789ab/mcp.json"]
 print(json.dumps([bool(m["RENDER_PATTERN"].match(p)) for p in paths]))
-`, launcher], { encoding: "utf8" }));
+`, launcher], { windowsHide: true, encoding: "utf8" }));
   expect(out).toEqual([true, true, false, false, false, false, false, false]);
 });

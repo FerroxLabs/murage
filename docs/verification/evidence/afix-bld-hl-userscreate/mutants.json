@@ -1,0 +1,56 @@
+[
+  {
+    "id": "BLOCK1-secret-log-during-transport",
+    "baselineExit": 0,
+    "mutantExit": 1,
+    "killed": true,
+    "assertion": "A secret reached a protected sink.",
+    "before": "076b1918d1263e81a66433a4ba1fbf3fd902f562076e89a61b2c7f8c29414f09",
+    "after": "076b1918d1263e81a66433a4ba1fbf3fd902f562076e89a61b2c7f8c29414f09"
+  },
+  {
+    "id": "BLOCK2-collection-failure-counted-as-red",
+    "baselineExit": 0,
+    "mutantExit": 1,
+    "killed": true,
+    "assertion": "expected true to be false",
+    "before": "608d331133000cd7bdb726e3dda169d0de0a1217e4ef0145885dceb21ca7303e",
+    "after": "608d331133000cd7bdb726e3dda169d0de0a1217e4ef0145885dceb21ca7303e"
+  },
+  {
+    "id": "secret-echo-result",
+    "baselineExit": 0,
+    "mutantExit": 1,
+    "killed": true,
+    "assertion": "A secret reached a protected sink.",
+    "before": "076b1918d1263e81a66433a4ba1fbf3fd902f562076e89a61b2c7f8c29414f09",
+    "after": "076b1918d1263e81a66433a4ba1fbf3fd902f562076e89a61b2c7f8c29414f09"
+  },
+  {
+    "id": "replacement-create-on-restart",
+    "baselineExit": 0,
+    "mutantExit": 1,
+    "killed": true,
+    "assertion": "expected 1 to be +0",
+    "before": "e99cf4afc0db7442fc965c705057401ae230e3def03ab2bd8556bdac0b902a49",
+    "after": "e99cf4afc0db7442fc965c705057401ae230e3def03ab2bd8556bdac0b902a49"
+  },
+  {
+    "id": "missing-finally-clear",
+    "baselineExit": 0,
+    "mutantExit": 1,
+    "killed": true,
+    "assertion": "expected false to be true",
+    "before": "076b1918d1263e81a66433a4ba1fbf3fd902f562076e89a61b2c7f8c29414f09",
+    "after": "076b1918d1263e81a66433a4ba1fbf3fd902f562076e89a61b2c7f8c29414f09"
+  },
+  {
+    "id": "recipient-flag-default-true",
+    "baselineExit": 0,
+    "mutantExit": 1,
+    "killed": true,
+    "assertion": "expected true to be false",
+    "before": "bf169dcb1d23b55000ad92ba2b9a7af53c4279e70490b494f726bbb813685fe6",
+    "after": "bf169dcb1d23b55000ad92ba2b9a7af53c4279e70490b494f726bbb813685fe6"
+  }
+]

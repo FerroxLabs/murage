@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -246,5 +247,220 @@ describe("sealUnwritten", () => {
     expect(() => boundary.beforeSubmit(() => { throw first; })).toThrow(first);
     expect(boundary.sealUnwritten(revoked(), true)).toBe(false);
     expect(() => boundary.assertNotRefused()).toThrow(first);
+  });
+});
+
+it("pre-spawn validation does not release a prompt or spend an unwritten rebuild", () => {
+  const boundary = new TurnSubmissionBoundary();
+  const passed = vi.fn(), check = vi.fn();
+  boundary.onPassed(passed);
+  boundary.alsoCheck(check);
+  boundary.started();
+  boundary.prepare(() => boundary.beforeSubmit(() => {}));
+  expect(check).toHaveBeenCalledTimes(1);
+  expect(passed).not.toHaveBeenCalled();
+  expect(boundary.hasReleasedSubmission).toBe(false);
+  // A seal can move while the spawned process waits for MCP readiness.
+  expect(() => boundary.beforeSubmit(() => { throw new Error("sealed"); })).toThrow("sealed");
+  expect(boundary.canRetry).toBe(true);
+  boundary.beforeSubmit(() => {});
+  expect(boundary.hasReleasedSubmission).toBe(true);
+  expect(passed).toHaveBeenCalledTimes(1);
+});
+
+it("preparation after a released prompt cannot authorize replay", () => {
+  const boundary = new TurnSubmissionBoundary();
+  boundary.started();
+  boundary.beforeSubmit(() => {});
+  expect(() => boundary.prepare(() => boundary.beforeSubmit(() => { throw new Error("sealed"); }))).toThrow("sealed");
+  expect(boundary.hasReleasedSubmission).toBe(true);
+  expect(boundary.canRetry).toBe(false);
+});
+
+it("C11 keeps prior released submissions through a later refused fence", () => {
+  const boundary = new TurnSubmissionBoundary();
+  const withdrawn = vi.fn(), refused = vi.fn();
+  boundary.onNotWritten(withdrawn);
+  boundary.started();
+  boundary.acceptedBy(refused);
+  boundary.beforeSubmit(() => {});
+  expect(() => boundary.beforeSubmit(() => { throw new Error("revoked"); })).toThrow("revoked");
+  expect(boundary.canRetry).toBe(false);
+  expect(boundary.hasReleasedSubmission).toBe(true);
+  expect(withdrawn).not.toHaveBeenCalled();
+  expect(refused.mock.calls[0][1]).toEqual({ priorSubmissionReleased: true });
+  expect(Object.isFrozen(refused.mock.calls[0][1])).toBe(true);
+  boundary.notWritten();
+  expect(withdrawn).toHaveBeenCalledTimes(1);
+  expect(boundary.hasReleasedSubmission).toBe(true);
+});
+
+
+it.each(["route", "cursor", "delegation"])("c11-written-attribution survives %s refusal", async origin => {
+  const { createTurnAttribution } = await import("./turn-attribution.ts");
+  const row: { dispatchedIn?: string } = {};
+  const unstamp = vi.fn(() => { delete row.dispatchedIn; });
+  const attribution = createTurnAttribution({ stamp: (_thread, _row, turn) => { row.dispatchedIn = turn; }, unstamp });
+  const boundary = new TurnSubmissionBoundary();
+  attribution.begin("claim", "thread", ["owner"]);
+  attribution.bind("claim", boundary);
+  boundary.started(); attribution.accepted("claim", "provider-turn"); boundary.acceptedBy(() => {});
+  boundary.beforeSubmit(() => {}); boundary.noteEngineWrite();
+  expect(row.dispatchedIn).toBe("provider-turn");
+  expect(() => boundary.beforeSubmit(() => { throw new Error(origin); })).toThrow(origin);
+  expect(unstamp).not.toHaveBeenCalled();
+  expect(row.dispatchedIn).toBe("provider-turn");
+  expect(boundary.canRetry).toBe(false);
+  expect(boundary.sealUnwritten(new Error("late"), true)).toBe(false);
+  expect(boundary.hasConfirmedSubmission).toBe(true);
+});
+
+it("c11-written-attribution retains explicit unwritten withdrawal", async () => {
+  const { createTurnAttribution } = await import("./turn-attribution.ts");
+  const unstamp = vi.fn();
+  const attribution = createTurnAttribution({ stamp: vi.fn(), unstamp });
+  const boundary = new TurnSubmissionBoundary();
+  attribution.begin("claim", "thread", ["owner"]); attribution.bind("claim", boundary);
+  boundary.started(); attribution.accepted("claim", "provider-turn");
+  boundary.beforeSubmit(() => {}); boundary.notWritten();
+  expect(unstamp).toHaveBeenCalledWith("thread", "owner", "provider-turn");
+  expect(boundary.canRetry).toBe(false);
+  const sealed = new TurnSubmissionBoundary(); sealed.started();
+  const listener = vi.fn(); sealed.onNotWritten(listener);
+  expect(sealed.sealUnwritten(new Error("sealed"), true)).toBe(true);
+  expect(() => sealed.beforeSubmit(() => {})).toThrow("sealed");
+  expect(listener).toHaveBeenCalledTimes(1);
+});
+
+it("c11-review-10 boundary documentation limits rebuilding to verified unwritten dispatches", () => {
+  const boundary = readFileSync(new URL("./turn-dispatch-guard.ts", import.meta.url), "utf8");
+  const acp = readFileSync(new URL("./drivers/acp/core.ts", import.meta.url), "utf8");
+  const acceptance = boundary.slice(boundary.indexOf("/** The server accepted"), boundary.indexOf("  acceptedBy("));
+  const fence = acp.slice(acp.indexOf("// The submission fence (SendTurnInput.beforeSubmit)"), acp.indexOf("// The submission fence (SendTurnInput.beforeSubmit)") + 650);
+  for (const comment of [acceptance, fence]) {
+    expect(comment).toContain("prior release");
+    expect(comment).toContain("verified unwritten");
+  }
+  expect(acceptance).not.toContain("nothing was written, so it may re-run");
+  expect(fence).not.toContain("the harness re-runs it on a reset session");
+});
+
+
+it("setup validation releases no prompt; a refusal after readiness can rebuild, while a prior write cannot", () => {
+  const boundary = new TurnSubmissionBoundary();
+  const passed = vi.fn();
+  boundary.onPassed(passed);
+  boundary.started();
+  boundary.beforePrepare(() => {});
+  expect(passed).not.toHaveBeenCalled();
+  expect(boundary.hasReleasedSubmission).toBe(false);
+  expect(boundary.canRetry).toBe(false); // setup alone is not proof of refusal
+  expect(() => boundary.beforeSubmit(() => { throw new Error("sealed during readiness"); })).toThrow();
+  expect(boundary.canRetry).toBe(true);
+
+  const released = new TurnSubmissionBoundary();
+  released.started();
+  released.beforeSubmit(() => {});
+  expect(() => released.beforePrepare(() => { throw new Error("recovery revoked"); })).toThrow();
+  expect(released.canRetry).toBe(false);
+  expect(released.hasReleasedSubmission).toBe(true);
+});
+
+describe("T6a replay proof and seal", () => {
+  it.each([false, true])("leaves an unknown boundary unproven (requireNoRelease=%s)", requireNoRelease => {
+    const boundary = new TurnSubmissionBoundary();
+    boundary.started();
+    expect(boundary.sealForReplay(new Error("replay"), { requireNoRelease })).toBe("unproven");
+    expect(boundary.canRetry).toBe(false);
+    expect(boundary.refusedWith).toBeUndefined();
+    boundary.beforeSubmit(() => {});
+    expect(boundary.releasedWrites).toBe(1);
+  });
+
+  it("counts released writes forever and preserves the current prohibition on replay after release", () => {
+    const boundary = new TurnSubmissionBoundary();
+    boundary.started();
+    boundary.beforeSubmit(() => {});
+    boundary.notWritten();
+    boundary.beforeSubmit(() => {});
+    const refusal = new Error("refused");
+    boundary.refuse(refusal);
+    expect(boundary.releasedWrites).toBe(2);
+    expect(boundary.sealForReplay(new Error("replay"), { requireNoRelease: true })).toBe("unproven");
+    const validate = vi.fn();
+    boundary.beforeSubmit(validate);
+    expect(validate).toHaveBeenCalledOnce();
+    expect(boundary.releasedWrites).toBe(3);
+    expect(boundary.sealForReplay(new Error("replay"), { requireNoRelease: false })).toBe("unproven");
+    expect(boundary.canRetry).toBe(false);
+    boundary.beforeSubmit(validate);
+    expect(validate).toHaveBeenCalledTimes(2);
+    expect(boundary.releasedWrites).toBe(4);
+  });
+
+  it("seals an unstarted boundary once with the first replay refusal", () => {
+    const boundary = new TurnSubmissionBoundary();
+    const first = new Error("first replay");
+    expect(boundary.sealForReplay(first, { requireNoRelease: true })).toBe("sealed");
+    expect(boundary.sealForReplay(new Error("second replay"), { requireNoRelease: true })).toBe("sealed");
+    const validate = vi.fn(), check = vi.fn(), passed = vi.fn(), notWritten = vi.fn();
+    boundary.alsoCheck(check); boundary.onPassed(passed); boundary.onNotWritten(notWritten);
+    expect(() => boundary.beforeSubmit(validate)).toThrow(first);
+    expect(() => boundary.beforeSubmit(validate)).toThrow(first);
+    expect(validate).not.toHaveBeenCalled(); expect(check).not.toHaveBeenCalled(); expect(passed).not.toHaveBeenCalled();
+    expect(notWritten).toHaveBeenCalledTimes(2);
+    expect(boundary.releasedWrites).toBe(0);
+  });
+
+  it("is idempotent with sealUnwritten and preserves its refusal", () => {
+    const boundary = new TurnSubmissionBoundary();
+    boundary.started();
+    const refusal = new Error("acceptance refused");
+    expect(boundary.sealUnwritten(refusal, true)).toBe(true);
+    expect(boundary.sealForReplay(new Error("replay"), { requireNoRelease: true })).toBe("sealed");
+    expect(boundary.sealForReplay(new Error("again"), { requireNoRelease: false })).toBe("sealed");
+    expect(boundary.refusedWith).toBe(refusal);
+    expect(() => boundary.beforeSubmit(() => {})).toThrow(refusal);
+    expect(boundary.releasedWrites).toBe(0);
+  });
+
+  it.each([undefined, null, new Error("original")])("preserves a recorded refusal even when its value is %s", refusal => {
+    const boundary = new TurnSubmissionBoundary();
+    boundary.started();
+    try { boundary.beforeSubmit(() => { throw refusal; }); } catch { /* trusted refusal */ }
+    expect(boundary.sealForReplay(new Error("replacement"), { requireNoRelease: true })).toBe("sealed");
+    let caught: unknown = Symbol("not thrown");
+    try { boundary.beforeSubmit(() => {}); } catch (error) { caught = error; }
+    expect(caught).toBe(refusal);
+    expect(boundary.releasedWrites).toBe(0);
+  });
+});
+
+
+describe("replay seals with current submission evidence", () => {
+  it.each([false, true])("cannot prove replay after an engine-confirmed write (requireNoRelease=%s)", requireNoRelease => {
+    const boundary = new TurnSubmissionBoundary();
+    boundary.started();
+    boundary.noteEngineWrite();
+    const refusal = new Error("late refusal");
+    boundary.refuse(refusal);
+    expect(boundary.sealForReplay(new Error("replay"), { requireNoRelease })).toBe("unproven");
+    expect(boundary.hasConfirmedSubmission).toBe(true);
+    expect(boundary.refusedWith).toBe(refusal);
+  });
+
+  it("allows a refused preparation to seal, and checks the seal before later setup or writes", () => {
+    const boundary = new TurnSubmissionBoundary();
+    boundary.started();
+    boundary.prepare(() => boundary.beforeSubmit(() => {}));
+    expect(boundary.releasedWrites).toBe(0);
+    const refusal = new Error("readiness refused");
+    expect(() => boundary.beforePrepare(() => { throw refusal; })).toThrow(refusal);
+    expect(boundary.sealForReplay(new Error("replay"), { requireNoRelease: true })).toBe("sealed");
+    const validate = vi.fn();
+    expect(() => boundary.beforePrepare(validate)).toThrow(refusal);
+    expect(() => boundary.beforeSubmit(validate)).toThrow(refusal);
+    expect(validate).not.toHaveBeenCalled();
+    expect(boundary.releasedWrites).toBe(0);
   });
 });

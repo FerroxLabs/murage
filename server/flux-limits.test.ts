@@ -5,7 +5,7 @@ import { accountTotal, createFluxSpendReader, fetchFluxLimits, FLUX_KEY_LIMITS_U
 import { KNOWN_FRAME_KINDS, scopedConfig } from "./sse-visibility.ts";
 import { fluxKeyEpoch, onFluxKeySaved, saveConfig } from "./config.ts";
 
-const ok = { key_id: "k1", key_monthly_budget_usd: null, spent_usd_this_month: 12.4, tokens_this_month: 9, spend_basis: "billed_sale", resets_at: "2026-12-01T00:00:00Z", as_of: "2026-11-04T10:00:00Z" };
+const ok = { key_id: "k1", key_monthly_budget_usd: null, spent_usd_this_month: 12.4, tokens_this_month: 9, spend_basis: "customer_billed_sale", resets_at: "2026-12-01T00:00:00Z", as_of: "2026-11-04T10:00:00Z" };
 const respond = (status: number, body: unknown, headers: Record<string, string> = {}) =>
   new Response(body === undefined ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
 

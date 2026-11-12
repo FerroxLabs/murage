@@ -642,7 +642,7 @@ describe("per-phone share and ask switch", () => {
     const src = readFileSync(fileURLToPath(new NodeURL("./CompanionSection.tsx", import.meta.url)), "utf8");
     // 1.0.12: the Preview card asks /api/phones/offered and hands each answer to the page
     expect(readFileSync(fileURLToPath(new NodeURL("./PhonePreviewSwitches.tsx", import.meta.url)), "utf8")).toContain('"/api/phones/offered"');
-    expect(src).toContain("<PhonePreviewSwitches onAnswer={onOfferAnswer} />");
+    expect(src).toContain("<PhonePreviewSwitches onAnswer={onOfferAnswer} mode={mode} />");
     expect(src).toContain("answer?.shareAsk === true");
     expect(src).not.toContain("answer?.offered");
     expect(src).toContain("companion.shareAsk(device.id,");

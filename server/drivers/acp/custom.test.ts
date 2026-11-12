@@ -49,7 +49,7 @@ describe("CustomAcpDriver config", () => {
     });
     expect(CustomAcpDriver.models).toEqual({
       default: "agent-default",
-      options: [{ id: "agent-default", label: "Agent default" }],
+      options: [{ id: "agent-default", label: "Agent default", custom: true }],
     });
     // no install descriptor: there is nothing generic to install
     expect(CustomAcpDriver.install).toBeUndefined();

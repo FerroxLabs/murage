@@ -1,4 +1,6 @@
 #!/usr/bin/env -S node --experimental-strip-types
+import "../shared/win-hide-child-process.mjs";
+import { withHideInherit } from '../shared/win-hide-child-process.mjs';
 // Thin, agent-friendly CLI over the same guarded MCP operations exposed to
 // external clients. It deliberately owns no second API client or wait loop.
 import { spawn, type ChildProcess } from "node:child_process";
@@ -11,7 +13,8 @@ import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
 
 import { handleToolCall, request, validateBaseUrl } from "./mcp-server.ts";
 import { readMcpAccessKey } from "../server/mcp-access.ts";
-import { removeTempDir, waitForExit } from "../server/testing/cleanup.ts";
+import { removeTempDir } from "../server/testing/cleanup.ts";
+import { stopFixtureServer } from "../server/testing/platform-fixtures.ts";
 import { freePortBlock } from "../server/testing/ports.ts";
 import { gitBashPath } from "../server/tool-discovery.ts";
 import { TERMS_VERSION } from "../shared/terms.ts";
@@ -493,13 +496,13 @@ export async function launchVerificationServer(
   }
   function startChild() {
     const log = openSync(logPath, "a", 0o600);
-    try { const launched = spawn(process.execPath, ["--experimental-strip-types", ...(options.instrumentationSource === undefined ? [] : ["--import", pathToFileURL(instrumentationPath).href]), join(ROOT, "server", "index.ts")], {
+    try { const launched = spawn(process.execPath, ["--experimental-strip-types", ...(options.instrumentationSource === undefined ? [] : ["--import", pathToFileURL(instrumentationPath).href]), join(ROOT, "server", "index.ts")], withHideInherit({
     cwd: ROOT,
     env: childEnv,
     // Cloud fixtures keep the private boot pipe at FD3 and satisfy the
-    // supervisor's separate IPC contract at FD4; desktop stdio is unchanged.
-    stdio: options.cloud ? ["ignore", log, log, "pipe", "ipc"] : ["ignore", log, log],
-    });
+    // supervisor's separate IPC contract at FD4; desktop has an IPC channel too, for graceful Windows shutdown.
+    stdio: options.cloud ? ["ignore", log, log, "pipe", "ipc"] : ["ignore", log, log, "ipc"],
+    }));
     if(options.cloud) (launched.stdio[3] as import("node:stream").Writable).on("error", () => {}).end(JSON.stringify({ version: 1, bootstrapSecret: options.cloud.bootstrapSecret, credentials: {} }));
     return launched; } finally { closeSync(log); }
   }
@@ -520,7 +523,7 @@ export async function launchVerificationServer(
   try {
     await ready();
   } catch (error) {
-    await waitForExit(child, { signal: "SIGTERM" });
+    await stopFixtureServer(child);
     await removeFixtureDirs();
     throw error;
   }
@@ -539,25 +542,25 @@ export async function launchVerificationServer(
       if (closed || restarting) throw new ControlMurageError("verification fixture is closed or restarting");
       restarting = true;
       try {
-        await waitForExit(child, { signal: "SIGTERM" });
+        await stopFixtureServer(child);
         logPath = join(evidenceDir, `server-${Date.now()}-${process.pid}.log`);
         child = startChild();
         fixture.child = child;
         fixture.info = { url, pid: child.pid!, dataDir, logPath };
         try { await ready(); }
-        catch (error) { await waitForExit(child, { signal: "SIGTERM" }); throw error; }
+        catch (error) { await stopFixtureServer(child); throw error; }
       } finally { restarting = false; }
     },
     async stop() {
       if (restarting) throw new ControlMurageError("verification fixture is restarting");
-      await waitForExit(child, { signal: "SIGTERM" });
+      await stopFixtureServer(child);
     },
     async close() {
       if (closed) return;
       if (restarting) throw new ControlMurageError("verification fixture is restarting");
       closed = true;
       fixtureDataDirs.delete(url);
-      await waitForExit(child, { signal: "SIGTERM" });
+      await stopFixtureServer(child);
       await removeFixtureDirs();
     },
   };

@@ -133,6 +133,14 @@ describe("the landing never guesses", () => {
     expect(landingControl(heading, rootOf(top))).toBe(opener);
   });
 
+  it("lands on the browser region while its records are still loading", () => {
+    const browser = el("SECTION", { id: "memory-browser-heading", "data-setting-control": "memory-browser-heading", tabindex: "-1" }, [el("BUTTON", { "aria-expanded": "true" })]);
+    const top = el("DIV", {}, [sw("memory-heading"), browser]);
+    expect(landingControl(browser, rootOf(top))).toBe(browser);
+    expect(landOnSetting(browser, { root: rootOf(top), afterPaint: () => {}, later: () => {}, activeElement: () => null })).toBe(browser);
+    expect(browser.getAttribute("data-setting-landed")).toBe("");
+  });
+
   it("lands on the card when its mark is disabled or hidden, never on another control", () => {
     const heading = el("H3", { id: "local-models-heading" });
     const disabled = el("BUTTON", { disabled: "", "data-setting-control": "local-models-heading" });

@@ -1,0 +1,2572 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "claude-sonnet int1019 lane A",
+  "date": "2026-11-11",
+  "base": "9955459fc",
+  "scope": "int1019-lane-A-63-keys",
+  "strings": {
+    "en:ux.cloud.terms.siteIntro": {
+      "text": "Your terms need your agreement once. Agree on murage.ai, then come back here.",
+      "en": "Your terms need your agreement once. Agree on murage.ai, then come back here.",
+      "verdict": "fail",
+      "note": "Awkward opening. Use: You need to agree to the terms once. Agree on murage.ai, then come back here."
+    },
+    "en:ux.cloud.terms.agreeOnSite": {
+      "text": "Agree on murage.ai",
+      "en": "Agree on murage.ai",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.terms.checkAgain": {
+      "text": "Check again",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.title": {
+      "text": "One more step.",
+      "en": "One more step.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.body": {
+      "text": "We sent a 6-digit code to {email}. Enter it to {act}.",
+      "en": "We sent a 6-digit code to {email}. Enter it to {act}.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.sending": {
+      "text": "Sending your code...",
+      "en": "Sending your code...",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.confirm": {
+      "text": "Confirm",
+      "en": "Confirm",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.checking": {
+      "text": "Checking...",
+      "en": "Checking...",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.resend": {
+      "text": "Send a new code",
+      "en": "Send a new code",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.resendWait": {
+      "text": "You can ask for another code in {seconds} seconds.",
+      "en": "You can ask for another code in {seconds} seconds.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.cancel": {
+      "text": "Cancel",
+      "en": "Cancel",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.groupLabel": {
+      "text": "6-digit code",
+      "en": "6-digit code",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.digitLabel": {
+      "text": "Digit {n} of 6",
+      "en": "Digit {n} of 6",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.wrong": {
+      "text": "That code didn't work. Try again.",
+      "en": "That code didn't work. Try again.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.expired": {
+      "text": "That code has expired. We can send a new one.",
+      "en": "That code has expired. We can send a new one.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.locked": {
+      "text": "Too many tries on that code. Send a new code.",
+      "en": "Too many tries on that code. Send a new code.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.tooMany": {
+      "text": "That's a lot of codes for one day. Try again tomorrow.",
+      "en": "That's a lot of codes for one day. Try again tomorrow.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.couldNotSend": {
+      "text": "We couldn't send your code just now. Nothing was changed. Try again in a minute.",
+      "en": "We couldn't send your code just now. Nothing was changed. Try again in a minute.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.unavailable": {
+      "text": "Nothing was changed. Try again in a minute.",
+      "en": "Nothing was changed. Try again in a minute.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.changed": {
+      "text": "This request changed. Review it again before you allow it.",
+      "en": "This request changed. Review it again before you allow it.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.cancelled": {
+      "text": "Cancelled. Nothing was changed.",
+      "en": "Cancelled. Nothing was changed.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.thisBot": {
+      "text": "this bot",
+      "en": "this bot",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.act.full_access": {
+      "text": "turn on Full access for {arg}",
+      "en": "turn on Full access for {arg}",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.act.allow_request": {
+      "text": "allow this request",
+      "en": "allow this request",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.act.folder_trust": {
+      "text": "trust this folder",
+      "en": "trust this folder",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.act.restore_release": {
+      "text": "restore from a backup",
+      "en": "restore from a backup",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.act.delete": {
+      "text": "delete this for good",
+      "en": "delete this for good",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.act.bot_reach": {
+      "text": "change who can reach {arg}",
+      "en": "change who can reach {arg}",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.act.mcp_server": {
+      "text": "add this tool server",
+      "en": "add this tool server",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.act.new_skill": {
+      "text": "allow this code to run",
+      "en": "allow this code to run",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.act.traffic_moved": {
+      "text": "change where this traffic goes",
+      "en": "change where this traffic goes",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.act.computer_viewer": {
+      "text": "open a view of the bot's screen",
+      "en": "open a view of the bot's screen",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.act.computer_command": {
+      "text": "let {arg} control a computer",
+      "en": "let {arg} control a computer",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.act.bot_widen": {
+      "text": "allow more than this setting allowed before",
+      "en": "allow more than this setting allowed before",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.act.device_remove": {
+      "text": "add another device",
+      "en": "add another device",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.act.config_change": {
+      "text": "change this setting",
+      "en": "change this setting",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.act.take_down_site": {
+      "text": "take this site down",
+      "en": "take this site down",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.act.fresh_door": {
+      "text": "connect this channel",
+      "en": "connect this channel",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.act.publish_allow": {
+      "text": "allow this site to be published",
+      "en": "allow this site to be published",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerCode.act.other": {
+      "text": "confirm this change",
+      "en": "confirm this change",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.ownerBanner.expired": {
+      "text": "To change settings, open Murage from murage.ai.",
+      "en": "To change settings, open Murage from murage.ai.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.signin.leadLink": {
+      "text": "Sign in to {engine}. A new tab opens. Come back here when it says you're done.",
+      "en": "Sign in to {engine}. A new tab opens. Come back here when it says you're done.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.signin.leadCode": {
+      "text": "Sign in to {engine}. Click the link below, approve in the new tab, then paste the code it shows into the box here.",
+      "en": "Sign in to {engine}. Click the link below, approve in the new tab, then paste the code it shows into the box here.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.signin.done": {
+      "text": "Done",
+      "en": "Done",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.signin.notHere": {
+      "text": "{engine} can't be signed in from a browser yet. Use the Murage desktop app for it.",
+      "en": "{engine} can't be signed in from a browser yet. Use the Murage desktop app for it.",
+      "verdict": "fail",
+      "note": "Awkward passive wording. Use: You can't sign in to {engine} from a browser yet. Use the Murage desktop app for it."
+    },
+    "en:ux.cloud.firstRun.hello": {
+      "text": "Hello, I'm Ember. What should I call you?",
+      "en": "Hello, I'm Ember. What should I call you?",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.firstRun.continue": {
+      "text": "Continue",
+      "en": "Continue",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.firstRun.stepFailed": {
+      "text": "That did not go through. Try once more.",
+      "en": "That did not go through. Try once more.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.firstRun.tryAgain": {
+      "text": "Try again",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.firstRun.job.brief.title": {
+      "text": "Brief me every morning",
+      "en": "Brief me every morning",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.firstRun.job.brief.sub": {
+      "text": "One short page each morning of what needs you first. I use your calendar and email once you connect them.",
+      "en": "One short page each morning of what needs you first. I use your calendar and email once you connect them.",
+      "verdict": "fail",
+      "note": "Unnatural 'what needs you first'. Use: Each morning, I give you one short page of what needs your attention first. I use your calendar and email once you connect them."
+    },
+    "en:ux.cloud.firstRun.job.day.title": {
+      "text": "Plan my day",
+      "en": "Plan my day",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.firstRun.job.day.sub": {
+      "text": "Type in what is on today, one line each. I tell you which one will slip and what to do first.",
+      "en": "Type in what is on today, one line each. I tell you which one will slip and what to do first.",
+      "verdict": "fail",
+      "note": "'Will slip' is vague. Use: Type in today's tasks, one per line. I tell you which task will run late and what to do first."
+    },
+    "en:ux.cloud.firstRun.job.notes.title": {
+      "text": "Tidy up my notes",
+      "en": "Tidy up my notes",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.firstRun.job.notes.sub": {
+      "text": "Paste in your notes. I pick out the next steps and put the ones with a date or a waiting person first.",
+      "en": "Paste in your notes. I pick out the next steps and put the ones with a date or a waiting person first.",
+      "verdict": "fail",
+      "note": "'A waiting person' is unnatural. Use: Paste in your notes. I pick out the next steps and put those with a date or someone waiting for them first."
+    },
+    "en:ux.cloud.firstRun.job.research.title": {
+      "text": "Look into something for me",
+      "en": "Look into something for me",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.firstRun.job.research.sub": {
+      "text": "Like which dishwasher to buy. I read around and tell you what I found and what I am not sure of.",
+      "en": "Like which dishwasher to buy. I read around and tell you what I found and what I am not sure of.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.firstRun.job.business.title": {
+      "text": "Help me run my business",
+      "en": "Help me run my business",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.firstRun.job.business.sub": {
+      "text": "I set up two helpers, one to pick your priority and one to draft it, plus a weekly review you switch on when you like.",
+      "en": "I set up two helpers, one to pick your priority and one to draft it, plus a weekly review you switch on when you like.",
+      "verdict": "fail",
+      "note": "A priority cannot itself be drafted. Use: I set up two helpers, one to choose your top task and one to prepare a draft for it, plus a weekly review you switch on when you like."
+    },
+    "en:ux.cloud.firstRun.bookmark": {
+      "text": "Bookmark this page so you can come back.",
+      "en": "Bookmark this page so you can come back.",
+      "verdict": "pass"
+    },
+    "en:ux.cloud.firstRun.bookmarkDoor": {
+      "text": "Bookmark this page so you can come back. Any day, {site}/home/cloud is the way in.",
+      "en": "Bookmark this page so you can come back. Any day, {site}/home/cloud is the way in.",
+      "verdict": "fail",
+      "note": "Awkward return instruction. Use: Bookmark this page so you can come back. You can always return at {site}/home/cloud."
+    },
+    "en:ux.cloud.firstRun.unreachable": {
+      "text": "Can't reach your Murage right now. Anything you type is kept, and this reconnects by itself.",
+      "en": "Can't reach your Murage right now. Anything you type is kept, and this reconnects by itself.",
+      "verdict": "pass"
+    },
+    "en:ux.l2b.health.doc.fluxNotReady.step": {
+      "text": "Press Check again below.",
+      "en": "Press Check again below.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.terms.siteIntro": {
+      "text": "Du musst unseren Bedingungen einmal zustimmen. Stimme auf murage.ai zu und komm dann hierher zurück.",
+      "en": "Your terms need your agreement once. Agree on murage.ai, then come back here.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.terms.agreeOnSite": {
+      "text": "Auf murage.ai zustimmen",
+      "en": "Agree on murage.ai",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.terms.checkAgain": {
+      "text": "Erneut prüfen",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.title": {
+      "text": "Noch ein Schritt.",
+      "en": "One more step.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.body": {
+      "text": "Wir haben einen 6-stelligen Code an {email} gesendet. Gib ihn ein, um {act}.",
+      "en": "We sent a 6-digit code to {email}. Enter it to {act}.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.sending": {
+      "text": "Dein Code wird gesendet...",
+      "en": "Sending your code...",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.confirm": {
+      "text": "Bestätigen",
+      "en": "Confirm",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.checking": {
+      "text": "Wird geprüft...",
+      "en": "Checking...",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.resend": {
+      "text": "Neuen Code senden",
+      "en": "Send a new code",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.resendWait": {
+      "text": "In {seconds} Sekunden kannst du einen neuen Code anfordern.",
+      "en": "You can ask for another code in {seconds} seconds.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.cancel": {
+      "text": "Abbrechen",
+      "en": "Cancel",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.groupLabel": {
+      "text": "6-stelliger Code",
+      "en": "6-digit code",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.digitLabel": {
+      "text": "Ziffer {n} von 6",
+      "en": "Digit {n} of 6",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.wrong": {
+      "text": "Dieser Code hat nicht funktioniert. Versuch es noch einmal.",
+      "en": "That code didn't work. Try again.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.expired": {
+      "text": "Dieser Code ist abgelaufen. Wir können dir einen neuen senden.",
+      "en": "That code has expired. We can send a new one.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.locked": {
+      "text": "Zu viele Versuche mit diesem Code. Sende einen neuen Code.",
+      "en": "Too many tries on that code. Send a new code.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.tooMany": {
+      "text": "Das sind viele Codes für einen Tag. Versuch es morgen wieder.",
+      "en": "That's a lot of codes for one day. Try again tomorrow.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.couldNotSend": {
+      "text": "Wir konnten deinen Code gerade nicht senden. Es wurde nichts geändert. Versuch es in einer Minute noch einmal.",
+      "en": "We couldn't send your code just now. Nothing was changed. Try again in a minute.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.unavailable": {
+      "text": "Es wurde nichts geändert. Versuch es in einer Minute noch einmal.",
+      "en": "Nothing was changed. Try again in a minute.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.changed": {
+      "text": "Diese Anfrage hat sich geändert. Sieh sie dir noch einmal an, bevor du sie erlaubst.",
+      "en": "This request changed. Review it again before you allow it.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.cancelled": {
+      "text": "Abgebrochen. Es wurde nichts geändert.",
+      "en": "Cancelled. Nothing was changed.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.thisBot": {
+      "text": "diesen Bot",
+      "en": "this bot",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.act.full_access": {
+      "text": "Vollen Zugriff für {arg} einzuschalten",
+      "en": "turn on Full access for {arg}",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.act.allow_request": {
+      "text": "diese Anfrage zu erlauben",
+      "en": "allow this request",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.act.folder_trust": {
+      "text": "diesem Ordner zu vertrauen",
+      "en": "trust this folder",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.act.restore_release": {
+      "text": "aus einem Backup wiederherzustellen",
+      "en": "restore from a backup",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.act.delete": {
+      "text": "dies endgültig zu löschen",
+      "en": "delete this for good",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.act.bot_reach": {
+      "text": "zu ändern, wer {arg} erreichen kann",
+      "en": "change who can reach {arg}",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.act.mcp_server": {
+      "text": "diesen Tool-Server hinzuzufügen",
+      "en": "add this tool server",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.act.new_skill": {
+      "text": "diesen Code ausführen zu lassen",
+      "en": "allow this code to run",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.act.traffic_moved": {
+      "text": "zu ändern, wohin dieser Datenverkehr geht",
+      "en": "change where this traffic goes",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.act.computer_viewer": {
+      "text": "eine Ansicht des Bot-Bildschirms zu öffnen",
+      "en": "open a view of the bot's screen",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.act.computer_command": {
+      "text": "die Steuerung eines Computers durch {arg} zu erlauben",
+      "en": "let {arg} control a computer",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.act.bot_widen": {
+      "text": "mehr zu erlauben, als diese Einstellung bisher erlaubte",
+      "en": "allow more than this setting allowed before",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.act.device_remove": {
+      "text": "ein weiteres Gerät hinzuzufügen",
+      "en": "add another device",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.act.config_change": {
+      "text": "diese Einstellung zu ändern",
+      "en": "change this setting",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.act.take_down_site": {
+      "text": "diese Website offline zu nehmen",
+      "en": "take this site down",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.act.fresh_door": {
+      "text": "diesen Kanal zu verbinden",
+      "en": "connect this channel",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.act.publish_allow": {
+      "text": "zu erlauben, dass diese Website veröffentlicht wird",
+      "en": "allow this site to be published",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerCode.act.other": {
+      "text": "diese Änderung zu bestätigen",
+      "en": "confirm this change",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.ownerBanner.expired": {
+      "text": "Um Einstellungen zu ändern, öffne Murage über murage.ai.",
+      "en": "To change settings, open Murage from murage.ai.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.signin.leadLink": {
+      "text": "Melde dich bei {engine} an. Ein neuer Tab öffnet sich. Komm hierher zurück, wenn dort steht, dass du fertig bist.",
+      "en": "Sign in to {engine}. A new tab opens. Come back here when it says you're done.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.signin.leadCode": {
+      "text": "Melde dich bei {engine} an. Klicke auf den Link unten, bestätige im neuen Tab und füge dann den angezeigten Code hier ins Feld ein.",
+      "en": "Sign in to {engine}. Click the link below, approve in the new tab, then paste the code it shows into the box here.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.signin.done": {
+      "text": "Fertig",
+      "en": "Done",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.signin.notHere": {
+      "text": "Bei {engine} kann man sich im Browser noch nicht anmelden. Nutze dafür die Murage-Desktop-App.",
+      "en": "{engine} can't be signed in from a browser yet. Use the Murage desktop app for it.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.firstRun.hello": {
+      "text": "Hallo, ich bin Ember. Wie soll ich dich nennen?",
+      "en": "Hello, I'm Ember. What should I call you?",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.firstRun.continue": {
+      "text": "Weiter",
+      "en": "Continue",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.firstRun.stepFailed": {
+      "text": "Das hat nicht geklappt. Versuch es noch einmal.",
+      "en": "That did not go through. Try once more.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.firstRun.tryAgain": {
+      "text": "Erneut versuchen",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.firstRun.job.brief.title": {
+      "text": "Informiere mich jeden Morgen",
+      "en": "Brief me every morning",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.firstRun.job.brief.sub": {
+      "text": "Jeden Morgen eine kurze Seite mit dem, was zuerst dich braucht. Ich nutze deinen Kalender und deine E-Mails, sobald du sie verbindest.",
+      "en": "One short page each morning of what needs you first. I use your calendar and email once you connect them.",
+      "verdict": "fail",
+      "note": "Unnatural literal wording. Use: Jeden Morgen eine kurze Seite mit dem, was zuerst deine Aufmerksamkeit braucht. Ich nutze deinen Kalender und deine E-Mails, sobald du sie verbindest."
+    },
+    "de:ux.cloud.firstRun.job.day.title": {
+      "text": "Plane meinen Tag",
+      "en": "Plan my day",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.firstRun.job.day.sub": {
+      "text": "Tippe ein, was heute ansteht, jeweils eine Zeile. Ich sage dir, was wahrscheinlich liegen bleibt und womit du anfangen solltest.",
+      "en": "Type in what is on today, one line each. I tell you which one will slip and what to do first.",
+      "verdict": "fail",
+      "note": "Changes running late to probably remaining undone. Use: Tippe ein, was heute ansteht, jeweils eine Zeile pro Aufgabe. Ich sage dir, welche Aufgabe sich verspätet und was du zuerst tun solltest."
+    },
+    "de:ux.cloud.firstRun.job.notes.title": {
+      "text": "Räum meine Notizen auf",
+      "en": "Tidy up my notes",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.firstRun.job.notes.sub": {
+      "text": "Füge deine Notizen ein. Ich suche die nächsten Schritte heraus und stelle die mit Datum oder wartender Person nach vorn.",
+      "en": "Paste in your notes. I pick out the next steps and put the ones with a date or a waiting person first.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.firstRun.job.research.title": {
+      "text": "Recherchiere etwas für mich",
+      "en": "Look into something for me",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.firstRun.job.research.sub": {
+      "text": "Zum Beispiel, welche Spülmaschine du kaufen sollst. Ich lese mich ein und sage dir, was ich gefunden habe und wobei ich mir nicht sicher bin.",
+      "en": "Like which dishwasher to buy. I read around and tell you what I found and what I am not sure of.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.firstRun.job.business.title": {
+      "text": "Hilf mir, mein Geschäft zu führen",
+      "en": "Help me run my business",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.firstRun.job.business.sub": {
+      "text": "Ich richte zwei Helfer ein, einen, der deine Priorität auswählt, und einen, der sie entwirft, dazu eine wöchentliche Rückschau, die du einschaltest, wenn du magst.",
+      "en": "I set up two helpers, one to pick your priority and one to draft it, plus a weekly review you switch on when you like.",
+      "verdict": "fail",
+      "note": "A priority cannot itself be drafted. Use: Ich richte zwei Helfer ein, einen, der deine wichtigste Aufgabe auswählt, und einen, der einen Entwurf dafür erstellt, dazu eine wöchentliche Rückschau, die du einschaltest, wenn du magst."
+    },
+    "de:ux.cloud.firstRun.bookmark": {
+      "text": "Setze dir ein Lesezeichen für diese Seite, damit du zurückkommen kannst.",
+      "en": "Bookmark this page so you can come back.",
+      "verdict": "pass"
+    },
+    "de:ux.cloud.firstRun.bookmarkDoor": {
+      "text": "Setze dir ein Lesezeichen für diese Seite, damit du zurückkommen kannst. Jederzeit führt {site}/home/cloud hinein.",
+      "en": "Bookmark this page so you can come back. Any day, {site}/home/cloud is the way in.",
+      "verdict": "fail",
+      "note": "Unnatural 'führt ... hinein'. Use: Setze dir ein Lesezeichen für diese Seite, damit du zurückkommen kannst. Du kommst jederzeit über {site}/home/cloud zurück."
+    },
+    "de:ux.cloud.firstRun.unreachable": {
+      "text": "Dein Murage ist gerade nicht erreichbar. Alles, was du tippst, bleibt erhalten, und die Verbindung wird von selbst wiederhergestellt.",
+      "en": "Can't reach your Murage right now. Anything you type is kept, and this reconnects by itself.",
+      "verdict": "pass"
+    },
+    "de:ux.l2b.health.doc.fluxNotReady.step": {
+      "text": "Drücke unten auf „Erneut prüfen“.",
+      "en": "Press Check again below.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.terms.siteIntro": {
+      "text": "Tus términos necesitan tu aceptación una vez. Acepta en murage.ai y vuelve aquí.",
+      "en": "Your terms need your agreement once. Agree on murage.ai, then come back here.",
+      "verdict": "fail",
+      "note": "Unnatural literal opening. Use: Tienes que aceptar las condiciones una vez. Acéptalas en murage.ai y vuelve aquí."
+    },
+    "es:ux.cloud.terms.agreeOnSite": {
+      "text": "Aceptar en murage.ai",
+      "en": "Agree on murage.ai",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.terms.checkAgain": {
+      "text": "Comprobar de nuevo",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.title": {
+      "text": "Un paso más.",
+      "en": "One more step.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.body": {
+      "text": "Enviamos un código de 6 dígitos a {email}. Introdúcelo para {act}.",
+      "en": "We sent a 6-digit code to {email}. Enter it to {act}.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.sending": {
+      "text": "Enviando tu código...",
+      "en": "Sending your code...",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.confirm": {
+      "text": "Confirmar",
+      "en": "Confirm",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.checking": {
+      "text": "Comprobando...",
+      "en": "Checking...",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.resend": {
+      "text": "Enviar un código nuevo",
+      "en": "Send a new code",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.resendWait": {
+      "text": "Puedes pedir otro código en {seconds} segundos.",
+      "en": "You can ask for another code in {seconds} seconds.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.cancel": {
+      "text": "Cancelar",
+      "en": "Cancel",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.groupLabel": {
+      "text": "Código de 6 dígitos",
+      "en": "6-digit code",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.digitLabel": {
+      "text": "Dígito {n} de 6",
+      "en": "Digit {n} of 6",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.wrong": {
+      "text": "Ese código no funcionó. Inténtalo de nuevo.",
+      "en": "That code didn't work. Try again.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.expired": {
+      "text": "Ese código ha caducado. Podemos enviarte uno nuevo.",
+      "en": "That code has expired. We can send a new one.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.locked": {
+      "text": "Demasiados intentos con ese código. Envía un código nuevo.",
+      "en": "Too many tries on that code. Send a new code.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.tooMany": {
+      "text": "Son muchos códigos para un solo día. Inténtalo mañana.",
+      "en": "That's a lot of codes for one day. Try again tomorrow.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.couldNotSend": {
+      "text": "No pudimos enviar tu código ahora mismo. No se cambió nada. Inténtalo de nuevo en un minuto.",
+      "en": "We couldn't send your code just now. Nothing was changed. Try again in a minute.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.unavailable": {
+      "text": "No se cambió nada. Inténtalo de nuevo en un minuto.",
+      "en": "Nothing was changed. Try again in a minute.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.changed": {
+      "text": "Esta solicitud ha cambiado. Revísala de nuevo antes de permitirla.",
+      "en": "This request changed. Review it again before you allow it.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.cancelled": {
+      "text": "Cancelado. No se cambió nada.",
+      "en": "Cancelled. Nothing was changed.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.thisBot": {
+      "text": "este bot",
+      "en": "this bot",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.act.full_access": {
+      "text": "activar el Acceso total para {arg}",
+      "en": "turn on Full access for {arg}",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.act.allow_request": {
+      "text": "permitir esta solicitud",
+      "en": "allow this request",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.act.folder_trust": {
+      "text": "confiar en esta carpeta",
+      "en": "trust this folder",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.act.restore_release": {
+      "text": "restaurar desde una copia de seguridad",
+      "en": "restore from a backup",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.act.delete": {
+      "text": "eliminar esto para siempre",
+      "en": "delete this for good",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.act.bot_reach": {
+      "text": "cambiar quién puede contactar con {arg}",
+      "en": "change who can reach {arg}",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.act.mcp_server": {
+      "text": "añadir este servidor de herramientas",
+      "en": "add this tool server",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.act.new_skill": {
+      "text": "permitir que este código se ejecute",
+      "en": "allow this code to run",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.act.traffic_moved": {
+      "text": "cambiar adónde va este tráfico",
+      "en": "change where this traffic goes",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.act.computer_viewer": {
+      "text": "abrir una vista de la pantalla del bot",
+      "en": "open a view of the bot's screen",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.act.computer_command": {
+      "text": "dejar que {arg} controle un ordenador",
+      "en": "let {arg} control a computer",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.act.bot_widen": {
+      "text": "permitir más de lo que permitía este ajuste antes",
+      "en": "allow more than this setting allowed before",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.act.device_remove": {
+      "text": "añadir otro dispositivo",
+      "en": "add another device",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.act.config_change": {
+      "text": "cambiar este ajuste",
+      "en": "change this setting",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.act.take_down_site": {
+      "text": "desactivar este sitio",
+      "en": "take this site down",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.act.fresh_door": {
+      "text": "conectar este canal",
+      "en": "connect this channel",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.act.publish_allow": {
+      "text": "permitir que se publique este sitio",
+      "en": "allow this site to be published",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerCode.act.other": {
+      "text": "confirmar este cambio",
+      "en": "confirm this change",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.ownerBanner.expired": {
+      "text": "Para cambiar los ajustes, abre Murage desde murage.ai.",
+      "en": "To change settings, open Murage from murage.ai.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.signin.leadLink": {
+      "text": "Inicia sesión en {engine}. Se abre una pestaña nueva. Vuelve aquí cuando diga que has terminado.",
+      "en": "Sign in to {engine}. A new tab opens. Come back here when it says you're done.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.signin.leadCode": {
+      "text": "Inicia sesión en {engine}. Haz clic en el enlace de abajo, aprueba en la pestaña nueva y pega el código que muestre en el cuadro de aquí.",
+      "en": "Sign in to {engine}. Click the link below, approve in the new tab, then paste the code it shows into the box here.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.signin.done": {
+      "text": "Listo",
+      "en": "Done",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.signin.notHere": {
+      "text": "Todavía no se puede iniciar sesión en {engine} desde un navegador. Usa la aplicación de escritorio de Murage.",
+      "en": "{engine} can't be signed in from a browser yet. Use the Murage desktop app for it.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.firstRun.hello": {
+      "text": "Hola, soy Ember. ¿Cómo quieres que te llame?",
+      "en": "Hello, I'm Ember. What should I call you?",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.firstRun.continue": {
+      "text": "Continuar",
+      "en": "Continue",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.firstRun.stepFailed": {
+      "text": "Eso no se completó. Inténtalo una vez más.",
+      "en": "That did not go through. Try once more.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.firstRun.tryAgain": {
+      "text": "Intentar de nuevo",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.firstRun.job.brief.title": {
+      "text": "Ponme al día cada mañana",
+      "en": "Brief me every morning",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.firstRun.job.brief.sub": {
+      "text": "Cada mañana, una página corta con lo que te necesita primero. Uso tu calendario y tu correo en cuanto los conectes.",
+      "en": "One short page each morning of what needs you first. I use your calendar and email once you connect them.",
+      "verdict": "fail",
+      "note": "Unnatural 'lo que te necesita primero'. Use: Cada mañana, una página corta con lo que necesita tu atención primero. Uso tu calendario y tu correo en cuanto los conectes."
+    },
+    "es:ux.cloud.firstRun.job.day.title": {
+      "text": "Planifica mi día",
+      "en": "Plan my day",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.firstRun.job.day.sub": {
+      "text": "Escribe lo que tienes hoy, una línea por cosa. Te digo cuál se va a retrasar y qué hacer primero.",
+      "en": "Type in what is on today, one line each. I tell you which one will slip and what to do first.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.firstRun.job.notes.title": {
+      "text": "Ordena mis notas",
+      "en": "Tidy up my notes",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.firstRun.job.notes.sub": {
+      "text": "Pega tus notas. Saco los próximos pasos y pongo primero los que tienen fecha o alguien esperando.",
+      "en": "Paste in your notes. I pick out the next steps and put the ones with a date or a waiting person first.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.firstRun.job.research.title": {
+      "text": "Investiga algo por mí",
+      "en": "Look into something for me",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.firstRun.job.research.sub": {
+      "text": "Por ejemplo, qué lavavajillas comprar. Leo sobre el tema y te cuento lo que encuentro y lo que no tengo claro.",
+      "en": "Like which dishwasher to buy. I read around and tell you what I found and what I am not sure of.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.firstRun.job.business.title": {
+      "text": "Ayúdame a llevar mi negocio",
+      "en": "Help me run my business",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.firstRun.job.business.sub": {
+      "text": "Preparo dos ayudantes, uno que elige tu prioridad y otro que la redacta, más una revisión semanal que activas cuando quieras.",
+      "en": "I set up two helpers, one to pick your priority and one to draft it, plus a weekly review you switch on when you like.",
+      "verdict": "fail",
+      "note": "A priority cannot itself be drafted. Use: Preparo dos ayudantes, uno que elige tu tarea prioritaria y otro que prepara un borrador para ella, más una revisión semanal que activas cuando quieras."
+    },
+    "es:ux.cloud.firstRun.bookmark": {
+      "text": "Guarda esta página en marcadores para poder volver.",
+      "en": "Bookmark this page so you can come back.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.firstRun.bookmarkDoor": {
+      "text": "Guarda esta página en marcadores para poder volver. Cualquier día, {site}/home/cloud es la entrada.",
+      "en": "Bookmark this page so you can come back. Any day, {site}/home/cloud is the way in.",
+      "verdict": "pass"
+    },
+    "es:ux.cloud.firstRun.unreachable": {
+      "text": "No se puede conectar con tu Murage ahora mismo. Todo lo que escribas se conserva y se reconecta solo.",
+      "en": "Can't reach your Murage right now. Anything you type is kept, and this reconnects by itself.",
+      "verdict": "pass"
+    },
+    "es:ux.l2b.health.doc.fluxNotReady.step": {
+      "text": "Pulsa «Comprobar de nuevo» más abajo.",
+      "en": "Press Check again below.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.terms.siteIntro": {
+      "text": "Tes conditions ont besoin de ton accord une fois. Accepte-les sur murage.ai, puis reviens ici.",
+      "en": "Your terms need your agreement once. Agree on murage.ai, then come back here.",
+      "verdict": "fail",
+      "note": "Unnatural literal opening. Use: Tu dois accepter les conditions une seule fois. Accepte-les sur murage.ai, puis reviens ici."
+    },
+    "fr:ux.cloud.terms.agreeOnSite": {
+      "text": "Accepter sur murage.ai",
+      "en": "Agree on murage.ai",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.terms.checkAgain": {
+      "text": "Vérifier à nouveau",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.title": {
+      "text": "Encore une étape.",
+      "en": "One more step.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.body": {
+      "text": "Nous avons envoyé un code à 6 chiffres à {email}. Saisis-le pour {act}.",
+      "en": "We sent a 6-digit code to {email}. Enter it to {act}.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.sending": {
+      "text": "Envoi de ton code...",
+      "en": "Sending your code...",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.confirm": {
+      "text": "Confirmer",
+      "en": "Confirm",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.checking": {
+      "text": "Vérification...",
+      "en": "Checking...",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.resend": {
+      "text": "Envoyer un nouveau code",
+      "en": "Send a new code",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.resendWait": {
+      "text": "Tu pourras demander un autre code dans {seconds} secondes.",
+      "en": "You can ask for another code in {seconds} seconds.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.cancel": {
+      "text": "Annuler",
+      "en": "Cancel",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.groupLabel": {
+      "text": "Code à 6 chiffres",
+      "en": "6-digit code",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.digitLabel": {
+      "text": "Chiffre {n} sur 6",
+      "en": "Digit {n} of 6",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.wrong": {
+      "text": "Ce code n'a pas fonctionné. Réessaie.",
+      "en": "That code didn't work. Try again.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.expired": {
+      "text": "Ce code a expiré. On peut t'en envoyer un nouveau.",
+      "en": "That code has expired. We can send a new one.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.locked": {
+      "text": "Trop d'essais avec ce code. Envoie un nouveau code.",
+      "en": "Too many tries on that code. Send a new code.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.tooMany": {
+      "text": "Ça fait beaucoup de codes pour une journée. Réessaie demain.",
+      "en": "That's a lot of codes for one day. Try again tomorrow.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.couldNotSend": {
+      "text": "Nous n'avons pas pu envoyer ton code à l'instant. Rien n'a été modifié. Réessaie dans une minute.",
+      "en": "We couldn't send your code just now. Nothing was changed. Try again in a minute.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.unavailable": {
+      "text": "Rien n'a été modifié. Réessaie dans une minute.",
+      "en": "Nothing was changed. Try again in a minute.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.changed": {
+      "text": "Cette demande a changé. Relis-la avant de l'autoriser.",
+      "en": "This request changed. Review it again before you allow it.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.cancelled": {
+      "text": "Annulé. Rien n'a été modifié.",
+      "en": "Cancelled. Nothing was changed.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.thisBot": {
+      "text": "ce bot",
+      "en": "this bot",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.act.full_access": {
+      "text": "activer l'Accès complet pour {arg}",
+      "en": "turn on Full access for {arg}",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.act.allow_request": {
+      "text": "autoriser cette demande",
+      "en": "allow this request",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.act.folder_trust": {
+      "text": "faire confiance à ce dossier",
+      "en": "trust this folder",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.act.restore_release": {
+      "text": "restaurer à partir d'une sauvegarde",
+      "en": "restore from a backup",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.act.delete": {
+      "text": "supprimer ceci définitivement",
+      "en": "delete this for good",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.act.bot_reach": {
+      "text": "modifier qui peut joindre {arg}",
+      "en": "change who can reach {arg}",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.act.mcp_server": {
+      "text": "ajouter ce serveur d'outils",
+      "en": "add this tool server",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.act.new_skill": {
+      "text": "autoriser l'exécution de ce code",
+      "en": "allow this code to run",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.act.traffic_moved": {
+      "text": "changer la destination de ce trafic",
+      "en": "change where this traffic goes",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.act.computer_viewer": {
+      "text": "ouvrir une vue de l'écran du bot",
+      "en": "open a view of the bot's screen",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.act.computer_command": {
+      "text": "laisser {arg} contrôler un ordinateur",
+      "en": "let {arg} control a computer",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.act.bot_widen": {
+      "text": "autoriser plus que ce que ce réglage autorisait avant",
+      "en": "allow more than this setting allowed before",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.act.device_remove": {
+      "text": "ajouter un autre appareil",
+      "en": "add another device",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.act.config_change": {
+      "text": "modifier ce réglage",
+      "en": "change this setting",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.act.take_down_site": {
+      "text": "mettre ce site hors ligne",
+      "en": "take this site down",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.act.fresh_door": {
+      "text": "connecter ce canal",
+      "en": "connect this channel",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.act.publish_allow": {
+      "text": "autoriser la publication de ce site",
+      "en": "allow this site to be published",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerCode.act.other": {
+      "text": "confirmer ce changement",
+      "en": "confirm this change",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.ownerBanner.expired": {
+      "text": "Pour modifier les réglages, ouvre Murage depuis murage.ai.",
+      "en": "To change settings, open Murage from murage.ai.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.signin.leadLink": {
+      "text": "Connecte-toi à {engine}. Un nouvel onglet s'ouvre. Reviens ici quand il indique que c'est terminé.",
+      "en": "Sign in to {engine}. A new tab opens. Come back here when it says you're done.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.signin.leadCode": {
+      "text": "Connecte-toi à {engine}. Clique sur le lien ci-dessous, approuve dans le nouvel onglet, puis colle le code affiché dans la zone ici.",
+      "en": "Sign in to {engine}. Click the link below, approve in the new tab, then paste the code it shows into the box here.",
+      "verdict": "fail",
+      "note": "Unnatural 'dans la zone ici'. Use: Connecte-toi à {engine}. Clique sur le lien ci-dessous, approuve dans le nouvel onglet, puis colle le code affiché dans le champ sur cette page."
+    },
+    "fr:ux.cloud.signin.done": {
+      "text": "Terminé",
+      "en": "Done",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.signin.notHere": {
+      "text": "On ne peut pas encore se connecter à {engine} depuis un navigateur. Utilise l'application de bureau Murage pour cela.",
+      "en": "{engine} can't be signed in from a browser yet. Use the Murage desktop app for it.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.firstRun.hello": {
+      "text": "Bonjour, je suis Ember. Comment dois-je t'appeler ?",
+      "en": "Hello, I'm Ember. What should I call you?",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.firstRun.continue": {
+      "text": "Continuer",
+      "en": "Continue",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.firstRun.stepFailed": {
+      "text": "Ça n'a pas abouti. Réessaie une fois.",
+      "en": "That did not go through. Try once more.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.firstRun.tryAgain": {
+      "text": "Réessayer",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.firstRun.job.brief.title": {
+      "text": "Fais-moi un point chaque matin",
+      "en": "Brief me every morning",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.firstRun.job.brief.sub": {
+      "text": "Chaque matin, une page courte avec ce qui a besoin de toi en premier. J'utilise ton agenda et tes e-mails dès que tu les connectes.",
+      "en": "One short page each morning of what needs you first. I use your calendar and email once you connect them.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.firstRun.job.day.title": {
+      "text": "Organise ma journée",
+      "en": "Plan my day",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.firstRun.job.day.sub": {
+      "text": "Écris ce qui est prévu aujourd'hui, une ligne par chose. Je te dis laquelle va prendre du retard et par quoi commencer.",
+      "en": "Type in what is on today, one line each. I tell you which one will slip and what to do first.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.firstRun.job.notes.title": {
+      "text": "Mets de l'ordre dans mes notes",
+      "en": "Tidy up my notes",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.firstRun.job.notes.sub": {
+      "text": "Colle tes notes. J'en tire les prochaines étapes et je mets en premier celles qui ont une date ou quelqu'un qui attend.",
+      "en": "Paste in your notes. I pick out the next steps and put the ones with a date or a waiting person first.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.firstRun.job.research.title": {
+      "text": "Renseigne-toi sur un sujet pour moi",
+      "en": "Look into something for me",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.firstRun.job.research.sub": {
+      "text": "Par exemple, quel lave-vaisselle acheter. Je me documente et je te dis ce que j'ai trouvé et ce dont je doute.",
+      "en": "Like which dishwasher to buy. I read around and tell you what I found and what I am not sure of.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.firstRun.job.business.title": {
+      "text": "Aide-moi à gérer mon activité",
+      "en": "Help me run my business",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.firstRun.job.business.sub": {
+      "text": "Je mets en place deux assistants, un qui choisit ta priorité et un qui la rédige, plus un bilan hebdomadaire que tu actives quand tu veux.",
+      "en": "I set up two helpers, one to pick your priority and one to draft it, plus a weekly review you switch on when you like.",
+      "verdict": "fail",
+      "note": "A priority cannot itself be drafted. Use: Je mets en place deux assistants, un pour choisir ta tâche prioritaire et un pour préparer un brouillon pour cette tâche, plus un bilan hebdomadaire que tu actives quand tu veux."
+    },
+    "fr:ux.cloud.firstRun.bookmark": {
+      "text": "Ajoute cette page à tes favoris pour pouvoir revenir.",
+      "en": "Bookmark this page so you can come back.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.firstRun.bookmarkDoor": {
+      "text": "Ajoute cette page à tes favoris pour pouvoir revenir. Quel que soit le jour, {site}/home/cloud est la porte d'entrée.",
+      "en": "Bookmark this page so you can come back. Any day, {site}/home/cloud is the way in.",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.firstRun.unreachable": {
+      "text": "Impossible de joindre ton Murage pour le moment. Tout ce que tu écris est conservé, et la connexion se rétablit toute seule.",
+      "en": "Can't reach your Murage right now. Anything you type is kept, and this reconnects by itself.",
+      "verdict": "pass"
+    },
+    "fr:ux.l2b.health.doc.fluxNotReady.step": {
+      "text": "Appuie sur « Vérifier à nouveau » ci-dessous.",
+      "en": "Press Check again below.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.terms.siteIntro": {
+      "text": "आपको अपनी शर्तों पर एक बार सहमति देनी होगी। murage.ai पर सहमति दें, फिर यहाँ लौट आएँ।",
+      "en": "Your terms need your agreement once. Agree on murage.ai, then come back here.",
+      "verdict": "fail",
+      "note": "'अपनी शर्तों' suggests the owner's own conditions. Use: आपको शर्तों से एक बार सहमत होना है। murage.ai पर सहमति दें, फिर यहाँ लौट आएँ।"
+    },
+    "hi:ux.cloud.terms.agreeOnSite": {
+      "text": "murage.ai पर सहमति दें",
+      "en": "Agree on murage.ai",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.terms.checkAgain": {
+      "text": "फिर से जाँचें",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.title": {
+      "text": "बस एक कदम और।",
+      "en": "One more step.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.body": {
+      "text": "हमने {email} पर 6 अंकों का कोड भेजा है। {act} के लिए इसे दर्ज करें।",
+      "en": "We sent a 6-digit code to {email}. Enter it to {act}.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.sending": {
+      "text": "आपका कोड भेजा जा रहा है...",
+      "en": "Sending your code...",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.confirm": {
+      "text": "पुष्टि करें",
+      "en": "Confirm",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.checking": {
+      "text": "जाँच हो रही है...",
+      "en": "Checking...",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.resend": {
+      "text": "नया कोड भेजें",
+      "en": "Send a new code",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.resendWait": {
+      "text": "आप {seconds} सेकंड में दूसरा कोड माँग सकते हैं।",
+      "en": "You can ask for another code in {seconds} seconds.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.cancel": {
+      "text": "रद्द करें",
+      "en": "Cancel",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.groupLabel": {
+      "text": "6 अंकों का कोड",
+      "en": "6-digit code",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.digitLabel": {
+      "text": "6 में से अंक {n}",
+      "en": "Digit {n} of 6",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.wrong": {
+      "text": "वह कोड काम नहीं किया। फिर से कोशिश करें।",
+      "en": "That code didn't work. Try again.",
+      "verdict": "fail",
+      "note": "Incorrect verb construction. Use: वह कोड काम नहीं आया। फिर से कोशिश करें।"
+    },
+    "hi:ux.cloud.ownerCode.expired": {
+      "text": "वह कोड समाप्त हो गया है। हम नया कोड भेज सकते हैं।",
+      "en": "That code has expired. We can send a new one.",
+      "verdict": "fail",
+      "note": "Says the code ended rather than its validity expired. Use: उस कोड का समय खत्म हो गया है। हम नया कोड भेज सकते हैं।"
+    },
+    "hi:ux.cloud.ownerCode.locked": {
+      "text": "उस कोड पर बहुत ज़्यादा प्रयास हो गए। नया कोड भेजें।",
+      "en": "Too many tries on that code. Send a new code.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.tooMany": {
+      "text": "एक दिन के लिए बहुत सारे कोड हो गए। कल फिर कोशिश करें।",
+      "en": "That's a lot of codes for one day. Try again tomorrow.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.couldNotSend": {
+      "text": "हम अभी आपका कोड नहीं भेज सके। कुछ भी नहीं बदला गया। एक मिनट में फिर कोशिश करें।",
+      "en": "We couldn't send your code just now. Nothing was changed. Try again in a minute.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.unavailable": {
+      "text": "कुछ भी नहीं बदला गया। एक मिनट में फिर कोशिश करें।",
+      "en": "Nothing was changed. Try again in a minute.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.changed": {
+      "text": "यह अनुरोध बदल गया है। अनुमति देने से पहले इसे फिर से देखें।",
+      "en": "This request changed. Review it again before you allow it.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.cancelled": {
+      "text": "रद्द किया गया। कुछ भी नहीं बदला गया।",
+      "en": "Cancelled. Nothing was changed.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.thisBot": {
+      "text": "इस बॉट",
+      "en": "this bot",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.act.full_access": {
+      "text": "{arg} के लिए पूर्ण पहुँच चालू करने",
+      "en": "turn on Full access for {arg}",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.act.allow_request": {
+      "text": "इस अनुरोध को अनुमति देने",
+      "en": "allow this request",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.act.folder_trust": {
+      "text": "इस फ़ोल्डर पर भरोसा करने",
+      "en": "trust this folder",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.act.restore_release": {
+      "text": "बैकअप से पुनर्स्थापित करने",
+      "en": "restore from a backup",
+      "verdict": "fail",
+      "note": "Overly technical verb for this audience. Use: बैकअप से वापस लाने"
+    },
+    "hi:ux.cloud.ownerCode.act.delete": {
+      "text": "इसे हमेशा के लिए हटाने",
+      "en": "delete this for good",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.act.bot_reach": {
+      "text": "{arg} तक कौन पहुँच सकता है, यह बदलने",
+      "en": "change who can reach {arg}",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.act.mcp_server": {
+      "text": "यह टूल सर्वर जोड़ने",
+      "en": "add this tool server",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.act.new_skill": {
+      "text": "इस कोड को चलने की अनुमति देने",
+      "en": "allow this code to run",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.act.traffic_moved": {
+      "text": "यह ट्रैफ़िक कहाँ जाता है, यह बदलने",
+      "en": "change where this traffic goes",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.act.computer_viewer": {
+      "text": "बॉट की स्क्रीन का व्यू खोलने",
+      "en": "open a view of the bot's screen",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.act.computer_command": {
+      "text": "{arg} को कंप्यूटर नियंत्रित करने देने",
+      "en": "let {arg} control a computer",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.act.bot_widen": {
+      "text": "इस सेटिंग से पहले जितनी अनुमति थी, उससे ज़्यादा की अनुमति देने",
+      "en": "allow more than this setting allowed before",
+      "verdict": "fail",
+      "note": "Can mean permission before this setting existed. Use: इस सेटिंग में पहले जितनी अनुमति थी, उससे ज़्यादा अनुमति देने"
+    },
+    "hi:ux.cloud.ownerCode.act.device_remove": {
+      "text": "एक और डिवाइस जोड़ने",
+      "en": "add another device",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.act.config_change": {
+      "text": "यह सेटिंग बदलने",
+      "en": "change this setting",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.act.take_down_site": {
+      "text": "इस साइट को बंद करने",
+      "en": "take this site down",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.act.fresh_door": {
+      "text": "यह चैनल कनेक्ट करने",
+      "en": "connect this channel",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.act.publish_allow": {
+      "text": "इस साइट को प्रकाशित होने की अनुमति देने",
+      "en": "allow this site to be published",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerCode.act.other": {
+      "text": "इस बदलाव की पुष्टि करने",
+      "en": "confirm this change",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.ownerBanner.expired": {
+      "text": "सेटिंग बदलने के लिए murage.ai से Murage खोलें।",
+      "en": "To change settings, open Murage from murage.ai.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.signin.leadLink": {
+      "text": "{engine} में साइन इन करें। एक नया टैब खुलेगा। जब वहाँ दिखे कि आपका काम हो गया, तो यहाँ लौट आएँ।",
+      "en": "Sign in to {engine}. A new tab opens. Come back here when it says you're done.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.signin.leadCode": {
+      "text": "{engine} में साइन इन करें। नीचे दिए लिंक पर क्लिक करें, नए टैब में मंज़ूरी दें, फिर वहाँ दिखने वाला कोड यहाँ बॉक्स में चिपकाएँ।",
+      "en": "Sign in to {engine}. Click the link below, approve in the new tab, then paste the code it shows into the box here.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.signin.done": {
+      "text": "हो गया",
+      "en": "Done",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.signin.notHere": {
+      "text": "{engine} में अभी ब्राउज़र से साइन इन नहीं हो सकता। इसके लिए Murage डेस्कटॉप ऐप इस्तेमाल करें।",
+      "en": "{engine} can't be signed in from a browser yet. Use the Murage desktop app for it.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.firstRun.hello": {
+      "text": "नमस्ते, मैं Ember हूँ। मैं आपको क्या कहकर बुलाऊँ?",
+      "en": "Hello, I'm Ember. What should I call you?",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.firstRun.continue": {
+      "text": "जारी रखें",
+      "en": "Continue",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.firstRun.stepFailed": {
+      "text": "वह पूरा नहीं हो पाया। एक बार फिर कोशिश करें।",
+      "en": "That did not go through. Try once more.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.firstRun.tryAgain": {
+      "text": "फिर से कोशिश करें",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.firstRun.job.brief.title": {
+      "text": "हर सुबह मुझे ब्रीफ़ करें",
+      "en": "Brief me every morning",
+      "verdict": "fail",
+      "note": "Avoid the business jargon 'ब्रीफ़'. Use: हर सुबह मुझे ज़रूरी बातें बताएँ"
+    },
+    "hi:ux.cloud.firstRun.job.brief.sub": {
+      "text": "हर सुबह एक छोटा पन्ना, जिसमें वह सब हो जिस पर आपको सबसे पहले ध्यान देना है। आपके कैलेंडर और ईमेल जुड़ते ही उनका इस्तेमाल किया जाएगा।",
+      "en": "One short page each morning of what needs you first. I use your calendar and email once you connect them.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.firstRun.job.day.title": {
+      "text": "मेरा दिन प्लान करें",
+      "en": "Plan my day",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.firstRun.job.day.sub": {
+      "text": "आज जो कुछ है, एक-एक पंक्ति में लिखें। यहाँ बताया जाएगा कि कौन सा काम छूट जाएगा और पहले क्या करना है।",
+      "en": "Type in what is on today, one line each. I tell you which one will slip and what to do first.",
+      "verdict": "fail",
+      "note": "Changes a delayed task to a missed task. Use: आज के काम लिखें, हर काम अलग पंक्ति में। यहाँ बताया जाएगा कि किस काम में देर होगी और पहले क्या करना है।"
+    },
+    "hi:ux.cloud.firstRun.job.notes.title": {
+      "text": "मेरे नोट्स व्यवस्थित करें",
+      "en": "Tidy up my notes",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.firstRun.job.notes.sub": {
+      "text": "अपने नोट्स चिपकाएँ। अगले कदम छाँटे जाएँगे, और जिनमें तारीख़ है या कोई इंतज़ार कर रहा है, वे सबसे ऊपर रखे जाएँगे।",
+      "en": "Paste in your notes. I pick out the next steps and put the ones with a date or a waiting person first.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.firstRun.job.research.title": {
+      "text": "मेरे लिए कुछ पता लगाएँ",
+      "en": "Look into something for me",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.firstRun.job.research.sub": {
+      "text": "जैसे कौन सा डिशवॉशर खरीदें। जानकारी खँगालकर बताया जाएगा कि क्या मिला और किस बात पर पक्का भरोसा नहीं है।",
+      "en": "Like which dishwasher to buy. I read around and tell you what I found and what I am not sure of.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.firstRun.job.business.title": {
+      "text": "मेरा बिज़नेस चलाने में मदद करें",
+      "en": "Help me run my business",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.firstRun.job.business.sub": {
+      "text": "दो सहायक तैयार किए जाएँगे, एक आपकी प्राथमिकता चुनने के लिए और एक उसका मसौदा बनाने के लिए, साथ में एक साप्ताहिक समीक्षा जिसे आप जब चाहें चालू कर सकते हैं।",
+      "en": "I set up two helpers, one to pick your priority and one to draft it, plus a weekly review you switch on when you like.",
+      "verdict": "fail",
+      "note": "A priority cannot itself be drafted. Use: दो सहायक तैयार किए जाएँगे, एक आपका सबसे ज़रूरी काम चुनने के लिए और दूसरा उसके लिए मसौदा बनाने के लिए। साथ में एक साप्ताहिक समीक्षा होगी जिसे आप जब चाहें चालू कर सकते हैं।"
+    },
+    "hi:ux.cloud.firstRun.bookmark": {
+      "text": "इस पेज को बुकमार्क करें ताकि आप वापस आ सकें।",
+      "en": "Bookmark this page so you can come back.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.firstRun.bookmarkDoor": {
+      "text": "इस पेज को बुकमार्क करें ताकि आप वापस आ सकें। किसी भी दिन, {site}/home/cloud से अंदर आ सकते हैं।",
+      "en": "Bookmark this page so you can come back. Any day, {site}/home/cloud is the way in.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.firstRun.unreachable": {
+      "text": "अभी आपके Murage तक नहीं पहुँचा जा सकता। आप जो भी टाइप करेंगे वह बना रहेगा, और यह अपने आप फिर से जुड़ जाएगा।",
+      "en": "Can't reach your Murage right now. Anything you type is kept, and this reconnects by itself.",
+      "verdict": "pass"
+    },
+    "hi:ux.l2b.health.doc.fluxNotReady.step": {
+      "text": "नीचे \"फिर से जाँचें\" दबाएँ।",
+      "en": "Press Check again below.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.terms.siteIntro": {
+      "text": "利用規約への同意が一度だけ必要です。murage.ai で同意してから、ここに戻ってください。",
+      "en": "Your terms need your agreement once. Agree on murage.ai, then come back here.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.terms.agreeOnSite": {
+      "text": "murage.ai で同意する",
+      "en": "Agree on murage.ai",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.terms.checkAgain": {
+      "text": "もう一度確認",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.title": {
+      "text": "あと一歩です。",
+      "en": "One more step.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.body": {
+      "text": "{email} に6桁のコードを送りました。{act}には、このコードを入力してください。",
+      "en": "We sent a 6-digit code to {email}. Enter it to {act}.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.sending": {
+      "text": "コードを送信しています...",
+      "en": "Sending your code...",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.confirm": {
+      "text": "確認",
+      "en": "Confirm",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.checking": {
+      "text": "確認しています...",
+      "en": "Checking...",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.resend": {
+      "text": "新しいコードを送る",
+      "en": "Send a new code",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.resendWait": {
+      "text": "{seconds}秒後に別のコードを依頼できます。",
+      "en": "You can ask for another code in {seconds} seconds.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.cancel": {
+      "text": "キャンセル",
+      "en": "Cancel",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.groupLabel": {
+      "text": "6桁のコード",
+      "en": "6-digit code",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.digitLabel": {
+      "text": "6桁中{n}桁目",
+      "en": "Digit {n} of 6",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.wrong": {
+      "text": "そのコードは使えませんでした。もう一度お試しください。",
+      "en": "That code didn't work. Try again.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.expired": {
+      "text": "そのコードは期限切れです。新しいコードをお送りできます。",
+      "en": "That code has expired. We can send a new one.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.locked": {
+      "text": "そのコードでの試行回数が多すぎます。新しいコードを送ってください。",
+      "en": "Too many tries on that code. Send a new code.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.tooMany": {
+      "text": "1日にしてはコードの数が多すぎます。明日もう一度お試しください。",
+      "en": "That's a lot of codes for one day. Try again tomorrow.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.couldNotSend": {
+      "text": "今はコードを送れませんでした。何も変更されていません。1分後にもう一度お試しください。",
+      "en": "We couldn't send your code just now. Nothing was changed. Try again in a minute.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.unavailable": {
+      "text": "何も変更されていません。1分後にもう一度お試しください。",
+      "en": "Nothing was changed. Try again in a minute.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.changed": {
+      "text": "このリクエストは変更されました。許可する前にもう一度確認してください。",
+      "en": "This request changed. Review it again before you allow it.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.cancelled": {
+      "text": "キャンセルしました。何も変更されていません。",
+      "en": "Cancelled. Nothing was changed.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.thisBot": {
+      "text": "このボット",
+      "en": "this bot",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.act.full_access": {
+      "text": "{arg}のフルアクセスをオンにする",
+      "en": "turn on Full access for {arg}",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.act.allow_request": {
+      "text": "このリクエストを許可する",
+      "en": "allow this request",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.act.folder_trust": {
+      "text": "このフォルダを信頼する",
+      "en": "trust this folder",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.act.restore_release": {
+      "text": "バックアップから復元する",
+      "en": "restore from a backup",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.act.delete": {
+      "text": "これを完全に削除する",
+      "en": "delete this for good",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.act.bot_reach": {
+      "text": "{arg}に連絡できる相手を変更する",
+      "en": "change who can reach {arg}",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.act.mcp_server": {
+      "text": "このツールサーバーを追加する",
+      "en": "add this tool server",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.act.new_skill": {
+      "text": "このコードの実行を許可する",
+      "en": "allow this code to run",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.act.traffic_moved": {
+      "text": "このトラフィックの送信先を変更する",
+      "en": "change where this traffic goes",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.act.computer_viewer": {
+      "text": "ボットの画面のビューを開く",
+      "en": "open a view of the bot's screen",
+      "verdict": "fail",
+      "note": "Unnatural technical calque. Use: ボットの画面を表示する"
+    },
+    "ja:ux.cloud.ownerCode.act.computer_command": {
+      "text": "{arg}にコンピューターの操作を任せる",
+      "en": "let {arg} control a computer",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.act.bot_widen": {
+      "text": "この設定がこれまで許していた範囲より広く許可する",
+      "en": "allow more than this setting allowed before",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.act.device_remove": {
+      "text": "別のデバイスを追加する",
+      "en": "add another device",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.act.config_change": {
+      "text": "この設定を変更する",
+      "en": "change this setting",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.act.take_down_site": {
+      "text": "このサイトを停止する",
+      "en": "take this site down",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.act.fresh_door": {
+      "text": "このチャンネルを接続する",
+      "en": "connect this channel",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.act.publish_allow": {
+      "text": "このサイトの公開を許可する",
+      "en": "allow this site to be published",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerCode.act.other": {
+      "text": "この変更を確認する",
+      "en": "confirm this change",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.ownerBanner.expired": {
+      "text": "設定を変更するには、murage.ai から Murage を開いてください。",
+      "en": "To change settings, open Murage from murage.ai.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.signin.leadLink": {
+      "text": "{engine} にサインインしてください。新しいタブが開きます。完了と表示されたら、ここに戻ってください。",
+      "en": "Sign in to {engine}. A new tab opens. Come back here when it says you're done.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.signin.leadCode": {
+      "text": "{engine} にサインインしてください。下のリンクをクリックし、新しいタブで承認して、表示されたコードをここの入力欄に貼り付けてください。",
+      "en": "Sign in to {engine}. Click the link below, approve in the new tab, then paste the code it shows into the box here.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.signin.done": {
+      "text": "完了",
+      "en": "Done",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.signin.notHere": {
+      "text": "{engine} には、まだブラウザからサインインできません。デスクトップ版の Murage アプリをお使いください。",
+      "en": "{engine} can't be signed in from a browser yet. Use the Murage desktop app for it.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.firstRun.hello": {
+      "text": "こんにちは、Emberです。何とお呼びしましょうか？",
+      "en": "Hello, I'm Ember. What should I call you?",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.firstRun.continue": {
+      "text": "続ける",
+      "en": "Continue",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.firstRun.stepFailed": {
+      "text": "うまくいきませんでした。もう一度お試しください。",
+      "en": "That did not go through. Try once more.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.firstRun.tryAgain": {
+      "text": "もう一度試す",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.firstRun.job.brief.title": {
+      "text": "毎朝、状況を教えて",
+      "en": "Brief me every morning",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.firstRun.job.brief.sub": {
+      "text": "毎朝、まずあなたの対応が必要なことを1ページにまとめます。カレンダーとメールは、接続していただいたら使います。",
+      "en": "One short page each morning of what needs you first. I use your calendar and email once you connect them.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.firstRun.job.day.title": {
+      "text": "今日の予定を立てて",
+      "en": "Plan my day",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.firstRun.job.day.sub": {
+      "text": "今日の予定を1行ずつ入力してください。どれが間に合わなくなりそうか、何から始めるべきかをお伝えします。",
+      "en": "Type in what is on today, one line each. I tell you which one will slip and what to do first.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.firstRun.job.notes.title": {
+      "text": "メモを整理して",
+      "en": "Tidy up my notes",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.firstRun.job.notes.sub": {
+      "text": "メモを貼り付けてください。次にやることを拾い出し、日付があるものや、相手が待っているものを先に並べます。",
+      "en": "Paste in your notes. I pick out the next steps and put the ones with a date or a waiting person first.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.firstRun.job.research.title": {
+      "text": "調べものをお願い",
+      "en": "Look into something for me",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.firstRun.job.research.sub": {
+      "text": "たとえば、どの食洗機を買うべきか。いろいろ読んで、わかったことと、自信のないことをお伝えします。",
+      "en": "Like which dishwasher to buy. I read around and tell you what I found and what I am not sure of.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.firstRun.job.business.title": {
+      "text": "ビジネスの運営を手伝って",
+      "en": "Help me run my business",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.firstRun.job.business.sub": {
+      "text": "2人のヘルパーを用意します。1人はあなたの優先事項を選び、もう1人はその下書きを作ります。さらに、好きなときにオンにできる週次レビューも付きます。",
+      "en": "I set up two helpers, one to pick your priority and one to draft it, plus a weekly review you switch on when you like.",
+      "verdict": "fail",
+      "note": "A priority cannot itself have a draft. Use: 2人のヘルパーを用意します。1人は優先する作業を選び、もう1人はその作業に使う下書きを作ります。さらに、好きなときにオンにできる週次レビューも付きます。"
+    },
+    "ja:ux.cloud.firstRun.bookmark": {
+      "text": "このページをブックマークしておくと、また戻ってこられます。",
+      "en": "Bookmark this page so you can come back.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.firstRun.bookmarkDoor": {
+      "text": "このページをブックマークしておくと、また戻ってこられます。いつでも {site}/home/cloud から入れます。",
+      "en": "Bookmark this page so you can come back. Any day, {site}/home/cloud is the way in.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.firstRun.unreachable": {
+      "text": "今は Murage に接続できません。入力した内容は保持され、自動的に再接続されます。",
+      "en": "Can't reach your Murage right now. Anything you type is kept, and this reconnects by itself.",
+      "verdict": "pass"
+    },
+    "ja:ux.l2b.health.doc.fluxNotReady.step": {
+      "text": "下の「もう一度確認」を押してください。",
+      "en": "Press Check again below.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.terms.siteIntro": {
+      "text": "Seus termos precisam da sua concordância uma vez. Concorde em murage.ai e depois volte aqui.",
+      "en": "Your terms need your agreement once. Agree on murage.ai, then come back here.",
+      "verdict": "fail",
+      "note": "Unnatural literal opening. Use: Você precisa concordar com os termos uma vez. Concorde em murage.ai e depois volte aqui."
+    },
+    "pt-br:ux.cloud.terms.agreeOnSite": {
+      "text": "Concordar em murage.ai",
+      "en": "Agree on murage.ai",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.terms.checkAgain": {
+      "text": "Verificar de novo",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.title": {
+      "text": "Mais um passo.",
+      "en": "One more step.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.body": {
+      "text": "Enviamos um código de 6 dígitos para {email}. Digite-o para {act}.",
+      "en": "We sent a 6-digit code to {email}. Enter it to {act}.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.sending": {
+      "text": "Enviando seu código...",
+      "en": "Sending your code...",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.confirm": {
+      "text": "Confirmar",
+      "en": "Confirm",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.checking": {
+      "text": "Verificando...",
+      "en": "Checking...",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.resend": {
+      "text": "Enviar um novo código",
+      "en": "Send a new code",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.resendWait": {
+      "text": "Você poderá pedir outro código em {seconds} segundos.",
+      "en": "You can ask for another code in {seconds} seconds.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.cancel": {
+      "text": "Cancelar",
+      "en": "Cancel",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.groupLabel": {
+      "text": "Código de 6 dígitos",
+      "en": "6-digit code",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.digitLabel": {
+      "text": "Dígito {n} de 6",
+      "en": "Digit {n} of 6",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.wrong": {
+      "text": "Esse código não funcionou. Tente de novo.",
+      "en": "That code didn't work. Try again.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.expired": {
+      "text": "Esse código expirou. Podemos enviar um novo.",
+      "en": "That code has expired. We can send a new one.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.locked": {
+      "text": "Muitas tentativas com esse código. Envie um novo código.",
+      "en": "Too many tries on that code. Send a new code.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.tooMany": {
+      "text": "São muitos códigos para um dia só. Tente de novo amanhã.",
+      "en": "That's a lot of codes for one day. Try again tomorrow.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.couldNotSend": {
+      "text": "Não conseguimos enviar seu código agora. Nada foi alterado. Tente de novo em um minuto.",
+      "en": "We couldn't send your code just now. Nothing was changed. Try again in a minute.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.unavailable": {
+      "text": "Nada foi alterado. Tente de novo em um minuto.",
+      "en": "Nothing was changed. Try again in a minute.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.changed": {
+      "text": "Esta solicitação mudou. Revise-a de novo antes de permiti-la.",
+      "en": "This request changed. Review it again before you allow it.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.cancelled": {
+      "text": "Cancelado. Nada foi alterado.",
+      "en": "Cancelled. Nothing was changed.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.thisBot": {
+      "text": "este bot",
+      "en": "this bot",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.act.full_access": {
+      "text": "ativar o Acesso total para {arg}",
+      "en": "turn on Full access for {arg}",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.act.allow_request": {
+      "text": "permitir esta solicitação",
+      "en": "allow this request",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.act.folder_trust": {
+      "text": "confiar nesta pasta",
+      "en": "trust this folder",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.act.restore_release": {
+      "text": "restaurar de um backup",
+      "en": "restore from a backup",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.act.delete": {
+      "text": "excluir isto de vez",
+      "en": "delete this for good",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.act.bot_reach": {
+      "text": "alterar quem pode falar com {arg}",
+      "en": "change who can reach {arg}",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.act.mcp_server": {
+      "text": "adicionar este servidor de ferramentas",
+      "en": "add this tool server",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.act.new_skill": {
+      "text": "permitir que este código seja executado",
+      "en": "allow this code to run",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.act.traffic_moved": {
+      "text": "mudar para onde este tráfego vai",
+      "en": "change where this traffic goes",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.act.computer_viewer": {
+      "text": "abrir uma visualização da tela do bot",
+      "en": "open a view of the bot's screen",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.act.computer_command": {
+      "text": "deixar {arg} controlar um computador",
+      "en": "let {arg} control a computer",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.act.bot_widen": {
+      "text": "permitir mais do que esta configuração permitia antes",
+      "en": "allow more than this setting allowed before",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.act.device_remove": {
+      "text": "adicionar outro dispositivo",
+      "en": "add another device",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.act.config_change": {
+      "text": "alterar esta configuração",
+      "en": "change this setting",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.act.take_down_site": {
+      "text": "tirar este site do ar",
+      "en": "take this site down",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.act.fresh_door": {
+      "text": "conectar este canal",
+      "en": "connect this channel",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.act.publish_allow": {
+      "text": "permitir que este site seja publicado",
+      "en": "allow this site to be published",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerCode.act.other": {
+      "text": "confirmar esta alteração",
+      "en": "confirm this change",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.ownerBanner.expired": {
+      "text": "Para alterar as configurações, abra o Murage a partir de murage.ai.",
+      "en": "To change settings, open Murage from murage.ai.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.signin.leadLink": {
+      "text": "Entre no {engine}. Uma nova aba será aberta. Volte aqui quando ela disser que você terminou.",
+      "en": "Sign in to {engine}. A new tab opens. Come back here when it says you're done.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.signin.leadCode": {
+      "text": "Entre no {engine}. Clique no link abaixo, aprove na nova aba e cole o código que ela mostrar na caixa aqui.",
+      "en": "Sign in to {engine}. Click the link below, approve in the new tab, then paste the code it shows into the box here.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.signin.done": {
+      "text": "Concluído",
+      "en": "Done",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.signin.notHere": {
+      "text": "Ainda não é possível entrar no {engine} pelo navegador. Use o app de computador do Murage.",
+      "en": "{engine} can't be signed in from a browser yet. Use the Murage desktop app for it.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.firstRun.hello": {
+      "text": "Olá, eu sou a Ember. Como devo chamar você?",
+      "en": "Hello, I'm Ember. What should I call you?",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.firstRun.continue": {
+      "text": "Continuar",
+      "en": "Continue",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.firstRun.stepFailed": {
+      "text": "Isso não deu certo. Tente mais uma vez.",
+      "en": "That did not go through. Try once more.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.firstRun.tryAgain": {
+      "text": "Tentar de novo",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.firstRun.job.brief.title": {
+      "text": "Me atualize toda manhã",
+      "en": "Brief me every morning",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.firstRun.job.brief.sub": {
+      "text": "Toda manhã, uma página curta com o que precisa de você primeiro. Uso seu calendário e seu e-mail assim que você os conectar.",
+      "en": "One short page each morning of what needs you first. I use your calendar and email once you connect them.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.firstRun.job.day.title": {
+      "text": "Planeje meu dia",
+      "en": "Plan my day",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.firstRun.job.day.sub": {
+      "text": "Digite o que tem para hoje, uma linha por item. Eu digo qual vai atrasar e o que fazer primeiro.",
+      "en": "Type in what is on today, one line each. I tell you which one will slip and what to do first.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.firstRun.job.notes.title": {
+      "text": "Organize minhas anotações",
+      "en": "Tidy up my notes",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.firstRun.job.notes.sub": {
+      "text": "Cole suas anotações. Eu separo os próximos passos e coloco primeiro os que têm data ou alguém esperando.",
+      "en": "Paste in your notes. I pick out the next steps and put the ones with a date or a waiting person first.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.firstRun.job.research.title": {
+      "text": "Pesquise algo para mim",
+      "en": "Look into something for me",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.firstRun.job.research.sub": {
+      "text": "Por exemplo, qual lava-louças comprar. Eu pesquiso e conto o que encontrei e o que não sei ao certo.",
+      "en": "Like which dishwasher to buy. I read around and tell you what I found and what I am not sure of.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.firstRun.job.business.title": {
+      "text": "Ajude-me a tocar meu negócio",
+      "en": "Help me run my business",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.firstRun.job.business.sub": {
+      "text": "Eu configuro dois ajudantes, um para escolher sua prioridade e outro para redigi-la, além de uma revisão semanal que você liga quando quiser.",
+      "en": "I set up two helpers, one to pick your priority and one to draft it, plus a weekly review you switch on when you like.",
+      "verdict": "fail",
+      "note": "A priority cannot itself be drafted. Use: Eu configuro dois ajudantes, um para escolher sua tarefa prioritária e outro para preparar um rascunho para ela, além de uma revisão semanal que você liga quando quiser."
+    },
+    "pt-br:ux.cloud.firstRun.bookmark": {
+      "text": "Salve esta página nos favoritos para poder voltar.",
+      "en": "Bookmark this page so you can come back.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.firstRun.bookmarkDoor": {
+      "text": "Salve esta página nos favoritos para poder voltar. Em qualquer dia, {site}/home/cloud é a entrada.",
+      "en": "Bookmark this page so you can come back. Any day, {site}/home/cloud is the way in.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.cloud.firstRun.unreachable": {
+      "text": "Não foi possível acessar seu Murage agora. Tudo o que você digitar é mantido, e a conexão volta sozinha.",
+      "en": "Can't reach your Murage right now. Anything you type is kept, and this reconnects by itself.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2b.health.doc.fluxNotReady.step": {
+      "text": "Clique em “Verificar de novo” abaixo.",
+      "en": "Press Check again below.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.terms.siteIntro": {
+      "text": "你需要同意一次条款。请在 murage.ai 上同意，然后回到这里。",
+      "en": "Your terms need your agreement once. Agree on murage.ai, then come back here.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.terms.agreeOnSite": {
+      "text": "在 murage.ai 上同意",
+      "en": "Agree on murage.ai",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.terms.checkAgain": {
+      "text": "重新检查",
+      "en": "Check again",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.title": {
+      "text": "还差一步。",
+      "en": "One more step.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.body": {
+      "text": "我们已向 {email} 发送了 6 位验证码。输入验证码即可{act}。",
+      "en": "We sent a 6-digit code to {email}. Enter it to {act}.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.sending": {
+      "text": "正在发送你的验证码...",
+      "en": "Sending your code...",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.confirm": {
+      "text": "确认",
+      "en": "Confirm",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.checking": {
+      "text": "正在检查...",
+      "en": "Checking...",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.resend": {
+      "text": "发送新验证码",
+      "en": "Send a new code",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.resendWait": {
+      "text": "{seconds} 秒后你可以再申请一个验证码。",
+      "en": "You can ask for another code in {seconds} seconds.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.cancel": {
+      "text": "取消",
+      "en": "Cancel",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.groupLabel": {
+      "text": "6 位验证码",
+      "en": "6-digit code",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.digitLabel": {
+      "text": "第 {n} 位，共 6 位",
+      "en": "Digit {n} of 6",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.wrong": {
+      "text": "该验证码无效。请再试一次。",
+      "en": "That code didn't work. Try again.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.expired": {
+      "text": "该验证码已过期。我们可以发送一个新的。",
+      "en": "That code has expired. We can send a new one.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.locked": {
+      "text": "该验证码尝试次数过多。请发送新验证码。",
+      "en": "Too many tries on that code. Send a new code.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.tooMany": {
+      "text": "一天内的验证码太多了。请明天再试。",
+      "en": "That's a lot of codes for one day. Try again tomorrow.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.couldNotSend": {
+      "text": "我们暂时无法发送你的验证码。没有任何更改。请一分钟后再试。",
+      "en": "We couldn't send your code just now. Nothing was changed. Try again in a minute.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.unavailable": {
+      "text": "没有任何更改。请一分钟后再试。",
+      "en": "Nothing was changed. Try again in a minute.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.changed": {
+      "text": "此请求已更改。允许之前请再检查一遍。",
+      "en": "This request changed. Review it again before you allow it.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.cancelled": {
+      "text": "已取消。没有任何更改。",
+      "en": "Cancelled. Nothing was changed.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.thisBot": {
+      "text": "这个机器人",
+      "en": "this bot",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.act.full_access": {
+      "text": "为{arg}开启完全访问",
+      "en": "turn on Full access for {arg}",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.act.allow_request": {
+      "text": "允许此请求",
+      "en": "allow this request",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.act.folder_trust": {
+      "text": "信任此文件夹",
+      "en": "trust this folder",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.act.restore_release": {
+      "text": "从备份恢复",
+      "en": "restore from a backup",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.act.delete": {
+      "text": "永久删除此项",
+      "en": "delete this for good",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.act.bot_reach": {
+      "text": "更改谁可以联系{arg}",
+      "en": "change who can reach {arg}",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.act.mcp_server": {
+      "text": "添加此工具服务器",
+      "en": "add this tool server",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.act.new_skill": {
+      "text": "允许运行此代码",
+      "en": "allow this code to run",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.act.traffic_moved": {
+      "text": "更改此流量的去向",
+      "en": "change where this traffic goes",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.act.computer_viewer": {
+      "text": "打开机器人屏幕的视图",
+      "en": "open a view of the bot's screen",
+      "verdict": "fail",
+      "note": "Unnatural technical calque. Use: 打开机器人的屏幕画面"
+    },
+    "zh:ux.cloud.ownerCode.act.computer_command": {
+      "text": "让{arg}控制一台电脑",
+      "en": "let {arg} control a computer",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.act.bot_widen": {
+      "text": "允许比此设置之前更多的内容",
+      "en": "allow more than this setting allowed before",
+      "verdict": "fail",
+      "note": "Broken comparison adds an unsupported reference to content. Use: 扩大此设置原先允许的范围"
+    },
+    "zh:ux.cloud.ownerCode.act.device_remove": {
+      "text": "添加另一台设备",
+      "en": "add another device",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.act.config_change": {
+      "text": "更改此设置",
+      "en": "change this setting",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.act.take_down_site": {
+      "text": "下线此网站",
+      "en": "take this site down",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.act.fresh_door": {
+      "text": "连接此渠道",
+      "en": "connect this channel",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.act.publish_allow": {
+      "text": "允许发布此网站",
+      "en": "allow this site to be published",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerCode.act.other": {
+      "text": "确认此更改",
+      "en": "confirm this change",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.ownerBanner.expired": {
+      "text": "要更改设置，请从 murage.ai 打开 Murage。",
+      "en": "To change settings, open Murage from murage.ai.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.signin.leadLink": {
+      "text": "登录 {engine}。会打开一个新标签页。看到完成提示后，回到这里。",
+      "en": "Sign in to {engine}. A new tab opens. Come back here when it says you're done.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.signin.leadCode": {
+      "text": "登录 {engine}。点击下方链接，在新标签页中批准，然后把显示的验证码粘贴到这里的输入框中。",
+      "en": "Sign in to {engine}. Click the link below, approve in the new tab, then paste the code it shows into the box here.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.signin.done": {
+      "text": "完成",
+      "en": "Done",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.signin.notHere": {
+      "text": "目前还不能在浏览器中登录 {engine}。请使用 Murage 桌面应用。",
+      "en": "{engine} can't be signed in from a browser yet. Use the Murage desktop app for it.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.firstRun.hello": {
+      "text": "你好，我是 Ember。我该怎么称呼你？",
+      "en": "Hello, I'm Ember. What should I call you?",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.firstRun.continue": {
+      "text": "继续",
+      "en": "Continue",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.firstRun.stepFailed": {
+      "text": "没有成功。请再试一次。",
+      "en": "That did not go through. Try once more.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.firstRun.tryAgain": {
+      "text": "重试",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.firstRun.job.brief.title": {
+      "text": "每天早上给我简报",
+      "en": "Brief me every morning",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.firstRun.job.brief.sub": {
+      "text": "每天早上一页简短的内容，列出最先需要你处理的事。你连接日历和邮箱后，我会使用它们。",
+      "en": "One short page each morning of what needs you first. I use your calendar and email once you connect them.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.firstRun.job.day.title": {
+      "text": "帮我规划今天",
+      "en": "Plan my day",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.firstRun.job.day.sub": {
+      "text": "输入今天要做的事，每行一件。我会告诉你哪一件会被耽搁，以及先做什么。",
+      "en": "Type in what is on today, one line each. I tell you which one will slip and what to do first.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.firstRun.job.notes.title": {
+      "text": "帮我整理笔记",
+      "en": "Tidy up my notes",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.firstRun.job.notes.sub": {
+      "text": "粘贴你的笔记。我会挑出下一步行动，并把有日期或有人在等的排在最前面。",
+      "en": "Paste in your notes. I pick out the next steps and put the ones with a date or a waiting person first.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.firstRun.job.research.title": {
+      "text": "帮我查点东西",
+      "en": "Look into something for me",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.firstRun.job.research.sub": {
+      "text": "比如该买哪台洗碗机。我会四处查阅，告诉你我找到了什么，以及哪些我不确定。",
+      "en": "Like which dishwasher to buy. I read around and tell you what I found and what I am not sure of.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.firstRun.job.business.title": {
+      "text": "帮我经营生意",
+      "en": "Help me run my business",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.firstRun.job.business.sub": {
+      "text": "我会设置两个帮手，一个负责挑出你的优先事项，一个负责起草，再加一个你想开就能开的每周回顾。",
+      "en": "I set up two helpers, one to pick your priority and one to draft it, plus a weekly review you switch on when you like.",
+      "verdict": "fail",
+      "note": "Does not say what the second helper drafts. Use: 我会设置两个帮手，一个负责挑出你最优先的任务，一个负责为这项任务起草内容，再加上你随时可以开启的每周回顾。"
+    },
+    "zh:ux.cloud.firstRun.bookmark": {
+      "text": "把这个页面加入书签，方便你回来。",
+      "en": "Bookmark this page so you can come back.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.firstRun.bookmarkDoor": {
+      "text": "把这个页面加入书签，方便你回来。任何一天，{site}/home/cloud 都是入口。",
+      "en": "Bookmark this page so you can come back. Any day, {site}/home/cloud is the way in.",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.firstRun.unreachable": {
+      "text": "暂时连不上你的 Murage。你输入的内容都会保留，并且会自动重新连接。",
+      "en": "Can't reach your Murage right now. Anything you type is kept, and this reconnects by itself.",
+      "verdict": "pass"
+    },
+    "zh:ux.l2b.health.doc.fluxNotReady.step": {
+      "text": "按下方的“重新检查”。",
+      "en": "Press Check again below.",
+      "verdict": "pass"
+    }
+  },
+  "files": {
+    "links.json": {
+      "text": "{\n  \"de:browserUnavailable.userChrome\": [\n    {\n      \"token\": \"chrome://inspect/#remote-debugging.\",\n      \"reason\": \"Chrome's own local debugging page the owner opens to allow remote debugging; not a web destination\"\n    }\n  ],\n  \"de:connectedApps.flux.conflict.installAlreadyClaimed\": [\n    {\n      \"token\": \"support@fluxrouter.ai\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"de:connectedApps.flux.movedElsewhere\": [\n    {\n      \"token\": \"support@fluxrouter.ai\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"de:connectedApps.flux.tokenBlocked\": [\n    {\n      \"token\": \"support@fluxrouter.ai.\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"de:mcp.add.placeholder\": [\n    {\n      \"token\": \"https://...\",\n      \"reason\": \"the shape of an address (https:// placeholder), not a destination\"\n    }\n  ],\n  \"de:mcp.reason.httpsRequired\": [\n    {\n      \"token\": \"https://\",\n      \"reason\": \"the shape of an address (https:// placeholder), not a destination\"\n    }\n  ],\n  \"de:modelSignIn.pastePlaceholder\": [\n    {\n      \"token\": \"x.ai\",\n      \"reason\": \"xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step\"\n    }\n  ],\n  \"de:publish.sites.add.badName\": [\n    {\n      \"token\": \"mein-shop.netlify.app\",\n      \"reason\": \"an example site address in the publishing form, in this language's words; not a real destination\"\n    }\n  ],\n  \"de:publish.sites.add.placeholder\": [\n    {\n      \"token\": \"mein-shop.netlify.app\",\n      \"reason\": \"an example site address in the publishing form, in this language's words; not a real destination\"\n    }\n  ],\n  \"de:updates.downloadFromMurage\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where a manual update is downloaded; no purchase step\"\n    }\n  ],\n  \"de:ux.cloud.ownerBanner.expired\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"de:ux.cloud.terms.agreeOnSite\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"de:ux.cloud.terms.siteIntro\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"en:bringYourAi.lead\": [\n    {\n      \"token\": \"x.ai\",\n      \"reason\": \"xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step\"\n    }\n  ],\n  \"en:browserUnavailable.userChrome\": [\n    {\n      \"token\": \"chrome://inspect/#remote-debugging.\",\n      \"reason\": \"Chrome's own local debugging page the owner opens to allow remote debugging; not a web destination\"\n    }\n  ],\n  \"en:connectedApps.flux.conflict.installAlreadyClaimed\": [\n    {\n      \"token\": \"support@fluxrouter.ai\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"en:connectedApps.flux.movedElsewhere\": [\n    {\n      \"token\": \"support@fluxrouter.ai\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"en:connectedApps.flux.tokenBlocked\": [\n    {\n      \"token\": \"support@fluxrouter.ai.\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"en:mcp.add.placeholder\": [\n    {\n      \"token\": \"https://...\",\n      \"reason\": \"the shape of an address (https:// placeholder), not a destination\"\n    }\n  ],\n  \"en:mcp.reason.httpsRequired\": [\n    {\n      \"token\": \"https://.\",\n      \"reason\": \"the shape of an address (https:// placeholder), not a destination\"\n    }\n  ],\n  \"en:modelSignIn.pasteHint\": [\n    {\n      \"token\": \"x.ai\",\n      \"reason\": \"xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step\"\n    }\n  ],\n  \"en:modelSignIn.pastePlaceholder\": [\n    {\n      \"token\": \"x.ai\",\n      \"reason\": \"xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step\"\n    }\n  ],\n  \"en:publish.sites.add.badName\": [\n    {\n      \"token\": \"my-shop.netlify.app\",\n      \"reason\": \"an example site address in the publishing form, in this language's words; not a real destination\"\n    }\n  ],\n  \"en:publish.sites.add.placeholder\": [\n    {\n      \"token\": \"my-shop.netlify.app\",\n      \"reason\": \"an example site address in the publishing form, in this language's words; not a real destination\"\n    }\n  ],\n  \"en:updates.downloadFromMurage\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where a manual update is downloaded; no purchase step\"\n    }\n  ],\n  \"en:ux.cloud.ownerBanner.expired\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"en:ux.cloud.terms.agreeOnSite\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"en:ux.cloud.terms.siteIntro\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"en:ux.lcopyb.cloud.claudeSignin\": [\n    {\n      \"token\": \"claude.ai\",\n      \"reason\": \"Anthropic's Claude site, where the owner signs in to Claude or its desktop features live; no purchase step\"\n    }\n  ],\n  \"es:bringYourAi.lead\": [\n    {\n      \"token\": \"x.ai\",\n      \"reason\": \"xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step\"\n    }\n  ],\n  \"es:browserUnavailable.userChrome\": [\n    {\n      \"token\": \"chrome://inspect/#remote-debugging.\",\n      \"reason\": \"Chrome's own local debugging page the owner opens to allow remote debugging; not a web destination\"\n    }\n  ],\n  \"es:connectedApps.flux.conflict.installAlreadyClaimed\": [\n    {\n      \"token\": \"support@fluxrouter.ai\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"es:connectedApps.flux.movedElsewhere\": [\n    {\n      \"token\": \"support@fluxrouter.ai\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"es:connectedApps.flux.tokenBlocked\": [\n    {\n      \"token\": \"support@fluxrouter.ai.\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"es:mcp.add.placeholder\": [\n    {\n      \"token\": \"https://...\",\n      \"reason\": \"the shape of an address (https:// placeholder), not a destination\"\n    }\n  ],\n  \"es:mcp.reason.httpsRequired\": [\n    {\n      \"token\": \"https://.\",\n      \"reason\": \"the shape of an address (https:// placeholder), not a destination\"\n    }\n  ],\n  \"es:modelSignIn.pasteHint\": [\n    {\n      \"token\": \"x.ai\",\n      \"reason\": \"xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step\"\n    }\n  ],\n  \"es:modelSignIn.pastePlaceholder\": [\n    {\n      \"token\": \"x.ai\",\n      \"reason\": \"xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step\"\n    }\n  ],\n  \"es:publish.sites.add.badName\": [\n    {\n      \"token\": \"mi-tienda.netlify.app\",\n      \"reason\": \"an example site address in the publishing form, in this language's words; not a real destination\"\n    }\n  ],\n  \"es:publish.sites.add.placeholder\": [\n    {\n      \"token\": \"mi-tienda.netlify.app\",\n      \"reason\": \"an example site address in the publishing form, in this language's words; not a real destination\"\n    }\n  ],\n  \"es:updates.downloadFromMurage\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where a manual update is downloaded; no purchase step\"\n    }\n  ],\n  \"es:ux.cloud.ownerBanner.expired\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"es:ux.cloud.terms.agreeOnSite\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"es:ux.cloud.terms.siteIntro\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"es:ux.lcopyb.cloud.claudeSignin\": [\n    {\n      \"token\": \"claude.ai\",\n      \"reason\": \"Anthropic's Claude site, where the owner signs in to Claude or its desktop features live; no purchase step\"\n    }\n  ],\n  \"fr:bringYourAi.lead\": [\n    {\n      \"token\": \"x.ai\",\n      \"reason\": \"xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step\"\n    }\n  ],\n  \"fr:browserUnavailable.userChrome\": [\n    {\n      \"token\": \"chrome://inspect/#remote-debugging.\",\n      \"reason\": \"Chrome's own local debugging page the owner opens to allow remote debugging; not a web destination\"\n    }\n  ],\n  \"fr:connectedApps.flux.conflict.installAlreadyClaimed\": [\n    {\n      \"token\": \"support@fluxrouter.ai\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"fr:connectedApps.flux.movedElsewhere\": [\n    {\n      \"token\": \"support@fluxrouter.ai\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"fr:connectedApps.flux.tokenBlocked\": [\n    {\n      \"token\": \"support@fluxrouter.ai.\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"fr:mcp.add.placeholder\": [\n    {\n      \"token\": \"https://...\",\n      \"reason\": \"the shape of an address (https:// placeholder), not a destination\"\n    }\n  ],\n  \"fr:mcp.reason.httpsRequired\": [\n    {\n      \"token\": \"https://.\",\n      \"reason\": \"the shape of an address (https:// placeholder), not a destination\"\n    }\n  ],\n  \"fr:modelSignIn.pasteHint\": [\n    {\n      \"token\": \"x.ai\",\n      \"reason\": \"xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step\"\n    }\n  ],\n  \"fr:modelSignIn.pastePlaceholder\": [\n    {\n      \"token\": \"x.ai\",\n      \"reason\": \"xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step\"\n    }\n  ],\n  \"fr:publish.sites.add.badName\": [\n    {\n      \"token\": \"ma-boutique.netlify.app\",\n      \"reason\": \"an example site address in the publishing form, in this language's words; not a real destination\"\n    }\n  ],\n  \"fr:publish.sites.add.placeholder\": [\n    {\n      \"token\": \"ma-boutique.netlify.app\",\n      \"reason\": \"an example site address in the publishing form, in this language's words; not a real destination\"\n    }\n  ],\n  \"fr:updates.downloadFromMurage\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where a manual update is downloaded; no purchase step\"\n    }\n  ],\n  \"fr:ux.cloud.ownerBanner.expired\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"fr:ux.cloud.terms.agreeOnSite\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"fr:ux.cloud.terms.siteIntro\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"fr:ux.lcopyb.cloud.claudeSignin\": [\n    {\n      \"token\": \"claude.ai\",\n      \"reason\": \"Anthropic's Claude site, where the owner signs in to Claude or its desktop features live; no purchase step\"\n    }\n  ],\n  \"hi:bringYourAi.lead\": [\n    {\n      \"token\": \"x.ai\",\n      \"reason\": \"xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step\"\n    }\n  ],\n  \"hi:browserUnavailable.userChrome\": [\n    {\n      \"token\": \"chrome://inspect/#remote-debugging\",\n      \"reason\": \"Chrome's own local debugging page the owner opens to allow remote debugging; not a web destination\"\n    }\n  ],\n  \"hi:connectedApps.flux.conflict.installAlreadyClaimed\": [\n    {\n      \"token\": \"support@fluxrouter.ai\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"hi:connectedApps.flux.movedElsewhere\": [\n    {\n      \"token\": \"support@fluxrouter.ai\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"hi:connectedApps.flux.tokenBlocked\": [\n    {\n      \"token\": \"support@fluxrouter.ai\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"hi:mcp.add.placeholder\": [\n    {\n      \"token\": \"https://...\",\n      \"reason\": \"the shape of an address (https:// placeholder), not a destination\"\n    }\n  ],\n  \"hi:mcp.reason.httpsRequired\": [\n    {\n      \"token\": \"https://\",\n      \"reason\": \"the shape of an address (https:// placeholder), not a destination\"\n    }\n  ],\n  \"hi:modelSignIn.pasteHint\": [\n    {\n      \"token\": \"x.ai\",\n      \"reason\": \"xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step\"\n    }\n  ],\n  \"hi:modelSignIn.pastePlaceholder\": [\n    {\n      \"token\": \"x.ai\",\n      \"reason\": \"xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step\"\n    }\n  ],\n  \"hi:publish.sites.add.badName\": [\n    {\n      \"token\": \"my-shop.netlify.app\",\n      \"reason\": \"an example site address in the publishing form, in this language's words; not a real destination\"\n    }\n  ],\n  \"hi:publish.sites.add.placeholder\": [\n    {\n      \"token\": \"my-shop.netlify.app\",\n      \"reason\": \"an example site address in the publishing form, in this language's words; not a real destination\"\n    }\n  ],\n  \"hi:updates.downloadFromMurage\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where a manual update is downloaded; no purchase step\"\n    }\n  ],\n  \"hi:ux.cloud.ownerBanner.expired\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"hi:ux.cloud.terms.agreeOnSite\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"hi:ux.cloud.terms.siteIntro\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"hi:ux.lcopyb.cloud.claudeSignin\": [\n    {\n      \"token\": \"claude.ai\",\n      \"reason\": \"Anthropic's Claude site, where the owner signs in to Claude or its desktop features live; no purchase step\"\n    }\n  ],\n  \"ja:bringYourAi.lead\": [\n    {\n      \"token\": \"x.ai\",\n      \"reason\": \"xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step\"\n    }\n  ],\n  \"ja:browserUnavailable.userChrome\": [\n    {\n      \"token\": \"chrome://inspect/#remote-debugging\",\n      \"reason\": \"Chrome's own local debugging page the owner opens to allow remote debugging; not a web destination\"\n    }\n  ],\n  \"ja:connectedApps.flux.conflict.installAlreadyClaimed\": [\n    {\n      \"token\": \"support@fluxrouter.ai\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"ja:connectedApps.flux.movedElsewhere\": [\n    {\n      \"token\": \"support@fluxrouter.ai\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"ja:connectedApps.flux.tokenBlocked\": [\n    {\n      \"token\": \"キーはブロックされています。support@fluxrouter.ai\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"ja:mcp.add.placeholder\": [\n    {\n      \"token\": \"https://...\",\n      \"reason\": \"the shape of an address (https:// placeholder), not a destination\"\n    }\n  ],\n  \"ja:mcp.reason.httpsRequired\": [\n    {\n      \"token\": \"https://\",\n      \"reason\": \"the shape of an address (https:// placeholder), not a destination\"\n    }\n  ],\n  \"ja:modelSignIn.pasteHint\": [\n    {\n      \"token\": \"x.ai\",\n      \"reason\": \"xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step\"\n    }\n  ],\n  \"ja:modelSignIn.pastePlaceholder\": [\n    {\n      \"token\": \"x.ai\",\n      \"reason\": \"xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step\"\n    }\n  ],\n  \"ja:publish.sites.add.badName\": [\n    {\n      \"token\": \"my-shop.netlify.appのようなアドレス\",\n      \"reason\": \"an example site address in the publishing form, in this language's words; not a real destination\"\n    }\n  ],\n  \"ja:publish.sites.add.placeholder\": [\n    {\n      \"token\": \"my-shop.netlify.app\",\n      \"reason\": \"an example site address in the publishing form, in this language's words; not a real destination\"\n    }\n  ],\n  \"ja:updates.downloadFromMurage\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where a manual update is downloaded; no purchase step\"\n    }\n  ],\n  \"ja:ux.cloud.ownerBanner.expired\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"ja:ux.cloud.terms.agreeOnSite\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"ja:ux.cloud.terms.siteIntro\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"ja:ux.lcopyb.cloud.claudeSignin\": [\n    {\n      \"token\": \"claude.ai\",\n      \"reason\": \"Anthropic's Claude site, where the owner signs in to Claude or its desktop features live; no purchase step\"\n    }\n  ],\n  \"pt-br:bringYourAi.lead\": [\n    {\n      \"token\": \"x.ai\",\n      \"reason\": \"xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step\"\n    }\n  ],\n  \"pt-br:browserUnavailable.userChrome\": [\n    {\n      \"token\": \"chrome://inspect/#remote-debugging.\",\n      \"reason\": \"Chrome's own local debugging page the owner opens to allow remote debugging; not a web destination\"\n    }\n  ],\n  \"pt-br:connectedApps.flux.conflict.installAlreadyClaimed\": [\n    {\n      \"token\": \"support@fluxrouter.ai\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"pt-br:connectedApps.flux.movedElsewhere\": [\n    {\n      \"token\": \"support@fluxrouter.ai\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"pt-br:connectedApps.flux.tokenBlocked\": [\n    {\n      \"token\": \"support@fluxrouter.ai.\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"pt-br:mcp.add.placeholder\": [\n    {\n      \"token\": \"https://...\",\n      \"reason\": \"the shape of an address (https:// placeholder), not a destination\"\n    }\n  ],\n  \"pt-br:mcp.reason.httpsRequired\": [\n    {\n      \"token\": \"https://.\",\n      \"reason\": \"the shape of an address (https:// placeholder), not a destination\"\n    }\n  ],\n  \"pt-br:modelSignIn.pasteHint\": [\n    {\n      \"token\": \"x.ai\",\n      \"reason\": \"xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step\"\n    }\n  ],\n  \"pt-br:modelSignIn.pastePlaceholder\": [\n    {\n      \"token\": \"x.ai\",\n      \"reason\": \"xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step\"\n    }\n  ],\n  \"pt-br:publish.sites.add.badName\": [\n    {\n      \"token\": \"minha-loja.netlify.app\",\n      \"reason\": \"an example site address in the publishing form, in this language's words; not a real destination\"\n    }\n  ],\n  \"pt-br:publish.sites.add.placeholder\": [\n    {\n      \"token\": \"minha-loja.netlify.app\",\n      \"reason\": \"an example site address in the publishing form, in this language's words; not a real destination\"\n    }\n  ],\n  \"pt-br:updates.downloadFromMurage\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where a manual update is downloaded; no purchase step\"\n    }\n  ],\n  \"pt-br:ux.cloud.ownerBanner.expired\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"pt-br:ux.cloud.terms.agreeOnSite\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"pt-br:ux.cloud.terms.siteIntro\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"pt-br:ux.lcopyb.cloud.claudeSignin\": [\n    {\n      \"token\": \"claude.ai\",\n      \"reason\": \"Anthropic's Claude site, where the owner signs in to Claude or its desktop features live; no purchase step\"\n    }\n  ],\n  \"zh:bringYourAi.lead\": [\n    {\n      \"token\": \"x.ai\",\n      \"reason\": \"xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step\"\n    }\n  ],\n  \"zh:browserUnavailable.userChrome\": [\n    {\n      \"token\": \"chrome://inspect/#remote-debugging\",\n      \"reason\": \"Chrome's own local debugging page the owner opens to allow remote debugging; not a web destination\"\n    }\n  ],\n  \"zh:connectedApps.flux.conflict.installAlreadyClaimed\": [\n    {\n      \"token\": \"support@fluxrouter.ai,并提供安装\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"zh:connectedApps.flux.movedElsewhere\": [\n    {\n      \"token\": \"support@fluxrouter.ai,并提供安装\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"zh:connectedApps.flux.tokenBlocked\": [\n    {\n      \"token\": \"support@fluxrouter.ai。\",\n      \"reason\": \"Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step\"\n    }\n  ],\n  \"zh:mcp.add.placeholder\": [\n    {\n      \"token\": \"https://...\",\n      \"reason\": \"the shape of an address (https:// placeholder), not a destination\"\n    }\n  ],\n  \"zh:mcp.reason.httpsRequired\": [\n    {\n      \"token\": \"https://\",\n      \"reason\": \"the shape of an address (https:// placeholder), not a destination\"\n    }\n  ],\n  \"zh:modelSignIn.pasteHint\": [\n    {\n      \"token\": \"x.ai\",\n      \"reason\": \"xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step\"\n    }\n  ],\n  \"zh:modelSignIn.pastePlaceholder\": [\n    {\n      \"token\": \"x.ai\",\n      \"reason\": \"xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step\"\n    }\n  ],\n  \"zh:publish.sites.add.badName\": [\n    {\n      \"token\": \"my-shop.netlify.app\",\n      \"reason\": \"an example site address in the publishing form, in this language's words; not a real destination\"\n    }\n  ],\n  \"zh:publish.sites.add.placeholder\": [\n    {\n      \"token\": \"my-shop.netlify.app\",\n      \"reason\": \"an example site address in the publishing form, in this language's words; not a real destination\"\n    }\n  ],\n  \"zh:updates.downloadFromMurage\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where a manual update is downloaded; no purchase step\"\n    }\n  ],\n  \"zh:ux.cloud.ownerBanner.expired\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"zh:ux.cloud.terms.agreeOnSite\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"zh:ux.cloud.terms.siteIntro\": [\n    {\n      \"token\": \"murage.ai\",\n      \"reason\": \"Murage's own site, where the owner agrees to the terms or opens Murage; no purchase step\"\n    }\n  ],\n  \"zh:ux.lcopyb.cloud.claudeSignin\": [\n    {\n      \"token\": \"claude.ai\",\n      \"reason\": \"Anthropic's Claude site, where the owner signs in to Claude or its desktop features live; no purchase step\"\n    }\n  ]\n}\n",
+      "verdict": "pass"
+    }
+  }
+}

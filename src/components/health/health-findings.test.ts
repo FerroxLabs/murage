@@ -8,6 +8,7 @@ import { en } from "@/locales";
 import type { EngineHealthRow } from "@/components/shell/shell-contract";
 import type { HealthFold } from "../../../shared/health-levels";
 import type { HealthIssue } from "../../../shared/sentinel-view";
+import { FLUX_NOT_READY_COPY } from "../../../shared/provider-error";
 import { checkArea, fluxFindings, fluxPanelLine, healthFindings, otherEngines, summaryLine, usedEngines, type FindingEntry } from "./health-findings";
 import { answersRunning, askYourBot, backUpNow, recheckFlux, switchEngineOn } from "@/lib/health-actions";
 
@@ -77,6 +78,14 @@ describe("Flux Router findings", () => {
   it("a key problem goes to Models; used up gives the step and Check again", () => {
     expect(fluxFindings("key-problem", null, true, now)[0]).toMatchObject({ level: "act", fix: { kind: "go", section: "models" } });
     expect(fluxFindings("allowance-used-up", null, true, now)[0]).toMatchObject({ level: "act", fix: { kind: "step", then: "flux-recheck" } });
+  });
+
+  it("on a Cloud home a key problem says the approved line, offers no Models button, and checks again", () => {
+    const [finding] = fluxFindings("key-problem", null, true, now, true);
+    expect(finding).toMatchObject({ level: "act", title: FLUX_NOT_READY_COPY, fix: { kind: "step", then: "flux-recheck" } });
+    expect(JSON.stringify(finding)).not.toMatch(/Flux key|Models|"go"/);
+    expect(fluxPanelLine("key-problem", null, true)).toBe(FLUX_NOT_READY_COPY);
+    expect(fluxPanelLine("key-problem", null, false)).toBe(en["ux.l2a.health.flux.keyProblem" as keyof typeof en]);
   });
 
   it("warns at 80% used and within 7 days of the key expiring, and not before", () => {

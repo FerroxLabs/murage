@@ -134,3 +134,11 @@ describe("pushDetail", () => {
     expect(pushDetail(event(), world({ prefs }), noon)).toEqual({ title: "Murage", body: "Your attention is needed." });
   });
 });
+
+it("rebuilds a connector alert from its live incident and respects phone preview consent", () => {
+  const row = event({ kind: "connector-reconnect", category: "question", requestId: "incident", messageId: "connector:incident" });
+  const live = world({ connector: () => ({ label: "Buffer" }), message: () => undefined });
+  expect(pushDetail(row, live, noon).title).toBe("Buffer needs you to sign in again");
+  expect(pushDetail(row, { ...live, previewContent: false }, noon)).toEqual(GENERIC_TEXT.question);
+  expect(pushDetail(row, { ...live, connector: () => undefined }, noon)).toEqual(GENERIC_TEXT.question);
+});

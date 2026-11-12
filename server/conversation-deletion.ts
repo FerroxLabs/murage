@@ -40,6 +40,7 @@ import { configureRedo, listRedo } from "./engine-redo.ts";
 import { inScopeFolder, privateScopeHome, scopeCandidates } from "./engine-closed.ts";
 import { runEngineHistoryOffThread, startEngineHistoryJob, type EngineDiscovery, type EngineHistoryJob, type EngineHistoryOptions, type EngineHistoryResult } from "./engine-history-offthread.ts";
 import { hasContentSteps, homeKey, pathApiFor, type EnginePlanData, type HomePlanData } from "./engine-plan-core.ts";
+import { searchCleanupPending, searchRetirementPending } from "./message-search-index.ts";
 import { scrubWalAfterDelete, walScrubPending } from "./wal-maintenance.ts";
 import { runningAppVersion } from "./memory/app-version.ts";
 import { OPEN_PASS_ENGINES } from "./engine-history-run.ts";
@@ -770,7 +771,10 @@ export class ConversationDeletions {
     // cleanup retries across restarts. They must never keep a removed chat in
     // the deletion journal or hold up another deletion. The WAL wait above is
     // bounded; a missing memory-worker acknowledgement is not awaited here.
-    if (walScrubPending() || this.memoryCleanupPending()) leftovers.push({ what: "Removed; finishing cleanup", where: "local memory; Murage retries automatically" });
+    const searchDb = this.options.database();
+    const retiredSearch = searchRetirementPending(searchDb);
+    if (walScrubPending() || (!retiredSearch && searchCleanupPending(searchDb)) || this.memoryCleanupPending()) leftovers.push({ what: "Removed; finishing cleanup", where: "local memory; Murage retries automatically" });
+    if (retiredSearch) leftovers.push({ what: "Removed; finishing cleanup", where: "local search index; Murage retries automatically" });
     // the homes left for Murage's next update are still owed, for the same reason
     const engines = ran && deferred.length ? {
       ...ran,

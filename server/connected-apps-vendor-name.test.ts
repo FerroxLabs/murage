@@ -222,6 +222,8 @@ const INTERNAL_ONLY: Record<string, string> = {
   "server/config.ts": "environment names",
   "server/data-dir-inventory.ts": "a credential file name",
   "server/flux-composio-dev-token.ts": "a credential file name and the broker's route",
+  "server/flux-admission.ts": "closed source-file inventory and billing classifications, never displayed",
+  "server/highlevel/native-wins.ts": "function identifier in an SSE serialization expression; app data is preserved",
   "server/flux-contract-endpoints.ts": "broker routes",
   "server/flux-memory-headers.ts": "the broker's route",
   "server/index.ts": "an event type",

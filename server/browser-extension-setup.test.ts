@@ -12,7 +12,7 @@ describe("chat-led browser setup",()=>{
  it("requires live profile and explicit continue",async()=>{const f=fixture();const request=f.request();await f.setup.answer("thread",request.messageId,"accept");await expect(f.setup.answer("thread",request.messageId,"continue")).rejects.toThrow("Connect the extension");f.setStatus(connected);await f.setup.answer("thread",request.messageId,"continue");await f.setup.drain();expect(f.optIn).toHaveBeenLastCalledWith("bot","profile",undefined,false);expect(f.continueTask).toHaveBeenCalledTimes(1);});
  it("does not bypass paused browser state",async()=>{const f=fixture();const request=f.request();await f.setup.answer("thread",request.messageId,"accept");f.setStatus({...connected,bindings:[{botId:"bot",threadId:"thread",profileId:"profile",state:"paused"}]});await expect(f.setup.answer("thread",request.messageId,"continue")).rejects.toThrow("Resume the browser");expect(f.continueTask).not.toHaveBeenCalled();});
 // C2 (RES-003): a stopped task is final, so setup never asks for a Resume the extension would refuse. Continue starts a new task, or says how.
-it("a stopped newest task without a way to start a new one says to start a new task, never to Resume",async()=>{const f=fixture();const request=f.request();await f.setup.answer("thread",request.messageId,"accept");f.setStatus({...connected,bindings:[{botId:"bot",threadId:"thread",profileId:"profile",state:"stopped"}]});await expect(f.setup.answer("thread",request.messageId,"continue")).rejects.toThrow("Start a new browser task");expect(f.continueTask).not.toHaveBeenCalled();});
+it("a stopped newest task without a way to start a new one says to start a new task, never to Resume",async()=>{const f=fixture();const request=f.request();await f.setup.answer("thread",request.messageId,"accept");f.setStatus({...connected,bindings:[{botId:"bot",threadId:"thread",profileId:"profile",state:"stopped"}]});await expect(f.setup.answer("thread",request.messageId,"continue")).rejects.toThrow("This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.");expect(f.continueTask).not.toHaveBeenCalled();});
 it("Continue on the setup card starts a new task when the newest one was stopped, and an older stopped one does not matter",async()=>{const start=vi.fn(async()=>({}));const f=fixture({startNewTask:start});const request=f.request();await f.setup.answer("thread",request.messageId,"accept");
  f.setStatus({...connected,bindings:[{bindingId:"old",botId:"bot",threadId:"thread",profileId:"profile",state:"stopped"},{bindingId:"new",botId:"bot",threadId:"thread",profileId:"profile",state:"active"}]});await f.setup.answer("thread",request.messageId,"continue");expect(start).not.toHaveBeenCalled();});
 it("the queued continuation after a new task is not held up by the stopped one before it",async()=>{const f=fixture();f.bot.busy=true;const request=f.request();await f.setup.answer("thread",request.messageId,"accept");
@@ -80,4 +80,26 @@ describe("a reinstalled extension makes a new profile (#20 a)",()=>{
  it("Continue never rebinds by itself: it points the owner to the Browser panel and changes nothing",async()=>{const f=fixture();remember(f);const request=f.request();f.setStatus({profiles:[{profileId:"fresh",browser:"Chrome"}],bindings:[]});await expect(f.setup.answer("thread",request.messageId,"continue")).rejects.toThrow(/new browser profile.*Browser panel/);expect(f.optIn).not.toHaveBeenCalled();expect(f.continueTask).not.toHaveBeenCalled();});
  it("the owner's explicit choice of the new profile continues the task",async()=>{const f=fixture();remember(f);const request=f.request();f.setStatus({profiles:[{profileId:"fresh",browser:"Chrome"}],bindings:[]});await f.setup.answer("thread",request.messageId,"continue","fresh");expect(f.optIn).toHaveBeenCalledWith("bot","fresh",undefined,false);});
  it("with no live profile the old connect message stays",async()=>{const f=fixture();remember(f);const request=f.request();await expect(f.setup.answer("thread",request.messageId,"continue")).rejects.toThrow(/Connect the extension and choose its browser profile/);});
+});
+it('T4 confirms the card disclosure before setup effects and rejects stale confirmation',async()=>{
+ const choice={mode:'chrome-extension' as const,baseRevision:0,disclosureKey:'shown',lines:['From now on, Mira uses your Chrome.']};
+ const applyChoice=vi.fn(async()=>{throw new Error('disclosure_stale');});const f=fixture({previewChoice:()=>choice,applyChoice});const request=f.request();
+ expect(f.messages[1].card?.browserSetup?.browserChoice).toEqual(choice);expect(applyChoice).not.toHaveBeenCalled();
+ await expect(f.setup.answer('thread',request.messageId,'accept')).rejects.toThrow('disclosure_stale');expect(f.startHelper).not.toHaveBeenCalled();expect(f.optIn).not.toHaveBeenCalled();
+});
+
+it('direct confirmation enables tools without starting the helper and Continue resumes exactly once',async()=>{
+ const choice={mode:'chrome-direct' as const,browser:'chrome' as const,baseRevision:0,disclosureKey:'direct',lines:['From now on, your Chrome.']};
+ const enableTools=vi.fn(async()=>{});
+ const f=fixture({previewChoice:()=>choice,enableTools,applyChoice:async()=>{Object.assign(f.bot,{browserMode:'chrome-direct',selectionRevision:1});return {applied:true};}});
+ const request=f.request();await f.setup.answer('thread',request.messageId,'accept');
+ expect(enableTools).toHaveBeenCalledWith('bot',1);expect(f.startHelper).not.toHaveBeenCalled();
+ await f.setup.answer('thread',request.messageId,'continue');await f.setup.drain();await f.setup.drain();
+ expect(f.continueTask).toHaveBeenCalledTimes(1);
+});
+it('a late queued Continue cannot resume under a different browser revision',async()=>{
+ const f=fixture();const request=f.request();await f.setup.answer('thread',request.messageId,'accept');f.setStatus(connected);
+ f.bot.busy=true;f.bot.selectionRevision=1;f.messages[1].card!.browserSetup!.selectionRevision=1;
+ await f.setup.answer('thread',request.messageId,'continue');f.bot.selectionRevision=2;f.bot.busy=false;
+ await f.setup.drain();expect(f.continueTask).not.toHaveBeenCalled();expect(f.messages[1].card!.browserSetup!.error).toContain('changed');
 });

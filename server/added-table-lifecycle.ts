@@ -1,3 +1,4 @@
+import { RETIRED_SEARCH_OBJECTS } from "./settle-copy.ts";
 import { THREAD_SUMMARY_TABLE, CHATS_GEN_TABLE } from "./thread-summary.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -22,6 +23,9 @@ const derived = (what: string): Lifecycle => ({ kind: "marker", reason: `derived
 const trigger = (name: string): Lifecycle => ({ kind: "marker", reason: `rows are kept and removed by the ${name} triggers with the request they follow` });
 
 export const ADDED_TABLE_LIFECYCLE: Readonly<Record<string, Lifecycle>> = {
+  highlevel_thread_marks: { kind: "marker", reason: "one permanent privacy mark per HighLevel conversation; retained across thread deletion so history restoration cannot unmark it" },
+  search_intents: derived("message search queue"),
+  ...Object.fromEntries(RETIRED_SEARCH_OBJECTS.map(name => [name, { kind: "marker" as const, reason: "retired search postings; removed from private copies and by offline downgrade" }])),
   [THREAD_SUMMARY_TABLE]: { kind: "marker", reason: "one preview row per chat, rebuilt from the newest visible line when a line is forgotten" },
   [CHATS_GEN_TABLE]: { kind: "marker", reason: "the single generation row; epoch and rev fence preview data across changes and restore" },
   // the branch index, the line index and the keyed indexes (branch-index.ts, keyed-cards.ts, message-image-paths.ts): small tables the message writers keep and a thread's fill builds
@@ -49,10 +53,12 @@ export const ADDED_TABLE_LIFECYCLE: Readonly<Record<string, Lifecycle>> = {
   turn_source_holds: { kind: "marker", reason: "one small row per line withheld, forgotten or replaced; kept so every turn's starting entry in the log stays exact" },
   pending_delegations: { kind: "marker", reason: "a row lives until its hand-off finishes and is removed with it" },
   pending_delegations_import: { kind: "marker", reason: "one row: the one-time import of the older queue file" },
+  delegation_packs: { kind: "marker", reason: "one metadata row per delegation, retained after queue cleanup for replay; source or destination deletion and restore preparation own removal (L5b-1)" },
   // 1.0.9 phone tools and share and ask (server/phones/): small tables made only while the flag is on
   phone_registrations: { kind: "marker", reason: "one row per phone, replaced by its next report and removed when the phone is removed" },
   phone_revocations: { kind: "marker", reason: "one small row per removed or switched-off phone, kept so it stays refused" },
   phone_ask_revocations: { kind: "marker", reason: "one row per phone: the highest ask generation refused, which only ever grows" },
+  phone_ask_optins: { kind: "marker", reason: "one device-id disclosure choice per phone, preserved in backups, replaced at ask mint and removed when the phone is removed" },
   phone_receipts: { kind: "retained", by: "RETAIN_MS" },
   restore_holds: { kind: "marker", reason: "holds a restore keeps until the owner decides, cleared by that decision" },
   send_restore_generation: { kind: "marker", reason: "one counter row" },
@@ -86,6 +92,7 @@ export const ADDED_TABLE_LIFECYCLE: Readonly<Record<string, Lifecycle>> = {
   email_policy_sync: { kind: "marker", reason: "one row per bot: the email setting still to be written to Flux, confirmed in place" },
   email_trust: { kind: "marker", reason: "one row per (bot, address) the owner sent to: the earned-trust counter, a bounded list of times" },
   email_trusted: { kind: "marker", reason: "the owner's exact-address trusted list and block list per bot, changed only by the owner" },
+  email_parks: { kind: "marker", reason: "removals a restore parked until the owner decides Keep or Remove; deleted when the removal completes or Keep succeeds" },
   email_tombstones: { kind: "marker", reason: "removal intents and tombstones of email addresses; removed ones are pruned after 30 days by EmailStore.pruneTombstones" },
   shared_request_events: {
     kind: "child", parent: "room_requests", column: "request_id",

@@ -1,0 +1,19 @@
+path	tier	oses	reason
+scripts/no-limits-live/cli.node-test.mjs	gate	all	No limits release qualification preserves owner refusals, exact evidence and origin rules
+scripts/no-limits-live/predicate.node-test.mjs	gate	all	No limits release qualification preserves owner refusals, exact evidence and origin rules
+scripts/no-limits-live/release-legs.node-test.mjs	gate	all	No limits release qualification preserves owner refusals, exact evidence and origin rules
+scripts/no-limits-live/ruling.node-test.mjs	gate	all	No limits release qualification preserves owner refusals, exact evidence and origin rules
+scripts/nolim-replay/release-ruling.node-test.mjs	gate	all	No limits release qualification preserves owner refusals, exact evidence and origin rules
+scripts/nolim-replay/ruling.node-test.mjs	gate	all	No limits release qualification preserves owner refusals, exact evidence and origin rules
+scripts/no-limits-live/launch-api.test.mjs	gate	all	Live gate fixture proves wipe-only decisions, owner origin and platform parity
+scripts/no-limits-live/mandatory-powershell.test.mjs	gate	all	Live gate fixture proves wipe-only decisions, owner origin and platform parity
+scripts/no-limits-live/mandatory-ruling.test.mjs	gate	all	Live gate fixture proves wipe-only decisions, owner origin and platform parity
+scripts/no-limits-live/mandatory-unreadable.test.mjs	gate	all	Live gate fixture proves wipe-only decisions, owner origin and platform parity
+scripts/no-limits-live/mandatory-wipe.test.mjs	gate	all	Live gate fixture proves wipe-only decisions, owner origin and platform parity
+scripts/no-limits-live/origin-api.test.mjs	gate	all	Live gate fixture proves wipe-only decisions, owner origin and platform parity
+scripts/release-gate/inventory.node-test.mjs	gate	all	Absolute release verdict rejects incomplete or contradictory No limits evidence
+scripts/release-gate/judge.node-test.mjs	gate	all	Absolute release verdict rejects incomplete or contradictory No limits evidence
+scripts/release-gate/mutation-proof.node-test.mjs	gate	all	Absolute release verdict rejects incomplete or contradictory No limits evidence
+scripts/release-gate/orchestration.node-test.mjs	gate	all	Absolute release verdict rejects incomplete or contradictory No limits evidence
+scripts/release-gate/smooth-receipt.node-test.mjs	gate	all	Absolute release verdict rejects incomplete or contradictory No limits evidence
+scripts/release-gate/truly.node-test.mjs	gate	all	Absolute release verdict rejects incomplete or contradictory No limits evidence

@@ -1,5 +1,7 @@
+import { forgetHighLevelReview, highlevelReviewId } from "@/components/HighLevelReviewValues";
 import { chatsGenHello, chatsGenFrame, chatsGenUnproven, registerChatsGenReplacement } from "@/lib/chats-gen";
 import { createStoreSubscriptions } from "./store-subscriptions";
+import { acceptCreatedBot } from "./bot-creation";
 import { raiseTransientError, useChatErrorClear } from "./chat-error";
 import { createNewTaskOnce, NEW_TASK_DEADLINE_MS, NewTaskStalled, withDeadline } from "./new-task-once";
 import { t } from "@/lib/i18n";
@@ -51,6 +53,7 @@ import { botRole } from "@/lib/bot-role";
 import { SETUP_VIEW_EVENT } from "@/lib/app-events";
 import { idToSaveOnSetupView, landingId, readLastConversation, shouldRemember, workspaceKey, writeLastConversation } from "@/lib/last-conversation";
 import { homeMeta } from "@/lib/cloud-home-meta";
+import { ownerCodeRetryInit } from "@/lib/owner-code";
 import { extraTasksPatch, findTask, mayHoldTask, viewedThreadGone, windowCovers, withExtraTasks } from "@/lib/task-window";
 import { forgetProjectTab } from "@/lib/project-tab";
 import { createIndexedDbDraftBackend, forgetMarkdownDrafts } from "@/lib/markdown-drafts";
@@ -80,6 +83,7 @@ import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
 import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib/webhooks";
 import { currentCall } from "@/lib/call";
 import { isHealthPage, showHealthPage, showNotification } from "@/lib/notify";
+import { forwardAttentionConfig, forwardAttentionSettled, reportAttentionVisible, routeNotification } from "@/lib/attention-offer";
 import { replyController } from "@/lib/tts/reply-speech";
 import { knownComputer, surface } from "@/lib/surface";
 import { refreshAfterFluxKey } from "@/lib/flux-key-paste";
@@ -137,6 +141,9 @@ export type { RoutineRunCardData } from "../../shared/routine-run";
 import { isQuestionCard, type QuestionAnswer, type QuestionSpec } from "../../shared/questions";
 
 export interface OptionCardData {
+  botReviewId?: string;
+  botAuthority?: import("../../server/bot-call-authority").BotCardAuthority;
+  taskAllowSuggested?: { ownerWords: string };
   /** A publish approval card (server/publish): never auto-approved, never "always allow". */
   kind?: "publish" | "mcpEnable" | "email-send" | "email-trust-offer";
   publish?: import("../../shared/publish-card").PublishCardData;
@@ -327,7 +334,7 @@ export interface Message {
   /** activity messages: tool name + outcome. `spoken` is the server's
    * narration of the same chip ("reading a file"), used by call mode. */
   /** `setup` marks an error fixed by installing something, not by retrying. */
-  tool?: { name: string; ok?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; claudeUpdate?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; busy?: { engine: string; reason: "busy" | "credit" | "unresolved" | "hold" | "freeCap" | "hourly"; resetsAt?: number }; localFailure?: LocalSetupFailure; localFailureEngine?: string; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number; /** 1.0.18 U6 E15: the turn ended with this step still open ("No result"). */ unrecorded?: boolean; /** An image made without an approval card: what was asked for and the whole prompt. */ imageRecord?: { summary: string; prompt: string }; /** U4 S3: a hand-off's "done when" line. */ doneWhen?: string };
+  tool?: { name: string; ok?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; claudeUpdate?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; busy?: { engine: string; reason: Exclude<import("../../shared/flux-busyloop").Reason, "other"> | "repeated"; resetsAt?: number; waitSeconds?: number; shortReason?: string }; localFailure?: LocalSetupFailure; localFailureEngine?: string; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number; /** 1.0.18 U6 E15: the turn ended with this step still open ("No result"). */ unrecorded?: boolean; /** An image made without an approval card: what was asked for and the whole prompt. */ imageRecord?: { summary: string; prompt: string }; /** U4 S3: a hand-off's "done when" line. */ doneWhen?: string };
   /** user messages sent into a running turn — the model saw it mid-turn */
   steered?: boolean;
   /** a steered message the bot has not confirmed yet; cleared when it does */
@@ -526,6 +533,7 @@ export interface ModelSelection {
   model: string;
   connectionId?: string;
   effort?: EffortLevel;
+  variant?: string;
 }
 
 /** One of a bot's separate contexts: its own thread, transcript and
@@ -586,6 +594,8 @@ export interface TaskUsage {
 }
 
 export interface Bot {
+  staged?: import("../../server/bot-staging-types").StagedBot;
+  pendingRevision?: import("../../server/bot-staging-types").PendingBotRevision;
   id: string;
   /** 1.0.14 FIRST-ENGINE-REPICK: moves with every write of this bot's engine; an owner tap sends the one it was drawn with. */
   engineRev?: number;
@@ -667,7 +677,9 @@ export interface Bot {
   fullAccess?: boolean;
   /** set by the server once the owner confirmed the one-time Full access warning */
   fullAccessAcknowledgedAt?: number;
-  /** No limits, above Full access: no stop line; on a turn the owner started only the gate files of the key guard ask */
+  permissionExplicit?: boolean;
+  permissionRev?: number;
+  /** No limits keeps only the wipe/catastrophe check (Sean 2026-11-12 02:05Z). */
   noLimits?: boolean;
   /** set by the server once the owner confirmed the one-time No limits warning */
   noLimitsAcknowledgedAt?: number;
@@ -738,6 +750,13 @@ export interface Bot {
   /** Named browser profile id (config.browserProfiles); absent/null = the
    * bot's own session (null is how a clear travels over PATCH). */
   browserProfile?: string | null;
+  browserMode?: 'builtin' | 'chrome-extension' | 'chrome-direct';
+  selectionRevision?: number;
+  browserSelectionRevision?: number;
+  browserSetupRevision?: number;
+  pendingBrowserChoice?: import('../../server/browser-mode-transition.ts').BrowserChoice;
+  previousBrowserChoice?: import('../../server/browser-mode-policy.ts').BrowserSelection;
+  browserRelease?: import('../../server/browser-mode-transition.ts').BrowserRelease;
   /** The owner opted this bot into their own running Chrome (one bot at most). */
   useMyChrome?: boolean;
   browserTransport?: "extension";
@@ -892,13 +911,18 @@ export function messageVersions(bot: Bot, message: Message): Message[] {
 
 /** GET /api/config — configured flags only; secrets are never echoed. */
 export interface ConfigStatus {
+  settingsDefaultMode?: "simple" | "advanced";
   xai?: { configured: boolean };
   composio: { configured: boolean; mode?: "managed" | "unavailable"; migration?: { state?: string }; broker?: "flux" | "legacy" | null; ownKeyRetired?: boolean };
   box: { configured: boolean };
   vps: { configured: boolean; sshAlias: string };
   rooms: { turnTimeoutMinutes: number };
   /** Effort every new bot starts with where its engine offers it; absent = none sent. */
-  newBots?: { effort?: EffortLevel };
+  newBots?: { effort?: EffortLevel; permissionLevel?: "ask" | "auto" | "full" | "no-limits" };
+  /** Which computer a new bot starts on (config computer.defaultForNewBots; "this" until chosen). Read at creation only. */
+  newBotComputer?: "off" | "this" | "vm" | "cloud";
+  /** Claude Code copy import: the owner's switch and what the last import added (counts only). */
+  claudeCodeImport?: { enabled: boolean; lastImportedAt: number | null; skills: number; servers: number; needsKey: number };
   localVm: { mode: "shared" | "per-bot"; maxInstances: number };
   opencodeGo?: { configured: boolean };
   /** Voice (ElevenLabs). `configured` = a key is saved; `ready` = a key AND
@@ -946,6 +970,14 @@ export interface ConfigStatus {
   harness?: { platform: string };
   /** Whether the owner has accepted No limits as it now stands. Desktop only: the phone's copy has no such field. */
   noLimitsTerms?: { accepted: boolean };
+  /** A Cloud home's owner browser: false once the owner factor ran out (chat only until they open Murage from murage.ai). Absent off a home. */
+  owner?: boolean;
+  /** When the owner factor ends (ms epoch), on a Cloud home. */
+  ownerUntil?: number;
+  /** false on a Cloud home: there is no computer to sign in on. */
+  computer?: boolean;
+  /** true when this page is an owner browser of a Cloud home. */
+  cloudOwnerBrowser?: boolean;
 }
 
 export interface BrowserProfile {
@@ -961,11 +993,12 @@ export type FluxKeyState = "ok" | "missing" | "not-flux" | "refused";
 
 export type ConfigStatusFrame = Pick<
   ConfigStatus,
-  "xai" | "composio" | "box" | "vps" | "rooms" | "newBots" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "flux" | "decider" | "webSearch" | "notifications" | "profile" | "language" | "spend" | "features" | "browserProfiles" | "harness"
+  "settingsDefaultMode" | "xai" | "composio" | "box" | "vps" | "rooms" | "newBots" | "newBotComputer" | "claudeCodeImport" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "flux" | "decider" | "webSearch" | "notifications" | "profile" | "language" | "spend" | "features" | "browserProfiles" | "harness"
 >;
 
 export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
   return {
+    settingsDefaultMode: frame.settingsDefaultMode,
     xai: frame.xai,
     composio: frame.composio,
     box: frame.box,
@@ -975,6 +1008,8 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     // Dropping them here made the auto-routing switch read off after any live
     // config change, and its next click saved it back on (U35).
     newBots: frame.newBots,
+    newBotComputer: frame.newBotComputer,
+    claudeCodeImport: frame.claudeCodeImport,
     localVm: frame.localVm,
     opencodeGo: frame.opencodeGo,
     tts: frame.tts,
@@ -1027,9 +1062,11 @@ export interface InstanceInfo {
     /** a reported cost on a subscription is notional; the UI says so */
     billing?: "metered" | "subscription";
     /** Cloud home: offer this engine's sign-in again (Claude's token is near expiry or no longer accepted) */
+    /** Home-level setup status only (some bot has a sign-in); never read it as a bot being signed in. */
+    setUpOnHome?: boolean;
     renewSignIn?: boolean;
   };
-  models: { default: string; options: Array<{ id: string; label: string; custom?: boolean; loaded?: boolean; provider?: string }> };
+  models: { default: string; options: Array<{ id: string; label: string; custom?: boolean; loaded?: boolean; provider?: string; variants?: Array<{ id: string; label: string }> }> };
   capabilities?: {
     computerMcp?: boolean;
     agentsMcp?: boolean;
@@ -1125,6 +1162,8 @@ export interface AppState {
   /** Which half the Connected apps panel opens on (Settings > Connected
    *  apps has a button for each). Read when the panel mounts. */
   pluginsSurface?: "apps" | "mcp";
+  reconnectIncidentId?: string;
+  pluginReconnect?: { slug: string; accountId?: string; alias?: string };
   computerOpen: boolean;
   /** the per-thread event inspector (runtime stream + native protocol tee) */
   inspectorOpen: boolean;
@@ -1141,6 +1180,8 @@ export interface AppState {
   screens: Record<string, { png: string; mime: string }>;
   /** A bounded preview warning; the last good pixels remain available. */
   screenNotices?: Record<string, string>;
+  /** Creation fallback explanations, kept for this session's per-bot Computer settings. */
+  botComputerNotices?: Record<string, string>;
   /** bots whose cloud computer is being provisioned */
   provisioning: Record<string, boolean>;
   /** who is driving each bot's computer: held = the person has the wheel
@@ -1635,6 +1676,9 @@ export type Action =
       message?: string;
       /** Exact proposal hash displayed by a current learned-skill client. */
       reviewedSha256?: string;
+      /** HighLevel: the digest of the open review whose values this surface showed (HL-S2-WRITES (a)4). */
+      reviewDigest?: string;
+      seen?: { renderer: string; digest: string };
       /** remember this exact grant (the server's allowKey) for the bot, or a
        * several-action card's whole set (its allowKeys, Rule 78c) */
       /** `onSaved` gets the save's `added` receipt BY HOLDER (the bot's
@@ -1716,10 +1760,11 @@ export type Action =
   | { type: "deleteTask"; botId: string; threadId: string }
   /** `profile`: hire in one sentence (UX-L6A part 2, src/lib/hire-defaults.ts). The engine is still the server's birth rule. */
   | { type: "newBot"; profile?: { name: string; description: string }; onSettled?: (error: unknown | null) => void }
+  | { type: "botComputerNotice"; botId: string; message: string }
   | ({ type: "botAdded"; bot: Bot } & HttpOrigin)
   /** The person deleted a bot (the sidebar, or the archived list with `archived`): removed at once, pending until the DELETE's own
    * answer or the deletion frame (§2.7). `attempt` is a client nonce (newDeleteAttempt); `onSettled` is a local hook, never sent. */
-  | { type: "deleteBot"; source: "local"; botId: string; attempt: string; archived?: boolean; onSettled?: (result: DeleteOutcome) => void }
+  | { type: "deleteBot"; source: "local"; botId: string; attempt: string; archived?: boolean; emailConfirm?: string; onSettled?: (result: DeleteOutcome) => void }
   /** The stream's `bot.deleted`: `hidden` is a hide sent to a scoped stream (`audience: "remote"`), else a real deletion. */
   | { type: "botDeleted"; source: "stream"; botId: string; hidden: boolean; tasksSeq?: number; tasksEpoch?: string }
   /** The DELETE effect's outcome, matched to the pending delete by `attempt` (§2.7 r6). */
@@ -1771,7 +1816,8 @@ export type Action =
       answer?: boolean }
   | { type: "toggleSettings"; open?: boolean; intent?: BotSettingsIntent; botId?: string }
   | { type: "clearBotSettingsIntent" }
-  | { type: "togglePlugins"; open?: boolean; surface?: "apps" | "mcp" }
+  | { type: "openConnectorReconnect"; incidentId?: string }
+  | { type: "togglePlugins"; open?: boolean; surface?: "apps" | "mcp"; reconnect?: { slug: string; accountId?: string; alias?: string } }
   | { type: "toggleComputer"; open?: boolean }
   | { type: "toggleInspector"; open?: boolean }
   | { type: "workspacePane"; action: WorkspacePaneAction }
@@ -1917,9 +1963,13 @@ export function visibleNotificationThread(
 
 export function openNotificationTarget(
   dispatch: (action: Action) => void,
-  target: { botId?: string; threadId: string },
+  target: { botId?: string; threadId: string; reconnectIncidentId?: string },
   state: NotificationRoutingState,
 ): boolean {
+  if (target.reconnectIncidentId) {
+    dispatch({ type: "openConnectorReconnect", incidentId: target.reconnectIncidentId });
+    return true;
+  }
   // A room's approval/question notification carries the asker bot with the
   // GROUP's thread id; asking the bot to switch to that thread would 404.
   // Open the room itself. A thread that is neither a room nor one of the
@@ -3887,6 +3937,8 @@ function reduceState(state: AppState, action: Action): AppState {
         ...(action.message.kind === "options" ? { cardsRev: (b.cardsRev ?? 0) + 1 } : {}),
       }));
     }
+    case "botComputerNotice":
+      return { ...state, botComputerNotices: { ...state.botComputerNotices, [action.botId]: action.message } };
     case "screenUnavailable":
       return { ...state, screenNotices: { ...state.screenNotices, [action.botId]: action.message } };
     case "screenFrame": {
@@ -3963,9 +4015,10 @@ function reduceState(state: AppState, action: Action): AppState {
         appSettingsOpen: open ? false : state.appSettingsOpen,
       };
     }
+    case "openConnectorReconnect": return { ...state, reconnectIncidentId: action.incidentId };
     case "togglePlugins": {
       const open = action.open ?? !state.pluginsOpen;
-      return { ...state, pluginsOpen: open, pluginsSurface: open ? action.surface ?? "apps" : state.pluginsSurface };
+      return { ...state, pluginsOpen: open, pluginReconnect: action.reconnect, pluginsSurface: open ? action.surface ?? "apps" : state.pluginsSurface };
     }
     case "focusMessage":
       return {
@@ -4489,6 +4542,10 @@ export async function api(path: string, init?: RequestInit, busyTries: number = 
     if (Number.isFinite(retryAfter) && retryAfter > 0) body.retryAfterSeconds = retryAfter;
   }
   if (!res.ok) {
+    // An owner browser on a Cloud home: a high-risk change is refused with 403 email_code. The owner types the 6-digit code from
+    // their email (OwnerCodeDialog) and this exact request goes once more with the proof. null (anything else, anywhere else) falls through.
+    const withProof = res.status === 403 ? await ownerCodeRetryInit(init, res.status, body) : null;
+    if (withProof) return api(path, withProof, busyTries);
     const error = Object.assign(new Error(sendNoticeFromBody(body) ?? body.error ?? requestFailedSentence(res.status)), { status: res.status, body });
     // A delete or a settings write (PUT, PATCH: repeating one changes nothing a first run did not) that met the server's busy answer (503
     // DATABASE_BUSY) is repeated after its Retry-After, a few times, before the failure reaches the caller (send-delivery.ts busyRetriesFor).
@@ -4721,6 +4778,41 @@ async function setupFinished(): Promise<boolean> {
   return setupFinishedAnswer;
 }
 
+/** A browser window has no conversation, outbox, notifications or read receipts.
+ * Only the displayed bot and browser profiles are refreshed here. */
+export function BrowserStoreProvider({ botId, children }: { botId: string; children: ReactNode }) {
+  const [state, setState] = useState<AppState>(initialState);
+  const revision = useRef(0);
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = async () => {
+      const asked = revision.current;
+      try {
+        const [{ bot }, config] = await Promise.all([
+          api(`/api/bots/${encodeURIComponent(botId)}?messages=0`) as Promise<{ bot: Bot }>,
+          api('/api/config').then(configReply<ConfigStatus>),
+        ]);
+        if (alive && asked === revision.current) setState({ ...initialState, bots: bot?.id === botId ? [bot] : [], config, connected: true });
+      } catch (error) {
+        if (alive && (error as { status?: number }).status === 404) setState({ ...initialState, connected: true });
+      } finally { if (alive) timer = setTimeout(refresh, 2000); }
+    };
+    void refresh();
+    return () => { alive = false; clearTimeout(timer); };
+  }, [botId]);
+  const dispatch = useCallback<React.Dispatch<Action>>(action => {
+    if (action.type === 'botPatched' && action.bot.id === botId) {
+      revision.current++;
+      setState(previous => ({ ...previous, bots: previous.bots.map(bot => ({ ...bot, ...action.bot })) }));
+    } else if (action.type === 'interrupt' && action.botId === botId) {
+      void api(`/api/bots/${encodeURIComponent(botId)}/interrupt`, { method: 'POST', body: '{}' }).catch(() => {});
+    }
+  }, [botId]);
+  const value = useMemo(() => ({ state, dispatch, flushBotPatches: async () => {}, refreshInstances: async () => {}, refreshAfterKey: async () => {} }), [state, dispatch]);
+  return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
+}
+
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, rawDispatch] = useReducer(reducer, initialState);
   const [selections] = useState(() => createStoreSubscriptions(state));
@@ -4730,6 +4822,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   stateRef.current = state;
   const syncReplyContext = (hydrated = Boolean(stateRef.current.hydrated)) => replyController.configure({ desktop: knownComputer() === true, hydrated, threadId: visibleNotificationThread(stateRef.current), botId: stateRef.current.bots.find(bot => bot.id === stateRef.current.selectedId)?.id, visible: document.visibilityState !== "hidden", call: currentCall() !== null });
   useEffect(() => { syncReplyContext(); }, [state.hydrated, state.selectedId, state.activeView, state.bots, state.groups]);
+  // NOTIFY-EVERYWHERE-1019 S3: tell the router which conversation is on screen and whether this window has focus (changes only).
+  useEffect(() => {
+    const report = () => reportAttentionVisible(visibleNotificationThread(stateRef.current), document.hasFocus() && document.visibilityState !== "hidden");
+    report();
+    window.addEventListener("focus", report);
+    window.addEventListener("blur", report);
+    document.addEventListener("visibilitychange", report);
+    return () => { window.removeEventListener("focus", report); window.removeEventListener("blur", report); document.removeEventListener("visibilitychange", report); };
+  }, [state.selectedId, state.activeView, state.bots, state.groups]);
   useEffect(() => {
     let alive = true;
     void surface().then(() => { if (alive) syncReplyContext(); });
@@ -5014,7 +5115,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // Sent with its attempt id; an answer carrying the server's own JSON error is a refusal (shown, the bot fetched again); no answer
     // (network, abort, a body that is not the server's) is retried with the same attempt, said out loud after the third try and given
     // up after DELETE_RETRY_MAX. The stream's deletion frame for the id ends it at any point.
-    type DeleteRun = { botId: string; attempt: string; name: string; archived: boolean; tries: number; inFlight: boolean; timer?: ReturnType<typeof setTimeout>; onSettled?: (result: DeleteOutcome) => void };
+    type DeleteRun = { botId: string; attempt: string; name: string; archived: boolean; emailConfirm?: string; tries: number; inFlight: boolean; timer?: ReturnType<typeof setTimeout>; onSettled?: (result: DeleteOutcome) => void };
     const deleteRuns = new Map<string, DeleteRun>();
     const forgetBotDrafts = (botId: string) => {
       forgetDeletedDrafts({ botId });
@@ -5043,7 +5144,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (run.timer) clearTimeout(run.timer);
       run.timer = undefined;
       run.inFlight = true;
-      api(`/api/bots/${encodeURIComponent(run.botId)}${run.archived ? "?ifArchived=1" : ""}`, { method: "DELETE", headers: { "x-murage-attempt": run.attempt } })
+      api(`/api/bots/${encodeURIComponent(run.botId)}${run.archived ? "?ifArchived=1" : ""}`, { method: "DELETE", headers: { "x-murage-attempt": run.attempt }, ...(run.emailConfirm ? { body: JSON.stringify({ emailConfirm: run.emailConfirm }) } : {}) })
         .then((body: { ok?: unknown; tasksSeq?: unknown; tasksEpoch?: unknown; warning?: unknown } | null) => {
           run.inFlight = false;
           if (deleteRuns.get(run.botId) !== run) return;
@@ -5272,6 +5373,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             behavior: action.behavior,
             message: action.message,
             reviewedSha256: action.reviewedSha256,
+            ...(action.reviewDigest ? { reviewDigest: action.reviewDigest } : {}),
+            ...(action.seen ? { seen: action.seen } : {}),
             ...(action.allowForTask ? { allowForTask: true } : {}),
           };
           // SEC-006: an Allow from the phone may be met by a challenge; the
@@ -5282,6 +5385,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             decideWithFreshAuth(
               async (extra) => {
                 const body = await api(`/api/threads/${action.threadId}/respond`, { method: "POST", body: JSON.stringify({ ...answer, ...extra }) });
+                const highlevelId = highlevelReviewId(action.requestId);
+                if (highlevelId && (body?.outcome === "allowed-once" || body?.outcome === "rejected")) forgetHighLevelReview(highlevelId);
                 // UX-TRUST-MOMENTS-1012 1.3: the allowance this answer added, for the card's Undo
                 if (allowForTask && body?.outcome === "allowed-once") onTaskAdded?.(stringList(body.taskAdded));
                 return body;
@@ -5503,8 +5608,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "newBot":
           api("/api/bots", action.profile ? { method: "POST", body: JSON.stringify({ name: action.profile.name, description: action.profile.description }) } : { method: "POST" })
-            .then(({ bot }) => {
-              rawDispatch({ type: "botAdded", ...fromAnswer(bot), bot });
+            .then((answer) => {
+              acceptCreatedBot(rawDispatch, answer);
               action.onSettled?.(null);
             })
             // A caller that says what happened (the Hire sheet) shows the refusal itself, with the owner's draft kept.
@@ -5553,7 +5658,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (action.archived !== true) forgetBotDrafts(action.botId);
           const previous = deleteRuns.get(action.botId);
           if (previous?.timer) clearTimeout(previous.timer);
-          const run: DeleteRun = { botId: action.botId, attempt: action.attempt, name: botBeforeDelete?.name || "This bot", archived: action.archived === true, tries: 0, inFlight: false, onSettled: action.onSettled };
+          const run: DeleteRun = { botId: action.botId, attempt: action.attempt, name: botBeforeDelete?.name || "This bot", archived: action.archived === true, tries: 0, inFlight: false, onSettled: action.onSettled, ...(action.emailConfirm ? { emailConfirm: action.emailConfirm } : {}) };
           deleteRuns.set(action.botId, run);
           sendDelete(run);
           break;
@@ -6280,6 +6385,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // transcript on a reconnect it already covered is pure waste.
     handleFrame = (frame, replayed = false) => {
       if (frame.kind === "inbox.changed") { emitInboxChanged(frame.pollScale); return; }
+      if (frame.kind === "attention.settled") { forwardAttentionSettled(frame); return; }
+      if (frame.kind === "config") forwardAttentionConfig(); // a content-free signal; the handling below is unchanged
       // A memory the bot just kept (B5m): the open chat attaches its chip under the reply it came from.
       if (frame.kind === "learning.remembered" || frame.kind === "learning.improved") { window.dispatchEvent(new CustomEvent(REMEMBERED_EVENT, { detail: frame })); return; }
       // How many memories wait for the owner (counts only): the shared counts, the badge and the Memory screen move at once.
@@ -6339,6 +6446,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         case "message.patch":
           conversationCache()?.applyFrame(frame);
+          if (frame.message?.card?.answered || frame.message?.card?.dismissed) {
+            const reviewId = highlevelReviewId(frame.message.card.requestId);
+            if (reviewId) forgetHighLevelReview(reviewId);
+          }
           rawDispatch({ type: "messagePatched", threadId: frame.threadId, message: frame.message, ...seqEnvelope(frame) });
           break;
         case "thread":
@@ -6399,12 +6510,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // unread:false back. Opening a bot from its own notification and
           // watching the badge return on the next hydration is exactly the
           // bug that makes notifications feel broken.
-          showNotification(
-            frame.notification,
+          // NOTIFY-EVERYWHERE-1019 S3: the desktop's router decides first (routing ids only cross); the display below is unchanged and
+          // runs when the router says show, or at once when there is no router.
+          routeNotification(frame.notification, (shown) => showNotification(
+            shown as typeof frame.notification,
             (target) => openNotificationTarget(dispatch, target, stateRef.current),
             stateRef.current.bots.find((bot) => bot.id === frame.notification.botId)?.avatarUrl,
             visibleNotificationThread(stateRef.current),
-          );
+          ));
           break;
         case "group.deleted":
           rawDispatch({

@@ -28,8 +28,8 @@ function startWorker(pin: string[]) {
   const args = ["--experimental-strip-types", resolve("server/memory/worker.ts")];
   const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1", MURAGE_MEMORY_BACKEND: "wasm" };
   const child: ChildProcess = pin.length
-    ? spawn("taskset", ["-c", pin.join(","), process.execPath, ...args], { env, stdio: ["ignore", "ignore", "pipe", "ipc"] })
-    : fork(args[1], [], { execArgv: [args[0]], env, stdio: ["ignore", "ignore", "pipe", "ipc"] });
+    ? spawn("taskset", ["-c", pin.join(","), process.execPath, ...args], { windowsHide: true, env, stdio: ["ignore", "ignore", "pipe", "ipc"] })
+    : fork(args[1], [], { windowsHide: true, execArgv: [args[0]], env, stdio: ["ignore", "ignore", "pipe", "ipc"] });
   const mailbox: Message[] = [];
   let wake: (() => void) | undefined, exited: number | null | undefined, output = "";
   child.on("message", message => { mailbox.push(message as Message); wake?.(); });
@@ -76,7 +76,7 @@ it.runIf(prepared && mode)("the first search after a WebAssembly idle exit: resp
   const root = mkdtempSync(join(tmpdir(), "respawn-"));
   const loaded = mode === "load";
   const pin = loaded ? ["0", "1"] : [];
-  const busy: ChildProcess[] = loaded ? Array.from({ length: 6 }, () => spawn("taskset", ["-c", "0,1", process.execPath, "-e", "for(;;);"], { stdio: "ignore" })) : [];
+  const busy: ChildProcess[] = loaded ? Array.from({ length: 6 }, () => spawn("taskset", ["-c", "0,1", process.execPath, "-e", "for(;;);"], { windowsHide: true, stdio: "ignore" })) : [];
   try {
     const records = fixture(root);
     const init = { type: "init", indexPath: join(root, "index.db"), authorityPath: join(root, "authority.db"), modelDirectory, manifest, wasmIdleExitMs: 50 };

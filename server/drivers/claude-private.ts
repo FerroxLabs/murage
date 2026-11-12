@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -246,7 +247,7 @@ export function sweepClaudePrivate(root: string, fs: PrivateFs = defaultFs(), lo
   try {
     const mst = lstatSync(manifest);
     if (!mst.isFile() || mst.isSymbolicLink()) { log(`claude private: ${MANIFEST} is not a regular file; left alone`); return []; }
-    names = JSON.parse(readFileSync(manifest, "utf8"));
+    names = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(manifest, "utf8")));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") { log(`claude private: ${MANIFEST} could not be read; left alone`); return []; }
   }

@@ -57,7 +57,7 @@ it("applies the overlay after the final hand only for engines with the hook", as
 });
 it("keeps the old overlay order for an engine without the hook", async () => {
   const order: string[] = [];
-  const instance = await create({ ...support(), finishTurnEnv: () => { order.push("finish"); }, applyFluxMemory: () => { order.push("overlay"); } });
+  const instance = await create({ ...support(), requestBaseUrl: () => "https://api.fluxrouter.ai/v1", finishTurnEnv: () => { order.push("finish"); }, applyFluxMemory: () => { order.push("overlay"); } });
   const events = recordEvents(instance.adapter);
   await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "old-order", text: "fixture", model: "flux-auto" });
   await events.until(e => e.type === "turn.completed");
@@ -211,4 +211,16 @@ it.skipIf(process.platform === "win32").each(["stopAll", "dispose"] as const)("D
     release(); await instance?.dispose(); resolver.dispose(); writer.close();
     removeTempDirSync(root);
   }
+});
+
+for (const requestUrl of ["https://api.fluxrouter.ai/v1", "https://api.openai.com/v1"]) it(`R1 probed model override decides refusal scope: ${requestUrl}`, async () => {
+  const instance=await create({...support(),effectiveDestination:async()=>({provider:"flux",urls:["https://api.fluxrouter.ai/v1",requestUrl]})}, {FAKE_ACP_MODE:"payment-required:missing"});
+  const rec=recordEvents(instance.adapter);
+  try {
+    await instance.adapter.sendTurn({cwd:fixtureBotFolder(),threadId:"r1-probed",text:"fixture",model:"flux/m"});
+    await rec.until(e=>e.type==="turn.completed");
+    const decision=(rec.events.find(e=>e.type==="runtime.error") as any)?.fluxDecision;
+    if(requestUrl.includes("fluxrouter.ai"))expect(decision).toEqual({reason:"fluxStop",action:"STOP",wait:"-"});
+    else expect(decision).toBeUndefined();
+  } finally {rec.stop();}
 });

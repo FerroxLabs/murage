@@ -101,6 +101,7 @@ afterEach(() => { _resetPhoneSecretsForTest(); setPhoneAskPreview(null); });
 /** The agents MCP proxy spawned the way a driver's mount spawns it. */
 async function proxy(phone: boolean) {
   const child: ChildProcess = spawn(process.execPath, [PROXY], {
+    windowsHide: true,
     env: { ...process.env, MURAGE_HARNESS_URL: `http://127.0.0.1:${stubPort}`, MURAGE_BOT_ID: "bot-s7", MURAGE_THREAD_ID: "thread-s7", MURAGE_COMMS_TOKEN: TOKEN,
       MURAGE_TURN_DEPTH: "0", ...(phone ? { MURAGE_PHONE_CALLS: "1" } : { MURAGE_PHONE_CALLS: "" }) },
     stdio: ["pipe", "pipe", "ignore"],

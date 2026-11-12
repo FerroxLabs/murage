@@ -1,0 +1,10 @@
+REMOVED /work/node_modules
+REMOVED /work/dist-server
+REMOVED /work/.test-tmp/cfix6-winscen
+REMOVED /work/node_modules
+REMOVED /work/dist-server
+REMOVED /work/.test-tmp/cfix6-winscen
+REMOVED /work/fuigo-builds/swarm-b/winscen/wt/node_modules
+REMOVED /work/fuigo-builds/swarm-b/winscen/wt/dist-server
+REMOVED /work/fuigo-builds/swarm-b/winscen/wt/.test-tmp/cfix6-winscen
+No retained cfix6 containers; dependencies and generated build/test tooling removed.

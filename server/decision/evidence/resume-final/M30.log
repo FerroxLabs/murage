@@ -1,0 +1,57 @@
+COMMAND node_modules/.bin/vitest run server/permission-level-parity.test.ts -t M30
+
+ RUN  v4.1.12 /work
+
+stdout | server/permission-level-parity.test.ts > R6 M30 X5 full 512-cell transition parity, including non-owner No-limits sole mirroring
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/permission-level-parity.test.ts (1 test | 1 failed) 332ms
+   × R6 M30 X5 full 512-cell transition parity, including non-owner No-limits sole mirroring 329ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  08:17:13
+   Duration  5.35s (transform 3.75s, setup 4.37s, import 530ms, tests 332ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/permission-level-parity.test.ts > R6 M30 X5 full 512-cell transition parity, including non-owner No-limits sole mirroring
+AssertionError: expected { id: 'b', autoApprove: false, …(5) } to deeply equal { id: 'b', autoApprove: false, …(5) }
+
+- Expected
++ Received
+
+@@ -8,18 +8,13 @@
+      "rev": 0,
+    },
+    "permissionRev": 1,
+    "tasks": [
+      {
+-       "autoApprove": false,
++       "autoApprove": true,
+        "fullAccess": false,
+        "id": "task0",
+        "noLimits": false,
+-       "permissionPrev": {
+-         "level": "auto",
+-         "rev": 0,
+-       },
+-       "permissionRev": 1,
+        "threadId": "other0",
+      },
+    ],
+  }
+
+ ❯ server/permission-level-parity.test.ts:26:153
+     24|   const ctx=context(c.from,c.conv,c.count,c.owner);Store.prototype.set…
+     25|   const base=frozen.rows[index];const involves=c.from!==c.to&&(c.from=…
+     26|   if(c.owner&&involves)for(const task of ctx.bot().tasks)expect(permis…
+       |                                                                                                                                                         ^
+     27|   expect(ctx.events).toEqual(base.events);
+     28|  }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

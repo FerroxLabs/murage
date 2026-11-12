@@ -121,12 +121,12 @@ describe("copy rules", () => {
     // It read `expect(claims).not.toMatch(/voice|speech|image|picture|avatar/)`
     // and its comment said Flux "is not voice, not image generation". That was
     // a claim about FLUX, and it was false. FluxRouter serves a metered
-    // POST /v1/images/generations (flux-router/src/images_route.py) across
-    // seven provider arms (capability_image.py), and an audio route besides.
+    // POST /v1/images/generations across
+    // seven provider arms, and an audio route besides.
     // Probed live 2026-09-03: an unauthenticated POST to
     // https://api.fluxrouter.ai/v1/images/generations answers 401
     // {"error":{"message":"unauthorized"}}, which is that handler's own 401 and
-    // only runs AFTER the FLUX_CAP_IMAGE_ENABLED dark gate would have returned
+    // only runs AFTER the server-side rollout gate would have returned
     // 404. The capability is live, so a blanket ban on the word "image" was
     // guarding a fact that was not true.
     //
@@ -225,6 +225,8 @@ describe("nothing in the app is gated on a Flux key", () => {
     // same bar: bot email is work the key performs (the mail account lives in Flux), the card and the section render with
     // or without a key, and nothing is hidden or removed; the key only changes the explanation (SETTINGS-UX-1011 S1).
     "components/BotEmailSettings.tsx",
+    // settings/pages/BotEmailReadout.tsx (1.0.19) is the phone and Cloud readout of the same Bot email card: it words one line from the saved state and hides nothing.
+    "components/settings/pages/BotEmailReadout.tsx",
     // bot-email.ts signInFluxAgain reads the /api/flux-connection answer's `configured` only to pick the sign-in action
     // ("replace" the saved key or "connect" a first one) for the Bot email stub's Sign in with Flux (1.0.11
     // FLUX-SIGNIN-DEFAULT). It gates nothing: the stub and the section render either way.
@@ -232,6 +234,11 @@ describe("nothing in the app is gated on a Flux key", () => {
     // today/use-engine-health.ts reads `configured` only to word the Health line when the server has no answer yet
     // (UX L2A). It gates nothing: every screen and engine works either way.
     "components/today/use-engine-health.ts",
+    // cloud-signin-status.ts fluxReadyOf turns a Flux status reading into ready, not ready or unknown (CLOUD-NOKEY-FALLBACK,
+    // b6b9912cd). On a Cloud home only, while the credit is not ready, the gate shows "Getting Fuigo ready" in place of another
+    // engine's sign-in bar. It clears the same bar: every engine still signs in and works, nothing is hidden or removed,
+    // and off a Cloud home the answer is never used.
+    "lib/cloud-signin-status.ts",
   ]);
 
   const sources = (): string[] => {

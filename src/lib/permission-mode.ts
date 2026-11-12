@@ -1,3 +1,4 @@
+import { ownerRoutineLevel } from "../../shared/owner-routine-level.ts";
 import type { Bot } from "@/state/store";
 import { t } from "@/lib/i18n";
 
@@ -129,10 +130,10 @@ export function routineOfConversation<T extends { botId: string; threadId?: stri
  * effectiveRoutinePermissionMode does on the server. With no ceiling of its
  * own, the bot's level. The chip never shows more than a run can do. */
 export function routineEffectiveMode(
-  routine: { permissionMode?: PermissionMode },
-  profile: Pick<Bot, "autoApprove" | "fullAccess"> & { noLimits?: boolean },
+  routine: { permissionMode?: PermissionMode; permissionExplicit?:boolean; draftOnly?: boolean },
+  profile: Pick<Bot, "autoApprove" | "fullAccess"> & { noLimits?: boolean; draftOnly?:boolean },
 ): PermissionMode {
   const current = permissionModeOf(profile);
-  const ceiling = routine.permissionMode ?? current;
-  return levelRank(ceiling) < levelRank(current) ? ceiling : current;
+  const ceiling = current === "unlimited" && routine.permissionExplicit === false ? current : routine.permissionMode ?? current;
+  return ownerRoutineLevel(current, levelRank(ceiling) < levelRank(current) ? ceiling : current, routine.draftOnly === true || profile.draftOnly === true);
 }

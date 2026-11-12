@@ -1,0 +1,79 @@
+{
+  "typecheck": "passed (UI, server, Flux conformance)",
+  "vitest": {
+    "files": 57,
+    "passed": 15817,
+    "failed": 0
+  },
+  "node": {
+    "passed": 35,
+    "failed": 0
+  },
+  "mutantsKilled": 4,
+  "sourceRestored": true,
+  "fixture": {
+    "firstCreates": 1,
+    "initialOutcome": "outcome_unknown",
+    "restartCreates": 0,
+    "restartReads": 1,
+    "restartOutcome": "applied_by_read_reconciliation",
+    "recipientFlag": "unset",
+    "scans": [
+      {
+        "files": 9,
+        "decoded": 0,
+        "leaks": 0
+      },
+      {
+        "files": 7,
+        "decoded": 0,
+        "leaks": 0
+      }
+    ]
+  },
+  "retiredRoutes": [
+    {
+      "suffix": "password-session",
+      "status": 404,
+      "body": {
+        "error": "Not found"
+      }
+    },
+    {
+      "suffix": "create-user",
+      "status": 404,
+      "body": {
+        "error": "Not found"
+      }
+    }
+  ],
+  "retiredRouteArtifactScans": {
+    "scan": {
+      "files": 27,
+      "decoded": 0,
+      "leaks": 0,
+      "emptyDirectories": 8,
+      "sockets": 1,
+      "collectionAttempts": 1
+    },
+    "afterShutdown": {
+      "files": 24,
+      "decoded": 0,
+      "leaks": 0,
+      "emptyDirectories": 7,
+      "sockets": 0,
+      "collectionAttempts": 1
+    },
+    "afterRestart": {
+      "files": 27,
+      "decoded": 0,
+      "leaks": 0,
+      "emptyDirectories": 7,
+      "sockets": 1,
+      "collectionAttempts": 1
+    }
+  },
+  "liveHighLevelCalls": 0,
+  "packagedInteractiveDesktop": "unqualified",
+  "recipientAccessLiveCheck": "not performed; MAIN must authorize and verify before enabling"
+}

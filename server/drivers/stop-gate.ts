@@ -19,6 +19,8 @@ export type StopWhy = "asked" | "closing";
 
 /** What a turn ended with, as the engine knows it. `final`: emitted as is under any mark (a gate incident, a refusal, a shutdown timeout). */
 export type Verdict = {
+  readsComplete?: true;
+  helperRow?: import('../turn-settle.ts').HelperRow;
   ok: boolean;
   stopReason: string | null;
   /** A terminal error: a string becomes the runtime.error message, an object is spread into the runtime.error event. */
@@ -136,7 +138,7 @@ export function createStopGate(env: GateEnv) {
               const detail = typeof v.error === "string" ? { message: v.error } : v.error;
               env.emit({ ...env.base(threadId, turnId), type: "runtime.error", ...detail });
             }
-            env.emit({ ...env.base(threadId, turnId), type: "turn.completed", ok: v.ok, stopReason: v.stopReason, cost: null, ...v.extra });
+            env.emit({ ...env.base(threadId, turnId), type: "turn.completed", ok: v.ok, stopReason: v.stopReason, cost: null, ...(v.readsComplete ? { readsComplete: true } : {}), ...(v.helperRow ? { helperRow: v.helperRow } : {}), ...v.extra });
           }
         } finally {
           leave(e);

@@ -13,6 +13,7 @@ import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database, DEFAULT_BUSY_MS, finishBackgroundUpgradeWorkNow } from "../database.ts";
+import { walMaintenanceReady } from "../wal-maintenance.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { forgetMemory } from "./forget.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
@@ -191,7 +192,7 @@ it("the conversion survives a kill: every set still proves the same, and the nex
   let before: Map<string, string>;
   // (the file is left a legacy one on disk, certificate away, for the child process; this connection restores it afterwards)
   before = everySet(db); migrateMemorySchema(db); startConversion(db); db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-  const child = spawn(process.execPath, [join(import.meta.dirname, "testing", "root-set-compact-child.ts"), file], { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [join(import.meta.dirname, "testing", "root-set-compact-child.ts"), file], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
   let output = "", errors = "";
   child.stderr.on("data", chunk => { errors += String(chunk); });
   const exited = new Promise<void>(resolve => child.on("exit", () => resolve()));
@@ -286,9 +287,11 @@ it("background maintenance only takes short steps: unused sets in small batches,
 it("the app's connection keeps its write-ahead log short", async () => {
   const db = database();
   expect(Number((db.prepare("PRAGMA journal_size_limit").get() as Record<string, number>).journal_size_limit)).toBe(0);
-  // the log is checkpointed by a worker thread once it is ready; until then (and if it fails) the connection does it at 1000 pages
-  expect(Number((db.prepare("PRAGMA wal_autocheckpoint").get() as Record<string, number>).wal_autocheckpoint)).toBe(1000);
-  await vi.waitFor(() => expect(Number((db.prepare("PRAGMA wal_autocheckpoint").get() as Record<string, number>).wal_autocheckpoint)).toBe(0), { timeout: 10_000 });
+  // 5d5a791f19 keeps checkpoints off the serving thread even during worker
+  // startup/failure. Prove readiness separately so the wait is not vacuous.
+  expect(Number((db.prepare("PRAGMA wal_autocheckpoint").get() as Record<string, number>).wal_autocheckpoint)).toBe(0);
+  await vi.waitFor(() => expect(walMaintenanceReady()).toBe(true), { timeout: 10_000 });
+  expect(Number((db.prepare("PRAGMA wal_autocheckpoint").get() as Record<string, number>).wal_autocheckpoint)).toBe(0);
   // a new file frees pages back in small steps
   expect(Number((db.prepare("PRAGMA auto_vacuum").get() as { auto_vacuum: number }).auto_vacuum)).toBe(2);
 });

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// CONTRACT DOUBLE of the P3 router routes (flux-router-b4 @ wp5-p3 2a221b43: src/cloud_home_grants_route.py + src/flux_credit_grants.py),
+// CONTRACT DOUBLE of the P3 router routes (the reviewed Flux router contract: the Flux router's cloud grants route + the Flux router's credit grants handler),
 // NOT the live router. It mirrors them case for case: the flag-off 404 (no reason field), the misconfigured-token 503, the bearer-only 401,
 // the 16 KiB body limit (413 payload_too_large), full body validation (unknown fields, identity, amount, ISO timestamps with an offset, date
 // overflow, expires_at = period_end + 1 calendar month), the replay-before-state order (grant row by body hash, else a receipt), issuance
@@ -67,7 +67,7 @@ function identity(b: Record<string, unknown>, allowed: Set<string>) {
   if (Object.keys(b).some((k) => !allowed.has(k))) throw new Invalid("unknown field(s) in body");
   const grantId = text(b, "grant_id"); const invoiceId = text(b, "invoice_id");
   const kind = b.kind;
-  if (kind !== "period" && kind !== "upgrade_delta") throw new Invalid("kind must be period or upgrade_delta");
+  if (kind !== "period" && kind !== "upgrade_delta" && kind !== "topup") throw new Invalid("kind must be period, upgrade_delta or topup");
   const homeId = b.home_id;
   if (typeof homeId !== "string" || !HOME_RE.test(homeId)) throw new Invalid("home_id is not a valid home id");
   if (grantId !== `${invoiceId}:${kind}`) throw new Invalid("grant_id must equal invoice_id:kind");
@@ -94,6 +94,8 @@ export class GrantsRouterDouble {
   usageFault = false;
   /** Astra JOURNEY-A-6 #2: the reversal-target route (lanes/cloud-v2/b4/FLUX-REVERSAL-TARGET-CONTRACT.md); off = the live router (404). */
   reversalTargets = false;
+  /** Draft cloud-b contract: kind "topup" grants (no period_start, period_end or expires_at: any of them is a 400), advertised as capabilities.topupGrants. */
+  topupGrants = false;
   /** Astra JOURNEY-A-8 #2: the grant route takes `initial_target` and applies it IN THE GRANT'S OWN STEP (one transaction: a grant is never live
    *  without it, and no fault mode can separate them); advertised as capabilities.grantWithTarget. Off = a router that refuses the unknown
    *  field (400, nothing applied). */
@@ -136,8 +138,8 @@ export class GrantsRouterDouble {
     if (route === "GET /internal/cloud-home/credit-grants/usage") return this.usage(u.searchParams);
     // wp5-p5: the capability route exists only on a router that implements the target contract (an older router answers 404).
     if (route === "GET /internal/cloud-home/credit-grants/capabilities") {
-      return this.reversalTargets || this.grantWithTarget
-        ? j(200, { capabilities: { ...(this.reversalTargets ? { reversalTargets: true } : {}), ...(this.grantWithTarget ? { grantWithTarget: true } : {}),
+      return this.reversalTargets || this.grantWithTarget || this.topupGrants
+        ? j(200, { capabilities: { ...(this.topupGrants ? { topupGrants: true } : {}), ...(this.reversalTargets ? { reversalTargets: true } : {}), ...(this.grantWithTarget ? { grantWithTarget: true } : {}),
           ...(this.grantState ? { grantState: true } : {}), ...(this.adoptLegacyReversal ? { adoptLegacyReversal: true } : {}) } })
         : j(404, { detail: "Not Found" });
     }
@@ -225,14 +227,21 @@ export class GrantsRouterDouble {
       const id = identity(b, GRANT_FIELDS);
       const amount = b.amount_microcents;
       if (typeof amount !== "number" || !Number.isInteger(amount) || !(amount > 0 && amount <= MAX_AMOUNT)) throw new Invalid("amount_microcents must be an integer, 0 < amount <= 2^53-1");
+      const accountId = text(b, "account_id"); const plan = text(b, "plan");
+      if (id.kind === "topup") {
+        if (!this.topupGrants) throw new Invalid("kind must be period or upgrade_delta");
+        if ("period_start" in b || "period_end" in b || "expires_at" in b) throw new Invalid("a topup grant has no period or expiry");
+        const canon = { account_id: accountId, amount_microcents: amount, grant_id: id.grantId, home_id: id.homeId, invoice_id: id.invoiceId, kind: id.kind, plan };
+        g = { ...id, accountId, plan, amount, sha: await hex(JSON.stringify(canon)), periodEnd: 0 };
+      } else {
       const ps = parseTs(b.period_start, "period_start"); const pe = parseTs(b.period_end, "period_end"); const ex = parseTs(b.expires_at, "expires_at");
       if (pe.ms * 1000 + pe.us <= ps.ms * 1000 + ps.us) throw new Invalid("period_end must be after period_start");
       const expected = addOneMonth(pe.ms);
       if (ex.ms !== expected || ex.us !== pe.us) throw new Invalid("expires_at must equal period_end plus one calendar month (UTC)");
-      const accountId = text(b, "account_id"); const plan = text(b, "plan");
       const canon = { account_id: accountId, amount_microcents: amount, expires_at: iso(ex), grant_id: id.grantId, home_id: id.homeId, invoice_id: id.invoiceId,
         kind: id.kind, period_end: iso(pe), period_start: iso(ps), plan };
       g = { ...id, accountId, plan, amount, sha: await hex(JSON.stringify(canon)), periodEnd: pe.ms };
+      }
     } catch (e) {
       if (e instanceof Invalid) return err(400, "invalid_request", e.message); // store validation: error.message only, no reason
       throw e;

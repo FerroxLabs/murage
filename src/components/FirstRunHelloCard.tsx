@@ -19,6 +19,8 @@ import { afterPaint, startFirstRunTiming } from "@/lib/first-run-timing";
 import { t } from "@/lib/i18n";
 import { api, type Bot } from "@/state/store";
 import { FirstRunWorking } from "./FirstRunWorking";
+import { isCloudHome } from "@/lib/cloud-workspace";
+import { uxCloud } from "@/lib/cloud-ux-copy";
 import {
   FIRST_RUN_FOCUS,
   FIRST_RUN_INPUT,
@@ -208,6 +210,8 @@ export function FirstRunHelloCard({ settled, bot }: { settled: boolean; bot?: Bo
   const found = probeLine(view);
   const helperId = useId();
 
+  // A Cloud home asks the name and nothing else: no email, no Skip, and no look around "this computer".
+  const cloud = isCloudHome();
   const valid = helloAnswerReady(name, email);
   const emailNote = helloEmailNote(email, emailChecked);
 
@@ -264,8 +268,8 @@ export function FirstRunHelloCard({ settled, bot }: { settled: boolean; bot?: Bo
 
   return (
     <FirstRunBubble>
-      <FirstRunLine>{copy.chief}</FirstRunLine>
-      <div className="mt-2 text-[15px] font-semibold text-ink">{copy.heading}</div>
+      <FirstRunLine>{cloud ? uxCloud("ux.cloud.firstRun.hello") : copy.chief}</FirstRunLine>
+      {!cloud && <div className="mt-2 text-[15px] font-semibold text-ink">{copy.heading}</div>}
 
       {!done && (
         <div className="mt-3 grid gap-2" data-state={busy ? "saving" : "open"} aria-busy={busy || undefined}>
@@ -273,7 +277,7 @@ export function FirstRunHelloCard({ settled, bot }: { settled: boolean; bot?: Bo
             {copy.nameLabel}
             <input
               aria-label={copy.nameLabel}
-              placeholder={copy.namePlaceholder}
+              placeholder={cloud ? undefined : copy.namePlaceholder}
               value={name}
               disabled={busy}
               onChange={(event) => setName(event.target.value)}
@@ -290,6 +294,7 @@ export function FirstRunHelloCard({ settled, bot }: { settled: boolean; bot?: Bo
               className={`mt-1.5 ${FIRST_RUN_INPUT} ${FIRST_RUN_FOCUS}`}
             />
           </label>
+          {!cloud && (<>
           <label className="text-[13px] text-ink-secondary">
             {copy.emailLabel}
             <input
@@ -317,11 +322,14 @@ export function FirstRunHelloCard({ settled, bot }: { settled: boolean; bot?: Bo
           <p id={emailNoteId} aria-live="polite" className="text-[12.5px] leading-snug text-danger empty:hidden">
             {emailNote}
           </p>
+          </>)}
           {/* One primary action, on the right; the ghost before it. */}
           <div className="mt-1 flex flex-wrap items-center justify-end gap-2">
-            <button type="button" disabled={busy} onClick={() => void skip()} className={`${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
-              {copy.skip}
-            </button>
+            {!cloud && (
+              <button type="button" disabled={busy} onClick={() => void skip()} className={`${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
+                {copy.skip}
+              </button>
+            )}
             {/* A wrong email holds Continue (dimmed, aria-disabled) yet leaves it
                 pressable, so pressing it says why. No name, and it is off. */}
             <button
@@ -331,7 +339,7 @@ export function FirstRunHelloCard({ settled, bot }: { settled: boolean; bot?: Bo
               onClick={() => void save()}
               className={`${FIRST_RUN_PRIMARY} ${FIRST_RUN_FOCUS} aria-disabled:opacity-50`}
             >
-              {pressing === "name" ? copy.working : copy.submit}
+              {pressing === "name" ? copy.working : cloud ? uxCloud("ux.cloud.firstRun.continue") : copy.submit}
             </button>
           </div>
           {busy && <FirstRunWorking bot={bot} words={t(pressing === "name" ? "firstRun.press.name" : "firstRun.press.skip")} />}
@@ -344,10 +352,10 @@ export function FirstRunHelloCard({ settled, bot }: { settled: boolean; bot?: Bo
 
       {/* Detection is already running while they type, and saying so is the
           difference between a wait and a pause. One line, and quiet. */}
-      {!done && <p aria-live="polite" className="mt-2 text-[13px] leading-relaxed text-ink-secondary">{found ?? copy.detecting}</p>}
+      {!done && !cloud && <p aria-live="polite" className="mt-2 text-[13px] leading-relaxed text-ink-secondary">{found ?? copy.detecting}</p>}
 
       {/* How learning works, once, where the owner is already reading. */}
-      <FirstRunLine quiet>{copy.learnLine}</FirstRunLine>
+      {!cloud && <FirstRunLine quiet>{copy.learnLine}</FirstRunLine>}
     </FirstRunBubble>
   );
 }

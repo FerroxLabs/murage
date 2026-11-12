@@ -14,6 +14,7 @@ export interface ConnectorStatus {
     id: string;
     alias?: string;
     status: string;
+    needsReconnect?: boolean;
   }>;
 }
 

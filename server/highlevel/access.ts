@@ -1,3 +1,5 @@
+import {CONNECTED_APPS_OFF} from '../feature-off.ts';
+import { inertBot } from "../store.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -15,11 +17,11 @@
 import {
   HIGHLEVEL_HELPER_NAMES,
   HIGHLEVEL_TOOL_NAMES,
-  highlevelBotAccessSchema,
+  effectiveHighLevelAccess, operationAllowed, LEGACY_TOOL_TO_OPERATION, HIGHLEVEL_FAMILY_TOOLS, HIGHLEVEL_TOOLKIT,
+  type Family, type EffectiveHighLevelAccess, type EffectiveGrant, type OperationId, type Risk,
   isHighLevelWrite,
   isNativeHighLevelName,
   type HighLevelAnyToolName,
-  type HighLevelBotAccess,
   type NativeGrant,
 } from "../../shared/highlevel.ts";
 import { accessRoleBinding, botAccessPolicy, type AccessRole } from "../bot-access-role.ts";
@@ -35,27 +37,31 @@ export interface HighLevelAccessBot extends AccessRole {
 export type HighLevelRefusalCode =
   | "bot_unavailable" | "not_granted" | "choose_connection" | "connection_not_ready" | "draft_only" | "read_only" | "writes_blocked";
 
+type AuthorizedGrant = NativeGrant & EffectiveGrant;
 export type HighLevelDecision =
-  | { ok: true; grant: NativeGrant; connection: HighLevelConnectionView; write: boolean; policyRevision: number; roleBinding: string; accessRevision: number }
+  | { ok: true; grant: AuthorizedGrant; connection: HighLevelConnectionView; write: boolean; policyRevision: number; roleBinding: string; accessRevision: number }
   | { ok: false; code: HighLevelRefusalCode; text: string };
 
 export const HIGHLEVEL_DRAFT_ONLY_REFUSAL = "This bot prepares drafts and does not change records. It can read the CRM; give the owner the draft to review.";
 
 /** The bot's native grants as they stand now, or null: unparsable, saved for another role, or for another bot. */
-export function nativeAccessFor(bot: HighLevelAccessBot): HighLevelBotAccess | null {
-  if (bot.highlevelAccess === undefined) return null;
-  const parsed = highlevelBotAccessSchema.safeParse(bot.highlevelAccess);
-  if (!parsed.success) return null;
-  if (parsed.data.roleBinding !== accessRoleBinding(bot)) return null;
-  return { ...parsed.data, grants: parsed.data.grants.filter((grant) => grant.botId === bot.id) };
+export function nativeAccessFor(bot: HighLevelAccessBot, noLimits = false): (Omit<EffectiveHighLevelAccess, "grants"> & { grants: AuthorizedGrant[] }) | null {
+  const access = effectiveHighLevelAccess(bot.highlevelAccess, { id: bot.id, roleBinding: accessRoleBinding(bot) }, noLimits);
+  if (!access || access.roleBinding !== accessRoleBinding(bot)) return null;
+  return { ...access, grants: access.grants.filter(grant => grant.botId === bot.id).map(grant => ({ ...grant,
+    toolkit: HIGHLEVEL_TOOLKIT, families: { ...grant.families }, operations: Object.fromEntries(Object.entries(grant.operations).map(([family, ops]) => [family, [...ops]])) as Partial<Record<Family, OperationId[]>>,
+    // Compatibility projection for the frozen base host; operations remain the authority.
+    tools: HIGHLEVEL_TOOL_NAMES.filter(tool => operationAllowed(grant, LEGACY_TOOL_TO_OPERATION[tool]!, "R")),
+  })) };
+
 }
 
 const refused = (code: HighLevelRefusalCode, text: string): Extract<HighLevelDecision, { ok: false }> => ({ ok: false, code, text });
 const refuse = (code: HighLevelRefusalCode, text: string): HighLevelDecision => refused(code, text);
 
 /** Which grant a call uses: the named connection, or the only one granting this tool. Never a guess between two. */
-export function selectGrant(access: HighLevelBotAccess | null, tool: string, connectionId?: string): NativeGrant | HighLevelRefusalCode {
-  const granting = (access?.grants ?? []).filter((grant) => (grant.tools as readonly string[]).includes(tool));
+export function selectGrant(access: ReturnType<typeof nativeAccessFor>, tool: string, connectionId?: string, operation?: OperationId, _risk: Risk = "R"): AuthorizedGrant | HighLevelRefusalCode {
+  const granting = (access?.grants ?? []).filter(grant => operation ? operationAllowed(grant, operation, "R") : (grant.tools as readonly string[]).includes(tool));
   if (connectionId !== undefined) return granting.find((grant) => grant.accountId === connectionId) ?? "not_granted";
   if (granting.length === 1) return granting[0]!;
   return granting.length === 0 ? "not_granted" : "choose_connection";
@@ -66,49 +72,54 @@ export async function authorizeHighLevelCall(input: {
   /** The bot as stored now; read again after the connection status await so a grant changed meanwhile counts. */
   bot: () => HighLevelAccessBot | undefined;
   tool: string;
+  operation?: OperationId; risk?: Risk;
   connectionId?: string;
   connection: (connectionId: string) => Promise<HighLevelConnectionView | undefined>;
 }): Promise<HighLevelDecision> {
   const { tool } = input;
-  const initial = decide(input.bot(), tool, input.connectionId);
+  const initial = decide(input.bot(), tool, input.connectionId, input.operation, input.risk);
   if ("ok" in initial) return initial;
   const connection = await input.connection(initial.grant.accountId);
   // Everything is decided again from the bot as it is after the await.
-  const current = decide(input.bot(), tool, input.connectionId);
+  const current = decide(input.bot(), tool, input.connectionId, input.operation, input.risk);
   if ("ok" in current) return current;
   if (current.grant.accountId !== initial.grant.accountId) return refuse("not_granted", "The bot's HighLevel access changed while this call ran. Run it again.");
-  return finish(current, connection, tool);
+  return finish(current, connection, tool, input.operation, input.risk);
 }
 
-type Selected = { bot: HighLevelAccessBot; grant: NativeGrant; access: HighLevelBotAccess };
+type Selected = { bot: HighLevelAccessBot; grant: AuthorizedGrant; access: EffectiveHighLevelAccess };
 
-function decide(bot: HighLevelAccessBot | undefined, tool: string, connectionId: string | undefined): Selected | Extract<HighLevelDecision, { ok: false }> {
-  if (!bot || bot.hidden || bot.composio === false) return refused("bot_unavailable", "Connected apps are off for this bot, so it cannot use HighLevel.");
-  if (!(HIGHLEVEL_TOOL_NAMES as readonly string[]).includes(tool)) return refused("not_granted", "This is not a HighLevel CRM tool.");
+function decide(bot: HighLevelAccessBot | undefined, tool: string, connectionId: string | undefined, operation?: OperationId, risk?: Risk): Selected | Extract<HighLevelDecision, { ok: false }> {
+  if (!bot || inertBot(bot) || bot.composio === false) return refused("bot_unavailable", CONNECTED_APPS_OFF);
+  if (!(HIGHLEVEL_TOOL_NAMES as readonly string[]).includes(tool) && !(operation && (Object.values(HIGHLEVEL_FAMILY_TOOLS) as readonly string[]).includes(tool) && HIGHLEVEL_FAMILY_TOOLS[operation.split(".")[0] as keyof typeof HIGHLEVEL_FAMILY_TOOLS] === tool)) return refused("not_granted", "This is not a HighLevel CRM tool.");
+  if (operation && (!risk || (LEGACY_TOOL_TO_OPERATION[tool] && LEGACY_TOOL_TO_OPERATION[tool] !== operation))) return refused("not_granted", "The HighLevel operation does not match this tool.");
   const access = nativeAccessFor(bot);
-  const selected = selectGrant(access, tool, connectionId);
+  const selected = selectGrant(access, tool, connectionId, operation, risk);
   if (selected === "choose_connection") return refused("choose_connection", "This bot can use more than one HighLevel location. Call HIGHLEVEL_LIST_CONNECTIONS and pass the connectionId to use.");
   if (typeof selected === "string") return refused("not_granted", "The owner has not given this bot this HighLevel tool for that location. They can add it in the bot's settings.");
   return { bot, grant: selected, access: access! };
 }
 
-function finish({ bot, grant: selected, access }: Selected, connection: HighLevelConnectionView | undefined, tool: string): HighLevelDecision {
+function finish({ bot, grant: selected, access }: Selected, connection: HighLevelConnectionView | undefined, tool: string, operation?: OperationId, risk?: Risk): HighLevelDecision {
   if (!connection || connection.connectionId !== selected.accountId || (connection.state !== "connected" && connection.state !== "degraded")) {
     return refuse("connection_not_ready", connection?.state === "pending_browser_confirmation"
       ? "This HighLevel location is still waiting for the owner to confirm it in their browser. Nothing can run until then."
       : "This HighLevel location is not connected right now. The owner can Reconnect it from the HighLevel CRM card.");
   }
-  const write = isHighLevelWrite(tool);
+  const effectiveRisk = risk ?? (isHighLevelWrite(tool) ? "C" : "R");
+  const write = effectiveRisk !== "R";
+  const op = operation ?? LEGACY_TOOL_TO_OPERATION[tool];
+  if (!op || !operationAllowed(selected, op, effectiveRisk)) return refuse("read_only", "The owner has not allowed this level of HighLevel operation.");
   if (write && bot.draftOnly) return refuse("draft_only", HIGHLEVEL_DRAFT_ONLY_REFUSAL);
   if (write && selected.ceiling !== "propose") return refuse("read_only", "The owner lets this bot read this HighLevel location but not propose changes to it.");
   const policy = botAccessPolicy(bot);
   if (write && policy.mode === "restricted" && !policy.allowWrites) return refuse("writes_blocked", "The owner has blocked connected-app changes for this bot.");
-  return { ok: true, grant: selected, connection, write, policyRevision: policy.revision, roleBinding: accessRoleBinding(bot), accessRevision: access.revision };
+  return { ok: true, grant: selected, connection, write, policyRevision: policy.revision, roleBinding: access.roleBinding, accessRevision: access.revision };
 }
 
 /** The tool names tools/list shows: only what a call could be allowed to run. Location readiness is checked per call. */
 export function visibleHighLevelTools(bot: HighLevelAccessBot | undefined): HighLevelAnyToolName[] {
-  if (!bot || bot.hidden || bot.composio === false) return [];
+  if (!bot || inertBot(bot) || bot.composio === false) return [];
   const access = nativeAccessFor(bot);
   if (!access || access.grants.length === 0) return [];
   const policy = botAccessPolicy(bot);

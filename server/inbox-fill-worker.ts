@@ -1,3 +1,4 @@
+import "../shared/win-hide-child-process.mjs";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Projects the rows the Inbox fill's slice budget could not admit.
 //
@@ -120,7 +121,9 @@ if (parentPort && (workerData as { kind?: string } | null)?.kind === "inbox-fill
   const { file, sql, priorityOnly, maxHoldMs } = workerData as { file: string; sql: InboxDeferredSql; priorityOnly?: boolean; maxHoldMs?: number };
   try {
     const db = new DatabaseSync(file);
-    db.exec("PRAGMA busy_timeout=0; PRAGMA secure_delete=ON;");
+    // The paced WAL maintenance owner checkpoints messages.db. An automatic
+    // checkpoint here can copy an entire large source during a projection commit.
+    db.exec("PRAGMA busy_timeout=0; PRAGMA secure_delete=ON; PRAGMA wal_autocheckpoint=0;");
     const drain = inboxDeferredDrain(db, sql, { priorityOnly, ...(maxHoldMs !== undefined ? { maxHoldMs } : {}), onSlowRow: row => port.postMessage({ type: "slow-row", ...row }) });
     for (;;) {
       try { if (!drain.step()) break; }

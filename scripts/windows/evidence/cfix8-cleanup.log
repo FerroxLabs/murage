@@ -1,0 +1,5 @@
+Removed job tooling: /work/fuigo-builds/swarm-b/winscen/wt/node_modules
+Removed job tooling: /work/fuigo-builds/swarm-b/winscen/wt/.test-tmp/cfix8-winscen
+1.36 1.37 1.25 1/944 1170271
+PASS local job PowerShell archive and temporary fixtures removed; remote job node_modules and parser tooling removed.
+No build outputs created. Remote docker ps -a for the job returned no containers.

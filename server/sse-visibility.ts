@@ -324,6 +324,7 @@ const nested = (payload: Record<string, unknown>, key: string): Record<string, u
  * of `index.ts` and fails if any of them is missing from this list, so a new
  * kind breaks the build and has to be classified on purpose. */
 export const KNOWN_FRAME_KINDS = [
+  "attention.settled",
   "speech.sessionClosed",
   "speech.ready",
   "speech.invalidate",

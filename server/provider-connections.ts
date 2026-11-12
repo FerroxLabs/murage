@@ -5,6 +5,8 @@ import { PROVIDER_PRESETS, isFluxKeyShape, keyIssuer, parseProviderBank } from "
 import { CHATGPT_IDENTITY_HEADERS, SIGNIN_PRESETS, isSignInPreset } from "../electron/model-signin-presets.mjs";
 import { MODEL_CATALOG_REFRESH_MS } from "./model-catalog-refresh.ts";
 import { writeFileAtomic } from "./atomic.ts";
+import { containsHomeFluxKey, containsPrimaryFluxKey } from "../shared/flux-credential-scan.mjs";
+import { cloudHomeCopy } from "./cloud-home/copy.ts";
 import { resolveModelLabel } from "../shared/model-label.ts";
 import type { ProviderCatalog, ProviderCatalogError, ProviderConnectionRecord, ProviderModel, ProviderPreset, PublicProviderConnection } from "../shared/provider-connections.ts";
 import type { SignInConnectionInfo } from "../shared/model-signin.ts";
@@ -137,14 +139,18 @@ const cachedModelSchema=z.object({connectionId:z.string().max(100),preset:z.stri
 const cacheSchema=z.object({revision:z.string().max(100),catalog:z.object({connectionId:z.string().max(100),models:z.array(cachedModelSchema).max(MAX_MODELS),fetchedAt:z.number().nonnegative().finite().optional(),stale:z.boolean(),assurance:z.literal("catalog-only")}).strict()}).strict();
 export interface LegacyProviderConnection extends ProviderConnectionRecord { legacy: true; managedIn: "engines" | "connections" | "images"; legacyError?: string }
 interface Cached { revision: string; catalog: ProviderCatalog }
+/** The ordering a catalog refresh took when it began (flux-key-health.ts): what its answer is allowed to change. */
+export type CatalogEvidence={seq:number;generation:number;id:string};
 export class ProviderConnectionsService {
  private readonly cache=new Map<string,Cached>();
- private readonly pending=new Map<string,{revision:string;promise:Promise<ProviderCatalog>}>();
+ private readonly pending=new Map<string,{revision:string;evidence:CatalogEvidence|undefined;promise:Promise<ProviderCatalog>}>();
+ /** The refresh that owns each connection's catalog state: only the newest one begun may publish (memory or disk). */
+ private readonly owner=new Map<string,symbol>();
  private readonly attempted=new Map<string,{revision:string;at:number}>();
  private readonly listeners=new Set<(changedIds:string[])=>void|Promise<void>>();
  private readonly fetcher:typeof fetch;
- private readonly options:{readBank:()=>string|undefined;cacheDir:string;fetch?:typeof fetch;now?:()=>number;legacyConnections?:()=>LegacyProviderConnection[];onCatalogOutcome?:(connection:{id:string;preset:ProviderPreset;key:string},outcome:"ok"|"refused",code?:"unauthorized"|"forbidden")=>void;keyGate?:(connection:{id:string;preset:ProviderPreset;key:string})=>Promise<ProviderCatalogError|null>;resolveAlias?:(id:string)=>ProviderConnectionRecord|null;signIns?:SignInConnectionSource};
- constructor(options:{readBank:()=>string|undefined;cacheDir:string;fetch?:typeof fetch;now?:()=>number;legacyConnections?:()=>LegacyProviderConnection[];onCatalogOutcome?:(connection:{id:string;preset:ProviderPreset;key:string},outcome:"ok"|"refused",code?:"unauthorized"|"forbidden")=>void;keyGate?:(connection:{id:string;preset:ProviderPreset;key:string})=>Promise<ProviderCatalogError|null>;resolveAlias?:(id:string)=>ProviderConnectionRecord|null;signIns?:SignInConnectionSource}){this.options=options;this.fetcher=options.fetch??fetch;}
+ private readonly options:{readBank:()=>string|undefined;cacheDir:string;fetch?:typeof fetch;now?:()=>number;legacyConnections?:()=>LegacyProviderConnection[];onCatalogOutcome?:(connection:{id:string;preset:ProviderPreset;key:string},outcome:"ok"|"refused",code:"unauthorized"|"forbidden"|undefined,evidence:CatalogEvidence|undefined)=>void;beginEvidence?:(key:string)=>CatalogEvidence;evidenceCurrent?:(evidence:CatalogEvidence)=>boolean;keyGate?:(connection:{id:string;preset:ProviderPreset;key:string})=>Promise<ProviderCatalogError|null>;resolveAlias?:(id:string)=>ProviderConnectionRecord|null;signIns?:SignInConnectionSource};
+ constructor(options:{readBank:()=>string|undefined;cacheDir:string;fetch?:typeof fetch;now?:()=>number;legacyConnections?:()=>LegacyProviderConnection[];onCatalogOutcome?:(connection:{id:string;preset:ProviderPreset;key:string},outcome:"ok"|"refused",code:"unauthorized"|"forbidden"|undefined,evidence:CatalogEvidence|undefined)=>void;beginEvidence?:(key:string)=>CatalogEvidence;evidenceCurrent?:(evidence:CatalogEvidence)=>boolean;keyGate?:(connection:{id:string;preset:ProviderPreset;key:string})=>Promise<ProviderCatalogError|null>;resolveAlias?:(id:string)=>ProviderConnectionRecord|null;signIns?:SignInConnectionSource}){this.options=options;this.fetcher=options.fetch??fetch;}
  /** Plan sign-in connections changed (sign-in, sign-out, account switch or
   * an ended sign-in). Same effect as a bank change for those ids. */
  async invalidate(ids:string[]){for(const id of ids)this.cache.delete(id);await Promise.all([...this.listeners].map(listener=>listener(ids)));}
@@ -158,6 +164,8 @@ export class ProviderConnectionsService {
  // provider clears it.
  private records():Array<ProviderConnectionRecord|LegacyProviderConnection|(ProviderConnectionRecord&{legacyError:string})>{return [...(this.options.legacyConnections?.()??[]),...parseProviderBank(this.options.readBank()).map(row=>{const issuer=keyIssuer(row.key);if(issuer&&issuer!==row.preset)return{...row,enabled:false,legacyError:"This saved key belongs to a different provider. Remove it, then add the key under its own provider."};
   if(row.preset==="flux"&&!isFluxKeyShape(row.key))return{...row,enabled:false,legacyError:"This saved value is not a Flux Router key. Remove it, then add your sk-flux- key."};
+  // Hole 7, final route resolution: a Cloud home never resolves a row holding the owner's primary Flux key, nor a home key under another provider.
+  if(process.env.MURAGE_CLOUD_ROLE==="home"&&(containsPrimaryFluxKey(row)||(row.preset!=="flux"&&containsHomeFluxKey(row.key))))return{...row,key:"",enabled:false,legacyError:cloudHomeCopy.fluxKeyMustBeHomeKey};
   return row;}),...(this.options.signIns?.records()??[])];}
  resolve(id:string){const found=this.records().find(row=>row.id===id)??this.options.resolveAlias?.(id);return found?{...presetInfo(found.preset),...found}:null;}
  private readCache(connection:ProviderConnectionRecord):ProviderCatalog {
@@ -188,15 +196,24 @@ export class ProviderConnectionsService {
   const connection=this.resolve(id);if(!connection)throw Object.assign(new Error("Model connection not found."),{status:404});
   if(!connection.enabled)throw Object.assign(new Error("Enable this connection before refreshing models."),{status:409});
   if(this.options.resolveAlias?.(id)){await this.refresh("legacy-flux",signal);return this.getCatalog(id);}
-  const current=this.pending.get(id);if(current?.revision===connection.revision)return current.promise;
+  // A refresh begun before the latest recheck is never joined by a request after it: it may carry an answer from before the person acted.
+  const current=this.pending.get(id);if(current?.revision===connection.revision&&(!current.evidence||!this.options.evidenceCurrent||this.options.evidenceCurrent(current.evidence)))return current.promise;
+  const evidence=this.options.beginEvidence?.(connection.key);
+  // Owner entries of connections that were replaced or removed since are forgotten.
+  for(const other of [...this.owner.keys()])if(other!==id&&!this.resolve(other))this.owner.delete(other);
+  const token=Symbol(id);this.owner.set(id,token);
   this.attempted.set(id,{revision:connection.revision,at:this.now()});
-  const entry={revision:connection.revision,promise:Promise.resolve(undefined as unknown as ProviderCatalog)};
-  entry.promise=this.refreshCatalog(id,signal).finally(()=>{if(this.pending.get(id)===entry)this.pending.delete(id);});
+  const entry={revision:connection.revision,evidence,promise:Promise.resolve(undefined as unknown as ProviderCatalog)};
+  entry.promise=this.refreshCatalog(id,signal,evidence,token).finally(()=>{if(this.pending.get(id)===entry)this.pending.delete(id);
+  // The connection was replaced or removed while this refresh ran and nothing newer took over: forget the owner entry.
+  if(this.owner.get(id)===token&&this.resolve(id)?.revision!==connection.revision)this.owner.delete(id);});
   this.pending.set(id,entry);return entry.promise;
  }
  /** Tell the owner of the service what the provider said to this key (Flux's 401/403 marks the key refused). Never throws, never carries more than the key's own row. */
- private report(connection:{id:string;preset:ProviderPreset;key:string},outcome:"ok"|"refused",code?:"unauthorized"|"forbidden"):void{if(this.resolve(connection.id)?.key!==connection.key)return;try{this.options.onCatalogOutcome?.({id:connection.id,preset:connection.preset,key:connection.key},outcome,code);}catch{/* a listener must not break a refresh */}}
- private async refreshCatalog(id:string,signal?:AbortSignal):Promise<ProviderCatalog>{
+ private report(connection:{id:string;preset:ProviderPreset;key:string},outcome:"ok"|"refused",code:"unauthorized"|"forbidden"|undefined,evidence:CatalogEvidence|undefined):void{if(this.resolve(connection.id)?.key!==connection.key)return;try{this.options.onCatalogOutcome?.({id:connection.id,preset:connection.preset,key:connection.key},outcome,code,evidence);}catch{/* a listener must not break a refresh */}}
+ /** May this refresh still publish? Not after a newer refresh began for the connection, nor after a recheck since it began (its answer is from before the person acted). */
+ private mayPublish(id:string,token:symbol,evidence:CatalogEvidence|undefined):boolean{return this.owner.get(id)===token&&(!evidence||!this.options.evidenceCurrent||this.options.evidenceCurrent(evidence));}
+ private async refreshCatalog(id:string,signal:AbortSignal|undefined,evidence:CatalogEvidence|undefined,token:symbol):Promise<ProviderCatalog>{
   const connection=this.resolve(id);if(!connection)throw Object.assign(new Error("Model connection not found."),{status:404});
   if(!connection.enabled)throw Object.assign(new Error("Enable this connection before refreshing models."),{status:409});
   const previous=this.readCache(connection),controllerSignal=signal?AbortSignal.any([signal,AbortSignal.timeout(15_000)]):AbortSignal.timeout(15_000);
@@ -204,6 +221,8 @@ export class ProviderConnectionsService {
   try{
    // A key the provider is known to refuse (or that is blocked) is not sent to the catalog route at all.
    if(this.options.keyGate){const gated=await this.options.keyGate({id,preset:connection.preset,key:connection.key});if(gated)throw new CatalogFailure(gated);}
+   // The /models request starts now, after the key probe: its evidence is ordered from here, under the recheck the refresh began in.
+   if(evidence&&this.options.beginEvidence)evidence={...this.options.beginEvidence(connection.key),generation:evidence.generation};
    const all:ProviderModel[]=[],seen=new Set<string>();let cursor:string|undefined;
    for(let page=0;page<20;page++){
     active();const url=new URL(connection.catalogUrl);if(cursor)url.searchParams.set("after_id",cursor);
@@ -220,11 +239,12 @@ export class ProviderConnectionsService {
     if(all.length>MAX_MODELS)throw new CatalogFailure("invalid-catalog");
     if(connection.preset!=="anthropic"||!object(data)||data.has_more!==true){
      const catalog:ProviderCatalog={connectionId:id,models:all,fetchedAt:this.now(),stale:false,assurance:"catalog-only"};
-     active();mkdirSync(this.options.cacheDir,{recursive:true,mode:0o700});writeFileAtomic(join(this.options.cacheDir,id+".json"),JSON.stringify({revision:connection.revision,catalog}),{mode:0o600});this.cache.set(id,{revision:connection.revision,catalog});this.report(connection,"ok");return catalog;
+     active();if(!this.mayPublish(id,token,evidence)){this.report(connection,"ok",undefined,evidence);return this.readCache(connection);}
+     mkdirSync(this.options.cacheDir,{recursive:true,mode:0o700});writeFileAtomic(join(this.options.cacheDir,id+".json"),JSON.stringify({revision:connection.revision,catalog}),{mode:0o600});this.cache.set(id,{revision:connection.revision,catalog});this.report(connection,"ok",undefined,evidence);return catalog;
     }
     if(typeof data.last_id!=="string"||!data.last_id||data.last_id.length>200||data.last_id===cursor)throw new CatalogFailure("invalid-catalog");cursor=data.last_id;
    }
    throw new CatalogFailure("invalid-catalog");
-  }catch(error){const code=error instanceof CatalogFailure?error.code:"offline";if(code==="unauthorized"||code==="forbidden")this.report(connection,"refused",code);const catalog:ProviderCatalog={...previous,stale:Boolean(previous.fetchedAt),error:{code,message:messages[code],...(error instanceof CatalogFailure&&error.httpStatus!==undefined?{httpStatus:error.httpStatus}:{})},assurance:"catalog-only"};if(this.resolve(id)?.revision===connection.revision)this.cache.set(id,{revision:connection.revision,catalog});return catalog;}
+  }catch(error){const code=error instanceof CatalogFailure?error.code:"offline";if(code==="unauthorized"||code==="forbidden")this.report(connection,"refused",code,evidence);const catalog:ProviderCatalog={...previous,stale:Boolean(previous.fetchedAt),error:{code,message:messages[code],...(error instanceof CatalogFailure&&error.httpStatus!==undefined?{httpStatus:error.httpStatus}:{})},assurance:"catalog-only"};if(!this.mayPublish(id,token,evidence))return this.readCache(connection);if(this.resolve(id)?.revision===connection.revision)this.cache.set(id,{revision:connection.revision,catalog});return catalog;}
  }
 }

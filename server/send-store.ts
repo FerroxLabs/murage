@@ -101,6 +101,7 @@ import { afterCommit, txScopeBegin, txScopeEnd } from "./tx-scope.ts";
 import { RESTORE_HOLDS_DDL } from "./restore-fence.ts";
 import { groupDeletionKey, ownerDeletedThread, OWNER_DELETIONS_DDL } from "./owner-deletions.ts";
 import { SEND_NOTICE_ENGLISH, sendNoticeActivityName, type SendNoticeCode } from "../shared/send-notice.ts";
+import { askProofRecordSchema, type AskProofRecord } from "../shared/phone-ask-contract.ts";
 
 export type SendStatus = "sending" | "queued" | "dispatched" | "started" | "delivered" | "unconfirmed" | "failed" | "refused" | "cancelled";
 export type SendKind = "bot" | "group";
@@ -152,6 +153,8 @@ export interface SendRow {
   queueOnly: boolean;
   /** The phone that made a via row. */
   viaDevice: string | null;
+  /** Admission proof for this ask and device; null when absent or malformed. Never itself grants authority. */
+  viaProof: AskProofRecord | null;
   /** Files a via row carries; null when none or when the stored column is malformed (such a row is refused at the drain, never run with a guess). */
   attachments: SendAttachment[] | null;
   /** True when the stored attachments column holds something that does not parse: the drain refuses such a row. */
@@ -189,10 +192,12 @@ export interface AcceptInput {
   actionId?: string;
   /** This chip was made from work a restore expired (a room request): it is held like a neutralized send. */
   restoreHeld?: boolean;
-  /** A share or ask-intent row. Needs `queueOnly` and origin "unproven" (a programming error otherwise); a replaced via row carries all of it forward. */
+  /** A share or ask-intent row. Needs `queueOnly` and origin "unproven" (a programming error otherwise); a replacement keeps its standing but drops proof. */
   via?: SendVia;
   queueOnly?: true;
   viaDevice?: string;
+  /** Server-owned admission evidence from commitPhoneLine after verification, never from an HTTP body. */
+  viaProof?: AskProofRecord | null;
   attachments?: SendRow["attachments"];
   now?: number;
 }
@@ -268,7 +273,8 @@ const DDL = `CREATE TABLE IF NOT EXISTS owner_sends (
   via TEXT,
   queue_only INTEGER NOT NULL DEFAULT 0,
   via_device TEXT,
-  attachments TEXT
+  attachments TEXT,
+  via_proof TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS owner_sends_send ON owner_sends(thread_id, send_id);
 CREATE INDEX IF NOT EXISTS owner_sends_open ON owner_sends(thread_id, status, seq);
@@ -337,6 +343,7 @@ function addMissingColumns(db: DatabaseSync): void {
   if (!columns.some((column) => column.name === "queue_only")) db.exec("ALTER TABLE owner_sends ADD COLUMN queue_only INTEGER NOT NULL DEFAULT 0");
   if (!columns.some((column) => column.name === "via_device")) db.exec("ALTER TABLE owner_sends ADD COLUMN via_device TEXT");
   if (!columns.some((column) => column.name === "attachments")) db.exec("ALTER TABLE owner_sends ADD COLUMN attachments TEXT");
+  if (!columns.some((column) => column.name === "via_proof")) db.exec("ALTER TABLE owner_sends ADD COLUMN via_proof TEXT");
 }
 
 /**
@@ -403,6 +410,14 @@ function parseAttachments(raw: unknown): SendAttachment[] | null {
   } catch { return null; }
 }
 
+function parseViaProof(raw: unknown, via: unknown, deviceId: unknown): AskProofRecord | null {
+  if (via !== "ask-intent" || typeof raw !== "string") return null;
+  try {
+    const parsed = askProofRecordSchema.safeParse(JSON.parse(raw));
+    return parsed.success && parsed.data.deviceId === deviceId ? parsed.data : null;
+  } catch { return null; }
+}
+
 function toRow(r: Record<string, unknown>): SendRow {
   return {
     seq: Number(r.seq),
@@ -432,6 +447,7 @@ function toRow(r: Record<string, unknown>): SendRow {
     via: r.via === "share" || r.via === "ask-intent" ? r.via : null,
     queueOnly: Number(r.queue_only) === 1,
     viaDevice: (r.via_device as string | null) ?? null,
+    viaProof: parseViaProof(r.via_proof, r.via, r.via_device),
     attachments: parseAttachments(r.attachments),
     attachmentsMalformed: typeof r.attachments === "string" && r.attachments !== "" && parseAttachments(r.attachments) === null,
     createdAt: Number(r.created_at),
@@ -592,6 +608,7 @@ export class SendStore {
     let via: SendVia | null = input.via ?? null;
     let queueOnly = input.queueOnly === true;
     let viaDevice: string | null = input.viaDevice ?? null;
+    let viaProof = input.viaProof && !input.resend ? parseViaProof(JSON.stringify(input.viaProof), via, viaDevice) : null;
     let attachments: SendRow["attachments"] = input.attachments ?? null;
     let origin: string | null = input.origin ?? null;
     const result = this.atomically((db): AcceptResult => {
@@ -611,6 +628,8 @@ export class SendStore {
           if (!stoppedResendRuns(prior, input)) return { kind: "existing", row: prior };
           // A replay of the very press that made this row (its acknowledgement was lost) never runs it a second time.
           if (input.resend && input.actionId && prior.actionId === input.actionId) return { kind: "existing", row: prior };
+          // A replacement is a new admission, even if the caller supplied the old proof again.
+          viaProof = null;
           if (prior.via !== null) {
             // A via row keeps its standing and its files across the replacement, whatever the press says: third-party words never become an owner turn here.
             if (input.via && input.via !== prior.via) throw new Error("a resend cannot change a send's via");
@@ -627,13 +646,14 @@ export class SendStore {
       }
       const queueId = input.queueId ?? randomUUID();
       const heldGeneration = input.restoreHeld ? (currentRestoreGeneration(db) ?? issueRestoreGeneration(db)) : null;
-      db.prepare(`INSERT INTO owner_sends (kind, owner_id, thread_id, send_id, queue_id, fingerprint, text, prompt, reply_to_id, origin, mode, responder_id, status, notice, dispatched, created_at, updated_at, restore_held, restore_gen, action_id, via, queue_only, via_device, attachments)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?)`).run(
+      db.prepare(`INSERT INTO owner_sends (kind, owner_id, thread_id, send_id, queue_id, fingerprint, text, prompt, reply_to_id, origin, mode, responder_id, status, notice, dispatched, created_at, updated_at, restore_held, restore_gen, action_id, via, queue_only, via_device, attachments, via_proof)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?)`).run(
         input.kind, input.ownerId, input.threadId, input.sendId ?? null, queueId, fingerprint, input.text, input.prompt ?? null,
         input.replyToId ?? null, origin, input.mode ?? null, input.responderId ?? null,
         input.status ?? "sending", input.status === "refused" ? (input.notice ?? "refused") : null, typedAt, now,
         input.restoreHeld ? 1 : 0, heldGeneration, input.resend && input.actionId ? input.actionId : null,
         via, queueOnly ? 1 : 0, viaDevice, attachments ? JSON.stringify(attachments) : null,
+        viaProof ? JSON.stringify(viaProof) : null,
       );
       this.speechAccepted?.({ ...input, origin: origin ?? undefined });
       return { kind: "new", row: this.one(db, "SELECT * FROM owner_sends WHERE queue_id=?", queueId)! };

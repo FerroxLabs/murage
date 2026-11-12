@@ -54,6 +54,7 @@ export const registrationSchema = z.strictObject({
 export const offerSchema = z.strictObject({
   operationId: uuid4,
   offerId: uuid4,
+  permission: z.literal("run").optional(),
   workspace: text(120),
   bot: z.strictObject({ id: text(128), name: text(120) }),
   capability,

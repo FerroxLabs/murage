@@ -3,7 +3,7 @@
 // MEMDEL-SIMPLIFY-109 through the real scheduler: the real MemoryWorkerController forks the real helper (worker.ts) on a fresh fixture
 // in the throwaway HOME (server/testing/setup.ts). No engine, no model, never the user's data. A bulk deletion's batches are each
 // acknowledged at once and share one index merge (plus at most one follow-up), and a helper killed mid-scrub is restarted for the
-// index's durable debt alone and resumes that merge instead of starting another.
+// index's durable debt alone and resumes that scrub instead of starting another merge.
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -24,9 +24,10 @@ const FORGETS = 80, FILLER = 4096;
 const indexFile = () => join(DATA_DIR, "memory-index.db");
 type Internals = { child: ChildProcess | null; scrubOwed: boolean };
 let controller: MemoryWorkerController | null = null;
+let checkpointReader: DatabaseSync | null = null;
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); });
-afterEach(async () => { await controller?.stop().catch(() => {}); controller = null; closeMemoryIndexReader(); closeDatabase(); });
+afterEach(async () => { await controller?.stop().catch(() => {}); controller = null; checkpointReader?.close(); checkpointReader = null; closeMemoryIndexReader(); closeDatabase(); });
 
 /** index_meta on a short-lived read-only connection, so no snapshot is held across a helper checkpoint. */
 function meta(key: string): string | undefined {
@@ -56,7 +57,7 @@ const owedForgets = () => Number(database().prepare("SELECT count(*) AS n FROM m
 const wait = (check: () => void, timeout: number) => vi.waitFor(check, { timeout, interval: 25 });
 
 /** FORGETS indexed records carrying the marker, beside FILLER retained entries, written by this process before any helper runs. */
-function seed(): string[] {
+function seed(unmerged = false): string[] {
   const scope = ensureScope("conversation", "memdel-scheduler");
   const db = database();
   const ids = Array.from({ length: FORGETS }, (_, n) => `forget-${String(n).padStart(3, "0")}`);
@@ -68,6 +69,13 @@ function seed(): string[] {
   });
   const index = new MemoryIndex(indexFile());
   try {
+    if (unmerged) {
+      // Retain independent segments so a one-page scrub cannot finish in one turn.
+      // MEMDEL-SIMPLIFY-109 §2 and Tests require a crash during an unfinished merge.
+      const db = new DatabaseSync(indexFile());
+      try { db.exec("INSERT INTO lexical(lexical,rank) VALUES('automerge',0); INSERT INTO lexical(lexical,rank) VALUES('crisismerge',1000)"); }
+      finally { db.close(); }
+    }
     for (let at = 0; at < FILLER; at += 16) {
       index.upsert(Array.from({ length: 16 }, (_, k) => ({ id: `filler-${at + k}`, version: 1, scopeId: scope, deleted: false,
         text: Array.from({ length: 60 }, (_, word) => `fillerterm${at + k}part${word}`).join(" ") })));
@@ -121,32 +129,59 @@ it("a bulk deletion over several batches is acknowledged batch by batch and cost
 // memdel r2 High #2 and #3: the restart may come with memory off or paused (no capture or recall work at all), or with the index unreadable
 // at the controller's first look (unknown is owed, not clean): the helper still starts for the debt and finishes it.
 it.each([
-  { mode: "capture", probe: "readable" }, { mode: "off", probe: "readable" }, { mode: "paused", probe: "readable" }, { mode: "capture", probe: "unreadable" },
-] as const)("a helper killed mid-scrub is restarted for the index's debt alone (memory $mode, index $probe at start), resumes the same merge and erases the bytes", async ({ mode, probe }) => {
-  const ids = seed();
+  { phase: "merge", mode: "capture", probe: "readable" }, { phase: "merge", mode: "off", probe: "readable" },
+  { phase: "merge", mode: "paused", probe: "readable" }, { phase: "merge", mode: "capture", probe: "unreadable" },
+  { phase: "truncate", mode: "capture", probe: "readable" },
+] as const)("a helper killed during $phase is restarted for the index's debt alone (memory $mode, index $probe at start), resumes the same scrub and erases the bytes", async ({ phase, mode, probe }) => {
+  const ids = seed(phase === "merge");
   forget(ids);
+  // Keep pre-deletion WAL bytes observable through the crash in either phase.
+  checkpointReader = new DatabaseSync(indexFile(), { readOnly: true });
+  checkpointReader.exec("BEGIN");
+  checkpointReader.prepare("SELECT value FROM index_meta LIMIT 1").get();
+  if (phase === "merge") {
+    // A legacy writer left FTS tombstones and lost its acknowledgements. The
+    // new helper must resume this conservative owner scrub (index.ts:103-104;
+    // MEMDEL-SIMPLIFY-109 §2 and Tests). Leave every receipt pending so the real
+    // scheduler acknowledges each batch, without changing the covering generation.
+    const index = new MemoryIndex(indexFile());
+    try {
+      const db = new DatabaseSync(indexFile());
+      try { db.exec("INSERT INTO lexical(lexical,rank) VALUES('secure-delete',0)"); }
+      finally { db.close(); }
+      for (let at = 0; at < ids.length; at += 16) index.upsert(ids.slice(at, at + 16).map(id => ({
+        id, version: 1, scopeId: "unused", text: "", deleted: true,
+      })));
+    } finally { index.close(); }
+    expect(owedForgets()).toBe(FORGETS);
+    expect(meta("delete_scrub_owed")).toBe("merge");
+    expect(marked().length).toBeGreaterThan(0);
+  }
   start();
   await wait(() => {
     expect(owedForgets()).toBe(0);
-    // Mid-way through the merge that covers every removal (a forget removed while an earlier merge ran owes one follow-up).
+    // Require the exact crash phase; truncate cannot stand in for an unfinished merge.
     const merge = JSON.parse(meta("delete_scrub_merge") ?? "{}") as { generation?: number; started?: boolean };
-    expect(meta("delete_scrub_owed")).toBe("merge");
+    expect(meta("delete_scrub_owed")).toBe(phase);
     expect(merge.started).toBe(true);
     expect(merge.generation).toBeGreaterThanOrEqual(Number(meta("delete_scrub_target")));
   }, 60_000);
   const started = merges();
   expect(started).toBeGreaterThanOrEqual(1);
-  // Crash: the helper dies mid-merge (a step in flight rolls back), then the app stops too.
+  // Crash before the merge or checkpoint finishes; a step in flight rolls back.
   const child = internals().child!;
   const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
   child.kill("SIGKILL");
   await exited;
   await controller!.stop();
   controller = null;
-  expect(meta("delete_scrub_owed")).toBe("merge");
+  expect(meta("delete_scrub_owed")).toBe(phase);
+  const savedMerge = meta("delete_scrub_merge");
+  expect(JSON.parse(savedMerge!).started).toBe(true);
   expect(marked().length).toBeGreaterThan(0);
   // Restart with nothing else for memory to do: no receipt, no capture job. The index's own marker starts a helper.
   expect(Number(database().prepare("SELECT count(*) AS n FROM memory_projection_receipts WHERE lexical_status IN ('pending','pending-archive','delete-pending')").get()!.n)).toBe(0);
+  checkpointReader?.close(); checkpointReader = null;
   setMemoryMode(mode);
   // the controller's own read of the marker finds no handle (as while the file is locked or being replaced); the helper's start unblocks it
   if (probe === "unreadable") blockMemoryIndexReader();

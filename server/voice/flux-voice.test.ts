@@ -1,4 +1,5 @@
 import { resetUnavailable } from "./voice-routes.ts";
+import { installFluxStartGate } from "../flux-start-gate.ts";
 // Flux transcription, driven against a stub rather than the live service —
 // same rule as tts.test.ts: what we send, and how a refusal is reported,
 // are the things that break.
@@ -238,4 +239,15 @@ it("a spent transcription key sends no second upstream request", async () => {
   refuse = { status: 402, body: { error: "key_budget_reached" } };
   for (let i = 0; i < 2; i++) await expect(transcribe({ bytes: CLIP, filename: "clip.ogg", mime: "audio/ogg" }, { env: env() })).rejects.toMatchObject({ reason: "budget" });
   expect(seen).toHaveLength(1);
+});
+
+it("UX-L2C-PAUSE r6: an audio 402 key_budget_reached is reported to the spend gate with the key the request was sent with", async () => {
+  const reported: Array<{ body: unknown; key: unknown }> = [];
+  installFluxStartGate({ onBudgetReached: (body: unknown, key?: string | null) => { reported.push({ body, key }); return { armed: true }; }, authorizeFluxDispatch: async () => {} } as never);
+  refuse = { status: 402, body: { error: "key_budget_reached", limit: "monthly_spend", key_id: "k1", as_of: "2026-11-10T10:00:00Z" } };
+  try {
+    await expect(transcribe({ bytes: CLIP, filename: "clip.ogg" }, { env: { FLUX_API_KEY: "sk-flux-hook-402" } as unknown as NodeJS.ProcessEnv })).rejects.toMatchObject({ reason: "budget" });
+  } finally { installFluxStartGate(null); }
+  expect(reported).toHaveLength(1);
+  expect(reported[0]).toMatchObject({ key: "sk-flux-hook-402", body: { error: "key_budget_reached", limit: "monthly_spend" } });
 });

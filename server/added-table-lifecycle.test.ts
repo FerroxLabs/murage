@@ -48,6 +48,17 @@ function mapping(id: string): void {
 const rows = (table: string): number => Number((database().prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n);
 
 describe("the lifecycle map beside the list of added tables", () => {
+  it("T-SCHEMA-STARTUP: delegation packs are registered and survive reopening; mutant omits initialization", async () => {
+    expect(APP_SCHEMA_102_ADDITIONS.tables).toContain("delegation_packs");
+    expect(ADDED_TABLE_LIFECYCLE.delegation_packs).toMatchObject({ kind: "marker", reason: expect.stringContaining("source or destination") });
+    const db = database();
+    db.exec("INSERT INTO delegation_packs(id,delegation_id,source_thread_id,source_bot_id,target_bot_id,refs,cut_at,created_at) VALUES('pack','job','source','sable','ember','[]',1,1)");
+    expect(db.prepare("SELECT prepared, destination_thread_id FROM delegation_packs").get()).toEqual({ prepared: "[]", destination_thread_id: null });
+    closeDatabase();
+    await settleTestHandles();
+    expect(database().prepare("SELECT id FROM delegation_packs").all()).toEqual([{ id: "pack" }]);
+  });
+
   it("has one entry for every listed table and no entry for a table that is not listed", () => {
     const listed = [...APP_SCHEMA_102_ADDITIONS.tables].sort();
     expect(Object.keys(ADDED_TABLE_LIFECYCLE).sort()).toEqual(listed);
@@ -185,7 +196,9 @@ describe("against the real 1.0.1 (git archive d950cbf67)", () => {
     const addedTables = new Set<string>(APP_SCHEMA_102_ADDITIONS.tables);
     // 1.0.2 objects the list does not name (an auto-index of a listed table goes with its table). The inbox projection and the forget table stay in a stepped
     // file, 1.0.2's own step included: that is why a step to schema 6 is 1.0.2's to run, and why the test below judges the file without the projection.
-    const unlisted = current.filter(row => !old.has(row.name) && !listed.has(row.name) && !isInboxProjectionObject(row) && !(row.name.startsWith("sqlite_autoindex_") && addedTables.has(row.tbl_name))).map(row => row.name);
+    // SQLite retains this internal allocator after AUTOINCREMENT tables
+    // leave; referenceSchema excludes it and older inspectors ignore it.
+    const unlisted = current.filter(row => row.name !== "sqlite_sequence" && !old.has(row.name) && !listed.has(row.name) && !isInboxProjectionObject(row) && !(row.name.startsWith("sqlite_autoindex_") && addedTables.has(row.tbl_name))).map(row => row.name);
     expect(unlisted.sort(), "added in 1.0.2 but missing from APP_SCHEMA_102_ADDITIONS").toEqual(["event_log_forgets", "sqlite_autoindex_event_log_forgets_1"]);
     // listed objects that exist here must be new: a 1.0.1 object on the list would be dropped by the downgrade
     const present = new Set(current.map(row => row.name));
@@ -229,7 +242,9 @@ it.skipIf(!haveV101)("C2 adds zero objects to the real 1.0.1 base inventory", as
     const listed = new Set<string>([...APP_SCHEMA_102_ADDITIONS.triggers, ...APP_SCHEMA_102_ADDITIONS.indexes, ...APP_SCHEMA_102_ADDITIONS.tables]);
     const addedTables = new Set<string>(APP_SCHEMA_102_ADDITIONS.tables);
     // 1.0.2 objects the list does not name (an auto-index of a listed table goes with its table)
-    const unlisted = current.filter(row => !old.has(row.name) && !listed.has(row.name) && !(row.name.startsWith("sqlite_autoindex_") && addedTables.has(row.tbl_name))).map(row => row.name);
+    // SQLite retains this internal allocator after AUTOINCREMENT tables
+    // leave; referenceSchema excludes it and older inspectors ignore it.
+    const unlisted = current.filter(row => row.name !== "sqlite_sequence" && !old.has(row.name) && !listed.has(row.name) && !(row.name.startsWith("sqlite_autoindex_") && addedTables.has(row.tbl_name))).map(row => row.name);
     expect(unlisted).toEqual([
   "flux_capture_hold",
   "messages_thread_seq",

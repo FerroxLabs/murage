@@ -13,7 +13,7 @@ import type { TodayTag } from "@/components/shell/shell-contract";
 export function StatusLine({ tags }: { tags: readonly TodayTag[] }) {
   if (tags.length === 0) return null;
   return (
-    <ul aria-label={t("ux.l2a.today.statusLabel")} className="mt-2 flex flex-wrap gap-1.5 max-md:flex-nowrap max-md:overflow-x-auto max-md:py-0.5 max-md:[&>li]:shrink-0" data-today-status>
+    <ul aria-label={t("ux.l2a.today.statusLabel")} className="mt-2 no-scrollbar-phone flex flex-wrap gap-1.5 max-md:flex-nowrap max-md:overflow-x-auto max-md:py-0.5 max-md:[&>li]:shrink-0" data-today-status>
       {tags.map((tag) => {
         const inner = (
           <>

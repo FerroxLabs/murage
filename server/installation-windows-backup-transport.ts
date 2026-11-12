@@ -1,3 +1,4 @@
+import "../shared/win-hide-child-process.mjs";
 import { randomUUID } from "node:crypto";
 import { closeSync, fsyncSync, openSync, writeSync } from "node:fs";
 import * as wire from "../native/backup-age/protocol.mjs";

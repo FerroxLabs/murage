@@ -71,10 +71,11 @@ describe("ownerAppSurface on a Cloud home", () => {
     home();
     expect(ownerAppSurface(cloud("owner-desktop"))).toEqual({ ok: true, app: { kind: "desktop" } });
   });
-  it("refuses the passkey browser, which isDesktopApp lets through", () => {
+  it("refuses the passkey browser, and isDesktopApp no longer counts any browser as the computer", () => {
     home();
     const passkey = cloud("browser", { factor: "passkey", publicKey: P256, assertionKey: P256 });
-    expect(isDesktopApp(passkey, null)).toBe(true);
+    // INT1019-CLOUD: the home line made isDesktopApp false for every browser (cloud-owner-surface.ts), so the owner browser cannot reach a desktop-only handler
+    expect(isDesktopApp(passkey, null)).toBe(false);
     expect(ownerAppSurface(passkey)).toEqual({ ok: false, refusal: "on_computer" });
     expect(ownerAppSurface(cloud("browser", { factor: "remembered-owner", publicKey: P256, assertionKey: P256 }))).toEqual({ ok: false, refusal: "on_computer" });
     expect(ownerAppSurface(cloud("browser", { settingsRead: true }))).toEqual({ ok: false, refusal: "on_computer" });

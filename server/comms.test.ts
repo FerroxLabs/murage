@@ -309,8 +309,14 @@ describe("comms e2e (fake ACP fleet)", () => {
     // RECALL-SKIP-DROP (comms-recall-skip.test.ts): the same suite with every overlapped recall skipped, the branch a
     // slow machine takes when recall runs past RECALL_WAIT_MS.
     const preload = RECALL_SKIP ? ["--import", pathToFileURL(join(SERVER_DIR, "testing", "recall-skip-preload.mjs")).href] : [];
+    // This child runs only the fake fleet under its disposable home. Like the
+    // verification launcher, opt into the test-only host-power seam; the
+    // container does not carry the packaged bwrap executable.
+    env.NODE_ENV = "test";
+    preload.push("--import", "data:text/javascript,globalThis[Symbol.for('murage.hostPower.testUnwrapped')]=true;");
     if (RECALL_SKIP) env.MURAGE_TEST_RECALL_SKIP = "1";
     child = spawn(process.execPath, [...preload, join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env,
       stdio: ["ignore", "pipe", "pipe"],

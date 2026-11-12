@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
-import { InAdvanced } from "./SettingsPrimitives";
+import { HowThisWorks, InAdvanced, SetInAdvancedButton, SetupArea } from "./SettingsPrimitives";
+import type { SettingsMode } from "@/lib/settings-mode";
 import { copyTextOrThrow } from "@/lib/copy-text";
 
 export interface DiscordStatus {
@@ -36,23 +37,23 @@ export function discordHealth(status: DiscordStatus | null, expired = false) {
   if (expired) return "Pairing code expired";
   if (status.state === "pairing") return "Waiting for your Discord message";
   if (status.paired) return "Pairing saved · receiver offline";
-  return status.configured ? "Credentials saved · not paired" : "Save your Discord credentials";
+  return status.configured ? "Keys saved · not paired yet" : "Not set up";
 }
 export function discordHelp(code: string | null) {
   if (!code) return null;
   const messages: Record<string, string> = {
     "chief-changed": "Your Chief changed. Revoke this connection, then pair with the current Chief.",
-    "identity-mismatch": "The credentials do not match the saved app identity. Revoke the connection, then check your application before pairing again.",
+    "identity-mismatch": "The keys do not match the saved app identity. Revoke the connection, then check your application before pairing again.",
     "pair-required": "Pairing was not completed. Revoke the connection and create a new pairing code.",
     "revoke-recovery-required": "Discord is stopped, but revocation could not be saved. Restore access to the local connection data, then retry Revoke.",
     "connection-recovery-required": "The saved connection needs review. Check local data access before retrying or revoking it.",
     "retry-limit": "Automatic reconnect attempts stopped. Check your connection and Discord app access, then retry.",
-    "pairing-failed": "Pairing could not complete. Revoke the incomplete connection, then check the bot credential and your Discord app settings.",
+    "pairing-failed": "Pairing could not complete. Revoke the incomplete connection, then check the bot key and your Discord app settings.",
     "intake-failed": "A Discord message receipt could not be completed. Check the connection and local data access before sending it again.",
     "delivery-failed": "A reply needs review. Check Discord and the task in Murage before sending it again.",
     "transport-error": "Discord reported a connection problem. Check your app access and refresh status.",
     "gateway-reconnecting": "The saved connection is reconnecting. Pairing is preserved; do not resend a task until you have checked its result.",
-    "gateway-blocked": "Discord rejected the Gateway session. Check the bot token and application settings, then revoke and pair again.",
+    "gateway-blocked": "Discord rejected the connection. Check the bot token and application settings, then revoke and pair again.",
   };
   return messages[code] ?? "Discord needs attention. Refresh status and review the saved connection.";
 }
@@ -60,7 +61,16 @@ export function discordHelp(code: string | null) {
 const inputClass = "mt-1 min-h-11 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink focus-visible:ring-2 focus-visible:ring-accent-border disabled:opacity-50";
 const buttonClass = "min-h-11 rounded-lg border border-hairline/40 px-3 py-2 text-[12px] text-ink hover:bg-control disabled:opacity-50";
 interface Pair { code: string; expiresAt: number }
-export function DiscordSettings() {
+/** SIMPLE-COPY 1: the sentences Simple moves off the card, word for word (a to d). */
+export function DiscordHowThisWorks() {
+  return <>
+    <p>Message your Chief from one approved Discord direct message. Keep Murage running to receive messages; messages missed while it is stopped may not be recovered. Long replies are previews with the full result in Murage. Approvals stay in Murage.</p>
+    <p>Stored encrypted on this computer. Saved keys are never shown here; leave a saved key blank to keep it.</p>
+    <p>Use the application ID from Discord Developer Portal and your own Discord user ID. Only this owner can pair and send messages to Chief.</p>
+    <p>Create a code, then send it to your Discord app in a direct message from the owner above. Saving keys does not start pairing.</p>
+  </>;
+}
+export function DiscordSettings({ mode, arrivalAnchor }: { mode?: SettingsMode; arrivalAnchor?: string | null } = {}) {
   const [status, setStatus] = useState<DiscordStatus | null>(null);
   const [botToken, setBotToken] = useState("");
   const [identity, setIdentity] = useState({ applicationId: "", ownerUserId: "" });
@@ -83,9 +93,9 @@ export function DiscordSettings() {
     catch {
       if (mounted.current && expected === version.current) {
         const errors: Record<string, string> = {
-          credentials: "Credentials could not be saved. Refresh status to check whether the key was saved, then retry in Murage Desktop.",
+          credentials: "Keys could not be saved. Refresh status to check whether the key was saved, then retry in the Murage desktop app.",
           identity: "Application details could not be saved. Check the two IDs and refresh status before retrying.",
-          pair: "Pairing could not start. Check that a Chief is selected and the bot credential and application details are saved. Revoke any incomplete connection before trying again.",
+          pair: "Pairing could not start. Check that a Chief is selected and the bot key and application details are saved. Revoke any incomplete connection before trying again.",
           copy: "The command could not be copied. Select the command below and copy it manually.",
           revoke: "Revocation could not complete. Refresh status and restore local data access before retrying Revoke.",
           resume: "Reconnect could not complete. Check your connection and Discord app access, then refresh status.",
@@ -123,39 +133,46 @@ export function DiscordSettings() {
     try {
       if (botToken.trim()) await window.muragebox!.setCredential!("discordBotToken", botToken.trim());
     } finally { setBotToken(""); }
-    await refresh(expected); if (mounted.current) setNotice("Credentials saved. Pairing has not started.");
+    await refresh(expected); if (mounted.current) setNotice("Keys saved. Pairing has not started.");
   });
   const saveIdentity = () => run("identity", async expected => {
     if (locked || !Object.values(identity).every(value => identityPattern.test(value))) throw new Error("Invalid identity");
     await api("/api/config", { method: "PATCH", body: JSON.stringify({ discord: identity }) }); dirty.current = false;
     await refresh(expected); if (mounted.current) setNotice("Application details saved. Pairing has not started.");
   });
-  return <section aria-labelledby="discord-settings-title" className="min-w-0 rounded-xl border border-hairline/40 bg-card p-4">
-    <h3 id="discord-settings-title" className="text-[15px] font-semibold text-ink">Discord</h3>
-    <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">Message your Chief from one approved Discord direct message. Keep Murage running to receive messages; messages missed while it is stopped may not be recovered. Long replies are previews with the full result in Murage. Approvals stay in Murage.</p>
+  // SIMPLE-COPY: no `mode` prop renders today's card (explanations inline, steps open). The Settings pages pass `mode`.
+  const piped = mode !== undefined;
+  const simple = mode === "simple";
+  const midSetup = Boolean(status && (status.configured || status.botConfigured) && !(status.paired && status.enabled)) || Boolean(pair) || expired;
+  const manageLabel = status && (status.configured || status.botConfigured) ? "Manage" : "Set up Discord";
+  return <section aria-labelledby="discord-settings-name" className="min-w-0 rounded-xl border border-hairline/40 bg-card p-4">
+    <h3 id="discord-settings-name"className="text-[15px] font-semibold text-ink">Discord</h3>
+    <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{piped ? "Message your Chief from a Discord direct message." : "Message your Chief from one approved Discord direct message. Keep Murage running to receive messages; messages missed while it is stopped may not be recovered. Long replies are previews with the full result in Murage. Approvals stay in Murage."}</p>
     <p role="status" className="mt-3 text-[12px] font-medium text-ink">{discordHealth(status, expired)}</p>
-    <InAdvanced><div id="discord-app-setup-heading" className="rounded-xl bg-card p-4 text-[12px] text-ink-secondary">
+    <InAdvanced slot="discord-setup"><div className="rounded-xl bg-card p-4 text-[12px] text-ink-secondary">
       <h4 className="text-[13px] font-medium text-ink">Private Discord app setup</h4>
       <p>Use your own Discord application bot. Choose an installation you control and open a direct message with the bot. Murage reads only direct messages from the owner below; guild messages and Discord approval buttons are not supported.</p>
       <a data-setting-control="discord-app-setup-heading" className="mt-2 inline-flex min-h-11 items-center text-accent-text underline hover:text-ink" href="https://discord.com/developers/applications" target="_blank" rel="noreferrer">Open Discord app settings</a>
     </div></InAdvanced>
-    <h4 className="mt-4 text-[13px] font-medium text-ink">1. Save credentials securely</h4>
-    <p className="mt-1 text-[12px] text-ink-secondary">Stored encrypted on this computer. Saved keys are never shown here; leave a saved key blank to keep it.</p>
+    <SetupArea id="discord-setup-area" mode={mode ?? "advanced"} label={manageLabel} forceOpen={midSetup} controlAnchor="discord-settings-title" arrivalAnchor={arrivalAnchor}>
+    {simple && <div className="mt-3 flex flex-wrap items-center gap-x-2 text-[12px] text-ink-secondary"><span>Needs your own Discord app. Set it up in Advanced.</span><SetInAdvancedButton anchor="discord-app-setup-heading" /></div>}
+    <h4 className="mt-4 text-[13px] font-medium text-ink">1. Save your app keys</h4>
+    {!piped && <p className="mt-1 text-[12px] text-ink-secondary">Stored encrypted on this computer. Saved keys are never shown here; leave a saved key blank to keep it.</p>}
     <label className="mt-3 block text-[12px] text-ink-secondary">Bot token {status?.botConfigured && <span>(saved)</span>}
       <input name="discord-bot-token" data-setting-control="discord-settings-title" type="password" autoComplete="off" spellCheck={false} maxLength={512} value={botToken} disabled={disabled || !secure} onChange={event => setBotToken(event.target.value)} className={inputClass} />
     </label>
-    <button type="button" className={`${buttonClass} mt-3 bg-control`} disabled={disabled || !secure || !botToken.trim()} onClick={() => void saveCredentials()}>{busy === "credentials" ? "Saving credentials…" : "Save credentials"}</button>
-    {!secure && <p role="status" className="mt-2 text-[12px] text-warning">Secure storage is unavailable in this window. Open Channels in Murage Desktop to save credentials.</p>}
-    {locked && <p className="mt-2 text-[12px] text-ink-secondary">Revoke this connection before changing its credentials or owner.</p>}
+    <button type="button" className={`${buttonClass} mt-3 bg-control`} disabled={disabled || !secure || !botToken.trim()} onClick={() => void saveCredentials()}>{busy === "credentials" ? "Saving keys…" : "Save keys"}</button>
+    {!secure && <p role="status" className="mt-2 text-[12px] text-warning">Saving keys needs the Murage desktop app.</p>}
+    {locked && <p className="mt-2 text-[12px] text-ink-secondary">Revoke this connection before changing its keys or owner.</p>}
     <h4 className="mt-5 text-[13px] font-medium text-ink">2. Choose your application and owner</h4>
-    <p className="mt-1 text-[12px] text-ink-secondary">Use the application ID from Discord Developer Portal and your own Discord user ID. Only this owner can pair and send messages to Chief.</p>
+    {!piped && <p className="mt-1 text-[12px] text-ink-secondary">Use the application ID from Discord Developer Portal and your own Discord user ID. Only this owner can pair and send messages to Chief.</p>}
     {([['applicationId', 'Application ID'], ['ownerUserId', 'Owner user ID']] as const).map(([key, label]) => <label key={key} className="mt-3 block text-[12px] text-ink-secondary">{label}
       <input name={`discord-${key}`} autoComplete="off" spellCheck={false} maxLength={20} value={identity[key]} disabled={disabled || !status?.configured}
         onChange={event => { dirty.current = true; setIdentity(current => ({ ...current, [key]: event.target.value.trim() })); }} className={inputClass} />
     </label>)}
     <button type="button" className={`${buttonClass} mt-3`} disabled={disabled || !status?.configured || !Object.values(identity).every(value => identityPattern.test(value)) || !dirty.current} onClick={() => void saveIdentity()}>{busy === "identity" ? "Saving details…" : "Save application details"}</button>
     <h4 className="mt-5 text-[13px] font-medium text-ink">3. Pair with Chief</h4>
-    <p className="mt-1 text-[12px] text-ink-secondary">Create a code, then send it to your Discord app in a direct message from the owner above. Saving credentials does not start pairing.</p>
+    {!piped && <p className="mt-1 text-[12px] text-ink-secondary">Create a code, then send it to your Discord app in a direct message from the owner above. Saving keys does not start pairing.</p>}
     <div className="mt-3 flex flex-wrap gap-2">
       <button type="button" className="min-h-11 rounded-lg bg-accent px-3 py-2 text-[12px] text-accent-ink hover:brightness-110 disabled:opacity-50" disabled={disabled || !status?.configured || !detailsSaved}
         onClick={() => void run("pair", async expected => {
@@ -166,7 +183,7 @@ export function DiscordSettings() {
       {canRetry && <button type="button" className={buttonClass} disabled={Boolean(busy) || status?.busy} onClick={() => void run("resume", async expected => { await api("/api/discord/resume", { method: "POST", body: "{}" }); await refresh(expected); })}>{busy === "resume" ? "Reconnecting…" : "Retry connection"}</button>}
       <button type="button" className={buttonClass} disabled={Boolean(busy)} onClick={() => void run("refresh", refresh)}>Refresh status</button>
       <button type="button" className={`${buttonClass} text-danger`} disabled={Boolean(busy) || !status?.requiresRevoke} onClick={() => void run("revoke", async expected => {
-        await api("/api/discord/revoke", { method: "POST", body: "{}" }); setPair(null); await refresh(expected); setNotice("Discord connection revoked. Saved credentials are unchanged.");
+        await api("/api/discord/revoke", { method: "POST", body: "{}" }); setPair(null); await refresh(expected); setNotice("Discord connection revoked. Saved keys are unchanged.");
       })}>{busy === "revoke" ? "Revoking…" : "Revoke connection"}</button>
     </div>
     {pair && !expired && <div className="mt-3 rounded-lg bg-inset p-3 text-[12px] text-ink">
@@ -174,6 +191,7 @@ export function DiscordSettings() {
       <button type="button" className={`${buttonClass} mt-2`} disabled={Boolean(busy)} onClick={() => void run("copy", async () => { await copyTextOrThrow(`/pair ${pair.code}`); setNotice("Pairing command copied."); })}>Copy pairing command</button>
       <p className="mt-2 text-ink-secondary">Expires {new Date(pair.expiresAt).toLocaleTimeString()}. Status updates automatically.</p>
     </div>}
+    </SetupArea>
     {expired && <p role="status" className="mt-3 text-[12px] text-warning">The code expired. Revoke the incomplete connection, then create a new pairing code.</p>}
     {!pair && status?.state === "pairing" && <p role="status" className="mt-3 text-[12px] text-ink-secondary">Use the code from the window that started pairing. If it is unavailable, revoke and create a new code here.</p>}
     {(status?.pending ?? 0) > 0 && <p role="status" className="mt-3 text-[12px] text-ink-secondary">Discord work is pending. Review the task in Murage.</p>}
@@ -184,5 +202,6 @@ export function DiscordSettings() {
     {refreshError && <p role="alert" className="mt-2 text-[12px] text-warning">Status refresh failed. The last confirmed state is still shown. Check the connection, then use Refresh status.</p>}
     {error && <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p>}
     {notice && <p role="status" className="mt-2 text-[12px] text-ink-secondary">{notice}</p>}
+    {piped && <HowThisWorks id="discord-how-this-works" mode={mode}><DiscordHowThisWorks /></HowThisWorks>}
   </section>;
 }

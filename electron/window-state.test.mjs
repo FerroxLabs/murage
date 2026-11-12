@@ -46,3 +46,9 @@ describe("desktop window state", () => {
     expect(normalizeUnreadCount("3")).toBe(0);
   });
 });
+
+it('keeps a pop-out minimum separate from the main window minimum', () => {
+  const saved = {bounds:{x:30,y:50,width:450,height:500},maximized:false};
+  expect(resolveWindowState(saved,[primary],{width:1100,height:800},{width:390,height:400})).toEqual(saved);
+  expect(resolveWindowState(saved,[primary]).bounds).toMatchObject({width:900,height:600});
+});

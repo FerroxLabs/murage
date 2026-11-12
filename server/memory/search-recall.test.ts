@@ -7,6 +7,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
+import { stopSearchIndex } from "../message-search-index.ts";
 import { DATA_DIR } from "../config.ts";
 import { database } from "../database.ts";
 import { resetObserveWindows, setObserveSink } from "../observe.ts";
@@ -93,6 +94,9 @@ it("recall and bundle assembly write nothing at all", async () => {
   const { access } = accessFor();
   await searchMemory("launch review", access, emptyBridge, {allowance: LineageAllowance.tool(1_000_000_000)});  // warm anything lazy (the per-connection temp tables are made on first use)
   await buildMemoryBundle("launch review", access, emptyBridge, {allowance: LineageAllowance.tool()});
+  // The independent message-search worker may insert its startup reset marker
+  // across these awaits (5d5a791f19). Join it before measuring memory reads.
+  await stopSearchIndex();
   const before = changes();
   await searchMemory("launch review Friday", access, emptyBridge, {allowance: LineageAllowance.tool(1_000_000_000)});
   await searchMemory("weekly reports", access, hangingBridge, {allowance: LineageAllowance.tool(1_000_000_000)});
@@ -109,6 +113,9 @@ it("retrieval counters are held in memory and written by the idle sweep, and the
   await buildMemoryBundle("launch review", access, emptyBridge, {allowance: LineageAllowance.tool()});
   const queries = () => Number(memoryHealth(null).retrieved.queries);
   const base = queries();
+  // The independent message-search worker may insert its startup reset marker
+  // across these awaits (5d5a791f19). Join it before measuring memory reads.
+  await stopSearchIndex();
   const before = changes();
   await searchMemory("launch review", access, emptyBridge, {allowance: LineageAllowance.tool(1_000_000_000)});
   expect(changes()).toBe(before);

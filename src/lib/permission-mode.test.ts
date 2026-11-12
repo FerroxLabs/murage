@@ -4,7 +4,11 @@
 // found" / "no such route" beside a control that looked switched on.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+// S1 owns the shared calculation; this slice verifies the UI's consumption.
+vi.mock('../../shared/owner-routine-level.ts',()=>({ownerRoutineLevel:vi.fn((_bot,base,draft)=>draft?'ask':base)}));
+import {routineSheetModel} from './routine-sheet-model';
+import {ownerRoutineLevel} from '../../shared/owner-routine-level.ts';
 
 import { routineEffectiveMode, routineOfConversation, FULL_ACCESS_DESKTOP_ONLY, FULL_ACCESS_OPTIONS_DESKTOP_ONLY, fullAccessRefusalMessage, PEER_CONTACT_LABEL, peerContactHint } from "./permission-mode";
 
@@ -91,7 +95,7 @@ describe("a routine's own conversation", () => {
   it("shows the level the routine's runs actually get", () => {
     const noLimitsBot = { autoApprove: true, fullAccess: true, noLimits: true };
     expect(routineEffectiveMode({}, noLimitsBot)).toBe("unlimited");
-    expect(routineEffectiveMode({ permissionMode: "auto" }, noLimitsBot)).toBe("auto");
+    expect(routineEffectiveMode({ permissionMode: "auto", permissionExplicit:false }, noLimitsBot)).toBe("unlimited");
     expect(routineEffectiveMode({}, { autoApprove: false, fullAccess: false })).toBe("ask");
   });
 
@@ -105,4 +109,23 @@ describe("a routine's own conversation", () => {
     expect(routineEffectiveMode({ permissionMode: "ask" }, fullBot)).toBe("ask");
     expect(routineEffectiveMode({ permissionMode: "full" }, fullBot)).toBe("full");
   });
+});
+
+it('F6 / M29 uses the shared helper for No limits, return to Auto, and draft-only',()=>{
+ const profile={autoApprove:true,fullAccess:true,noLimits:true};
+ expect(routineEffectiveMode({permissionMode:'auto',permissionExplicit:false},profile)).toBe('unlimited');
+ expect(ownerRoutineLevel).toHaveBeenCalledWith('unlimited','unlimited',false);
+ expect(routineEffectiveMode({permissionMode:'auto'},{...profile,noLimits:false})).toBe('auto');
+ expect(routineEffectiveMode({permissionMode:'auto',draftOnly:true},profile)).toBe('ask');
+});
+
+it('R4b / F6 the routine sheet chip says No limits for a captured Auto routine',()=>{
+ const routine:any={id:'routine',name:'Fixture',prompt:'fixture',botId:'bot',target:'bot',runOn:'ember',enabled:false,schedule:{type:'once',at:0},permissionMode:'auto',permissionExplicit:false,createdAt:0,updatedAt:0};
+ const sheet=routineSheetModel(routine,[],[{id:'bot',name:'Bot',autoApprove:true,fullAccess:true,noLimits:true}],[],0);
+ expect(sheet.level.mode).toBe('unlimited');expect(sheet.level.text).toContain('No limits');
+});
+
+it('F7 explicit lower routine choices remain visible at No limits',()=>{
+ const profile={autoApprove:true,fullAccess:true,noLimits:true};
+ for(const permissionMode of ['ask','auto','full']as const)expect(routineEffectiveMode({permissionMode,permissionExplicit:true},profile)).toBe(permissionMode);
 });

@@ -47,8 +47,8 @@ test("BackupSettings exposes truthful states and only zero-argument host actions
  await page.goto(origin+"/__backup?supported=false");await openRestore();await expect(restart).toBeDisabled();
  // The schedule and remote panels now render their own status lines beside
  // this one, so the encrypted-backup status is picked out by its subject. Was:
- //   await expect(page.getByRole("status")).toContainText("verified backup tool");
- await expect(page.getByRole("status").filter({hasText:"Encrypted backup requires"})).toContainText("verified backup tool");
+ //   await expect(page.getByRole("status")).toContainText("Murage desktop app");
+ await expect(page.getByRole("status").filter({hasText:"Encrypted backups work"})).toContainText("Murage desktop app");
 });
 // The recovery page speaks plainly since b7741f1a: "Projected recovery ZIP" is
 // "Older recovery files (.zip)", "Create encrypted backup" is "Make a backup now",

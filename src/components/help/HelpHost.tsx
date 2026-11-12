@@ -118,7 +118,7 @@ export function installHelpKeys(target: EventTarget): void {
   marked[INSTALLED] = listener;
   target.addEventListener("keydown", listener, true);
 }
-if (typeof window !== "undefined") installHelpKeys(window);
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") installHelpKeys(window);
 
 // ── Show hints again (L4C's CoachMarks registers it) ─────────────────────
 
@@ -151,19 +151,56 @@ export function useHintsReset(): (() => void) | null {
  *  them instead (below). */
 export const HELP_LAYER = 80;
 
-/** The "?" tab on the right edge, drawn while the panel is closed. */
-export function HelpLauncher({ onOpen }: { onOpen: () => void }) {
+/** The "?" tab on the right edge, drawn while the panel is closed. Not drawn
+ *  below md: on a phone it sat over the transcript text; Help is a row in the
+ *  You menu there (Sidebar.tsx). Inside a modal window (What's new, bot
+ *  settings, ...) a phone gets a labelled button in the window's own flow
+ *  instead, so the window keeps its contextual Help. */
+export function HelpLauncher({ onOpen, inModal = false }: { onOpen: () => void; inModal?: boolean }) {
   return (
-    <button
-      type="button"
-      data-help-launcher
-      aria-label={t("ux.l4a.panel.open")}
-      onClick={onOpen}
-      className="fixed right-0 top-1/2 z-[80] flex size-11 -translate-y-1/2 items-center justify-center rounded-l-lg border border-r-0 border-hairline/50 bg-panel text-[16px] font-semibold text-ink-secondary shadow-xl hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-border"
-    >
-      ?
-    </button>
+    <>
+      <button
+        type="button"
+        data-help-launcher
+        aria-label={t("ux.l4a.panel.open")}
+        onClick={onOpen}
+        className="fixed right-0 top-1/2 z-[80] flex size-11 max-md:hidden -translate-y-1/2 items-center justify-center rounded-l-lg border border-r-0 border-hairline/50 bg-panel text-[16px] font-semibold text-ink-secondary shadow-xl hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-border"
+      >
+        ?
+      </button>
+      {inModal && (
+        <button
+          type="button"
+          data-help-modal-button
+          onClick={onOpen}
+          className="mx-auto my-2 flex min-h-11 items-center justify-center rounded-lg border border-hairline/50 bg-panel px-4 text-[14px] font-medium text-ink-secondary hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-border md:hidden"
+        >
+          {t("ux.l4a.panel.label")}
+        </button>
+      )}
+    </>
   );
+}
+
+/** The element to remember as help's opener: the focused control, never <body> (a pointer tap leaves focus there, and body would shadow the fallbacks). */
+export function openerToRecord(active: Element | null, body: Element | null): HTMLElement | null {
+  return active instanceof HTMLElement && active !== body ? active : null;
+}
+
+/** True when `el` can take focus now: drawn, and not inside an inert subtree. */
+export function canTakeFocus(el: HTMLElement | null | undefined): el is HTMLElement {
+  if (!el?.isConnected || el.closest("[inert]")) return false;
+  return typeof el.checkVisibility === "function" ? el.checkVisibility() : el.getClientRects().length > 0;
+}
+
+/** Where focus goes when help closes: the control it opened from if that is still usable; else the "?" tab; else, on a phone where the tab is not drawn, the bot-list toggle. */
+export function helpReturnTarget(back: HTMLElement | null, root: ParentNode = document): HTMLElement | null {
+  if (canTakeFocus(back)) return back;
+  for (const selector of ["[data-help-launcher]", "[data-help-modal-button]", "[data-open-bot-list]"]) {
+    const found = root.querySelector<HTMLElement>(selector);
+    if (canTakeFocus(found)) return found;
+  }
+  return null;
 }
 
 // ── over a modal window ──────────────────────────────────────────────────
@@ -245,7 +282,7 @@ export function HelpHost({ surface, noEngines, enginesOff, firstRun, askSlot }: 
   const modalWindow = useModalWindow();
   const returnTo = useRef<HTMLElement | null>(null);
   const openPanel = useCallback(() => {
-    returnTo.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    returnTo.current = openerToRecord(document.activeElement, document.body);
     setOpen(true);
   }, []);
   const close = useCallback(() => {
@@ -253,7 +290,7 @@ export function HelpHost({ surface, noEngines, enginesOff, firstRun, askSlot }: 
     const back = returnTo.current;
     returnTo.current = null;
     // Opened from the "?" tab, which is not drawn while the panel is open: focus the tab again once it is back.
-    requestAnimationFrame(() => (back?.isConnected ? back : document.querySelector<HTMLElement>("[data-help-launcher]"))?.focus());
+    requestAnimationFrame(() => helpReturnTarget(back)?.focus());
   }, []);
   /** Closed for "Ask your bot": focus goes to the composer, not back. */
   const dismiss = useCallback(() => { setOpen(false); returnTo.current = null; }, []);
@@ -265,7 +302,7 @@ export function HelpHost({ surface, noEngines, enginesOff, firstRun, askSlot }: 
   // No prefetch: the panel's chunk is fetched only when help opens, so a
   // closed help never asks for it and never triggers chunk-reload.ts.
 
-  const entry = !open ? <HelpLauncher onOpen={openPanel} /> : (
+  const entry = !open ? <HelpLauncher onOpen={openPanel} inModal={Boolean(modalWindow)} /> : (
     <LazyBoundary inline onRetry={HelpOpenChunk.retry} onDismiss={close} frame={(alert) => <HelpFrame onClose={close}>{alert}</HelpFrame>} {...helpBoundaryLabels()}>
       <Suspense fallback={<HelpFrame onClose={close}><p role="status" data-help-loading className="text-ink-secondary">{t("ux.l4a.panel.loading")}</p></HelpFrame>}>
         <HelpOpenChunk.Component surface={surface} noEngines={noEngines} enginesOff={enginesOff} firstRun={firstRun} askSlot={askSlot} onClose={close} onDismiss={dismiss} />

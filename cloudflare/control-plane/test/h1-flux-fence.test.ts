@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createFluxClient, grantMonthlyCredits, recordRemoteRevision, sweepFlux, type FluxDependencies } from "../src/b4-flux";
 import { operatorApplied, operatorClaim } from "../src/b4-flux-ledger";
 import { claimDisputeCredit, markDisputeCreditApplied, stubFluxHooks, type FluxEntitlementHooks } from "../src/b5-billing";
+import { ensureOwnerLinked, fluxSignInUrl, fluxWelcomeEmail } from "../src/flux-link";
+import { FLUX_WELCOME_CLAIM_MS, FLUX_WELCOME_MAX_ATTEMPTS, fluxWelcomeBackoff, sendFluxWelcome, sweepFluxWelcome } from "../src/flux-welcome-mail";
 import { withHomeLease } from "../src/billing-lease";
 import { allocateFenceRevision, claimGrantFence, fenceDue, fenceHeld, fenceOf, reconcileFences, reconcileOne, settleFenceRevision, type RemoteGrantState } from "../src/flux-grant-fence";
 import { FluxNotDispatched, FluxRevisionMismatch, grantsHooks, readGrantState, sha256Hex } from "../src/flux-grants";
@@ -124,12 +126,14 @@ const deps = (): FluxDependencies => ({ fluxClient: (e) => createFluxClient(e, r
 const hooks = (): FluxEntitlementHooks => ({ ...stubFluxHooks, ...grantsHooks(router.fetch, { reversalTargets: true }), stub: false });
 const seedHome = (owner = OWNER) => env.DB.prepare(`INSERT OR IGNORE INTO cloud_homes (id,installation_id,owner_id,desired_state,observed_state,image_digest,home_key,created_at,updated_at)
   VALUES (?,?,?,'ready','ready','sha256:x','k',1,1)`).bind(HOME, `inst-${HOME}`, owner).run();
-const linkOwner = () => env.DB.prepare("INSERT INTO flux_links (owner_user_id,flux_account_id,linked_at,link_id,link_version,fenced) VALUES (?,?,1,'lnk-h1',1,0)")
-  .bind(OWNER, ACCT).run();
+const linkOwnerStmt = () => env.DB.prepare("INSERT INTO flux_links (owner_user_id,flux_account_id,linked_at,link_id,link_version,fenced) VALUES (?,?,1,'lnk-h1',1,0)")
+  .bind(OWNER, ACCT);
+const linkOwner = () => linkOwnerStmt().run();
 const seedIdentity = async () => {
   await env.DB.prepare(`INSERT OR IGNORE INTO "user" (id,name,email,emailVerified,createdAt,updatedAt) VALUES (?,?,?,1,0,0)`).bind(OWNER, "n", `cloud-${OWNER}@cloud-account.invalid`).run();
-  await env.DB.prepare("INSERT OR IGNORE INTO supabase_identities (sub,user_id,via,created_at,email_revision,contact_email) VALUES (?,?,'created',1,0,?)")
-    .bind("sub-h1", OWNER, "owner-h1@example.test").run();
+  // The owner proved the inbox (ITEM4-PROOF-CURRENT: ensure-account is called only on a TRUE stamp for the current address).
+  await env.DB.prepare(`INSERT OR IGNORE INTO supabase_identities (sub,user_id,via,created_at,email_revision,contact_email,email_verified_at,email_verified_for)
+    VALUES (?,?,'created',1,0,?,1,?)`).bind("sub-h1", OWNER, "owner-h1@example.test", "owner-h1@example.test").run();
 };
 const cover = (invoiceId: string, covered: number) => env.DB.prepare(`INSERT INTO refund_coverage
     (home_id,payment_intent,invoice_id,subscription_id,paid_cents,covered_cents,open_cents,end_plan,changed_at,created_at) VALUES (?,?,?,'sub_a',4900,?,0,0,?,?)
@@ -315,7 +319,7 @@ describe("H1 ensure-account (auto-link)", () => {
     expect(router.ensureCalls).toBe(1);
     const call = router.calls("/api/internal/cloud-home/accounts/ensure")[0];
     expect(call.auth).toBe(`Bearer ${SERVICE}`);
-    expect(call.body).toEqual({ murage_account_id: OWNER, email: "owner-h1@example.test" });
+    expect(call.body).toEqual({ murage_account_id: OWNER, email: "owner-h1@example.test", email_verified: true });
     expect(await env.DB.prepare("SELECT flux_account_id,link_id,link_version,fenced FROM flux_links WHERE owner_user_id=?").bind(OWNER).first())
       .toEqual({ flux_account_id: ACCT, link_id: ACCT, link_version: 1, fenced: 0 });
     expect([...router.grants.values()].map((g) => g.account)).toEqual([ACCT, ACCT]);
@@ -341,9 +345,334 @@ describe("H1 ensure-account (auto-link)", () => {
       expect(alerts).toEqual(kind ? [{ kind, severity: "high" }] : []);
       expect(router.requests.filter((x) => x.path.startsWith("/internal/cloud-home/credit-grants"))).toEqual([]);
       expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_links").first()).toEqual({ n: 0 });
+      expect(await welcomeRows()).toEqual([]);
       expect(router.balances(ACCT)).toEqual({ prepaid: PREPAID, spent: 0 });
     });
   }
+});
+
+const welcomeRows = async () => (await env.DB.prepare("SELECT owner_user_id,created,attempts,sent_at FROM flux_welcome_mail").all<
+  { owner_user_id: string; created: number; attempts: number; sent_at: number | null }>()).results;
+type Sent = { to: string; subject: string; text: string; html: string };
+/** A mocked sender: tests never reach a real mailbox. */
+const mockSender = (sent: Sent[], fail = false) => ({ async send(m: Sent) { if (fail) throw new Error("down"); sent.push(m); } });
+/** The queue and the sweep run on the real clock (the link row's time is Date.now()). */
+const soon = () => Date.now() + 1_000;
+// The link row, or null for no link (item 4's STALE / UNPROVEN outcomes are "no link" here, so an expected link still fails the test).
+const once = async () => { const r = await ensureOwnerLinked(fluxEnv(), OWNER, async () => ({ fluxAccountId: ACCT, created: true })); return typeof r === "string" ? null : r; };
+/** The suite runs as staging; the welcome sweep refuses staging without the mail sink, so the mocked-sender cases run as live. */
+const mail = (e: Env) => ({ ...e, MURAGE_ENV: "live" }) as Env;
+const welcomeOf = () => env.DB.prepare("SELECT created,attempts,next_attempt_at,sent_at,terminal,attempt_token FROM flux_welcome_mail WHERE owner_user_id=?")
+  .bind(OWNER).first<{ created: number; attempts: number; next_attempt_at: number; sent_at: number | null; terminal: string | null; attempt_token: string | null }>();
+/** env.DB whose `SET sent_at` write throws the first `n` times. */
+const failSentAt = (e: Env, n: number) => {
+  let left = n;
+  const db = new Proxy(env.DB, { get(t, k) {
+    if (k === "prepare") return (q: string) => { if (q.includes("SET sent_at") && left-- > 0) throw new Error("d1 down"); return t.prepare(q); };
+    const v = Reflect.get(t, k); return typeof v === "function" ? v.bind(t) : v;
+  } });
+  return { ...mail(e), DB: db } as Env;
+};
+describe("H1 the Flux welcome email (one per Murage account, ever)", () => {
+  it("first link of a NEW Flux account: one email queued, then sent once, with the sign-in link and no password", async () => {
+    const e = fluxEnv();
+    await seedHome(); await seedIdentity();
+    await hooks().ensureAccount!(e, { homeId: HOME });
+    expect(await welcomeRows()).toEqual([{ owner_user_id: OWNER, created: 1, attempts: 0, sent_at: null }]);
+    const sent: Sent[] = [];
+    const t = soon();
+    expect(await sweepFluxWelcome(mail(e), t, mockSender(sent))).toBe(1);
+    expect(await sweepFluxWelcome(mail(e), t + FLUX_WELCOME_CLAIM_MS + 1, mockSender(sent))).toBe(0);
+    expect(sent.map((m) => [m.to, m.subject])).toEqual([["owner-h1@example.test", "Your Flux Router account is ready"]]);
+    expect(sent[0].text.startsWith("Your bots run on Fuigo, powered by Flux.")).toBe(true);
+    expect(sent[0].text).toContain('go to https://fluxrouter.ai/auth/sign-in, type this email address and choose "Send Verification Code". You do not need a password.');
+    expect((await welcomeRows())[0].sent_at).toBe(t);
+  });
+
+  it("first link of an EXISTING Flux account: the 'credits are on your account' email", async () => {
+    const e = fluxEnv();
+    await seedHome(); await seedIdentity();
+    router.accounts.set(OWNER, { flux: ACCT, email: "owner-h1@example.test" });
+    await hooks().ensureAccount!(e, { homeId: HOME });
+    expect((await welcomeRows()).map((r) => r.created)).toEqual([0]);
+    const sent: Sent[] = [];
+    const t = soon();
+    await sweepFluxWelcome(mail(e), t, mockSender(sent));
+    expect(sent.map((m) => m.subject)).toEqual(["Your Murage Cloud credits are on your Flux Router account"]);
+    expect(sent[0].text).toContain('Sign in at https://fluxrouter.ai/auth/sign-in with this email address. If you do not use a password, choose "Send Verification Code".');
+    expect(sent[0].text).not.toContain("Sign in as usual");
+    expect(sent[0].text).not.toContain("Email me a code");
+  });
+
+  it("a second ensure, a second home, and an unlink then a new link: still exactly one email", async () => {
+    const e = fluxEnv();
+    await seedHome(); await seedIdentity();
+    await hooks().ensureAccount!(e, { homeId: HOME });
+    await hooks().ensureAccount!(e, { homeId: HOME });
+    expect(await once()).not.toBeNull(); // already linked (another home's ask): nothing new
+    const sent: Sent[] = [];
+    const t = soon();
+    await sweepFluxWelcome(mail(e), t, mockSender(sent));
+    // Unlinked (the link row goes, the floor stays): the owner is linked again above the floor (link_version 2), and no second email.
+    await env.DB.prepare("DELETE FROM flux_links WHERE owner_user_id=?").bind(OWNER).run();
+    await env.DB.prepare("INSERT INTO flux_link_floor (owner_user_id,version) VALUES (?,1)").bind(OWNER).run();
+    expect((await once())?.link_version).toBe(2);
+    // The floor goes too and the owner is linked again from scratch: still no second email.
+    await env.DB.prepare("DELETE FROM flux_links WHERE owner_user_id=?").bind(OWNER).run();
+    await env.DB.prepare("DELETE FROM flux_link_floor WHERE owner_user_id=?").bind(OWNER).run();
+    expect(await once()).not.toBeNull();
+    await sweepFluxWelcome(mail(e), t + 86_400_000, mockSender(sent));
+    expect(router.ensureCalls).toBe(1);
+    expect(sent).toHaveLength(1);
+    expect(await welcomeRows()).toEqual([{ owner_user_id: OWNER, created: 1, attempts: 1, sent_at: t }]);
+  });
+
+  it("no verified email (held) or a refused ensure: no email", async () => {
+    const e = fluxEnv();
+    await seedHome();
+    await hooks().ensureAccount!(e, { homeId: HOME });
+    expect(router.ensureCalls).toBe(0);
+    await seedIdentity();
+    router.ensureAnswer = { status: 409, body: { code: "email_mismatch" } };
+    await hooks().ensureAccount!(e, { homeId: HOME });
+    expect(router.ensureCalls).toBe(1);
+    expect(await welcomeRows()).toEqual([]);
+  });
+
+  it("a failed send never blocks the link and is tried again after a backoff", async () => {
+    const e = fluxEnv();
+    await seedHome(); await seedIdentity();
+    await hooks().ensureAccount!(e, { homeId: HOME });
+    expect(await env.DB.prepare("SELECT flux_account_id FROM flux_links WHERE owner_user_id=?").bind(OWNER).first()).toEqual({ flux_account_id: ACCT });
+    const sent: Sent[] = [];
+    const t = soon();
+    expect(await sweepFluxWelcome(mail(e), t, mockSender(sent, true))).toBe(0);
+    expect(await sweepFluxWelcome(mail(e), t + fluxWelcomeBackoff(1) - 1, mockSender(sent))).toBe(0);
+    expect(await sweepFluxWelcome(mail(e), t + fluxWelcomeBackoff(1), mockSender(sent))).toBe(1);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("the link comes from FLUX_APP_BASE (staging), never a hardcoded production address", async () => {
+    const e = fluxEnv({ FLUX_APP_BASE: "https://app-staging.fluxrouter.ai" });
+    await seedHome(); await seedIdentity();
+    await hooks().ensureAccount!(e, { homeId: HOME });
+    const sent: Sent[] = [];
+    const t = soon();
+    await sweepFluxWelcome(mail(e), t, mockSender(sent));
+    expect(sent[0].text).toContain("https://app-staging.fluxrouter.ai/auth/sign-in");
+    expect(sent[0].html).toContain('<a href="https://app-staging.fluxrouter.ai/auth/sign-in">');
+    expect(`${sent[0].text}${sent[0].html}`).not.toContain("https://fluxrouter.ai");
+    expect(fluxSignInUrl({} as Env)).toBe("https://fluxrouter.ai/auth/sign-in");
+  });
+
+  it("the link host is pinned: a hostile FLUX_APP_BASE throws and nothing is sent (the row stays unsent, one attempt counted)", async () => {
+    for (const bad of ["https://fluxrouter.ai@evil.example", "http://fluxrouter.ai", "https://evil.example/", "https://fluxrouter.ai.evil.com",
+      "https://evilfluxrouter.ai", "https://fluxrouter.ai:8443", "https://fluxrouter.ai/x", "https://fluxrouter.ai/?a=1"]) {
+      expect(() => fluxSignInUrl({ FLUX_APP_BASE: bad } as unknown as Env)).toThrow();
+    }
+    for (const bad of ["https://fluxrouter.ai@evil.example", "http://fluxrouter.ai", "https://evil.example/", "https://fluxrouter.ai.evil.com", "https://evilfluxrouter.ai"]) {
+      await env.DB.prepare("DELETE FROM flux_welcome_mail").run();
+      await env.DB.prepare("INSERT INTO flux_welcome_mail (owner_user_id,created,queued_at,next_attempt_at) VALUES (?,1,1,1)").bind(OWNER).run();
+      await seedIdentity();
+      const sent: Sent[] = [];
+      expect(await sweepFluxWelcome(mail(fluxEnv({ FLUX_APP_BASE: bad })), soon(), mockSender(sent))).toBe(0);
+      expect(sent).toEqual([]);
+      expect(await welcomeOf()).toMatchObject({ attempts: 1, sent_at: null, terminal: null });
+    }
+    expect(fluxSignInUrl({ FLUX_APP_BASE: "https://app-staging.fluxrouter.ai/" } as unknown as Env)).toBe("https://app-staging.fluxrouter.ai/auth/sign-in");
+    expect(fluxSignInUrl({ FLUX_APP_BASE: "https://fluxrouter.ai:443" } as unknown as Env)).toBe("https://fluxrouter.ai/auth/sign-in");
+  });
+
+  it("a lost ack: the sent_at write is retried in-process, and if it never lands the row is held 24 h, not minutes", async () => {
+    const e = fluxEnv();
+    await seedHome(); await seedIdentity();
+    await hooks().ensureAccount!(e, { homeId: HOME });
+    const sent: Sent[] = [];
+    const t = soon();
+    // Two failed writes, then it lands: recorded, no second send.
+    expect(await sweepFluxWelcome(failSentAt(e, 2), t, mockSender(sent))).toBe(1);
+    expect((await welcomeOf())?.sent_at).toBe(t);
+    await env.DB.prepare("UPDATE flux_welcome_mail SET sent_at=NULL,attempts=0,next_attempt_at=? WHERE owner_user_id=?").bind(t, OWNER).run();
+    // The write never lands: sent once, then nothing for the 24 h lease (an hour later, a minute before it ends), then once more.
+    expect(await sweepFluxWelcome(failSentAt(e, 99), t, mockSender(sent))).toBe(1);
+    expect(await welcomeOf()).toMatchObject({ sent_at: null, terminal: null });
+    expect(FLUX_WELCOME_CLAIM_MS).toBeGreaterThanOrEqual(24 * 3_600_000);
+    for (const dt of [10 * 60_000 + 1, 3_600_000, FLUX_WELCOME_CLAIM_MS - 60_000]) expect(await sweepFluxWelcome(mail(e), t + dt, mockSender(sent))).toBe(0);
+    expect(sent).toHaveLength(2);
+    expect(await sweepFluxWelcome(mail(e), t + FLUX_WELCOME_CLAIM_MS, mockSender(sent))).toBe(1);
+    expect(sent).toHaveLength(3);
+  });
+
+  it("two lost acks in a row: exactly 2 sends; across three lease expirations the third sends nothing and the row ends terminal", async () => {
+    const e = fluxEnv();
+    await seedHome(); await seedIdentity();
+    await hooks().ensureAccount!(e, { homeId: HOME });
+    // The second lost ack is a sent_at write that runs but changes no row (meta.changes 0): treated like a failed write.
+    const noopSentAt = { ...mail(e), DB: new Proxy(env.DB, { get(tg, k) {
+      if (k === "prepare") return (q: string) => q.includes("SET sent_at") ? { bind: () => ({ run: async () => ({ meta: { changes: 0 } }) }) } : tg.prepare(q);
+      const v = Reflect.get(tg, k); return typeof v === "function" ? v.bind(tg) : v;
+    } }) } as Env;
+    const sent: Sent[] = [];
+    let t = soon();
+    expect(await sweepFluxWelcome(failSentAt(e, 99), t, mockSender(sent))).toBe(1);
+    expect(await welcomeOf()).toMatchObject({ attempts: 1, sent_at: null, terminal: null });
+    t += FLUX_WELCOME_CLAIM_MS; // lease expiry 1: the leftover token makes this the final claim (one allowed extra copy)
+    expect(await sweepFluxWelcome(noopSentAt, t, mockSender(sent))).toBe(1);
+    expect(await welcomeOf()).toMatchObject({ attempts: FLUX_WELCOME_MAX_ATTEMPTS, sent_at: null, terminal: null });
+    t += FLUX_WELCOME_CLAIM_MS; // lease expiry 2: at the cap, terminal, no send
+    expect(await sweepFluxWelcome(mail(e), t, mockSender(sent))).toBe(0);
+    expect(await welcomeOf()).toMatchObject({ attempts: FLUX_WELCOME_MAX_ATTEMPTS, sent_at: null, terminal: "gave_up", attempt_token: null });
+    t += FLUX_WELCOME_CLAIM_MS; // lease expiry 3: still nothing
+    expect(await sweepFluxWelcome(mail(e), t, mockSender(sent))).toBe(0);
+    expect(sent).toHaveLength(2);
+  });
+
+  it("a definitive (caught) failure clears the token and keeps the 8-try retry: 7 failures, then the 8th try sends", async () => {
+    const e = fluxEnv();
+    await seedHome(); await seedIdentity();
+    await hooks().ensureAccount!(e, { homeId: HOME });
+    const sent: Sent[] = [];
+    let t = soon();
+    for (let i = 1; i < FLUX_WELCOME_MAX_ATTEMPTS; i++) {
+      expect(await sweepFluxWelcome(mail(e), t, mockSender(sent, true))).toBe(0);
+      expect(await welcomeOf()).toMatchObject({ attempts: i, attempt_token: null, sent_at: null, terminal: null });
+      t += 7 * 3_600_000;
+    }
+    expect(await sweepFluxWelcome(mail(e), t, mockSender(sent))).toBe(1);
+    expect(await welcomeOf()).toMatchObject({ attempts: FLUX_WELCOME_MAX_ATTEMPTS, sent_at: t, terminal: null });
+    expect(sent).toHaveLength(1);
+  });
+
+  it("completion is fenced by the attempt: a claim whose token was taken over never records sent_at", async () => {
+    const e = fluxEnv();
+    await seedHome(); await seedIdentity();
+    await hooks().ensureAccount!(e, { homeId: HOME });
+    const t = soon();
+    const takeover = { async send() { await env.DB.prepare("UPDATE flux_welcome_mail SET attempt_token='another-claim' WHERE owner_user_id=?").bind(OWNER).run(); } };
+    expect(await sendFluxWelcome(mail(e), OWNER, t, takeover)).toBe(true);
+    expect(await welcomeOf()).toMatchObject({ sent_at: null, attempt_token: "another-claim" });
+    // A stale attempt's failure does not cut the new claim's lease either.
+    const fail = { async send() { await env.DB.prepare("UPDATE flux_welcome_mail SET attempt_token='third',next_attempt_at=? WHERE owner_user_id=?").bind(t + FLUX_WELCOME_CLAIM_MS * 2, OWNER).run(); throw new Error("down"); } };
+    await env.DB.prepare("UPDATE flux_welcome_mail SET next_attempt_at=? WHERE owner_user_id=?").bind(t, OWNER).run();
+    expect(await sendFluxWelcome(mail(e), OWNER, t, fail)).toBe(false);
+    expect(await welcomeOf()).toMatchObject({ next_attempt_at: t + FLUX_WELCOME_CLAIM_MS * 2, attempt_token: "third", sent_at: null });
+  });
+
+  it("owners linked before migration 0140 never get a welcome, and a floor with no welcome row never queues one", async () => {
+    const e = fluxEnv();
+    await seedHome(); await seedIdentity();
+    // Pre-migration history: this owner linked, another owner was linked and then unlinked (floor only). Re-run 0140's backfill.
+    await linkOwner();
+    await env.DB.prepare("INSERT INTO flux_link_floor (owner_user_id,version) VALUES ('user-gone',3)").run();
+    const sql = env.TEST_MIGRATIONS.find((m) => m.name.startsWith("0140_"))!.queries.join(";\n");
+    const at = sql.indexOf("INSERT OR IGNORE INTO flux_welcome_mail");
+    expect(at).toBeGreaterThan(-1);
+    await env.DB.prepare(sql.slice(at).split(";")[0]).run();
+    expect((await env.DB.prepare("SELECT owner_user_id,terminal,sent_at IS NOT NULL AS done FROM flux_welcome_mail ORDER BY owner_user_id").all()).results)
+      .toEqual([{ owner_user_id: "user-gone", terminal: "pre_existing", done: 1 }, { owner_user_id: OWNER, terminal: "pre_existing", done: 1 }]);
+    // Unlink (floor 4) and re-link at version 5: nothing queued, nothing sent.
+    await env.DB.prepare("DELETE FROM flux_links WHERE owner_user_id=?").bind(OWNER).run();
+    await env.DB.prepare("INSERT INTO flux_link_floor (owner_user_id,version) VALUES (?,4)").bind(OWNER).run();
+    expect((await once())?.link_version).toBe(5);
+    const sent: Sent[] = [];
+    expect(await sweepFluxWelcome(mail(e), soon() + 2 * FLUX_WELCOME_CLAIM_MS, mockSender(sent))).toBe(0);
+    expect(sent).toEqual([]);
+    // A floor and no welcome row at all (the backfill missed it): the link queues nothing.
+    await env.DB.prepare("DELETE FROM flux_welcome_mail").run();
+    await env.DB.prepare("DELETE FROM flux_links WHERE owner_user_id=?").bind(OWNER).run();
+    expect((await once())?.link_version).toBe(5);
+    expect(await welcomeRows()).toEqual([]);
+  });
+
+  it("bounded: 8 failed tries, then the row is terminal, never due again and never requeued by a later link", async () => {
+    const e = fluxEnv();
+    await seedHome(); await seedIdentity();
+    await hooks().ensureAccount!(e, { homeId: HOME });
+    const sent: Sent[] = [];
+    let t = soon();
+    for (let i = 0; i < FLUX_WELCOME_MAX_ATTEMPTS; i++) { await sweepFluxWelcome(mail(e), t, mockSender(sent, true)); t += 7 * 3_600_000; }
+    expect(FLUX_WELCOME_MAX_ATTEMPTS).toBe(8);
+    expect(await welcomeOf()).toMatchObject({ attempts: 8, sent_at: null, terminal: "gave_up" });
+    expect(await sweepFluxWelcome(mail(e), t + 30 * 86_400_000, mockSender(sent))).toBe(0);
+    await env.DB.prepare("DELETE FROM flux_links WHERE owner_user_id=?").bind(OWNER).run();
+    await env.DB.prepare("DELETE FROM flux_link_floor WHERE owner_user_id=?").bind(OWNER).run();
+    expect(await once()).not.toBeNull();
+    expect(await sweepFluxWelcome(mail(e), t + 60 * 86_400_000, mockSender(sent))).toBe(0);
+    expect(sent).toEqual([]);
+    expect(await welcomeOf()).toMatchObject({ attempts: 8, terminal: "gave_up" });
+  });
+
+  it("a last try whose lease ran out at the cap is finished, not left due forever", async () => {
+    await seedIdentity();
+    await env.DB.prepare("INSERT INTO flux_welcome_mail (owner_user_id,created,queued_at,attempts,next_attempt_at) VALUES (?,1,1,8,1)").bind(OWNER).run();
+    const sent: Sent[] = [];
+    expect(await sweepFluxWelcome(mail(fluxEnv()), soon(), mockSender(sent))).toBe(0);
+    expect(sent).toEqual([]);
+    expect(await welcomeOf()).toMatchObject({ attempts: 8, terminal: "gave_up" });
+  });
+
+  it("staging sends only through an engaged mail sink: a missing or wrong flag or binding never reaches EMAIL", async () => {
+    const calls: unknown[] = [];
+    const EMAIL = { async send(m: unknown) { calls.push(m); } };
+    for (const over of [{ MAIL_SINK: env.DB }, { MAIL_SINK: env.DB, STAGING_MAIL_SINK: "0" }, { MAIL_SINK: env.DB, STAGING_MAIL_SINK: "true" },
+      { STAGING_MAIL_SINK: "1" }, {}]) {
+      await env.DB.prepare("DELETE FROM flux_welcome_mail").run();
+      await env.DB.prepare("INSERT INTO flux_welcome_mail (owner_user_id,created,queued_at,next_attempt_at) VALUES (?,1,1,1)").bind(OWNER).run();
+      await seedIdentity();
+      const e = { ...fluxEnv(), MURAGE_ENV: "staging", EMAIL, MAIL_SINK: undefined, STAGING_MAIL_SINK: undefined, ...over } as unknown as Env;
+      expect(await sweepFluxWelcome(e, soon())).toBe(0);
+      expect(await welcomeOf()).toMatchObject({ attempts: 1, sent_at: null });
+    }
+    expect(calls).toEqual([]);
+    // Engaged: the sink gets it (the allowlist admits the address), EMAIL still never.
+    await env.DB.prepare("DELETE FROM flux_welcome_mail").run();
+    await env.DB.prepare("INSERT INTO flux_welcome_mail (owner_user_id,created,queued_at,next_attempt_at) VALUES (?,1,1,1)").bind(OWNER).run();
+    const sunk: unknown[][] = [];
+    const sink = { prepare: () => ({ bind: (...a: unknown[]) => ({ run: async () => { sunk.push(a); } }) }), batch: async () => [] };
+    const ok = { ...fluxEnv(), MURAGE_ENV: "staging", EMAIL, MAIL_SINK: sink, STAGING_MAIL_SINK: "1", MAIL_SINK_ALLOWLIST: "@example.test" } as unknown as Env;
+    expect(await sweepFluxWelcome(ok, soon())).toBe(1);
+    expect(calls).toEqual([]);
+    expect(sunk.map((a) => a[1])).toEqual(["owner-h1@example.test"]);
+  });
+
+  it("two first links at once: the call that heard created=true sets created=1 even when the other queued the row first", async () => {
+    await seedHome(); await seedIdentity();
+    const row = await ensureOwnerLinked(fluxEnv(), OWNER, async () => {
+      // The concurrent caller (it heard created=false) commits its link and the welcome row while this one waits on Flux.
+      await env.DB.batch([linkOwnerStmt(), env.DB.prepare("INSERT INTO flux_welcome_mail (owner_user_id,created,queued_at,next_attempt_at) VALUES (?,0,1,1)").bind(OWNER)]);
+      return { fluxAccountId: ACCT, created: true };
+    });
+    expect(row).not.toBeNull();
+    expect(await welcomeOf()).toMatchObject({ created: 1, sent_at: null });
+  });
+
+  it("the cron sends before a delayed creator returns: whichever version goes out says \"Send Verification Code\"", async () => {
+    await seedHome(); await seedIdentity();
+    const sent: Sent[] = [];
+    const t = soon();
+    const row = await ensureOwnerLinked(fluxEnv(), OWNER, async () => {
+      // The other caller (it heard created=false) queues the row, and the cron sends it, while this creator still waits on Flux.
+      await env.DB.batch([linkOwnerStmt(), env.DB.prepare("INSERT INTO flux_welcome_mail (owner_user_id,created,queued_at,next_attempt_at) VALUES (?,0,1,1)").bind(OWNER)]);
+      expect(await sweepFluxWelcome(mail(fluxEnv()), t, mockSender(sent))).toBe(1);
+      return { fluxAccountId: ACCT, created: true };
+    });
+    expect(row).not.toBeNull();
+    expect(await welcomeOf()).toMatchObject({ created: 0, sent_at: t });
+    expect(sent).toHaveLength(1);
+    expect(sent[0].text).toContain('choose "Send Verification Code"');
+    for (const created of [true, false]) expect(fluxWelcomeEmail(fluxEnv(), created).emailText).toContain('choose "Send Verification Code"');
+  });
+
+  it("copy rules: plain words, no em or en dashes, none of the banned words, no dollar amount", () => {
+    for (const created of [true, false]) {
+      const m = fluxWelcomeEmail(fluxEnv(), created);
+      const all = `${m.emailSubject}\n${m.emailText}\n${m.emailHtml}`;
+      expect(all).not.toMatch(/[–—]/);
+      expect(all).not.toMatch(/\b(safe|unsafe|safety|free)\b/i);
+      expect(all).not.toMatch(/will fail/i);
+      expect(all).not.toMatch(/\$\d/);
+    }
+  });
 });
 
 describe("H1 Flux off: nothing is called, the ledger still books every grant", () => {
@@ -871,5 +1200,72 @@ describe("H4 Astra re-review of the grant fence (ASTRA-H3)", () => {
     }
     expect(router.requests).toEqual([]);
     expect(router.balances(ACCT)).toEqual({ prepaid: PREPAID, spent: 0 });
+  });
+});
+
+describe("DISPUTE-FENCE-ACCOUNT round 2 (Astra H1): the B5 billing grant goes through the same choke point as every other credit grant", () => {
+  const setDispute = (open: 0 | 1) => env.DB.prepare(`INSERT INTO flux_account_dispute (account_id,version,open,note,by,at) VALUES (?,1,?,'n','ops',1)
+    ON CONFLICT(account_id) DO UPDATE SET open=excluded.open`).bind(OWNER, open).run();
+  afterEach(async () => { await env.DB.prepare("DELETE FROM flux_account_dispute").run(); });
+
+  it("a LINKED owner with an open dispute: the period grant is refused at the allocation (nothing sent), a reversal still goes, and the grant lands after the clear", async () => {
+    const e = fluxEnv();
+    await seedIdentity(); await seedHome(); await linkOwner();
+    const inv = "in_fence_b5";
+    const id = `${inv}:period`;
+    const body = JSON.stringify({ grant_id: id, invoice_id: inv, kind: "period", home_id: HOME, account_id: ACCT, amount_microcents: 10_000_000 });
+    await env.DB.prepare("INSERT INTO credit_grants (invoice_id,kind,home_id,plan,claimed_at,body_json,body_sha256) VALUES (?,'period',?,'starter',1,?,?)")
+      .bind(inv, HOME, body, await sha256Hex(body)).run();
+    const ask = () => withHomeLease(e, HOME, (lease) => hooks().grantMonthlyCredits(e, { homeId: HOME, plan: "starter", invoiceId: inv, periodStart: P_START, periodEnd: P_END }, { lease })
+      .catch((x) => x));
+    await setDispute(1);
+    const refused = await ask();
+    expect(refused).toBeInstanceOf(FluxNotDispatched);
+    expect((refused as FluxNotDispatched).code).toBe("account_disputed");
+    expect(router.requests.filter((r) => r.method === "POST")).toEqual([]);
+    expect(router.grants.has(id)).toBe(false);
+    await setDispute(0);
+    expect(await ask()).toMatchObject({ status: "granted" });
+    expect(router.grants.has(id)).toBe(true);
+    // Reversals and refunds stay allowed while a dispute stands.
+    await setDispute(1);
+    expect(await hooks().revokeCredits(e, { homeId: HOME, invoiceId: inv, kind: "period", grantId: id, reason: "refund" })).toMatchObject({ status: "reversed" });
+  });
+
+  it("the choke point itself: allocateFenceRevision refuses a credit-raising op (grant) for a disputed home, and never refuses a reversal, a target or an operator adjustment", async () => {
+    await seedHome();
+    await setDispute(1);
+    const c = (await claimGrantFence(env.DB, { grantId: "in_choke:period", kind: "t", homeId: HOME }))!;
+    expect(await allocateFenceRevision(env.DB, c, { op: "grant", homeId: HOME })).toBeNull();
+    // Even when the fence row was created without a home (the caller names none), the home is read from the row.
+    expect(await allocateFenceRevision(env.DB, c, { op: "grant" })).toBeNull();
+    for (const op of ["reverse", "target", "operator"] as const) expect(await allocateFenceRevision(env.DB, c, { op })).not.toBeNull();
+    await setDispute(0);
+    expect(await allocateFenceRevision(env.DB, c, { op: "grant", homeId: HOME })).not.toBeNull();
+  });
+
+  it("Astra M3 (explicit exception): an operator's restoration of a refunded grant CAN give credit back while the dispute stands", async () => {
+    const e = fluxEnv();
+    await seedHome(); await linkOwner();
+    await grantMonthlyCredits(e, { homeId: HOME, plan: "starter", invoiceId: "in_m3", periodStart: P_START, periodEnd: P_END }, deps());
+    const id = "in_m3:period";
+    const amount = router.grants.get(id)!.amount;
+    await cover("in_m3", 4900);
+    await sweepFlux(e, deps());
+    expect(router.grants.get(id)!.remaining).toBe(0);
+    // The refund failed: the credit is owed again. The dispute opens; the operator's correction is still allowed and restores the credit.
+    await cover("in_m3", 0);
+    await setDispute(1);
+    const claim = await operatorClaim(env.DB, { grantId: "inv:in_m3", by: "ops-m3", now: clock });
+    expect(claim.claimed).toBe(true);
+    if (!claim.claimed) return;
+    router.adminRestore(id);
+    const applied = await operatorApplied(env.DB, { grantId: "inv:in_m3", token: claim.token, revision: claim.account.revision, wireRevision: claim.wireRevision ?? undefined, appliedMicrocents: amount,
+      adjustmentRef: claim.adjustmentRef, evidence: "Flux admin restore (m3)", by: "ops-m3", now: clock });
+    expect(["applied", "pending_verification"]).toContain(applied);
+    expect(router.grants.get(id)!.remaining).toBe(amount); // credit restored with the dispute open
+    // ...while a NEW grant for the same disputed account is still refused at the allocation.
+    const fresh = (await claimGrantFence(env.DB, { grantId: "in_m3_new:period", kind: "t", homeId: HOME }))!;
+    expect(await allocateFenceRevision(env.DB, fresh, { op: "grant", homeId: HOME })).toBeNull();
   });
 });

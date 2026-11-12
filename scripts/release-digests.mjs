@@ -82,10 +82,13 @@ async function main([command, ...args]) {
     throw new Error("usage: release-digests.mjs verify <version> <release-id> <assets-dir>");
   }
   const [version, releaseId, assetsDir] = args;
+  await verifyReleaseCommand(version, releaseId, assetsDir);
+}
+
+// Shared by the standalone diagnostic CLI and the privileged guard command.
+export async function verifyReleaseCommand(version, releaseId, assetsDir) {
   const result = await verifyRelease({
-    version,
-    releaseId,
-    assetsDir,
+    version, releaseId, assetsDir,
     attempts: boundedInteger("RELEASE_DIGEST_POLL_ATTEMPTS", DEFAULT_DIGEST_POLL_ATTEMPTS, 60),
     intervalMs: boundedInteger("RELEASE_DIGEST_POLL_INTERVAL_MS", DEFAULT_DIGEST_POLL_INTERVAL_MS, 60_000),
   });

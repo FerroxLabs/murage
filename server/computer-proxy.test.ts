@@ -117,6 +117,7 @@ describe("computer proxy (fake box)", () => {
     port = (box.address() as any).port;
 
     proxy = spawn(process.execPath, ["--experimental-strip-types", PROXY], {
+      windowsHide: true,
       env: {
         ...process.env,
         MURAGEBOX_BOX_API: `http://127.0.0.1:${port}`,
@@ -199,7 +200,7 @@ describe("computer proxy (fake box)", () => {
     const result = await waitFor(71);
     expect(commands.length - before).toBe(1);
     const command = commands.at(-1)!;
-    if (process.platform !== "win32") expect(spawnSync("/bin/bash", ["-n", "-c", command]).status).toBe(0);
+    if (process.platform !== "win32") expect(spawnSync("/bin/bash", ["-n", "-c", command], { windowsHide: true }).status).toBe(0);
     expect(command).toContain("END=$((SECONDS+90))");
     expect(command).toContain("timeout --kill-after=1s 1s bash -c");
     expect(command).toContain("grep -Eq");
@@ -254,7 +255,7 @@ describe("computer proxy (fake box)", () => {
     const command = commands.at(-1)!;
     if (process.platform !== "win32") {
       const started = Date.now();
-      const executed = spawnSync("/bin/bash", ["-c", command], { encoding: "utf8", timeout: 4_000 });
+      const executed = spawnSync("/bin/bash", ["-c", command], { windowsHide: true, encoding: "utf8", timeout: 4_000 });
       expect(executed.status).toBe(0);
       expect(executed.stdout).toMatch(/WAIT_RESULT no ELAPSED [12]/);
       expect(Date.now() - started).toBeLessThan(3_000);
@@ -288,7 +289,7 @@ describe("computer proxy (fake box)", () => {
     expect(commands.length - before).toBe(1);
     const command = commands.at(-1)!;
     expect(command).toContain('exec env -i HOME="$HOME"');
-    if (process.platform !== "win32") expect(spawnSync("/bin/bash", ["-n", "-c", command]).status).toBe(0);
+    if (process.platform !== "win32") expect(spawnSync("/bin/bash", ["-n", "-c", command], { windowsHide: true }).status).toBe(0);
     expect(command).toMatch(/xdotool mousemove \$CX \$CY click 1/);
     expect(command).toContain("/opt/muragebox/cua-driver call click");
     expect(command).toContain("CUA_DRIVER_RS_TELEMETRY_ENABLED=0");
@@ -722,6 +723,7 @@ describe("computer proxy control gate (fake box + fake control)", () => {
     const controlPort = (controlServer.address() as any).port;
 
     proxy = spawn(process.execPath, ["--experimental-strip-types", PROXY], {
+      windowsHide: true,
       env: {
         ...process.env,
         MURAGEBOX_BOX_API: `http://127.0.0.1:${boxPort}`,
@@ -874,6 +876,7 @@ describe("computer proxy box token from the credential file", () => {
     const port = (box.address() as { port: number }).port;
     store.write({ computer: { MURAGEBOX_BOX_TOKEN: "file-tok-1" } });
     const proxy = spawn(process.execPath, ["--experimental-strip-types", PROXY], {
+      windowsHide: true,
       env: { ...process.env, MURAGEBOX_BOX_API: `http://127.0.0.1:${port}`, MURAGEBOX_BOX_ID: "box-1", MURAGEBOX_BOX_TOKEN: "stale-env", MURAGE_CRED_FILE: store.path, MURAGE_CRED_SERVER: "computer" },
       stdio: ["pipe", "ignore", "ignore"],
     });

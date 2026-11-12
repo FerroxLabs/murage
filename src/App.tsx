@@ -1,3 +1,5 @@
+import { ConnectorReconnectDialog } from "@/components/ConnectorReconnectDialog";
+import { ReconnectAppsBanner } from "@/components/ReconnectAppsBanner";
 import { settingsOpener } from "@/lib/settings-leave";
 import { LazyOverlay } from "@/components/LazyOverlay";
 import { EngineChatLinkHost } from "@/components/EngineChatLink";
@@ -19,7 +21,7 @@ import { ServerLifecycleBanner } from "@/components/ServerLifecycleBanner";
 import { LazyMemoryIntegrityStrip } from "@/components/MemoryIntegrityStripLazy";
 import { CloudUnreachableBanner } from "@/components/cloud/CloudUnreachableBanner";
 import { WorkspaceSwitch } from "@/components/cloud/WorkspaceSwitch";
-import { isCloudOrigin, notificationBridge } from "@/lib/cloud-workspace";
+import { isCloudHome, isCloudOrigin, notificationBridge } from "@/lib/cloud-workspace";
 import { RemoteConnectionBanner } from "@/components/RemoteConnectionBanner";
 import { FluxKeyProblemBanner } from "@/components/FluxKeyProblemBanner";
 import { SignedOutCard } from "@/components/SignedOutCard";
@@ -30,7 +32,10 @@ import { drawerCloseKey } from "@/lib/drawer-close";
 import { CommandPaletteHost } from "@/components/CommandPaletteHost";
 import { DictationStatusBar } from "@/components/DictationStatusBar";
 import { FirstRunPhases } from "@/components/FirstRunPhases";
-import { useSetupView } from "@/components/FirstRunChrome";
+import { FirstRunWelcome } from "@/components/FirstRunWelcome";
+import { StartupPictureWriter } from "@/components/StartupPictureWriter";
+import { pictureHeld } from "@/lib/startup-picture-schedule";
+import { useRefreshSetupOnBotChange, useSetupView } from "@/components/FirstRunChrome";
 import { firstRunOwnsMainView } from "@/lib/first-run";
 import { settleSendKeyForUpgrade } from "@/lib/send-key";
 import { BotListDrawerProvider, PhoneBotListBar, useBotListDrawer } from "@/components/OpenBotListButton";
@@ -49,6 +54,7 @@ import { canPrefetchWhenIdle, loadBotSettings, loadedBotSettings, preloadBotSett
 import { LazyBoundary, retryableLazy } from "@/components/LazyBoundary";
 import { loadGroupView, preloadGroupView } from "@/lib/group-view-preload";
 import { TermsGate } from "@/components/TermsGate";
+import { NoLimitsFollowers } from "@/components/NoLimitsFollowers";
 import { NoLimitsTermsPrompt } from "@/components/NoLimitsTermsPrompt";
 import { HelpHost } from "@/components/help/HelpHost";
 import { CoachMarks } from "@/components/ui/CoachMarks";
@@ -60,6 +66,9 @@ import { doorForView, healthReturn, shellNav, trackShellOrigins, type CalendarOr
 import type { ShellDoor } from "@/components/shell/shell-contract";
 import { TodayView } from "@/components/today/TodayView";
 import { useConnectivity } from "@/lib/connectivity";
+import { NewBotSignInStep } from "@/components/cloud/BotSignInOffer";
+import { OwnerCodeDialog } from "@/components/cloud/OwnerCodeDialog";
+import { OwnerExpiredBanner } from "@/components/cloud/OwnerExpiredBanner";
 
 // Opened by a tap, so loaded by one (spec §6). Settings alone pulls in every
 // settings page and, through House rules and the skill editor, Tiptap; a phone
@@ -133,6 +142,8 @@ function Shell() {
   // The same cached `GET /api/setup` the phase bar reads, so the band and the
   // view underneath it cannot disagree about whose screen this is.
   const { view: setupView } = useSetupView();
+  // The Inbox rows and counts follow the visible bots; re-read the view when they change.
+  useRefreshSetupOnBotChange(state.bots);
   // 1.0.4 made Ctrl/Cmd+Enter the Japanese default; an install set up before it keeps Enter.
   const setupFirstRun = setupView?.firstRun;
   useEffect(() => settleSendKeyForUpgrade(setupFirstRun), [setupFirstRun]);
@@ -452,6 +463,7 @@ function Shell() {
     });
   }, [dispatch]);
 
+  const cloudBrowser = isCloudHome() && !isCloudOrigin();
   return (
     <div className="flex h-full flex-col">
       {/* ABOVE everything, and not dismissible while the engine is down. A
@@ -461,9 +473,12 @@ function Shell() {
       {/* After an update, later memory work runs while chat is open: say so, calmly, with the progress. */}
       {desktop === true && <LazyMemoryIntegrityStrip />}
       <CloudUnreachableBanner />
+      <OwnerExpiredBanner />
       <WorkspaceSwitch />
       {/* The remote counterpart: a phone or browser whose computer went quiet. */}
       {desktop === false && <RemoteConnectionBanner connected={state.connected} signedOut={state.signedOut === true} />}
+      {/* An owner's browser on a Cloud home counts as the desktop surface, so it needs its own ask. The Cloud window has CloudUnreachableBanner. */}
+      {desktop === true && cloudBrowser && <RemoteConnectionBanner connected={state.connected} signedOut={state.signedOut === true} />}
       {/* The saved Flux key is not one, or Flux refused it: say so, with the fix. */}
       {desktop === true && <FluxKeyProblemBanner />}
       {/* Only after the door itself said 401 (lib/session-check.ts). */}
@@ -480,6 +495,11 @@ function Shell() {
           browser door is not a fresh machine and must never be shown a
           first-run screen. */}
       {desktop === true && <FirstRunPhases />}
+      {/* The welcome (Ember pops in): the first paint of a brand-new install, above everything, desktop only. Its rule is
+          welcomeShouldShow (src/lib/first-run-welcome.ts). */}
+      {desktop === true && <FirstRunWelcome />}
+      {/* The cached start-up picture (FIRSTRUN-1019 slice B): the next start's tip and the Chief's own face, drawn off screen. Nothing on screen; held while the welcome is up. */}
+      {desktop === true && <StartupPictureWriter chiefBotId={setupView?.chiefBotId ?? null} suspended={pictureHeld(setupView ?? null)} />}
       <div className="relative flex min-h-0 flex-1">
       <BotListDrawerProvider value={drawerControl}>
       {/* The "Open bot list" button is not drawn here. Each main view's header
@@ -587,6 +607,9 @@ function Shell() {
             <SettingsModal />
         </LazyOverlay>
       )}
+      <div className="fixed bottom-4 left-4 z-40 max-w-sm"><ReconnectAppsBanner enabled /></div>
+      {state.reconnectIncidentId && <ConnectorReconnectDialog key={state.reconnectIncidentId} incidentId={state.reconnectIncidentId} />}
+      <NewBotSignInStep />
       {state.pluginsOpen && <LazyOverlay name="plugins" kind="window" covers="always" onRetry={PluginsPanelLazy.retry} onDismiss={() => dispatch({ type: "togglePlugins", open: false })}><PluginsPanel /></LazyOverlay>}
       {/* mounted after the modals: same z-50 tier, so DOM order keeps the
           palette on top when one of them is open underneath */}
@@ -594,6 +617,7 @@ function Shell() {
       {/* The stop control for composer dictation when no Composer can draw it (thread switch, another view, a layer on top). */}
       <DictationStatusBar />
       {desktop === true && <NoLimitsTermsPrompt />}
+      {desktop === true && <NoLimitsFollowers upgrade />}
       <EngineChatLinkHost />
       {/* Bot calls 1.0.9: the ring banner (call.ring hints re-read GET /api/calls/active) */}
       <BotCallRing />
@@ -663,6 +687,8 @@ export default function App() {
         <TermsGate>
           <Shell />
         </TermsGate>
+        {/* The 6-digit code step for an owner browser on a Cloud home (src/lib/owner-code.ts). Outside the terms gate: nothing in it can be sent without it. */}
+        <OwnerCodeDialog />
         {/* The update pop-up (above the sidebar footer once it mounts; a top-layer popover inside an open modal window). Beside the gate, not behind it: an update that downloads
             while the terms screen is up still shows, and it sends nothing. It renders nothing without the updater bridge. */}
         <UpdateBanner />

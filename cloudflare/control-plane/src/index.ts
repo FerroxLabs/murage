@@ -1,26 +1,35 @@
 import { z } from "zod";
-import { FLUX_LEDGER_ROUTE, fluxCapStepUpExempt, fluxOffStubRoute, fluxRoute, sweepFlux, type FluxDependencies } from "./b4-flux";
-import { fluxRoutesEnabled, isFluxPath } from "./b4-flux-config";
+import { FLUX_LEDGER_ROUTE, SPENDING_OFF_STEP_UP_WORDS, capOffBody, fluxOwnerSubkeyRoute, fluxCapStepUpExempt, fluxOffStubRoute, fluxRevocationRoute, fluxRoute, sweepFlux, type FluxDependencies } from "./b4-flux";
+import { fluxRoutesEnabled, fluxServing, isFluxPath } from "./b4-flux-config";
+import { envFluxHooks, selectFluxMode } from "./flux-live-hooks";
 import { cloudMachineRoute, sweepCloudRetention } from "./cloud-machines";
-import { b3Route, isHeartbeatRequest, reconcileB3, type B3Dependencies } from "./b3-control";
+import { AUTO_CANARY_MINUTE_BUDGET, AUTO_CANARY_MINUTE_CONCURRENCY, AUTO_CANARY_MINUTE_LEASE_MS, AUTO_CANARY_MINUTE_PASS_MS, AUTO_CANARY_MINUTE_STAGE_MS, autoCanaryPass, b3Route, isHeartbeatRequest, reconcileB3, type B3Dependencies } from "./b3-control";
 import { b3Enabled } from "./b3-config";
-import { billingRoute, stripeWebhook, stubFluxHooks, sweepBilling, sweepCustomerWaiting, type BillingDependencies } from "./b5-billing";
+import { assertSalesAllowedFor, billingRoute, stripeWebhook, sweepBilling, sweepCustomerWaiting, type BillingDependencies } from "./b5-billing";
 import { legalRoute, topupStepUpExempt } from "./legal-routes";
 import { cp0ControlRoute } from "./cp0-control";
 import { machineEndpointRoute } from "./machine-endpoints";
 import { edgeGate } from "./edge-limits";
+import { isStatusRequest, statusResponse, stepUpStateRoute } from "./status";
+import { isPoolPath, poolCloudConfigRoute } from "./warm-pool-claim";
 import { pairingRoute, type PairingDependencies } from "./pairing";
 import { homesRoute } from "./homes";
 import { devicesRoute } from "./devices";
+import { homeApiRoute, sweepOwnerEvents } from "./home-api";
+import { sweepAccessNotices, sweepProviderAccess } from "./access-audit";
+import { deviceJoinOwnerRoute, sweepDeviceJoins } from "./device-join";
 import { DOOR_HANDING_OUT, doorRoute, handOutDoorTicket, sweepDoorNotices } from "./door";
 import { trustedFactorRoute } from "./trusted-factors";
 import { sweepMonitoring } from "./ops-monitor";
+import { MINUTE_CRON, minuteTick } from "./warm-pool";
+import { noteMonitoring, rolloutRoute, sweepRollout } from "./rollout";
 import { accountTwoFactorRoute } from "./account-2fa";
 import { admin } from "./b3-control";
-import { boundCustomer, carryBinding, createIdentity, DOOR_ROUTE, doorRecentProofAt, isFluxCapChange, isFluxOwnerPath, isTopupChange, needsStepUp, stepUpProofValid, type Identity, type IdentityDependencies } from "./customer-identity";
+import { boundCustomer, carryBinding, createIdentity, inviteDecision, DOOR_ROUTE, doorRecentProofAt, isFluxCapChange, isFluxOwnerPath, isTopupChange, needsStepUp, stepUpProofValid, type Identity, type IdentityDependencies } from "./customer-identity";
+import { OPERATOR_ROUTE as FLUX_PROOF_OPERATOR_ROUTE, fluxEmailProofRoute, sweepFluxEmailAutoSend, sweepFluxEmailStuck, sweepFluxEmailWake } from "./flux-email-proof";
 import { completeStepUpRefusal, CONSUMED_HEADER, prepareStepUp, recordOutcome, stepUpEmailRoute, stepUpRefusal, sweepStepUpEmail, type Prepared } from "./step-up-email";
 import { membersRoute, sweepPlanResizes } from "./members-api";
-import { isPurchaseRoute, purchaseBootstrap, stepUpRefused } from "./purchase-bootstrap";
+import { isInviteGatedRoute, isPurchaseRoute, purchaseBootstrap, stepUpRefused } from "./purchase-bootstrap";
 import { exportDownload, selfServiceMachineRoute, selfServiceRoute, sweepSelfService, type SelfServiceDependencies } from "./self-service";
 import { newLinkFailure, publicRoute } from "./public-routes";
 import { cancellationAccountRoute, cancellationAdminRoute, registerCancellation, sweepCancellations } from "./public-cancellation";
@@ -28,15 +37,26 @@ import { sweepPublicTokens } from "./public-tokens";
 import { clarifyAccountRoute, registerClarify } from "./clarify";
 import { noticeAccountRoute, registerWithdrawalNotices, sweepWithdrawalNotices, withdrawalAdminRoute } from "./withdrawal-notices";
 
-import { subscribeToAnnouncements, type SendlaneFetch } from "./announcements";
+import { subscribeToAnnouncements, unsubscribeFromAnnouncements, UNSUBSCRIBE_PATH, type SendlaneFetch } from "./announcements";
+import { updatesMembersRoute } from "./updates-consent/members";
+import { isUpdatesEarlyRequest, PROVE_ROUTE, sendUpdatesOutbox, updatesEarly, updatesEmail, updatesExport, updatesProve, updatesStatus, updatesWithdraw, UPDATES_BASE,
+  UPDATES_PUBLIC_PATHS } from "./updates-consent/routes";
+import { ownerFeedbackRoute, sweepOwnerFeedback } from "./owner-feedback";
 import { accountSession, createAuth } from "./auth";
 import { readConfig, type ControlPlaneConfig } from "./config";
+import { assertEnvIsolation, assertEnvIsolationAsync } from "./env-isolation";
+import { salesAllowed, salesMode } from "./b5-config";
+import { assertInvited } from "./sales-invite";
+import { assertImageEpochCurrent } from "./image-admission";
+import { sweepImageReadiness } from "./image-readiness";
+import { sweepDispatchReview, trustDiff } from "./image-dispatch-review";
 import { errorResponse, HTTPError, json, preflight, secureResponse, withBoundedRequestBody, type JSONValue } from "./http";
 import { reserveOTPRecipient, requireJSONAuthBody } from "./otp-rate-limit";
 import type { CloudflareFetch } from "./cloudflare-api";
 import { BOOKMARK_HEADER, sessionFor } from "./d1-session";
 import { serverTiming, timeD1 } from "./d1-timing";
 import { sweepMailSink } from "./email";
+import { sweepFluxWelcome } from "./flux-welcome-mail";
 import {
   cleanupEndpointForInstallation,
   deleteManagedEndpoint,
@@ -51,6 +71,9 @@ import {
   revokeInstallation,
   rotateInstallationCredential,
 } from "./installations";
+
+/** The two announcement paths that answer without a login: no Server-Timing and no bookmark headers (B1 r1 Grok L6). */
+const ANNOUNCEMENT_PUBLIC_PATHS: ReadonlySet<string> = new Set(["/v1/announcements/subscribe", UNSUBSCRIBE_PATH]);
 
 const ROTATE_ROUTE = /^\/v1\/installations\/([^/]+)\/credentials\/rotate$/;
 const INSTALLATION_ROUTE = /^\/v1\/installations\/([^/]+)$/;
@@ -145,13 +168,44 @@ async function route(
   // Unauthenticated on purpose: the caller is somebody's first run, before any
   // account exists. Answered before `createAuth`, which a signup needs nothing
   // from.
+  // Updates consent (design v5.6.1 4.1): the desktop's anonymous routes, D1 only. Only the one-click unsubscribe is dispatched early (handle()).
+  // The prove page comes through here, after the origin check: GET needs no bypass (a navigation sends no Origin) and never confirms; POST
+  // also refuses any Origin but this Worker's own (updatesProve; B1 r1 Grok M3).
+  if (request.method === "GET" && url.pathname === PROVE_ROUTE) return updatesProve(request, env);
+  if (request.method === "POST" && url.pathname.startsWith(`${UPDATES_BASE}/`)) {
+    const tail = url.pathname.slice(UPDATES_BASE.length + 1);
+    if (tail === "prove") return updatesProve(request, env);
+    if (tail === "email") return updatesEmail(request, env);
+    if (tail === "status") return updatesStatus(request, env);
+    if (tail === "withdraw") return updatesWithdraw(request, env);
+    if (tail === "export") return updatesExport(request, env);
+  }
+  // Updates consent members area (4.2): Cloud scope, so authenticateCloud already refused a caller with no verified member (401).
+  const updatesMembers = await updatesMembersRoute(request, env, () => identity.customer(request));
+  if (updatesMembers) return updatesMembers;
+
   if (request.method === "POST" && url.pathname === "/v1/announcements/subscribe") {
     return subscribeToAnnouncements(request, env, sendlaneFetch, requestId);
   }
 
+  // Site forwarder only: without a valid X-Murage-Site-Token this falls through to the unknown-route 404.
+  if (request.method === "POST" && url.pathname === UNSUBSCRIBE_PATH) {
+    const unsubscribed = await unsubscribeFromAnnouncements(request, env, sendlaneFetch, requestId);
+    if (unsubscribed) return unsubscribed;
+  }
+
+  // Tester feedback (UX lane L-FB): the POST is public (the desktop relay; allowlisted body, per-install and per-caller limits),
+  // the triage read and status change are operator-only (CLOUD_ADMIN_TOKEN). owner-feedback.ts.
+  const feedback = await ownerFeedbackRoute(request, env, { waitUntil: (work) => ctx.waitUntil(work) }, requestId);
+  if (feedback) return feedback;
+
   // Home side of self-service (commands, logs, export), and the export archive download (its token is the credential).
   const selfServiceMachine = await selfServiceMachineRoute(request, env, { b3: b3Dependencies, billing: billingDependencies, waitUntil: (work) => ctx.waitUntil(work), ...selfServiceDependencies });
   if (selfServiceMachine) return selfServiceMachine;
+  // The home's own calls to the control plane (home-api.ts): the fresh owner code, the terms proof, owner events. HMAC with the home's bootstrap
+  // secret, no member identity; bypasses the customer identity gate and nothing else.
+  const homeApi = await homeApiRoute(request, env, { emailSender: pairingDependencies.emailSender, keyWrapper: pairingDependencies.keyWrapper });
+  if (homeApi) return homeApi;
   const exportToken = /^\/v1\/export-download\/([^/]+)$/.exec(url.pathname);
   if (exportToken && request.method === "GET") {
     return exportDownload(request, env, { b3: b3Dependencies, billing: billingDependencies, waitUntil: (work) => ctx.waitUntil(work), ...selfServiceDependencies }, exportToken[1]);
@@ -161,10 +215,16 @@ async function route(
   if (machineEndpoint) return machineEndpoint;
   const cp0Control = await cp0ControlRoute(request, env);
   if (cp0Control) return cp0Control;
+  // Home-update rollout controller: operator routes only (the CLOUD_ADMIN_TOKEN bearer); no customer route exists.
+  const rollout = await rolloutRoute(request, env);
+  if (rollout) return rollout;
   const b3Response = await b3Route(request, env, b3Dependencies);
   if (b3Response) return b3Response;
   const machineResponse = await cloudMachineRoute(request, env);
   if (machineResponse) return machineResponse;
+  // Warm pool: the cloud-config a claimed server's cloud-init fetches (secret in the path; never logged here). Per-IP limited by edgeGate.
+  const poolResponse = await poolCloudConfigRoute(request, env);
+  if (poolResponse) return poolResponse;
 
   const auth = createAuth(env, ctx, config, requestId);
   // Cloud routes were bound and authenticated in fetch(), before the body cap and the edge limiter (authenticateCloud).
@@ -173,8 +233,11 @@ async function route(
     // same for a home's monthly Flux spend limit that is not raised, and, while Flux is off, for both spending-Off routes (cap and stop: they
     // only answer that Flux is unavailable; Astra JOURNEY-A-11 #1). Each handler enforces the rule again at the moment it writes.
     const exempt = (isTopupChange(request.method, url.pathname) && await topupStepUpExempt(request, env, billingDependencies, auth))
-      || ((isFluxCapChange(request.method, url.pathname) || (!fluxRoutesEnabled(env) && fluxOffStubRoute(request.method, url.pathname)))
+      || ((isFluxCapChange(request.method, url.pathname) || (!fluxServing(env) && fluxOffStubRoute(request.method, url.pathname)))
         && await fluxCapStepUpExempt(request, env, auth, fluxDependencies))
+      // 8b (SPENDING-RESUME-VIA-POLLER 2.2): the owner's /flux/subkey is retired; the route answers 410 owner_mint_retired and writes nothing, so the
+      // gate must not open a step-up intent for it.
+      || (fluxServing(env) && fluxOwnerSubkeyRoute(request.method, url.pathname))
       // Door v2 (CLOUD-DOOR-V2-DESIGN.md 3.4): the emailed sign-in, or an emailed code granted in THIS Supabase session, within 900 s. The
       // exemption names DOOR_ROUTE and nothing else (device revoke, money routes, desktop-code and the pair hold keep the ordinary rule);
       // the identity is the request's memoized one, and door.ts checks the proof again.
@@ -186,11 +249,13 @@ async function route(
       // in handle()) fills reason, methods in offer order, window, last proof and the emailed-code alternative for this exact request.
       // The three purchase routes also say the first-purchase bootstrap does not apply (step_up.bootstrap: false).
       if (isPurchaseRoute(request.method, url.pathname)) throw stepUpRefused();
+      // Spending off: the prompt says what the code is for and what it pauses (SPENDING_OFF_STEP_UP_WORDS, b4-flux.ts).
+      if (isFluxCapChange(request.method, url.pathname) && await capOffBody(request)) throw new HTTPError(403, "step_up_required", { message: SPENDING_OFF_STEP_UP_WORDS });
       throw new HTTPError(403, "step_up_required");
     }
   }
   // B4 Flux routes (wiring step 3), after the Cloud authentication and the step-up gate, next to the billing routes. Still OFF by
-  // default: handle() answers 404 for every Flux path (CLOUD_FLUX_ROUTES_ENABLED, b4-flux-config.ts) before authenticateCloud,
+  // default: handle() answers 404 for every Flux path (the Flux route switch, b4-flux-config.ts) before authenticateCloud,
   // the edge limiter or any D1 read. Switched on, the owner routes (/v1/flux/link*, /v1/homes/:id/flux*) are Cloud scope
   // (isCloudScopePath): only the bound Supabase member authenticates, as the mapped Cloud account id (a Better Auth companion
   // bearer is 401), and link start/complete, subkey, cap and stop passed the fresh trusted second factor above (needsStepUp).
@@ -199,6 +264,9 @@ async function route(
   const fluxStepUp = billingDependencies.trustedStepUp ?? billingDependencies.stepUp ?? (async () => false);
   const fluxResponse = await fluxRoute(request, env, auth, { stepUp: async (r) => !!boundCustomer(r) && await fluxStepUp(env, r, auth), ...fluxDependencies });
   if (fluxResponse) return fluxResponse;
+  // GET /v1/account/step-up/state: whether /door would ask for a code now (status.ts). Read-only; /door stays the enforcer.
+  const stepUpState = await stepUpStateRoute(request, env, identity);
+  if (stepUpState) return stepUpState;
   const members = await membersRoute(request, env, billingDependencies, auth);
   if (members) return members;
   const selfService = await selfServiceRoute(request, env, identity, { b3: b3Dependencies, billing: billingDependencies, waitUntil: (work) => ctx.waitUntil(work), ...selfServiceDependencies });
@@ -215,8 +283,11 @@ async function route(
   const keep = await cancellationAccountRoute(request, env, billingDependencies, auth);
   if (keep) return keep;
   // Step-up by an emailed 6-digit code (step-up-email.ts): send and verify, Cloud scope, never step-up gated themselves.
-  const stepUpEmail = await stepUpEmailRoute(request, env, identity, { emailSender: pairingDependencies.emailSender });
+  const stepUpEmail = await stepUpEmailRoute(request, env, identity, { emailSender: pairingDependencies.emailSender, pairing: pairingDependencies });
   if (stepUpEmail) return stepUpEmail;
+  // FLUX-ENSURE-EMAIL-VERIFIED: the Cloud page's "Email me a code" card (flux-email-proof.ts), sign-in only, never step-up gated.
+  const fluxEmailProof = await fluxEmailProofRoute(request, env, identity, { emailSender: pairingDependencies.emailSender });
+  if (fluxEmailProof) return fluxEmailProof;
   const trusted = await trustedFactorRoute(request, env, identity, { emailSender: pairingDependencies.emailSender });
   if (trusted) return trusted;
   // The door (door.ts): the owner's 60-second ticket into their home, after the step-up gate above (STEP_UP_PATTERNS, 300 s).
@@ -226,6 +297,9 @@ async function route(
   // Device management on My Cloud (devices.ts): the list (sign-in) and the revoke (step-up gated above, never the door's reuse).
   const devices = await devicesRoute(request, env, identity, requestId, pairingDependencies);
   if (devices) return devices;
+  // Door device confirmation (device-join.ts): the owner's view of a waiting join, its resend and its cancel. Sign-in only.
+  const joins = await deviceJoinOwnerRoute(request, env, identity, { emailSender: pairingDependencies.emailSender, homeFetch: pairingDependencies.homeFetch, keyWrapper: pairingDependencies.keyWrapper });
+  if (joins) return joins;
   const pairing = await pairingRoute(request, env, auth, pairingDependencies);
   if (pairing) return pairing;
   const homes = await homesRoute(request, env, auth);
@@ -296,16 +370,24 @@ async function route(
  * 410 to everyone. Off Cloud routes this binds nothing and checks nothing.
  */
 async function authenticateCloud(request: Request, env: Env, ctx: ExecutionContext, config: ControlPlaneConfig, requestId: string,
-  billingDependencies: BillingDependencies, identity: Identity) {
-  if (request.method === "OPTIONS") return;
-  identity.bind(request, env);
-  if (!boundCustomer(request) || new URL(request.url).pathname.startsWith("/v1/account/2fa") || await isOperator(request, env)) return;
+  billingDependencies: BillingDependencies, identity: Identity): Promise<string | null> {
+  if (request.method === "OPTIONS") return null;
+  identity.bind(request, env, { waiveAdmission: Boolean(billingDependencies.accountUser) });
+  if (!boundCustomer(request) || new URL(request.url).pathname.startsWith("/v1/account/2fa") || await isOperator(request, env)) return null;
   // On a Cloud route the account is the bound Supabase member (accountSession never consults Better Auth there), so no
   // Better Auth instance is built just to say 401. A caller-supplied accountUser (tests) gets one.
+  // CH1 M1 (Astra r1): in invite mode the invite check runs on the verified token's own address BEFORE the account is resolved, because
+  // resolving a first-time or changed-address member writes rows (user, supabase_identities, account_link_events, the email reconcile).
+  // An uninvited caller is refused with nothing persisted. A caller-supplied accountUser (tests) is its own resolver and is checked in fetch().
+  if (!billingDependencies.accountUser && isInviteGatedRoute(request.method, new URL(request.url).pathname) && salesMode(env) === "invite") {
+    if (!await identity.admit(request, env)) throw new HTTPError(401, "unauthorized");
+  }
   const user = billingDependencies.accountUser
     ? await billingDependencies.accountUser(request, createAuth(env, ctx, config, requestId))
     : (await boundCustomer(request)!.resolve())?.user ?? null;
   if (!user) throw new HTTPError(401, "unauthorized");
+  // The signed-in account's own address (the sales invite list matches only this, never an address from a request body).
+  return typeof (user as { email?: unknown }).email === "string" ? (user as { email: string }).email : null;
 }
 
 async function isOperator(request: Request, env: Env): Promise<boolean> {
@@ -345,7 +427,8 @@ async function doorRetry(env: Env, identity: Identity, prepared: Prepared, reque
  *      step-up, without clearing cookies (Astra DOORMINT-7). Never 410 on the door path: any other replay prepareStepUp built as 410 is
  *      answered the same way.
  *  null: not a door intent, or not done (any other replay, e.g. 409 action_in_progress, is answered as prepareStepUp built it). */
-async function doorReplay(env: Env, identity: Identity, prepared: Prepared, requestId: string): Promise<Response | null> {
+const DOOR_RERUN = Symbol("door_rerun");
+async function doorReplay(env: Env, identity: Identity, prepared: Prepared, requestId: string): Promise<Response | typeof DOOR_RERUN | null> {
   const replay = prepared.replay!;
   if (!prepared.frozen || !DOOR_ROUTE.test(prepared.frozen.path)) return null;
   const body = await replay.clone().json().catch(() => null) as { operation?: { id?: unknown } } | null;
@@ -354,12 +437,21 @@ async function doorReplay(env: Env, identity: Identity, prepared: Prepared, requ
   // THE read: nothing is awaited between it and the classification below.
   const row = await env.DB.prepare("SELECT phase, response_status, response_code, response_ref FROM cloud_stepup_intents WHERE id=? AND state='done'")
     .bind(id).first<{ phase: string | null; response_status: number | null; response_code: string | null; response_ref: string | null }>();
-  const completed = () => doorRetry(env, identity, prepared, requestId, 409, "already_completed",
-    { operation: { id, ...(row?.response_ref ? { ref: row.response_ref } : {}) } });
+  // A delivered ticket whose answer was lost, while the emailed SIGN-IN under 15 minutes old still stands (a code the intent itself spent does
+  // not count): the intent is dropped and the door runs again (the member needs no further code; a used later join answers its own key again,
+  // never a new wait).
+  const completed = async () => await doorSignInStands(prepared.request, env, identity) ? DOOR_RERUN
+    : doorRetry(env, identity, prepared, requestId, 409, "already_completed", { operation: { id, ...(row?.response_ref ? { ref: row.response_ref } : {}) } });
   if (row?.phase !== "delivered" || row.response_status === null) return replay.status === 410 ? completed() : null;
   if (row.response_status === 200 && row.response_code === DOOR_HANDING_OUT) return doorRetry(env, identity, prepared, requestId, 503, "door_unavailable");
   if (row.response_status >= 400) return doorRetry(env, identity, prepared, requestId, row.response_status, row.response_code ?? "action_failed");
   return completed();
+}
+
+/** The member's emailed sign-in is under 15 minutes old (the amr proof of doorRecentProofAt, never a code granted for an intent). */
+async function doorSignInStands(request: Request, env: Env, identity: Identity): Promise<boolean> {
+  const s = await identity.customer(request);
+  return Boolean(s) && (await doorRecentProofAt(env, s!, identity.now()))?.proof === "amr";
 }
 
 /** The door's 15-minute reuse holds for this request's bound member (customer-identity.ts doorRecentProofAt). */
@@ -379,7 +471,11 @@ export function createWorker(
   fluxDependencies: FluxDependencies = {},
 ) {
   // Astra INTEGRATED-1 #7: B4 dispatches under the SAME launch gate as billing (b4-flux.ts b4RouterClient): the hooks billing runs with.
-  fluxDependencies = { billingFlux: billingInput.flux ?? stubFluxHooks, ...fluxDependencies };
+  // Step 1 of Flux: that one object is the pre-B4 stub until the Flux route switch is "1", then the real hooks (flux-live-hooks.ts); an
+  // injected billingInput.flux (tests) is used as given and is never switched.
+  const fluxHooks = billingInput.flux ?? envFluxHooks;
+  const selectMode = (env: Env) => { if (!billingInput.flux) selectFluxMode(env); };
+  fluxDependencies = { billingFlux: fluxHooks, ...fluxDependencies };
   const identity = createIdentity(identityDependencies);
   // Money actions require a fresh second factor: the members-area token's aal2 + amr. Every money route is a Cloud route
   // (always bound); anything else fails closed. A caller may override.
@@ -395,13 +491,20 @@ export function createWorker(
     purchaseBootstrap(env, request, accountId, homeId, (billingInput.now ?? Date.now)()));
   const stepUp: NonNullable<BillingDependencies["stepUp"]> = async (env, request, auth) =>
     (await trustedStepUp(env, request, auth)) || (await bootstrapCheck(env, request, null, null)) !== null;
-  const billingDependencies: BillingDependencies = { ...billingInput, stepUp, trustedStepUp, purchaseBootstrap: bootstrapCheck };
+  const billingDependencies: BillingDependencies = { ...billingInput, flux: fluxHooks, stepUp, trustedStepUp, purchaseBootstrap: bootstrapCheck };
   registerCancellation(billingDependencies);
   registerWithdrawalNotices(billingDependencies);
   registerClarify();
   const handle = async (request: Request, env: Env, ctx: ExecutionContext): Promise<Response> => {
       const requestId = crypto.randomUUID();
       const url = new URL(request.url);
+      selectMode(env);
+      // G3: a mixed environment answers 503 env_mixed before anything else runs (no route, D1 read, mail or provider call).
+      try {
+        await assertEnvIsolationAsync(env);
+      } catch (error) {
+        return secureResponse(errorResponse(503, error instanceof HTTPError ? error.code : "env_mixed"), request, null, requestId);
+      }
       if (request.method === "GET" && url.pathname === "/healthz") {
         try {
           readConfig(env);
@@ -411,13 +514,38 @@ export function createWorker(
         return secureResponse(json({ ok: true, service: "murage-control-plane" }), request, null, requestId);
       }
 
-      // B4 Flux routes are off unless CLOUD_FLUX_ROUTES_ENABLED is exactly "1": 404 before configuration, origin,
+      // B4 Flux routes are off unless the Flux route switch is exactly "1": 404 before configuration, origin,
       // authentication (no Supabase or Better Auth session is resolved), the body cap, the edge limiter and any D1 read.
       // The one exception (Astra JOURNEY-A-10 #4): the owner's spending Off is authenticated as usual and answered "Flux is unavailable".
       // Astra INTEGRATED-11 (ledger R9): the operator's evidenced ledger recovery makes no router call and works while Flux is off (admin
       // credential, checked by the route itself).
-      if (isFluxPath(url.pathname) && !fluxRoutesEnabled(env) && !fluxOffStubRoute(request.method, url.pathname) && !FLUX_LEDGER_ROUTE.test(url.pathname)) {
+      // PRODFLUX (Astra HIGH 2): switched on with a Flux credential missing is answered exactly as off (fluxServing, b4-flux-config.ts).
+      // PRODFLUX (MurageMain): with only the grants token missing a Stop still revokes (fluxRevokeOnly, b4-flux.ts): the operator's billing
+      // Stop reaches the route, which decides again. PRODFLUX r4 C: switched on, whatever the secrets (the route journals it with real hooks).
+      // ITEM 9 M2: support's email-proof routes (resend, dispute, dispute-clear) also pass while Flux is off or a credential is missing, so a
+      // dispute can be recorded or cleared during an outage. The route still demands the admin credential (b4-flux.ts fluxRoute adminOnly).
+      if (isFluxPath(url.pathname) && !fluxServing(env) && !fluxOffStubRoute(request.method, url.pathname) && !FLUX_LEDGER_ROUTE.test(url.pathname)
+        && !FLUX_PROOF_OPERATOR_ROUTE.test(url.pathname)
+        && !(fluxRoutesEnabled(env) && fluxRevocationRoute(request.method, url.pathname))) {
         return secureResponse(errorResponse(404, "not_found"), request, null, requestId);
+      }
+
+      // GET /v1/status {live}: no login, no D1, no configuration read (a broken configuration is live:false, never a 5xx). Per-IP edge limited like
+      // the other public GETs, no CORS (the desktop app calls it from Electron main).
+      // Updates consent (design v5.6.1 4.1, GB v5.4 H3): the one-click unsubscribe, GET and POST (RFC 8058: a form body, no Origin), is
+      // answered here, before readConfig, the origin check, authentication, the body cap and route(); the token is the authorisation. Only
+      // those two methods on that one path (B1 r1 Grok M3): the prove page goes through the origin check and route().
+      // No edgeGate: a refused unsubscribe is worse than a repeated one (3.5). A null config adds no CORS headers.
+      if (isUpdatesEarlyRequest(request)) {
+        return secureResponse(await updatesEarly(request, env).catch((error: unknown) => {
+          if (error instanceof HTTPError) return errorResponse(error.status, error.code);
+          throw error;
+        }), request, null, requestId);
+      }
+
+      if (isStatusRequest(request)) {
+        const limited = await edgeGate(request, env);
+        return secureResponse(limited ?? await statusResponse(env), request, null, requestId);
       }
 
       let config: ControlPlaneConfig | null = null;
@@ -435,9 +563,23 @@ export function createWorker(
         }
         // Stripe events can exceed the 16 KB API body cap and are authenticated by signature, not origin.
         if (request.method === "POST" && url.pathname === "/v1/billing/webhook") {
-          return secureResponse(await stripeWebhook(request, env, billingDependencies), request, config, requestId);
+          // ITEM 9 M5: waitUntil carries the proof mail sent after the checkpoint (b5-billing.ts stripeWebhook).
+          return secureResponse(await stripeWebhook(request, env, { ...billingDependencies, waitUntil: (work) => ctx.waitUntil(work) }), request, config, requestId);
         }
-        await authenticateCloud(request, env, ctx, config, requestId, billingDependencies, identity);
+        const signedInEmail = await authenticateCloud(request, env, ctx, config, requestId, billingDependencies, identity);
+        // Sales shut (CLOUD_SALES_OPEN anything but "true" or "invite"), unless the signed-in account's email is on CLOUD_SALES_ALLOWLIST (B1 dark-launch list, inert while the list is empty),: reserve, checkout and checkout/resume answer 503 sales_closed once the caller is authenticated and
+        // BEFORE any step-up handling (no 403 step_up_required, no intent row, no approval claimed). The handlers check again.
+        // "invite" mode (CLOUD_SALES_OPEN): the caller's verified session email must be in sales_invites, else 403 not_invited, before anything else.
+        if (isInviteGatedRoute(request.method, url.pathname)) {
+          // CH1 N2: plan preview and plan change (CLOUD_PLAN_CHANGE) are invite-gated too, but are not sales-open or image-epoch routes.
+          const purchase = isPurchaseRoute(request.method, url.pathname);
+          if (purchase && !salesAllowed(env, signedInEmail)) await assertSalesAllowedFor(request, env, billingDependencies, createAuth(env, ctx, config, requestId));
+          const inviteConfig = config;
+          await assertInvited(env, async () => billingDependencies.accountUser
+            ? billingDependencies.accountUser(request, createAuth(env, ctx, inviteConfig, requestId))
+            : (await boundCustomer(request)?.resolve())?.user ?? null, inviteDecision(request));
+          if (purchase) await assertImageEpochCurrent(env);
+        }
         // The machine heartbeat bounds its own body, AFTER authenticating the machine from its headers (Astra AUTOCANARY-11 P1-2): an
         // oversized report from a valid credential must reach the route, which invalidates the home's evidence before answering 413.
         const boundedRequest = isHeartbeatRequest(request.method, url.pathname) ? request : await withBoundedRequestBody(request);
@@ -452,11 +594,15 @@ export function createWorker(
           stepped: async (r) => trustedStepUp(env, r, createAuth(env, ctx, cfg, requestId)),
         }, claimSink);
         stepped = prepared;
+        let rerun = false;
         if (prepared.replay) {
           // A door operation: its replay is classified from its record as it stands NOW (doorReplay): a refusal, or a hand-out not
           // confirmed, says how to recover; a confirmed hand-out never yields a second ticket.
           const doorAnswer = await doorReplay(env, identity, prepared, requestId);
-          if (doorAnswer) return secureResponse(doorAnswer, request, config, requestId);
+          rerun = doorAnswer === DOOR_RERUN;
+          if (doorAnswer && !rerun) return secureResponse(doorAnswer as Response, request, config, requestId);
+        }
+        if (prepared.replay && !rerun) {
           // The replay of an operation its refusal voided is that refusal again, built whole by the serializer below (a fresh intent),
           // never a bare stored code (Astra STEPUP-EMAIL-7 #4).
           if (prepared.replay.status === 403 && prepared.frozen
@@ -539,7 +685,10 @@ export function createWorker(
       // A denied Flux home answer (/v1/homes/<id>/flux*: an unknown home and somebody else's are the same 404) carries none either: its
       // duration or round trips could tell an existing home from an unknown one (Astra FLUX-STEP3 #3).
       const pathname = new URL(request.url).pathname;
-      if (pathname.startsWith("/v1/public/") || (response.status === 404 && isFluxOwnerPath(pathname))) {
+      // The anonymous signup (/v1/announcements/subscribe) answers refused and admitted alike, and the site unsubscribe likewise: no
+      // telemetry on either (B1 r1 Grok L6).
+      if (pathname.startsWith("/v1/public/") || UPDATES_PUBLIC_PATHS.has(pathname) || ANNOUNCEMENT_PUBLIC_PATHS.has(pathname) || isPoolPath(pathname)
+        || (response.status === 404 && isFluxOwnerPath(pathname))) {
         for (const h of [BOOKMARK_HEADER, "server-timing", "x-d1-bookmark"]) response.headers.delete(h);
         return response;
       }
@@ -548,8 +697,34 @@ export function createWorker(
       response.headers.set("server-timing", serverTiming(stats, Date.now() - started));
       return response;
     },
-    scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): void {
+    scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): void {
+      // G3: a mixed environment aborts the whole run (the invocation fails) before any sweep starts. The configuration rules run here, before
+      // anything is registered; the signing-key check is the first step of the registered work and throws before any sweep.
+      assertEnvIsolation(env);
+      selectMode(env);
       const requestId = crypto.randomUUID();
+      // The 1-minute cron runs the warm pool's minute tick on its own short deadline, and beside it the B3 automatic canary on a smaller
+      // stage (a paid home whose evidence holds is promoted within about a minute, not up to 5 later); the */5 pipeline below is unchanged.
+      // Cloudflare fires both crons on minutes divisible by 5, and a */5 pass can still run minutes after its start (it waits on customer work
+      // first), so no minute is skipped: autoCanaryPass takes the fleet-wide lease (auto_canary_lease) and a caller that finds it held
+      // stands down. Each is isolated from the other.
+      if (controller.cron === MINUTE_CRON) {
+        const canary = b3Enabled(env);
+        ctx.waitUntil((async () => {
+          await assertEnvIsolationAsync(env);
+          await Promise.all([
+            minuteTick(env).catch(() => {
+              console.error(JSON.stringify({ message: "pool minute tick failed", requestId, errorCode: "pool_internal" }));
+            }),
+            canary ? autoCanaryPass(env, b3Dependencies.probeFetch ?? ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, init)),
+              { stageMs: AUTO_CANARY_MINUTE_STAGE_MS, budget: AUTO_CANARY_MINUTE_BUDGET, concurrency: AUTO_CANARY_MINUTE_CONCURRENCY,
+                passMs: AUTO_CANARY_MINUTE_PASS_MS, skipIdle: true, leaseMs: AUTO_CANARY_MINUTE_LEASE_MS }).catch(() => {
+              console.error(JSON.stringify({ message: "b3 minute auto-canary failed", requestId, errorCode: "b3_auto_canary_internal" }));
+            }) : undefined,
+          ]);
+        })());
+        return;
+      }
       // The invocation's hard wall, taken once at its start (lane C design 3 A2): the customer-waiting loops (stored events, then notices)
       // start no attempt that could run past it, and wait for each at most EVENT_MAX_MS. They run FIRST in the invocation, before B3
       // reconcile and the self-service sweep, each on its own budget, so no other stage can use up their time (Astra MAILRETRY-6/7 P1). The
@@ -558,6 +733,9 @@ export function createWorker(
       // work order: reconcileB3 runs them first (giveUpOverdue, Astra MAILRETRY-8 P1), within about 4 minutes of the invocation's start.
       const deadline = Date.now() + SCHEDULED_SWEEP_DEADLINE_MS;
       ctx.waitUntil((async () => {
+        await assertEnvIsolationAsync(env);
+        // KMS 13.1 H2: the trust diff is the FIRST act of the invocation, before any sweep and before the readiness store (it never throws).
+        if (env.B5_PROVISIONER_CONFIG) await trustDiff(env, Date.now());
         try {
           // Every attempt cut at its cap goes on as a continuation registered with this invocation (Astra MAILRETRY-4 P2).
           await sweepCustomerWaiting(env, { ...billingDependencies, sweepDeadline: deadline, waitUntil: (work) => ctx.waitUntil(work) });
@@ -574,10 +752,20 @@ export function createWorker(
           }
         }
         try {
+          // Updates consent (3.3 O): hand queued prove mail to the sender, at most once per row. Sends nothing while T-C1 is closed.
+          await sendUpdatesOutbox(env);
+        } catch {
+          console.error(JSON.stringify({ message: "updates outbox failed", requestId, errorCode: "updates_outbox_internal" }));
+        }
+        try {
           await sweepSelfService(env, { b3: b3Dependencies, billing: billingDependencies, waitUntil: (work) => ctx.waitUntil(work), ...selfServiceDependencies });
         } catch {
           console.error(JSON.stringify({ message: "self-service sweep failed", requestId, errorCode: "selfservice_internal" }));
         }
+        // KMS design 9.8: the image readiness row that sales admission reads. A deployment with no B5 provisioner config sells nothing and writes none.
+        if (env.B5_PROVISIONER_CONFIG) await sweepImageReadiness(env);
+        // KMS 10.6 / 13: the review of dispatches whose image, key or check was revoked (reads the provider, never changes it; honours the invocation's deadline).
+        if (env.B5_PROVISIONER_CONFIG) await sweepDispatchReview(env, Date.now(), { deadline });
         try {
           // The customer-waiting loops already ran first in this invocation: the billing sweep does not run them again.
           await sweepBilling(env, { ...billingDependencies, customerWaitingDone: true, sweepDeadline: deadline, waitUntil: (work) => ctx.waitUntil(work) });
@@ -593,6 +781,12 @@ export function createWorker(
           await sweepFlux(env, fluxDependencies);
         } catch {
           console.error(JSON.stringify({ message: "flux sweep failed", requestId, errorCode: "flux_internal" }));
+        }
+        try {
+          // Tester feedback keeps 90 days (lane L-FB).
+          await sweepOwnerFeedback(env, Date.now());
+        } catch {
+          console.error(JSON.stringify({ message: "owner feedback sweep failed", requestId, errorCode: "feedback_sweep_internal" }));
         }
         try {
           await sweepCloudRetention(env);
@@ -616,6 +810,30 @@ export function createWorker(
           console.error(JSON.stringify({ message: "mail sink sweep failed", requestId, errorCode: "mail_sink_internal" }));
         }
         try {
+          // The one Flux welcome email per Murage account (flux-welcome-mail.ts): queued at the owner's first link, retried with backoff.
+          await sweepFluxWelcome(env, Date.now());
+        } catch {
+          console.error(JSON.stringify({ message: "flux welcome sweep failed", requestId, errorCode: "flux_welcome_internal" }));
+        }
+        try {
+          // FLUX-ENSURE-EMAIL-VERIFIED: a proof's wake-up left behind by an interrupted request (at most 5 tries, then flux.email_wake_exhausted).
+          await sweepFluxEmailWake(env);
+        } catch {
+          console.error(JSON.stringify({ message: "flux email wake sweep failed", requestId, errorCode: "flux_email_wake_internal" }));
+        }
+        try {
+          // ITEM4-PROOF-CURRENT: one page per account and revision for a buyer still unproven 24 h after the home went active (50 a tick).
+          await sweepFluxEmailStuck(env);
+        } catch {
+          console.error(JSON.stringify({ message: "flux email stuck sweep failed", requestId, errorCode: "flux_email_stuck_internal" }));
+        }
+        try {
+          // Launch flow A: the queued proof codes (ITEM 9 M1, M5) and the one retry of a proof code the auto-send could not mail.
+          await sweepFluxEmailAutoSend(env);
+        } catch {
+          console.error(JSON.stringify({ message: "flux email auto-send sweep failed", requestId, errorCode: "flux_email_autosend_internal" }));
+        }
+        try {
           await sweepStepUpEmail(env, Date.now());
         } catch {
           console.error(JSON.stringify({ message: "step-up email sweep failed", requestId, errorCode: "stepup_email_internal" }));
@@ -627,14 +845,46 @@ export function createWorker(
           console.error(JSON.stringify({ message: "door notice sweep failed", requestId, errorCode: "door_notices_internal" }));
         }
         try {
+          // Door device confirmation (device-join.ts): join mail retries, Ready, lapse, revokes. Inert unless DOOR_JOIN_REQUIRED is "1".
+          await sweepDeviceJoins(env, Date.now(), { emailSender: pairingDependencies.emailSender, homeFetch: pairingDependencies.homeFetch, keyWrapper: pairingDependencies.keyWrapper });
+        } catch {
+          console.error(JSON.stringify({ message: "device join sweep failed", requestId, errorCode: "device_join_internal" }));
+        }
+        try {
+          // The owner events the home reported (home-api.ts): a failed or paced mail is retried, folded into the next one.
+          await sweepOwnerEvents(env, Date.now(), { emailSender: pairingDependencies.emailSender });
+        } catch {
+          console.error(JSON.stringify({ message: "owner event sweep failed", requestId, errorCode: "owner_events_internal" }));
+        }
+        try {
+          // G2: provider rescue / console / password actions are read from the provider's action list and audited, then the owner is told.
+          if (env.CLOUD_B3_MODE === "live") await sweepProviderAccess(env, Date.now());
+        } catch {
+          console.error(JSON.stringify({ message: "provider access sweep failed", requestId, errorCode: "provider_access_internal" }));
+        }
+        try {
+          await sweepAccessNotices(env, Date.now(), { emailSender: pairingDependencies.emailSender });
+        } catch {
+          console.error(JSON.stringify({ message: "access notice sweep failed", requestId, errorCode: "access_notices_internal" }));
+        }
+        try {
           await sweepPublicTokens(env, Date.now());
         } catch {
           console.error(JSON.stringify({ message: "public token sweep failed", requestId, errorCode: "public_tokens_internal" }));
         }
+        let monitored = true;
         try {
           await sweepMonitoring(env);
         } catch {
+          monitored = false;
           console.error(JSON.stringify({ message: "monitoring sweep failed", requestId, errorCode: "monitoring_internal" }));
+        }
+        try {
+          // After monitoring, so the heartbeat and render alerts it raised this run are what the soak gate reads. Not on a tick where monitoring
+          // failed: the soak's only health signal is those alerts, so a blind tick must not let a soak elapse or a release promote.
+          if (monitored) { await noteMonitoring(env); await sweepRollout(env); }
+        } catch {
+          console.error(JSON.stringify({ message: "rollout sweep failed", requestId, errorCode: "rollout_internal" }));
         }
         try {
           await sweepManagedEndpointCleanup(env, readConfig(env), cloudflareFetch, requestId);

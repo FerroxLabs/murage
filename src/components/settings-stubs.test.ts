@@ -207,8 +207,9 @@ describe("Settings > Connected apps > Bot email card", () => {
   it("the Cloud window cannot set Flux, so it gets no Open Models & engines button", () => {
     vi.stubGlobal("location", { protocol: CLOUD_PROTOCOL });
     const html = render(BotEmailAccountCard, { status: { kind: "off" } });
-    expect(html).toContain(esc(SETTINGS_STUB_COPY.needsAccount("Nova")));
+    expect(html).toContain("Email connection is not available on this Cloud home yet.");
     expect(html).not.toContain(esc(SETTINGS_STUB_COPY.openModels));
+    expect(html).not.toContain("<button");
   });
 
   it("not on for the account yet: no button, the line ends the hunt", () => {
@@ -290,7 +291,7 @@ describe("cards that need this computer, in the Cloud window", () => {
 
   it("paths name the page and the fold", () => {
     expect(settingsCardPath("startup-heading")?.path).toBe("General > Advanced > Start at login and run in the background");
-    expect(settingsCardPath("setup-heading")?.path).toBe("About & updates > Run setup again");
+    expect(settingsCardPath("setup-heading")?.path).toBe("About & help > Run setup again");
   });
 });
 

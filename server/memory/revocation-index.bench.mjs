@@ -1,3 +1,4 @@
+import { withHideInherit } from "../../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -92,9 +93,9 @@ if (role === "seed") {
     const env = { ...process.env, REVOKE_BENCH_FILE: join(dir, "messages.db"), REVOKE_BENCH_RECEIPTS: String(receipts) };
     const self = fileURLToPath(import.meta.url);
     const s0 = performance.now();
-    execFileSync(process.execPath, [self], { env: { ...env, REVOKE_BENCH_ROLE: "seed" }, stdio: ["ignore", "inherit", "inherit"] });
+    execFileSync(process.execPath, [self], withHideInherit({ env: { ...env, REVOKE_BENCH_ROLE: "seed" }, stdio: ["ignore", "inherit", "inherit"] }));
     const seedMs = Math.round(performance.now() - s0), v7Bytes = statSync(env.REVOKE_BENCH_FILE).size;
-    const out = execFileSync(process.execPath, [self], { env: { ...env, REVOKE_BENCH_ROLE: "upgrade" }, stdio: ["ignore", "pipe", "inherit"], maxBuffer: 1 << 20 }).toString();
+    const out = execFileSync(process.execPath, [self], withHideInherit({ env: { ...env, REVOKE_BENCH_ROLE: "upgrade" }, stdio: ["ignore", "pipe", "inherit"], maxBuffer: 1 << 20 })).toString();
     console.log(`REVOKE_UPGRADE_BENCH ${JSON.stringify({ receipts, seedMs, v7MiB: Math.round(v7Bytes / 1048576), v8MiB: Math.round(statSync(env.REVOKE_BENCH_FILE).size / 1048576), ...JSON.parse(out) })}`);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }

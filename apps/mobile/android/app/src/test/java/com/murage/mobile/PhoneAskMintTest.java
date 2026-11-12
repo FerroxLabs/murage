@@ -273,6 +273,36 @@ public class PhoneAskMintTest {
         assertEquals(0, PhoneJobsMintClient.Completion.class.getDeclaredMethod("complete").getParameterCount());
     }
 
+    @Test public void mintAnswerAcceptsTokenAloneOrTokenWithStringDeviceId() throws Exception {
+        JSONObject v = vector();
+        String token = fixture().getJSONObject("token").getJSONArray("valid").getString(0);
+        for (JSONObject answer : Arrays.asList(new JSONObject().put("token", token), new JSONObject().put("token", token).put("deviceId", "dev-1"))) {
+            Key key = new Key(v); Writer writer = new Writer(); HTTP http = new HTTP(); Done done = new Done();
+            http.answers.add(response(hello())); http.answers.add(response(challenge(v))); http.answers.add(response(answer));
+            client(key, writer, http).mint(WorkspaceOrigin.parse(v.getString("origin")), done);
+            assertEquals(1, done.successes); assertEquals(1, writer.writes); assertEquals(token, writer.token);
+            // Android never opts in: the request body carries no want field.
+            assertEquals(false, http.bodies.get(2).has("want"));
+        }
+    }
+
+    @Test public void mintAnswerWithExtraKeyOrNonStringDeviceIdIsRefusedAndNeverWrites() throws Exception {
+        JSONObject v = vector();
+        String token = fixture().getJSONObject("token").getJSONArray("valid").getString(0);
+        for (JSONObject answer : Arrays.asList(
+            new JSONObject().put("token", token).put("extra", "x"),
+            new JSONObject().put("token", token).put("deviceId", "dev-1").put("extra", "x"),
+            new JSONObject().put("token", token).put("deviceId", 7),
+            new JSONObject().put("token", token).put("deviceId", true),
+            new JSONObject().put("token", token).put("deviceId", JSONObject.NULL),
+            new JSONObject().put("token", token).put("other", "dev-1"))) {
+            Key key = new Key(v); Writer writer = new Writer(); HTTP http = new HTTP(); Done done = new Done();
+            http.answers.add(response(hello())); http.answers.add(response(challenge(v))); http.answers.add(response(answer));
+            client(key, writer, http).mint(WorkspaceOrigin.parse(v.getString("origin")), done);
+            assertEquals(PhoneJobsMintClient.Failure.INVALID_RESPONSE, done.failure); assertEquals(0, writer.writes);
+        }
+    }
+
     @Test public void challengeRefusalRateLimitAndNotOfferedNeverPromptOrStore() throws Exception {
         JSONObject v = vector();
         for (int status : new int[] {403, 429, 404}) {

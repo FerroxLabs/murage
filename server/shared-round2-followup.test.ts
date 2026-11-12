@@ -1,3 +1,4 @@
+import { highlevelEngineRequest } from "./highlevel/engine-policy.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
@@ -38,19 +39,23 @@ function evaluate(code: string, deps: Record<string, unknown>) {
   const js = ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   return new Function(...Object.keys(deps), js)(...Object.values(deps));
 }
-function declaration(name: string) {
+function declaration(name: string, initializerCall?: string) {
   let found: ts.Node | undefined;
+  let matches = 0;
   const visit = (node: ts.Node) => {
-    if ((ts.isFunctionDeclaration(node) || ts.isVariableDeclaration(node)) && node.name?.getText(ast) === name) found ??= node;
+    if ((ts.isFunctionDeclaration(node) || ts.isVariableDeclaration(node)) && node.name?.getText(ast) === name &&
+        (!initializerCall || (ts.isVariableDeclaration(node) && node.initializer && ts.isCallExpression(node.initializer) && node.initializer.expression.getText(ast) === initializerCall))) {
+      found ??= node; matches++;
+    }
     ts.forEachChild(node, visit);
   };
-  visit(ast); if (!found) throw Error(`Missing ${name}`); return found;
+  visit(ast); if (initializerCall) expect(matches).toBe(1); if (!found) throw Error(`Missing ${name}`); return found;
 }
-function seam(name: string, deps: Record<string, unknown>) {
-  const node = declaration(name);
+function seam(name: string, deps: Record<string, unknown>, initializerCall?: string) {
+  const node = declaration(name, initializerCall);
   return evaluate(`${ts.isVariableDeclaration(node) ? "const " : ""}${node.getText(ast)}; return ${name};`, deps);
 }
-function value(name: string, deps: Record<string, unknown>) { return seam(name, deps); }
+function value(name: string, deps: Record<string, unknown>, initializerCall?: string) { return seam(name, deps, initializerCall); }
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); resetDataRootsForTest(); });
 function fixture() {
   const store = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
@@ -154,7 +159,7 @@ it("R2.6 unpartitioned agents retain inspect-only rows, individuals and project 
 it("R2.7 index standing prompt path selects Sales and excludes home notes", () => {
   const f = fixture(), root = partitionRoots(f.iris, threadPartition(f.iris, f.work.threadId))[0]; mkdirSync(root, { recursive: true });
   writeFileSync(join(root, "MEMORY.md"), "SALES_NOTE"); writeFileSync(join(ensureWorkspace(f.iris.id), "MEMORY.md"), "HOME_NOTE");
-  const standing = value("standing", { bot: f.iris, threadId: f.work.threadId, threadPartition, standingContextParts, surfacesForOwner: true, worksInWorkspace: false, opts: {}, fullAccessOrigin: "owner" });
+  const standing = value("standing", { bot: f.iris, threadId: f.work.threadId, threadPartition, standingContextParts, surfacesForOwner: true, worksInWorkspace: false, opts: {}, fullAccessOrigin: "owner" }, "standingContextParts");
   expect(standing.memory).toContain("SALES_NOTE"); expect(JSON.stringify(standing)).not.toContain("HOME_NOTE");
 });
 it("R2.7 real permission event denies cross-partition writes before Full access autoVerdict", () => {
@@ -163,6 +168,7 @@ it("R2.7 real permission event denies cross-partition writes before Full access 
   // callSpeech: D24's call speech coordinator; no call is live, so no provider turn feeds call speech here
   const fold = seam("foldRuntimeEvent", { callSpeech: { provider: () => undefined }, fluxFirstTokenProbe: { begin() {}, observe() {} }, providerReplyOf: () => undefined, accountProjectEvent: vi.fn(), shouldIgnoreProviderEvent: () => false, accountPresentedProjectEvent: () => true, presentedRequests: { publish: vi.fn() }, localVmThreadTargets: new Map(), groupGoalCoordinatorTurns: new Map(), groupGoalCoordinatorTurnForEvent: () => undefined, broadcast: vi.fn(), routines: null, store: f.store, botForDirectThread: () => f.iris, partitionFileRefusal, turnCwdByThread: new Map(), turnEngineByThread: new Map(), registry: { get: () => ({ adapter: { respondToRequest } }) }, autoVerdict: judged,
     // index.ts imports it from engine-env.ts and calls it for every permission event (Rule 74a): the real one, as in production
+    highlevelEngineRequest,
     noteStartupFileEvent,
     // index.ts imports it from outside-wire.ts and calls it for every request (NOLIMITS v1 V5): the real one, as in production
     noteAskItemUnseen,

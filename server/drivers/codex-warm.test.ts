@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // One warm `codex app-server` per chat thread: reused while every spawn input
@@ -733,7 +734,7 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       resetIsolationCache();
     });
 
-    it("F13 + F14: each conversation's process has its own file; a reused turn rewrites only its own; a close removes it", async () => {
+    it("F13 + F14: each conversation's process has its own file; a reused turn keeps its authenticated bytes; a close removes it", async () => {
       await gated();
       // a first conversation names the scope; closing it removes its process's file
       const w = await run("t-env-0", "one", { ...base, cwd: scratch });
@@ -758,11 +759,15 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
         expect(envB).not.toBe(envA);
         expect(dirname(envB)).toBe(home);
         const tokenB = readFileSync(envB, "utf8");
+        expect(tokenB).not.toBe(tokenA); // distinct children still have distinct credentials
         const b2 = await run("t-env-b", "two", { ...base, cwd: scratch });
         expect(lines.join(" | ")).toContain("thread=t-env-b process=reused");
         expect(b2.pid).toBe(b1.pid);
         expect(envOf(b2)).toBe(envB);
-        expect(readFileSync(envB, "utf8")).not.toBe(tokenB);
+        // Rev 8: the env hash and token are fixed for one child lifetime.
+        expect(readFileSync(envB, "utf8")).toBe(tokenB);
+        expect(tokenB).not.toBe(tokenA);
+        expect(createHash("sha256").update(tokenB).digest("hex")).toBe(b2.seen.env.MURAGE_CODEX_HOOK_ENV_SHA256);
         // A's file was never touched by B's turns
         expect(readFileSync(envA, "utf8")).toBe(tokenA);
         holdThreads.delete("t-env-a");
@@ -789,6 +794,7 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       await eventually(() => !existsSync(envA));
       // a leftover engine of an earlier Murage run finds no file: its hook blocks, it is never handed another process's socket
       const blocked = spawnSync(process.execPath, [join(a1.seen.env.CODEX_HOME, "murage-hook.mjs")], {
+        windowsHide: true,
         input: JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "ls" }, tool_use_id: "x" }),
         env: { ...process.env, MURAGE_CODEX_HOOK_ENV: envA },
       });

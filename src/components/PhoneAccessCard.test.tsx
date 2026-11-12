@@ -2,13 +2,15 @@
 // presentational view that renders to static markup; the container only wires them to fetches.
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { PHONE_CARD_COPY, PHONE_COPY } from "../../shared/phone-copy";
 import { driverMountsPhoneJobs } from "../../server/phone-jobs-engines";
 import { mergePhones, nextGrant, PhoneAccessView, phoneCardMode, savePhoneApps, type PhoneDeviceRow } from "./PhoneAccessCard";
 
-const view = (mode: "hidden" | "cloud" | "engine" | "ready", extra: { grant?: object; rows?: PhoneDeviceRow[] } = {}) =>
-  renderToStaticMarkup(createElement(PhoneAccessView, { mode, grant: extra.grant ?? {}, rows: extra.rows ?? [], busy: false, error: null, onChange: () => {} }));
+const view = (mode: "hidden" | "cloud" | "engine" | "ready", extra: { grant?: object; rows?: PhoneDeviceRow[]; botName?: string } = {}) =>
+  renderToStaticMarkup(createElement(PhoneAccessView, { mode, grant: extra.grant ?? {}, rows: extra.rows ?? [], busy: false, error: null, onChange: () => {}, botName: extra.botName ?? "Ember" }));
 const esc = (s: string) => s.replace(/'/g, "&#x27;");
 
 describe("when the card shows", () => {
@@ -102,6 +104,64 @@ describe("card copy", () => {
     for (const s of [...strings(PHONE_CARD_COPY), ...strings(PHONE_COPY), view("ready", { rows: mergePhones([{ id: "x", name: "P" }], []) })]) {
       expect(s).not.toMatch(/—/);
       for (const w of banned) expect(s.toLowerCase()).not.toMatch(new RegExp(`\\b${w}\\b`));
+    }
+  });
+});
+
+describe("the pair-again hint on a phone row", () => {
+  const caps = { calendar: "full" as const, reminders: true, location: "approximate" as const, messages: false };
+  const reg = (over: object) => ({ deviceId: "a", name: "Sean's iPhone", capabilities: caps, platform: "ios" as const, ...over });
+  const hint = (bot: string) => `Pair this phone again so ${bot} can see your recent chat when you send from it.`;
+  it("shows on an iPhone whose mint did not opt in, and names the bot", () => {
+    const rows = mergePhones([], [reg({ deviceIdOptIn: false })]);
+    expect(rows[0]).toMatchObject({ state: "registered", repair: true });
+    const html = view("ready", { rows, botName: "Ember" });
+    expect(html).toContain(hint("Ember"));
+    expect(html).not.toContain("Sable");
+    expect(view("ready", { rows, botName: "Juniper" })).toContain(hint("Juniper"));
+  });
+  it("does not show once the phone has opted in: pairing again clears it", () => {
+    const before = mergePhones([], [reg({ deviceIdOptIn: false })]);
+    const after = mergePhones([], [reg({ deviceIdOptIn: true })]);
+    expect(view("ready", { rows: before })).toContain("phone-repair-hint");
+    expect(view("ready", { rows: after })).not.toContain("phone-repair-hint");
+    expect(after[0]).not.toHaveProperty("repair");
+  });
+  it("does not show when the host does not say (an older host, or a jobs-only phone that never minted an ask token), or for an Android phone", () => {
+    expect(mergePhones([], [reg({})])[0]).not.toHaveProperty("repair");
+    expect(view("ready", { rows: mergePhones([], [reg({})]) })).not.toContain("phone-repair-hint");
+    expect(mergePhones([], [reg({ platform: "android", deviceIdOptIn: false })])[0]).not.toHaveProperty("repair");
+    expect(mergePhones([], [reg({ platform: undefined, deviceIdOptIn: false })])[0]).not.toHaveProperty("repair");
+  });
+  it("an iPhone the host has no record for gets the neutral hint, not the pair-again line, and names the bot", () => {
+    const rows = mergePhones([], [reg({ deviceIdOptIn: "unknown" })]);
+    expect(rows[0]).toMatchObject({ state: "registered", check: true });
+    expect(rows[0]).not.toHaveProperty("repair");
+    const html = view("ready", { rows, botName: "Ember" });
+    expect(html).toContain("phone-check-hint");
+    expect(html).toContain("Pair this phone again if you want Ember to see your recent chat when you send from it.");
+    expect(html).not.toContain("phone-repair-hint");
+    expect(html).not.toMatch(/must|has to|needs to/i);
+    expect(view("ready", { rows, botName: "Juniper" })).toContain("if you want Juniper to see");
+  });
+  it("the neutral hint is not shown for Android, for a known phone, or when an older host leaves the field out", () => {
+    for (const over of [{ platform: "android" as const, deviceIdOptIn: "unknown" as const }, { deviceIdOptIn: true }, { deviceIdOptIn: false }, {}]) {
+      expect(mergePhones([], [reg(over)])[0], JSON.stringify(over)).not.toHaveProperty("check");
+      expect(view("ready", { rows: mergePhones([], [reg(over)]) }), JSON.stringify(over)).not.toContain("phone-check-hint");
+    }
+  });
+  it("is in every language with the {bot} placeholder and no bot name written into it", () => {
+    for (const code of ["en", "de", "es", "fr", "hi", "ja", "pt-br", "zh"]) {
+      const pack = JSON.parse(readFileSync(join(import.meta.dirname, "..", "locales", `${code}.json`), "utf8")) as Record<string, string>;
+      for (const key of ["phone.checkHint"]) {
+        expect(pack[key], `${code} ${key}`).toContain("{bot}");
+        expect(pack[key], `${code} ${key}`).not.toMatch(/Sable|Ember/i);
+        expect(pack[key], `${code} ${key}`).not.toMatch(/—/);
+      }
+      const text = pack["phone.repairHint"];
+      expect(text, code).toContain("{bot}");
+      expect(text.replace(/\{bot\}/g, "Ember"), code).toContain("Ember");
+      expect(text, code).not.toMatch(/Sable/i);
     }
   });
 });

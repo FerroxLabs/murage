@@ -15,7 +15,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { openSidebar } from "./fixtures.ts";
+import { dismissFirstRunWelcome, openSidebar } from "./fixtures.ts";
 
 interface VerificationServer { info: { url: string; dataDir: string }; close(): Promise<void> }
 type LaunchVerificationServer = (environment: NodeJS.ProcessEnv, signal?: AbortSignal, options?: { instrumentationSource?: string }) => Promise<VerificationServer>;
@@ -65,6 +65,8 @@ async function open(page: Page, width: number, height: number) {
   await page.route("**/api/whats-new?*", (route) => route.fulfill({ json: { show: false } }));
   await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-setup-seen", "1"); });
   await page.goto(origin);
+  // The fixture is a fresh data dir, so the first-run welcome covers the app; press its own control, as a person would.
+  await dismissFirstRunWelcome(page);
   const sidebar = await openSidebar(page);
   await sidebar.getByText("Dax", { exact: true }).first().click();
   await expect(page.getByRole("region", { name: "Pending approval" })).toBeVisible();

@@ -7,6 +7,7 @@
   "label.modelSigninRemove": "Remove a model connection from your Cloud home",
   "label.ownServer": "Change the server your bots use as a computer",
   "label.engineLogin": "Sign in or out of an engine on your Cloud home",
+  "label.engineSigninCode": "Finish an Antigravity sign-in for a bot on your Cloud home page",
   "label.botCreate": "Create a bot",
   "label.botDelete": "Delete a bot and its conversations",
   "label.botSettings": "Change a bot's settings",
@@ -58,6 +59,7 @@
   "label.localModels": "Change the local models",
   "label.claudeAccounts": "Change a Claude account",
   "label.chatChannels": "Change a Telegram, Slack or Discord connection",
+  "label.signal": "Change the Signal connection",
   "label.whatsapp": "Change the WhatsApp connection",
   "label.memory": "Change memory",
   "label.skillsCollection": "Change the skills collection",
@@ -130,5 +132,6 @@
   "dialog.close": "Close",
   "prepare.voiceFinishing": "Murage is finishing a voice reply.",
   "prepare.voiceFinishingDetail": "Try again in about {minutes} min. Your chats and memories are as they were.",
-  "prepare.quit": "Quit"
+  "prepare.quit": "Quit",
+  "label.claudeCodeImport": "Import skills and tool servers from Claude Code"
 }

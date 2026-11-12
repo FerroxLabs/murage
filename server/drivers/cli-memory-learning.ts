@@ -182,7 +182,8 @@ export const hiddenTurnRunner = (live: ProviderInstance, _oneShotFolder?: () => 
     // was written (the adapter relaunched after it); `notWritten` withdraws only the open, unwritten admission (r8 review change 1).
     const beforeSubmit = gate ? () => { gate.wrote(); try { gate.admit(); } catch (error) { state.fenced = error instanceof Error ? error : new MemorySendFenced(); finish(); throw error; } } : undefined;
     const notWritten = gate ? () => gate.notWritten() : undefined;
-    const sending = adapter.sendTurn({ threadId, text: prompt, sessionReset: true, cwd, stopLine: true, proposalOnly: true, background: true, usageFeature: "memory", ...(beforeSubmit ? { beforeSubmit, notWritten } : {}) });
+    const beforePrepare = gate ? () => { try { gate.check(); } catch (error) { state.fenced = error instanceof Error ? error : new MemorySendFenced(); finish(); throw error; } } : undefined;
+    const sending = adapter.sendTurn({ threadId, text: prompt, sessionReset: true, cwd, stopLine: true, proposalOnly: true, background: true, usageFeature: "memory", ...(beforeSubmit ? { beforeSubmit, notWritten } : {}), beforePrepare });
     // sendTurn may stay pending until the turn ends: the wait is on the turn's own end, never on it.
     sending.catch(error => { state.failure ??= error instanceof BotFolderUnavailableError ? error : engineFailure(error instanceof Error ? error.message : String(error)); finish(); });
     await finished;

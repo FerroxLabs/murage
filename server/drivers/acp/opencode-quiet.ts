@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../../../shared/flux-route.ts";
 export type OpenCodeFailure = "authentication" | "rate_limit" | "unavailable" | "tool_count";
 const MAX_RECORD = 8192;
 const FIELDS = new Set(["timestamp", "level", "run", "message", "providerID", "modelID", "session.id", "small", "agent", "mode", "error.error"]);
@@ -13,7 +14,7 @@ export function parseOpenCodeFailure(line: string, session: string): OpenCodeFai
     const match = token.exec(line);
     if (!match || !FIELDS.has(match[1]!) || fields.has(match[1]!)) return;
     let value = match[2]!;
-    if (value.startsWith('"')) { try { value = JSON.parse(value); } catch { return; } }
+    if (value.startsWith('"')) { try { value = registerBusyloopPayloadSite("read", JSON.parse(value)); } catch { return; } }
     fields.set(match[1]!, value);
     at = token.lastIndex;
   }

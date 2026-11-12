@@ -45,10 +45,12 @@ describe("browser extension owner actions on a cloud home", () => {
   it("N1: no handler in the browser extension route group reads the raw surface", () => {
     const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
     const start = source.indexOf('path === "/api/browser-extension/clients"');
+    // d9d9f8e08f moved browser ownership into the browser route principal.
     const end = source.indexOf("const paired = companionAuthorized(req.headers);", start);
     expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
     expect(source.slice(start, end).match(/requestSurface\(/g) ?? []).toEqual([]);
     const setup = source.indexOf('/browser-setup\\/([\\w-]+)$/');
+    expect(setup).toBeGreaterThan(0); expect(start).toBeGreaterThan(setup);
     expect(source.slice(setup, start).match(/requestSurface\(/g) ?? []).toEqual([]);
   });
 });

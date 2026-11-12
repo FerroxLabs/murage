@@ -1,0 +1,34 @@
+All test commands ran via:
+IT_JOB=bld-nolim-s1 IT_W=/work/fuigo-builds/swarm-b/bld-nolim-s1/wt IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh /work/fuigo-builds/tools/it-remote.sh '<command>'
+Each invocation checked host load < 60 before launch. Network none; at most two concurrent containers. Final runs selected IT_BOXES=murage-vt3 to reuse its mounted dependency cache.
+
+Broad behavior (resume-behavior.log):
+node_modules/.bin/vitest run server/decision/*.test.ts server/permission-level-parity.test.ts server/added-table-lifecycle.test.ts server/pm-sends-102-r22.test.ts --exclude server/decision/contract.test.ts --reporter=verbose
+
+Frozen S0 declaration/stub fixture (resume-final/contract-stubs.log):
+DECISION_EVIDENCE=server/decision/evidence/resume-final node server/decision/verify-contract.mjs
+The three NotBuilt-only assertions are S0 stub tests. Unmodified built-tree contract.test.ts reports those three failures; no production NotBuilt switches or altered frozen tests were introduced. verify-contract temporarily restores the recorded S0 stubs and restores built modules in finally.
+
+Full regression run (resume-final/mutants.json and one command-prefixed log per mutant):
+DECISION_EVIDENCE=server/decision/evidence/resume-final node server/decision/verify-mutants.mjs
+51/51 killed. M1-M8, M10-M20 and M22 are direct hostile-call injections in authority-attacks, seam, ingress and record-presentation tests; their rejected writes and unchanged row counts are in resume-behavior.log. M9 adds a real producer in a fresh production file and is also in the regression runner.
+
+Focused pre-fix assertion RED (resume-edges-red.log):
+node_modules/.bin/vitest run server/decision/budget.test.ts server/decision/ingress.test.ts server/decision/settle-states.test.ts
+Focused pre-fix hook assertion RED (resume-hook-red.log):
+node_modules/.bin/vitest run server/decision/faults.test.ts -t "A5 hook exemption"
+
+Final hook-policy verification (resume-hook-green.log):
+node_modules/.bin/vitest run server/decision/faults.test.ts server/decision/settle-faults.test.ts server/decision/exec-mode.test.ts server/decision/engine-action.test.ts
+DECISION_MUTANTS=A5-hook-identity,M28,M38,X4 DECISION_EVIDENCE=server/decision/evidence/resume-hook node server/decision/verify-mutants.mjs
+86 tests passed, four mutants killed (one new; 52 unique regression mutants total).
+
+Full server typecheck (typecheck-resume-final.log):
+node_modules/.bin/tsc -p tsconfig.server.json
+Exit 2: 62 diagnostics in unmigrated producers/wiring and legacy tests outside S1 test ownership. No diagnostics in S1 implementation files or assigned tests. No integrated typecheck PASS claimed.
+
+Documented fixture workflow:
+node_modules/.bin/vitest run server/decision/workflow-smoke.test.ts
+fixture-commands.json records doctor, new-bot, send, wait and messages with the exact isolated URL; fixture-*.json records their responses. fixture-wait.json is settled and fixture-messages.json contains the fake engine reply. The fixture launcher stopped its exact child and removed its data directory. This is a fake-engine workflow, not the integrated G-NL live five-engine release gate.
+
+Earlier interrupted-run evidence remains under this directory and /work/fuigo-builds/swarm-b/bld-nolim-s1/evidence. complete-red-final/complete-s0-red.log records the S0 NotBuilt behavioral RED baseline; release-final and edge-mutants record earlier regression kills.

@@ -1,0 +1,230 @@
+[
+  {
+    "ext": ".cs",
+    "code": "process.Kill();"
+  },
+  {
+    "ext": ".mjs",
+    "code": "child.kill();"
+  },
+  {
+    "ext": ".js",
+    "code": "process.kill(123);"
+  },
+  {
+    "ext": ".cjs",
+    "code": "kill(123);"
+  },
+  {
+    "ext": ".ps1",
+    "code": "Stop-Process -Id 123"
+  },
+  {
+    "ext": ".psm1",
+    "code": "taskkill.exe /PID 123 /F"
+  },
+  {
+    "ext": ".cmd",
+    "code": "tskill 123"
+  },
+  {
+    "ext": ".bat",
+    "code": "wmic process where ProcessId=123 delete"
+  },
+  {
+    "ext": ".ps1",
+    "code": "wmic.exe process where ProcessId=123 call terminate"
+  },
+  {
+    "ext": ".ps1",
+    "code": "Invoke-CimMethod -InputObject $process -MethodName Terminate"
+  },
+  {
+    "ext": ".psm1",
+    "code": "Invoke-CimMethod -InputObject $process `\n -MethodName \"terminate\""
+  },
+  {
+    "ext": ".ps1",
+    "code": "([wmiclass]\"Win32_Process\").Terminate()"
+  },
+  {
+    "ext": ".cs",
+    "code": "TerminateProcess(handle, 1);"
+  },
+  {
+    "ext": ".mjs",
+    "code": "spawn('powershell.exe', []);"
+  },
+  {
+    "ext": ".js",
+    "code": "execFile('schtasks.exe', []);"
+  },
+  {
+    "ext": ".cjs",
+    "code": "exec('taskkill.exe /PID 123 /F');"
+  },
+  {
+    "ext": ".mjs",
+    "code": "fork('helper.js');"
+  },
+  {
+    "ext": ".ps1",
+    "code": "Start-Process 'powershell.exe'"
+  },
+  {
+    "ext": ".ps1",
+    "code": "& 'C:\\Windows\\System32\\taskkill.exe' /PID 123 /F"
+  },
+  {
+    "ext": ".cs",
+    "code": "System.Diagnostics.Process.Start(\"cmd.exe\");"
+  },
+  {
+    "ext": ".mjs",
+    "code": "import {spawn as hidden} from 'node:child_process'; hidden('cmd.exe');"
+  },
+  {
+    "ext": ".mjs",
+    "code": "child['kIlL']();"
+  },
+  {
+    "ext": ".ps1",
+    "code": "TASKKILL.EXE /PID 123 /F"
+  },
+  {
+    "ext": ".ps1",
+    "code": "Invoke-CimMethod -InputObject $process -MethodName tErMiNaTe"
+  },
+  {
+    "ext": ".cmd",
+    "code": "cmd.exe /c helper.cmd"
+  },
+  {
+    "ext": ".bat",
+    "code": "powershell.exe -File helper.ps1"
+  },
+  {
+    "ext": ".ps1",
+    "code": "[Diagnostics.Process]::Start(\"cmd.exe\")"
+  },
+  {
+    "ext": ".ps1",
+    "code": "$process = Get-CimInstance Win32_Process -Filter 'ProcessId=123'\nInvoke-CimMethod -InputObject $process -MethodName (\n  'Terminate'\n)"
+  },
+  {
+    "ext": ".ps1",
+    "code": "$args = @{ InputObject=$process; MethodName='Terminate' }; Invoke-CimMethod @args"
+  },
+  {
+    "ext": ".psm1",
+    "code": "spps -Id 123"
+  },
+  {
+    "ext": ".ps1",
+    "code": "kill -Id 123"
+  },
+  {
+    "ext": ".ps1",
+    "code": "saps cmd.exe"
+  },
+  {
+    "ext": ".ps1",
+    "code": "iex 'Stop-Process -Id 123'"
+  },
+  {
+    "ext": ".ps1",
+    "code": "Microsoft.PowerShell.Management\\Stop-Process -Id 123"
+  },
+  {
+    "ext": ".ps1",
+    "code": "$p.('Ki' + 'll')()"
+  },
+  {
+    "ext": ".ps1",
+    "code": "$p.$method()"
+  },
+  {
+    "ext": ".ps1",
+    "code": "$p.Terminate(\n  $arguments\n)"
+  },
+  {
+    "ext": ".ps1",
+    "code": "& $x @arguments"
+  },
+  {
+    "ext": ".ps1",
+    "code": "[scriptblock]::Create($code)"
+  },
+  {
+    "ext": ".ps1",
+    "code": "$block.Invoke()"
+  },
+  {
+    "ext": ".ps1",
+    "code": "Add-Type -TypeDefinition 'public class Native {}'"
+  },
+  {
+    "ext": ".ps1",
+    "code": "Add-Type @arguments"
+  },
+  {
+    "ext": ".ps1",
+    "code": "Invoke-CimMethod -InputObject $p -MethodName ('Term' + 'inate')"
+  },
+  {
+    "ext": ".ps1",
+    "code": "Set-Alias stopme Stop-Process; stopme -Id 123"
+  },
+  {
+    "ext": ".mjs",
+    "code": "import {kill as terminate} from 'node:process'; terminate(123);"
+  },
+  {
+    "ext": ".mjs",
+    "code": "import * as native from 'node:child_process'; native['sp'+'awn']('cmd.exe');"
+  },
+  {
+    "ext": ".js",
+    "code": "process['ki' + 'll'](123);"
+  },
+  {
+    "ext": ".js",
+    "code": "const method = 'kill'; process[method](123);"
+  },
+  {
+    "ext": ".cjs",
+    "code": "const {execFile: hidden} = require('node:child_process'); hidden('cmd.exe');"
+  },
+  {
+    "ext": ".mjs",
+    "code": "const hidden=child.kill; const indirect=hidden; indirect();"
+  },
+  {
+    "ext": ".cmd",
+    "code": "ta^\nskkill /PID 123 /F"
+  },
+  {
+    "ext": ".bat",
+    "code": "@WMIC ^\nprocess where ProcessId=123 delete"
+  },
+  {
+    "ext": ".cmd",
+    "code": "cmd /c \"taskkill\" /PID 123 /F"
+  },
+  {
+    "ext": ".ps1",
+    "code": "start cmd.exe"
+  },
+  {
+    "ext": ".mjs",
+    "code": "const {['ki'+'ll']: hidden} = process; hidden(123);"
+  },
+  {
+    "ext": ".js",
+    "code": "const hidden = process[method]; hidden(123);"
+  },
+  {
+    "ext": ".mjs",
+    "code": "process.kill.call(process,123);"
+  }
+]

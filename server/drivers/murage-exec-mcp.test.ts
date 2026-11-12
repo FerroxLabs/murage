@@ -66,9 +66,22 @@ describe.skipIf(!BASH)(`murage-exec in front of MCP servers${BASH ? "" : " (skip
   });
   afterEach(() => removeTempDirSync(proj));
   // Run the wrapper as Claude's shell does (through bash: a Windows file has no shebang to execute).
-  const runWrapper = (command: string, env: Record<string, string>, script = wrapper) => spawnSync(BASH!, [WIN ? script.replace(/\\/g, "/") : script, command], { env: { ...winBase(), ...homeBase(), PATH: hostPath(), MURAGE_EXEC_ENV_FILE: envFile, ...env }, encoding: "utf8" });
+  const runWrapper = (command: string, env: Record<string, string>, script = wrapper) => spawnSync(BASH!, [WIN ? script.replace(/\\/g, "/") : script, command], { windowsHide: true, env: { ...winBase(), ...homeBase(), PATH: hostPath(), MURAGE_EXEC_ENV_FILE: envFile, ...env }, encoding: "utf8" });
 
   const hostile = `it's "here" $(touch /nonexistent) \`x\`\nsecond line`;
+
+  it.skipIf(process.platform !== "linux")("reaps the environment writer instead of leaving it as an MCP server child", () => {
+    const script = join(proj, "children.cjs");
+    writeFileSync(script, `
+      const fs = require("node:fs");
+      const children = fs.readFileSync('/proc/self/task/' + process.pid + '/children', 'utf8').trim();
+      process.stdout.write(JSON.stringify({ children }) + '\\n');
+    `);
+    const command = `'${process.execPath.replace(/'/g, "'\\''")}' '${script.replace(/'/g, "'\\''")}'`;
+    const out = runWrapper(command, { NEEDED: "server", [EXEC_KEEP]: "NEEDED" });
+    expect(out.status, out.stderr).toBe(0);
+    expect(JSON.parse(out.stdout).children, "the MCP server cannot reap an inherited shell writer").toBe("");
+  });
 
   it("a stdio server started through the prefix sees its own mcp.json env, and nothing else of Claude's", () => {
     const script = join(proj, "server.cjs");
@@ -87,6 +100,7 @@ describe.skipIf(!BASH)(`murage-exec in front of MCP servers${BASH ? "" : " (skip
     const launch = claudeMcpLaunch({ command: asBash(servers.probe!.command), args: servers.probe!.args.map(asBash), env: servers.probe!.env! }, { CLAUDE_CODE_SHELL_PREFIX: murageExecPrefix(), CLAUDE_CODE_SHELL: BASH! });
     expect(launch.command).toBe(BASH);
     const out = spawnSync(launch.command, launch.args, {
+      windowsHide: true,
       env: { ...winBase(), ...homeBase(), PATH: hostPath(), MURAGE_EXEC_ENV_FILE: envFile, FROM_CLAUDE: "claude's own", ...launch.env },
       input: `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`,
       encoding: "utf8",
@@ -117,7 +131,7 @@ describe.skipIf(!BASH)(`murage-exec in front of MCP servers${BASH ? "" : " (skip
     const servers = withExecKeep({ probe: { command: process.execPath, args: [script], env: { NEEDED: "server" } } }) as Record<string, { command: string; args: string[]; env: Record<string, string> }>;
     const launch = claudeMcpLaunch(servers.probe!, { CLAUDE_CODE_SHELL_PREFIX: murageExecPrefix(), CLAUDE_CODE_SHELL: BASH! });
     // Claude Code's own environment has a SHLVL, so the shell it starts the prefix with reads nothing either.
-    const out = spawnSync(launch.command, launch.args, { env: { HOME: home, SHLVL: "1", PATH: hostPath(), MURAGE_EXEC_ENV_FILE: mapFile, ...launch.env }, input: "\n", encoding: "utf8" });
+    const out = spawnSync(launch.command, launch.args, { windowsHide: true, env: { HOME: home, SHLVL: "1", PATH: hostPath(), MURAGE_EXEC_ENV_FILE: mapFile, ...launch.env }, input: "\n", encoding: "utf8" });
     expect(out.stderr).toBe("");
     expect(out.status).toBe(0);
     expect(JSON.parse(out.stdout.trim())).toEqual({ leak: null, needed: "server" });
@@ -139,7 +153,7 @@ describe.skipIf(!BASH)(`murage-exec in front of MCP servers${BASH ? "" : " (skip
     // Every `env` the wrapper execs is a shim that records its argv, then runs the real one. On Linux/macOS the shim sits
     // first on PATH. MSYS puts its own /usr/bin first whatever the PATH says, so on Windows the shim is named in a copy of
     // the wrapper whose only difference is that the two `exec env -i` call it by path.
-    const realEnv = WIN ? "/usr/bin/env" : spawnSync("/bin/sh", ["-c", "command -v env"], { encoding: "utf8" }).stdout.trim();
+    const realEnv = WIN ? "/usr/bin/env" : spawnSync("/bin/sh", ["-c", "command -v env"], { windowsHide: true, encoding: "utf8" }).stdout.trim();
     expect(realEnv).toMatch(/^\//);
     const bin = join(proj, "bin");
     mkdirSync(bin);
@@ -157,7 +171,7 @@ describe.skipIf(!BASH)(`murage-exec in front of MCP servers${BASH ? "" : " (skip
     }
     const secret = "dummy-secret-4f1c9a";
     const out = spawnSync(BASH!, [fwd(script), 'printf "%s|%s|%s" "${NOTES_TOKEN-gone}" "${SHARED-gone}" "${ELECTRON_RUN_AS_NODE-gone}"'],
-      { env: { ...winBase(), ...homeBase(), PATH: WIN ? hostPath() : `${bin}:${hostPath()}`, MURAGE_EXEC_ENV_FILE: envFile, NOTES_TOKEN: secret, SHARED: `server-${secret}`, ELECTRON_RUN_AS_NODE: "1", [EXEC_KEEP]: "NOTES_TOKEN,SHARED,ELECTRON_RUN_AS_NODE" }, encoding: "utf8" });
+      { windowsHide: true, env: { ...winBase(), ...homeBase(), PATH: WIN ? hostPath() : `${bin}:${hostPath()}`, MURAGE_EXEC_ENV_FILE: envFile, NOTES_TOKEN: secret, SHARED: `server-${secret}`, ELECTRON_RUN_AS_NODE: "1", [EXEC_KEEP]: "NOTES_TOKEN,SHARED,ELECTRON_RUN_AS_NODE" }, encoding: "utf8" });
     expect(out.stderr).toBe("");
     expect(out.status).toBe(0);
     expect(out.stdout).toBe(`${secret}|server-${secret}|1`);
@@ -242,6 +256,7 @@ describe.skipIf(WIN)("murage-exec Git Bash branch (MSYS spellings, simulated)", 
     const servers = withExecKeep({ probe: { command: process.execPath, args: [script], env: { ELECTRON_RUN_AS_NODE: "1", NEEDED: "msys", SHARED: "server" } } }) as Record<string, { command: string; args: string[]; env: Record<string, string> }>;
     const launch = claudeMcpLaunch(servers.probe!, { CLAUDE_CODE_SHELL_PREFIX: murageExecPrefix(), CLAUDE_CODE_SHELL: "/bin/bash" });
     const out = spawnSync(launch.command, launch.args, {
+      windowsHide: true,
       // Claude Code's own environment always carries HOME (homeBase above), so the shell it starts the prefix with has one too.
       env: { ...homeBase(), PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`, MURAGE_EXEC_ENV_FILE: envFile, ...launch.env },
       input: `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`,
@@ -253,7 +268,7 @@ describe.skipIf(WIN)("murage-exec Git Bash branch (MSYS spellings, simulated)", 
     expect(reply.result.env).toMatchObject({ NEEDED: "msys", ELECTRON_RUN_AS_NODE: "1", SHARED: "server", MURAGE_EXEC_KEEP: null, MURAGE_EXEC_ENV_FILE: null });
     expect(sameDir(reply.result.cwd, proj)).toBe(true);
     // a Bash command through the same file sees the converted search path, in MSYS form
-    const bash = spawnSync("/bin/bash", [installMurageExec(), 'printf "%s|%s" "$PATH" "$PWD"'], { env: { PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`, MURAGE_EXEC_ENV_FILE: envFile }, encoding: "utf8" });
+    const bash = spawnSync("/bin/bash", [installMurageExec(), 'printf "%s|%s" "$PATH" "$PWD"'], { windowsHide: true, env: { PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`, MURAGE_EXEC_ENV_FILE: envFile }, encoding: "utf8" });
     expect(bash.stderr).toBe("");
     expect(bash.stdout).toBe(`${[bin, ...hostDirs].join(":")}|${proj}`);
   });
@@ -262,7 +277,7 @@ describe.skipIf(WIN)("murage-exec Git Bash branch (MSYS spellings, simulated)", 
     writeFileSync(join(bin, "cygpath"), "");
     rmSync(join(bin, "cygpath"));
     const envFile = writeExecEnvFile(`t-msys-nocyg-${process.pid}`, { PATH: "W:/usr/bin" }, `W:${proj}`, "W:/bin/bash");
-    const out = spawnSync("/bin/bash", [installMurageExec(), "touch ran"], { env: { PATH: `${bin}:/usr/bin:/bin`, MURAGE_EXEC_ENV_FILE: envFile }, encoding: "utf8", cwd: proj });
+    const out = spawnSync("/bin/bash", [installMurageExec(), "touch ran"], { windowsHide: true, env: { PATH: `${bin}:/usr/bin:/bin`, MURAGE_EXEC_ENV_FILE: envFile }, encoding: "utf8", cwd: proj });
     expect(out.status).toBe(126);
     expect(out.stderr).toContain("cygpath is not available");
     expect(existsSync(join(proj, "ran"))).toBe(false);

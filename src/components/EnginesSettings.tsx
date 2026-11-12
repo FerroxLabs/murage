@@ -15,11 +15,16 @@ import { ClaudeAccountsSettings } from "./ClaudeAccountsSettings";
 import { EngineGroupLabel } from "./EngineGroupLabel";
 import { EngineSetup, needsCli, needsSignIn } from "./EngineSetup";
 import { InstanceProviderMark } from "./ProviderIcons";
-import { engineFamilies, engineFamilyHeader } from "@/lib/provider-model-picker";
+import { engineFamilies, engineFamilyHeader } from "@/lib/provider-model-picker-dialog";
 import { engineLocalLine, LOCAL_MODELS_TITLE, OPEN_LOCAL_MODELS_EVENT } from "@/lib/local-models-view";
 import { localEngineSupport } from "../../shared/local-models";
 import { cn } from "@/lib/cn";
 import { Card, InAdvanced } from "./SettingsPrimitives";
+import { EngineRow } from "./EngineRow";
+import { useSettingsMode } from "@/lib/settings-mode";
+import { routeState, type RouteFixAction } from "@/lib/route-state";
+import { creditFromHealth } from "@/lib/flux-credit";
+import { useEngineHealthAnswer } from "@/components/today/use-engine-health";
 
 /** What a Cloud home's engine card says when Claude's sign-in is due (the desktop app's Cloud home page signs it in again).
  * Starts with server/cloud-home/copy.ts cloudClaudeSigninRenew (EngineLoginTerminal's CLAUDE_CLOUD_RENEW_COPY; a test compares). */
@@ -223,18 +228,35 @@ function CustomPicker({ instance, cliDefault, onClose, onSaved }: {
   );
 }
 
-function EngineRow({ instance, settingControl }: { instance: InstanceInfo; settingControl?: string }) {
+function EngineBlock({ instance, settingControl }: { instance: InstanceInfo; settingControl?: string }) {
   const { refreshInstances, dispatch } = useStore();
+  // File paths and command details are for Advanced; Simple shows the engine, its state and its one fix.
+  const mode = useSettingsMode();
   // One place, one name (spec UX rule): this link is the same destination the
   // picker's empty Local rail row uses.
   const openLocalModels = () => {
-    dispatch({ type: "toggleAppSettings", open: true, section: "models" });
+    dispatch({ type: "toggleAppSettings", open: true, section: "models", anchor: "local-models-heading" });
     setTimeout(() => window.dispatchEvent(new Event(OPEN_LOCAL_MODELS_EVENT)), 0);
   };
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmationOpen, setConfirmationOpen] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
+  const root = useRef<HTMLDivElement>(null);
+  // Engine-level reading: no selection and no account; a Flux-routed engine reads its credit from the engine-health answer (4.2).
+  const route = routeState(null, instance, null, creditFromHealth(useEngineHealthAnswer()));
+  const onFix = (action: RouteFixAction) => {
+    if (action === "turnOn") { void setEnabled(); return; }
+    if (action === "addCredit") { window.open("https://flux.ferroxlabs.com", "_blank", "noopener,noreferrer"); return; }
+    // Install, repair, sign in and renew: the steps are the setup card right below this row.
+    const target = root.current?.querySelector<HTMLElement>("[data-engine-fix-target]");
+    if (!target) {
+      // No setup card for this engine: the engine command lines (Advanced) are the one place left to point it at its program.
+      dispatch({ type: "toggleAppSettings", open: true, section: "models", anchor: "engine-command-lines-heading" });
+      return;
+    }
+    (target.querySelector<HTMLElement>("button, a[href], input") ?? target).focus();
+  };
 
   const setEnabled = async () => {
     if (engineChangeGate.has(instance.instanceId) || switching) return;
@@ -263,12 +285,12 @@ function EngineRow({ instance, settingControl }: { instance: InstanceInfo; setti
   };
 
   return (
-    <div>
+    <div ref={root}>
       <div className="flex flex-wrap items-center gap-2 text-[13px]">
         <span className={cn("size-1.5 shrink-0 rounded-full", instance.cli ? "bg-accent" : "bg-raised-hover")} />
         <InstanceProviderMark instance={instance} size={14} />
-        <span className="min-w-0 max-w-full truncate text-ink" title={instance.displayName}>{instance.displayName}</span>
-        {instance.cli ? (
+        <EngineRow name={instance.displayName} state={route} onFix={onFix} className="min-w-0 flex-1">
+        {mode !== "advanced" ? null : instance.cli ? (
           <span className="truncate font-mono text-[11.5px] text-accent" title={instance.cli}>
             {instance.cli}
           </span>
@@ -277,7 +299,6 @@ function EngineRow({ instance, settingControl }: { instance: InstanceInfo; setti
             <span className="truncate text-[11px] text-ink-secondary">{instance.cliDefault} · default</span>
           )
         )}
-        <span className="flex-1" />
         {instance.driverKind !== "fuigoAgent" && (
           <button
             type="button"
@@ -299,17 +320,10 @@ function EngineRow({ instance, settingControl }: { instance: InstanceInfo; setti
         >
           {instance.enabled === false ? "Enable" : "Disable"}
         </button>
+        </EngineRow>
       </div>
       {error && <div role="alert" className="mt-1 text-[12px] text-danger">{error}</div>}
       {saved && <div role="status" className="mt-1 text-[12px] text-success">{saved}</div>}
-      <p className="mt-1 text-[12px] text-ink-secondary">
-        {instance.enabled === false ? "Disabled" : needsCli(instance)
-          ? instance.snapshot.reason ?? "Not detected"
-          : instance.driverKind === "fuigoAgent"
-            ? needsSignIn(instance) ? t("ux.lcopyb.engines.includedConnect") : instance.snapshot.authenticated === true ? "Included · connected" : "Included · connection not verified"
-          : needsSignIn(instance) ? "Detected · sign-in required"
-            : instance.snapshot.authenticated === true ? "Detected · signed in" : "Detected · sign-in not verified"}
-      </p>
       {/* Cloud home (CLOUD-ENGINES-DESIGN.md r8 R3.1): Claude's long-lived token is due for renewal. The sign-in
           runs from the desktop app, which holds the home's pairing. */}
       {/* A line about the detected version (OpenClaw below its Ask floor), the same one a refused Ask turn shows. */}
@@ -321,7 +335,7 @@ function EngineRow({ instance, settingControl }: { instance: InstanceInfo; setti
         <p className="mt-1 text-[12px] text-ink-secondary">{t("engines.copilot.preview")}</p>
       )}
       {instance.snapshot.renewSignIn === true && (
-        <p role="status" className="mt-1 text-[12px] text-ink">{ENGINE_RENEW_COPY}</p>
+        <p role="status" data-engine-fix-target tabIndex={-1} className="mt-1 text-[12px] text-ink outline-none">{ENGINE_RENEW_COPY}</p>
       )}
       {/* Spec V4: every engine says where it stands on local models, in one
           line, with the one place to manage them. An engine that cannot use a
@@ -336,7 +350,10 @@ function EngineRow({ instance, settingControl }: { instance: InstanceInfo; setti
         </p>
       )}
       {instance.enabled !== false && instance.install && (needsCli(instance) || needsSignIn(instance)) && (
-        <EngineSetup instance={instance} className="mt-2" />
+        <div data-engine-fix-target tabIndex={-1} className="outline-none"><EngineSetup instance={instance} className="mt-2" /></div>
+      )}
+      {instance.enabled !== false && !instance.install && instance.snapshot.renewSignIn !== true && instance.snapshot.reason && (route.state === "signIn" || route.state === "install" || route.state === "repair") && (
+        <p role="status" data-engine-fix-target tabIndex={-1} className="mt-1 text-[12px] text-ink outline-none">{instance.snapshot.reason}</p>
       )}
       {instance.enabled !== false && !(instance.install?.native && needsCli(instance)) && <EngineManagement instance={instance} />}
       {confirmationOpen && (
@@ -431,7 +448,7 @@ function EngineCommandLines({ rows }: { rows: InstanceInfo[] }) {
   // The card's mark goes on the first row that renders its control; with none, the landing takes the card.
   const marked = rows.findIndex(cliConfigurableEngine);
   return (
-    <div id="engine-command-lines-heading" tabIndex={-1} className="outline-none">
+    <div tabIndex={-1} className="outline-none">
       <Card
         title="Engine command lines"
         subtitle={t("ux.lcopyb.engines.commandLinesSubtitle")}
@@ -549,14 +566,14 @@ export function EnginesSettings() {
             word — the same doubling the model picker's engine list had
             (engineFamilyHeader, the one rule both surfaces use). */}
         {engineFamilyHeader(primary,members)&&<EngineGroupLabel className="mb-3">{primary.displayName}</EngineGroupLabel>}
-        <EngineRow instance={primary} settingControl={familyIndex === 0 ? "engines-heading" : undefined}/>
-        {members.length>1&&<div className="mt-3 border-t border-hairline/30 pt-2"><p className="text-xs text-ink-secondary">Other accounts and installations · {members.length-1}</p><div className="mt-3 space-y-4">{members.filter(i=>i.instanceId!==primary.instanceId).map(i=><div key={i.instanceId}><EngineRow instance={i}/>{i.cli&&i.cli===primary.cli&&<p className="mt-1 text-[11px] text-ink-secondary">{t("ux.lcopyb.engines.sameApp")}</p>}</div>)}</div></div>}
-        {primary.driverKind === "claudeAgent" && <InAdvanced><ClaudeAccountsSettings onChanged={refreshInstances} /></InAdvanced>}
+        <EngineBlock instance={primary} settingControl={familyIndex === 0 ? "engines-heading" : undefined}/>
+        {members.length>1&&<div className="mt-3 border-t border-hairline/30 pt-2"><p className="text-xs text-ink-secondary">Other accounts and installations · {members.length-1}</p><div className="mt-3 space-y-4">{members.filter(i=>i.instanceId!==primary.instanceId).map(i=><div key={i.instanceId}><EngineBlock instance={i}/>{i.cli&&i.cli===primary.cli&&<p className="mt-1 text-[11px] text-ink-secondary">{t("ux.lcopyb.engines.sameApp")}</p>}</div>)}</div></div>}
+        {primary.driverKind === "claudeAgent" && <InAdvanced part="models.claude-accounts"><ClaudeAccountsSettings onChanged={refreshInstances} /></InAdvanced>}
       </section>)}
-      {!rows.some(instance => instance.driverKind === "claudeAgent") && <InAdvanced><ClaudeAccountsSettings onChanged={refreshInstances} /></InAdvanced>}
+      {!rows.some(instance => instance.driverKind === "claudeAgent") && <InAdvanced part="models.claude-accounts"><ClaudeAccountsSettings onChanged={refreshInstances} /></InAdvanced>}
       {/* Folded under Advanced: Settings holds no fold of its own outside it (SettingsShell.test.ts). */}
-      <InAdvanced><HiddenEngines /></InAdvanced>
-      <InAdvanced><EngineCommandLines rows={rows} /></InAdvanced>
+      <InAdvanced part="models.engines-more"><HiddenEngines /></InAdvanced>
+      <InAdvanced part="models.command-lines"><EngineCommandLines rows={rows} /></InAdvanced>
     </div>
   );
 }

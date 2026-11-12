@@ -1,13 +1,9 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Local crash dumps. When a window or the app itself crashes, Crashpad writes a
-// minidump into app.getPath("crashDumps") so we can see why. Dumps stay on this
-// computer: the reporter is started with uploads off and no server address, and
-// cloud-links-guards.node-test.mjs fails the build if that ever changes. A dump
-// can hold memory contents, so the diagnostics export copies one only when the
-// person asks for it (see includeCrashDumpOnRequest). Dependencies are injected
-// so everything here is unit-testable without Electron.
+// Legacy crash dumps from earlier versions. New app launches never start
+// Crashpad: a local-only memory dump still persists secrets. Keep discovery and
+// explicit export for existing files; no code in this module creates a dump.
 import fs from "node:fs";
 import path from "node:path";
 
@@ -20,18 +16,6 @@ const MAX_DEPTH = 2;
 
 export function isCrashDumpName(name) {
   return typeof name === "string" && DUMP_NAME.test(name);
-}
-
-/** Start Crashpad for local dumps only. Electron requires this in the main
- * process before app "ready"; it then covers renderer and child processes too. */
-export function startLocalCrashReporter(crashReporter) {
-  try {
-    crashReporter.start({ uploadToServer: false, submitURL: "", compress: true });
-    return true;
-  } catch {
-    // A missing crash reporter must never stop the app from starting.
-    return false;
-  }
 }
 
 /** Regular .dmp files under the dump folder, newest first. Symlinks and

@@ -13,17 +13,16 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createBackupScheduleHost } from "../electron/backup-schedule-host.mjs";
-import { backupAgePinForTarget } from "../shared/backup-age-pin.ts";
 import { BackupCoordinator } from "./backup-coordinator.ts";
 import { classifyDataDirEntry } from "./data-dir-inventory.ts";
 import { FROZEN_REPLIES_CURSOR, recoverFrozenRepliesSlice, type FrozenReplyPorts } from "./frozen-replies.ts";
 import { inspectEncryptedInstallationBackup } from "./installation-encrypted-backup.ts";
 import { installationRecoveryCommand } from "./installation-recovery-command.ts";
 import { stageInstallationState } from "./installation-state-snapshot.ts";
-import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
+import { backupFixture, testAgeKeys, optionalBackupAgeUnavailable } from "./testing/backup-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
-const noPinnedAge = !backupAgePinForTarget(process.platform, process.arch) || !process.env.MURAGE_BACKUP_TEST_AGE_DIR;
+const noPinnedAge = optionalBackupAgeUnavailable();
 type CaptureRequest = { output: string; recipient: string; readIdentity: () => Promise<string>; maxBytes: number; maxDurationMs: number };
 
 /** A fixture data folder after one 1.0.3 start: the real recovery slice has written its cursor at the root. */

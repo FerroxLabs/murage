@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { z } from "zod";
+import { ALERT_BACKLOG_HUGE_ALERT, ALERT_BACKLOG_HUGE_AT, PROVIDER_ACTION_OPEN_MS, PROVIDER_ACTION_UNEXPECTED_ALERT, isPageKind } from "./alert-tiers";
+import { agedOutLines, clearAgedOut, handleDigestRows, needsYouLines, openDigestLines, sweepPages, weeklyReviewLines } from "./alert-pages";
 
 export const HEARTBEAT_MISS_MS = 5 * 60 * 1000;
 export const DISK_ALERT_PERCENT = 85;
@@ -9,7 +11,7 @@ const ALERT_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 export const MAX_DELIVERY_ATTEMPTS = 20;
 
 /** Events a home may report. One name per event; lane 1's CPU-mining flag is abuse.mining_suspected. */
-export const HOME_EVENT_TYPES = ["abuse.mining_suspected"] as const;
+export const HOME_EVENT_TYPES = ["abuse.mining_suspected", "restore.aborted", "restore.stuck", "home.event_spool_failed"] as const;
 
 /** The app's process id on /api/health ("instance": a random 16-byte base64url token minted at process start), on the heartbeat
  *  (checks.uiInstance) and on the public probe alike. */
@@ -35,10 +37,6 @@ export const ALERT_SEND_LIMIT = 60;
 export const ALERT_OLDEST_SHARE = 20;
 /** Raised (one open) when more undelivered alerts wait than one sweep sends (Astra AUTOCANARY-9 P2); resolved once the queue fits. */
 export const ALERT_BACKLOG_ALERT = "alerts.backlog";
-/** Alerts sent ahead of the rest of a backlog (Astra AUTOCANARY-9 P2): a home waiting in 'checking' without its render, and a home given
- *  up on. Then by severity, then by age; alerts.backlog itself goes first and ALERT_OLDEST_SHARE of a run goes to the oldest (AUTOCANARY-10). */
-const URGENT_ALERT_KINDS = ["home.ui_render_missing", "provision.failed"];
-
 /** Optional block on the existing heartbeat body. Older homes that send only {generation} keep working. */
 export const healthSchema = z.object({
   diskUsedPercent: z.number().int().min(0).max(100).optional(),
@@ -287,25 +285,39 @@ export function alertStatement(db: D1Database, alert: { homeId: string; kind: st
  *  row only references those by id ("earlier payment <subject> also failed; see alert <id>"). It is inserted only when `gateSql` (a
  *  condition binding `gateBinds`) holds, i.e. the subject's own obligation was just recorded by this batch, with the usual shape
  *  (delivered_at NULL, delivery_attempts 0), which sweepMonitoring delivers later. One delivery per row, so one per fact. No network. */
-export function subjectAlertStatements(db: D1Database, alert: { homeId: string; kind: string; severity: string; detail: string; subject: string },
+export function subjectAlertStatements(db: D1Database, alert: { homeId: string; kind: string; severity: string; detail: string; subject: string;
+    /** How the detail refers to another open alert of the kind: "earlier <noun> <subject> <verb>; see alert <id>" (default: payment, also failed). */
+    earlier?: { noun: string; verb: string } },
   gateSql: string, gateBinds: unknown[], now: number): D1PreparedStatement[] {
   return [
     db.prepare(`INSERT INTO cloud_alerts (id,home_id,kind,severity,detail,raised_at,subject)
-      SELECT ?,?,?,?,? || COALESCE((SELECT ' | ' || group_concat('earlier payment ' || CASE WHEN a.subject<>'' THEN a.subject ELSE '(unrecorded)' END
-          || ' also failed; see alert ' || a.id, ' | ') FROM cloud_alerts a WHERE a.home_id=? AND a.kind=? AND a.subject<>?),''),?,?
+      SELECT ?,?,?,?,? || COALESCE((SELECT ' | ' || group_concat('earlier ' || ? || ' ' || CASE WHEN a.subject<>'' THEN a.subject ELSE '(unrecorded)' END
+          || ' ' || ? || '; see alert ' || a.id, ' | ') FROM cloud_alerts a WHERE a.home_id=? AND a.kind=? AND a.subject<>?),''),?,?
       WHERE ${gateSql} ON CONFLICT DO NOTHING`)
-      .bind(crypto.randomUUID(), alert.homeId, alert.kind, alert.severity, alert.detail, alert.homeId, alert.kind, alert.subject, now, alert.subject, ...gateBinds),
+      .bind(crypto.randomUUID(), alert.homeId, alert.kind, alert.severity, alert.detail, alert.earlier?.noun ?? "payment", alert.earlier?.verb ?? "also failed",
+        alert.homeId, alert.kind, alert.subject, now, alert.subject, ...gateBinds),
   ];
 }
 
-/** Opens an alert unless one of this kind is already open for the home; delivers it to the webhook once. */
+/** Opens an alert unless one of this kind is already open for the home. Two tiers (alert-tiers.ts): a digest kind is only recorded, handled
+ *  at once and never posted; a page kind is recorded and its group is delivered now (sweepPages: one page per cause, with the group's
+ *  thresholds and rate limits), not one message per row. */
 export async function raiseAlert(env: Env, alert: { homeId: string; kind: string; severity: string; detail: string }, now = Date.now(), fetcher?: Fetcher) {
   const id = crypto.randomUUID();
   const result = await env.DB.prepare(`INSERT INTO cloud_alerts (id,home_id,kind,severity,detail,raised_at) VALUES (?,?,?,?,?,?)
     ON CONFLICT DO NOTHING`).bind(id, alert.homeId, alert.kind, alert.severity, alert.detail, now).run();
   if (result.meta.changes !== 1) return false;
-  await deliver(env, id, alert.detail, { kind: alert.kind, severity: alert.severity, homeId: alert.homeId, text: `[murage-cloud] ${alert.kind} home=${alert.homeId}: ${alert.detail}`, at: now }, now, fetcher);
+  if (!isPageKind(alert.kind)) {
+    await env.DB.prepare("UPDATE cloud_alerts SET delivered_at=? WHERE id=? AND delivered_at IS NULL").bind(now, id).run();
+    return true;
+  }
+  if ((env as OpsEnv).ALERT_WEBHOOK_URL) await deliverPages(env, now, fetcher).catch(() => undefined);
   return true;
+}
+
+/** The page tier's delivery: sweepPages over this module's bounded, https-only post. */
+export function deliverPages(env: Env, now: number, fetcher?: Fetcher) {
+  return sweepPages(env, now, (payload, key) => post(env, payload, fetcher, key), MAX_DELIVERY_ATTEMPTS, ALERT_STAGE_MS);
 }
 
 /** Resolves the open alert of this kind for the home; its ".resolved" notice is owed (resolve_notice_due) until a send of it succeeds
@@ -314,7 +326,8 @@ export async function resolveAlert(env: Env, homeId: string, kind: string, now: 
   const open = await env.DB.prepare("SELECT id FROM cloud_alerts WHERE home_id=? AND kind=? AND resolved_at IS NULL").bind(homeId, kind).first<{ id: string }>();
   if (!open) return;
   const r = await env.DB.prepare("UPDATE cloud_alerts SET resolved_at=?,resolve_notice_due=1 WHERE id=? AND resolved_at IS NULL").bind(now, open.id).run();
-  if (r.meta.changes === 1) await deliverResolution(env, { id: open.id, home_id: homeId, kind, resolved_at: now }, now, fetcher);
+  // The resolve message is the group's (sweepPages), not one per row: the row's own notice is cleared by the next sweep.
+  void r; void fetcher;
 }
 
 /**
@@ -325,7 +338,7 @@ export async function resolveAlert(env: Env, homeId: string, kind: string, now: 
 export async function resolveAlertUnless(env: Env, homeId: string, kind: string, now: number, guardSql: string, fetcher?: Fetcher) {
   const closed = await env.DB.prepare(`UPDATE cloud_alerts SET resolved_at=?,resolve_notice_due=1 WHERE home_id=? AND kind=? AND resolved_at IS NULL
     AND NOT EXISTS (${guardSql}) RETURNING id`).bind(now, homeId, kind).all<{ id: string }>();
-  for (const row of closed.results) await deliverResolution(env, { id: row.id, home_id: homeId, kind, resolved_at: now }, now, fetcher);
+  void closed; void fetcher;   // the resolve message is the group's (sweepPages)
 }
 
 /** The persist-only variant of resolveAlertUnless (claimed delivery): the guarded UPDATE marks the resolution notice due and sends nothing;
@@ -390,7 +403,9 @@ export async function deliver(env: Env, id: string, sentDetail: string, payload:
   return ok;
 }
 
-/** Sends one owed resolution notice under the same kind of claim (resolve_claim_until, resolve_attempts; Astra AUTOCANARY-7 P2): owed
+/** The per-row resolution send. No longer called by the sweep or by resolveAlert: a closed GROUP posts one resolve message (sweepPages), so a
+ *  row's own notice is cleared, not sent. Kept for its claim and retry tests and for a caller that needs a one-off row notice.
+ *  Sends one owed resolution notice under the same kind of claim (resolve_claim_until, resolve_attempts; Astra AUTOCANARY-7 P2): owed
  *  until a send succeeds, retried after the claim lapses, never sent by two sweeps at once. */
 export async function deliverResolution(env: Env, a: { id: string; home_id: string; kind: string; resolved_at: number }, now: number,
   fetcher?: Fetcher): Promise<boolean> {
@@ -403,27 +418,6 @@ export async function deliverResolution(env: Env, a: { id: string; home_id: stri
     text: `[murage-cloud] ${a.kind} resolved home=${a.home_id}`, at: a.resolved_at }, fetcher, `alert:${a.id}:resolved`);
   if (ok) await env.DB.prepare("UPDATE cloud_alerts SET resolve_notice_due=NULL,resolve_claim_until=NULL WHERE id=?").bind(a.id).run();
   return ok;
-}
-
-/** The refund state of every ledger operation an alert names (detail.opId, detail.items[].opId), read from refund_ops when the alert is
- *  sent (Astra WP5-6 #4): an alert records only that a refund was requested, never that it was made. */
-async function refundStates(env: Env, detail: string): Promise<string> {
-  let d: unknown;
-  try { d = JSON.parse(detail); } catch { return ""; }
-  if (!d || typeof d !== "object") return "";
-  const ids = new Set<string>();
-  const add = (x: unknown) => { const op = x && typeof x === "object" ? (x as { opId?: unknown }).opId : null; if (typeof op === "string" && op) ids.add(op); };
-  add(d);
-  const items = (d as { items?: unknown }).items;
-  if (Array.isArray(items)) items.forEach(add);
-  if (ids.size === 0) return "";
-  const states: string[] = [];
-  for (const opId of [...ids].slice(0, 20)) {
-    const op = await env.DB.prepare("SELECT refunded_at,done_at FROM refund_ops WHERE id=?").bind(opId)
-      .first<{ refunded_at: number | null; done_at: number | null }>();
-    states.push(`${opId}=${!op ? "not found" : op.refunded_at !== null ? "refunded" : "requested"}`);
-  }
-  return ` | refunds: ${states.join(", ")}`;
 }
 
 interface Row { home_id: string; last_seen: number | null; disk: number | null; backup: number | null; since: number }
@@ -456,69 +450,32 @@ export async function sweepMonitoring(env: Env, now = Date.now(), fetcher?: Fetc
       await record(home.home_id, "home.backup_stale", "medium", `last backup ${Math.floor((now - home.backup) / 3_600_000)} h ago`);
     } else if (home.backup !== null) await resolve(home.home_id, "home.backup_stale");
   }
-  // The delivery stage (Astra AUTOCANARY-6/7/8 P2): undelivered alerts (webhook down, just configured, or recorded without network) and
-  // owed resolution notices whose claim is free, each sent under its own recoverable claim (deliver, deliverResolution) dated when it is
-  // written (Date.now()), at most ALERT_SEND_CONCURRENCY at once. Resolutions go first (at most RESOLUTION_SEND_LIMIT, none started after
-  // RESOLUTION_STAGE_MS), then alerts (at most ALERT_SEND_LIMIT, none started after ALERT_STAGE_MS from the stage's start): neither
-  // backlog starves the other, and stalled sends cost the sweep at most ALERT_STAGE_MS + ALERT_POST_TIMEOUT_MS.
-  if ((env as OpsEnv).ALERT_WEBHOOK_URL) {
-    const resolved = await env.DB.prepare(`SELECT id,home_id,kind,resolved_at FROM cloud_alerts WHERE resolve_notice_due=1 AND resolve_attempts<?
-      AND (resolve_claim_until IS NULL OR resolve_claim_until<=?) ORDER BY resolved_at LIMIT ?`)
-      .bind(MAX_DELIVERY_ATTEMPTS, Date.now(), RESOLUTION_SEND_LIMIT).all<{ id: string; home_id: string; kind: string; resolved_at: number }>();
-    const started = Date.now();
-    const stage = async (sends: (() => Promise<unknown>)[], budgetMs: number) => {
-      let next = 0;
-      const worker = async () => {
-        while (next < sends.length && Date.now() - started < budgetMs) {
-          const send = sends[next++];
-          try { await send(); } catch { /* one failed send never stops the rest; its claim lapses and a later sweep retries it */ }
-        }
-      };
-      await Promise.all(Array.from({ length: Math.min(ALERT_SEND_CONCURRENCY, sends.length) }, worker));
-    };
-    await stage(resolved.results.map((a) => () => deliverResolution(env, a, now, fetcher)), RESOLUTION_STAGE_MS);
-    // Alerts (Astra AUTOCANARY-10 P2). The backlog is counted first, so alerts.backlog itself is opened (or resolved) before the run is
-    // chosen, and while it is open and undelivered it is sent first. The run is then at most ALERT_SEND_LIMIT alerts: ALERT_OLDEST_SHARE of
-    // them reserved for the oldest non-urgent alerts, by age alone, the rest by priority (urgent kinds, then severity, then age),
-    // interleaved two priority to one oldest. A flood of urgent alerts can never starve the oldest, nor hide the backlog alert.
-    const claimable = `delivered_at IS NULL AND resolved_at IS NULL AND delivery_attempts<?1
-      AND (delivery_claim_until IS NULL OR delivery_claim_until<=?2 OR delivery_attempts=0)`;
-    const notBacklog = "NOT (home_id='ops' AND kind=?3)";
-    const waiting = await env.DB.prepare(`SELECT COUNT(*) AS n FROM cloud_alerts WHERE ${claimable} AND ${notBacklog}`)
-      .bind(MAX_DELIVERY_ATTEMPTS, Date.now(), ALERT_BACKLOG_ALERT).first<{ n: number }>();
-    if ((waiting?.n ?? 0) > ALERT_SEND_LIMIT) {
-      await persistAlert(env, { homeId: "ops", kind: ALERT_BACKLOG_ALERT, severity: "high",
-        detail: `more than ${ALERT_SEND_LIMIT} undelivered alerts wait; ${ALERT_SEND_LIMIT} are sent per sweep, the most urgent and the oldest first` }, now);
-    } else await resolveAlertStatement(env.DB, "ops", ALERT_BACKLOG_ALERT, now).run();
-    type Pending = { id: string; home_id: string; kind: string; severity: string; detail: string; raised_at: number };
-    const columns = "id,home_id,kind,severity,detail,raised_at";
-    const urgent = URGENT_ALERT_KINDS.map((kind) => `'${kind}'`).join(",");
-    const at = Date.now();
-    const [backlog, oldest, priority] = await env.DB.batch<Pending>([
-      env.DB.prepare(`SELECT ${columns} FROM cloud_alerts WHERE ${claimable} AND NOT ${notBacklog}`)
-        .bind(MAX_DELIVERY_ATTEMPTS, at, ALERT_BACKLOG_ALERT),
-      env.DB.prepare(`SELECT ${columns} FROM cloud_alerts WHERE ${claimable} AND ${notBacklog} AND kind NOT IN (${urgent})
-        ORDER BY raised_at,id LIMIT ?4`).bind(MAX_DELIVERY_ATTEMPTS, at, ALERT_BACKLOG_ALERT, ALERT_OLDEST_SHARE),
-      env.DB.prepare(`SELECT ${columns} FROM cloud_alerts WHERE ${claimable} AND ${notBacklog}
-        ORDER BY CASE WHEN kind IN (${urgent}) THEN 0 ELSE 1 END,
-          CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, raised_at,id LIMIT ?4`)
-        .bind(MAX_DELIVERY_ATTEMPTS, at, ALERT_BACKLOG_ALERT, ALERT_SEND_LIMIT + ALERT_OLDEST_SHARE),
-    ]);
-    const run: Pending[] = [...(backlog.results ?? [])];
-    const room = ALERT_SEND_LIMIT - run.length;
-    const byAge = (oldest.results ?? []).slice(0, Math.min(ALERT_OLDEST_SHARE, room));
-    const reserved = new Set(byAge.map((a) => a.id));
-    const byPriority = (priority.results ?? []).filter((a) => !reserved.has(a.id)).slice(0, room - byAge.length);
-    // Interleaved two priority to one oldest, so a stage cut short by a stalled webhook still reaches both.
-    while (byPriority.length || byAge.length) {
-      for (const queue of [byPriority, byPriority, byAge]) { const a = queue.shift(); if (a) run.push(a); }
-    }
-    await stage(run.map((a) => async () => deliver(env, a.id, a.detail, { kind: a.kind, severity: a.severity, homeId: a.home_id,
-      text: `[murage-cloud] ${a.kind} home=${a.home_id}: ${a.detail}${await refundStates(env, a.detail)}`, at: a.raised_at }, now, fetcher)),
-      ALERT_STAGE_MS);
-  }
+  // The delivery stage, two tiers (ALERTS-TWO-TIER-DESIGN.md). Digest rows are never posted: they are marked handled, so the backlog never
+  // counts them, and they reach Sean in the daily digest. Resolution notices are owed per group, not per row: a row's own notice is
+  // cleared, and a group that closes posts one resolve message (sweepPages). Page rows are delivered as one message per group, under the
+  // group's own claim and retry backoff (MAX_DELIVERY_ATTEMPTS), with the re-page and hourly limits.
+  await handleDigestRows(env, now);
+  // The compromise watch ends silently: no resolve notice, and its group closes without an all-clear (PAGE_GROUPS silentClose). The daily
+  // digest says it aged out unconfirmed (agedOutLines).
+  await env.DB.prepare("UPDATE cloud_alerts SET resolved_at=?,ageout_notice=1 WHERE kind=? AND resolved_at IS NULL AND raised_at<?")
+    .bind(now, PROVIDER_ACTION_UNEXPECTED_ALERT, now - PROVIDER_ACTION_OPEN_MS).run();
+  await env.DB.prepare("UPDATE cloud_alerts SET resolve_notice_due=NULL,resolve_claim_until=NULL WHERE resolve_notice_due=1").run();
+  // The backlog alert: undelivered page rows, counted first so alerts.backlog itself is opened (or resolved) before delivery. It is a
+  // digest item; only a huge backlog (ALERT_BACKLOG_HUGE_AT) is also a page.
+  const waiting = await env.DB.prepare(`SELECT COUNT(*) AS n FROM cloud_alerts WHERE delivered_at IS NULL AND resolved_at IS NULL
+    AND NOT (home_id='ops' AND kind IN (?1,?2))`).bind(ALERT_BACKLOG_ALERT, ALERT_BACKLOG_HUGE_ALERT).first<{ n: number }>();
+  if ((waiting?.n ?? 0) > ALERT_SEND_LIMIT) {
+    await persistAlert(env, { homeId: "ops", kind: ALERT_BACKLOG_ALERT, severity: "high",
+      detail: `more than ${ALERT_SEND_LIMIT} alerts wait to be delivered` }, now);
+  } else await resolveAlertStatement(env.DB, "ops", ALERT_BACKLOG_ALERT, now).run();
+  if ((waiting?.n ?? 0) > ALERT_BACKLOG_HUGE_AT) {
+    await persistAlert(env, { homeId: "ops", kind: ALERT_BACKLOG_HUGE_ALERT, severity: "high",
+      detail: `more than ${ALERT_BACKLOG_HUGE_AT} alerts wait to be delivered` }, now);
+  } else await resolveAlertStatement(env.DB, "ops", ALERT_BACKLOG_HUGE_ALERT, now).run();
+  await handleDigestRows(env, now);   // the backlog alerts just opened are digest or page rows of their own
+  if ((env as OpsEnv).ALERT_WEBHOOK_URL) await deliverPages(env, now, fetcher);
   await dailySummary(env, homes.results, now, fetcher);
-  await env.DB.prepare("DELETE FROM cloud_alerts WHERE resolved_at IS NOT NULL AND resolved_at<?").bind(now - ALERT_RETENTION_MS).run();
+  await env.DB.prepare("DELETE FROM cloud_alerts WHERE resolved_at IS NOT NULL AND ageout_notice IS NULL AND resolved_at<?").bind(now - ALERT_RETENTION_MS).run();
 }
 
 async function dailySummary(env: Env, homes: Row[], now: number, fetcher?: Fetcher) {
@@ -526,15 +483,28 @@ async function dailySummary(env: Env, homes: Row[], now: number, fetcher?: Fetch
   if (new Date(now).getUTCHours() < SUMMARY_HOUR_UTC) return;
   const last = await env.DB.prepare("SELECT value FROM cloud_ops_state WHERE key='daily_summary_day'").first<{ value: string }>();
   if (last?.value === day) return;
-  const open = await env.DB.prepare("SELECT kind,COUNT(*) AS n FROM cloud_alerts WHERE resolved_at IS NULL GROUP BY kind").all<{ kind: string; n: number }>();
-  const raised = await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_alerts WHERE raised_at>?").bind(now - 86_400_000).first<{ n: number }>();
+  // The daily digest. First line: "Nothing needs you today." or "N things need you:" and the open page groups. Then the fleet, the last 24 h
+  // by kind, and the open digest items grouped by kind. On Mondays, the weekly review of every page kind.
+  const byKind = await env.DB.prepare("SELECT kind,COUNT(*) AS n FROM cloud_alerts WHERE raised_at>? GROUP BY kind ORDER BY n DESC,kind")
+    .bind(now - 86_400_000).all<{ kind: string; n: number }>();
+  const total = byKind.results.reduce((n, k) => n + k.n, 0);
   const disk = homes.filter((h) => h.disk !== null && h.disk >= DISK_ALERT_PERCENT).length;
   const noBackup = homes.filter((h) => h.backup === null || now - h.backup > BACKUP_STALE_MS).length;
   const stale = homes.filter((h) => now - (h.last_seen ?? h.since) > HEARTBEAT_MISS_MS).length;
-  const text = `[murage-cloud] daily summary ${day}: ${homes.length} homes, ${stale} silent, ${disk} disk >= ${DISK_ALERT_PERCENT}%, ${noBackup} without a fresh backup, `
-    + `${raised?.n ?? 0} alerts in 24 h, open: ${open.results.map((o) => `${o.kind}=${o.n}`).join(", ") || "none"}`;
+  const shown = byKind.results.slice(0, 25);
+  const openDigest = await openDigestLines(env);
+  const aged = await agedOutLines(env);
+  const lines = [...await needsYouLines(env), ...aged.lines, "",
+    `Daily digest ${day}: ${homes.length} homes, ${stale} silent, ${disk} disk >= ${DISK_ALERT_PERCENT}%, ${noBackup} without a fresh backup.`,
+    `Alerts in 24 h: ${total}${shown.length ? ` (${shown.map((k) => `${k.kind}=${k.n}`).join(", ")}${byKind.results.length > shown.length ? `, ${byKind.results.length - shown.length} more kinds` : ""})` : ""}.`,
+    openDigest.length ? "Open items:" : "Open items: none.", ...openDigest.slice(0, 40).map((l) => `- ${l}`),
+    ...(openDigest.length > 40 ? [`- and ${openDigest.length - 40} more kinds`] : [])];
+  if (new Date(now).getUTCDay() === 1) lines.push("", ...await weeklyReviewLines(env, now));
+  const text = lines.join("\n");
   // Mark the day only if it was delivered, so a down webhook retries on the next tick.
-  if (await post(env, { kind: "daily.summary", severity: "info", text, at: now }, fetcher, `daily:${day}`) || !(env as OpsEnv).ALERT_WEBHOOK_URL) {
+  const delivered = await post(env, { kind: "daily.summary", severity: "info", text, at: now }, fetcher, `daily:${day}`);
+  if (delivered) await clearAgedOut(env, aged.ids);   // the age-out notice is owed until a digest that carried it got a 2xx
+  if (delivered || !(env as OpsEnv).ALERT_WEBHOOK_URL) {
     await env.DB.prepare("INSERT INTO cloud_ops_state (key,value) VALUES ('daily_summary_day',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(day).run();
   }
 }

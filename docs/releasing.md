@@ -12,7 +12,9 @@ toolchain requirements separate. Never describe an unpublished candidate as the
 latest public release. README review is required for every release.
 
 For a normal release, run **Actions → Prepare next release → Run workflow**
-and choose a patch, minor, or custom version. It opens a tiny version-bump PR;
+and choose a patch, minor, or custom version. It opens or reuses a tiny
+version-bump PR on `release/prep-<version>` and explicitly dispatches `ci.yml`
+on that branch (GitHub-token commits do not start push CI);
 merging that PR automatically starts **Release** and assembles a draft from the
 exact merge commit. Review and publish the draft when it is ready.
 
@@ -52,7 +54,24 @@ stop the workflow. A missing published tag is checked against authenticated
 draft listings too. Prepare next release inspects an existing version branch:
 its package version must match, and its open PR is reused if present. If the
 branch exists without an open PR, the workflow creates the missing PR without
-rewriting or pushing that branch.
+rewriting or pushing that branch. A mismatched version or API failure stops
+preparation. The `release-version-patch` artifact is retained on the preparation
+run for review: download and unzip it to inspect `release-version.patch`. The
+`open-pr` job performs the branch/PR handoff automatically; reviewers review
+and merge the linked PR. Do not apply the patch again to an existing PR.
+
+Preparation uses only `GITHUB_TOKEN`. Only Release's `assemble` job may mutate
+releases or release assets through an API, `gh release`, or electron-builder
+publishing, and only that job may use `RELEASES_PAT`. Other jobs may call release
+APIs only with GET, using `GITHUB_TOKEN` or no token and `contents: read`.
+After the Signal prerequisite and version checks, `assemble` creates, verifies
+and deletes a uniquely named
+throwaway draft to prove token write access, then checks the candidate version
+is still available. The read-only `preflight` job observes successful completion
+of that probe in the same workflow run attempt before any platform build starts.
+A failed probe stops builds. `assemble` then waits for successful `stage`, which
+depends on CI and every platform job. No installer upload happens before that
+barrier. Both waits are bounded and API failures stop the run.
 
 ## Draft assembly and publication boundaries
 
@@ -70,9 +89,11 @@ Publication waits for GitHub's own digest of every asset. GitHub computes
 digests asynchronously, so the proof step polls for up to a minute. A wrong
 name, an unfinished upload or a mismatched digest fails at once. If any digest
 is still missing after the wait, the release is **held**: the proof step fails,
-Publish does not run, and the draft is left untouched. To resume without
-rebuilding, re-run the failed assemble job (the build artifacts are reused and
-retained uploads are kept), or verify the retained draft directly with
+Publish does not run, and the draft is left untouched. To resume through
+Actions, select **Re-run all jobs**. The probe, staging,
+review record and artifacts are bound to one run attempt; rerunning only
+`assemble` cannot consume a previous attempt's stage result. Existing matching
+release uploads are still retained. To verify the retained draft directly, use
 `node scripts/release-digests.mjs verify <version> <release-id> <assets-dir>`.
 `scripts/release-guard.mjs publish` repeats the check right before it flips the
 draft. Publishing from the GitHub UI skips this check, so verify first.
@@ -104,8 +125,9 @@ release appears without a source commit.
 
 `app-update.yml` is baked into every packaged desktop app and is the only
 thing that tells an installed copy where its updates come from. It is written
-from `electron-builder.yml`'s `publish` block, which must stay
-`owner: FerroxLabs` / `repo: murage-releases`. Changing it strands every
+by `scripts/offline-update-metadata.mjs`, with `owner: FerroxLabs` /
+`repo: murage-releases`. Both builder configurations keep `publish: null`;
+packaging cannot upload a release. Changing it strands every
 already-installed user with no error anywhere, so the mac, Windows, and Ubuntu
 jobs each assert both halves on the packaged bytes, and
 `scripts/verify-linux-package.mjs` re-checks them inside the `.deb` and the
@@ -133,9 +155,11 @@ commit: a scoped run alone is refused, and a red full run stays red until that
 run is re-run or a new full run passes. A run re-run with `gh run rerun <id>
 --failed` counts once it goes green. A push to main starts CI and Release
 together, so a run still in progress is waited for (up to 4 hours; the builds
-run beside it and only the draft job waits on the verdict); no run at all is
+run beside it after the token probe, and staging waits on the verdict); no run at all is
 refused after a ten minute grace; a failed, cancelled or skipped one is refused
-straight away. Re-run the failed CI jobs on the commit and re-run the release to
+straight away. The workflow has no Actions-write cancellation job; a CI failure
+blocks staging and upload but does not cancel builds already running. Re-run
+the failed CI jobs on the commit and re-run all jobs of the release to
 continue.
 
 The same gate needs the latest nightly green. CI's Vitest shards leave out
@@ -247,10 +271,11 @@ Check a download with
 
 ### Build-provenance attestation
 
-The Linux job attests the `.deb`, the `.AppImage` and `SHA256SUMS-ubuntu-x64.txt`
-with `actions/attest-build-provenance` (pinned by full commit SHA, v4.2.2). Check a
-download with `gh attestation verify Murage.AppImage --repo FerroxLabs/murage`. The
-macOS and Windows jobs are not attested yet, and cosign is not used.
+Release jobs do not create GitHub provenance attestations: the exact write-job
+allowlist does not grant Linux `id-token: write` or `attestations: write`.
+Platform signing, checksum signatures, package verification and release-asset
+digest checks remain required. Do not expect `gh attestation verify` to find an
+attestation for these builds.
 
 ### Local fallback
 

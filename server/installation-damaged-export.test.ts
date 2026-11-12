@@ -1,5 +1,9 @@
+import { fixtureLink } from "./testing/platform-fixtures.ts";
+import { seedCopyIntents } from "./testing/fts-copy-fixture.ts";
+import { initializeMessageTables } from "./message-tables.ts";
+import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import * as yauzl from "yauzl";
@@ -103,17 +107,17 @@ it("refuses existing destinations, output inside source and active ownership", a
   expect(existsSync(join(f.root, "other.zip"))).toBe(false);
 });
 
-it.skipIf(process.platform === "win32")("omits source symlinks and rejects destination aliases into the source", async () => {
+it("omits source symlinks and rejects destination aliases into the source", async () => {
   const f = fixture();
   const outside = join(f.root, "external-private"); writeFileSync(outside, "external credential canary");
-  symlinkSync(outside, join(f.data, "workspaces", "outside"));
-  symlinkSync(f.data, join(f.data, "workspaces", "cycle"));
+  fixtureLink(outside, join(f.data, "workspaces", "outside"), "file");
+  fixtureLink(f.data, join(f.data, "workspaces", "cycle"), "dir");
   const result = await writeInstallationDamagedExport(f.data, f.target);
   expect(result.manifest.omitted).toEqual(expect.arrayContaining([{ path: "workspaces/outside", reason: "Symlink not followed" }, { path: "workspaces/cycle", reason: "Symlink not followed" }]));
   const entries = await readZip(f.target);
   expect([...entries.values()].some(bytes => bytes.includes("external credential canary"))).toBe(false);
   expect(readFileSync(outside, "utf8")).toBe("external credential canary");
-  const alias = join(f.root, "alias"); symlinkSync(f.data, alias);
+  const alias = join(f.root, "alias"); fixtureLink(f.data, alias, "dir");
   await expect(writeInstallationDamagedExport(f.data, join(alias, "output.zip"))).rejects.toMatchObject({ code: "DESTINATION_INSIDE_INSTALLATION" });
 });
 
@@ -150,4 +154,20 @@ it("preserves the phone rollback journal byte for byte beside its database", asy
   const files = await readZip(f.target);
   expect(files.get("preservation/phone-calls.db-journal")).toEqual(Buffer.from([1, 0, 255, 42]));
   expect(files.get("preservation/phone-calls.db")?.toString()).toBe("damaged phone database");
+});
+
+it("T-COPY-DAMAGED: damaged export sanitizes retired postings in its private database", async () => {
+  const f = fixture();
+  for (const suffix of ["", "-wal", "-shm"]) rmSync(join(f.data, "messages.db" + suffix), { force: true });
+  const source = new DatabaseSync(join(f.data,"messages.db"));
+  try { initializeMessageTables(source); seedCopyIntents(source); source.exec("CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(t, tokenize='trigram', content='', contentless_delete=1, detail=none); ALTER TABLE messages_fts RENAME TO messages_fts_retired; CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(t, tokenize='trigram', content='', contentless_delete=1, detail=none); INSERT INTO messages_fts_retired(rowid,t) VALUES(9999999,'qzxretiredcanary')"); } finally { source.close(); }
+  expect(readFileSync(join(f.data,"messages.db")).includes(Buffer.from("qzx"))).toBe(true);
+  await writeInstallationDamagedExport(f.data,f.target);
+  const files = await readZip(f.target);
+  const entry = [...files].find(([name]) => name.endsWith("/messages.db"));
+  expect(entry).toBeDefined();
+  const file = join(f.root,"sanitized.db"); writeFileSync(file,entry![1]);
+  const copy = new DatabaseSync(file,{readOnly:true});
+  try { expect(copy.prepare("SELECT * FROM search_intents").all()).toEqual([]); expect(copy.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'messages_fts_retired%'").all()).toEqual([]); } finally { copy.close(); }
+  expect(readFileSync(file).includes(Buffer.from("qzx"))).toBe(false);
 });

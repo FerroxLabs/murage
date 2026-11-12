@@ -1,0 +1,32 @@
+Fix-round base: 8cd8ae4fcaa99fb6ec3bf0ed397baa907fe40c55
+Original behavioral RED base: 0567676f107f5e8690b94841fd96a050b3da2748
+
+Host preparation (no tests on host):
+mkdir -p .test-tmp/afix-bld-hl-userscreate/starting-tree
+git archive 0567676f1 | tar -x -C .test-tmp/afix-bld-hl-userscreate/starting-tree
+
+Every test command below ran through /work/fuigo-builds/tools/it-remote.sh:
+IT_JOB=afix-bld-hl-userscreate
+IT_W=/work/fuigo-builds/swarm-b/hlf6/wt
+IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh
+NETARG=--network none
+Host wrapper waits while load > 60. At most two containers. Qualified mutation
+runs follow passing baselines and restore source in finally. All provider I/O
+uses fakes. A fallback container without dependencies was rejected before tests;
+the qualified run uses murage-vt2, after its successful full typecheck.
+
+node scripts/highlevel-userscreate-starting-red.mjs
+pnpm exec vitest run server/highlevel/users-create-starting.test.ts server/highlevel/users-create-host.test.ts scripts/highlevel-userscreate-red-verdict.test.mjs
+node --experimental-strip-types scripts/highlevel-userscreate-fixture.mjs
+pnpm typecheck
+USERSCREATE_MUTANT_DIR=.test-tmp/afix-bld-hl-userscreate/mutants node scripts/highlevel-userscreate-mutants.mjs
+pnpm exec vitest run server/highlevel src/components/HighLevelReviewValues.test.ts shared/highlevel.test.ts scripts/highlevel-userscreate-red-verdict.test.mjs
+
+Final RED-runner qualification (reject stale reports and non-test exits):
+node scripts/highlevel-userscreate-starting-red.mjs
+pnpm exec vitest run scripts/highlevel-userscreate-red-verdict.test.mjs server/highlevel/users-create-starting.test.ts
+USERSCREATE_MUTANT_DIR=.test-tmp/afix-bld-hl-userscreate/mutants-final node scripts/highlevel-userscreate-mutants.mjs
+
+Public added-line gate: unchanged shared leak-guard.sh and
+public-leak-patterns.txt against a separate Git fixture holding exactly the
+staged added lines. No pattern exclusions or relaxations.

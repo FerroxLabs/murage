@@ -427,6 +427,7 @@ describe("round 3: a missing, null, cut or unknown value never grants, approves 
     for (const bot of [...levels("app-action:GMAIL_SEND_EMAIL"), ...levels(acpToolKey("custom:custom", "run")), ...levels("Bash:cat")]) {
       expect(verdict(bot, ask, extra).approve, JSON.stringify([ask.tool, bot])).toBeNull();
     }
+    // r1.3b: routine and unattended verdicts retain the 1.0.18 base.
     expect(verdict(unlimited, ask, { ...extra, automated: true, routineLevel: true }).approve, "routine").toBeNull();
     expect(verdict(unlimited, ask, { ...extra, unattended: true }).approve, "unattended").toBeNull();
   };

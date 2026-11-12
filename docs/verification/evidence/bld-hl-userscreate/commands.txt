@@ -1,0 +1,17 @@
+IT_JOB=bld-hl-userscreate
+IT_W=/work/fuigo-builds/swarm-b/hlf6/wt
+IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh
+NETARG=--network none
+Runner: /work/fuigo-builds/tools/it-remote.sh
+Host wrapper waits while load > 60. All jobs ran sequentially, one container at a time.
+
+node --experimental-strip-types scripts/highlevel-f0-snapshot.ts --write
+pnpm typecheck
+pnpm exec vitest run server/highlevel src/components/HighLevelReviewValues.test.ts shared/highlevel.test.ts
+node --experimental-strip-types scripts/highlevel-userscreate-fixture.mjs
+node --import ./server/testing/safe-wipe-preload.mjs --test electron/ipc-channel-classes.node-test.mjs electron/main-ipc-trust.node-test.mjs electron/password-process-protection.node-test.mjs
+node scripts/highlevel-userscreate-mutants.mjs
+
+Public source gate: unmodified shared leak-guard.sh and public-leak-patterns.txt,
+executed against an isolated Git fixture containing exactly the staged added lines.
+No exclusions added; the guard validates every ERE and fails on scan errors.

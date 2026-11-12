@@ -4,8 +4,10 @@ import {
   INSTALL_DISMISSED_KEY,
   installInvite,
   isAppleMobile,
+  isCloudDesktopBrowser,
   type InstallInvite,
 } from "./install-prompt";
+import { homeMeta } from "./cloud-home-meta";
 import { inNativeShell } from "./native-shell";
 
 /** The event Chromium fires when a site is installable. Not in lib.dom. */
@@ -93,6 +95,7 @@ export function useInstallPrompt(): {
     ios: isAppleMobile(navigator.userAgent, navigator.maxTouchPoints ?? 0),
     dismissed,
     nativeShell: inNativeShell(),
+    cloudDesktop: isCloudDesktopBrowser(homeMeta(document).homeId !== null, navigator.maxTouchPoints ?? 0, window.innerWidth),
   });
 
   return { invite, install, dismiss };

@@ -6,12 +6,14 @@
 // missing name gets, a FIFO never hangs a request, both avatar routes await
 // the bounded check, and upload retries compare through the bounded reader.
 import { execFileSync } from "node:child_process";
-import { linkSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { linkSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 
-const posixOnly = describe.skipIf(process.platform === "win32");
+
+// POSIX FIFOs and Windows directories are both non-regular attachment entries.
+const nonRegular = (path: string) => process.platform === "win32" ? mkdirSync(path) : execFileSync("mkfifo", [path], { windowsHide: true });
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jD1sAAAAASUVORK5CYII=", "base64");
 let fixture: VerificationServer, headers: Record<string, string>, folder: string;
 
@@ -22,7 +24,7 @@ const within = async <T>(ms: number, work: Promise<T>): Promise<T> => {
   finally { clearTimeout(timer); }
 };
 
-posixOnly("attachment reads through the server", () => {
+describe("attachment reads through the server", () => {
   beforeAll(async () => {
     fixture = await launchVerificationServer(process.env);
     const secret = (await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string }).secret;
@@ -30,15 +32,15 @@ posixOnly("attachment reads through the server", () => {
     const first = await fetch(`${fixture.info.url}/api/attachments`, { method: "POST", headers: { ...headers, "content-type": "image/png" }, body: PNG });
     expect(first.status).toBe(201);
     const saved = await first.json() as { path: string };
-    folder = saved.path.slice(0, saved.path.lastIndexOf("/"));
+    folder = dirname(saved.path);
   }, 60000);
   afterAll(async () => { await fixture?.close(); });
 
-  it("a link, a FIFO and a hard link answer the missing-name 404, and a FIFO does not hang", async () => {
+  it("a link, a non-regular entry and a hard link answer the missing-name 404, and the non-regular entry does not hang", async () => {
     const outside = join(fixture.info.dataDir, "outside.png");
     writeFileSync(outside, PNG);
     symlinkSync(outside, join(folder, `${uuid(1)}.png`));
-    execFileSync("mkfifo", [join(folder, `${uuid(2)}.png`)]);
+    nonRegular(join(folder, `${uuid(2)}.png`));
     writeFileSync(join(folder, `${uuid(3)}.png`), PNG);
     linkSync(join(folder, `${uuid(3)}.png`), join(fixture.info.dataDir, "second-link.png"));
     for (const n of [1, 2, 3, 4]) {
@@ -48,13 +50,13 @@ posixOnly("attachment reads through the server", () => {
     }
   });
 
-  it("both avatar routes await the bounded check: a link or FIFO is refused, a stored image is accepted", async () => {
+  it("both avatar routes await the bounded check: a link or non-regular entry is refused, a stored image is accepted", async () => {
     const made = await fetch(`${fixture.info.url}/api/bots`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ name: "Avatar Check" }) });
     expect(made.status).toBeLessThan(300);
     const bot = (await made.json() as { bot?: { id: string }; id?: string });
     const id = bot.bot?.id ?? bot.id!;
     const upload = await fetch(`${fixture.info.url}/api/attachments`, { method: "POST", headers: { ...headers, "content-type": "image/png" }, body: PNG });
-    const stored = (await upload.json() as { path: string }).path.split("/").at(-1)!;
+    const stored = basename((await upload.json() as { path: string }).path);
     for (const route of [`/api/bots/${id}/profile`, `/api/bots/${id}`]) {
       for (const name of [`${uuid(1)}.png`, `${uuid(2)}.png`, `${uuid(3)}.png`]) {
         const refused = await within(3000, fetch(`${fixture.info.url}${route}`, { method: "PATCH", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ avatarUrl: `/api/attachments/${name}` }) }));
@@ -66,14 +68,14 @@ posixOnly("attachment reads through the server", () => {
     }
   });
 
-  it("an upload retry onto a FIFO answers 409 at once, four in parallel, and a normal upload still completes", async () => {
+  it("an upload retry onto a non-regular entry answers 409 at once, four in parallel, and a normal upload still completes", async () => {
     const id = uuid(5);
-    execFileSync("mkfifo", [join(folder, `${id}.png`)]);
+    nonRegular(join(folder, `${id}.png`));
     const retries = await within(5000, Promise.all(Array.from({ length: 4 }, () =>
       fetch(`${fixture.info.url}/api/attachments?uploadId=${id}`, { method: "POST", headers: { ...headers, "content-type": "image/png" }, body: PNG }))));
     for (const retry of retries) { expect(retry.status).toBe(409); await retry.text(); }
     const fileId = uuid(6);
-    execFileSync("mkfifo", [join(folder, `${fileId}.txt`)]);
+    nonRegular(join(folder, `${fileId}.txt`));
     const file = await within(5000, fetch(`${fixture.info.url}/api/files?name=a.txt&uploadId=${fileId}`, { method: "POST", headers: { ...headers, "content-type": "text/plain" }, body: "hello" }));
     expect(file.status).toBe(409); await file.text();
     const normal = await fetch(`${fixture.info.url}/api/attachments?uploadId=${uuid(7)}`, { method: "POST", headers: { ...headers, "content-type": "image/png" }, body: PNG });

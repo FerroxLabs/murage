@@ -30,6 +30,9 @@ export interface CapabilityProbeOptions {
   /** 1.0.11: an email:owner token is saved (the capability read can go on it when the account key has no email scope). */
   ownerKeySaved?: () => boolean;
   now?: () => number;
+  /** False on a host that cannot keep email's secrets yet (a Cloud home, until owner sign-in and sealed-secret persistence are
+   *  wired there): the probe never asks Flux and answers off. Absent = offered. */
+  offered?: () => boolean;
   /** DATA_DIR/email-capabilities.json; without it the probe keeps memory only (as 1.0.10). */
   capsFile?: string;
   /** Called after every read of the current account lands (definitive or not), so the app can read the status again. */
@@ -134,7 +137,9 @@ export class EmailCapabilityProbe {
   }
 
   /** True only when the saved account's last answer said enabled: true (r2.5: the platform flag) and passed the #33 checks (isEnabled). */
-  emailEnabled(): boolean { return isEnabled(this.current()); }
+  emailEnabled(): boolean { return this.offeredHere() && isEnabled(this.current()); }
+
+  private offeredHere(): boolean { return this.options.offered?.() !== false; }
 
   /** A key is saved and no definitive answer is known for it yet: "Checking", never off. */
   checking(): boolean {
@@ -189,6 +194,7 @@ export class EmailCapabilityProbe {
 
   /** Re-reads the answer. Only a definitive answer changes it (see the header); an unreadable answer is never enabled: true. */
   async refresh(): Promise<Capabilities | null> {
+    if (!this.offeredHere()) return null;
     const account = this.options.accountRef();
     if (!account) return null;
     const generation = this.generation;

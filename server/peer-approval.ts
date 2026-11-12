@@ -1,3 +1,5 @@
+import { serviceQueue, waitForProducerApproval, answerProducerRequestSync, producerBase, type ServiceAuthorityReader } from "./narrow-denials.ts";
+import { readApproval } from "./decision/index.ts";
 // Harness-native peer-comm approval gate.
 //
 // A bot with `approvePeerComms = true` may not call ask_bot or
@@ -19,7 +21,6 @@ import { messagesHighWater, openToolCardPage, openToolCardRowsInRange, openToolC
 import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import type { BotRecord, Message, Store } from "./store.ts";
 import type { RoutinePeerSource } from "./routine-permissions.ts";
-import { murageLine } from "./murage-line.ts";
 
 export { peerAllowKey } from "./peer-approval-key.ts";
 
@@ -48,11 +49,15 @@ export function peerApprovalFailure(outcome: PeerApprovalFailure): {
  * updates without waiting for a refresh. */
 export interface ApprovalBus {
   store: Store;
+  authorityFor?: ServiceAuthorityReader;
   /** SSE broadcast (kind: "message" envelope). */
   broadcast: (payload: Record<string, unknown>) => void;
   /** The provider turn running in a conversation now (internal-capabilities.ts providerTurnOf), from the server's own turn state, never a request.
    * A card that quotes a bot's message or names its choices names that turn, so revoking the turn's inputs withholds it. */
   turnOf?: (threadId: string) => string | undefined;
+  /** Browser execution only: park the current extension RPC at its owner wait,
+   * then regain ownership before returning the unchanged approval outcome. */
+  onBrowserOwnerWait?: (threadId: string, requestId: string) => ((releaseAfter?: boolean, signal?: AbortSignal) => Promise<void>) | undefined;
   onApproval?: (botId: string, threadId: string, requestId: string, messageId: string) => void;
   /** Does the current sender still cover the queued contact's ceiling? */
   fullAccessStanding?: (botId: string, threadId: string, routineAuthority?: RoutinePeerSource) => boolean;
@@ -95,12 +100,11 @@ interface Pending {
  * what the `request.resolved` fold does for provider cards; a harness-native
  * card never emits that event, so it has to settle itself. */
 function settleCard(pending: Pending, behavior: string, source: "user" | "system"): void {
-  const existing = pending.bus.store.messageById(pending.threadId, pending.messageId);
-  if (!existing?.card || existing.card.answered) return;
-  pending.bus.store.patchMessage(pending.threadId, pending.messageId, {
-    // A close the owner did not choose reads "Not answered", never "Denied" (LONGWORK H2). An "allow" stays "allow" whatever its source: an allow that went through ran the action, so "Not answered" would be untrue (GROK-STOPPED F6, kept on purpose).
-    card: { ...existing.card, answered: source === "user" || behavior === "allow" ? behavior : "unavailable", dismissed: source !== "user" },
-  });
+  const kind=pending.allowKey.startsWith('event_limit:')?'event-limit':'peer';
+  const item=serviceQueue(kind).pendingApprovals().find(item=>item.ref===pending.requestId);
+  if(!item)return;
+  if(source==='user')void serviceQueue(kind).answer(item.approvalId,{behavior:behavior==='allow'?'allow':'deny'});
+  else void serviceQueue(kind).stop(item.approvalId);
 }
 
 /** requestId → pending ask. Lives only in memory — restarting the
@@ -127,90 +131,34 @@ function allowKeyAllowed(from: BotRecord, allowKey: string): boolean {
   return from.alwaysAllow?.includes(allowKey) ?? false;
 }
 
-function pushApprovalCard(
-  bus: ApprovalBus,
-  from: BotRecord,
-  target: BotRecord,
-  message: string,
-  action: PeerAction,
-  requestId: string,
-  sourceThreadId: string,
-): Message {
-  const subtitle = message.length > 200 ? `${message.slice(0, 200)}…` : message;
-  const note = bus.store.appendMessage(sourceThreadId, murageLine({
-    role: "bot",
-    kind: "options",
-    turnId: bus.turnOf?.(sourceThreadId),
-    card: {
-      title: `@${from.name} wants to ${action === "ask_bot" ? "contact" : "delegate to"} @${target.name}`,
-      subtitle,
-      options: ["Allow", "Deny", "Always allow"],
-      requestId,
-      tool: action,
-      allowKey: peerAllowKey(action, target.id),
-    },
-  }));
-  return note;
-}
+export function peerPendingApprovals() { return serviceQueue('peer').pendingApprovals(); }
+export function eventLimitPendingApprovals() { return serviceQueue('event-limit').pendingApprovals(); }
 
-/** Ask the user (in the source task thread) whether `from` may `action` `target`.
- * Resolves with `"allow"`, the user's `"deny"` or `"cancelled"` (its bot or turn went away). If `from.alwaysAllow` already
- * covers the (action, target) pair, returns `"allow"` immediately
- * without a card. */
 export function requestPeerApproval(
-  bus: ApprovalBus,
-  from: BotRecord,
-  target: BotRecord,
-  message: string,
-  action: PeerAction,
-  sourceThreadId = from.threadId,
-  boundRequestId?: string,
-  routineAuthority?: RoutinePeerSource,
-): Promise<PeerApprovalOutcome> {
-  if (!bus.unattended?.(sourceThreadId) && routineAuthority?.triggerSource !== "schedule" && allowKeyAllowed(from, peerAllowKey(action, target.id))) {
-    return Promise.resolve("allow");
-  }
-  const late = `${sourceThreadId}\u0000${peerAllowKey(action, target.id)}`;
-  if (lateAllows.delete(late)) return Promise.resolve("allow");
-  return waitOnCard(bus, from.id, target.id, message, peerAllowKey(action, target.id), sourceThreadId, boundRequestId,
-    (requestId) => pushApprovalCard(bus, from, target, message, action, requestId, sourceThreadId));
+  bus: ApprovalBus, from: BotRecord, target: BotRecord, message: string, action: PeerAction,
+  sourceThreadId=from.threadId, boundRequestId?:string, routineAuthority?:RoutinePeerSource,
+):Promise<PeerApprovalOutcome> {
+  const key=peerAllowKey(action,target.id);
+  const baseAsk=!(!bus.unattended?.(sourceThreadId)&&routineAuthority?.triggerSource!=='schedule'&&allowKeyAllowed(from,key))
+    && !lateAllows.delete(`${sourceThreadId}\u0000${key}`);
+  return waitOnCard(bus,from.id,target.id,message,key,sourceThreadId,boundRequestId,'peer',action,{target:target.id,message},
+    {title:`@${from.name} wants to ${action==='ask_bot'?'contact':'delegate to'} @${target.name}`,subtitle:message.length>200?`${message.slice(0,200)}…`:message},
+    {tool:action,allowKey:key,options:['Allow','Deny','Always allow']},baseAsk);
 }
-
-/** The one place a harness-native card is opened and awaited: the card has to
- * exist before the entry, so an answer or a cancel can always find it. */
 function waitOnCard(
-  bus: ApprovalBus,
-  fromBotId: string,
-  toBotId: string,
-  message: string,
-  allowKey: string,
-  sourceThreadId: string,
-  boundRequestId: string | undefined,
-  push: (requestId: string) => Message,
-): Promise<PeerApprovalOutcome> {
-  return new Promise((resolve) => {
-    const requestId = newId();
-    const card = push(requestId);
-    let held = false;
-    try { held = bus.routineCard?.opened(sourceThreadId, requestId, card.card?.title ?? "A bot-to-bot contact") === true; } catch { /* delivery never changes authority */ }
-    // The card waits for the owner until it is answered or its turn, bot or
-    // request goes away (cards-wait 1.0.8, GROK-STOPPED F1): no expiry timer.
-    // Bot-to-bot caller waits stay bounded where they wait, not here.
-    pendingComms.set(requestId, {
-      resolve,
-      held,
-      allowKey,
-      requestId,
-      fromBotId,
-      toBotId,
-      message,
-      threadId: sourceThreadId,
-      messageId: card.id,
-      bus,
-      ...(boundRequestId ? { boundRequestId } : {}),
+  bus:ApprovalBus,fromBotId:string,toBotId:string,message:string,allowKey:string,sourceThreadId:string,boundRequestId:string|undefined,
+  kind:'peer'|'event-limit',tool:string,input:unknown,view:{title:string;subtitle:string},action:Record<string,unknown>,baseAsk=true,
+):Promise<PeerApprovalOutcome> {
+  const requestId=newId();
+  return waitForProducerApproval(serviceQueue(kind),{authority:bus.authorityFor?.(sourceThreadId,fromBotId),ref:requestId,tool,input,
+    action:{...action,requestId},view,base:producerBase(baseAsk)}, {presented:(_item,messageId)=>{
+      const held=bus.routineCard?.opened(sourceThreadId,requestId,view.title)===true;
+      pendingComms.set(requestId,{resolve:()=>{},held,allowKey,requestId,fromBotId,toBotId,message,threadId:sourceThreadId,messageId,bus,...(boundRequestId?{boundRequestId}:{})});
+      bus.onApproval?.(fromBotId,sourceThreadId,requestId,messageId);
+    }}).then(outcome=>{
+      const pending=pendingComms.get(requestId);if(pending){pendingComms.delete(requestId);closeHeld(pending,outcome==='cancelled'?'none':outcome);}
+      return outcome;
     });
-    try { bus.onApproval?.(fromBotId, sourceThreadId, requestId, card.id); } catch { /* Delivery never changes approval authority. */ }
-  });
 }
 
 /** The two tools an event-run limit card carries. They are not peer contacts:
@@ -241,38 +189,20 @@ export function requestEventLimitApproval(
   const body = kind === "handoff"
     ? `This run has handed off ${plural(done, "task", "tasks")}, the most it can without you. Next it wants to ask @${targetName ?? "another bot"}. Allow lets this run hand off up to ${more} more${last}. Not now stops hand-offs for the rest of this run. Work already handed off carries on.`
     : `This run has added ${plural(done, "bot", "bots")}, the most it can without you. Next it wants to add @${targetName ?? "another bot"}. Allow lets this run add up to ${more} more${last}. Not now stops new bots for the rest of this run.`;
-  return waitOnCard(bus, from.id, from.id, title, `event_limit:${eventId}:${kind}`, sourceThreadId, undefined, (requestId) =>
-    bus.store.appendMessage(sourceThreadId, murageLine({
-      role: "bot",
-      kind: "options",
-      turnId: bus.turnOf?.(sourceThreadId),
-      card: {
-        title,
-        subtitle: body,
-        options: ["Allow", "Not now"],
-        requestId,
-        tool: kind === "handoff" ? "more_handoffs" : "more_new_bots",
-      },
-    })));
+  const tool=kind==='handoff'?'more_handoffs':'more_new_bots';
+  return waitOnCard(bus,from.id,from.id,title,`event_limit:${eventId}:${kind}`,sourceThreadId,undefined,'event-limit',tool,
+    {kind,targetName,eventId},{title,subtitle:body},{tool,options:['Allow','Not now']});
 }
 
 /** Called by the respond endpoints BEFORE forwarding to the provider
  * adapter. Returns true if the requestId belonged to a pending peer
  * approval (and resolves it); false if it was a provider request and
  * the endpoint should keep going. */
-export function resolvePeerComms(
-  _bus: ApprovalBus,
-  requestId: string,
-  behavior: string | undefined,
-): boolean {
-  const pending = pendingComms.get(requestId);
-  if (!pending) return false;
-  pendingComms.delete(requestId);
-  const allow = behavior === "allow";
-  settleCard(pending, allow ? "allow" : "deny", "user");
-  closeHeld(pending, allow ? "allow" : "deny");
-  pending.resolve(allow ? "allow" : "deny");
-  return true;
+export function resolvePeerComms(_bus:ApprovalBus,requestId:string,behavior:string|undefined):boolean {
+  const pending=pendingComms.get(requestId);
+  if(!pending)return false;
+  const kind=pending.allowKey.startsWith('event_limit:')?'event-limit':'peer';
+  return answerProducerRequestSync(serviceQueue(kind),pending.threadId,requestId,behavior);
 }
 
 /** The bus holds this request (a bot-to-bot contact card is waiting on
@@ -351,6 +281,8 @@ export function settleStaleCardPage(bus: ApprovalBus, kinds: readonly StaleCardK
   for (const { threadId, message } of page.rows) {
     const card = message.card;
     const kind = kinds.find((candidate) => candidate.tools.includes(String(card?.tool)));
+    const approvalId=(card as {approvalId?:string}|undefined)?.approvalId;
+    if(approvalId&&readApproval(approvalId))continue;
     if (!card || !kind || !owned.has(threadId) || card.answered || card.dismissed || kind.keep(card)) continue;
     if (bus.store.patchMessagePoint(threadId, message.id, { card: { ...card, answered: "unavailable", dismissed: true } })) dismissed += 1;
   }
@@ -423,6 +355,8 @@ export function dismissStaleToolCards(bus: ApprovalBus, tools: readonly string[]
   let dismissed = 0;
   for (const { threadId, message } of hits) {
     const card = message.card;
+    const approvalId=(card as {approvalId?:string}|undefined)?.approvalId;
+    if(approvalId&&readApproval(approvalId))continue;
     if (!card || !owned.has(threadId) || card.answered || card.dismissed || keep(card)) continue;
     if (bus.store.patchMessagePoint(threadId, message.id, { card: { ...card, answered: "unavailable", dismissed: true } })) dismissed += 1;
   }

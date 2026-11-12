@@ -77,6 +77,7 @@ export function buildSyntheticV6(path: string, options: SyntheticV6Options): Syn
     // 1.0.1 had none of the derived transcript tables added since (open cards, first rows of turns, branch walks, pending browser checks): the open fills them
     db.exec("DROP TABLE IF EXISTS open_card; DROP TABLE IF EXISTS turn_first; DROP TABLE IF EXISTS card_branch; DROP TABLE IF EXISTS branch_walk; DROP TABLE IF EXISTS browser_check_pending; DROP TABLE IF EXISTS transcript_index_state; DROP TABLE IF EXISTS thread_key; DROP TABLE IF EXISTS seg; DROP TABLE IF EXISTS msg_branch; DROP TABLE IF EXISTS fill_pending; DROP TABLE IF EXISTS line; DROP TABLE IF EXISTS branch_change; DROP TABLE IF EXISTS message_image; DROP TABLE IF EXISTS attachment_name; DROP TABLE IF EXISTS keyed_card");
     // what 1.0.1 had: the search index over every message, and the shape marker at schema 6
+    db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(t, tokenize='trigram', content='', contentless_delete=1, detail=none)");
     db.exec("INSERT INTO messages_fts(rowid,t) SELECT rowid,text FROM messages WHERE kind='text'");
     validateMemorySchema(db, { incrementalShapes: true });
     db.exec("PRAGMA wal_checkpoint(TRUNCATE)");

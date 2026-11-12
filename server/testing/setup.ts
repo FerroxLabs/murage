@@ -8,11 +8,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach } from "vitest";
 
+import { prepareWorkspaceTestDependencies } from "./workspace-dependencies.ts";
 import { settleTestHandles } from "../test-handle-registry.ts";
 import { removeTempDir } from "./cleanup.ts";
 import { scrubAmbientMurageEnv } from "./murage-env.mjs";
 import { installSafeWipeGuard } from "./safe-wipe.mjs";
 import { installNoFollowRmSync } from "../link-removal.ts";
+
+prepareWorkspaceTestDependencies();
 
 // Ambient Murage runtime keys (a bot's own terminal, a server in another
 // window) never reach a test or a child it spawns: each test sets the keys it

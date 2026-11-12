@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// FLUX-BURN-COPY-1018: Flux's hourly spend gate (flux-router forge_hook.py, the hourly burn check) answers 429 with
+// FLUX-BURN-COPY-1018: Flux's hourly spend gate (the hourly burn check) answers 429 with
 // detail {"error":"hourly_burn_limit", ..., "retry_after": <seconds>}. Fuigo relays it as ACP -32003 with the sentence
 // "API error (status 429 Too Many Requests): None: hourly_burn_limit". It is read as its own Flux code: never resent, one card
 // that says the Flux hourly limit is reached, and the reset time only when the body carries retry_after.
@@ -14,7 +14,7 @@ import { classifyError } from "./drivers/retry.ts";
 const NOW = 1_800_000_000_000;
 // The recorded Fuigo 1.0.37 relay: JSON-RPC error -32003, error_kind rate_limited, the code only in the sentence.
 const RPC_32003 = { code: -32003, message: "API error (status 429 Too Many Requests): None: hourly_burn_limit", data: { error_kind: "rate_limited" } };
-// forge_hook.py's HTTPException detail, as the Flux key route receives the raw body.
+// The Flux service's HTTPException detail, as the Flux key route receives the raw body.
 const DETAIL = { detail: { error: "hourly_burn_limit", subscription_tier: "pro", spent_usd_last_hour: 12.5, inflight_usd: 0.2, threshold_usd: 12, retry_after: 1800 } };
 // LiteLLM flattens the same dict into error.message as a Python repr.
 const REPR = "{'error': 'hourly_burn_limit', 'subscription_tier': 'pro', 'spent_usd_last_hour': 12.5, 'inflight_usd': 0.2, 'threshold_usd': 12, 'retry_after': 1800}";
@@ -215,7 +215,7 @@ describe("the server loads the refusal reader as plain Node", () => {
   // The server runs its .ts files under Node type stripping, which refuses parameter properties, enums and namespaces.
   it("imports flux-refusal.ts with Node type stripping and reads a refusal", () => {
     const code = "import(process.argv[1]).then(m => { process.stdout.write(String(m.fluxRefusalCode(\"API error (status 429 Too Many Requests): None: hourly_burn_limit\"))); })";
-    const out = execFileSync(process.execPath, ["-e", code, new URL("./flux-refusal.ts", import.meta.url).href], { encoding: "utf8" });
+    const out = execFileSync(process.execPath, ["-e", code, new URL("./flux-refusal.ts", import.meta.url).href], { windowsHide: true, encoding: "utf8" });
     expect(out).toBe("hourly_burn_limit");
   });
 });

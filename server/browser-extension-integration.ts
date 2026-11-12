@@ -1,3 +1,4 @@
+import { extensionProfileForChoice } from './browser-mode-policy.ts';
 import { homedir } from "node:os";
 import { connectOwnerBrowser, removeOwnerBrowser } from "../electron/browser-extension-registration.mjs";
 import { runningAppImage } from "../electron/desktop-relaunch.mjs";
@@ -46,11 +47,12 @@ export class BrowserExtensionIntegration {
   private expiry?: ReturnType<typeof setInterval>;
   private registrationProblem = "";
   private registrationCode = "";
-  private options: { panelAvatars?: PanelAvatars; dataDir: string; socketDir: string; workspaceId: string; approvalBus: ApprovalBus; bot: (id: string) => BotRecord | undefined; protectedOrigins: string[]; createEngine?: Parameters<typeof createBrowserExtensionService>[0]["createEngine"]; collectFacts?: Parameters<typeof createBrowserExtensionService>[0]["collectFacts"]; stopped?: (threadId: string) => void;
+  private options: { lifecycle?: <T>(botId:string,fn:()=>Promise<T>)=>Promise<T>; panelAvatars?: PanelAvatars; dataDir: string; socketDir: string; workspaceId: string; approvalBus: ApprovalBus; bot: (id: string) => BotRecord | undefined; protectedOrigins: string[]; createEngine?: Parameters<typeof createBrowserExtensionService>[0]["createEngine"]; collectFacts?: Parameters<typeof createBrowserExtensionService>[0]["collectFacts"]; stopped?: (threadId: string) => void;
     /** The owner's latest proven instruction in a conversation (level-1 free navigation, coordinator ruling 0.1.62). */
     ownerInstruction?: (threadId: string) => { id: string; text: string } | undefined;
     /** A6: the owner's own message that started the turn running now in this conversation (explicit owner origin only), or undefined. */
     ownerTurnInstruction?: (threadId: string) => { id: string; text: string } | undefined;
+    readTurn?: (botId: string, threadId: string) => ReturnType<NonNullable<Parameters<typeof createBrowserExtensionService>[0]['readTurn']>>;
     /** The hard floor asked for the owner: post the Your turn note in the conversation and send the push (no page text). */
     yourTurn?: (info: YourTurnInfo & { bot: BotRecord }) => void;
     /** C2 / RES-002: the extension reported that the last step may have run. One plain line to the owner in the conversation. */
@@ -115,6 +117,8 @@ export class BrowserExtensionIntegration {
   /** The owner answers a card. A card whose call already returned WAITING (or that survived a restart) needs the saved state loaded
    * first, so its binding can be looked at again before anything runs. */
   /** APPROVE-ALL (design 6.2 step 11): read only, whether this request is one of the extension's cards. Settles nothing. */
+  pendingApprovals() { return this.approvals.pendingApprovals(); }
+  approvalQueue() { return this.approvals.approvalQueue(); }
   knowsCard(requestId: string): boolean { return this.approvals.knows(requestId); }
   async answerCard(threadId: string, requestId: string, behavior: string | undefined): Promise<boolean> {
     if (!this.approvals.knows(requestId)) return false;
@@ -138,6 +142,8 @@ export class BrowserExtensionIntegration {
         // The side panel shows the bot's name and the conversation, never the ids.
         ownerInstruction: context => this.options.ownerInstruction?.(context.threadId),
         ownerTurnInstruction: context => this.options.ownerTurnInstruction?.(context.threadId),
+        readTurn: context => this.options.readTurn?.(context.botId, context.threadId),
+        authorityFor: context => this.options.approvalBus.authorityFor?.(context.threadId,context.botId),
         approvalMode: context => this.options.bot(context.botId)?.browserApproval ?? "task",
         botName: context => this.options.bot(context.botId)?.name ?? "Your bot",
         siteSetting: (context, origin) => this.options.siteSetting?.(context.botId, context.profileId, origin),
@@ -175,13 +181,13 @@ export class BrowserExtensionIntegration {
           if (!bot) return "never";
           const state = await this.approvals.ask({ bot, threadId: context.threadId, bindingId: context.bindingId, generation: context.generation,
             digest: createHash("sha256").update(JSON.stringify(["site", context, origin])).digest("hex"),
-            summary: `Let ${bot.name} read and work on ${origin}? Site access is remembered for this browser task. It does not approve purchases, messages or other changes.`, scope: "site", waitMs: HUMAN_WAIT_MS, binding, kind: "site", title: `${bot.name} wants to use ${(() => { try { return new URL(origin).host || origin; } catch { return origin; } })()}` });
+            summary: `Let ${bot.name} read and work on ${origin}? Site access is remembered for this browser task. It does not approve purchases, messages or other changes.`, scope: "site", call:{tool:"browser_site",input:{origin}}, waitMs: HUMAN_WAIT_MS, binding, kind: "site", title: `${bot.name} wants to use ${(() => { try { return new URL(origin).host || origin; } catch { return origin; } })()}` });
           return state === "allow" ? "allow" : state === "waiting" ? "waiting" : "ask";
         },
         askAction: async (context, action, binding) => {
           const bot = this.options.bot(context.botId);
           if (!bot) return false;
-          const state = await this.approvals.ask({ bot, threadId: context.threadId, bindingId: context.bindingId, generation: context.generation, digest: action.digest, summary: action.summary.slice(0, 12000), ...(action.pushSummary ? { pushSummary: action.pushSummary } : {}), waitMs: HUMAN_WAIT_MS, binding, kind: "action", title: browserActionCardTitle(bot.name, action), ...(action.cardKind ? { cardKind: action.cardKind } : {}) });
+          const state = await this.approvals.ask({ bot, threadId: context.threadId, bindingId: context.bindingId, generation: context.generation, digest: action.digest, call:{tool:action.name,input:action}, summary: action.summary.slice(0, 12000), ...(action.pushSummary ? { pushSummary: action.pushSummary } : {}), waitMs: HUMAN_WAIT_MS, binding, kind: "action", title: browserActionCardTitle(bot.name, action), ...(action.cardKind ? { cardKind: action.cardKind } : {}) });
           return state === "allow" ? true : state === "waiting" ? "waiting" : false;
         },
         consumeApproval: (context, query) => this.approvals.consume({ bindingId: context.bindingId, kind: query.kind, binding: query.binding }),
@@ -344,14 +350,18 @@ export class BrowserExtensionIntegration {
   status() { return this.service?.status() ?? { profiles: [], bindings: [] }; }
   /** Used by owner-controlled packaging/setup only, never by a model/client endpoint. */
   hostConfigPath() { return this.broker?.configPath ?? null; }
+  async releaseBot(botId: string): Promise<void> {
+    const service = await this.start();
+    for (const binding of service.status().bindings.filter(item => item.botId === botId)) {
+      await this.ownerAction(binding.bindingId, 'stop');
+      if (!service.stoppedByExtension(binding.bindingId)) throw new Error('Chrome has not acknowledged stopping the old task.');
+    }
+  }
   async bind(bot: BotRecord, threadId: string) {
+    if (bot.browserRelease) throw Object.assign(new Error('The old browser connection is still closing.'), { code: 'release_pending' });
     const service = await this.start();
     const profiles = service.status().profiles;
-    // The sole profile stands in only when its hello says Google Chrome. Murage
-    // for Chrome says "chromium" in Chrome, Edge and Brave alike, so such a
-    // profile waits for the owner to choose it (1.0.7).
-    const sole = profiles.length === 1 && (profiles[0].browser ?? "").toLowerCase() === "chrome" ? profiles[0].profileId : undefined;
-    const profileId = bot.browserExtensionProfileId ?? sole;
+    const profileId = extensionProfileForChoice({profile:bot.browserExtensionProfileId,browser:bot.browserExtensionBrowser},profiles);
     if (!profileId) throw Object.assign(new Error(profiles.length ? "Choose the browser profile to connect." : "Connect Murage for Chrome to use your browser. Your request stays in this conversation."), { code: "browser_extension_setup_required" });
     // The only profile online is used for this turn but never pinned here: a
     // profile is remembered only when the owner chooses it (setup Continue or
@@ -362,7 +372,7 @@ export class BrowserExtensionIntegration {
       const code = (error as { code?: unknown })?.code;
       throw Object.assign(new Error(code === "host_offline" ? "The owner's browser is not connected right now." : code === "incompatible_capabilities" ? "Update Murage for Chrome in the owner's browser to use it with this version of Murage. Ask the owner to update the extension, then try again."
         : code === "update_murage" ? "Update Murage on this computer to use this version of Murage for Chrome. Ask the owner to update the app, then try again."
-        : code === "binding_capacity" ? "Murage for Chrome is holding as many browser tasks as it can. The owner can stop one in the extension side panel." : "The owner's browser could not be reached for this conversation."), { code: "browser_extension_not_ready" });
+        : code === "binding_capacity" ? "Murage for Chrome is holding as many browser tasks as it can. The owner can stop one in the extension side panel." : "The owner's browser could not be reached for this conversation."), { code: typeof code === "string" && ["host_offline","incompatible_capabilities","update_murage","binding_capacity"].includes(code) ? code : "browser_extension_not_ready" });
     }
     // Tools are mounted only for a binding that can act now. A paused, stopped
     // or offline one would list every browser tool and refuse every call.
@@ -373,19 +383,20 @@ export class BrowserExtensionIntegration {
       : state === "paused" && status?.pausedReason === "uncertain" ? "Browser control is paused because the owner's browser restarted during the last step, so that step may not have finished. Ask the owner to check the page and resume it in Murage for Chrome before you carry on."
       : state === "paused" && status?.pausedReason === "connection_lost" ? "Browser control is paused because Chrome or Murage closed while you were using it. Ask the owner to check the page and press Resume in Murage for Chrome before you carry on."
       : state === "paused" ? BROWSER_EXTENSION_PAUSED_REASON
-      : "The owner's browser is not connected right now."), { code: "browser_extension_not_ready" });
+      : "The owner's browser is not connected right now."), { code: state === "stopped" ? "stopped" : state === "paused" ? status?.pausedReason ?? "paused" : "host_offline" });
     return binding;
   }
   async externalBind(identity: { botId: string; threadId: string; profileId: string; clientId: string }) {
+    if (this.options.bot(identity.botId)?.browserRelease) throw Object.assign(new Error('The old browser connection is still closing.'), { code: 'release_pending' });
     const service = await this.start();
     return service.ensureBinding(identity);
   }
-  async dispatch(bindingId: string, method: string, params: Record<string, unknown>, authorize: () => boolean) {
+  async dispatch(bindingId: string, method: string, params: Record<string, unknown>, authorize: () => boolean, bootstrapOnly = false) {
     const service = this.service;
     if (!service || !authorize()) throw new Error("Browser connection is unavailable.");
     if (method === "tools/list") return service.tools(bindingId, authorize);
     if (method !== "tools/call") throw new Error("Unsupported browser method.");
-    return service.dispatch(bindingId, params.name, params.arguments ?? {}, authorize);
+    return service.dispatch(bindingId, params.name, params.arguments ?? {}, authorize, bootstrapOnly);
   }
   /** The owner's actions. `surface` is where the request came from: the phone and the side panel may only tighten (stop, pause,
    * end the task, revoke, set a site to Ask or Never); raising a site's access is the desktop app's alone. Unknown means tighten only. */
@@ -394,7 +405,15 @@ export class BrowserExtensionIntegration {
     if (!service) throw new Error("Browser connection is unavailable.");
     if (action === "stop" || action === "pause") { this.approvals.cancelBinding(bindingId); return service[action](bindingId); }
     // RES-003: a new task after Stop is the owner's to start. It gives no authority back (a new binding, no grants), so the desktop, the panel and the phone may all do it; a bot call never reaches here.
-    if (action === "start" || action === "newtask") { this.approvals.cancelBinding(bindingId); return service.startNewTask(bindingId); }
+    if (action === "start" || action === "newtask") {
+      const binding=service.status().bindings.find(b=>b.bindingId===bindingId);
+      const start=async()=>{
+        const bot=binding&&this.options.bot(binding.botId);
+        if(bot?.browserRelease||bot?.browserMode==='builtin'||bot?.browserMode==='chrome-direct')throw Object.assign(new Error('This browser choice changed. Open the Browser tab.'),{status:409,code:'revision_changed'});
+        this.approvals.cancelBinding(bindingId);return service.startNewTask(bindingId);
+      };
+      return binding&&this.options.lifecycle?this.options.lifecycle(binding.botId,start):start();
+    }
     // T25 / D9: Continue after a hand-over is the owner at the desktop or in the browser's own panel. The phone cannot.
     if (action === "continue") {
       if (input.surface !== "desktop" && input.surface !== "panel") throw Object.assign(new Error("Continue needs the Murage app on your computer."), { status: 403, errorKey: "browserExt.owner.errorContinueDesktop" });

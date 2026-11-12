@@ -1,0 +1,20 @@
+Cleanup murage-vt1
+0.42 1.76 3.22 1/751 1118505
+4.0K	/work/fuigo-builds/swarm-b/winscen/wt/node_modules
+531M	/work/fuigo-builds/swarm-b/winscen/wt/dist-server
+243M	/work/fuigo-builds/swarm-b/winscen/wt/.test-tmp/cfix4-winscen
+PASS own generated outputs absent; no job containers remain
+Cleanup murage-vt4
+1.39 1.52 1.93 2/327 2055212
+4.0K	/work/fuigo-builds/swarm-b/winscen/wt/node_modules
+105M	/work/fuigo-builds/swarm-b/winscen/wt/dist-server
+243M	/work/fuigo-builds/swarm-b/winscen/wt/.test-tmp/cfix4-winscen
+PASS own generated outputs absent; no job containers remain
+Cleanup murage-vt5
+6.14 3.48 3.02 8/540 1301926
+4.0K	/work/fuigo-builds/swarm-b/winscen/wt/node_modules
+243M	/work/fuigo-builds/swarm-b/winscen/wt/.test-tmp/cfix4-winscen
+PASS own generated outputs absent; no job containers remain
+105M	/work/fuigo-builds/swarm-b/winscen/wt/dist-server
+243M	/work/fuigo-builds/swarm-b/winscen/wt/.test-tmp/cfix4-winscen
+PASS local own generated outputs absent; tracked build assets preserved

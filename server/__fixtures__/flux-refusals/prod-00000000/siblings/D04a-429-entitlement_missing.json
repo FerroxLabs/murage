@@ -1,0 +1,37 @@
+{
+ "status": 429,
+ "headers": {
+  "content-length": "266",
+  "content-type": "application/json"
+ },
+ "body": {
+  "error": {
+   "type": "rate_limit_exceeded",
+   "state": "entitlement_missing",
+   "message": "This account has no active Flux entitlement, so no allowance could be resolved for it. Contact support@fluxrouter.ai to have the account provisioned.",
+   "support": "support@fluxrouter.ai"
+  }
+ },
+ "endpoint": "/v1/responses",
+ "method": "from-code (rendered in fixture env with the real Flux renderer)",
+ "headers_note": "content-type and content-length are from the real renderer. The security headers seen on every live chat capture (x-frame-options, content-security-policy, x-content-type-options) are app-wide and expected here too, but these routes were NOT live-captured (staging does not mount the Flux /v1/messages and /v1/responses handlers). x-request-id is echoed on /v1/messages only when the client sent one.",
+ "per_endpoint": {
+  "/v1/messages": {
+   "status": 429,
+   "headers": {
+    "content-length": "214",
+    "content-type": "application/json"
+   },
+   "body": {
+    "type": "error",
+    "error": {
+     "type": "rate_limit_error",
+     "message": "This account has no active Flux entitlement, so no allowance could be resolved for it. Contact support@fluxrouter.ai to have the account provisioned."
+    }
+   },
+   "method": "from-code (rendered in fixture env with the real Flux renderer)",
+   "headers_note": "content-type and content-length are from the real renderer. The security headers seen on every live chat capture (x-frame-options, content-security-policy, x-content-type-options) are app-wide and expected here too, but these routes were NOT live-captured (staging does not mount the Flux /v1/messages and /v1/responses handlers). x-request-id is echoed on /v1/messages only when the client sent one."
+  }
+ },
+ "notes": "Sibling of 04 (same _entitlement_refusal_body shape, different state/message). Rendered for /v1/responses and /v1/messages only, as requested: on /v1/chat/completions the forge failure hook rewrites this 429 into the same 402 free_tier_exhausted body as 04 (tier not yet stamped -> 'free', 'exceeded' in str(exc)). No Retry-After on any endpoint. Code comment at src/rate_limits.py:1109-1118 calls this branch a BACKSTOP 'unreachable from production today' (2026-07-30 backfill left no rowless keys); the code path itself is present and not flag-gated at 00000000. DB state not checked here."
+}

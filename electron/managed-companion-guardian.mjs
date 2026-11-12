@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Parent-death guardian for the managed Companion origin.
 //
 // Electron launches this small Node process with an open stdin pipe. It owns
@@ -158,12 +159,12 @@ export async function runManagedCompanionGuardian({
         "--token-file",
         tokenFile,
       ],
-      {
+      withHideInherit({
         env: minimalCloudflaredEnvironment(environment, platform),
         shell: false,
         windowsHide: true,
         stdio: ["ignore", "ignore", "ignore"],
-      },
+      }),
     );
   } catch (error) {
     gateway.invalidate();

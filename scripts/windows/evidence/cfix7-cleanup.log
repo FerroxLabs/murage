@@ -1,0 +1,3 @@
+PASS remote cleanup: /work/fuigo-builds/swarm-b/winscen/wt/node_modules
+PASS remote cleanup: /work/fuigo-builds/swarm-b/winscen/wt/.test-tmp/cfix7-winscen
+PASS local job tooling cleanup; no local build outputs created

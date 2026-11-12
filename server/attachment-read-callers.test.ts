@@ -82,11 +82,11 @@ describe("upload retries", () => {
   });
 
   it.runIf(posix)("a FIFO at the name answers 409 at once for images and files; four in parallel, then a normal upload completes", async () => {
-    execFileSync("mkfifo", [join(FOLDER, `${ID}.png`)]);
+    execFileSync("mkfifo", [join(FOLDER, `${ID}.png`)], { windowsHide: true });
     const answers = await Promise.allSettled(Array.from({ length: 4 }, () => saveImageUpload(PNG, "image/png", ID)));
     for (const answer of answers) expect(answer).toMatchObject({ status: "rejected", reason: { status: 409 } });
     const fileId = "55555555-5555-4555-8555-555555555555";
-    execFileSync("mkfifo", [join(FOLDER, `${fileId}.txt`)]);
+    execFileSync("mkfifo", [join(FOLDER, `${fileId}.txt`)], { windowsHide: true });
     await expect(saveFile((async function* () { yield Buffer.from("hello"); })(), "a.txt", "text/plain", { uploadId: fileId })).rejects.toMatchObject({ status: 409 });
     expect((await saveImageUpload(PNG, "image/png")).bytes).toBe(PNG.length);
   }, 5000);

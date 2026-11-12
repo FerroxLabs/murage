@@ -1,0 +1,22 @@
+Job bld2-toolid-s4a, branch dev/1019-toolid-s4a, binding REDESIGN-tool-identity-r1.2.md section 4 S4a.
+Pure reader port: server/no-limits-code.ts and Python, JavaScript, shell helpers. S4b owns approval-path integration; S3 owns Hermes FSM and D5. The MAIN drop-admin-hooks default is unchanged by this reader-only change.
+
+Collection repair: removed the prior unimplemented extractor API tests (saved at /work/fuigo-builds/swarm-b/bld-toolid-s4a/r11-draft-test.txt). Replaced with direct, byte-pinned TSV rows and a callable always-run stub before implementing the reader. RED: 105 assertions-bearing tests executed, 78 failed, 27 passed; zero collection failures. Original r1.1 collection-only failure remains in ../red.log.
+
+Final reader vitest: 117 passed (104 normative rows, one hash/count test including both original fixture hashes, 12 adapter/boundary tests). 0 corpus mismatches. No expectation was edited.
+Reference cross-check: 104 complete twin lists match; all 49 Python corpus inputs match ast-based twins and literal multisets. 0 mismatches. Python parses the payloads; it never executes them. Production has no Python subprocess/dependency.
+Existing regressions: always-ask 5890 passed; No-limits do-everything 27 passed; outside-scan inert 52 passed; app-action-grant 34 passed.
+TypeScript: full tsconfig.server.json passed; final scoped strict check passed.
+Lint: 6 files, 0 warnings, 0 errors.
+Isolated fixture: launchVerificationServer -> runControlMurage doctor with explicit fixture URL -> close. doctor.ok=true, verification engine available, data removed; original log path and retained server log are in fixture-smoke.log / fixture-server.log. This proves readiness, not a real-provider conversation or S4b integration.
+
+Containers: exclusively it-remote.sh, IT_JOB=bld2-toolid-s4a (then -checks / -final), IT_W=/work/fuigo-builds/swarm-b/toolid-s4a/wt, IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh. Used murage-vt1 and murage-vt6, at most two containers concurrently; no vtq. All containers auto-removed. Removed job-created node_modules and Python bytecode on both runners and locally. No build outputs emitted (tsc --noEmit). Cleanup load: host 14.79, vt1 7.32, vt6 3.58.
+
+Reproduce from repository root inside the prescribed container:
+node node_modules/vitest/vitest.mjs run server/no-limits-code.test.ts --reporter=verbose
+node --experimental-strip-types lane-evidence/toolid-s4a/r12/ast-parity.mjs
+node node_modules/vitest/vitest.mjs run server/always-ask.test.ts server/no-limits-do-everything-1019.test.ts server/outside-scan-inert-1018.test.ts server/app-action-grant.test.ts --reporter=verbose
+node node_modules/typescript/bin/tsc -p tsconfig.server.json --pretty false
+node node_modules/typescript/bin/tsc --target ES2023 --module NodeNext --moduleResolution NodeNext --allowImportingTsExtensions --strict --noUnusedLocals --noUnusedParameters --skipLibCheck --noEmit --types node server/no-limits-code.ts server/no-limits-code.test.ts
+node_modules/.bin/oxlint server/no-limits-code.ts server/no-limits-shell.ts server/no-limits-python.ts server/no-limits-javascript.ts server/code-lexer.ts server/no-limits-code.test.ts
+node --experimental-strip-types lane-evidence/toolid-s4a/r12/fixture-smoke.mjs

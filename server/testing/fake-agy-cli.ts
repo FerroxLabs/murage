@@ -82,6 +82,7 @@ function driveMcp(
   return new Promise((resolve, reject) => {
     const env = { ...process.env, ...entry.env };
     const child = spawn(entry.command, entry.args ?? [], {
+      windowsHide: true,
       env,
       stdio: ["pipe", "pipe", "inherit"],
     });
@@ -294,11 +295,11 @@ function hookDenial(name: string, args: unknown = {}, stepIdx = 0, always = fals
           // (cmd drops the outer pair of quotes Murage adds). execSync would run `cmd /d /s /c "<command>"`, which
           // wraps it in one more pair, so the Windows form is spelled out here.
           if (process.platform === "win32") {
-            const run = spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/c", handler.command], { input, cwd, encoding: "utf8", timeout: 15_000, windowsVerbatimArguments: true });
+            const run = spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/c", handler.command], { windowsHide: true, input, cwd, encoding: "utf8", timeout: 15_000, windowsVerbatimArguments: true });
             if (run.error) throw run.error;
             if (run.status !== 0) throw new Error(`Command failed: ${handler.command} (exit ${run.status}) ${String(run.stderr ?? "").trim()}`.replace(/\n/g, " "));
             answer = run.stdout;
-          } else answer = execSync(handler.command, { input, cwd, encoding: "utf8", timeout: 15_000 });
+          } else answer = execSync(handler.command, { windowsHide: true, input, cwd, encoding: "utf8", timeout: 15_000 });
         } catch (error) {
           return `hook failed (${(error as Error).message.split("\n")[0]})`;
         }
@@ -390,6 +391,11 @@ for (const [index, call] of calls.entries()) {
     continue;
   }
   const refused = hookDenial(call.name, call.args, index);
+  // An adversarial engine can report execution even after its hook denied it.
+  if (process.env.FAKE_AGY_REPORT_STATE === "DONE" || process.env.FAKE_AGY_REPORT_STATE === "ERROR") {
+    step(process.env.FAKE_AGY_REPORT_STATE);
+    continue;
+  }
   if (refused !== null) {
     step("ERROR", { error: { type: "TOOL_ERROR", message: `tool call denied by pre-tool hook: ${refused}` } });
     continue;
@@ -398,7 +404,7 @@ for (const [index, call] of calls.entries()) {
     // The platform's own command shell: there is no /bin/sh on Windows, so a run_command there must go through cmd.exe
     // (ComSpec), or the step "ran" without running anything and a test's file never appears.
     const shell = process.platform === "win32" ? process.env.ComSpec || "cmd.exe" : "/bin/sh";
-    try { execSync(call.args.CommandLine, { cwd: process.cwd(), stdio: "ignore", shell }); } catch { /* the step still ran */ }
+    try { execSync(call.args.CommandLine, { windowsHide: true, cwd: process.cwd(), stdio: "ignore", shell }); } catch { /* the step still ran */ }
   }
   step("DONE");
 }
@@ -406,8 +412,11 @@ if (process.env.FAKE_AGY_DUMP && toolCalls) writeFileSync(`${process.env.FAKE_AG
 const denial = toolCalls ? null : hookDenial(toolName);
 if (toolCalls) {
   // the tool steps ran above
-} else if (denial !== null) {
-  out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 0, state: "ERROR", step_type: "tool", tool_name: toolName, tool_info: { name: toolName, parameters: {}, error: { type: "TOOL_ERROR", message: `tool call denied by pre-tool hook: ${denial}` } } } });
+} else if (denial !== null || process.env.FAKE_AGY_DENIED_COMMAND === "1") {
+  // A native permission denial did not execute the tool. Reporting DONE
+  // here fabricates an unapproved execution before the denied_actions result.
+  const message = denial !== null ? `tool call denied by pre-tool hook: ${denial}` : "command denied by native permissions";
+  out({ event: "step_update", conversation_id: CONV, step_update: { conversation_id: CONV, step_index: 0, state: "ERROR", step_type: "tool", tool_name: toolName, tool_info: { name: toolName, parameters: {}, error: { type: "TOOL_ERROR", message } } } });
   if (process.env.FAKE_AGY_DUMP) writeFileSync(`${process.env.FAKE_AGY_DUMP}.hook.json`, JSON.stringify({ tool: toolName, denial }));
 } else {
   if (process.env.FAKE_AGY_DUMP && process.env.FAKE_AGY_RUN_HOOKS === "1") writeFileSync(`${process.env.FAKE_AGY_DUMP}.hook.json`, JSON.stringify({ tool: toolName, denial: null }));

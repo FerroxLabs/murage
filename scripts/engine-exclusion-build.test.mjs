@@ -49,15 +49,41 @@ describe("the Windows build", () => {
     expect(() => msvcCommand("cl.exe", ['/Fe"x'], { env: {}, environmentFile: "C:\\VS\\VsDevCmd.bat" })).toThrow(/UNSAFE/);
   });
 
+  it("--all-arch builds x64 and arm64 with the right machine and developer environment, and compiles anchored-win.c into both", () => {
+    const outputRoot = scratch();
+    const calls = [];
+    const receipts = buildEngineExclusion({ platform: "win32", env: {}, allArch: true, environmentFile: "C:\\VS\\Common7\\Tools\\VsDevCmd.bat", headerDirectory: headers(), outputRoot, exec: (command, args) => { calls.push(args.join(" ")); fs.writeFileSync(path.join(outputRoot, calls.length <= 2 ? "win32-x64" : "win32-arm64", "engine-exclusion.node"), "MZ"); } });
+    expect(receipts.map((r) => r.target)).toEqual(["win32-x64", "win32-arm64"]);
+    expect(calls).toHaveLength(4);
+    expect(calls[0]).toContain("-arch=x64");
+    expect(calls[2]).toMatch(/-arch=arm64 -host_arch=\w+ && lib\.exe/);
+    expect(calls[2]).toContain("/machine:arm64");
+    expect(calls[3]).toContain("anchored-win.c");
+    expect(calls[3]).not.toContain("ANCHOR_TEST_HOOKS");
+    expect(receipts[0].sourceSha256).toBe(receipts[1].sourceSha256);
+    expect(fs.readFileSync(path.join(outputRoot, "win32-x64", "node.def"), "utf8")).toContain("napi_create_function");
+  });
+
+  it("--test-hooks defines ANCHOR_TEST_HOOKS, builds the oplock fixture, and is refused off Windows", () => {
+    const outputRoot = scratch();
+    const calls = [];
+    buildEngineExclusion({ platform: "win32", env: { VSCMD_ARG_TGT_ARCH: process.arch === "arm64" ? "arm64" : "x64" }, testHooks: true, headerDirectory: headers(), outputRoot, exec: (command, args) => { calls.push(args.join(" ")); fs.writeFileSync(path.join(outputRoot, `win32-${process.arch}`, "engine-exclusion.node"), "MZ"); } });
+    expect(calls[1]).toContain("/DANCHOR_TEST_HOOKS");
+    expect(calls[2]).toContain("oplock-holder.c");
+    expect(calls[3]).toContain("reparse-convert.c");
+    expect(() => buildEngineExclusion({ platform: "linux", testHooks: true, headerDirectory: headers(), outputRoot })).toThrow(/WINDOWS_ONLY/);
+  });
+
   it("the Linux build is compiled with -Wall -Werror", () => {
     expect(ENGINE_EXCLUSION_BUILD_SCRIPT).toContain('-Wall -Werror -fPIC');
   });
 
-  it("both loaders require addon v10 and Windows requires the privilege-drop export", () => {
+  it("both loaders require addon v11 and Windows requires the privilege-drop and the seven anchor exports", () => {
     const source = fs.readFileSync(new URL("../native/engine-exclusion/exclusion.c", import.meta.url), "utf8");
-    expect(ADDON_VERSION).toBe(10);
+    expect(ADDON_VERSION).toBe(11);
     expect(WINDOWS_NATIVE_VERSION).toBe(ADDON_VERSION);
-    expect(source).toMatch(/^#define ADDON_VERSION 10$/m);
+    expect(source).toMatch(/^#define ADDON_VERSION 11$/m);
+    for (const name of ["anchorBegin", "anchorOpen", "anchorList", "anchorRead", "anchorStat", "anchorClose", "anchorEnd"]) expect(WINDOWS_NATIVE_FUNCTIONS).toContain(name);
     expect(WINDOWS_NATIVE_FUNCTIONS).toContain("dropShutdownPrivileges");
     expect(source).toContain('add(env, exports, "dropShutdownPrivileges", drop_shutdown_privileges);');
   });
@@ -105,23 +131,24 @@ describe("the packaging gate", () => {
   const macho = () => { const b = Buffer.alloc(4096); Buffer.from([0xcf, 0xfa, 0xed, 0xfe]).copy(b); b.writeUInt32LE(0x0100000c, 4); b.writeUInt32LE(8, 12); return b; };
   const image = { linux: elf(), win32: pe(), darwin: macho() };
   const arch = { linux: "x64", win32: "x64", darwin: "arm64" };
+  const mtReceipt = () => { const file = path.join(scratch(), "build.json"); fs.writeFileSync(file, JSON.stringify({ crt: "MT" })); return file; }; // a Windows package must carry the build receipt (R16/R25)
   const addon = (bytes) => { const resources = scratch(); fs.writeFileSync(path.join(resources, "engine-exclusion.node"), bytes); return resources; };
 
   it("accepts an executable image of the platform and machine it is packaged for", () => {
-    for (const platform of ["linux", "win32", "darwin"]) expect(validateEngineExclusionResource(addon(image[platform]), platform, arch[platform])).toMatch(/engine-exclusion\.node$/);
+    for (const platform of ["linux", "win32", "darwin"]) expect(validateEngineExclusionResource(addon(image[platform]), platform, arch[platform], platform === "win32" ? mtReceipt() : undefined)).toMatch(/engine-exclusion\.node$/);
   });
 
   it("refuses an image for another machine, and a file that only starts like one", () => {
     expect(() => validateEngineExclusionResource(addon(image.darwin), "darwin", "x64")).toThrow(/MISMATCH/);
     expect(() => validateEngineExclusionResource(addon(image.linux), "linux", "arm64")).toThrow(/MISMATCH/);
     expect(() => validateEngineExclusionResource(addon(Buffer.concat([Buffer.from([0x7f, 0x45, 0x4c, 0x46]), Buffer.alloc(4096)])), "linux", "x64")).toThrow(/MISMATCH/);
-    expect(() => validateEngineExclusionResource(addon(Buffer.concat([Buffer.from("MZ"), Buffer.alloc(4096)])), "win32", "x64")).toThrow(/MISMATCH/);
+    expect(() => validateEngineExclusionResource(addon(Buffer.concat([Buffer.from("MZ"), Buffer.alloc(4096)])), "win32", "x64", mtReceipt())).toThrow(/MISMATCH/);
   });
 
   it("refuses a missing addon, one for another platform, an empty file, a link and a folder", () => {
     expect(() => validateEngineExclusionResource(scratch(), "linux", "x64")).toThrow(/MISSING/);
     expect(() => validateEngineExclusionResource(addon(image.win32), "linux", "x64")).toThrow(/MISMATCH/);
-    expect(() => validateEngineExclusionResource(addon(image.linux), "win32", "x64")).toThrow(/MISMATCH/);
+    expect(() => validateEngineExclusionResource(addon(image.linux), "win32", "x64", mtReceipt())).toThrow(/MISMATCH/);
     const empty = scratch();
     fs.writeFileSync(path.join(empty, "engine-exclusion.node"), "");
     expect(() => validateEngineExclusionResource(empty, "linux", "x64")).toThrow(/INVALID/);

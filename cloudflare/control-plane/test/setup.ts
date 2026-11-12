@@ -1,6 +1,13 @@
 import { env } from "cloudflare:workers";
 import { applyD1Migrations, type D1Migration } from "cloudflare:test";
 import { afterEach, beforeAll } from "vitest";
+import { setSigningCheckForTests } from "../src/env-isolation";
+import { setImageReadinessForTests, type Probe } from "../src/image-readiness";
+
+/** The rig has no signed images: every arch probes usable for an hour, so the suites that sell are not about image readiness. The policy-epoch,
+ *  config-hash, freshness and hold logic around the probe stays real; test/image-readiness.test.ts replaces the probe too. */
+export const okProbe = async (_env: unknown, now: number): Promise<Probe> => ({ prerequisite: null, archs: { x86: { ok: true, validUntil: now + 3_600_000 }, arm: { ok: true, validUntil: now + 3_600_000 } } });
+export const rigReadiness = () => setImageReadinessForTests({ check: okProbe });
 
 declare global {
   namespace Cloudflare {
@@ -11,11 +18,22 @@ declare global {
 }
 
 beforeAll(async () => {
+  // The rig signs with throwaway keys; test/env-isolation.test.ts restores the real check.
+  setSigningCheckForTests(async () => true);
+  rigReadiness();
   await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
 });
 
 afterEach(async () => {
+  rigReadiness();
   await env.DB.batch([
+    env.DB.prepare("DELETE FROM cloud_referral_partners"),
+    env.DB.prepare("DELETE FROM sales_invites"),
+    env.DB.prepare("DELETE FROM image_recheck"),
+    env.DB.prepare("DELETE FROM image_readiness"),
+    env.DB.prepare("DELETE FROM image_dispatch_auth"),
+    env.DB.prepare("UPDATE image_policy SET accepted_fps=NULL,accepted_checks=NULL,accepted_images=NULL,trust_hash=NULL"),
+    env.DB.prepare("UPDATE image_policy SET epoch=0"),
     env.DB.prepare("DELETE FROM selfservice_rate_limits"),
     env.DB.prepare("DELETE FROM backup_subaccounts"),
     env.DB.prepare("DELETE FROM selfservice_audit"),
@@ -113,7 +131,14 @@ afterEach(async () => {
     env.DB.prepare("DELETE FROM cloud_cp0_control"),
     env.DB.prepare("DELETE FROM cloud_mutations"),
     env.DB.prepare("DELETE FROM cloud_alerts"),
+    env.DB.prepare("DELETE FROM cloud_alert_groups"),
+    env.DB.prepare("DELETE FROM cloud_alert_pages"),
     env.DB.prepare("DELETE FROM cloud_home_health"),
+    env.DB.prepare("DELETE FROM cloud_release_homes"),
+    env.DB.prepare("DELETE FROM cloud_releases"),
+    env.DB.prepare("DELETE FROM cloud_home_update_reports"),
+    env.DB.prepare("DELETE FROM cloud_rollout_flags"),
+    env.DB.prepare("DELETE FROM cloud_home_runner"),
     env.DB.prepare("DELETE FROM cloud_ops_state"),
     env.DB.prepare("DELETE FROM cloud_write_guards"),
     env.DB.prepare("DELETE FROM cloud_outbox"),
@@ -133,6 +158,8 @@ afterEach(async () => {
     env.DB.prepare("DELETE FROM cloud_machines"),
     env.DB.prepare("DELETE FROM otp_recipient_rate_limits"),
     env.DB.prepare("DELETE FROM announcement_rate_limits"),
+    env.DB.prepare("DELETE FROM announcement_consents"),
+    env.DB.prepare("DELETE FROM announcement_optouts"),
     env.DB.prepare("DELETE FROM flux_grants"),
     env.DB.prepare("DELETE FROM flux_grant_accounts"),
     env.DB.prepare("DELETE FROM flux_grant_causes"),
@@ -143,11 +170,13 @@ afterEach(async () => {
     env.DB.prepare("DELETE FROM dispute_holds"),
     env.DB.prepare("DELETE FROM flux_invoices"),
     env.DB.prepare("DELETE FROM flux_mint_ops"),
+    env.DB.prepare("DELETE FROM flux_first_key_retry"),
     env.DB.prepare("DELETE FROM flux_home_keys"),
     env.DB.prepare("DELETE FROM flux_link_proofs"),
     env.DB.prepare("DELETE FROM flux_link_challenges"),
     env.DB.prepare("DELETE FROM flux_links"),
     env.DB.prepare("DELETE FROM flux_link_floor"),
+    env.DB.prepare("DELETE FROM flux_welcome_mail"),
     env.DB.prepare("DELETE FROM flux_key_compensations"),
     env.DB.prepare("DELETE FROM flux_home_ops"),
     env.DB.prepare("DELETE FROM flux_entitlements"),
@@ -174,6 +203,12 @@ afterEach(async () => {
     env.DB.prepare("DELETE FROM cloud_stepup_intents"),
     env.DB.prepare("DELETE FROM cloud_stepup_events"),
     env.DB.prepare("DELETE FROM cloud_door_notices"),
+    env.DB.prepare("DELETE FROM home_api_nonces"),
+    env.DB.prepare("DELETE FROM home_owner_codes"),
+    env.DB.prepare("DELETE FROM home_owner_code_sends"),
+    env.DB.prepare("DELETE FROM home_owner_events"),
+    env.DB.prepare("DELETE FROM home_owner_event_slots"),
+    env.DB.prepare("DELETE FROM door_computer_notices"),
     env.DB.prepare("DELETE FROM cloud_door_notice_slots"),
     env.DB.prepare("DELETE FROM cloud_trusted_factors"),
     env.DB.prepare('DELETE FROM "user"'),

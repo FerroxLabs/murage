@@ -68,7 +68,7 @@ describe("browser tools only when the owner's browser is ready for this bot", ()
     await f.value.bind(bot({ browserExtensionProfileId: "profile_a" }), "thread");
     f.offline();
     const error = await f.value.bind(bot({ browserExtensionProfileId: "profile_a" }), "thread").catch(e => e);
-    expect(error).toMatchObject({ code: "browser_extension_not_ready" });
+    expect(error).toMatchObject({ code: "host_offline" });
     expect(error.message).toMatch(PLAIN); expect(error.message).toMatch(/not connected/);
     expect(extensionBrowserUnavailablePrompt(error.message, true)).not.toContain("host_offline");
   });
@@ -78,7 +78,7 @@ describe("browser tools only when the owner's browser is ready for this bot", ()
     await f.service.pause(first.bindingId);
     const runtime = f.bindings.get(first.bindingId)!; runtime.tabs[0].navigationEpoch++; runtime.tabs[0].origin = ""; runtime.tabs[0].url = "";
     const error = await f.value.bind(bot({ browserExtensionProfileId: "profile_a" }), "thread").catch(e => e);
-    expect(error).toMatchObject({ code: "browser_extension_not_ready" });
+    expect(error).toMatchObject({ code: "paused" });
     expect(error.message).toMatch(/paused/); expect(error.message).not.toMatch(/Invalid URL/);
     await expect(f.service.stop(first.bindingId)).resolves.toBeUndefined();
     const stopped = await f.value.bind(bot({ browserExtensionProfileId: "profile_a" }), "thread").catch(e => e);
@@ -96,7 +96,7 @@ describe("browser tools only when the owner's browser is ready for this bot", ()
       const f = await fixture(["profile_a"]);
       f.value.start = async () => ({ status: () => ({ profiles: [{ profileId: "profile_a", browser: "chromium" }], bindings: [] }), ensureBinding: async () => { throw Object.assign(Error(`${code} at /private/tmp/x`), { code }); } }) as never;
       const error = await f.value.bind(bot({ browserExtensionProfileId: "profile_a" }), "thread").catch(e => e);
-      expect(error).toMatchObject({ code: "browser_extension_not_ready" });
+      expect(error).toMatchObject({ code });
       expect(error.message).toMatch(PLAIN); expect(error.message).toMatch(pattern); expect(error.message).not.toMatch(/_|\/private|—/);
     }
   });
@@ -273,4 +273,10 @@ describe("EXT-RESTART 14, 15, 28, 28b: restart reports before the service exists
     const error = await f.value.bind(bot({ browserExtensionProfileId: "profile_a" }), "thread").catch(e => e);
     expect(error.message).toMatch(/Chrome or Murage closed/); expect(error.message).toMatch(PLAIN);
   });
+});
+it('an unpinned chosen Edge route never takes the sole Chrome profile',async()=>{
+ const f=await fixture(['p'],'chrome');await expect(f.value.bind(bot({browserExtensionBrowser:'edge'}),'thread')).rejects.toMatchObject({code:'browser_extension_setup_required'});
+});
+it('an unpinned chosen Edge route uses its sole explicitly identified Edge profile',async()=>{
+ const f=await fixture(['p'],'edge');await expect(f.value.bind(bot({browserExtensionBrowser:'edge'}),'thread')).resolves.toMatchObject({profileId:'p'});
 });

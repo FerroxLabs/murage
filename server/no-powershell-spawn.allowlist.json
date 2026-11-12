@@ -1,6 +1,12 @@
 {
-  "_about": "Every shipped code line naming a PowerShell program is fingerprinted. Direct launches remain prohibited except the exact user-terminal entry. The additional command-environment probe in engine-env.ts uses execCli, a fixed nonce-tagged script, a pinned NoProfile form, closed stdin, a hidden console, bounded output and bounded cleanup. No command text or environment value is interpolated into that script.",
+  "_about": "Every shipped code line naming a PowerShell program is fingerprinted. Direct launches require the exact user-terminal entry or one of the three reviewed security reads authorized by MAIN POWERSHELL GUARD RULING r2 (2026-11-11). reviewed_security pins each real launch by holder, call and full-source digests, with callsite, reason and citations; these are never names_only. The command-environment probe in engine-env.ts uses execCli, a fixed nonce-tagged script, a pinned NoProfile form, closed stdin, a hidden console, bounded output and bounded cleanup. No command text or environment value is interpolated into that script.",
   "names_only": {
+    "server/engine-reply-check.ts": {
+      "reason": "fixed owner probe: resolves Windows PowerShell under the server's absolute SystemRoot, never PATH; execCliSync runs a fixed NoProfile command with closed stdin, hidden console, timeout and output bound. The literal owner path is passed only in MURAGE_CHECK_PATH, never command text (engine-check-folder.test.ts). No direct launch is authorized.",
+      "lines": {
+        "13fb1c14573bb7b8": "const executable = environmentProbeProgram(\"powershell.exe\", \"win32\");"
+      }
+    },
     "electron/terminal-launch.mjs": {
       "reason": "label: WINDOWS_FALLBACK_SHELL names the shell the Open terminal fallback window runs, so its tests can compare it with the shell the shown commands are written for; starts nothing",
       "lines": {
@@ -8,7 +14,7 @@
       }
     },
     "server/always-ask.ts": {
-      "reason": "recognizer: rule table and foreign-executor recognition classify proposed command text; unreadable commands keep asking; starts nothing (1.0.9 nolimits-node: five signature/guard lines re-fingerprinted, they only gained home/options parameters and a null return; optional-parameter form kept so no `shell:` text reads as a spawn option; no launch) (1.0.18 int reds: 740934c9e MARKS R1 re-fingerprinted the read line, which only gained the owner clean No limits cwd and runtimePaths arguments; no launch)",
+      "reason": "recognizer: rule table and foreign-executor recognition classify proposed command text; unreadable commands keep asking; starts nothing (1.0.9 nolimits-node: five signature/guard lines re-fingerprinted, they only gained home/options parameters and a null return; optional-parameter form kept so no `shell:` text reads as a spawn option; no launch) (1.0.18 int reds: 740934c9e MARKS R1 re-fingerprinted the read line, which only gained the owner clean No limits cwd and runtimePaths arguments; no launch) (1019 CI-REDS2: the Git Bash payload lines for pwsh owner/full access only recognize a `bash <script>` text shape; no launch)",
       "lines": {
         "f798c6c601f85705": "if (matches.length !== 1) throw new Unreadable(\"pwsh\", matches.length ? `-${given} is ambi",
         "34c511b1f6deaab9": "if (text === \"--%\") throw new Unreadable(\"pwsh\", \"--% stops parsing\");",
@@ -21,7 +27,9 @@
         "53b17291b37d0e87": "function unseenShapeAdmits(text: string, paths: string[], cwd: string | undefined, shell?:",
         "497b7b04b60c1a26": "if (shell === \"pwsh\" || looksLikePowerShell(text) !== null || /^\\s*robocopy(\\.exe)?(?=\\s|$",
         "dc0d467803f91f89": "case \"pwsh\": return walkPwsh(text, ctx, visitor);",
-        "781dda1c72235ff0": "const found = shell === \"pwsh\" ? walkPwsh(text, { ...newContext(ownerDeny() ? cwd : cwd || unde"
+        "781dda1c72235ff0": "const found = shell === \"pwsh\" ? walkPwsh(text, { ...newContext(ownerDeny() ? cwd : cwd || unde",
+        "97a775695efa30b6": "const bashShape = shell === \"pwsh\" && (ownerDeny() && options.pwshOwnerBash === true || options.pwshFullBash === true) ? PWSH_BASH_SCRIPT.exec(text)?.[1] : undefined;",
+        "8dfc401ff8a1c466": "if (shell === \"pwsh\" && bashShape === undefined && windowsBash?.length && !pwshBashIsGitBash(\"bash\", options)) return unreadableHit();"
       }
     },
     "server/auto-approve.ts": {
@@ -120,7 +128,6 @@
         "33b5a96c564d490a": "if (!ctx.written.has(resolveWritten(ctx, path))) throw new Unreadable(\"pwsh\", \"a shell run",
         "8a7858771328d279": "function scriptFile(spelled: string, name: string, dialect: \"pwsh\" | \"cmd\"): boolean {",
         "1457f2c611ff93cb": "function unmodelled(name: string, spelled: string, args: Word[], stdin: Provenance | undef",
-        "40a0eae1f6d02106": "if (runner === \"launcher\" && dialect === \"pwsh\" && ctx.windowsBash && literalBash && /^(ba",
         "010785822862ee19": "export function shellDialectOf(form: readonly string[] | undefined): \"pwsh\" | undefined {",
         "017242b6056ce69c": "return program !== undefined && (programBase(program) === \"powershell\" || programBase(prog",
         "f50cd4e5846055b2": "const loader = mentionsLoaderVariable(text, \"pwsh\");",
@@ -134,7 +141,8 @@
         "fe7db5fc453ccf18": "if (/^\\s*\\$[A-Za-z_][\\w:]*\\s*=/.test(text)) return \"pwsh\";",
         "93246a19243b672f": "if (/^[A-Z][a-z]+-[A-Z]/.test(first)) return \"pwsh\";",
         "4d1662205ce5d0a0": "if (POWERSHELLS.has(lower)) return \"pwsh\";",
-        "b2a8a5d6d9a7c37a": "return [\"format-volume\", \"clear-disk\", \"initialize-disk\", \"remove-item\", \"ri\", \"set-locati"
+        "b2a8a5d6d9a7c37a": "return [\"format-volume\", \"clear-disk\", \"initialize-disk\", \"remove-item\", \"ri\", \"set-locati",
+        "961700bbd755d969": "if (runner === \"launcher\" && dialect === \"pwsh\" && ctx.windowsBash && literalBash && /^bash$/i.test(name)"
       }
     },
     "server/startup-files.ts": {
@@ -223,18 +231,40 @@
       }
     },
     "server/outside-scan.ts": {
-      "reason": "recognizer: 61261505a and aad56adb6 (NOLIMITS 1.0.18 H6 allowlist) classify an interpreter word as the pwsh script family (a .ps1 operand or any script) when judging whether a proposed command reaches outside the folder; reads command text, starts nothing",
+      "reason": "recognizer: 61261505a and aad56adb6 (NOLIMITS 1.0.18 H6 allowlist) classify an interpreter word as the pwsh script family (a .ps1 operand or any script) when judging whether a proposed command reaches outside the folder; reads command text, starts nothing Recognizer: classifies a parsed PowerShell name while inspecting command operands and profile reach; the comparison starts no process.",
       "lines": {
         "a40933253f2dd602": "type ScriptFamily = \"deno\" | \"pwsh\" | \"other\";",
         "10fb22be080752f8": "if (family === \"pwsh\") return word.endsWith(\".ps1\");",
         "2b8e851ee82b37f1": "const family: ScriptFamily = part === \"deno\" || part === \"bun\" ? \"deno\" : part === \"pwsh\" || pa",
-        "e3b25f7c2d916dae": "if (family === \"pwsh\") return true;"
+        "e3b25f7c2d916dae": "if (family === \"pwsh\") return true;",
+        "cafd09c605b2cb70": "if (name === \"powershell\" || name === \"pwsh\") {"
       }
     },
     "server/runtime-event-out.ts": {
       "reason": "recognizer: d9b5e9db8 (NOLIMITS 1.0.18 logger lane 2) lists the shell tool names ('powershell', 'pwsh') that mark an ask as a shell ask so its command text is logged as a fixed label; classifies a tool name, starts nothing",
       "lines": {
         "b0cc1990ceecf054": "\"bash\", \"shell\", \"execute\", \"powershell\", \"pwsh\", \"run_terminal_cmd\", \"run_terminal_command\", \""
+      }
+    },
+    "server/native-deny/backstop.ts": {
+      "reason": "Recognizer: shell mode is a typed session label validated before readNativeCommand judges text; no process is started by these lines.",
+      "lines": {
+        "6aec7c24a213c8b1": "export interface ShellBinding { path: string; mode: \"command\" | \"pwsh\" }",
+        "858d5b4b8dc6f589": "if (typeof input.onTamper !== \"function\" || !/^[a-zA-Z0-9_-]{1,64}$/.test(input.engine) || !input.tools || !Object.keys(input.tools).length || Object.values(input.tools).some(kind => ![\"shell\", \"stdin\", \"code\", \"patch\", \"read\", \"write\"].includes(kind)) || input.spec.version !== 2 || hash !== sha256(canonicalJson(data)) || !input.turnId || !input.engine || !Number.isSafeInteger(input.generation) || input.generation < 0 || !input.cwd || !input.home || !input.shell.path || ![\"command\", \"pwsh\"].includes(input.shell.mode) || !/^[a-f0-9]{64}$/.test(input.policyHash) || !/^[a-f0-9]{64}$/.test(input.envSha256)) throw Error(\"native-deny invalid session\");",
+        "0fc5cd0fd579035b": "const found = await (deps.read ?? readNativeCommand)(command, session.cwd, session.home, session.shell.mode === \"pwsh\");"
+      }
+    },
+    "server/native-deny/upstream.ts": {
+      "reason": "Recognizer: chooses the existing command-reader dialect for proposed text before ownerMarks; this module imports no process launcher.",
+      "lines": {
+        "a2dbe080451fdd9c": "ownerMarks(() => alwaysAskCommand(text, cwd, \"command\", pwsh ? \"pwsh\" : undefined, undefined, home));"
+      }
+    },
+    "server/no-limits-shell.ts": {
+      "reason": "Recognizer: compares parsed executor names and scans operands for command wrappers; these comparisons do not execute any command.",
+      "lines": {
+        "f36dd7a93d977343": "if ([\"cmd\", \"powershell\", \"pwsh\"].includes(name)) {",
+        "aaf7ca9b714c30d1": "if ([\"cmd\", \"powershell\", \"pwsh\"].includes(name)) for (let k = 0; k + 1 < args.length; k++) {"
       }
     }
   },
@@ -255,5 +285,43 @@
     "launch": "8eba4ba5668095b1",
     "script": "666769f50c9d3a8a",
     "reason": "Only a command ask runs this fixed nonce-tagged environment probe through an absolute executable and pinned NoProfile form with closed stdin, hidden console, bounded output and bounded cleanup; no handed PATH lookup, tool command or environment value is interpolated."
+  },
+  "reviewed_security": {
+    "server/channels/signal/storage.ts": {
+      "reason": "CLM owner/DACL/reparse tree read before any Signal key access; six JSON roots in the environment, fixed stdin script, absolute SystemRoot program, bounded hidden runner; malformed, partial, foreign-owner and reparse evidence refuses.",
+      "citation": "MAIN POWERSHELL GUARD RULING r2, 2026-11-11 11:22Z, /root/fuigo-builds/swarm-b/_small/SEATING-RULES.txt; /root/fuigo-builds/orph/_ev/designs/SIGNAL-SLICE-1019-r3.md section 6.1 (B3); bea800eee5185305eb0e80d3484e76ac84930392; protected server/channels/signal/storage.test.ts:337 T-WIN-CLM and scripts/win-signal-native.README.md",
+      "callsite": "server/channels/signal/storage.ts:75 -> defaultSecurityRunner -> execFileSync",
+      "lines": {
+        "e9525a08174b1edf": "const output = run(win32.join(systemRoot, \"System32\", \"WindowsPowerShell\", \"v1.0\", \"powershell.exe\"),"
+      },
+      "launches": {
+        "99613e4d22195cc2": "run(win32.join(systemRoot, \"System32\", \"WindowsPowerShell\", \"v1.0\", \"powershell.exe\"),\n      [\"-NoProfile\", \"-NonInteractive\", \"-ExecutionPolicy\", \"Bypass\", \"-Command\", \"-\"], {\n        input: SECURITY_SCRIPT, env: { ...env, MURAGE_SIGNAL_ROOTS: JSON.stringify(roots) }, timeout: 15_000,\n      })"
+      },
+      "source_sha256": "a0d976912cd416bacda1db2da4d4b075afdf1e851c1a5aeb31cd0cdf948303d1"
+    },
+    "server/channels/signal/service.ts": {
+      "reason": "Signal bootstrap projects owner/DACL/reparse attributes before creating missing directories; fixed stdin script, JSON paths in the environment, absolute SystemRoot program, bounded hidden runner; foreign ownership and unknown evidence refuse without ownership transfer.",
+      "citation": "MAIN POWERSHELL GUARD RULING r2, 2026-11-11 11:22Z, /root/fuigo-builds/swarm-b/_small/SEATING-RULES.txt; /root/fuigo-builds/orph/_ev/designs/SIGNAL-SLICE-1019-r3.md section 6.1 (B3); server/channels/signal/service.ts prepareDirectories B3 bootstrap; protected server/channels/signal/storage.test.ts:337 T-WIN-CLM and scripts/ci-signal-windows.ps1",
+      "callsite": "server/channels/signal/service.ts:133 -> defaultSecurityRunner -> execFileSync",
+      "lines": {
+        "a90d832505ef6042": "const output = run(win32.join(systemRoot, \"System32/WindowsPowerShell/v1.0/powershell.exe\"),"
+      },
+      "launches": {
+        "0db392d26ccf5d54": "run(win32.join(systemRoot, \"System32/WindowsPowerShell/v1.0/powershell.exe\"),\n        [\"-NoProfile\", \"-NonInteractive\", \"-ExecutionPolicy\", \"Bypass\", \"-Command\", \"-\"], { env: { ...env, MURAGE_SIGNAL_DIRS: JSON.stringify(existing) }, timeout: 15000,\n          input: \"$ErrorActionPreference = 'Stop'\\n@($env:MURAGE_SIGNAL_DIRS | ConvertFrom-Json) | ForEach-Object { $item = Get-Item -LiteralPath $_ -Force; $attributes = [int]$item.Attributes; $sddl = $null; if (($attributes -band 1024) -eq 0) { $sddl = (Get-Acl -LiteralPath $_).Sddl }; @{ attributes = $attributes; sddl = $sddl } | ConvertTo-Json -Compress }\\n\" })"
+      },
+      "source_sha256": "536a881c6854e34ac3b771582473ae02ee4ce66d533505bf79116c748d073701"
+    },
+    "server/browser-window-chrome.ts": {
+      "reason": "Read-only Registry64 HKLM Chrome policy query: only explicit absent-key output permits preparation; reg.exe combines absence/access errors as exit 1 with localized diagnostics, and the shipped native helper has no registry query. Keep this fixed registry API script, absolute SystemRoot program, bounded hidden runner and fail-closed output validation.",
+      "citation": "MAIN POWERSHELL GUARD RULING r2, 2026-11-11 11:22Z, /root/fuigo-builds/swarm-b/_small/SEATING-RULES.txt; d7e42a63f9912871d35d9ad621dfbfce9d25fba9; docs/verification/window-chrome.md Windows policy contract; protected server/browser-window-policy.test.ts:21-44 (nine subprocess outcomes) and server/browser-window-chrome.test.ts Windows organization policy",
+      "callsite": "server/browser-window-chrome.ts:110 organizationManaged -> runTool -> execFile",
+      "lines": {
+        "de3635f850f6430a": "const result = await run(join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script]);"
+      },
+      "launches": {
+        "47b9127a4de91dec": "run(join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script])"
+      },
+      "source_sha256": "2656bff35e6aa08b01105edf5fec9040a0d50a2304dbcbc9a2646a7db338956a"
+    }
   }
 }

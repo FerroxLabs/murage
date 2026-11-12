@@ -647,6 +647,19 @@ describe("resize job", () => {
     const before = ops.length; await sweepPlanResizes(testEnv(), { resizeHost: host, now: () => clock }); expect(ops.length).toBe(before);
   });
 
+  it("a plan change records every provider call it makes as its own routine action and writes the power row, so nothing alerts at once", async () => {
+    const h = await queued();
+    await sweep(6);
+    expect((await job())!.state).toBe("checking");
+    const rows = (await env.DB.prepare("SELECT id,kind,actor,outcome,notice_state FROM cloud_access_events WHERE home_id=? ORDER BY id").bind(h).all<{ id: string; kind: string; actor: string; outcome: string; notice_state: string }>()).results;
+    expect(rows.map((r) => [r.id.replace(`provider:${h}:`, ""), r.kind, r.actor])).toEqual([
+      ["a-change", "plan_change_power", "system"], ["a-off", "plan_change_power", "system"], ["a-on", "plan_change_power", "system"], ["a-snap", "provider_snapshot", "system"]]);
+    // Every one is our own (system) action, which the notice sweep sends as a routine line; none is the provider account's.
+    expect(rows.every((r) => r.actor === "system" && r.outcome === "ok")).toBe(true);
+    const power = await env.DB.prepare("SELECT kind,ref,state,action_id,server_id FROM cloud_home_jobs WHERE home_id=? AND kind='power'").bind(h).all();
+    expect(power.results).toEqual([{ kind: "power", ref: "start", state: "done", action_id: "a-on", server_id: "42" }]);
+  });
+
   it("does not shut down until the snapshot image is usable, and fails (server untouched) if the snapshot fails (Astra 7)", async () => {
     await queued();
     snapAction = "running"; imageStatus = "creating";
@@ -792,7 +805,7 @@ describe("Astra INTEGRATED-1 #1: a replayed step-up checkout settles its issuanc
     await env.DB.prepare(`INSERT INTO checkout_resume_attempts (id,home_id,consent_id,expires_at,payload,state,created_at,stripe_price_id,idempotency_key) VALUES (?,?,?,?,?,'creating',?,?,?)`)
       .bind(id, h, c, expiresAt, JSON.stringify({ customerId: "cus_1", homeId: h, plan: "starter", priceId: PRICES.STRIPE_PRICE_STARTER, consentId: c, renewalSha256: "a".repeat(64),
         locale: "en", issuanceId: `checkout:${c}`, expiresAtSeconds: Math.floor(expiresAt / 1000), successUrl: "https://app.murage.test/ok", cancelUrl: "https://app.murage.test/no",
-        submitLinks: { terms: "https://murage.test/terms", tos: "https://murage.test/tos", privacy: "https://murage.test/privacy" } }),
+        submitLinks: { terms: "https://murage.test/terms", tos: "https://murage.test/tos", privacy: "https://murage.test/privacy", flux: "https://fluxrouter.ai/terms-of-service" } }),
         T - 20 * 60_000, PRICES.STRIPE_PRICE_STARTER, `checkout:${c}`).run();
     const marker = () => env.DB.prepare("SELECT session_inflight_at AS at,session_issuance_id AS iss FROM checkout_consents WHERE id=?").bind(c).first();
     expect(await marker()).toEqual({ at: T - 20 * 60_000, iss: `checkout:${c}` });
@@ -1439,7 +1452,7 @@ describe("Astra TAXCOUNTRY-5: Finish checkout and the interrupted-attempt replay
     await env.DB.prepare(`INSERT INTO checkout_resume_attempts (id,home_id,consent_id,expires_at,payload,state,created_at,stripe_price_id,idempotency_key) VALUES (?,?,?,?,?,'creating',?,?,?)`)
       .bind(id, h, c, expiresAt, JSON.stringify({ customerId: "cus_1", homeId: h, plan: "starter", priceId: PRICES.STRIPE_PRICE_STARTER, consentId: c, renewalSha256: "a".repeat(64),
         locale: "de", issuanceId: `checkout:${c}`, expiresAtSeconds: Math.floor(expiresAt / 1000), successUrl: "https://app.murage.test/ok", cancelUrl: "https://app.murage.test/no",
-        submitLinks: { terms: "https://murage.test/terms", tos: "https://murage.test/tos", privacy: "https://murage.test/privacy" } }),
+        submitLinks: { terms: "https://murage.test/terms", tos: "https://murage.test/tos", privacy: "https://murage.test/privacy", flux: "https://fluxrouter.ai/terms-of-service" } }),
         T - 20 * 60_000, PRICES.STRIPE_PRICE_STARTER, `checkout:${c}`).run();
     cust.customers.cus_1 = { address: { country: "DE", postal_code: "10115", city: "Berlin" } };
     return { h, c, id };
@@ -1550,7 +1563,7 @@ describe("Astra TAXCOUNTRY-5: Finish checkout and the interrupted-attempt replay
     await env.DB.prepare(`INSERT INTO checkout_resume_attempts (id,home_id,consent_id,expires_at,payload,state,created_at,stripe_price_id,idempotency_key) VALUES (?,?,?,?,?,'creating',?,?,?)`)
       .bind(id, h, c, expiresAt, JSON.stringify({ customerId: "cus_1", homeId: h, plan: "starter", priceId: PRICES.STRIPE_PRICE_STARTER, consentId: c, renewalSha256: "a".repeat(64),
         locale: "en", issuanceId: `checkout:${c}`, expiresAtSeconds: Math.floor(expiresAt / 1000), successUrl: "https://app.murage.test/ok", cancelUrl: "https://app.murage.test/no",
-        submitLinks: { terms: "https://murage.test/terms", tos: "https://murage.test/tos", privacy: "https://murage.test/privacy" } }),
+        submitLinks: { terms: "https://murage.test/terms", tos: "https://murage.test/tos", privacy: "https://murage.test/privacy", flux: "https://fluxrouter.ai/terms-of-service" } }),
         T - 20 * 60_000, PRICES.STRIPE_PRICE_STARTER, `checkout:${c}`).run();
     cust.customers.cus_1 = { address: { country: "DE", postal_code: "10115", city: "Berlin" } };
     return { h, c, id };
@@ -1758,5 +1771,212 @@ describe("Astra TAXCOUNTRY-5 P2-2 and the orphan list: the customer-create sweep
     const v = JSON.parse((await env.DB.prepare("SELECT value FROM cloud_ops_state WHERE key='tax_customer:home-s1:checkout-customer:consent-s1:1'").first<{ value: string }>())!.value);
     expect(v.attempts).toBe(1);
     expect(v.nextAttemptAt).toBeGreaterThan(Date.now() + 9 * 60_000);
+  });
+});
+
+describe("the checkout refusal: refused on GET /v1/account/home and GET /v1/account/order", () => {
+  type Refused = { kind: string; declared: string | null; collected: string | null; refund: string; at: number } | null;
+  const REFUSED_AT = T - 10 * 60_000;
+  /** A home whose latest order the guard turned away, with the refund operation rejectOrder opens for a paid one. */
+  async function refusedHome(sub: string, kind: string, o: { declared?: string | null; collected?: string | null; refund?: "pending" | "sent" | "none" } = {}) {
+    const a = await userOf(sub);
+    const h = await home(a, "payment_pending");
+    const c = await consent(h, a, { billing_country: "US", declared_country: o.declared === undefined ? "US" : o.declared, rejected_at: REFUSED_AT, rejected_reason: kind,
+      rejected_collected_country: o.collected === undefined ? "TH" : o.collected, stripe_subscription_id: o.refund === "none" ? null : `sub_ref_${h}`, completed_at: T - 20 * 60_000 });
+    if (o.refund !== "none") {
+      await subscription(h, { subscription_id: `sub_ref_${h}`, status: "canceled", consent_id: c });
+      await env.DB.prepare(`INSERT INTO refund_ops (id,kind,home_id,user_id,paid_cents,target_cents,amount_cents,end_plan,subscription_id,refunded_at,created_at,updated_at)
+        VALUES (?,?,?,?,4900,4900,4900,0,?,?,?,?)`).bind(`${kind}:${h}`, kind, h, a, `sub_ref_${h}`, o.refund === "sent" ? REFUSED_AT + 5 : null, REFUSED_AT, REFUSED_AT).run();
+    }
+    return { a, h, c, tok: await token(sub, false) };
+  }
+  const orderOf = async (h: string, tok: string) => (await call(`/v1/account/order?home=${h}`, tok)).json<Record<string, unknown> & { refused: Refused }>();
+  const cloudOf = async (tok: string) => (await call("/v1/account/cloud", tok)).json<Record<string, unknown> & { refused: Refused }>();
+  const homeOf = async (tok: string) => (await call("/v1/account/home", tok)).json<Record<string, unknown> & { refused: Refused }>();
+
+  it.each([["mismatch", "TH"], ["country_paused", "FR"], ["rejected_consent", "US"]])("%s: both endpoints carry the verdict, the countries, the refund state and the moment", async (kind, collected) => {
+    const { h, tok } = await refusedHome(SUB_A, kind, { collected, refund: "pending" });
+    const want = { kind, declared: "US", collected, refund: "pending", at: REFUSED_AT };
+    expect((await homeOf(tok)).refused).toEqual(want);
+    expect((await orderOf(h, tok)).refused).toEqual(want);
+  });
+
+  it("the refund follows the ledger: pending, then sent, and none when nothing was charged", async () => {
+    const { h, tok } = await refusedHome(SUB_A, "mismatch", { refund: "pending" });
+    expect((await orderOf(h, tok)).refused?.refund).toBe("pending");
+    await env.DB.prepare("UPDATE refund_ops SET refunded_at=? WHERE home_id=?").bind(REFUSED_AT + 5, h).run();
+    expect((await orderOf(h, tok)).refused?.refund).toBe("sent");
+    expect((await homeOf(tok)).refused?.refund).toBe("sent");
+    const unpaid = await refusedHome(SUB_B, "mismatch", { refund: "none", collected: null });
+    expect((await orderOf(unpaid.h, unpaid.tok)).refused).toEqual({ kind: "mismatch", declared: "US", collected: null, refund: "none", at: REFUSED_AT });
+  });
+
+  it("declared falls back to the billing country when the path was not recorded", async () => {
+    const { h, tok } = await refusedHome(SUB_A, "mismatch", { declared: null });
+    expect((await orderOf(h, tok)).refused?.declared).toBe("US");
+  });
+
+  it("a refused order is never reported as a plain refund_sent or refund_pending, paid or not", async () => {
+    for (const refund of ["sent", "pending", "none"] as const) {
+      const { h, tok } = await refusedHome(refund === "sent" ? SUB_A : refund === "pending" ? SUB_B : "sub-c", "mismatch", { refund });
+      const view = await orderOf(h, tok);
+      expect([refund, view.status, view.charged]).toEqual([refund, "failed", refund !== "none"]);
+      expect(view.reason).toBe(refund === "none" ? "not_paid" : "refused");
+    }
+  });
+
+  it("an accepted order has refused null, and a refund that is not a refusal (a repriced order) leaves it null", async () => {
+    const a = await userOf(SUB_A);
+    const h = await home(a, "payment_pending");
+    const c = await consent(h, a, { stripe_session_id: "cs_test_a", completed_at: T - 1000, stripe_subscription_id: "sub_a", paid_at: T - 500 });
+    await openCheckout(h, c, "completed", T + 3_600_000, "cs_test_a");
+    await subscription(h, { subscription_id: "sub_a", status: "active", first_paid_at: T, consent_id: c });
+    const tok = await token(SUB_A, false);
+    expect(await orderOf(h, tok)).toMatchObject({ status: "paid", refused: null });
+    expect((await homeOf(tok)).refused).toBeNull();
+    await env.DB.prepare(`INSERT INTO refund_ops (id,kind,home_id,user_id,paid_cents,target_cents,end_plan,subscription_id,created_at,updated_at)
+      VALUES ('price_mismatch:x','price_mismatch',?,?,4900,4900,0,'sub_a',?,?)`).bind(h, a, T, T).run();
+    expect(await orderOf(h, tok)).toMatchObject({ status: "refund_pending", refused: null });
+  });
+
+  it("only the latest consent decides: a refused order followed by a new attempt is no longer refused", async () => {
+    const { a, h, tok } = await refusedHome(SUB_A, "mismatch", { refund: "pending" });
+    expect((await homeOf(tok)).refused).not.toBeNull();
+    expect((await cloudOf(tok)).refused).not.toBeNull();
+    const c = await consent(h, a, { id: "consent-retry", created_at: T - 1000, stripe_session_id: "cs_retry" });
+    await openCheckout(h, c, "open", T + 3_600_000, "cs_retry");
+    expect((await homeOf(tok)).refused).toBeNull();
+    expect((await cloudOf(tok)).refused).toBeNull();
+    expect(await orderOf(h, tok)).toMatchObject({ refused: null, status: "pending", reason: "awaiting_payment" });
+  });
+
+  it("an older checkout paid AFTER a newer one was refused: refused is gone on every page and the paid order view never carries it", async () => {
+    const { a, h, tok } = await refusedHome(SUB_A, "mismatch", { refund: "pending" });
+    expect((await cloudOf(tok)).refused).not.toBeNull();
+    // checkout A was started BEFORE the refused B and settles now
+    const paidConsent = await consent(h, a, { id: "consent-old-paid", created_at: T - 3_600_000, stripe_session_id: "cs_old_paid", completed_at: T - 1000,
+      contract_made_at: T - 1000, paid_at: T - 500, stripe_subscription_id: "sub_old_paid" });
+    await openCheckout(h, paidConsent, "completed", T + 3_600_000, "cs_old_paid");
+    await subscription(h, { home_id: undefined, subscription_id: "sub_old_paid", status: "active", first_paid_at: T, consent_id: paidConsent }).catch(() => undefined);
+    expect((await cloudOf(tok)).refused).toBeNull();
+    expect((await homeOf(tok)).refused).toBeNull();
+    expect((await orderOf(h, tok)).refused).toBeNull();
+    const paidView = await (await call("/v1/account/order?session=cs_old_paid", tok)).json<Record<string, unknown> & { refused: Refused }>();
+    expect(paidView.refused).toBeNull();
+  });
+
+  it("an account whose home was first paid AFTER the refusal shows no refusal; an older paid home does not hide a new one", async () => {
+    const { a, h, tok } = await refusedHome(SUB_A, "mismatch", { refund: "pending" });
+    const old = await home(a, "live", "paid");
+    await subscription(old, { subscription_id: "sub_older", status: "active", first_paid_at: REFUSED_AT - 1000 });
+    expect((await cloudOf(tok)).refused).toMatchObject({ kind: "mismatch" });
+    await env.DB.prepare("UPDATE billing_subscriptions SET first_paid_at=? WHERE home_id=?").bind(REFUSED_AT + 1000, h).run();
+    expect((await cloudOf(tok)).refused).toBeNull();
+  });
+
+  it("a payment between the refused consent's creation and its rejection does not hide the refusal; one after the rejection does", async () => {
+    const { a, h, c, tok } = await refusedHome(SUB_A, "mismatch", { refund: "pending" });
+    await env.DB.prepare("UPDATE checkout_consents SET created_at=? WHERE id=?").bind(T - 2 * 3_600_000, c).run();
+    const h2 = await home(a, "live", "paid");
+    await consent(h2, a, { id: "consent-other", created_at: T - 3 * 3_600_000, paid_at: T - 90 * 60_000, contract_made_at: T - 90 * 60_000 });
+    expect((await cloudOf(tok)).refused).toMatchObject({ kind: "mismatch" });
+    await env.DB.prepare("UPDATE checkout_consents SET paid_at=? WHERE id='consent-other'").bind(REFUSED_AT + 1000).run();
+    expect((await cloudOf(tok)).refused).toBeNull();
+  });
+
+  it("two consents sharing one subscription id each see only their own stamped refund, on refused and on the order view", async () => {
+    const a = await userOf(SUB_A);
+    const h = await home(a, "payment_pending");
+    const refuse = async (id: string, at: number, sentAt: number | null) => {
+      await consent(h, a, { id, created_at: at, rejected_at: at + 1000, rejected_reason: "mismatch", rejected_collected_country: "TH", declared_country: "US",
+        stripe_subscription_id: "sub_shared", stripe_session_id: `cs_${id.replace("-", "_")}`, completed_at: at + 500 });
+      await env.DB.prepare(`INSERT INTO refund_ops (id,kind,home_id,user_id,paid_cents,target_cents,amount_cents,end_plan,subscription_id,detail,refunded_at,created_at,updated_at)
+        VALUES (?,?,?,?,4900,4900,4900,0,'sub_shared',?,?,?,?)`).bind(`op-${id}`, "mismatch", h, a, JSON.stringify({ path: "direct", consentId: id }), sentAt, at, at).run();
+    };
+    await refuse("shr-1", T - 5 * 3_600_000, T - 4 * 3_600_000);
+    await refuse("shr-2", T - 3_600_000, null);
+    const tok = await token(SUB_A, false);
+    const view = async (s: string) => (await call(`/v1/account/order?session=${s}`, tok)).json<{ refund: { refundedAt: number | null } | null; refused: Refused }>();
+    const one = await view("cs_shr_1"), two = await view("cs_shr_2");
+    expect(one.refund?.refundedAt).toBe(T - 4 * 3_600_000);
+    expect([two.refund?.refundedAt, two.refused?.refund]).toEqual([null, "pending"]);
+    expect((await cloudOf(tok)).refused).toMatchObject({ refund: "pending" });
+  });
+
+  it("two refusals on one home keep their own refund: the order view and refused agree, neither borrows the other's", async () => {
+    const a = await userOf(SUB_A);
+    const h = await home(a, "payment_pending");
+    const refuse = async (id: string, at: number, sentAt: number | null) => {
+      await consent(h, a, { id, created_at: at, rejected_at: at + 1000, rejected_reason: "mismatch", rejected_collected_country: "TH", declared_country: "US",
+        stripe_session_id: `cs_${id.replace("-", "_")}`, completed_at: at + 500 });
+      await env.DB.prepare(`INSERT INTO refund_ops (id,kind,home_id,user_id,paid_cents,target_cents,amount_cents,end_plan,detail,refunded_at,created_at,updated_at)
+        VALUES (?,?,?,?,4900,4900,4900,0,?,?,?,?)`).bind(`op-${id}`, "mismatch", h, a, JSON.stringify({ path: "direct", consentId: id }), sentAt, at, at).run();
+    };
+    await refuse("ref-1", T - 5 * 3_600_000, T - 4 * 3_600_000); // refunded
+    await refuse("ref-2", T - 3_600_000, null);                  // still pending
+    const tok = await token(SUB_A, false);
+    const second = await (await call("/v1/account/order?session=cs_ref_2", tok)).json<{ refund: { refundedAt: number | null } | null; refused: Refused; status: string }>();
+    expect([second.status, second.refund?.refundedAt, second.refused?.refund]).toEqual(["failed", null, "pending"]);
+    const first = await (await call("/v1/account/order?session=cs_ref_1", tok)).json<{ refund: { refundedAt: number | null } | null }>();
+    expect(first.refund?.refundedAt).toBe(T - 4 * 3_600_000);
+    await env.DB.prepare("UPDATE refund_ops SET refunded_at=? WHERE id='op-ref-2'").bind(T - 1000).run();
+    const after = await (await call("/v1/account/order?session=cs_ref_2", tok)).json<{ refund: { refundedAt: number | null } | null; refused: Refused }>();
+    expect([after.refund?.refundedAt, after.refused?.refund]).toEqual([T - 1000, "sent"]);
+    // a refusal with no refund of its own is "none" even though the home has refunds of an earlier refusal
+    await env.DB.prepare("DELETE FROM refund_ops WHERE id='op-ref-2'").run();
+    const none = await (await call("/v1/account/order?session=cs_ref_2", tok)).json<{ refund: unknown; refused: Refused; reason: string }>();
+    expect([none.refund, none.refused?.refund, none.reason]).toEqual([null, "none", "not_paid"]);
+  });
+
+  it("GET /v1/account/cloud carries refused beside a live home", async () => {
+    const { tok } = await refusedHome(SUB_A, "mismatch", { refund: "pending" });
+    const res = await call("/v1/account/cloud", tok);
+    expect(res.status).toBe(200);
+    expect((await res.json<{ refused: Refused }>()).refused).toEqual({ kind: "mismatch", declared: "US", collected: "TH", refund: "pending", at: REFUSED_AT });
+  });
+
+  it("GET /v1/account/cloud answers 200 with refused when the account has no home at all, and null once nothing is refused", async () => {
+    const { h, tok } = await refusedHome(SUB_A, "country_paused", { refund: "sent", collected: "FR" });
+    await env.DB.prepare("UPDATE cloud_homes SET desired_state='deleted',observed_state='deleted' WHERE id=?").bind(h).run();
+    const res = await call("/v1/account/cloud", tok);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ homeId: null, refused: { kind: "country_paused", declared: "US", collected: "FR", refund: "sent", at: REFUSED_AT } });
+    await env.DB.prepare("DELETE FROM billing_subscriptions WHERE home_id=?").bind(h).run();
+    expect(await (await call("/v1/account/cloud", tok)).json()).toMatchObject({ refused: { kind: "country_paused" } });
+    await env.DB.prepare("UPDATE checkout_consents SET rejected_at=NULL,rejected_reason=NULL WHERE home_id=?").bind(h).run();
+    // a deleted home is the ended view, which carries refused too (null here: nothing is refused any more)
+    expect(await (await call("/v1/account/cloud", tok)).json()).toMatchObject({ homeId: null, refused: null });
+  });
+
+  it("GET /v1/account/cloud answers 200 with refused when the account has no home row at all", async () => {
+    const { h, tok } = await refusedHome(SUB_A, "mismatch", { refund: "none", collected: null });
+    await env.DB.batch([env.DB.prepare("DELETE FROM open_checkouts WHERE home_id=?").bind(h), env.DB.prepare("DELETE FROM cloud_homes WHERE id=?").bind(h)]);
+    const res = await call("/v1/account/cloud", tok);
+    expect([res.status, await res.json()]).toEqual([200, { homeId: null, home: null, subscription: null,
+      refused: { kind: "mismatch", declared: "US", collected: null, refund: "none", at: REFUSED_AT } }]);
+    await env.DB.prepare("DELETE FROM checkout_consents WHERE home_id=?").bind(h).run();
+    expect((await call("/v1/account/cloud", tok)).status).toBe(404);
+  });
+
+  it("a new checkout consent by the account clears refused on every page, even with no home", async () => {
+    const { a, h, tok } = await refusedHome(SUB_A, "mismatch", { refund: "pending" });
+    await env.DB.prepare("UPDATE cloud_homes SET desired_state='deleted',observed_state='deleted' WHERE id=?").bind(h).run();
+    expect((await cloudOf(tok)).refused).not.toBeNull();
+    const fresh = await home(a, "payment_pending");
+    await consent(fresh, a, { created_at: T - 1000 });
+    expect((await cloudOf(tok)).refused).toBeNull();
+    expect((await orderOf(fresh, tok)).refused).toBeNull();
+  });
+
+  it("refused is gone once the refusal is older than 7 days", async () => {
+    const { h, tok } = await refusedHome(SUB_A, "mismatch", { refund: "sent" });
+    const DAY = 86_400_000;
+    await env.DB.prepare("UPDATE checkout_consents SET rejected_at=? WHERE home_id=?").bind(T - 7 * DAY + 60_000, h).run();
+    expect((await cloudOf(tok)).refused).not.toBeNull();
+    expect((await homeOf(tok)).refused).not.toBeNull();
+    await env.DB.prepare("UPDATE checkout_consents SET rejected_at=? WHERE home_id=?").bind(T - 7 * DAY - 60_000, h).run();
+    expect((await cloudOf(tok)).refused).toBeNull();
+    expect((await homeOf(tok)).refused).toBeNull();
+    expect((await orderOf(h, tok)).refused).toBeNull();
   });
 });

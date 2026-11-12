@@ -1,0 +1,41 @@
+COMMAND node_modules/.bin/vitest run server/decision/budget.test.ts -t "content streaming"
+
+ RUN  v4.1.12 /work
+
+ ❯ server/decision/budget.test.ts (11 tests | 1 failed | 10 skipped) 18ms
+   ↓ A12a M64 50MB content hashes stably without an unbounded clone; depth/key bounds
+   ↓ R18 bounded registrations: 33rd same-thread request refuses and prior wipe survives
+   ↓ A12a prune walks settled index in batches of 500
+   ↓ M64 projection never calls structuredClone before enforcing bounds
+   ↓ M36 one cumulative reader budget covers outer scripts and all nested executables
+   ↓ A12a UTF-8 byte bounds apply to content heads, values and oversized keys
+   ↓ A12a content heads share the same one MB registration budget
+   ↓ R18 600 concurrent registrations enforce the process cap without evicting a live wipe
+   ↓ R18 64 and 65 executables and five nested interpreters remain bounded and retain earlier wipe evidence
+   ↓ R18 1,000 changing deny revisions keep exact lookup work and retain a late deny
+   × A12a content streaming hashes the original Unicode bytes at every chunk boundary 15ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 10 skipped (11)
+   Start at  08:11:27
+   Duration  4.39s (transform 3.38s, setup 4.02s, import 232ms, tests 18ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/budget.test.ts > A12a content streaming hashes the original Unicode bytes at every chunk boundary
+AssertionError: expected '182346f6ef5d8542172393c20b84b8f1369a2…' to be 'dee49d7c67f6171e6db3254451cb1ec6e7469…' // Object.is equality
+
+Expected: "dee49d7c67f6171e6db3254451cb1ec6e7469cfaf31db77183e1d4478a5f561a"
+Received: "182346f6ef5d8542172393c20b84b8f1369a23c5a0cd416faadc19b434065f3f"
+
+ ❯ server/decision/budget.test.ts:72:53
+     70|  const {createHash}=await import('node:crypto');
+     71|  const body='x'.repeat(32767)+'😀'+'y'.repeat(70000);
+     72|  expect(boundedProjection({body}).body.contentHash).toBe(createHash('s…
+       |                                                     ^
+     73| });
+     74|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

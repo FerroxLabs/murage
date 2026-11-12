@@ -86,6 +86,7 @@ describe("first computer tool call wakes the box (fake archived box)", () => {
     await new Promise<void>((r) => box!.listen(0, "127.0.0.1", r));
     const port = (box.address() as any).port;
     proxy = spawn(process.execPath, ["--experimental-strip-types", PROXY], {
+      windowsHide: true,
       env: {
         ...process.env,
         MURAGEBOX_BOX_API: `http://127.0.0.1:${port}`,

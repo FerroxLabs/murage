@@ -1,3 +1,4 @@
+import { checkAllHookCanon } from "../hook-safety.ts";
 // Fan-in event bus — port of upstream's ProviderService fan-in +
 // EventNdjsonLogger tee, minus Effect. Every adapter's event stream merges
 // into one bus; each event is stamped with its providerInstanceId, teed to
@@ -205,6 +206,8 @@ function withheldForLog(policy: PhoneWithholdPolicy | null, loggable: RuntimeEve
 
 
 export class EventBus {
+  /** C4 installs projection before event-log persistence; listeners keep the original. */
+  highlevelProjection(project: (event: RuntimeEvent) => RuntimeEvent | null): void { void project; throw new Error("C4 implements"); }
   private listeners = new Set<RuntimeEventListener>();
   private unsubscribes: Array<{ instanceId: string; unsubscribe: () => void }> = [];
   private pendingLogWarnings = new Map<string, RuntimeEvent>();
@@ -265,6 +268,7 @@ export class EventBus {
   withholdText(policy: PhoneWithholdPolicy) { this.withhold = policy; }
 
   publish(event: RuntimeEvent) {
+    if (event.type === "item.completed" && event.itemType === "tool") checkAllHookCanon("V-ANY");
     if (this.omitThread(event.threadId)) return this.deliver(event);
     // Sentinel: every engine's turn outcomes through this one common path (observe only, O(1), never throws)
     observeTurnEvent(event);
@@ -475,5 +479,9 @@ function observeSignIn(instanceId: string, event: RuntimeEvent, subscriptionLogi
     return;
   }
   if (event.type !== "runtime.error" || event.setup === true) return;
+  if (event.fluxDecision) {
+    if (event.fluxDecision.reason === "keyRevoked") noteInstanceAuthFailure(instanceId, Date.now(), { signIn: false });
+    return;
+  }
   if (event.authRequired === true || event.providerError?.kind === "authentication" || looksLikeAuthFailure(event.message, { engineLevel: subscriptionLogin })) noteInstanceAuthFailure(instanceId, Date.now(), { signIn: subscriptionLogin });
 }

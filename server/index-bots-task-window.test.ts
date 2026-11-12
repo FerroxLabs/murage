@@ -17,9 +17,17 @@ import { ROSTER_TASK_WINDOW, TASK_WINDOW } from "./task-window.ts";
 
 const instrumentation = `
   const fs=await import('node:fs');const path=await import('node:path');const sqlite=await import('node:sqlite');
+  const {AsyncLocalStorage}=await import('node:async_hooks');const http=await import('node:http');
+  const requestScope=new AsyncLocalStorage();const emit=http.Server.prototype.emit;
+  http.Server.prototype.emit=function(event,...args){
+    if(event!=='request')return emit.call(this,event,...args);
+    const scope={active:true};args[1].once('finish',()=>{scope.active=false;});
+    args[1].once('close',()=>{scope.active=false;});
+    return requestScope.run(scope,()=>emit.call(this,event,...args));
+  };
   const dir=process.env.MURAGE_DATA_DIR;let on=false;let n=0;let by={};
   const proto=sqlite.StatementSync.prototype;
-  for(const name of ['all','get','iterate','run']){const original=proto[name];proto[name]=function(...args){if(on){n++;const key=String(this.sourceSQL).replace(/\\s+/g,' ').slice(0,140);by[key]=(by[key]??0)+1;}return original.apply(this,args);};}
+  for(const name of ['all','get','iterate','run']){const original=proto[name];proto[name]=function(...args){if(on&&requestScope.getStore()?.active){n++;const key=String(this.sourceSQL).replace(/\\s+/g,' ').slice(0,140);by[key]=(by[key]??0)+1;}return original.apply(this,args);};}
   ${countControlSource(`(c)=>{
     if(c.start){n=0;by={};on=true;fs.writeFileSync(path.join(dir,'count-started'),'1');}
     else{on=false;fs.writeFileSync(path.join(dir,'counts.json'),JSON.stringify({statements:n,by}));}}`)}
@@ -67,8 +75,10 @@ async function launchWith(count: number) {
   return { bot, count, grants: new Set(tasks.map((_, i) => grantOf(i))) };
 }
 
-/** The server does work of its own after it starts listening (a pass over every task, for one); count only once it is quiet. */
+/** Establish an idle interval. SQL is scoped to active HTTP requests: reviewed
+ * 5d5a791f19's perpetual idle search pruning is not roster-request work. */
 async function quiet() {
+  let last: unknown;
   for (let attempt = 0; attempt < 40; attempt++) {
     for (const name of ["counts.json", "count-started"]) rmSync(file(name), { force: true });
     signal({ start: true });
@@ -76,9 +86,11 @@ async function quiet() {
     await new Promise((r) => setTimeout(r, 1_000));
     signal({ dump: true });
     await until(() => existsSync(file("counts.json")));
-    if ((JSON.parse(readFileSync(file("counts.json"), "utf8")) as { statements: number }).statements < 5) return;
+    const sample = JSON.parse(readFileSync(file("counts.json"), "utf8")) as { statements: number; by: Record<string, number> };
+    last = sample;
+    if (sample.statements < 5) return;
   }
-  throw new Error("the server never went quiet");
+  throw new Error(`the server never went quiet: ${JSON.stringify(last)}`);
 }
 
 async function measured(read: () => Promise<{ status: number; text: string; body: any }>) {
@@ -89,6 +101,7 @@ async function measured(read: () => Promise<{ status: number; text: string; body
   signal({ dump: true });
   await until(() => existsSync(file("counts.json")));
   const dump = JSON.parse(readFileSync(file("counts.json"), "utf8")) as { statements: number; by: Record<string, any> };
+  expect(dump.statements, "the request SQL counter must observe real work").toBeGreaterThan(0);
   return { answer, statements: dump.statements };
 }
 

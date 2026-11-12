@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, constants, createReadStream, createWriteStream, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, rmSync, writeSync } from "node:fs";
@@ -135,7 +136,7 @@ async function fileHash(path: string): Promise<string> {
 function flushExtracted(directory: string, files: string[]) {
   if (!files.length) return;
   const tool = ["/bin/sync", "/usr/bin/sync"].find(candidate => { try { return lstatSync(candidate).isFile() || lstatSync(candidate).isSymbolicLink(); } catch { return false; } });
-  if (tool && spawnSync(tool, process.platform === "linux" ? ["-f", directory] : [], { stdio: "ignore", env: {}, timeout: 120_000 }).status === 0) return;
+  if (tool && spawnSync(tool, [...(process.platform === "linux" ? ["-f", directory] : [])], withHideInherit({ stdio: "ignore", env: {}, timeout: 120_000 })).status === 0) return;
   for (const file of files) { const fd = openSync(file, "r"); try { fsyncSync(fd); } finally { closeSync(fd); } }
 }
 

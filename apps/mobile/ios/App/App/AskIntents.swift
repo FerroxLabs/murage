@@ -46,36 +46,73 @@ private enum IntentEnvironment {
     }
 }
 
-struct AskMurageIntent: AppIntent {
+struct AskMurageIntent: ForegroundContinuableIntent {
     static var title: LocalizedStringResource = "Ask Murage"
     static var authenticationPolicy: IntentAuthenticationPolicy = .requiresLocalDeviceAuthentication
     static var openAppWhenRun: Bool = false
+    // Background by default; only the Face ID proof step may continue in the
+    // foreground (design 8.7, the OpenAskIntent pattern). V-D8-1 decides later
+    // whether Face ID can present in the background and the hop can go.
     @available(iOS 26.0, *)
-    static var supportedModes: IntentModes { .background }
+    static var supportedModes: IntentModes { [.background, .foreground(.dynamic)] }
 
     @Parameter(title: "Ask a bot") var bot: BotEntity?
     @Parameter(title: "What do you want to ask?", requestValueDialog: "What do you want to ask?") var question: String?
+
+    private static func local(_ key: String) -> String { Bundle.main.localizedString(forKey: key, value: key, table: nil) }
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {
         let targets = IntentEnvironment.targets
         let target = targets?.resolve(identity: bot?.id, now: IntentEnvironment.now)
         let text: String
-        if let question, !question.isEmpty { text = question }
+        // Text from a Shortcut or Spotlight parameter was not typed or spoken in this run.
+        let prefilled: Bool
+        if let question, !question.isEmpty { text = question; prefilled = true }
         else {
             let prompt = AskDialog.question(botName: bot == nil ? nil : target?.bot.name)
             text = try await $question.requestValue(IntentDialog("\(prompt)"))
+            prefilled = false
         }
         let outcome: AskIntentOutcome
         if let targets, let target {
             let http = ShareTargetsHTTP()
             defer { http.close() }
             let tokens = MurageShellCore.PhoneAskTokenStore()
-            outcome = await AskIntentRun(targets: targets, readToken: tokens.readForAsk,
-                post: { try await http.send($0) }).run(identity: target.identity, text: text, now: IntentEnvironment.now)
+            let steps = AskProofSigner.steps(
+                pin: AskDevicePin(defaults: UserDefaults(suiteName: ShareContainer.group)),
+                confirm: { shown in
+                    // The owner sees the full text; cancelling sends the plain ask (design 8.9).
+                    let title = AskProofStrings.render(AskProofStrings.confirmTitle, botName: target.bot.name)
+                    do {
+                        try await requestConfirmation(result: .result(dialog: IntentDialog("\(title)"), view: AskConfirmSnippet(text: shown)),
+                                                      confirmationActionName: .send)
+                        return true
+                    } catch { return false }
+                },
+                beforeSigning: {
+                    // Declining or no continuation leaves the plain ask to send.
+                    let line = Self.local(AskProofStrings.confirmInApp)
+                    do {
+                        if #available(iOS 26.0, *) { try await continueInForeground(IntentDialog("\(line)"), alwaysConfirm: true) }
+                        else { try await requestToContinueInForeground(IntentDialog("\(line)")) }
+                        return true
+                    } catch { return false }
+                })
+            outcome = await AskIntentRun(targets: targets, readToken: tokens.readForAsk, proof: steps,
+                post: { try await http.send($0) }).run(identity: target.identity, text: text, now: IntentEnvironment.now,
+                                                       textWasPrefilled: prefilled)
         } else { outcome = .init(.setup) }
         let line = outcome.dialog.text(botName: target?.bot.name ?? "")
         return .result(dialog: IntentDialog("\(line)"), view: AskResultSnippet(outcome: outcome, origin: target?.origin.serialized))
+    }
+}
+
+/// The full text the owner is asked to send as themselves.
+private struct AskConfirmSnippet: View {
+    let text: String
+    var body: some View {
+        Text(verbatim: text).fixedSize(horizontal: false, vertical: true).padding()
     }
 }
 

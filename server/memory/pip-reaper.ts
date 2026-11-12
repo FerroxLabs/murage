@@ -1,3 +1,4 @@
+import { withHideInherit } from "../../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -37,7 +38,7 @@ interface RunResult { ok: boolean; code: number | string | null; out: string }
  *  "ABORT_ERR"), never an empty answer, so no caller reads it as absence. */
 const run = (cmd: string, args: string[], abort?: AbortSignal): Promise<RunResult> =>
   abort?.aborted ? Promise.resolve({ ok: false, code: "ABORT_ERR", out: "" }) :
-  new Promise((done) => execFile(cmd, args, { timeout: 10_000, encoding: "utf8", windowsHide: true, ...(abort ? { signal: abort } : {}) }, (e, out) =>
+  new Promise((done) => execFile(cmd, [...args], withHideInherit({ timeout: 10_000, encoding: "utf8", windowsHide: true, ...(abort ? { signal: abort } : {}) }), (e, out) =>
     done(abort?.aborted ? { ok: false, code: "ABORT_ERR", out: "" } : { ok: !e, code: e ? ((e as NodeJS.ErrnoException & { code?: number | string }).code ?? null) : 0, out: String(out ?? "") })));
 
 /** What one look at a process found. "unknown" is a failed look, never evidence the process is gone. */

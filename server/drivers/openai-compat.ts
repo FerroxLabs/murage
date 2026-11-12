@@ -1,3 +1,5 @@
+import { registerBusyloopPayloadSite, fluxRouteFor } from "../../shared/flux-route.ts";
+import { inspectFluxResponse } from "./flux-busyloop-readers.ts";
 // Transcript-replay driver for OpenRouter, Groq, Together, llama.cpp, and
 // other endpoints that speak the OpenAI chat-completions contract.
 import { assertProviderKey, keyIssuer } from "../../electron/provider-connections.mjs";
@@ -6,6 +8,8 @@ import type { ModelCatalog, ProviderDriver } from "../contracts.ts";
 import { createOpenAIChatRuntime } from "./openai-chat.ts";
 import { requestMemoryExtraction, requestMemoryInference, requestMemoryGrounding } from "../memory/extract.ts";
 import { classifyLocalHostname } from "../../shared/local-models.ts";
+import { fluxKeyPolicyError } from "../cloud-home/flux-key-policy.ts";
+import { fluxUsageHeaders, isFluxHost } from "../flux-usage-tags.ts";
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject } from "./local-inject.ts";
 
 const DRIVER_KIND = "openai-compat";
@@ -107,6 +111,10 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       try { assertProviderKey(endpoint, apiKey.trim()); }
       catch { credentialMismatch = true; apiKey = ""; }
     }
+    // B4: a Flux address takes only the key Flux issued for this home, and that key
+    // goes nowhere else. Checked on the final key, wherever it came from.
+    const fluxPolicyError = apiKey && process.env.MURAGE_CLOUD_ROLE === "home" ? fluxKeyPolicyError(apiKey, config.url) : null; // Cloud homes only; a desktop owner keeps their own Flux key.
+    if (fluxPolicyError) { apiKey = ""; credentialMismatch = true; }
     // Spec E4: a server on this machine needs no key. The shared runtime
     // refuses an empty key, so a keyless loopback endpoint gets a harmless
     // placeholder instead of asking the user to invent one. LAN and remote
@@ -164,12 +172,13 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       await refreshLocal();
       if (!apiKey) return;
       try {
-        const response = await fetch(`${config.url}/models`, {
-          headers: { authorization: `Bearer ${apiKey}` },
+        const response = await fetch(fluxRouteFor(`${config.url}/models`).requestUrl, {
+          headers: { authorization: `Bearer ${apiKey}`, ...(isFluxHost(config.url) ? fluxUsageHeaders({ feature: "other" }) : {}) },
           signal: AbortSignal.timeout(8_000),
         });
-        if (!response.ok) return;
-        const json = await response.json() as { data?: Array<{ id?: unknown; name?: unknown; supported_parameters?: unknown }> } | Array<{ id?: unknown; name?: unknown; supported_parameters?: unknown }>;
+        const fluxResponse = await inspectFluxResponse(response, fluxRouteFor(`${config.url}/models`).routed, undefined, true);
+        if (!response.ok || (fluxResponse.decision && fluxResponse.decision.action !== "PASS")) return;
+        const json = (fluxResponse.rawBody !== undefined ? registerBusyloopPayloadSite("read", JSON.parse(fluxResponse.rawBody)) : await registerBusyloopPayloadSite("read", response.json())) as { data?: Array<{ id?: unknown; name?: unknown; supported_parameters?: unknown }> } | Array<{ id?: unknown; name?: unknown; supported_parameters?: unknown }>;
         const rows = Array.isArray(json) ? json : Array.isArray(json.data) ? json.data : [];
         const seen = new Set<string>();
         const options: ModelCatalog["options"] = [];
@@ -220,8 +229,8 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       }),
       httpErrorLabel: "upstream",
       jsonSchemaResponse: true,
-      missingKeyError: credentialMismatch ? "The saved key does not match this endpoint's provider. Connect its provider in Models." : "This engine has no API key yet. Add one in App Settings → Models.",
-      unavailableReason: credentialMismatch ? "The saved key does not match this endpoint's provider. Connect its provider in Models." : "No API key yet. Add one in App Settings → Models.",
+      missingKeyError: fluxPolicyError ?? (credentialMismatch ? "The saved key does not match this endpoint's provider. Connect its provider in Models." : "This engine has no API key yet. Add one in App Settings → Models."),
+      unavailableReason: fluxPolicyError ?? (credentialMismatch ? "The saved key does not match this endpoint's provider. Connect its provider in Models." : "No API key yet. Add one in App Settings → Models."),
       // No provider idle cut of its own (0.1.61): the thread's silence watch,
       // on the owner's setting, decides when a quiet turn stops.
       reasoning: true,

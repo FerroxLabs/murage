@@ -1,3 +1,4 @@
+import "../shared/win-hide-child-process.mjs";
 import { createHash } from "node:crypto";
 import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -64,6 +65,8 @@ type State = z.infer<typeof stateSchema> & {offerInvalid?:true;hopsInvalid?:true
 export type BackupCommittedState = Readonly<State>;
 type Job = z.infer<typeof jobSchema>;
 const waitingPhases:Job["phase"][]=["due","waiting-idle","waiting-backup-mode"];
+/** Phases in which a capture is under way or about to take the installation offline (a restore must not arm). */
+const busyPhases=new Set<string>(["claiming","capturing","handoff-prepared","handoff-armed","offline-claimed"]);
 const settledPhases:Job["phase"][]=["local-verified","skipped","returned","upgrade-complete","upgrade-cancelled"];
 /** A user-requested backup is named by its revision, so a changed schedule
  * never inherits one. It is only ever started by the request that made it. */
@@ -97,6 +100,8 @@ interface Options {
   onSideWritten?:()=>void;
   sideSync?:(file:string)=>void;
   sideWrite?:typeof writeFileAtomic;
+  /** True while a restore job is open: a manual backup is refused restore_finishing. */
+  restoreWindow?:()=>boolean;
   claimIdle?:(request:BackupCaptureRequest,signal:AbortSignal)=>Promise<{state:"busy"|"backup-mode-required"}|{state:"claimed";release:()=>Promise<void>}>;
   captureOffline?:(request:BackupCaptureRequest,signal:AbortSignal)=>Promise<BackupReceipt>;
   /** Told after each durable save, with what was saved (1.0.9 Sentinel's backup status manifest). Its result and any
@@ -361,10 +366,19 @@ export class BackupCoordinator {
       this.save({...rest,revision:s.revision+1,configuredAt:this.now(),schedule,job:unresolved?s.job:undefined,...(receiptCurrent?{lastVerified}:{})});return this.status();
     }finally{lease.release();}
   }
-  tick(upgradeId?:string){if(this.running)return this.running;this.running=this.work(upgradeId).finally(()=>{this.running=undefined;});return this.running;}
+  /** H3 (J4): a backup is under way, scheduled or manual, in this process or in another one (the desktop host's coordinator is not the server's), or died mid-capture
+   *  and has not been reconciled yet. A restore arms only when this is false. The committed state answers for every process; an unreadable state counts as busy. */
+  busy():boolean{
+    if(this.running!==undefined)return true;
+    try{return busyPhases.has(this.status().phase);}catch{return true;}
+  }
+  tick(upgradeId?:string){if(this.running)return this.running;
+    // r3.4d J2: a SCHEDULED tick starts nothing while a restore job is open (the manual path is gated in requestManual); the committed state is returned unchanged.
+    if(this.options.restoreWindow?.())return Promise.resolve(this.status());this.running=this.work(upgradeId).finally(()=>{this.running=undefined;});return this.running;}
   /** Read-only wake eligibility. Final owner admission and due selection remain
    * mandatory after the GUI job acquires its installation lease. */
   closedEligibility():{status:"disabled"|"not-due"|"due"|"needs-review"}{
+    if(this.options.restoreWindow?.())return {status:"not-due"};
     const c=this.readContext(),s=c.raw;
     if(c.wait){
       if(!s.schedule.enabled||s.schedule.closedApp!==true)return {status:"disabled"};
@@ -392,6 +406,7 @@ export class BackupCoordinator {
    * daily run. A daily job already waiting is handed off instead of a second
    * one, so the two never both run. */
   requestManual(expectedRevision:number,requestId:string,expected?:{jobId:string|undefined}){
+    if(this.options.restoreWindow?.())throw new Error("restore_finishing");
     const lease=this.lease();try{
       const s=this.read();if(s.revision!==expectedRevision)throw new Error("BACKUP_SCHEDULE_CHANGED");
       const request=backupReferenceSchema.safeParse(requestId);if(!request.success)throw new Error("BACKUP_HANDOFF_REJECTED");

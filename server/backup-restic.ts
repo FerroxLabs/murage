@@ -1,3 +1,5 @@
+import "../shared/win-hide-child-process.mjs";
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { constants, closeSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readSync, realpathSync, renameSync, rmSync, writeFileSync, writeSync, type BigIntStats } from "node:fs";
@@ -85,7 +87,7 @@ export function resticRunner(executable:string,signal?:AbortSignal):ResticRunner
     }catch{throw new Error("RESTIC_TOOL_UNVERIFIED");}
     return new Promise((resolveResult,reject)=>{
     let env:Record<string,string>;try{env=resticChildEnvironment(input.cwd,input.s3);}catch{reject(Error("RESTIC_S3_CREDENTIALS_INVALID"));return;}
-    const child=spawn(executable,input.args,{cwd:input.cwd,env,stdio:["pipe","pipe","pipe"],windowsHide:true});
+    const child=spawn(executable,[...input.args],withHideInherit({cwd:input.cwd,env,stdio:["pipe","pipe","pipe"],windowsHide:true}));
     let stdout="",overflow=false,timedOut=false,closed=false;let escalation:ReturnType<typeof setTimeout>|undefined;
     const stop=()=>{child.kill("SIGTERM");escalation=setTimeout(()=>{if(!closed)child.kill("SIGKILL");},1000);};
     const timer=setTimeout(()=>{timedOut=true;stop();},input.timeoutMs);

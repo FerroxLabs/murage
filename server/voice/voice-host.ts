@@ -1,3 +1,4 @@
+import { fluxRouteFor, registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 import { classifyFluxRefusal } from "../../shared/flux-refusal.ts";
 // The voice host: the fast half of a call.
 //
@@ -35,6 +36,7 @@ import { firstClauseBreak, firstClauseEnd, splitFirstClause, splitLong, splitSen
 import { compileSpeechSource, MAX_SOURCE_BYTES, REST_ON_SCREEN } from "../tts/speech-source.ts";
 import { optionBCut } from "../tts/speech-source-option-b.ts";
 import { sameRequest } from "./hand-downs.ts";
+import { authorizeFluxDispatch } from "../flux-start-gate.ts";
 
 /** Beyond this the host has stalled, and is asked once more; a second stall
  *  and the call falls back to the engine. One stall in 25 turns on a live
@@ -445,7 +447,7 @@ async function* readCompletion(body: ReadableStream<Uint8Array>, lookup?: Lookup
         if (data === "[DONE]") { if (completion) completion.sealed = true; continue; }
         let frame: any;
         try {
-          frame = JSON.parse(data);
+          frame = registerBusyloopPayloadSite("read", JSON.parse(data));
         } catch {
           continue;
         }
@@ -710,7 +712,8 @@ function sampling(endpoint: VoiceEndpoint, maxTokens: number): Record<string, nu
  */
 export async function warmVoiceHost(host: VoiceEndpoint | null, fetchImpl: typeof fetch = fetch): Promise<void> {
   if (!host || isBudgetReached(host)) return;
-  await fetchImpl(`${host.baseUrl}/chat/completions`, {
+  if (host.via === "flux") await authorizeFluxDispatch(host.key); // spend gate
+  await fetchImpl(fluxRouteFor(`${host.baseUrl}/chat/completions`).requestUrl, {
     method: "POST",
     headers: { authorization: `Bearer ${host.key}`, "content-type": "application/json", ...fluxCallHeadersVia("voice-host", host.via) },
     body: JSON.stringify({
@@ -832,7 +835,7 @@ async function* sseEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<any>
       const data = line.slice(5).trim();
       if (!data || data === "[DONE]") continue;
       try {
-        yield JSON.parse(data);
+        yield registerBusyloopPayloadSite("read", JSON.parse(data));
       } catch {
         // a malformed frame is skipped
       }
@@ -1026,7 +1029,7 @@ async function* hostTurn(options: VoiceHostOptions & PresentationFields, timing:
   ];
 
   const transport = options.fetchImpl ?? fetch;
-  const call: typeof fetch = (url, init) => { readCallPresentation(options.snapshot); return transport(url, init); };
+  const call: typeof fetch = (url, init) => { readCallPresentation(options.snapshot); return transport(fluxRouteFor(url).requestUrl, init); };
   const body = JSON.stringify({
     model: host.model,
     messages,
@@ -1065,6 +1068,7 @@ async function* hostTurn(options: VoiceHostOptions & PresentationFields, timing:
         mine.abort();
       }, FIRST_TOKEN_TIMEOUT_MS);
       try {
+        if (host.via === "flux") await authorizeFluxDispatch(host.key); // spend gate
         res = await call(`${host.baseUrl}/chat/completions`, {
           method: "POST",
           headers: { authorization: `Bearer ${host.key}`, "content-type": "application/json", ...fluxCallHeadersVia("voice-host", host.via) },
@@ -1160,7 +1164,7 @@ async function* hostTurn(options: VoiceHostOptions & PresentationFields, timing:
             // arguments that never arrived are not whole, except for a call
             // that takes none
             if (!call.args.trim() && call.name !== "cancel_task") throw new Error("no arguments");
-            JSON.parse(call.args || "{}");
+            registerBusyloopPayloadSite("read", JSON.parse(call.args || "{}"));
           } catch {
             calls.delete(index);
           }
@@ -1211,7 +1215,7 @@ async function* hostTurn(options: VoiceHostOptions & PresentationFields, timing:
       } else if (name === "quick_lookup" && !handed && lookupSource) {
         let query = "";
         try {
-          const parsed = JSON.parse(args || "{}");
+          const parsed = registerBusyloopPayloadSite("read", JSON.parse(args || "{}"));
           query = typeof parsed?.query === "string" ? parsed.query.trim() : "";
         } catch {
           // fall through to the owner's own words
@@ -1282,7 +1286,7 @@ async function* hostTurn(options: VoiceHostOptions & PresentationFields, timing:
         handed = true;
         let query = "";
         try {
-          const parsed = JSON.parse(args || "{}");
+          const parsed = registerBusyloopPayloadSite("read", JSON.parse(args || "{}"));
           query = typeof parsed?.query === "string" ? parsed.query.trim() : "";
         } catch {}
         yield { type: "hand_down", request: query || options.said };
@@ -1293,7 +1297,7 @@ async function* hostTurn(options: VoiceHostOptions & PresentationFields, timing:
         // sentence would start the same work twice
         let request = "";
         try {
-          const parsed = JSON.parse(args || "{}");
+          const parsed = registerBusyloopPayloadSite("read", JSON.parse(args || "{}"));
           request = typeof parsed?.request === "string" ? parsed.request.trim() : "";
         } catch {
           // malformed arguments: hand down the owner's own words instead
@@ -1393,10 +1397,11 @@ export async function* runVoiceBrief(input: VoiceBriefOptions): AsyncGenerator<V
   const firstToken = setTimeout(abort, BRIEF_FIRST_TOKEN_TIMEOUT_MS);
   const wholeTurn = setTimeout(abort, BRIEF_TURN_TIMEOUT_MS);
   const transport = options.fetchImpl ?? fetch;
-  const call: typeof fetch = (url, init) => { readCallPresentation(options.snapshot); return transport(url, init); };
+  const call: typeof fetch = (url, init) => { readCallPresentation(options.snapshot); return transport(fluxRouteFor(url).requestUrl, init); };
   try {
     let res: Response;
     try {
+      if (host.via === "flux") await authorizeFluxDispatch(host.key); // spend gate
       res = await call(`${host.baseUrl}/chat/completions`, {
         method: "POST",
         headers: { authorization: `Bearer ${host.key}`, "content-type": "application/json", ...fluxCallHeadersVia("voice-host", host.via) },

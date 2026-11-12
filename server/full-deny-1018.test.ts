@@ -11,6 +11,10 @@ import type { AutoContext } from "./auto-approve.ts";
 const { autoVerdict } = await import("./auto-approve.ts");
 const { alwaysAskCommand, protectedClass } = await import("./always-ask.ts");
 const { ownerMarks } = await import("./testing/marks-nlh0.ts");
+const { expectNoLimitsOwnerOutcome } = await import("./testing/no-limits-1019.ts");
+// NOLIM 1.0.19 (rev 3): at No limits the owner's built-in typed denies run; only the wipe list (and, by rev 3.2, Murage's own
+// hook and relay files, pinned in hook-selfguard.test.ts) still ask. Full access rows are unchanged.
+const noLimitsRule = (command: string): string | undefined => alwaysAskCommand(command, "/w")?.rule;
 
 const FULL = { id: "owned", autoApprove: true, fullAccess: true };
 const NO_LIMITS = { ...FULL, noLimits: true };
@@ -58,14 +62,14 @@ const MUTANT_ROWS: Array<[label: string, command: string, asks: boolean, asksNoL
   ["M-FD-usrlocal", "cp build/tool /usr/local/bin/tool", false, true],
   // MurageMain 11-07: code that calls into native code fails closed at every level (Astra r16 recheck OPEN 1)
   ["M-FD-ffi", `python3 -c 'import ctypes; ctypes.CDLL(None).syscall(87, b"/etc/passwd")'`, true],
-  ["M-FD-ffi", `python3 -c 'import cffi; cffi.FFI().dlopen(None)'`, true],
-  ["M-FD-ffi", `node -e 'require("ffi-napi")'`, true],
-  ["M-FD-ffi", `ruby -e 'require "fiddle"; Fiddle.dlopen(nil)'`, true],
+  ["M-FD-ffi", `python3 -c 'import cffi; cffi.FFI().dlopen(None)'`, true, false],
+  ["M-FD-ffi", `node -e 'require("ffi-napi")'`, true, false],
+  ["M-FD-ffi", `ruby -e 'require "fiddle"; Fiddle.dlopen(nil)'`, true, false],
   // MurageMain 11-07: in `ln -s TARGET LINK` only LINK is written; a hard link keeps both as write targets
-  // 11-08 re-baseline (MARKS r14 R-B, designs/MARKS-r14-DENY-CLASS.md :92 :95 :157 :193 :292): a link written and then written through
-  // in one command would reach a system file, so the symlink-target rule STOPS at owner No limits; Full access keeps running.
-  ["M-FD-ln", "ln -s /usr/bin/x ./y", false, true],
-  ["M-FD-ln", "ln -sf /etc/hosts ./hosts", false, true], // 11-08 re-baseline, same cite (MARKS r14 R-B :92 :95 :157 :193 :292)
+  // G-NL SYMLINK RULING (MAIN 2026-11-11 10:45Z), superseded under S1-B3:
+  // only LINK is written here, outside protected folders. Full access is unchanged.
+  ["M-FD-ln", "ln -s /usr/bin/x ./y", false, false],
+  ["M-FD-ln", "ln -sf /etc/hosts ./hosts", false, false],
   ["M-FD-ln", "ln -s ./a /usr/y", true],
   ["M-FD-ln", "ln /usr/bin/x ./y", true],
   ["M-FD-ln", "ln -s -t /usr/bin ./x", true],
@@ -86,6 +90,13 @@ describe("FULL-DENY-1018 mutant rows", () => {
     it.each(MUTANT_ROWS)(`%s ${level}: %s`, (_label, command, asksFull, asksNoLimits) => {
       const asks = level === "No limits" && asksNoLimits !== undefined ? asksNoLimits : asksFull;
       const verdict = autoVerdict(bot, "Bash", command, ctx(command));
+      if (level === "No limits") {
+        // S1-B3 RULING (MAIN 2026-11-11 09:30Z): protected writes keep their deny card, including owner-only protected targets.
+        // S1-B3 RULING (MAIN 2026-11-11 09:30Z): the explicit syscall fixture writes /etc/passwd; library imports retain the inherited run assertion.
+        if (asks && (_label !== "M-FD-ffi" || command.includes(".syscall("))) expect(verdict).toMatchObject({ approve: null, source: "always-ask" });
+        else expectNoLimitsOwnerOutcome(verdict, command, noLimitsRule(command));
+        return;
+      }
       if (asks) { expect(verdict.approve).toBeNull(); expect(["always-ask", "sensitive-guard"]).toContain(verdict.source); }
       else expect(verdict.approve).not.toBeNull();
     });
@@ -98,6 +109,11 @@ describe("FULL-DENY-1018: a deny rule holds at every level", () => {
     // spellings are pinned at Full access, where the plain spelling asks
     it.each(level === "Full access" ? [...DENIED, ...GATE_SPELLINGS] : DENIED)(`${level}: %s asks`, (command) => {
       const verdict = autoVerdict(bot, "Bash", command, ctx(command));
+      if (level === "No limits") {
+        // S1-B3 RULING (MAIN 2026-11-11 09:30Z): these protected-write run expectations are superseded.
+        expect(verdict).toMatchObject({ approve: null, source: "always-ask" });
+        return;
+      }
       expect(verdict.approve).toBeNull();
       expect(["always-ask", "sensitive-guard"]).toContain(verdict.source);
     });
@@ -123,8 +139,8 @@ describe("FULL-DENY-1018 ruling 11-08: device sinks at owner No limits", () => {
   });
   it.each(DEV_PROTECTED_STOPS)("M-DEV-protected No limits: %s stops", (command) => {
     const verdict = autoVerdict(NO_LIMITS, "Bash", command, ctx(command));
-    expect(verdict.approve).toBeNull();
-    expect(["always-ask", "sensitive-guard"]).toContain(verdict.source);
+    // S1-B3 RULING (MAIN 2026-11-11 09:30Z): protected device writes and writes through protected links still ask.
+    expect(verdict).toMatchObject({ approve: null, source: "always-ask" });
   });
   // The command rows above are also held by the independent device-write rule (disk-erase), so a /dev/ prefix widening of the
   // exemption leaves them green; the class rows below read the strict classifier itself and are what the prefix mutant turns red.

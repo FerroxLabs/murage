@@ -1,0 +1,11 @@
+# Copyright 2026 Ferrox Labs
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# owner substring | layer | note
+# Candidate observations only. These rows are not evidence of sharing detection.
+# A cover-display row additionally requires its window bounds to equal an active display.
+zoom.us | 25 | share toolbar; unproven: S0 must confirm the exact owner and layer
+Microsoft Teams | 25 | share toolbar; unproven: S0 must confirm the exact owner and layer
+Webex | 25 | share toolbar; unproven: S0 must confirm the exact owner and layer
+Slack | 25 | huddle toolbar; unproven: S0 must confirm the exact owner and layer
+Keynote | 0 | cover-display: slideshow; unproven: S0 must confirm the exact owner and layer
+Microsoft PowerPoint | 0 | cover-display: slideshow; unproven: S0 must confirm the exact owner and layer

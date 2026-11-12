@@ -392,7 +392,7 @@ describe("ClaudeDriver.decodeConfig", () => {
         expect(longTimers).toEqual([]);
         expect(resolved).toEqual([]);
         expect(broker.answer("plain", "allow")).toBe(true);
-        expect(resolved).toEqual([{ id: "plain", source: "user" }]);
+        await expect.poll(() => resolved).toEqual([{ id: "plain", source: "user" }]);
         conn.end();
       } finally {
         timerSpy.mockRestore();
@@ -697,18 +697,18 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(JSON.parse(readFileSync(healthyDump, "utf8")).pid).toBe(healthyPid);
   });
 
-  it.each(["key_budget_reached", "budget_exceeded", "premium_locked"])("preserves the routed CLI refusal %s and its key", async code => {
+  it.each(["key_budget_reached", "budget_exceeded", "premium_locked"])("classifies the routed CLI refusal %s without guessing a budget from 402", async code => {
     const { isBudgetReached, resetUnavailable } = await import("../voice/voice-routes.ts");
     resetUnavailable();
     await create("api-error", { FAKE_CLAUDE_API_ERROR: `API Error: 402 ${JSON.stringify({ error: { code } })}` });
     await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-cli-budget", text: "hi", model: "fixture-model",
-      providerRoute: { connectionId: "fixture", revision: "1", preset: "flux", protocol: "anthropic", baseUrl: "https://fixture.invalid/v1", apiKey: "fixture-budget", model: "fixture-model" } });
+      providerRoute: { connectionId: "fixture", revision: "1", preset: "flux", protocol: "anthropic", baseUrl: "https://api.fluxrouter.ai/v1", apiKey: "fixture-budget", model: "fixture-model" } });
     await recorder.until(e => e.type === "turn.completed");
-    const failure = recorder.events.find(e => e.type === "runtime.error" && e.providerError?.fluxBudget);
-    expect(Boolean(failure)).toBe(code !== "premium_locked");
-    expect(isBudgetReached({ via: "flux", label: "Flux", baseUrl: "https://fixture.invalid/v1", key: "fixture-budget", model: "speech" })).toBe(code !== "premium_locked");
-    expect(isBudgetReached({ via: "flux", label: "Flux", baseUrl: "https://fixture.invalid/v1", key: "different-key", model: "speech" })).toBe(false);
-    if (code !== "premium_locked") expect(recorder.events.some(e => e.type === "content.delta" && e.streamKind === "assistant_text")).toBe(false);
+    const failure = recorder.events.find(e => e.type === "runtime.error" && e.fluxDecision);
+    expect(failure).toMatchObject({ fluxDecision: { reason: code === "key_budget_reached" ? "keyBudget" : "fluxStop", action: "STOP", wait: "-" } });
+    expect(isBudgetReached({ via: "flux", label: "Flux", baseUrl: "https://api.fluxrouter.ai/v1", key: "fixture-budget", model: "speech" })).toBe(false);
+    expect(isBudgetReached({ via: "flux", label: "Flux", baseUrl: "https://api.fluxrouter.ai/v1", key: "different-key", model: "speech" })).toBe(false);
+    expect(recorder.events.some(e => e.type === "content.delta" && e.streamKind === "assistant_text")).toBe(false);
     resetUnavailable();
   });
 
@@ -1282,6 +1282,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const blockedNative = seen.argv[seen.argv.indexOf("--disallowedTools") + 1].split(",");
     expect(blockedNative).toContain("ListAgents");
     expect(blockedNative).toContain("SendMessage");
+    expect(blockedNative).toContain("WebFetch");
   });
 
   it("skips custom MCP entries with reserved env names while preserving built-ins and ordinary approval behavior", async () => {
@@ -5199,7 +5200,7 @@ describe("Claude gate: overlay, in-project check, wrapper (Rules 63, 69, 74b)", 
       const hostile = `$(touch ${marker}) \`touch ${marker}\` 'q' "d"\nnext line`;
       const file = writeExecEnvFile("t-exec", { PATH: process.env.PATH ?? "/usr/bin:/bin", HOSTILE: hostile, EMPTY: "" }, proj, "/bin/bash");
       expect(statSync(file).mode & 0o777).toBe(0o600);
-      const run = (command: string, envFile = file) => spawnSync(wrapper, [command], { env: { MURAGE_EXEC_ENV_FILE: envFile, LEAK: "leaked" }, encoding: "utf8" });
+      const run = (command: string, envFile = file) => spawnSync(wrapper, [command], { windowsHide: true, env: { MURAGE_EXEC_ENV_FILE: envFile, LEAK: "leaked" }, encoding: "utf8" });
       const out = run('printf "%s|%s|%s|%s" "$HOSTILE" "${EMPTY-unset}" "${LEAK-gone}" "$(pwd)"');
       expect(out.status).toBe(0);
       expect(out.stdout).toBe(`${hostile}||gone|${proj}`);

@@ -1,3 +1,4 @@
+import { withHideInherit } from "../../shared/win-hide-child-process.mjs";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Client for the root launcher's unscoped bot-state modes (CLOUD-ENGINES-DESIGN.md r9, "launcher
@@ -16,7 +17,8 @@ import type { Writable } from "node:stream";
 import { cloudHomeCopy } from "./copy.ts";
 import { TURN_LAUNCHER } from "./turn-process.ts";
 
-export interface BotStateEngine { mode: "apikey" | "oauth-token" | "chatgpt" | "oauth" | null; signedIn: boolean; expiresAt: number | null }
+/** `source`: which store answered, the home-wide one or the bot's own (null when the launcher does not say). */
+export interface BotStateEngine { mode: "apikey" | "oauth-token" | "chatgpt" | "oauth" | null; signedIn: boolean; expiresAt: number | null; source?: "home" | "bot" | null }
 export interface BotStateQuery { tombstoned: boolean; engines: Record<string, BotStateEngine> }
 /** Test seam: how a launcher request is run. */
 export type CloudLauncherSpawn = (request: Record<string, unknown>) => ChildProcess;
@@ -32,9 +34,9 @@ const onHome = (): boolean => process.env.MURAGE_CLOUD_ROLE === "home";
 
 /** `sudo -n -C 4 -- murage-turn-launch` with the request on FD 3, like every launcher call. */
 export function spawnCloudLauncher(request: Record<string, unknown>): ChildProcess {
-  const child = spawn("/usr/bin/sudo", ["-n", "-C", "4", "--", TURN_LAUNCHER], {
+  const child = spawn("/usr/bin/sudo", ["-n", "-C", "4", "--", TURN_LAUNCHER], withHideInherit({
     env: { PATH: "/usr/bin:/bin" }, cwd: "/", detached: true, stdio: ["pipe", "pipe", "pipe", "pipe"],
-  });
+  }));
   const channel = child.stdio[3] as Writable;
   channel.on("error", () => {});
   channel.end(JSON.stringify(request));
@@ -61,7 +63,7 @@ function runLauncher(request: Record<string, unknown>, launch: CloudLauncherSpaw
     let done = false;
     const finish = (fn: () => void) => { if (done) return; done = true; clearTimeout(timer); fn(); };
     const timer = setTimeout(() => {
-      finish(() => { try { child.kill("SIGKILL"); } catch { /* gone */ } reject(new Error(cloudHomeCopy.cloudBotStateUnreadable)); });
+      finish(() => { try { child.kill("SIGKILL"); } catch { /* gone */ } reject(Object.assign(new Error(cloudHomeCopy.cloudBotStateUnreadable), { code: "launcher-timeout" })); });
     }, CALL_TIMEOUT_MS);
     timer.unref?.();
     child.stdout?.on("data", keep("stdout"));
@@ -80,7 +82,8 @@ function parseQuery(stdout: string): BotStateQuery {
       // An entry that is not an object says nothing about the engine: it is left out.
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
       const mode = typeof value?.mode === "string" && MODES.has(value.mode) ? value.mode as BotStateEngine["mode"] : null;
-      engines[name] = { mode, signedIn: value?.signedIn === true, expiresAt: typeof value?.expiresAt === "number" ? value.expiresAt : null };
+      const source = value?.source === "home" || value?.source === "bot" ? value.source : null;
+      engines[name] = { mode, signedIn: value?.signedIn === true, expiresAt: typeof value?.expiresAt === "number" ? value.expiresAt : null, source };
     }
   }
   return { tombstoned: raw.tombstoned === true, engines };
@@ -90,11 +93,11 @@ function parseQuery(stdout: string): BotStateQuery {
  * only the engine-wide stores are reported. Any launcher failure throws; callers decide whether that matters. */
 export async function queryCloudBotState(bot?: string, launch: CloudLauncherSpawn = spawnCloudLauncher): Promise<BotStateQuery> {
   if (!onHome()) return { tombstoned: false, engines: {} };
-  if (bot !== undefined && !BOT_ID.test(bot)) throw new Error(cloudHomeCopy.cloudBotStateUnreadable);
+  if (bot !== undefined && !BOT_ID.test(bot)) throw Object.assign(new Error(cloudHomeCopy.cloudBotStateUnreadable), { code: "launcher-invalid-bot" });
   const result = await runLauncher({ mode: "bot-state-query", ...(bot ? { bot } : {}) }, launch);
-  if (result.code !== 0) throw new Error(firstLine(result.stderr) || cloudHomeCopy.cloudBotStateUnreadable);
+  if (result.code !== 0) throw Object.assign(new Error(firstLine(result.stderr) || cloudHomeCopy.cloudBotStateUnreadable), { code: "launcher-exit" });
   let parsed: BotStateQuery;
-  try { parsed = parseQuery(result.stdout); } catch { throw new Error(cloudHomeCopy.cloudBotStateUnreadable); }
+  try { parsed = parseQuery(result.stdout); } catch { throw Object.assign(new Error(cloudHomeCopy.cloudBotStateUnreadable), { code: "launcher-unreadable" }); }
   if (bot && parsed.tombstoned) tombstoned.add(bot);
   return parsed;
 }

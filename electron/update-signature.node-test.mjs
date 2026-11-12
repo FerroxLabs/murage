@@ -324,7 +324,9 @@ test("cached continuation verifies the publisher before admission and rechecks a
 test("both error surfaces use the external-open bridge and every locale carries the action and refusal", async () => {
   for (const file of ["UpdateBanner.tsx", "SettingsModal.tsx"]) {
     const source = await readFile(new URL(`../src/components/${file}`, import.meta.url), "utf8");
-    assert.match(source, /openExternal\?\.\("https:\/\/murage\.ai\/download"\)/);
+    // both surfaces open the download page through a local openPage helper (1.0.18 action feedback): the call site passes the download page and the helper is the external-open bridge
+    assert.match(source, /openPage\("https:\/\/murage\.ai\/download"\)/);
+    assert.match(source, /const openPage = \(url: string\) => \{[^}]*window\.muragebox\?\.openExternal\?\.\(url\)/);
     assert.match(source, /t\("updates.verificationRefused"\)/);
     assert.match(source, /t\("updates.downloadFromMurage"\)/);
   }
@@ -372,16 +374,16 @@ test("actual updater wiring sets a download check on every platform: signed SUMS
   }
 });
 test("real gpg Ed25519 export and detached signatures interoperate in an isolated temporary home", async (t) => {
-  const available = spawnSync("gpg", ["--version"], { encoding: "utf8" });
+  const available = spawnSync("gpg", ["--version"], { windowsHide: true, encoding: "utf8" });
   if (available.error?.code === "ENOENT") return t.skip("gpg is not installed");
   assert.equal(available.status, 0, available.stderr);
   const home = await mkdtemp(join(tmpdir(), "murage-gpg-"));
   // gpg runs with cwd = home and a relative "." homedir: the gpg on Windows runners is Git for Windows' MSYS build,
   // which treats a native "C:\\..." argument as relative, while the process cwd is translated for it. gpg makes "." absolute.
-  t.after(() => { spawnSync("gpgconf", ["--homedir", ".", "--kill", "all"], { cwd: home, timeout: 1000 }); safeWipeSync(home); });
+  t.after(() => { spawnSync("gpgconf", ["--homedir", ".", "--kill", "all"], { windowsHide: true, cwd: home, timeout: 1000 }); safeWipeSync(home); });
   const gpg = args => {
     const env = { ...process.env }; delete env.GNUPGHOME;
-    const result = spawnSync("gpg", ["--homedir", ".", "--no-options", "--batch", "--pinentry-mode", "loopback", "--passphrase", "", ...args], { cwd: home, encoding: "utf8", env, timeout: 30000 });
+    const result = spawnSync("gpg", ["--homedir", ".", "--no-options", "--batch", "--pinentry-mode", "loopback", "--passphrase", "", ...args], { windowsHide: true, cwd: home, encoding: "utf8", env, timeout: 30000 });
     assert.equal(result.status, 0, result.stderr);
     return result.stdout;
   };

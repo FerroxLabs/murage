@@ -3,10 +3,13 @@ import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } fro
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+// These cases isolate digest/draft semantics after qualification. The real
+// mandatory check and its CLI refusal are exercised in signal-release-* tests.
+vi.mock("./signal-release-prerequisites.mjs", () => ({ assertSignalReleaseReady() {} }));
 import { parse } from "yaml";
 import { createHash } from "node:crypto";
-import { apiGet, assertReleaseUpdateFeed, findRelease, inspectReleaseBranch, nextVersion, parseVersion, setReleaseBody, shouldRelease, uploadDraft, verifyReleaseTag } from "./release-guard.mjs";
+import { apiGet, probeReleaseToken, generateReleaseNotes, bootstrapDependencies, prepareReleaseNotes, downloadPreparedAssets, assertReleaseUpdateFeed, findRelease, inspectReleaseBranch, nextVersion, parseVersion, setReleaseBody, shouldRelease, uploadDraft, verifyReleaseTag } from "./release-guard.mjs";
 import { mkdtempSync as mkdtempBody, writeFileSync as writeBody } from "node:fs";
 import { tmpdir as tmpBody } from "node:os";
 import { join as joinBody } from "node:path";
@@ -20,21 +23,24 @@ const workflow = (name) => parse(readFileSync(join(ROOT, ".github/workflows", na
 function runStep(step, scenario = {}) {
   const dir = mkdtempSync(join(tmpdir(), "murage-release-guard-"));
   mkdirSync(join(dir, "bin"));
-  mkdirSync(join(dir, "assets"));
+  if (!scenario.download) mkdirSync(join(dir, "assets"));
   mkdirSync(join(dir, "scripts"));
   copyFileSync(join(ROOT, "scripts/release-guard.mjs"), join(dir, "scripts/release-guard.mjs"));
+  writeFileSync(join(dir, "scripts/signal-release-prerequisites.mjs"), scenario.bootstrap ? "throw new Error('dependencies not installed');\n" : "export function assertSignalReleaseReady() {}\n");
   writeFileSync(join(dir, "package.json"), JSON.stringify({ version: scenario.current ?? "1.2.3" }));
-  writeFileSync(join(dir, "assets", "asset.zip"), "artifact");
+  if (!scenario.download) writeFileSync(join(dir, "assets", "asset.zip"), "artifact");
   writeFileSync(join(dir, "release-notes.md"), "notes");
   writeFileSync(join(dir, "scenario.json"), JSON.stringify(scenario));
   writeFileSync(join(dir, "output"), "");
   writeFileSync(join(dir, "calls"), "");
   const stub = `#!${process.execPath}
-import { readFileSync, appendFileSync } from 'node:fs';
+import { readFileSync, appendFileSync, writeFileSync } from 'node:fs';
 const args = process.argv.slice(2);
 const s = JSON.parse(readFileSync(process.env.SCENARIO, 'utf8'));
 const tool = process.argv[1].split('/').at(-1);
 appendFileSync(process.env.CALLS, JSON.stringify([tool, ...args]) + '\\n');
+if (tool === 'npm') process.exit(0);
+if (args[0] === 'run' && args[1] === 'download') {writeFileSync('assets/asset.zip','artifact');process.exit(0);}
 if (tool === 'git') {
   if (args[0] === 'rev-parse') console.log('a'.repeat(40));
   else if (args[0] === 'show') console.log(JSON.stringify(s.previous ?? {version:'1.2.2'}));
@@ -49,10 +55,15 @@ if (args[0] === 'release' && args[1] === 'view') {
 if (args[0] === 'api') {
   const endpoint = args.find(a => a.startsWith('repos/') || a.startsWith('https://'));
   const method = args[args.indexOf('--method') + 1];
+  if (method === 'POST' && endpoint.endsWith('/releases')) {
+    if (s.probeDenied) process.exit(1);
+    console.log(JSON.stringify({id:71,tag_name:'release-preflight-123-2',draft:true})); process.exit(0);
+  }
   if (method === 'GET') {
     const status = s.apiError || (s.missing && endpoint.includes('/releases/tags/') ? 404 : 200);
     console.log('HTTP/2.0 ' + status + ' Status\\nContent-Type: application/json\\n\\n' + JSON.stringify(
-      status === 200 ? (endpoint.includes('/contents/')
+      status === 200 ? (endpoint.endsWith('/releases/71') ? {id:71,tag_name:'release-preflight-123-2',draft:true}
+        : endpoint.includes('/contents/')
         ? {encoding:'base64',content:Buffer.from(JSON.stringify({version:process.env.VERSION})).toString('base64')}
         : endpoint.includes('/releases?') ? []
         : endpoint.includes('/releases/') ? {id:123,tag_name:'v' + process.env.VERSION,draft:s.draft ?? true,assets:[]}
@@ -64,13 +75,13 @@ if (args[0] === 'api') {
 if (args[0] === 'pr' && args[1] === 'list') console.log(JSON.stringify(s.prs ?? []));
 process.exit(0);
 `;
-  for (const command of ["gh", "git"]) writeFileSync(join(dir, "bin", command), stub, { mode: 0o755 });
+  for (const command of ["gh", "git", "npm"]) writeFileSync(join(dir, "bin", command), stub, { mode: 0o755 });
   try {
     const result = spawnSync("bash", ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", step.run], {
       cwd: dir,
       env: {
         PATH: `${join(dir, "bin")}:${dirname(process.execPath)}:/usr/bin:/bin`,
-        GITHUB_EVENT_NAME: "push", BEFORE: "b".repeat(40), VERSION: scenario.current ?? "1.2.3",
+        GITHUB_RUN_ID: "123", GITHUB_RUN_ATTEMPT: "2", GITHUB_EVENT_NAME: "push", BEFORE: "b".repeat(40), VERSION: scenario.current ?? "1.2.3",
         GITHUB_REPOSITORY: "FerroxLabs/murage", GITHUB_OUTPUT: join(dir, "output"),
         GITHUB_STEP_SUMMARY: join(dir, "summary"), RUNNER_TEMP: dir,
         SCENARIO: join(dir, "scenario.json"), CALLS: join(dir, "calls"),
@@ -88,7 +99,6 @@ process.exit(0);
 // platform-independent helper cases below enabled on the Windows test matrix.
 describe.skipIf(process.platform === "win32")("executable release workflow boundaries", () => {
   const release = workflow("release.yml");
-  const prepare = workflow("prepare-release.yml");
   const pin = release.jobs.prepare.steps.find(step => step.id === "pin");
 
   it.each([{version:"1.2.4"}, {}, {version:"undefined"}, {version:"01.2.2"}])(
@@ -104,16 +114,37 @@ describe.skipIf(process.platform === "win32")("executable release workflow bound
     expect(greater.status, greater.stderr).toBe(0);
     expect(greater.output).toContain("should_release=true");
   });
-  it("fails closed on a GitHub lookup outage before branch creation", () => {
-    const step = prepare.jobs.prepare.steps.find(step => String(step.name).startsWith("Refuse an existing"));
-    expect(runStep(step, {apiError:503}).status).not.toBe(0);
+  it("bootstraps a clean checkout before importing any dependency", () => {
+    const step=release.jobs.assemble.steps.find(s=>s.run==='node scripts/release-guard.mjs bootstrap');
+    const result=runStep(step,{bootstrap:true});
+    expect(result.status,result.stderr).toBe(0);
+    expect(result.calls).toHaveLength(1);
+    expect(result.calls[0].slice(0,5)).toEqual(['npm','exec','--yes','--ignore-scripts','--package=pnpm@10.33.0']);
   });
-  it("reuses an existing branch without pretending an open PR exists", () => {
-    const step = prepare.jobs.prepare.steps.find(step => String(step.name).includes("release branch"));
-    const result = runStep(step, {missing:true,branchExists:true,prs:[]});
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.output).toContain("branch_exists=true");
-    expect(result.output).toContain("pr_url=\n");
+  it("downloads only the staged artifact from this run into a fresh data directory", () => {
+    const step=release.jobs.assemble.steps.find(s=>s.run==='node scripts/release-guard.mjs download');
+    const result=runStep(step,{download:true});
+    expect(result.status,result.stderr).toBe(0);
+    expect(result.calls).toEqual([['gh','run','download','123','--repo','FerroxLabs/murage','--name','release-staged-assets-2','--dir','assets'],['gh','run','download','123','--repo','FerroxLabs/murage','--name','release-ci-review-2','--dir','release-review']]);
+    const existing=runStep(step);
+    expect(existing.status).not.toBe(0);
+    expect(existing.calls).toEqual([]);
+  });
+  it("runs the early probe through the checked-in workflow command before checking availability", () => {
+    const step=release.jobs.assemble.steps.find(s=>s.run==='node scripts/release-guard.mjs probe-prepared');
+    const result=runStep(step,{missing:true});
+    expect(result.status,result.stderr).toBe(0);
+    expect(result.calls[0]).toContain('POST');
+    expect(result.calls[1]).toContain('repos/FerroxLabs/murage-releases/releases/71');
+    expect(result.calls[2]).toContain('DELETE');
+    expect(result.calls.at(-1).at(-1)).toContain('/releases?per_page=100&page=1');
+  });
+  it("an early write failure stops the probe command without any subsequent operation", () => {
+    const step=release.jobs.assemble.steps.find(s=>s.run==='node scripts/release-guard.mjs probe-prepared');
+    const result=runStep(step,{probeDenied:true});
+    expect(result.status).not.toBe(0);
+    expect(result.calls).toHaveLength(1);
+    expect(result.calls[0]).toContain('POST');
   });
   it("does not upload anything if the draft was published during the builds", () => {
     const step = release.jobs.assemble.steps.find(step => String(step.name).startsWith("Create or update"));
@@ -302,7 +333,8 @@ describe("the updater feed a release build may carry (L18 qualification feed)", 
   it("refuses a qualification build's feed, and any other feed", () => {
     const qualification = parse(readFileSync(join(ROOT, "electron-builder.qualification.yml"), "utf8"));
     expect(qualification.extends).toBe("./electron-builder.yml");
-    expect(qualification.publish).toEqual([{ provider: "generic", url: "${env.MURAGE_QUALIFICATION_FEED_URL}", channel: "latest", updaterCacheDirName: "murage-qualification-updater" }]);
+    expect(qualification.publish).toBeNull();
+    expect(qualification.extraMetadata.murageQualification).toBe(true);
     const baked = "provider: generic\nurl: https://feed.example.invalid/murage\nchannel: latest\nupdaterCacheDirName: murage-qualification-updater\n";
     expect(() => assertReleaseUpdateFeed(baked)).toThrow("qualification");
     expect(() => assertReleaseUpdateFeed(baked.replace("murage-qualification-updater", "murage-updater"))).toThrow("not the GitHub releases feed");
@@ -368,5 +400,70 @@ describe("a release body edit restores the tag at once", () => {
     const { run, state } = fakeGitHub({ draft: true, remoteTag: false });
     setReleaseBody("1.2.3", 7, notes(), "main", run);
     expect(state.calls.some(c => c.startsWith("git "))).toBe(false);
+  });
+});
+
+
+describe("guarded probe and notes commands", () => {
+  it("creates, rechecks and deletes only the probe draft", () => {
+    const calls = [], probe = 'release-preflight-123-1';
+    const run = (command, args) => {
+      calls.push([command, ...args]);
+      const data = JSON.stringify({ id: 71, tag_name: probe, draft: true });
+      return { status: 0, stdout: args.includes('GET') ? `HTTP/2.0 200 OK\n\n${data}` : data };
+    };
+    expect(probeReleaseToken(probe, run)).toBe(71);
+    expect(calls.map(call => call[call.indexOf('--method') + 1])).toEqual(['POST', 'GET', 'DELETE']);
+  });
+  it.each([{id:71,tag_name:'changed',draft:true}, {id:71,tag_name:'release-preflight-123-1',draft:false}])("refuses to delete a changed probe %j", current => {
+    const calls=[];
+    const run=(command,args)=>{calls.push(args);return {status:0,stdout:args.includes('GET') ? `HTTP/2.0 200 OK\n\n${JSON.stringify(current)}` : JSON.stringify({id:71,tag_name:'release-preflight-123-1',draft:true})};};
+    expect(()=>probeReleaseToken('release-preflight-123-1',run)).toThrow('refusing deletion');
+    expect(calls.some(args=>args.includes('DELETE'))).toBe(false);
+  });
+  it("generates notes at the guarded API boundary", () => {
+    const calls=[];
+    expect(generateReleaseNotes('1.0.19','FerroxLabs/murage','a'.repeat(40),(command,args)=>{calls.push(args);return {status:0,stdout:'notes'};})).toBe('notes');
+    expect(calls[0]).toContain('repos/FerroxLabs/murage/releases/generate-notes');
+    expect(calls[0]).toContain('POST');
+  });
+});
+
+
+describe("privileged workflow guard entrypoints", () => {
+  it("bootstraps a pinned package manager with frozen dependencies and no lifecycle scripts", () => {
+    const calls=[];
+    bootstrapDependencies((...args)=>{calls.push(args);return {status:0};});
+    expect(calls[0][0]).toBe('npm');
+    expect(calls[0][1]).toEqual(['exec','--yes','--ignore-scripts','--package=pnpm@10.33.0','--','pnpm','install','--frozen-lockfile','--ignore-scripts']);
+    expect(()=>bootstrapDependencies(()=>({status:1}))).toThrow('bootstrap failed');
+  });
+  it("creates notes and records the approved waiver, falling back on API failure", () => {
+    const dir=mkdtempSync(join(tmpdir(),'release-notes-'));
+    try {
+      const env={VERSION:'1.2.3',RUNNER_TEMP:dir,GITHUB_REPOSITORY:'o/r',SHA:'a'.repeat(40),WAIVER_PATH:'ci/waiver.json',WAIVER_SHA256:'b'.repeat(64),WAIVER_RUN:'12',WAIVER_RUN_URL:'https://example.invalid/12',WAIVER_APPROVAL:'reviewed'};
+      const file=prepareReleaseNotes(env,()=>({status:1}));
+      expect(readFileSync(file,'utf8')).toContain('Built by the release workflow from o/r@');
+      expect(readFileSync(file,'utf8')).toContain('CI review record');
+      prepareReleaseNotes(env,()=>({status:0,stdout:'generated notes'}));
+      expect(readFileSync(file,'utf8')).toContain('generated notes');
+    } finally {removeTempDirSync(dir);}
+  });
+  it("imports the CI review artifact only when it matches the pinned source commit", () => {
+    const dir=mkdtempSync(join(tmpdir(),'release-review-'));
+    try {
+      const env={VERSION:'1.2.3',RUNNER_TEMP:dir,GITHUB_REPOSITORY:'o/r',SHA:'a'.repeat(40),REVIEW_FILE:join(dir,'review.json')};
+      const review={SHA:env.SHA,WAIVER_PATH:'ci/waiver.md',WAIVER_SHA256:'b'.repeat(64),WAIVER_RUN:'12',WAIVER_RUN_URL:'https://example.invalid/12',WAIVER_APPROVAL:'reviewed'};
+      writeFileSync(env.REVIEW_FILE,JSON.stringify(review));
+      const file=prepareReleaseNotes(env,()=>({status:0,stdout:'generated notes'}));
+      expect(readFileSync(file,'utf8')).toContain('ci/waiver.md');
+      writeFileSync(env.REVIEW_FILE,JSON.stringify({...review,SHA:'c'.repeat(40)}));
+      expect(()=>prepareReleaseNotes(env,()=>({status:1}))).toThrow('invalid CI review record');
+    } finally {removeTempDirSync(dir);}
+  });
+  it("rejects an artifact source that is not a numeric run in a repository", () => {
+    const calls=[];
+    expect(()=>downloadPreparedAssets({GITHUB_RUN_ID:'../other',GITHUB_REPOSITORY:'o/r'},(...args)=>{calls.push(args);})).toThrow('invalid artifact source');
+    expect(calls).toEqual([]);
   });
 });

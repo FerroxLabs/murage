@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import "../../shared/win-hide-child-process.mjs";
+import { withHideInherit } from "../../shared/win-hide-child-process.mjs";
 /**
  * @license
  * Copyright 2026 Ferrox Labs
@@ -1191,7 +1193,7 @@ async function start(argv = []) {
   process.on("SIGINT", () => { void shutdown(130, "SIGINT", true); });
   process.on("SIGTERM", () => { void shutdown(143, "SIGTERM", true); });
   try {
-    harness = ownChild(spawn(process.execPath, args, { env: { ...env, ...launchSecretVia("MURAGE_COMPANION_TOKEN", "stdin") }, stdio: ["pipe", "inherit", "inherit"] }));
+    harness = ownChild(spawn(process.execPath, [...args], withHideInherit({ env: { ...env, ...launchSecretVia("MURAGE_COMPANION_TOKEN", "stdin") }, stdio: ["pipe", "inherit", "inherit"] })));
     feedLaunchSecretStdin(harness.child, launchToken);
     harness.child.once("error", error => {
       if (!stopping) fail(`the harness could not start: ${error.message}`);
@@ -1245,7 +1247,7 @@ export async function startSentinel(env, serverEntry, deps = {}) {
     const prepared = await (deps.prepare ?? prepareSentinel)({ payload, dataDir: env.MURAGE_DATA_DIR, env });
     if (!prepared.ok) { say(`health checks are waiting (${prepared.reason}); Murage runs as usual.`); return null; }
     const spec = sentinelWatchSpec({ execPath: deps.execPath ?? process.execPath, entry: payload.entry, descriptorPath: prepared.descriptorPath, env });
-    const child = (deps.spawn ?? spawn)(spec.command, spec.args, { env: spec.env, stdio: ["ignore", "ignore", "inherit"], detached: true });
+    const child = (deps.spawn ?? spawn)(spec.command, [...spec.args], withHideInherit({ env: spec.env, stdio: ["ignore", "ignore", "inherit"], detached: true }));
     child.unref?.();
     const owned = ownChild(child);
     owned.child.once("error", error => say(`health checks could not start: ${error.message}; Murage runs as usual.`));
@@ -1553,10 +1555,10 @@ function resetpass(argv = []) {
   // Declared to the server too, so a build that does have a password to reset
   // can refuse to prompt instead of hanging a provisioning run.
   if (mode.nonInteractive) env.MURAGE_NON_INTERACTIVE = "1";
-  const child = spawn(process.execPath, [found.entry, "--resetpass", ...mode.rest], {
+  const child = spawn(process.execPath, [found.entry, "--resetpass", ...mode.rest], withHideInherit({
     env,
     stdio: "inherit",
-  });
+  }));
   child.on("exit", (code) => process.exit(code ?? 0));
 }
 

@@ -1,0 +1,43 @@
+COMMAND node_modules/.bin/vitest run server/decision/inventory.test.ts -t "R2 M9"
+
+ RUN  v4.1.12 /work
+
+ ❯ server/decision/inventory.test.ts (3 tests | 1 failed | 2 skipped) 3738ms
+   × R2 M9 raw-writer and per-file producer inventory pins all existing sites 3734ms
+   ↓ L5 M68 credential card producer and fresh raw writer mutations are detected
+   ↓ replay authority adapter is restricted to tests and replay scripts
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 2 skipped (3)
+   Start at  08:19:21
+   Duration  8.08s (transform 3.29s, setup 3.99s, import 248ms, tests 3.74s, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/inventory.test.ts > R2 M9 raw-writer and per-file producer inventory pins all existing sites
+AssertionError: expected { …(10) } to deeply equal { …(9) }
+
+- Expected
++ Received
+
+@@ -3,10 +3,13 @@
+      "options": 1,
+    },
+    "server/browser-extension-setup.ts": {
+      "options": 1,
+    },
++   "server/decision/mutant-producer.ts": {
++     "options": 1,
++   },
+    "server/host-computer-consent.ts": {
+      "options": 1,
+    },
+    "server/image-operations.ts": {
+      "options": 1,
+
+ ❯ server/decision/inventory.test.ts:11:17
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

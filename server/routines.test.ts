@@ -116,6 +116,17 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) removeTempDirSync(dir);
 });
 
+it('looks up an approval routine name without inspecting retained runs or computing health', () => {
+  const h = harness();
+  const routine = h.manager.create({
+    name: 'Approval routine', prompt: 'Synthetic work', botId: 'bot-a', enabled: false,
+    schedule: { type: 'interval', everyMinutes: 30, anchorAt: h.nowValue() },
+  });
+  Object.defineProperty(h.manager, 'runs', { get() { throw new Error('retained run history read'); } });
+  expect(h.manager.routineName(routine.id)).toBe('Approval routine');
+  expect(h.manager.routineName('missing-routine')).toBeUndefined();
+});
+
 describe("versioned routine instructions", () => {
   const create = (h: ReturnType<typeof harness>) => h.manager.create({
     name: "Versioned routine", prompt: "Original verified method", botId: "bot-a", target: "bot",

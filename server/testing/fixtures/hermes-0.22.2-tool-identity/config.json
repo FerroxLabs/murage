@@ -1,0 +1,48 @@
+{
+  "model": {
+    "default": "s0-stub",
+    "provider": "custom:s0",
+    "base_url": "http://127.0.0.1:18080/v1",
+    "api_mode": "chat_completions"
+  },
+  "providers": {
+    "s0": {
+      "base_url": "http://127.0.0.1:18080/v1",
+      "api_key": "s0-dummy-not-a-credential",
+      "api_mode": "chat_completions"
+    }
+  },
+  "terminal": {
+    "backend": "local"
+  },
+  "agent": {
+    "max_turns": 8
+  },
+  "hooks": {
+    "pre_tool_call": [
+      {
+        "matcher": "(?!(?:read_file|search_files|tool_describe|skills_list|skill_view|session_search|todo_list|clarify|web_search|web_extract|vision_analyze|video_analyze|show_tip|read_terminal|read_window_below|x_search|memory|write_file|patch)$).+",
+        "command": "/node /capture/ask-hook.cjs",
+        "timeout": 10,
+        "fail_closed": true
+      }
+    ]
+  },
+  "platform_toolsets": {
+    "acp": [
+      "terminal",
+      "file",
+      "skills",
+      "todo",
+      "memory",
+      "clarify",
+      "code_execution",
+      "web",
+      "vision",
+      "video",
+      "x_search",
+      "desktop_ui",
+      "session_search"
+    ]
+  }
+}

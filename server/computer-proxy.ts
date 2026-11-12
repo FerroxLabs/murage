@@ -1,3 +1,5 @@
+import "../shared/win-hide-child-process.mjs";
+import { createMcpCatalogWriter, type McpRequest } from "./mcp-listed.ts";
 // computer-proxy — a minimal MCP stdio server the claude CLI spawns
 // (agentcal's permission-proxy pattern, dedicated entry file so there is
 // no argv-dispatch fork-bomb hazard). It gives the agent its bot's cloud
@@ -492,17 +494,20 @@ async function frameFrom(out: RunOut): Promise<Frame | null> {
   return { data: fetched, mime: "image/jpeg", hash, geometry };
 }
 
-const send = (obj: unknown): void => {
-  process.stdout.write(JSON.stringify(obj) + "\n");
+const catalog = createMcpCatalogWriter();
+/** Where one call's answer goes: the id it echoes and the handle of THAT request (delivery belongs to the handle, never to the id). */
+interface Reply { readonly id: unknown; readonly req: McpRequest }
+const send = (to: Reply, obj: Record<string, unknown>): void => {
+  void to.req.respond({ jsonrpc: "2.0", id: to.id, ...obj }).catch(() => { process.exitCode = 1; process.stdin.destroy(); });
 };
-const text = (id: unknown, t: string, isError = false): void =>
-  send({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: t }], isError: isError || undefined } });
+const text = (id: Reply, t: string, isError = false): void =>
+  send(id, { result: { content: [{ type: "text", text: t }], isError: isError || undefined } });
 
 /** An action result: the text plus the frame the action produced. When
  * the pixels are byte-identical to the frame the model just saw, the
  * image is dropped — it already has it, and it costs ~1.2k tokens. */
 function observed(
-  id: unknown,
+  id: Reply,
   note: string,
   frame: Frame | null,
   crop: CropRegion | null = null,
@@ -522,9 +527,7 @@ function observed(
       : " No new image is attached.";
     return text(id, `${note}\n(the screen is identical to the frame you already have.${guidance})`, isError);
   }
-  send({
-    jsonrpc: "2.0",
-    id,
+  send(id, {
     result: {
       content: [
         { type: "text", text: note },
@@ -821,7 +824,7 @@ function actionShell(a: any): string | { error: string } {
 /** The whole point: one round trip carries geometry, the actions, the
  * settle, the capture and the frame bytes. */
 async function actAndObserve(
-  id: unknown,
+  id: Reply,
   actions: any[],
   note: string,
   args: any,
@@ -871,7 +874,7 @@ async function actAndObserve(
 }
 
 async function semanticActAndObserve(
-  id: unknown,
+  id: Reply,
   action: "click" | "fill",
   ref: string,
   value: string | undefined,
@@ -914,7 +917,7 @@ async function semanticActAndObserve(
 /** A call that was already running when a person took control must not hand its
  * captured screen to the model: the frame can show whatever they opened.
  * True when the result was replaced by a text-only answer. */
-async function frameWithheld(id: unknown, note: string): Promise<boolean> {
+async function frameWithheld(id: Reply, note: string): Promise<boolean> {
   if (!control.configured) return false;
   const driving = await control.state(true);
   if (!driving.held && driving.available) return false;
@@ -933,7 +936,7 @@ async function frameWithheld(id: unknown, note: string): Promise<boolean> {
  * told when they finish, and the two that read nothing from the screen. */
 const OPEN_WHILE_DRIVEN = new Set(["computer_request_help", "computer_status", "observation_metrics"]);
 
-async function call(id: unknown, name: string, args: any, signal: AbortSignal = new AbortController().signal) {
+async function call(id: Reply, name: string, args: any, signal: AbortSignal = new AbortController().signal) {
   if (!OPEN_WHILE_DRIVEN.has(name)) {
     const driving = await control.state(true);
     if (driving.held) return text(id, CONTROL_REFUSAL, true);
@@ -1128,7 +1131,7 @@ async function call(id: unknown, name: string, args: any, signal: AbortSignal = 
     // the result is delivered below; the record goes after it
     if (outcome.kind === "done" || outcome.kind === "silent") queueMicrotask(() => void cleanupBoxJob(execDeps, job));
     // MCP: a request the client cancelled gets no response
-    if (outcome.kind === "stopped" || signal.aborted) return;
+    if (outcome.kind === "stopped" || signal.aborted) { id.req.cancel(); return; }
     if (outcome.kind === "failed") return text(id, `the command could not be run to the end: ${outcome.detail}`, true);
     const dropped = `${outcome.kind === "done" && outcome.abandoned ? "(the command was stopped because this tool lost track of it for too long)\n" : ""}${outcome.dropped ? "(later output was omitted to keep the computer's disk free)\n" : ""}`;
     const shown = (output: string, max: number) => engineStderrRedacted(output, Buffer.byteLength(output) >= ENGINE_STDERR_CAPTURE_CHARS).slice(-max);
@@ -1244,11 +1247,11 @@ async function call(id: unknown, name: string, args: any, signal: AbortSignal = 
   return text(id, `unknown tool ${name}`, true);
 }
 
-async function handle(msg: any) {
+async function handle(msg: any, req: McpRequest) {
+  await req.published;
+  const to: Reply = { id: msg.id, req };
   if (msg.method === "initialize") {
-    return send({
-      jsonrpc: "2.0",
-      id: msg.id,
+    return send(to, {
       result: {
         protocolVersion: msg.params?.protocolVersion ?? "2024-11-05",
         capabilities: { tools: {} },
@@ -1256,19 +1259,19 @@ async function handle(msg: any) {
       },
     });
   }
-  if (msg.method === "tools/list") return send({ jsonrpc: "2.0", id: msg.id, result: { tools: TOOLS } });
+  if (msg.method === "tools/list") return send(to, { result: { tools: TOOLS } });
   if (msg.method === "tools/call") {
-    if (closing) return text(msg.id, "the computer tools are closing: this call was not run", true);
+    if (closing) return text(to, "the computer tools are closing: this call was not run", true);
     const withdrawn = new AbortController();
     const key = JSON.stringify(msg.id);
     inFlight.set(key, withdrawn);
     try {
-      return await call(msg.id, msg.params?.name, msg.params?.arguments ?? {}, withdrawn.signal);
+      return await call(to, msg.params?.name, msg.params?.arguments ?? {}, withdrawn.signal);
     } catch (e) {
       const error = e instanceof Error ? e : new Error(String(e));
       const timedOut = error.name === "TimeoutError" || /timed?\s*out|timeout/i.test(error.message);
       return text(
-        msg.id,
+        to,
         timedOut
           ? "computer tool timed out. The action may or may not have completed; take a screenshot to inspect the current state before retrying it."
           : `computer tool failed: ${error.message}`,
@@ -1286,7 +1289,7 @@ async function handle(msg: any) {
   }
   if (String(msg.method ?? "").startsWith("notifications/")) return;
   if (msg.id != null) {
-    send({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: `method not found: ${msg.method}` } });
+    send(to, { error: { code: -32601, message: `method not found: ${msg.method}` } });
   }
 }
 
@@ -1299,7 +1302,12 @@ process.stdin.on("data", (chunk) => {
     buf = buf.slice(nl + 1);
     if (!line.trim()) continue;
     try {
-      void handle(JSON.parse(line));
+      const msg = JSON.parse(line);
+      const req = catalog.observeRequest(msg);
+      void handle(msg, req).catch(() => {
+        // A request answers once even when its handler throws (the handle drops a second answer).
+        if (msg && typeof msg === "object" && msg.id !== undefined) send({ id: msg.id, req }, { error: { code: -32603, message: "Computer proxy error" } });
+      });
     } catch {
       /* ignore malformed lines */
     }

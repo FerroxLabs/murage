@@ -1,3 +1,8 @@
+import "../../shared/win-hide-child-process.mjs";
+import { withHideInherit } from "../../shared/win-hide-child-process.mjs";
+import type { EngineTransport } from "../../shared/engine-transport.ts";
+import { NotModelRequest } from "../../shared/engine-transport.ts";
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 // pi-mcp-extension — the Pi-side half of "hands" for the pi engine.
 //
 // Pi core deliberately ships no MCP client (see pi's docs: "does not include
@@ -105,7 +110,8 @@ const TOOL_NAME_MAX_LENGTH = 64;
 
 /** A minimal stdio JSON-RPC 2.0 MCP client, matched to Murage's
  * newline-delimited house protocol. */
-export class StdioMcp {
+export class StdioMcp implements EngineTransport {
+  readonly engineTransport = true as const;
   private child: ChildProcessWithoutNullStreams;
   private buf = "";
   private nextId = 1;
@@ -117,10 +123,10 @@ export class StdioMcp {
   lastListProvisional = false;
 
   constructor(def: McpServerDef) {
-    this.child = spawn(def.command, def.args ?? [], {
+    this.child = spawn(def.command, [...(def.args ?? [])], withHideInherit({
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...(def.env ?? {}) },
-    });
+    }));
     this.child.stderr.on("data", () => {
       /* best-effort drain so a chatty server never blocks */
     });
@@ -166,7 +172,7 @@ export class StdioMcp {
       }
       let msg: { id?: unknown; method?: unknown; error?: { message?: string }; result?: unknown };
       try {
-        msg = JSON.parse(line);
+        msg = registerBusyloopPayloadSite("read", JSON.parse(line));
       } catch {
         continue;
       }
@@ -181,7 +187,7 @@ export class StdioMcp {
       // explicitly instead of leaving a conforming server waiting forever.
       if (msg.id !== undefined && typeof msg.method === "string") {
         try {
-          this.write({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "Client method not supported" } });
+          NotModelRequest("MCP initialization, tool discovery/invocation or protocol reply; no inference request", this.write({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "Client method not supported" } }));
         } catch (err) {
           this.closeWithError(err instanceof Error ? err : new Error(String(err)));
           return;
@@ -202,7 +208,7 @@ export class StdioMcp {
     if (this.disposed || this.child.stdin.destroyed || !this.child.stdin.writable) {
       throw new Error("MCP server stdin is closed");
     }
-    this.child.stdin.write(JSON.stringify(frame) + "\n");
+    NotModelRequest("MCP tool discovery, invocation or protocol reply; model inference is owned by the calling driver", this.child.stdin.write(JSON.stringify(frame) + "\n"));
   }
 
   /** `timeoutMs` bounds setup requests only; a tool call passes none and
@@ -227,7 +233,7 @@ export class StdioMcp {
       const cancel = (reason: string) => {
         this.pending.delete(id);
         try {
-          this.notify("notifications/cancelled", { requestId: id, reason });
+          NotModelRequest("MCP initialization, tool discovery/invocation or protocol reply; no inference request", this.notify("notifications/cancelled", { requestId: id, reason }));
         } catch {
           /* the transport may already be gone */
         }
@@ -242,7 +248,7 @@ export class StdioMcp {
         reject: (err) => settle(() => reject(err)),
       });
       try {
-        this.write({ jsonrpc: "2.0", id, method, params });
+        NotModelRequest("MCP initialization, tool discovery/invocation or protocol reply; no inference request", this.write({ jsonrpc: "2.0", id, method, params }));
       } catch (err) {
         this.pending.delete(id);
         settle(() => reject(err instanceof Error ? err : new Error(String(err))));
@@ -251,7 +257,7 @@ export class StdioMcp {
   }
 
   private notify(method: string, params?: unknown): void {
-    this.write({ jsonrpc: "2.0", method, params });
+    NotModelRequest("MCP initialization, tool discovery/invocation or protocol reply; no inference request", this.write({ jsonrpc: "2.0", method, params }));
   }
 
   async init(): Promise<void> {
@@ -264,7 +270,7 @@ export class StdioMcp {
       },
       MCP_STARTUP_TIMEOUT_MS,
     );
-    this.notify("notifications/initialized");
+    NotModelRequest("MCP initialization, tool discovery/invocation or protocol reply; no inference request", this.notify("notifications/initialized"));
   }
 
   async listTools(): Promise<McpTool[]> {
@@ -599,7 +605,7 @@ export default async function (pi: PiExtensionApi): Promise<void> {
 
   let config: McpConfig;
   try {
-    config = JSON.parse(readFileSync(configPath, "utf8")) as McpConfig;
+    config = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(configPath, "utf8"))) as McpConfig;
   } catch {
     return;
   }
@@ -621,7 +627,7 @@ export default async function (pi: PiExtensionApi): Promise<void> {
         return { serverName, def, client, tools: await client.listSettledTools() };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(`[murage-pi-mcp] ${serverName}: ${message}\n`);
+        NotModelRequest("MCP tool discovery, invocation or protocol reply; model inference is owned by the calling driver", process.stderr.write(`[murage-pi-mcp] ${serverName}: ${message}\n`));
         client?.dispose();
         return { serverName };
       }
@@ -680,7 +686,7 @@ export default async function (pi: PiExtensionApi): Promise<void> {
       const present = new Set<string>();
       for (const tool of list) {
         if (!tool || typeof tool.name !== "string" || !tool.name.trim()) {
-          process.stderr.write(`[murage-pi-mcp] ${serverName}: skipped a tool with no valid name\n`);
+          NotModelRequest("MCP tool discovery, invocation or protocol reply; model inference is owned by the calling driver", process.stderr.write(`[murage-pi-mcp] ${serverName}: skipped a tool with no valid name\n`));
           continue;
         }
         const toolName = tool.name;
@@ -703,7 +709,7 @@ export default async function (pi: PiExtensionApi): Promise<void> {
           // were already registered from the same server.
           if (!known) mcpTable().delete(piName);
           const message = err instanceof Error ? err.message : String(err);
-          process.stderr.write(`[murage-pi-mcp] ${serverName}:${toolName}: ${message}\n`);
+          NotModelRequest("MCP tool discovery, invocation or protocol reply; model inference is owned by the calling driver", process.stderr.write(`[murage-pi-mcp] ${serverName}:${toolName}: ${message}\n`));
         }
       }
       if (!complete) return;

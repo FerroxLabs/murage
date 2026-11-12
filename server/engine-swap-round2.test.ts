@@ -247,7 +247,7 @@ it("N7 persisted legacy entries require explicit owner recovery and can be reaut
     path: `/api/bots/${bot.id}/held-continuations/legacy/retry`, method: "POST", req: {}, res: {}, url: {}, readBody: async () => ({ threadId: bot.threadId }),
     store: restarted, connectorThread: () => ({ bot }), mayApprove: () => approved, turnAudienceIsOwner: () => true,
     threadHumanPrincipal: () => "owner", turnSessionAudience: () => "owner", latestRoomUserMessage: noop,
-    noteHeldQueue: noop, database: noop, runnableContinuation, isRestoreHeld, releaseHeldContinuation, currentRestoreGeneration: () => null, drainHeldContinuations: drain, APPROVAL_NEEDS_OWNER: "Owner required", json: (_res: any, status: number) => status,
+    noteHeldQueue: noop, database: noop, runnableContinuation, isRestoreHeld, releaseHeldContinuation, onOwnerBrowser: () => false, currentRestoreGeneration: () => null, drainHeldContinuations: drain, APPROVAL_NEEDS_OWNER: "Owner required", json: (_res: any, status: number) => status,
   });
   expect(await retry(false)).toBe(403); expect(drain).not.toHaveBeenCalled();
   expect(await retry(true)).toBe(200); expect(drain).toHaveBeenCalledWith(bot.id);
@@ -265,7 +265,7 @@ it("N8 a replayed pre-restore retry of a restore-held continuation carries the w
     path: `/api/bots/${bot.id}/held-continuations/heldr/retry`, method: "POST", req: {}, res: {}, url: {}, readBody: async () => ({ threadId: bot.threadId, ...body }),
     store, connectorThread: () => ({ bot }), mayApprove: () => true, turnAudienceIsOwner: () => true,
     threadHumanPrincipal: () => "owner", turnSessionAudience: () => "owner", latestRoomUserMessage: noop,
-    noteHeldQueue: noop, database: noop, runnableContinuation, isRestoreHeld, releaseHeldContinuation, currentRestoreGeneration: () => "gen-new", drainHeldContinuations: drain, APPROVAL_NEEDS_OWNER: "Owner required", json: (_res: any, status: number) => status,
+    noteHeldQueue: noop, database: noop, runnableContinuation, isRestoreHeld, releaseHeldContinuation, onOwnerBrowser: () => false, currentRestoreGeneration: () => "gen-new", drainHeldContinuations: drain, APPROVAL_NEEDS_OWNER: "Owner required", json: (_res: any, status: number) => status,
   });
   expect(await retry({})).toBe(409);                              // no generation presented
   expect(await retry({ restoreGen: "gen-old" })).toBe(409);       // a press or automatic retry from before the restore
@@ -275,16 +275,16 @@ it("N8 a replayed pre-restore retry of a restore-held continuation carries the w
   expect(drain).toHaveBeenCalledTimes(1);
 });
 
-it.each([false, true])("P7 counts original eligible history with memory inactive, native=%s", replaysNatively => {
+it.each([false, true])("P7 counts original eligible history with memory inactive, native=%s", async replaysNatively => {
   const original = [{ id: "withheld", at: 1, kind: "text", role: "bot", text: "withheld" }];
   // the replay's window of lines is read in a loop (the line index, doubling); the count of what it leaves out and the rendering follow it
   const begin = source.indexOf("  let replayOmitted ="), end = source.indexOf("  // After a rewind", begin);
   const replayOptions = { maxBytes: 5000 }, skipTranscript = new Set<string>();
   const replayableMessages: any[] = []; // the replay floor holds nothing, as in the production block it stands for
   const replayedMessages = replayWindow(replayableMessages, replayOptions);
-  const replay = execute(source.slice(begin, end) + "\n({transcript, omitted: replayOmitted});", { opts: undefined, replayFloor: { messages: [] }, activeMessages: original,
+  const replay = await execute("(async () => {" + source.slice(begin, end) + "\nreturn {transcript, omitted: replayOmitted};})()", { opts: undefined, replayFloor: { messages: [] }, activeMessages: original,
     skipTranscript, replayOptions, replayableMessages, replayedMessages, fitRenderedReplay, messagesById: new Map(), instanceId: "a", cfg: {}, replayMore: false,
-    replayLines: (_viewer: unknown, _shown: unknown, rows: any[], text: (row: any) => string) => rows.map(row => ({ id: row.id, role: row.role, text: text(row) })),
+    replayLinesInSlices: (_viewer: unknown, _shown: unknown, rows: any[], text: (row: any) => string) => rows.map(row => ({ id: row.id, role: row.role, text: text(row) })),
     botViewer: () => ({ kind: "bot", botId: "b" }), bot: { id: "b" }, transcriptText: (row: any) => row.text });
   expect(replay.omitted).toBe(1);
   expect(buildTurnContext({ ...replay, text: "now", fresh: true, rewound: false, externallyUpdated: false, replaysNatively }).turnText).toContain("1 earlier line");
@@ -296,7 +296,9 @@ it("N6 room dispatch retries retain the request and respect revalidation delays"
   const request = { id: "original", toBotId: bot.id, targetThreadId: group.threadId, state: "running" };
   const release = vi.fn(), claims = new Map([["key", { release }]]), running = new Map([["key", request.id]]);
   let now = 1;
-  const scope = { store, database: noop, roomTurnRequestKey: () => "key", pendingRoomTurnRequests: new Map(), roomTurnClaims: claims, roomTurnRequests: running,
+  // Use the real staged-seat gate; this fixture's existing bot is active.
+  const holdStagedAssignment = execute(definition("holdStagedAssignment", "function validateReviewedBot(") + "\nholdStagedAssignment;", { store });
+  const scope = { store, holdStagedAssignment, database: noop, roomTurnRequestKey: () => "key", pendingRoomTurnRequests: new Map(), roomTurnClaims: claims, roomTurnRequests: running,
     noteHeldQueue: noop, runnableContinuation, isRestoreHeld, releaseHeldContinuation, currentRestoreGeneration: () => null, Date: { now: () => now }, registry: { get: () => ({ adapter: { capabilities: {} } }) }, routeHasTools: () => true,
     requeueRoomRequest: (_db: any, id: string) => { expect(id).toBe("original"); request.state = "queued"; return true; } };
   const retry = execute(definition("retryHeldRoomRequest", "/** Start a queued member") + "\nretryHeldRoomRequest;", scope);

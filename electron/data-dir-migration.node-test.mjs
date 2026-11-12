@@ -66,3 +66,15 @@ test("explicit overrides and existing destinations leave legacy data alone", t =
   assert.equal(readFileSync(join(f.dataDir, "config.json"), "utf8"), "current-sentinel");
   assert.equal(readFileSync(join(f.legacyDataDir, "config.json"), "utf8"), "private-preserved-sentinel");
 });
+
+for (const name of ["search.db", "search.db-wal", "search.db-shm"]) {
+  test(`T-MIGRATION / M16: discards ${name} before activating the moved directory`, t => {
+    const f = fixture(t), owner = acquireDataDirLease(f.dataDir);
+    writeFileSync(join(f.legacyDataDir, name), "derived postings");
+    try {
+      assert.equal(migrateLegacyDataDirectory(f), true);
+      assert.equal(existsSync(join(f.dataDir, name)), false);
+      assert.equal(readFileSync(join(f.dataDir, "config.json"), "utf8"), "private-preserved-sentinel");
+    } finally { owner.release(); }
+  });
+}

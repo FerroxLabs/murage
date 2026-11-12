@@ -1,3 +1,4 @@
+import { REVOKE_MARK_CAP } from "./schema.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -88,7 +89,7 @@ class Store {
   }
   head(next = 5000): this { this.db.prepare("UPDATE memory_lsn SET next=max(next,?) WHERE id=1").run(next); return this; }
 }
-const store = () => { const fx = new WritetimeFixture(); fx.cert(true); return new Store(fx); };
+const store = () => { const fx = new WritetimeFixture(); fx.db.exec(REVOKE_MARK_CAP.sql); fx.cert(true); return new Store(fx); };
 
 /** Below every cap the random-store tests use (see randomStore). */
 const TURN_TOP = 3;

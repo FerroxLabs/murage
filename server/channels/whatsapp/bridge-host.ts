@@ -1,3 +1,5 @@
+import "../../../shared/win-hide-child-process.mjs";
+import { withHideInherit } from "../../../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // Spawn shape follows server/memory/worker-controller.ts; respawn backoff and ping supervision follow
 // WHATSAPP-DESIGN.md 1.2. Reconnect ownership stays inside the bridge; this host only supervises the process.
@@ -156,7 +158,7 @@ export class BridgeHost {
         ...(process.env.TMPDIR ? { TMPDIR: process.env.TMPDIR } : {}),
         ...this.opts.env,
       };
-      const child = this.forkFn(this.script, [], { execArgv, stdio: ["ignore", "ignore", "ignore", "ipc"], env });
+      const child = this.forkFn(this.script, [], withHideInherit({ execArgv, stdio: ["ignore", "ignore", "ignore", "ipc"], env }));
       this.child = child;
       this.ready = false;
       this.initializing = false;

@@ -1,5 +1,5 @@
 import { murageTool } from "./murage-tool-surface.ts";
-import { canReach, isIndividualAssistant, isWorkspaceChief, sectionKey } from "./store.ts";
+import { inertBot, canReach, isIndividualAssistant, isWorkspaceChief, sectionKey } from "./store.ts";
 
 export interface ChiefTeamMember {
   id: string;
@@ -8,6 +8,7 @@ export interface ChiefTeamMember {
   description?: string;
   busy?: boolean;
   hidden?: boolean;
+  staged?: unknown;
   section?: string;
   /** This bot leads its own section. */
   chiefOfStaff?: boolean;
@@ -82,7 +83,7 @@ function workspaceRoster(chief: ChiefTeamMember, bots: ChiefTeamMember[], named?
   const individuals: ChiefTeamMember[] = [];
   const direct: ChiefTeamMember[] = [];
   for (const bot of bots) {
-    if (bot.id === chief.id || bot.hidden) continue;
+    if (bot.id === chief.id || inertBot(bot)) continue;
     if (bot.shared) { direct.push(bot); continue; }
     if (isIndividualAssistant(bot)) {
       individuals.push(bot);
@@ -169,7 +170,7 @@ export function chiefOfStaffSystemPrompt(
   const chiefSection = sectionKey(chief?.section);
   const sectionName = chiefSection || "General";
   const team = bots.filter(
-    (bot) => bot.id !== chiefId && !bot.hidden && (bot.shared || sectionKey(bot.section) === chiefSection),
+    (bot) => bot.id !== chiefId && !inertBot(bot) && (bot.shared || sectionKey(bot.section) === chiefSection),
   );
   const listed = team.slice(0, ROSTER_MAX_BOTS);
   const roster = team.length
@@ -179,7 +180,7 @@ export function chiefOfStaffSystemPrompt(
   // canReach opens that one edge, and a lead that does not know the edge
   // exists will not use it.
   const workspaceChief = chief?.chiefOfStaff
-    ? bots.find((bot) => bot.id !== chiefId && !bot.hidden && isWorkspaceChief(bot) && canReach(chief, bot))
+    ? bots.find((bot) => bot.id !== chiefId && !inertBot(bot) && isWorkspaceChief(bot) && canReach(chief, bot))
     : undefined;
 
   return [
@@ -210,9 +211,9 @@ export function chiefPromptRosterIds(chiefId: string, bots: ChiefTeamMember[]): 
   const named: string[] = [];
   if (isWorkspaceChief(chief)) { workspaceRoster(chief, bots, named); return named; }
   const chiefSection = sectionKey(chief.section);
-  const team = bots.filter((bot) => bot.id !== chiefId && !bot.hidden && (bot.shared || sectionKey(bot.section) === chiefSection));
+  const team = bots.filter((bot) => bot.id !== chiefId && !inertBot(bot) && (bot.shared || sectionKey(bot.section) === chiefSection));
   named.push(...team.slice(0, ROSTER_MAX_BOTS).map((bot) => bot.id));
-  const workspaceChief = chief.chiefOfStaff ? bots.find((bot) => bot.id !== chiefId && !bot.hidden && isWorkspaceChief(bot) && canReach(chief, bot)) : undefined;
+  const workspaceChief = chief.chiefOfStaff ? bots.find((bot) => bot.id !== chiefId && !inertBot(bot) && isWorkspaceChief(bot) && canReach(chief, bot)) : undefined;
   if (workspaceChief) named.push(workspaceChief.id);
   return named;
 }
@@ -220,7 +221,7 @@ export function chiefPromptRosterIds(chiefId: string, bots: ChiefTeamMember[]): 
 export function individualAssistantRosterIds(selfId: string, bots: ChiefTeamMember[]): string[] {
   const self = bots.find((bot) => bot.id === selfId);
   if (!self) return [];
-  const reachable = bots.filter((bot) => bot.id !== selfId && !bot.hidden && canReach(self, bot));
+  const reachable = bots.filter((bot) => bot.id !== selfId && !inertBot(bot) && canReach(self, bot));
   const chief = reachable.find(isWorkspaceChief);
   const others = reachable.filter((bot) => !isWorkspaceChief(bot)).slice(0, ROSTER_MAX_BOTS);
   return [...(chief ? [chief.id] : []), ...others.map((bot) => bot.id)];
@@ -233,7 +234,7 @@ export function individualAssistantSystemPrompt(
 ): string {
   const self = bots.find((bot) => bot.id === selfId);
   const reachable = self
-    ? bots.filter((bot) => bot.id !== selfId && !bot.hidden && canReach(self, bot))
+    ? bots.filter((bot) => bot.id !== selfId && !inertBot(bot) && canReach(self, bot))
     : [];
   const chief = reachable.find(isWorkspaceChief);
   // Usually empty — an individual assistant sits alone in its own group. It

@@ -214,12 +214,13 @@ final class PhoneJobRunner {
         if (offer.decodedArgs() == null) {
             call(w, token, "POST", "/jobs/" + offer.operationId + "/decline", json("offerId", offer.offerId), 25000, r -> {}); return;
         }
-        if (!cards.canPresent(w)) return; // Leave offscreen offers unleased for their own computer.
+        if (!offer.permissionRun && !cards.canPresent(w)) return; // Leave offscreen offers unleased for their own computer.
         if (current != null) {
             if (!current.workspace.equals(w) || !current.offer.operationId.equals(offer.operationId)) waiting.put(w, offer);
             return;
         }
         Job job = new Job(w, offer, token, generation); current = job;
+        if (offer.permissionRun) { answer(job, true); return; }
         if (env.needsProvider(w, offer.provider.id)) { job.providerPending = true; cards.showProvider(w, offer.provider, offer.workspace, allow -> serial.execute(() -> {
             if (!valid(job) || job.answering || !job.providerPending) return;
             job.providerPending = false; job.answering = true;

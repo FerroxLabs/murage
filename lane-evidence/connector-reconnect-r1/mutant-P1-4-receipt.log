@@ -1,0 +1,28 @@
+✖ P1-4 receipt requires show confirmation and late failure permits bounded retry across restart (50.212264ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 135.053689
+
+✖ failing tests:
+
+test at electron/attention-delivery.node-test.mjs:731:1
+✖ P1-4 receipt requires show confirmation and late failure permits bounded retry across restart (50.212264ms)
+  AssertionError [ERR_ASSERTION]: late failure revokes delivery
+  
+  true !== false
+  
+      at TestContext.<anonymous> (file:///work/electron/attention-delivery.node-test.mjs:748:12)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

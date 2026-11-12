@@ -1,0 +1,127 @@
+{
+  "server/highlevel/operations/registry.ts": [
+    "export type Gate = \"R\" | \"GC\" | \"GC+\" | \"GD\" | \"GDp\";",
+    "export type ManifestRow = {\n    readonly id: OperationId;\n    readonly family: Family;\n    readonly risk: Risk;\n    readonly gate: Gate;\n    readonly send: boolean;\n    readonly precondition: \"provider\" | \"none\";\n    readonly docUrl: string;\n    readonly pathResourceSegment: number | null;\n    readonly preflight: readonly OperationId[];\n    readonly argsSchema: z.ZodTypeAny;\n    readonly bodySchema: z.ZodTypeAny | null;\n    readonly projection: readonly string[];\n} & ({\n    readonly disposition: \"ready\";\n    readonly method: HighLevelMethod;\n    readonly path: string;\n    readonly version: string;\n    readonly scope: string;\n} | {\n    readonly disposition: \"provider_absent\";\n    readonly method: HighLevelMethod | null;\n    readonly path: string | null;\n    readonly version: string | null;\n    readonly scope: string | null;\n});",
+    "export interface OperationRunContext {\n    readonly locationId: string;\n    readonly companyId?: string;\n    readonly prepared?: PreparedUpload;\n    readonly approvalContext?: RequestApprovalContext;\n}",
+    "export interface ReadDraft {\n    path: string;\n    query?: Record<string, string>;\n    body?: unknown;\n}",
+    "export interface PreflightRequester {\n    read(op: OperationId, draft: ReadDraft): Promise<unknown>;\n}",
+    "export type DraftBody = {\n    kind: \"json\";\n    value: unknown;\n} | {\n    kind: \"multipart\";\n    fields: Record<string, string>;\n    file: {\n        field: string;\n        upload: PreparedUpload;\n    };\n};",
+    "export interface RequestApprovalContext {\n    stateDigest?: string;\n    values: Record<string, unknown>;\n    identities: Record<string, readonly string[]>;\n}",
+    "export interface RequestDraft {\n    approvalContext?: RequestApprovalContext;\n    path: string;\n    query?: Record<string, string>;\n    body?: DraftBody;\n    resource: string;\n}",
+    "export interface SpecBase<A = Record<string, unknown>> {\n    readonly id: OperationId;\n    readonly family: Family;\n    readonly title: string;\n    readonly row: ManifestRow;\n    readonly endpoint: HighLevelEndpoint;\n    readonly args: z.ZodType<A>;\n    readonly nested: boolean;\n    readonly preflight: readonly OperationId[];\n    ownership?(pre: PreflightRequester, a: A, ctx: OperationRunContext): Promise<void>;\n    recordRefs(a: A): string[];\n    fields(a: A): string[];\n    targets(a: A): number;\n    project(value: unknown): unknown;\n    project(value: unknown, frozen: FrozenRequest): unknown;\n}",
+    "export interface ReadSpec<A = Record<string, unknown>> extends SpecBase<A> {\n    readonly risk: \"R\";\n    readonly maxReads: number;\n    prepareRead(a: A, ctx: OperationRunContext): Promise<RequestDraft>;\n    nextPage?(value: unknown, prev: RequestDraft): RequestDraft | null;\n}",
+    "export type RecheckResult = {\n    ok: true;\n} | {\n    ok: false;\n    reason: \"published\" | \"sent\" | \"not_draft\" | \"gone\" | \"changed\";\n};",
+    "export interface MutationSpec<A = Record<string, unknown>> extends SpecBase<A> {\n    readonly risk: \"C\" | \"D\";\n    readonly gate: Exclude<Gate, \"R\">;\n    readonly send: boolean;\n    readonly precondition: \"provider\" | \"none\";\n    prepare(pre: PreflightRequester, a: A, ctx: OperationRunContext): Promise<RequestDraft>;\n    recordId?(value: unknown): string | undefined;\n    recordId?(value: unknown, frozen: FrozenRequest): string | undefined;\n    recheck?(pre: PreflightRequester, frozen: FrozenRequest, ctx: OperationRunContext): Promise<RecheckResult>;\n}",
+    "export type OperationSpec<A = Record<string, unknown>> = ReadSpec<A> | MutationSpec<A>;",
+    "export function freezeOperationSpec<A>(spec: OperationSpec<A>): OperationSpec<A>;",
+    "export function assertRegistryCompleteness(specs: readonly OperationSpec[], integrated: readonly Family[] = INTEGRATED_FAMILIES): void;",
+    "export function operationSpec(id: string): OperationSpec | undefined;",
+    "export function familyOperations(family: Family): readonly OperationSpec[];",
+    "export function canonicalJson(value: unknown): Uint8Array;"
+  ],
+  "server/highlevel/held-request.ts": [
+    "export interface FrozenUploadRef {\n    readonly field: string;\n    readonly name: string;\n    readonly size: number;\n    readonly sha256: string;\n    readonly contentType: string;\n}",
+    "export interface FrozenRequest {\n    readonly completionKind?: 'private_generated_password_v1';\n    readonly operation: OperationId;\n    readonly method: HighLevelMethod;\n    readonly path: string;\n    readonly resource: string;\n    readonly query: readonly (readonly [\n        string,\n        string\n    ])[];\n    readonly bodyKind: \"none\" | \"json\" | \"multipart\";\n    readonly contentType: string | null;\n    readonly bodySha256: string;\n    readonly upload: FrozenUploadRef | null;\n    readonly requestDigest: string;\n}",
+    "export interface FrozenSendCopy {\n    url: URL;\n    method: HighLevelMethod;\n    headers: Record<string, string>;\n    body?: Uint8Array;\n    fileOffset: number | null;\n    fileLength: number | null;\n}",
+    "class HeldRequest   {\nget approvalContextDigest(): string | undefined;\napprovalContextCopy(): RequestApprovalContext | undefined;\nstatic freeze(spec: OperationSpec<any>, draft: RequestDraft, ctx: OperationRunContext): HeldRequest;\nreadonly frozen: FrozenRequest;\nsendCopy(): FrozenSendCopy;\n}",
+    "export function sendFrozen(client: HighLevelClient, ctx: HighLevelCallContext, held: HeldRequest, approvedRequestDigest: string): Promise<unknown>;",
+    "export function sendFrozenRead(client: HighLevelClient, ctx: HighLevelCallContext, held: HeldRequest): Promise<unknown>;"
+  ],
+  "server/highlevel/uploads.ts": [
+    "export const UPLOAD_MAX_BYTES = 10 * 1024 * 1024;",
+    "class PreparedUpload   {\nreadonly name: string;\nreadonly size: number;\nreadonly sha256: string;\nreadonly contentType: string;\nconstructor(name: string, bytes: Uint8Array, contentType: string = \"application/octet-stream\");\ncopyBytes(): Uint8Array;\n}",
+    "export function prepareWorkspaceUpload(root: string, ref: {\n    workspaceFile: string;\n}, maxBytes: number = UPLOAD_MAX_BYTES, reader: typeof readAnchoredFile = readAnchoredFile): PreparedUpload;"
+  ],
+  "server/highlevel/anchored-read.ts": [
+    "export type AnchoredRefusal = \"invalid_name\" | \"link\" | \"not_directory\" | \"not_regular\" | \"hard_link\" | \"other_volume\" | \"too_large\" | \"changed\" | \"unsupported\";",
+    "class AnchoredReadRefused   extends Error {\nconstructor(readonly code: AnchoredRefusal);\n}",
+    "export type AnchoredStep = {\n    kind: \"root\";\n} | {\n    kind: \"dir\";\n    index: number;\n} | {\n    kind: \"file\";\n} | {\n    kind: \"read\";\n};",
+    "export interface AnchoredReadHooks {\n    afterStep?(step: AnchoredStep): void;\n}",
+    "export interface AnchoredReadResult {\n    readonly bytes: Uint8Array;\n    readonly size: number;\n    readonly volume: string;\n    readonly fileId: string;\n}",
+    "export function readAnchoredFile(root: string, parts: readonly string[], maxBytes: number, hooks?: AnchoredReadHooks): AnchoredReadResult;",
+    "export function anchoredReadAvailable(): boolean;"
+  ],
+  "server/highlevel/event-projection.ts": [
+    "export const ORIGIN_VARIANTS = [[\"item.started\", \"tool\"], [\"item.completed\", \"assistant_text\"]] as const;",
+    "export function originRequired(e: RuntimeEvent): e is Extract<RuntimeEvent, {\n    origin: ItemOrigin;\n}>;"
+  ],
+  "server/highlevel/actions.ts": [
+    "export type ApprovalBasis = \"owner_exact_review\" | \"owner_no_limits\" | \"owner_no_limits_attended\";",
+    "export interface ActionBinding {\n    approvalContextDigest?: string;\n    completionKind?: 'private_generated_password_v1';\n    kind: \"read\" | \"change\";\n    operation: OperationId;\n    resource: string;\n    risk: Risk;\n    escalation: Escalation;\n    basis: ApprovalBasis;\n    requestDigest: string;\n    bodySha256: string;\n    upload: {\n        name: string;\n        size: number;\n        sha256: string;\n    } | null;\n}",
+    "export interface ProposeDetail {\n    kind: \"read\" | \"change\";\n    risk: Risk;\n    escalation: Escalation;\n    basis: ApprovalBasis;\n    recordRefs: string[];\n    fields: string[];\n    held: HeldRequest;\n}",
+    "export type ActionPhase = \"awaiting_approval\" | \"approved\" | \"dispatching\" | \"applied\" | \"not_applied\" | \"outcome_unknown\" | \"stale\" | \"read_done\" | \"read_withheld\";",
+    "export interface ActionIntent extends ActionBinding {\n    actionId: string;\n    botId: string;\n    threadId: string;\n    turnGeneration: string;\n    connectionId: string;\n    connectionEpoch: number;\n    locationId: string;\n    companyId: string;\n    grantRevision: number;\n    accessRevision: number;\n    policyRevision: number;\n    roleBinding: string;\n    tool: string;\n    argumentsDigest: string;\n    recordRefs: string[];\n    fields: string[];\n    reviewDigest: string;\n    phase: ActionPhase;\n    approvalId?: string;\n    dispatchAttempts: number;\n    createdAt: number;\n    expiresAt: number;\n    outcomeCode?: string;\n    receipt?: {\n        recordId: string;\n        fields: string[];\n        approvalBasis: ApprovalBasis;\n    };\n}",
+    "export interface ActionContext {\n    botId: string;\n    threadId: string;\n    turnGeneration: string;\n    connectionId: string;\n    connectionEpoch: number;\n    locationId: string;\n    companyId: string;\n    grantRevision: number;\n    accessRevision: number;\n    policyRevision: number;\n    roleBinding: string;\n}",
+    "export interface ActionJournal {\n    put(intent: ActionIntent): void;\n    delete(actionId: string): void;\n    all(): ActionIntent[];\n}",
+    "class MemoryActionJournal   implements ActionJournal {\nreadonly rows;\nput(intent: ActionIntent): void;\ndelete(actionId: string): void;\nall(): ActionIntent[];\n}",
+    "export const ACTION_MAX_IDENTITIES = 2000;",
+    "export const ACTION_REVIEW_TTL_MS = 10 * 60000;",
+    "export function normalizeArguments(args: Record<string, unknown>): unknown;",
+    "export const argumentsDigest = (tool: string, args: Record<string, unknown>) => sha([\"highlevel-args\", 1, tool, normalizeArguments(args)]);",
+    "export type ReviewDigestInput = Pick<ActionIntent, \"actionId\" | \"tool\" | \"argumentsDigest\" | \"expiresAt\"> & ActionContext & ActionBinding;",
+    "export function reviewDigestFor(intent: ReviewDigestInput): string;",
+    "class ActionRefused   extends Error {\nreadonly code: \"busy\" | \"unrecorded\" | \"review_open\" | \"not_found\" | \"not_awaiting\" | \"digest_mismatch\" | \"expired\" | \"stale\" | \"not_approved\" | \"one_send\" | \"request_shape\";\nconstructor(code: ActionRefused[\"code\"], message: string);\n}",
+    "export interface ActionReview extends ActionBinding {\n    actionId: string;\n    reviewDigest: string;\n    tool: string;\n    connectionId: string;\n    locationId: string;\n    recordRefs: string[];\n    fields: string[];\n    values: Record<string, unknown>;\n    expiresAt: number;\n    copy: string;\n}",
+    "export const HIGHLEVEL_REVIEW_COPY = \"Changes may run automations already set up in this CRM.\";",
+    "export type Decision = \"approved\" | \"denied\" | \"expired\";",
+    "class HighLevelActions   {\nconstructor(options: {\n    journal?: ActionJournal;\n    now?: () => number;\n    reviewTtlMs?: number;\n} = {});\npropose(context: ActionContext, tool: string, args: Record<string, unknown>, detail: ProposeDetail): ActionReview;\nbeginDispatch(actionId: string, current: ActionContext): {\n    intent: ActionIntent;\n    held: HeldRequest;\n};\nsettleRead(actionId: string, result: \"read_done\" | \"read_withheld\" | \"failed\" | \"stopped\", code?: string): void;\nrecover(): void;\nreview(actionId: string): ActionReview | undefined;\napprove(actionId: string, reviewDigest: string, approvalId?: string): ActionIntent;\napproveByPolicy(actionId: string, basis: Exclude<ApprovalBasis, \"owner_exact_review\">): ActionIntent;\nstaleConnection(connectionId: string, code: string): void;\ndeny(actionId: string): void;\nawaitDecision(actionId: string, signal: AbortSignal): Promise<Decision>;\nrecordAttempt(actionId: string, attempt: number, current: ActionContext): void;\napplied(actionId: string, receipt: {\n    recordId: string;\n    fields: string[];\n}): void;\nnotApplied(actionId: string, code: string): void;\nmarkStale(actionId: string, code: string): void;\noutcomeUnknown(actionId: string, code: string): void;\nstatusFor(botId: string, actionId: string): Pick<ActionIntent, \"actionId\" | \"tool\" | \"phase\" | \"outcomeCode\" | \"fields\" | \"recordRefs\" | \"receipt\" | \"connectionId\"> | undefined;\nget(actionId: string): ActionIntent | undefined;\n}"
+  ],
+  "server/highlevel/escalation.ts": [
+    "export type Escalation = \"none\" | \"send_count\" | \"targets\" | \"identical_loop\";",
+    "export function reserveEffectiveRisk(turnKey: string, spec: OperationSpec, args: Record<string, unknown>): {\n    risk: Risk;\n    escalation: Escalation;\n};"
+  ],
+  "server/highlevel/multipart.ts": [
+    "export function assembleMultipart(fields: Readonly<Record<string, string>>, file: {\n    field: string;\n    upload: PreparedUpload;\n}): {\n    bytes: Uint8Array;\n    contentType: string;\n    fileOffset: number;\n    fileLength: number;\n};"
+  ],
+  "server/highlevel/provider-contract.ts": [
+    "export type HighLevelMethod = \"GET\" | \"POST\" | \"PUT\" | \"PATCH\" | \"DELETE\";",
+    "export type RetryClass = \"read\" | \"write\";",
+    "export interface HighLevelEndpoint {\n    method: HighLevelMethod;\n    path: RegExp;\n    version: string;\n    scope: string;\n    retry: RetryClass;\n}"
+  ],
+  "server/highlevel/client.ts": [
+    "export interface HighLevelCallContext {\n    connection: HighLevelConnectionView;\n    assertActive(): void;\n    signal: AbortSignal;\n    onDispatch?: (attempt: number) => void | Promise<void>;\n    beforeRead?: () => Promise<void>;\n    beforeReadAttempt?: (attempt: number) => void | Promise<void>;\n}"
+  ],
+  "shared/highlevel.ts": [
+    "export const HIGHLEVEL_FAMILIES = [\"contacts\", \"opportunities\", \"conversations\", \"calendars\", \"automations\", \"location\", \"users\", \"forms\", \"payments\", \"social\", \"funnels\", \"blogs\", \"courses\", \"media\", \"documents\", \"saas\", \"snapshots\"] as const;",
+    "export type Family = typeof HIGHLEVEL_FAMILIES[number];",
+    "export type Risk = \"R\" | \"C\" | \"D\";",
+    "export type FamilyLevel = \"off\" | \"read\" | \"change\" | \"full\";",
+    "export type OperationId = `${Family}.${string}`;",
+    "export function levelCovers(level: FamilyLevel, risk: Risk): boolean;",
+    "export interface EffectiveGrant {\n    accountId: string;\n    botId: string;\n    revision: number;\n    ceiling: HighLevelCeiling;\n    families: Readonly<Record<Family, FamilyLevel>>;\n    operations: Readonly<Partial<Record<Family, readonly OperationId[]>>>;\n    legacy: boolean;\n}",
+    "export interface EffectiveHighLevelAccess {\n    grantsVersion: 2;\n    synthesized: boolean;\n    revision: number;\n    roleBinding: string;\n    grants: readonly EffectiveGrant[];\n    denyRules: readonly string[];\n}",
+    "export function effectiveHighLevelAccess(value: unknown, bot: {\n    id: string;\n    roleBinding: string;\n}): EffectiveHighLevelAccess | null;",
+    "export function operationAllowed(grant: EffectiveGrant, op: OperationId, risk: Risk): boolean;",
+    "export function highlevelDenyMatch(rules: readonly string[], op: OperationId, risk: Risk): boolean;",
+    "export const highlevelDenyRuleSchema = z.string().max(240).refine(value => /^HIGHLEVEL:(?:R|C|D|SEND|S)$/.test(value)\n    || HIGHLEVEL_FAMILIES.some(f => value === HIGHLEVEL_FAMILY_TOOLS[f] || new RegExp(`^HIGHLEVEL:${f}\\\\.[A-Za-z][A-Za-z0-9]*(?:\\\\.[A-Za-z][A-Za-z0-9]*)*$`).test(value)));",
+    "export const workspaceFileRefSchema: z.ZodType<{\n    workspaceFile: string;\n}> = z.strictObject({\n    workspaceFile: z.string().min(1).max(512).refine(value => {\n        const parts = value.split(\"/\");\n        return parts.length <= 32 && parts.every(p => p.length > 0 && p.length <= 255 && p !== \".\" && p !== \"..\"\n            && !/[\\\\:\\0\\r\\n]/u.test(p) && !/[. ]$/u.test(p) && !/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\\.|$)/iu.test(p));\n    }),\n});",
+    "export const LEGACY_TOOL_TO_OPERATION: Readonly<Record<string, OperationId>> = {\n    \"HIGHLEVEL_SEARCH_CONTACTS\": \"contacts.search\",\n    \"HIGHLEVEL_GET_CONTACT\": \"contacts.get\",\n    \"HIGHLEVEL_CREATE_CONTACT\": \"contacts.create\",\n    \"HIGHLEVEL_UPDATE_CONTACT\": \"contacts.update\",\n    \"HIGHLEVEL_ADD_TAGS\": \"contacts.tags.add\",\n    \"HIGHLEVEL_REMOVE_TAGS\": \"contacts.tags.remove\",\n    \"HIGHLEVEL_LIST_NOTES\": \"contacts.notes.list\",\n    \"HIGHLEVEL_ADD_NOTE\": \"contacts.notes.create\",\n    \"HIGHLEVEL_LIST_TASKS\": \"contacts.tasks.list\",\n    \"HIGHLEVEL_ADD_TASK\": \"contacts.tasks.create\",\n    \"HIGHLEVEL_LIST_PIPELINES\": \"opportunities.pipelines.list\",\n    \"HIGHLEVEL_SEARCH_OPPORTUNITIES\": \"opportunities.search\",\n    \"HIGHLEVEL_GET_OPPORTUNITY\": \"opportunities.get\",\n    \"HIGHLEVEL_CREATE_OPPORTUNITY\": \"opportunities.create\",\n    \"HIGHLEVEL_UPDATE_OPPORTUNITY\": \"opportunities.update\",\n    \"HIGHLEVEL_SEARCH_CONVERSATIONS\": \"conversations.search\",\n    \"HIGHLEVEL_READ_CONVERSATION\": \"conversations.messages.list\",\n    \"HIGHLEVEL_LIST_CALENDARS\": \"calendars.list\",\n    \"HIGHLEVEL_LIST_EVENTS\": \"calendars.events.list\",\n    \"HIGHLEVEL_GET_LOCATION\": \"location.get\",\n};"
+  ],
+  "server/harness/bus.ts": [
+    "class EventBus   {\nhighlevelProjection(project: (event: RuntimeEvent) => RuntimeEvent | null): void;\n}"
+  ],
+  "server/highlevel/operations/integrated-families.ts": [
+    "export const INTEGRATED_FAMILIES: readonly Family[] = [];"
+  ],
+  "server/highlevel/operations/manifest-data.json": "95775c194ec397cd3e7259904c59939df18e92d4b164b5b8523c45cca7d364eb",
+  "server/highlevel/operations/manifest.ts": "7c0535617a9be171169408cb2a7f8739fd0da841684d6476d688bf086f24d8b7",
+  "server/highlevel/operations/schemas/automations.ts": "fb25fdee36cb130eb10ef0e3427c9c8fbd7aa044df1302eaa29dc43d2e6b24eb",
+  "server/highlevel/operations/schemas/blogs.ts": "2395a3911a578fb83850f484856f3b9dc937f5ee0f9f240764f06068e55d69ac",
+  "server/highlevel/operations/schemas/calendars.ts": "dcef0019b13203fa251cceffef0ecdec637855fb70bbf84dbec1e24da49c8076",
+  "server/highlevel/operations/schemas/common.ts": "02a1eb703770a9c63c217a66ac29bdd07dfb3d675599a575c9b310222acb73ca",
+  "server/highlevel/operations/schemas/contacts.ts": "d2179d641bb33c44d423c0118dce55937968cc8372c6a020666d7585c38f528d",
+  "server/highlevel/operations/schemas/conversations.ts": "d468c5cecdbec694f2cc91ef08387f45ef204691f4c5339ec623540b1505eced",
+  "server/highlevel/operations/schemas/courses.ts": "2d475dc58fb7b4048cf0d556af3633c56926cdfea9413c877003e717b0e2cec5",
+  "server/highlevel/operations/schemas/documents.ts": "8951df62c427dfff6639f6b393ee124219d3697c85c42b0054b4af201e43b3d4",
+  "server/highlevel/operations/schemas/forms.ts": "59966ac35a14adea6b51607006fd8f2f951f2db9ba682f53a95cc54d0d8877f9",
+  "server/highlevel/operations/schemas/funnels.ts": "28a6e32c0089822c7ead108a5ec681d1be7fe27dff3f85ac3b9065ae3de9f46e",
+  "server/highlevel/operations/schemas/location.ts": "0fd871085a4b3bca9549a21c5d23ef5729d9fd128fcf868975d4bd2d18e5895e",
+  "server/highlevel/operations/schemas/media.ts": "873e106ffb32ebffd2c7df1856d4aad2408ffeca7dc00f2a883d982f541642d5",
+  "server/highlevel/operations/schemas/opportunities.ts": "34f34c16053e0798cc634c3f1be32276ac00aa91f83a19271b85a257b9aefeaa",
+  "server/highlevel/operations/schemas/payments.ts": "83920aaa324f761f6f843eadfff5c31024f7b346a574fcbecb9d07c8e44d1490",
+  "server/highlevel/operations/schemas/saas.ts": "9a72d4e1e7634da846a14bda15ede06b91f0eeaba779a3e78a6ed61ed59374dd",
+  "server/highlevel/operations/schemas/snapshots.ts": "3b32c20d44a08eaa9f4374d85a2478bbd6cb187d230b57c683119ec6df616358",
+  "server/highlevel/operations/schemas/social.ts": "39413b1112204436c12312a1f2710ee777ead6681259d87070af5af7cef48325",
+  "server/highlevel/operations/schemas/users.ts": "ce6023bbd399d1936c23edb7a7222e22c9ae00ce490fda9aec2457b310ee556b",
+  "server/highlevel/provider-manifest.json": "23e62b047463314dee45464dedece13a0a54629772154d2fb75f94a5f5af8b4b"
+}

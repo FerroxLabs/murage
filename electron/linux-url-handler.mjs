@@ -35,7 +35,7 @@ export function linuxHandlerDesktopEntry(executable) {
 }
 
 const runFile = (file, args) => new Promise((resolve, reject) => {
-  execFile(file, args, { timeout: 10_000 }, (error) => (error ? reject(error) : resolve()));
+  execFile(file, [...args], { timeout: 10_000 }, (error) => (error ? reject(error) : resolve()));
 });
 
 /**

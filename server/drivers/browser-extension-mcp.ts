@@ -1,3 +1,5 @@
+import "../../shared/win-hide-child-process.mjs";
+import { NotModelRequest } from "../../shared/engine-transport.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { pathToFileURL } from "node:url";
 import type { Readable, Writable } from "node:stream";
@@ -51,22 +53,22 @@ export async function runBrowserExtensionMcp(options: { config: BrowserExtension
           if(!rpc.params||typeof rpc.params!=="object"||Array.isArray(rpc.params)||Object.keys(rpc.params).some(key=>!["name","arguments","_meta"].includes(key))||!validProgressMeta((rpc.params as Record<string,unknown>)._meta))throw new Error("Invalid tool request");
           const supplied=rpc.params as Record<string,unknown>;params=validateHeadlessBrowserCall(supplied.name,supplied.arguments??{});
         } else if(rpc.params!==undefined && (!rpc.params||typeof rpc.params!=="object"||Array.isArray(rpc.params)||Object.keys(rpc.params).length))throw new Error("Invalid tool list request");
-        result=await boundedResponse(await request(config.endpoint,{method:"POST",headers:{authorization:`Bearer ${config.token}`,"x-murage-browser-client":config.clientId,"content-type":"application/json"},body:JSON.stringify({method:rpc.method,params}),redirect:"error",signal:AbortSignal.any([AbortSignal.timeout(BROWSER_EXTENSION_CALL_TIMEOUT_MS),cancel.signal])}));
+        result=await boundedResponse(await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", request(config.endpoint,{method:"POST",headers:{authorization:`Bearer ${config.token}`,"x-murage-browser-client":config.clientId,"content-type":"application/json"},body:JSON.stringify({method:rpc.method,params}),redirect:"error",signal:AbortSignal.any([AbortSignal.timeout(BROWSER_EXTENSION_CALL_TIMEOUT_MS),cancel.signal])})));
         if(rpc.method==="tools/list")result={tools:listHeadlessBrowserTools((result as {tools?:unknown}|null)?.tools)};
-      } else {await writeMcpLine(output,JSON.stringify({jsonrpc:"2.0",id:rpc.id,error:{code:-32601,message:"Method not available"}}));return;}
+      } else {await NotModelRequest("MCP tool protocol or Chrome browser control; no model request is submitted", writeMcpLine(output,JSON.stringify({jsonrpc:"2.0",id:rpc.id,error:{code:-32601,message:"Method not available"}})));return;}
       if(cancel.signal.aborted)return;
-      await writeMcpLine(output,JSON.stringify({jsonrpc:"2.0",id:rpc.id,result}));
+      await NotModelRequest("MCP tool protocol or Chrome browser control; no model request is submitted", writeMcpLine(output,JSON.stringify({jsonrpc:"2.0",id:rpc.id,result})));
     }catch(error){
       if(cancel.signal.aborted)return;
       const refusal=(error as {refusal?:{code:string;text:string}}|undefined)?.refusal;
       const message=refusal?.text??EXTENSION_CALL_FAILED_TEXT;
-      await writeMcpLine(output,JSON.stringify(rpc.method==="tools/call"?{jsonrpc:"2.0",id:rpc.id,result:{isError:true,...(refusal?{code:refusal.code}:{}),content:[{type:"text",text:message}]}}:{jsonrpc:"2.0",id:rpc.id,error:{code:-32000,message,...(refusal?{data:{code:refusal.code}}:{})}}));
+      await NotModelRequest("MCP tool protocol or Chrome browser control; no model request is submitted", writeMcpLine(output,JSON.stringify(rpc.method==="tools/call"?{jsonrpc:"2.0",id:rpc.id,result:{isError:true,...(refusal?{code:refusal.code}:{}),content:[{type:"text",text:message}]}}:{jsonrpc:"2.0",id:rpc.id,error:{code:-32000,message,...(refusal?{data:{code:refusal.code}}:{})}})));
     }
   };
   const drain=async()=>{for(const line of lines.splice(0)){
     let rpc: {id?:unknown;method?:unknown;params?:unknown};
-    try {rpc=JSON.parse(line);}catch{await writeMcpLine(output,JSON.stringify({jsonrpc:"2.0",id:null,error:{code:-32700,message:"Invalid JSON"}}));continue;}
-    if (!rpc || typeof rpc!=="object" || Array.isArray(rpc)) {await writeMcpLine(output,JSON.stringify({jsonrpc:"2.0",id:null,error:{code:-32600,message:"Invalid request"}}));continue;}
+    try {rpc=JSON.parse(line);}catch{await NotModelRequest("MCP tool protocol or Chrome browser control; no model request is submitted", writeMcpLine(output,JSON.stringify({jsonrpc:"2.0",id:null,error:{code:-32700,message:"Invalid JSON"}})));continue;}
+    if (!rpc || typeof rpc!=="object" || Array.isArray(rpc)) {await NotModelRequest("MCP tool protocol or Chrome browser control; no model request is submitted", writeMcpLine(output,JSON.stringify({jsonrpc:"2.0",id:null,error:{code:-32600,message:"Invalid request"}})));continue;}
     if (rpc.id===undefined) {
       if(rpc.method==="notifications/cancelled"&&rpc.params&&typeof rpc.params==="object"){
         const requestId=(rpc.params as {requestId?:unknown}).requestId;
@@ -74,10 +76,10 @@ export async function runBrowserExtensionMcp(options: { config: BrowserExtension
       }
       continue;
     }
-    if (!(typeof rpc.id==="string"&&rpc.id.length<=128)&&!(typeof rpc.id==="number"&&Number.isSafeInteger(rpc.id))) {await writeMcpLine(output,JSON.stringify({jsonrpc:"2.0",id:null,error:{code:-32600,message:"Invalid request id"}}));continue;}
+    if (!(typeof rpc.id==="string"&&rpc.id.length<=128)&&!(typeof rpc.id==="number"&&Number.isSafeInteger(rpc.id))) {await NotModelRequest("MCP tool protocol or Chrome browser control; no model request is submitted", writeMcpLine(output,JSON.stringify({jsonrpc:"2.0",id:null,error:{code:-32600,message:"Invalid request id"}})));continue;}
     const id=rpc.id;
-    if (inflight.has(key(id))) {await writeMcpLine(output,JSON.stringify({jsonrpc:"2.0",id,error:{code:-32600,message:"Request id already in use"}}));continue;}
-    if (inflight.size>=MAX_PARALLEL) {await writeMcpLine(output,JSON.stringify({jsonrpc:"2.0",id,error:{code:-32000,message:"Too many browser requests at once. Try again when one finishes."}}));continue;}
+    if (inflight.has(key(id))) {await NotModelRequest("MCP tool protocol or Chrome browser control; no model request is submitted", writeMcpLine(output,JSON.stringify({jsonrpc:"2.0",id,error:{code:-32600,message:"Request id already in use"}})));continue;}
+    if (inflight.size>=MAX_PARALLEL) {await NotModelRequest("MCP tool protocol or Chrome browser control; no model request is submitted", writeMcpLine(output,JSON.stringify({jsonrpc:"2.0",id,error:{code:-32000,message:"Too many browser requests at once. Try again when one finishes."}})));continue;}
     const cancel=new AbortController();inflight.set(key(id),cancel);
     const task=handle({...rpc,id},cancel).catch(error=>{failure??=error;}).finally(()=>{inflight.delete(key(id));running.delete(task);});
     running.add(task);
@@ -87,6 +89,6 @@ export async function runBrowserExtensionMcp(options: { config: BrowserExtension
   if(failure)throw failure;
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
-  try {const file=process.env.MURAGE_BROWSER_MCP_CONFIG;if(!file)throw new Error();const config=parseBrowserExtensionMcpConfig(readPrivateBrowserClientJson(file));void runBrowserExtensionMcp({config}).catch(()=>{process.stderr.write("Browser MCP disconnected. Check Murage connection settings.\n");process.exitCode=1;});}
-  catch {process.stderr.write("Browser MCP configuration unavailable. Pair this client in Murage.\n");process.exitCode=1;}
+  try {const file=process.env.MURAGE_BROWSER_MCP_CONFIG;if(!file)throw new Error();const config=parseBrowserExtensionMcpConfig(readPrivateBrowserClientJson(file));void runBrowserExtensionMcp({config}).catch(()=>{NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", process.stderr.write("Browser MCP disconnected. Check Murage connection settings.\n"));process.exitCode=1;});}
+  catch {NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", process.stderr.write("Browser MCP configuration unavailable. Pair this client in Murage.\n"));process.exitCode=1;}
 }

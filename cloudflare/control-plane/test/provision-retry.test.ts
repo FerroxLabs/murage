@@ -391,7 +391,9 @@ describe("Astra MAILRETRY-8: the overdue give-up pass runs before the per-home w
     const hooks: string[] = [];
     const hook = (async (_url: string, init?: RequestInit) => { hooks.push((JSON.parse(String(init?.body)) as { kind: string }).kind); return new Response("ok"); }) as unknown as typeof fetch;
     for (const minute of [1, 2]) await sweepMonitoring(fixtureEnv({ ALERT_WEBHOOK_URL: "https://ops.murage.test/hook" }), NOW + PROVISION_MAX_MS + (5 + minute) * MIN, hook);
-    expect(hooks.filter((k) => k === "provision.failed")).toHaveLength(1);
+    // Two-tier alerts: ONE failed home is below the P3 threshold (provision.failed on 2 homes in 30 min), so it is recorded and waits: no post.
+    expect(hooks.filter((k) => k === "provision.failed" || k.startsWith("page."))).toHaveLength(0);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_alerts WHERE kind='provision.failed' AND resolved_at IS NULL").first<{ n: number }>())!.n).toBe(1);
   });
 
   it("a home given up by the pass is not reprocessed as checking by the same run's page: one give-up, one cleanup, no failure", async () => {
@@ -922,40 +924,32 @@ describe("Astra MAILRETRY-11 round 7: payment version orders everything; legacy 
     expect((await obligations()).map((o) => o.id)).toEqual([`refund:provision_failed:${HOME}`, key("in_retry_2")]);
   });
 
-  it("P2-B: A's alert POST in flight while B is given up: A delivered exactly once and never resolved; B's own alert delivered once, referencing A by id", async () => {
+  it("P2-B: B is given up while A's alert is open: A's row is never resolved or copied, B's own row references A by id (two failures on ONE home are one home: no page)", async () => {
     const HOOK = "https://hooks.example.test/alerts";
-    const posts: string[] = [];
-    const gate: { release?: () => void } = {};
+    const posts: { kind: string; text: string }[] = [];
     const fetcher = (async (_url: string, init: { body: string }) => {
-      const body = JSON.parse(init.body) as { kind: string; text: string };
-      if (body.kind !== "provision.failed") return new Response("ok");
-      posts.push(body.text);
-      if (posts.length === 1) await new Promise<void>((resolve) => { gate.release = resolve; });
+      posts.push(JSON.parse(init.body) as { kind: string; text: string });
       return new Response("ok");
     }) as unknown as typeof fetch;
     const hookEnv = { ...env, ALERT_WEBHOOK_URL: HOOK } as Env;
     at(T); expect((await reconcile(fakeProvider)).status).toBe(200);
     await holdRetirement();
-    // A's delivery starts and hangs (in flight).
-    const first = sweepMonitoring(hookEnv, NOW + (T + 1) * MIN, fetcher);
-    await vi.waitFor(() => expect(gate.release).toBeDefined());
+    await sweepMonitoring(hookEnv, NOW + (T + 1) * MIN, fetcher);
     // Meanwhile B is paid, then given up.
     at(T + 2); await journal({ eventId: "evt-retry-q", version: 2, status: "paid", paymentId: "in_retry_2" });
     expect((await reconcile(fakeProvider)).status).toBe(200);
     at(2 * T + 2); expect((await reconcile(fakeProvider)).status).toBe(200);
     let al = await alertRows();
-    expect(al.map((x) => [x.subject, x.resolved_at, x.delivered_at])).toEqual([[PAYMENT.paymentId, null, null], ["in_retry_2", null, null]]);
-    // A's POST succeeds now.
-    gate.release!(); await first;
+    expect(al.map((x) => [x.subject, x.resolved_at])).toEqual([[PAYMENT.paymentId, null], ["in_retry_2", null]]);
     await sweepMonitoring(hookEnv, NOW + (2 * T + 3) * MIN, fetcher);
     await sweepMonitoring(hookEnv, NOW + (2 * T + 4) * MIN, fetcher);
     al = await alertRows();
     expect(al.map((x) => x.resolved_at)).toEqual([null, null]);
-    expect(al.every((x) => x.delivered_at !== null)).toBe(true);
-    expect(posts).toHaveLength(2);
-    expect(posts.filter((t) => t.includes(`[payment ${PAYMENT.paymentId}]`))).toHaveLength(1);
-    expect(posts.filter((t) => t.includes("[payment in_retry_2]"))).toHaveLength(1);
-    expect(posts[1]).toContain(`earlier payment ${PAYMENT.paymentId} also failed; see alert ${al[0].id}`);
+    // Two alerts of ONE home are below the P3 threshold (2 homes): recorded, waiting, never posted one by one.
+    expect(posts.filter((m) => m.kind !== "daily.summary")).toEqual([]);
+    expect(al[1].detail).toContain(`earlier payment ${PAYMENT.paymentId} also failed; see alert ${al[0].id}`);
+    expect(al[1].detail).toContain("[payment in_retry_2]");
+    expect(al[0].detail).toContain(`[payment ${PAYMENT.paymentId}]`);
   });
 });
 

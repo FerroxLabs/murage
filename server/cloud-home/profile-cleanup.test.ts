@@ -99,7 +99,7 @@ assert not os.path.lexists(root+"/b1") and os.path.exists(root+"/.cleanup-b1/pro
 module.cleanup_browser(root,"b1",os.getuid(),os.getgid(),erase=lambda target,uid,gid:shutil.rmtree(target),stop=lambda home:None)
 assert not os.path.lexists(root+"/.cleanup-b1") and os.path.exists(root+"/b2/state")
 print("QUARANTINE_RETRY_OK")`;
-  expect(execFileSync("python3", ["-I", "-c", script, launcher, join(root, "native-model")], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })).toBe("QUARANTINE_RETRY_OK\n");
+  expect(execFileSync("python3", ["-I", "-c", script, launcher, join(root, "native-model")], { windowsHide: true, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })).toBe("QUARANTINE_RETRY_OK\n");
 });
 
 it("T20 cleaning up a never-created canary profile exits 0 and touches nothing", () => {
@@ -111,7 +111,7 @@ def boom(*a):raise AssertionError("nothing exists, nothing is stopped or erased"
 module.cleanup_browser(root,"__murage-ui-canary",os.getuid(),os.getgid(),erase=boom,stop=boom)
 assert sorted(os.listdir(root))==["bot"]
 print("CANARY_CLEANUP_OK")`;
-  expect(execFileSync("python3", ["-I", "-c", script, launcher, join(root, "canary-never-created")], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })).toBe("CANARY_CLEANUP_OK\n");
+  expect(execFileSync("python3", ["-I", "-c", script, launcher, join(root, "canary-never-created")], { windowsHide: true, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })).toBe("CANARY_CLEANUP_OK\n");
 });
 
 const lockLauncher = fileURLToPath(new URL("../../deploy/cloud-home/murage-turn-launch.py", import.meta.url));
@@ -129,7 +129,7 @@ def busy(fn):
  except m.BrowserLockBusy:return True
 `;
 function runLock(body: string, name: string) {
-  return execFileSync("python3", ["-I", "-c", lockHead + body, lockLauncher, join(root, name)], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  return execFileSync("python3", ["-I", "-c", lockHead + body, lockLauncher, join(root, name)], { windowsHide: true, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 }
 it("r6 cleanup A holding the id lock makes cleanup B busy (not clean) without touching the profile, other ids stay free", () => {
   expect(runLock(`

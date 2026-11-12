@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-// Reads server/index.ts as text: the mint path stays singular and reachable only from the fresh idle entry.
+// Reads dispatch wiring: lower levels require the fresh idle ticket; No limits uses authenticated turn policy.
 const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "index.ts"), "utf8");
 const controlSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "scripts", "control-murage.ts"), "utf8");
 const lines = source.split("\n");
@@ -23,9 +23,11 @@ function bodyOf(header: string): string {
 }
 
 describe("phone authority wiring in server/index.ts", () => {
-  it("has exactly one phoneAuthorities.mint( call, followed within five lines by limitTurns.markPhoneHeld(", () => {
+  it("keeps the lower-level mint and admits authenticated No limits at the mount", () => {
     // every occurrence, no exclusions: no test seam may mint
-    expect(countOf("phoneAuthorities.mint(")).toBe(1);
+    expect(countOf("phoneAuthorities.mint(")).toBe(2);
+    expect(source).toContain("serviceNoLimits(dispatchClaimId, threadId, bot.id) && phonesOfferedNow()");
+    expect(source).toContain('origin: "no-limits"');
     // S23: no phone test seam of any kind survives in the server or in the fixture launcher
     for (const text of [source, controlSource]) expect(text).not.toContain("MURAGE_TEST_PHONE_");
     const at = lines.findIndex((l) => l.includes("phoneAuthorities.mint(") && l.includes("turnId: userMessage.id"));
@@ -33,7 +35,7 @@ describe("phone authority wiring in server/index.ts", () => {
     expect(lines.slice(at + 1, at + 6).some((l) => l.includes("limitTurns.markPhoneHeld("))).toBe(true);
   });
 
-  it("mints inside startTurnAdmitting, after dispatchClaimId, and only with the ticket", () => {
+  it("mints lower-level authority inside startTurnAdmitting, after dispatchClaimId, with the ticket", () => {
     const body = bodyOf("async function startTurnAdmitting(");
     expect(body).toContain("phoneAuthorities.mint(");
     expect(body.indexOf("const dispatchClaimId = run.generation;")).toBeGreaterThan(-1);

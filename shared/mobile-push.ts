@@ -5,7 +5,7 @@
 export const PUSH_CONTRACT_VERSION = 2;
 export const PUSH_CATEGORIES = ["approval", "approval-open", "question", "done", "resolved", "device-job", "call", "call-note"] as const;
 export type PushCategory = (typeof PUSH_CATEGORIES)[number];
-export type PushKind = "approval" | "question" | "done" | "routine-failed" | "turn-failed" | "takeover" | "backup-waiting" | "memories-waiting" | "device-job" | "call" | "call-note" | "email-digest" | "email-status";
+export type PushKind = "connector-reconnect" | "approval" | "question" | "done" | "routine-failed" | "turn-failed" | "takeover" | "backup-waiting" | "memories-waiting" | "device-job" | "call" | "call-note" | "email-digest" | "email-status";
 /** Contract v2 (bot calls, 1.0.9): the call kinds carry their own expiry in
  *  the phone payload, so a phone can stay silent for a ring that arrives late. */
 export const EXPIRING_CATEGORIES = ["call", "call-note"] as const;

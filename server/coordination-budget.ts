@@ -8,7 +8,7 @@ export const MAX_HANDOFFS_PER_TURN = 16;
 export const MAX_HANDOFFS_PER_ROOT = 32;
 export const MAX_CONCURRENT_HANDOFFS = 4;
 const id = z.string().min(1).max(180);
-export const coordinationTraceSchema = z.object({ rootId: id, path: z.array(id).min(1).max(3) }).strict();
+export const coordinationTraceSchema = z.object({ rootId: id, path: z.array(id).min(1) }).strict();
 export type CoordinationTrace = z.infer<typeof coordinationTraceSchema>;
 const rootSchema = z.object({
   id, owner: id, expiresAt: z.number().finite(),
@@ -63,7 +63,12 @@ export class CoordinationBudget {
     }
     return { rootId, path: [owner] };
   }
-  advance(trace: CoordinationTrace | undefined, sender: string, target: string): CoordinationTrace {
+  advance(trace: CoordinationTrace | undefined, sender: string, target: string, noLimits = false): CoordinationTrace {
+    if (noLimits) {
+      id.parse(sender); id.parse(target);
+      if (trace && (!coordinationTraceSchema.safeParse(trace).success || trace.path.at(-1) !== sender)) throw new Error("COORDINATION_ANCESTRY_INVALID");
+      return { rootId: trace?.rootId ?? randomUUID(), path: [...(trace?.path ?? [sender]), target] };
+    }
     if (!trace || !coordinationTraceSchema.safeParse(trace).success) throw new Error("COORDINATION_ALLOWANCE_UNAVAILABLE: start a new owner task");
     let root = this.state.roots.find(root => root.id === trace.rootId && root.expiresAt > this.now());
     let promoting: State["roots"] | undefined;

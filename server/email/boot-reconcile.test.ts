@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EMAIL_EVENT_KEEP_MS, EMAIL_PRUNE_BATCH, EmailRuntime, PRUNE_TICKS } from "./runtime.ts";
 import { EmailStore, PRUNE_PAYLOADS_SCOPE, type SendRow, type SendState } from "./email-store.ts";
 import { KEY_IDEMPOTENCY_WINDOW_MS } from "./binding-service.ts";
+import { prepareRestoredEmail } from "./restore.ts";
 import { EMAIL_LINES, codeLine } from "./tools.ts";
 import { FakeFlux, fluxError } from "../testing/fake-flux-email.ts";
 import type { BotRecord } from "../store.ts";
@@ -107,6 +108,125 @@ describe("F20 key rotation (2.3)", () => {
     expect(fake.calls("DELETE", /^\/api\/desktop\/bot-keys\/key_old$/)).toHaveLength(1);
     expect(fake.calls("POST", /^\/api\/desktop\/bot-keys$/)).toHaveLength(0);
     expect(services.store.getCursor("rotate:b1")).toBeNull();
+  });
+});
+
+describe("H3 no revoke by absence (CLOUD-EMAIL-KEYSTORE-1019 r2 section 6 rules 1, 4, 5; r3 section 1: no store id on intents)", () => {
+  const A = "a".repeat(32);
+  const cloud = (r: EmailRuntime, storeId: string) => r.secrets.attachCloud({ storeId, gen: 0, ownerRev: 0, owner: { token: "owner-fixture", keyId: "key_owner" }, doc: { bots: {} } });
+  const revokes = () => fake.calls("DELETE", /^\/api\/desktop\/bot-keys\//);
+  const mints = () => fake.calls("POST", /^\/api\/desktop\/bot-keys$/);
+  const homeFrom = (fresh: EmailRuntime) => { runtime.stop(); runtime = fresh; };
+  /** One boot of the same database under a new process: nothing in memory survives, the sealed keys are put back as the supervisor would. */
+  const boot = async (storeId: string, keys: () => void = () => {}) => {
+    homeFrom(make()); cloud(runtime, storeId); keys(); await runtime.probe.refresh();
+    await runtime.start(); runtime.stop();
+  };
+  const restoreInPlace = () => expect(prepareRestoredEmail(db)).toBeGreaterThanOrEqual(0);
+  it("R1. prepareRestoredEmail on a provisioning binding with rotate and setup-retry cursors: restored_unverified, both cursors gone, install-id kept", () => {
+    binding("b1", { state: "provisioning", step: "key", opId: "op-s", opStartedAt: clock });
+    const store = runtime.services()!.store;
+    store.setCursor("install-id", "install-src", clock);
+    store.setCursor("rotate:b1", JSON.stringify({ oldKeyId: "key_old", opId: "op-r", at: clock }), clock);
+    store.setCursor("setup-retry:b1", "1", clock);
+    expect(prepareRestoredEmail(db)).toBe(1);
+    expect(store.getBinding("b1")!.state).toBe("restored_unverified");
+    expect(store.getCursor("rotate:b1")).toBeNull();
+    expect(store.getCursor("setup-retry:b1")).toBeNull();
+    expect(store.getCursor("install-id")).toBe("install-src");
+  });
+  it("R2. boot on that restored database: zero mint and zero revoke calls", async () => {
+    binding("b1", { state: "provisioning", step: "key", opId: "op-s", opStartedAt: clock });
+    runtime.services()!.store.setCursor("rotate:b1", JSON.stringify({ oldKeyId: "key_old", opId: "op-r", at: clock }), clock);
+    restoreInPlace();
+    await boot(A);
+    expect(mints()).toHaveLength(0); expect(revokes()).toHaveLength(0);
+  });
+  it("R3. Reconnect mints with an idempotency key that differs from every opId in the restored database", async () => {
+    binding("b1", { state: "provisioning", step: "key", opId: "op-source", opStartedAt: clock });
+    runtime.services()!.store.setCursor("rotate:b1", JSON.stringify({ oldKeyId: "key_old", opId: "op-rot", at: clock }), clock);
+    restoreInPlace();
+    cloud(runtime, A);
+    fake.always("GET", /^\/v1\/email\/inboxes$/, { status: 200, body: { data: [{ id: "ibx_1", bot_id: "b1", state: "active", address: "juniper@murage.email" }] } });
+    fake.on("POST", /^\/api\/desktop\/bot-keys$/, { status: 201, body: { key: "bot-tgt", key_id: "key_tgt" } });
+    expect(await runtime.services()!.bindings.reconnect("b1")).toMatchObject({ ok: true });
+    const keyHeader = String(mints()[0]!.headers["idempotency-key"] ?? "");
+    expect(keyHeader).not.toBe("");
+    for (const op of ["op-source", "op-rot"]) expect(keyHeader).not.toContain(op);
+  });
+  it("a rotation intent carries no store id, also on a Cloud home with a sealed record", async () => {
+    binding("b1", { emailKeyRef: "key_old" });
+    cloud(runtime, A);
+    runtime.secrets.setBotKey("b1", { token: "bot-old", keyId: "key_old" });
+    fake.always("GET", /^\/v1\/email\/inboxes$/, { status: 200, body: { data: [] } });
+    fake.on("POST", /^\/api\/desktop\/bot-keys$/, { status: 201, body: { key: "bot-new", key_id: "key_new" } });
+    fake.on("DELETE", /^\/api\/desktop\/bot-keys\/key_old$/, { status: 200, body: {} });
+    await runtime.services()!.bindings.rotateKey("b1", () => true);
+    expect(runtime.services()!.store.getCursor("keystore-store-id")).toBeNull();
+    const raw = runtime.services()!.store.getCursor("rotate:b1");
+    if (raw) expect(JSON.parse(raw)).not.toHaveProperty("storeId");
+  });
+  it("11. two homes, one restored from the other (the restore preparation runs), Reconnect and two boots each: the revoke spy never sees a key id", async () => {
+    binding("b1", { emailKeyRef: "key_src" });
+    cloud(runtime, A);
+    runtime.secrets.setBotKey("b1", { token: "bot-src", keyId: "key_src" });
+    runtime.services()!.store.setCursor("rotate:b1", JSON.stringify({ oldKeyId: "key_older", opId: "op-r", at: clock }), clock);
+    // the restored home: the same database rows through prepareRestoredEmail, a new sealed store (credentials.enc is never backed up)
+    restoreInPlace();
+    expect(runtime.services()!.store.getCursor("rotate:b1")).toBeNull();
+    fake.always("GET", /^\/v1\/email\/inboxes$/, { status: 200, body: { data: [{ id: "ibx_1", bot_id: "b1", state: "active", address: "juniper@murage.email" }] } });
+    fake.on("POST", /^\/api\/desktop\/bot-keys$/, { status: 201, body: { key: "bot-tgt", key_id: "key_tgt" } });
+    for (let n = 0; n < 2; n++) await boot("b".repeat(32));
+    expect(runtime.services()!.store.getBinding("b1")!.state).toBe("restored_unverified");
+    expect(revokes()).toHaveLength(0);
+    expect(await runtime.services()!.bindings.reconnect("b1")).toMatchObject({ ok: true });
+    expect(runtime.secrets.botKey("b1")?.keyId).toBe("key_tgt");
+    for (let n = 0; n < 2; n++) await boot("b".repeat(32), () => runtime.secrets.setBotKey("b1", { token: "bot-tgt", keyId: "key_tgt" }));
+    expect(revokes()).toHaveLength(0);
+  });
+  it("12. boot never revokes a key id absent from this home's sealed doc and from the oldKeyId of intents in this home's database (no storeId on intents); Reconnect revokes only a key this home minted, past 24 h (reconnect-r32h.test.ts), never a foreign one", async () => {
+    binding("b1", { emailKeyRef: "key_new" });
+    cloud(runtime, A);
+    runtime.secrets.setBotKey("b1", { token: "bot-new", keyId: "key_new" });
+    // an own intent finishes (its old key is revoked once); a key id that is in neither the doc nor an intent is never touched
+    runtime.services()!.store.setCursor("rotate:b1", JSON.stringify({ oldKeyId: "key_old", opId: "op-r", at: clock }), clock);
+    fake.on("DELETE", /^\/api\/desktop\/bot-keys\/key_old$/, { status: 200, body: {} });
+    fake.on("DELETE", /^\/api\/desktop\/bot-keys\/key_stray$/, { status: 200, body: {} });
+    await runtime.start(); runtime.stop();
+    expect(revokes().map(c => c.path)).toEqual(["/api/desktop/bot-keys/key_old"]);
+    expect(revokes().some(c => c.path.endsWith("key_stray") || c.path.endsWith("key_new"))).toBe(false);
+    // a restored binding: boot revokes nothing, Reconnect never calls revokeBotKey
+    binding("b2", { state: "restored_unverified", emailKeyRef: "key_src" });
+    fake.always("GET", /^\/v1\/email\/inboxes$/, { status: 200, body: { data: [{ id: "ibx_2", bot_id: "b2", state: "active", address: "juniper@murage.email" }, { id: "ibx_3", bot_id: "b3", state: "active", address: "ivy@murage.email" }] } });
+    fake.on("POST", /^\/api\/desktop\/bot-keys$/, { status: 201, body: { key: "bot-b2", key_id: "key_b2" } });
+    bots.add("b2");
+    const before = revokes().length;
+    homeFrom(make()); cloud(runtime, A); runtime.secrets.setBotKey("b1", { token: "bot-new", keyId: "key_new" }); await runtime.probe.refresh();
+    await runtime.start();
+    expect(revokes()).toHaveLength(before);
+    expect(await runtime.services()!.bindings.reconnect("b2")).toMatchObject({ ok: true });
+    expect(revokes()).toHaveLength(before);
+    // behavioural (was a source slice): a Reconnect whose mint meets a live key this home never minted holds and revokes nothing
+    binding("b3", { state: "restored_unverified", emailKeyRef: "key_src3" });
+    bots.add("b3");
+    fake.on("POST", /^\/api\/desktop\/bot-keys$/, fluxError(409, "bot_key_exists", { key_id: "key_foreign" }));
+    expect(await runtime.services()!.bindings.reconnect("b3")).toMatchObject({ ok: false, code: "rotation_live_conflict" });
+    expect(revokes()).toHaveLength(before);
+  });
+});
+
+describe("restore while the source home still runs (CLOUD-EMAIL-KEYSTORE-1019 open question 2)", () => {
+  it("boot revokes no key while the binding is restored_unverified, and keeps the rotation intent for the Reconnect", async () => {
+    binding("b1", { state: "restored_unverified" });
+    const services = runtime.services()!;
+    // the restored copy carries the source home's rotation intent; its old key may be the live key of the source home
+    services.store.setCursor("rotate:b1", JSON.stringify({ oldKeyId: "key_old", opId: "op-r", at: clock }), clock);
+    runtime.secrets.setBotKey("b1", { token: "bot-new", keyId: "key_new" });
+    fake.on("DELETE", /^\/api\/desktop\/bot-keys\/key_old$/, { status: 200, body: {} });
+    await runtime.start(); runtime.stop();
+    expect(fake.calls("DELETE", /^\/api\/desktop\/bot-keys\//)).toHaveLength(0);
+    expect(fake.calls("POST", /^\/api\/desktop\/bot-keys$/)).toHaveLength(0);
+    expect(services.store.getCursor("rotate:b1")).not.toBeNull();
   });
 });
 

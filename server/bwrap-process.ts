@@ -29,6 +29,13 @@ export function hostProcessIdentity(pid: number): HostProcessIdentity | undefine
   return current && !["Z", "X"].includes(current.state) ? { pid, start: current.start } : undefined;
 }
 
+/** A status-reported PID can exit before its starttime is observed. Unreadable
+ * or malformed /proc data is still uncertainty; only absence or death proves exit. */
+export function hostProcessExited(pid: number): boolean {
+  const current = hostProcess(pid);
+  return current === null || !!current && ["Z", "X"].includes(current.state);
+}
+
 /** A missing/replaced/zombie init has completed the kernel's PID-namespace teardown, including descendants with no pipes. */
 export function hostProcessGone(identity: HostProcessIdentity): boolean {
   const current = hostProcess(identity.pid);

@@ -1,3 +1,5 @@
+import { windowsHideBundlePlugin } from './windows-hide-bundle-plugin.mjs';
+import { windowsHideImport } from "../shared/win-hide-child-process.mjs";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -51,7 +53,8 @@ export async function prepareBrowserExtension({ root = projectRoot, outDir = pat
   await buildImpl({
     entryPoints: { 'native-host': path.join(root, 'electron/browser-extension-host-entry.mjs'), 'browser-extension-mcp': path.join(root, 'server/drivers/browser-extension-mcp.ts'), registration: path.join(root, 'scripts/browser-extension-host-registration.mjs') },
     outdir: outDir, outExtension: { '.js': '.mjs' }, bundle: true, format: 'esm', platform: 'node', target: 'node24', logLevel: 'silent',
-    banner: { js: 'import { createRequire as __browserRequire } from "node:module"; const require = __browserRequire(import.meta.url);' },
+    plugins: [windowsHideBundlePlugin()],
+    banner: { js: windowsHideImport + 'import { createRequire as __browserRequire } from "node:module"; const require = __browserRequire(import.meta.url);' },
   });
   // The store item is the release ID whose key the dashboard gave; the app
   // links its listing only from this trusted value (browser-extension-listing.ts).

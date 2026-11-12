@@ -1,0 +1,262 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "astra-acct5",
+  "date": "2026-11-10",
+  "base": "c12aaad9341e8f87126a193f35b5c2768f0aa66f",
+  "scope": "S1 pop-out browser copy",
+  "strings": {
+    "en:browser.popout": {
+      "text": "Pop out view",
+      "en": "Pop out view",
+      "verdict": "pass"
+    },
+    "en:browser.handback": {
+      "text": "Hand back",
+      "en": "Hand back",
+      "verdict": "pass"
+    },
+    "en:browser.popoutShown": {
+      "text": "Shown in its own window",
+      "en": "Shown in its own window",
+      "verdict": "pass"
+    },
+    "en:browser.bringBack": {
+      "text": "Bring back",
+      "en": "Bring back",
+      "verdict": "pass"
+    },
+    "en:browser.popoutRetry": {
+      "text": "Your live view is here. Try Pop out view again.",
+      "en": "Your live view is here. Try Pop out view again.",
+      "verdict": "pass"
+    },
+    "en:browser.popoutMissing": {
+      "text": "Choose a browser from your bot list.",
+      "en": "Choose a browser from your bot list.",
+      "verdict": "pass"
+    },
+    "de:browser.popout": {
+      "text": "Ansicht in eigenem Fenster",
+      "en": "Pop out view",
+      "verdict": "pass"
+    },
+    "de:browser.handback": {
+      "text": "Zurückgeben",
+      "en": "Hand back",
+      "verdict": "pass",
+      "note": "Meaning matches (hand control back to the person); natural UI wording."
+    },
+    "de:browser.popoutShown": {
+      "text": "In einem eigenen Fenster geöffnet",
+      "en": "Shown in its own window",
+      "verdict": "pass"
+    },
+    "de:browser.bringBack": {
+      "text": "Zurückholen",
+      "en": "Bring back",
+      "verdict": "pass"
+    },
+    "de:browser.popoutRetry": {
+      "text": "Die Live-Ansicht ist hier. Öffne sie erneut in einem eigenen Fenster.",
+      "en": "Your live view is here. Try Pop out view again.",
+      "verdict": "pass"
+    },
+    "de:browser.popoutMissing": {
+      "text": "Wähle einen Browser aus deiner Bot-Liste.",
+      "en": "Choose a browser from your bot list.",
+      "verdict": "pass"
+    },
+    "es:browser.popout": {
+      "text": "Abrir vista en otra ventana",
+      "en": "Pop out view",
+      "verdict": "pass"
+    },
+    "es:browser.handback": {
+      "text": "Devolver el control",
+      "en": "Hand back",
+      "verdict": "pass",
+      "note": "Meaning matches (hand control back to the person); natural UI wording."
+    },
+    "es:browser.popoutShown": {
+      "text": "Se muestra en su propia ventana",
+      "en": "Shown in its own window",
+      "verdict": "pass"
+    },
+    "es:browser.bringBack": {
+      "text": "Traer de vuelta",
+      "en": "Bring back",
+      "verdict": "pass"
+    },
+    "es:browser.popoutRetry": {
+      "text": "La vista en directo está aquí. Ábrela de nuevo en otra ventana.",
+      "en": "Your live view is here. Try Pop out view again.",
+      "verdict": "pass"
+    },
+    "es:browser.popoutMissing": {
+      "text": "Elige un navegador de tu lista de bots.",
+      "en": "Choose a browser from your bot list.",
+      "verdict": "pass"
+    },
+    "fr:browser.popout": {
+      "text": "Ouvrir la vue dans une fenêtre",
+      "en": "Pop out view",
+      "verdict": "pass"
+    },
+    "fr:browser.handback": {
+      "text": "Rendre le contrôle",
+      "en": "Hand back",
+      "verdict": "pass",
+      "note": "Meaning matches (hand control back to the person); natural UI wording."
+    },
+    "fr:browser.popoutShown": {
+      "text": "Affiché dans sa propre fenêtre",
+      "en": "Shown in its own window",
+      "verdict": "pass"
+    },
+    "fr:browser.bringBack": {
+      "text": "Ramener ici",
+      "en": "Bring back",
+      "verdict": "pass"
+    },
+    "fr:browser.popoutRetry": {
+      "text": "La vue en direct est ici. Rouvre-la dans une fenêtre.",
+      "en": "Your live view is here. Try Pop out view again.",
+      "verdict": "pass"
+    },
+    "fr:browser.popoutMissing": {
+      "text": "Choisis un navigateur dans ta liste de bots.",
+      "en": "Choose a browser from your bot list.",
+      "verdict": "pass"
+    },
+    "hi:browser.popout": {
+      "text": "दृश्य अलग विंडो में खोलें",
+      "en": "Pop out view",
+      "verdict": "pass"
+    },
+    "hi:browser.handback": {
+      "text": "नियंत्रण वापस दें",
+      "en": "Hand back",
+      "verdict": "pass",
+      "note": "Meaning matches (hand control back to the person); natural UI wording."
+    },
+    "hi:browser.popoutShown": {
+      "text": "अलग विंडो में दिख रहा है",
+      "en": "Shown in its own window",
+      "verdict": "pass"
+    },
+    "hi:browser.bringBack": {
+      "text": "वापस लाएँ",
+      "en": "Bring back",
+      "verdict": "pass"
+    },
+    "hi:browser.popoutRetry": {
+      "text": "लाइव दृश्य यहाँ है। इसे फिर से अलग विंडो में खोलें।",
+      "en": "Your live view is here. Try Pop out view again.",
+      "verdict": "pass"
+    },
+    "hi:browser.popoutMissing": {
+      "text": "अपनी बॉट सूची से एक ब्राउज़र चुनें।",
+      "en": "Choose a browser from your bot list.",
+      "verdict": "pass"
+    },
+    "ja:browser.popout": {
+      "text": "別ウィンドウで表示",
+      "en": "Pop out view",
+      "verdict": "pass"
+    },
+    "ja:browser.handback": {
+      "text": "操作を返す",
+      "en": "Hand back",
+      "verdict": "pass",
+      "note": "Meaning matches (hand control back to the person); natural UI wording."
+    },
+    "ja:browser.popoutShown": {
+      "text": "別ウィンドウに表示中",
+      "en": "Shown in its own window",
+      "verdict": "pass"
+    },
+    "ja:browser.bringBack": {
+      "text": "ここに戻す",
+      "en": "Bring back",
+      "verdict": "pass"
+    },
+    "ja:browser.popoutRetry": {
+      "text": "ライブ画面はここにあります。もう一度別ウィンドウで開いてください。",
+      "en": "Your live view is here. Try Pop out view again.",
+      "verdict": "pass"
+    },
+    "ja:browser.popoutMissing": {
+      "text": "ボット一覧からブラウザーを選んでください。",
+      "en": "Choose a browser from your bot list.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.popout": {
+      "text": "Abrir visualização em outra janela",
+      "en": "Pop out view",
+      "verdict": "pass"
+    },
+    "pt-br:browser.handback": {
+      "text": "Devolver o controle",
+      "en": "Hand back",
+      "verdict": "pass",
+      "note": "Meaning matches (hand control back to the person); natural UI wording."
+    },
+    "pt-br:browser.popoutShown": {
+      "text": "Exibido em uma janela própria",
+      "en": "Shown in its own window",
+      "verdict": "pass"
+    },
+    "pt-br:browser.bringBack": {
+      "text": "Trazer de volta",
+      "en": "Bring back",
+      "verdict": "pass"
+    },
+    "pt-br:browser.popoutRetry": {
+      "text": "A visualização ao vivo está aqui. Abra-a novamente em outra janela.",
+      "en": "Your live view is here. Try Pop out view again.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.popoutMissing": {
+      "text": "Escolha um navegador na sua lista de bots.",
+      "en": "Choose a browser from your bot list.",
+      "verdict": "pass"
+    },
+    "zh:browser.popout": {
+      "text": "在独立窗口中查看",
+      "en": "Pop out view",
+      "verdict": "pass"
+    },
+    "zh:browser.handback": {
+      "text": "交还控制权",
+      "en": "Hand back",
+      "verdict": "pass",
+      "note": "Meaning matches (hand control back to the person); natural UI wording."
+    },
+    "zh:browser.popoutShown": {
+      "text": "正在独立窗口中显示",
+      "en": "Shown in its own window",
+      "verdict": "pass"
+    },
+    "zh:browser.bringBack": {
+      "text": "移回此处",
+      "en": "Bring back",
+      "verdict": "pass"
+    },
+    "zh:browser.popoutRetry": {
+      "text": "实时画面在这里。请再次在独立窗口中打开。",
+      "en": "Your live view is here. Try Pop out view again.",
+      "verdict": "pass"
+    },
+    "zh:browser.popoutMissing": {
+      "text": "请从机器人列表中选择浏览器。",
+      "en": "Choose a browser from your bot list.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

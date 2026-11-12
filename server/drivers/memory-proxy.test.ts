@@ -80,6 +80,7 @@ beforeAll(async () => {
   const address = stub.address();
   if (!address || typeof address === "string") throw new Error("missing fixture port");
   child = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./memory-proxy.ts", import.meta.url))], {
+    windowsHide: true,
     env: { ...process.env, MURAGE_HARNESS_URL: `http://127.0.0.1:${address.port}`, MURAGE_MEMORY_TOKEN: TOKEN },
     stdio: ["pipe", "pipe", "pipe"],
   });

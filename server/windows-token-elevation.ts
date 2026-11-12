@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -32,7 +33,7 @@ type Run = (command: string, args: string[], options: { encoding: "utf8"; window
 /** true: elevated; false: a standard token; null: could not tell (the helper's own check then decides). */
 export function readWindowsTokenElevation(run: Run = spawnSync as unknown as Run, environment: NodeJS.ProcessEnv = process.env): boolean | null {
   try {
-    const result = run(windowsWhoamiPath(environment), ["/groups"], { encoding: "utf8", windowsHide: true, timeout: 15_000, env: { PATH: "", SystemRoot: windowsFolder(environment) }, maxBuffer: 1024 * 1024 });
+    const result = run(windowsWhoamiPath(environment), ["/groups"], withHideInherit({ encoding: "utf8", windowsHide: true, timeout: 15_000, env: { PATH: "", SystemRoot: windowsFolder(environment) }, maxBuffer: 1024 * 1024 }));
     if (result.error || result.status !== 0 || typeof result.stdout !== "string") return null;
     if (ELEVATED.test(result.stdout)) return true;
     return STANDARD.test(result.stdout) ? false : null;

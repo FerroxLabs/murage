@@ -105,7 +105,11 @@ it("Q12 separate paused restore carries current owner deletions without changing
       const objects=read.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name").all();
       digest.update(JSON.stringify([read.prepare("PRAGMA user_version").get(),read.prepare("PRAGMA application_id").get(),objects]));
       for(const {name} of objects.filter(row=>row.type==="table"&&!String(row.name).startsWith("sqlite_"))){
-        const rows=read.prepare(`SELECT * FROM "${String(name).replaceAll('"','""')}"`).all().map(row=>JSON.stringify(row)).sort();
+        // 5d5a791f19 adds a signed 64-bit search nonce. Hash every integer
+        // exactly and preserve its SQLite type, including values beyond 2^53.
+        const statement=read.prepare(`SELECT * FROM "${String(name).replaceAll('"','""')}"`);
+        statement.setReadBigInts(true);
+        const rows=statement.all().map(row=>JSON.stringify(row,(_key,value)=>typeof value==="bigint"?{sqliteInteger:value.toString()}:value)).sort();
         digest.update(`${String(name)}\u0000${rows.length}\u0000`);for(const row of rows)digest.update(row);
       }
     }finally{read.close();}

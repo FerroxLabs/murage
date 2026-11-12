@@ -1,0 +1,88 @@
+{
+  "version": "1.0.43",
+  "status": "FILL-AT-NPM",
+  "source": "FILL-AT-NPM",
+  "registry": "https://registry.npmjs.org",
+  "verificationBasis": "Prepared before publication; no registry requests, native execution or release claims. Fill verifies registry receipts and supplied executable SHA-256 values. Native qualification remains owed.",
+  "installScriptsExecuted": false,
+  "nativeExecutablesRun": false,
+  "packages": [
+    {
+      "target": "wrapper",
+      "name": "fuigo",
+      "version": "1.0.43",
+      "tarball": "https://registry.npmjs.org/fuigo/-/fuigo-1.0.43.tgz",
+      "tarballSha256": "FILL-AT-NPM",
+      "integrity": "FILL-AT-NPM",
+      "shasum": "FILL-AT-NPM",
+      "optionalDependencies": {
+        "@fuigo/darwin-arm64": "1.0.43",
+        "@fuigo/darwin-x64": "1.0.43",
+        "@fuigo/linux-arm64": "1.0.43",
+        "@fuigo/linux-x64": "1.0.43",
+        "@fuigo/win32-arm64": "1.0.43",
+        "@fuigo/win32-x64": "1.0.43"
+      }
+    },
+    {
+      "target": "darwin-arm64",
+      "name": "@fuigo/darwin-arm64",
+      "version": "1.0.43",
+      "tarball": "https://registry.npmjs.org/@fuigo/darwin-arm64/-/darwin-arm64-1.0.43.tgz",
+      "tarballSha256": "FILL-AT-NPM",
+      "integrity": "FILL-AT-NPM",
+      "shasum": "FILL-AT-NPM",
+      "binarySha256": "FILL-AT-NPM"
+    },
+    {
+      "target": "darwin-x64",
+      "name": "@fuigo/darwin-x64",
+      "version": "1.0.43",
+      "tarball": "https://registry.npmjs.org/@fuigo/darwin-x64/-/darwin-x64-1.0.43.tgz",
+      "tarballSha256": "FILL-AT-NPM",
+      "integrity": "FILL-AT-NPM",
+      "shasum": "FILL-AT-NPM",
+      "binarySha256": "FILL-AT-NPM"
+    },
+    {
+      "target": "linux-arm64",
+      "name": "@fuigo/linux-arm64",
+      "version": "1.0.43",
+      "tarball": "https://registry.npmjs.org/@fuigo/linux-arm64/-/linux-arm64-1.0.43.tgz",
+      "tarballSha256": "FILL-AT-NPM",
+      "integrity": "FILL-AT-NPM",
+      "shasum": "FILL-AT-NPM",
+      "binarySha256": "FILL-AT-NPM"
+    },
+    {
+      "target": "linux-x64",
+      "name": "@fuigo/linux-x64",
+      "version": "1.0.43",
+      "tarball": "https://registry.npmjs.org/@fuigo/linux-x64/-/linux-x64-1.0.43.tgz",
+      "tarballSha256": "FILL-AT-NPM",
+      "integrity": "FILL-AT-NPM",
+      "shasum": "FILL-AT-NPM",
+      "binarySha256": "FILL-AT-NPM"
+    },
+    {
+      "target": "win32-arm64",
+      "name": "@fuigo/win32-arm64",
+      "version": "1.0.43",
+      "tarball": "https://registry.npmjs.org/@fuigo/win32-arm64/-/win32-arm64-1.0.43.tgz",
+      "tarballSha256": "FILL-AT-NPM",
+      "integrity": "FILL-AT-NPM",
+      "shasum": "FILL-AT-NPM",
+      "binarySha256": "FILL-AT-NPM"
+    },
+    {
+      "target": "win32-x64",
+      "name": "@fuigo/win32-x64",
+      "version": "1.0.43",
+      "tarball": "https://registry.npmjs.org/@fuigo/win32-x64/-/win32-x64-1.0.43.tgz",
+      "tarballSha256": "FILL-AT-NPM",
+      "integrity": "FILL-AT-NPM",
+      "shasum": "FILL-AT-NPM",
+      "binarySha256": "FILL-AT-NPM"
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+import "../../shared/win-hide-child-process.mjs";
 // Turn-side stdio MCP bridge for the own-server computer on a Cloud home. It
 // replaces vps-container-mcp.ts, which needs SSH the turn does not have.
 //

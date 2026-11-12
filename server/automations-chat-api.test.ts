@@ -39,6 +39,7 @@ let desktopHeaders: Record<string, string>;
 let child: ChildProcess;
 let home: string;
 let holderDump: string;
+let finishGateDir: string;
 let telegramDir: string;
 let stderr = "";
 
@@ -73,6 +74,7 @@ async function poll<T>(read: () => Promise<T | null | undefined>, ms: number): P
 async function boot() {
   stderr = "";
   child = spawn(process.execPath, ["--import", TELEGRAM_PRELOAD, "--import", IDLE_LOAD_PRELOAD, join(SERVER_DIR, "index.ts")], {
+    windowsHide: true,
     cwd: join(SERVER_DIR, ".."),
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -142,6 +144,12 @@ async function stopTurn(botId: string, threadId: string) {
   await waitIdle(botId, threadId);
 }
 
+async function finishTurn(botId: string, threadId: string) {
+  const { pid } = JSON.parse(readFileSync(holderDump, "utf8")) as { pid: number };
+  writeFileSync(join(finishGateDir, String(pid)), "1");
+  expect(await waitIdle(botId, threadId), "the fake's clean reply did not settle").not.toBeNull();
+}
+
 const proposeWebhook = (bot: { id: string }, threadId: string, auth: Record<string, string>, name: string, eventTypes?: string[]) =>
   request("POST", "/api/internal/routine-requests", {
     fromBotId: bot.id, fromThreadId: threadId, kind: "webhook", action: "create",
@@ -183,6 +191,8 @@ describe.skipIf(process.platform === "win32")("SL-J automations from chat over H
     home = mkdtempSync(join(tmpdir(), "murage-automations-chat-"));
     expect(home.startsWith(tmpdir())).toBe(true);
     holderDump = join(home, "fake-claude-dump.json");
+    finishGateDir = join(home, "finish-fake");
+    mkdirSync(finishGateDir);
     telegramDir = join(home, "telegram-fixture");
     mkdirSync(telegramDir);
     mkdirSync(join(home, ".murage"), { recursive: true });
@@ -190,7 +200,7 @@ describe.skipIf(process.platform === "win32")("SL-J automations from chat over H
       engineDiscovery: "explicit",
       instances: {
         // holds every turn open so the test can call the bot's own tools
-        holder: { driver: "claudeAgent", environment: { FAKE_CLAUDE_MODE: "hang", FAKE_CLAUDE_DUMP: holderDump }, config: { cli: FAKE_CLAUDE } },
+        holder: { driver: "claudeAgent", environment: { FAKE_CLAUDE_MODE: "hang", FAKE_CLAUDE_DUMP: holderDump, FAKE_CLAUDE_FINISH_GATE_DIR: finishGateDir }, config: { cli: FAKE_CLAUDE } },
       },
     }));
     await boot();
@@ -247,7 +257,7 @@ describe.skipIf(process.platform === "win32")("SL-J automations from chat over H
     expect((await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, { requestId: "not-a-card", behavior: "undo" })).status).toBe(400);
   }, 90_000);
 
-  it("Ask and Auto show the card; Full access applies an owner turn's webhook with its receipt; after a minted link Undo answers changed_since", async () => {
+  it("Ask and Auto show the card; Full access applies an owner turn's webhook at clean settle with its receipt; after a minted link Undo answers changed_since", async () => {
     const bot = await makeBot("Levels");
     let auth = await heldTurn(bot, bot.threadId);
     const asked = await proposeWebhook(bot, bot.threadId, auth, "Ask hook");
@@ -270,14 +280,24 @@ describe.skipIf(process.platform === "win32")("SL-J automations from chat over H
     expect((await desktopApi("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { fullAccess: true })).status).toBe(200);
     auth = await heldTurn(bot, bot.threadId);
     const onFull = await proposeWebhook(bot, bot.threadId, auth, "Full hook");
-    expect(onFull.status, JSON.stringify(onFull.body)).toBe(201);
-    expect(onFull.body.autoApproved).toBe(true);
-    expect(JSON.stringify(onFull.body)).not.toMatch(/whsec_/);
-    expect((await cardFor(bot.threadId, onFull.body.requestId)).answered).toBe("allow");
-    const made = (await listWebhooks()).find((w) => w.name === "Full hook");
-    expect(made).toBeTruthy();
-    expect(receipts().find((row) => row.requestId === onFull.body.requestId)).toMatchObject({ kind: "webhook", before: { absent: true }, resultId: made.id });
-    await stopTurn(bot.id, bot.threadId);
+    let made: any;
+    try {
+      expect(onFull.status, JSON.stringify(onFull.body)).toBe(201);
+      // BOT-CREATE-OUTSIDE-1019 r3.2 section 6.7.8 / D6: filing never applies setup mid-reply.
+      expect(onFull.body.autoApproved).not.toBe(true);
+      expect(onFull.body.startsWhen).toBe("reply-ends");
+      expect(JSON.stringify(onFull.body)).not.toMatch(/whsec_/);
+      expect((await cardFor(bot.threadId, onFull.body.requestId)).answered).toBeUndefined();
+      expect(await listWebhooks()).toEqual([]);
+      await finishTurn(bot.id, bot.threadId);
+      expect((await cardFor(bot.threadId, onFull.body.requestId)).answered).toBe("allow");
+      made = (await listWebhooks()).find((w) => w.name === "Full hook");
+      expect(made).toBeTruthy();
+      expect(receipts().find((row) => row.requestId === onFull.body.requestId)).toMatchObject({ kind: "webhook", before: { absent: true }, resultId: made.id });
+    } finally {
+      // A failed setup assertion must release the held owner turn before scheduled-run coverage.
+      if ((await taskState(bot.id, bot.threadId))?.busy) await stopTurn(bot.id, bot.threadId);
+    }
 
     // the owner mints the first link: the record moved, so Undo refuses and changes nothing
     const minted = await desktopApi("POST", `/api/webhooks/${made.id}/rotate`);

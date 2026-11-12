@@ -1,3 +1,4 @@
+import { windowsHidePrelude } from "../../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -74,7 +75,7 @@ try {
 export const buildInWorker: StatsBuilder = input => new Promise(resolve => {
   let settled = false;
   const finish = (result: BuildResult) => { if (!settled) { settled = true; clearTimeout(timer); resolve(result); } };
-  const worker = new Worker(BUILD_WORKER_SOURCE, { eval: true, workerData: input });
+  const worker = new Worker(windowsHidePrelude + BUILD_WORKER_SOURCE, { eval: true, workerData: input });
   const timer = setTimeout(() => { finish({ ok: false, code: "timeout" }); void worker.terminate(); }, STATS_BUILD_TIMEOUT_MS);
   timer.unref?.();
   worker.once("message", (message: BuildResult) => {

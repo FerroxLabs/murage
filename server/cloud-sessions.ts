@@ -15,6 +15,9 @@ export interface CloudDevice { id: string; account: string; scope: CloudScope; p
  *  last revoke" margin that keeps a revoke robust to CP/home clock drift (§4.4, §7.2). */
 export const REMEMBERED_OWNER_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const REVOKE_SKEW_MS = 5_000;
+/** How long after an emailed door proof the owner browser's durable-reach acts (channels, script access, webhooks, taking
+ *  control) stay plain; past it each needs a fresh code. */
+export const DOOR_FRESH_MS = 30 * 60 * 1000;
 export interface PairingInput { account: string; scope: CloudScope; publicKey: string; assertionKey: string; ttl?: number; browserFactor?: BrowserFactor; recovery?: boolean; recoveryId?: string; homeGeneration?: number | null }
 const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 /** An active device's `bind`: the same sha256 hex of the SPKI DER that a door ticket's `bind` carries. A record with no readable key carries none. */
@@ -60,6 +63,8 @@ function pairingShape(code: string, account: string, signature: string, assertio
 export class CloudSessions {
   readonly environmentId: string;
   readonly db: DatabaseSync;
+  /** Called when the door issues a NEW remembered-owner factor (not a renewal): the server records the owner event. */
+  onOwnerFactorIssued?: () => void;
   readonly now: () => number;
   readonly publicOrigin?: string;
   private readonly invalidationListeners = new Set<(deviceId?: string) => void>();
@@ -119,6 +124,20 @@ export class CloudSessions {
     if (factorKind === "passkey") factor = "passkey";
     else if (factorKind === "remembered-owner" && factorKeyHash && factorKeyHash === assertionKeyHash(device.assertionKey)) factor = "remembered-owner";
     return {...device, factor};
+  }
+  /** When this device's LIVE remembered-owner factor last had an emailed door proof, or undefined. The row is read as device()
+   *  reads it (not revoked, not expired). A renewal by a trusted site factor (`payload.proof === "factor"`) is not a code
+   *  typed just now, so it does not count. */
+  doorFreshAt(deviceId: string): number | undefined {
+    const row = this.db.prepare("SELECT payload, stepUpAt FROM cloud_browser_factors WHERE device=? AND kind='remembered-owner' AND revokedAt IS NULL AND (expiresAt IS NULL OR expiresAt > ?)")
+      .get(deviceId, this.now()) as {payload: string; stepUpAt: number|null}|undefined;
+    if (!row || typeof row.stepUpAt !== "number" || !Number.isFinite(row.stepUpAt)) return undefined;
+    try { return (JSON.parse(row.payload) as {proof?: unknown}).proof === "email" ? row.stepUpAt : undefined; } catch { return undefined; }
+  }
+  /** True while the door proof is within DOOR_FRESH_MS (a stepUpAt in the future, from clock drift, still counts as now). */
+  doorFresh(deviceId: string): boolean {
+    const at = this.doorFreshAt(deviceId);
+    return at !== undefined && this.now() - at <= DOOR_FRESH_MS;
   }
   mint(input: PairingInput): string {
     if (!input.account || input.account.length > 256 || !["owner-desktop","owner-phone","browser","service"].includes(input.scope)) throw new Error("Invalid pairing request");
@@ -422,6 +441,7 @@ export class CloudSessions {
           this.db.prepare("INSERT OR REPLACE INTO cloud_browser_factors (device,payload,kind,issuedAt,expiresAt,keyHash,stepUpAt,revokedAt) VALUES (?,?,?,?,?,?,?,NULL)")
             .run(id, payload, "remembered-owner", now, now + REMEMBERED_OWNER_TTL_MS, keyHash ?? null, claims.stepUpAt);
           logOwnerFactor(existingKind === "remembered-owner" ? "owner_factor_renewed" : "owner_factor_issued");
+          if (existingKind !== "remembered-owner") { try { this.onOwnerFactorIssued?.(); } catch { /* a notice never blocks the door */ } }
         }
       }
       const factorRow = this.db.prepare("SELECT kind,expiresAt FROM cloud_browser_factors WHERE device=? AND revokedAt IS NULL AND (expiresAt IS NULL OR expiresAt > ?)").get(id, now) as {kind:string; expiresAt:number|null}|undefined;

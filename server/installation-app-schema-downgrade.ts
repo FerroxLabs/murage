@@ -1,3 +1,6 @@
+import { dropRetiredSearchTables, RETIRED_SEARCH_OBJECTS } from "./settle-copy.ts";
+import { ADDED_TABLE_LIFECYCLE } from './added-table-lifecycle.ts';
+import { APPROVAL_OBJECTS, cancelOpenRecords } from './decision/records.ts';
 import { CHATS_PREVIEW_TABLES, CHATS_PREVIEW_INDEXES } from "./thread-summary.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
@@ -9,16 +12,26 @@ import { dropWriteRevisionTriggers } from "./app-write-revision.ts";
 import { LEGACY_DELEGATIONS_FILE, syncDirectory } from "./pending-delegations-schema.ts";
 import { runBranchChangeSlice } from "./memory/branch-change.ts";
 import { SCHEMA_1_0_1, type Schema101Object } from "./schema-1.0.1.ts";
+import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
+import { restoreWindowOpen } from "./email/restore-job.ts";
 
 /** The spoken-reply objects 1.0.18 makes at every open (database.ts initializeReplySchema). No earlier build knows them, and every earlier
  *  build's database check refuses an object it does not know. Declared before APP_SCHEMA_102_ADDITIONS, which lists them too. */
 export const SPEECH_INDEXES_AFTER_117: readonly string[] = Object.freeze(["speech_generation_provider", "speech_session_connection", "speech_automatic_claim", "speech_attempt_rate", "speech_message_rate", "speech_thread_active", "speech_commands_pending"]);
 export const SPEECH_TABLES_AFTER_117: readonly string[] = Object.freeze(["speech_clock", "speech_threads", "speech_prompts", "speech_generations", "speech_settlements", "speech_sessions", "speech_accounts", "speech_plans", "speech_attempts", "speech_commands"]);
+const DELEGATION_PACK_OBJECTS = Object.freeze({ indexes: ["delegation_packs_source", "delegation_packs_destination"], tables: ["delegation_packs"] });
 /** Every non-memory object Murage 1.0.2 adds to messages.db beyond what 1.0.1 reads. Frozen by name: a retry after a crash must drop exactly the
  * same set, and a 1.0.2 object that is not listed here fails server/pm-sends-102-r22.test.ts (the check against the real 1.0.1 inspector). Memory objects
  * (`memory_*`) are not here: the memory downgrade (server/memory/schema.ts) owns them. Dropped in this order: triggers, indexes, tables. */
+// S1 registers its schema lifecycle beside its owned additions, before either
+// catalog is observed. The existing lifecycle module stays source-unchanged.
+Object.assign(ADDED_TABLE_LIFECYCLE, {
+  approval_records: { kind: 'retained', by: 'pruneRecords' },
+  decision_continuations: { kind: 'retained', by: 'deleteContinuationRecord' },
+});
 export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
   triggers: [
+    ...APPROVAL_OBJECTS.triggers,
     "pending_delegation_live_pair",
     "pending_delegation_mark_request",
     "room_request_dismissal_gone",
@@ -45,6 +58,8 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     "turn_source_hold_u",
   ],
   indexes: [
+    ...DELEGATION_PACK_OBJECTS.indexes,
+    ...APPROVAL_OBJECTS.indexes,
     ...CHATS_PREVIEW_INDEXES,
     // turnctx: indexed reads of the working context on tables 1.0.1 already has
     "artifacts_bot_date",
@@ -111,6 +126,11 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     ...SPEECH_INDEXES_AFTER_117,
   ],
   tables: [
+    "highlevel_thread_marks",
+    "search_intents",
+    ...RETIRED_SEARCH_OBJECTS,
+    ...DELEGATION_PACK_OBJECTS.tables,
+    ...APPROVAL_OBJECTS.tables,
     ...CHATS_PREVIEW_TABLES,
     "app_write_revision",
     "attachment_name",
@@ -130,6 +150,7 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     "pending_delegations_import",
     // 1.0.9 phone tools and share and ask (server/phones/): created only while the flag is on, so absent from most files
     "phone_ask_revocations",
+    "phone_ask_optins",
     "phone_receipts",
     "phone_registrations",
     "phone_revocations",
@@ -154,6 +175,7 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     "email_bindings",
     "email_event_cursor",
     "email_events",
+    "email_parks",
     "email_payloads",
     "email_policy_sync",
     "email_sends",
@@ -174,6 +196,16 @@ export const DOWNGRADE_WORK_PENDING = "DOWNGRADE_WORK_PENDING";
 /** Thrown when a finished card's result is still owed to its project room: the owed row and its payload are the only record of that delivery. */
 export const DOWNGRADE_CARD_DELIVERY_OWED = "DOWNGRADE_CARD_DELIVERY_OWED";
 export const CARD_DELIVERY_OWED_LINE = "Some card results have not reached their room yet. Reopen this version of Murage to retry delivery, then try again.";
+/** Thrown (as the `code`) while an owner restore has not finished (restore-job.json armed, captured or swapped, or unreadable): an older build opened in that
+ *  window writes into the database the restore still owes preparation, and the next start of this build would then prepare over those writes. */
+export const DOWNGRADE_RESTORE_OPEN = "DOWNGRADE_RESTORE_OPEN";
+export const RESTORE_OPEN_LINE = "A restore has not finished. Open this version of Murage to finish recovery, then try going back to the earlier version.";
+/** Read-only. Refuses (DOWNGRADE_RESTORE_OPEN) while restoreWindowOpen(dataDir) says a restore may still be changing the install; it fails closed on an
+ *  unreadable journal. Only the journal counts: marks left in the file with no journal on disk do not block. The caller runs it under the offline lease and
+ *  before its first write. */
+export function assertNoRestoreWindowOpen(dataDir: string): void {
+  if (restoreWindowOpen(dataDir)) throw Object.assign(new Error(RESTORE_OPEN_LINE), { code: DOWNGRADE_RESTORE_OPEN });
+}
 /** Thrown (as the `code`) when hand-offs are held for the owner: going back would drop work the owner has not decided. */
 export const DOWNGRADE_HANDOFFS_HELD = "DOWNGRADE_HANDOFFS_HELD";
 /** Thrown (as the `code`, "DOWNGRADE_VOICE_FINISHING_<minutes left, 1 to 99>") while a spoken reply is still held or inside its rate window
@@ -194,6 +226,97 @@ export interface AppSchemaDowngrade {
 const has = (db: DatabaseSync, type: string, name: string): boolean => Boolean(db.prepare("SELECT 1 AS x FROM sqlite_schema WHERE type=? AND name=?").get(type, name));
 const quoted = (name: string): string => `"${name.replace(/"/g, '""')}"`;
 const BUSY_FALLBACK_MS = 5 * 60_000;
+
+/** Every supported downgrade target predates the separate 1.0.19 opt-in table.
+ * Carry the latest choice into the legacy registration field before dropping
+ * it: otherwise a later upgrade could backfill stale consent from that field. */
+export function downgradePhoneAskOptIns(db: DatabaseSync): void {
+  if (!has(db, "table", "phone_ask_optins")) return;
+  beginWrite(db, "phone_optin_downgrade");
+  try {
+    if (has(db, "table", "phone_registrations")) {
+      db.exec(`UPDATE phone_registrations SET body=json_set(body, '$.deviceIdOptIn',
+        json(CASE (SELECT opted_in FROM phone_ask_optins WHERE device_id=phone_registrations.device_id)
+          WHEN 1 THEN 'true' ELSE 'false' END))
+        WHERE EXISTS (SELECT 1 FROM phone_ask_optins WHERE device_id=phone_registrations.device_id)
+          AND CASE WHEN json_valid(body) THEN json_type(body)='object' ELSE 0 END`);
+    }
+    db.exec("DROP TABLE phone_ask_optins");
+    endWrite(db, "phone_optin_downgrade");
+  } catch (error) {
+    undoWrite(db, "phone_optin_downgrade");
+    throw error;
+  }
+}
+
+/** Exact pre-pack table shape: old inspectors compare the SQL as well as the columns. */
+export const PENDING_DELEGATIONS_PRE_PACK_DDL = `CREATE TABLE pending_delegations (id TEXT PRIMARY KEY NOT NULL,
+  source_thread_id TEXT NOT NULL,
+  to_bot_id TEXT NOT NULL,
+  from_bot_id TEXT,
+  phase TEXT NOT NULL CHECK(phase IN ('fresh','busy','parked','started')),
+  retry_at INTEGER,
+  item TEXT NOT NULL,
+  origin TEXT NOT NULL DEFAULT 'legacy' CHECK(origin IN ('owner','room','shared','legacy')),
+  target_thread_id TEXT,
+  turn_key TEXT,
+  started_at INTEGER,
+  accepted_turn_id TEXT,
+  start_attempts INTEGER,
+  submitted_at INTEGER,
+  evidence_at INTEGER)`;
+
+/** Remove the 1.0.19 approval boundary before an older binary opens messages.
+ * Cancel first while records and guards still exist; DDL and cancellation share
+ * one transaction, so a crash leaves either the complete boundary or none. */
+export function downgradeApprovals(db: DatabaseSync): void {
+  beginWrite(db, "approval_downgrade");
+  try {
+    cancelOpenRecords(db, "Cancelled (version change)");
+    for (const name of APPROVAL_OBJECTS.triggers) db.exec(`DROP TRIGGER IF EXISTS ${quoted(name)}`);
+    for (const name of APPROVAL_OBJECTS.indexes) db.exec(`DROP INDEX IF EXISTS ${quoted(name)}`);
+    for (const name of APPROVAL_OBJECTS.tables) db.exec(`DROP TABLE IF EXISTS ${quoted(name)}`);
+    endWrite(db, "approval_downgrade");
+  } catch (error) { undoWrite(db, "approval_downgrade"); throw error; }
+}
+
+/** 1.0.18's backup inspector rejects the new phone admission evidence column.
+ * The shared read-only downgrade preflight has already held unfinished sends. */
+export function downgradeOwnerSendProof(db: DatabaseSync): void {
+  if (!has(db, "table", "owner_sends") || !db.prepare("PRAGMA table_info(owner_sends)").all().some(column => column.name === "via_proof")) return;
+  beginWrite(db, "owner_send_proof_downgrade");
+  try {
+    db.exec("ALTER TABLE owner_sends DROP COLUMN via_proof");
+    endWrite(db, "owner_send_proof_downgrade");
+  } catch (error) { undoWrite(db, "owner_send_proof_downgrade"); throw error; }
+}
+
+/** Older builds do not know pack metadata or the owner-rooted proof column.
+ * Keep the queue's rows, rowids, indexes and guards in one atomic step. */
+export function downgradeDelegationPacks(db: DatabaseSync): void {
+  beginWrite(db, "delegation_pack_downgrade");
+  try {
+    const present = has(db, "table", "pending_delegations")
+      ? (db.prepare("PRAGMA table_info(pending_delegations)").all() as Array<{ name: string }>).map(column => column.name) : [];
+    if (present.includes("owner_rooted")) {
+      // Cross-table handoff triggers would otherwise follow the temporary rename.
+      const dependents = (db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE sql IS NOT NULL AND (type='trigger' OR (type='index' AND tbl_name='pending_delegations'))").all() as Array<{ type: string; name: string; tbl_name: string; sql: string }>)
+        .filter(item => item.tbl_name === "pending_delegations" || /\bpending_delegations\b/i.test(item.sql));
+      for (const item of dependents) db.exec(`DROP ${item.type.toUpperCase()} ${quoted(item.name)}`);
+      db.exec("ALTER TABLE pending_delegations RENAME TO pending_delegations__pack");
+      db.exec(PENDING_DELEGATIONS_PRE_PACK_DDL);
+      const kept = (db.prepare("PRAGMA table_info(pending_delegations)").all() as Array<{ name: string }>).map(column => quoted(column.name)).join(",");
+      db.exec(`INSERT INTO pending_delegations(rowid,${kept}) SELECT rowid,${kept} FROM pending_delegations__pack`);
+      db.exec("DROP TABLE pending_delegations__pack");
+      for (const item of dependents) db.exec(item.sql);
+    }
+    db.exec("DROP TABLE IF EXISTS delegation_packs");
+    endWrite(db, "delegation_pack_downgrade");
+  } catch (error) {
+    undoWrite(db, "delegation_pack_downgrade");
+    throw error;
+  }
+}
 
 /** The card tables 1.0.18 makes at every open (database.ts): the held Post in… posts (venue-post-held.ts) and the cross-chat share
  *  cards (room-shares-schema.ts). No earlier build knows them, and 1.0.2's database check refuses an object it does not know, so they
@@ -363,13 +486,13 @@ const OWNER_SENDS_102_DDL = `CREATE TABLE owner_sends (
   action_id TEXT,
   turn_id TEXT
 )`;
-export const PHONE_OWNER_SENDS_COLUMNS = Object.freeze(["via", "queue_only", "via_device", "attachments"]);
+export const PHONE_OWNER_SENDS_COLUMNS = Object.freeze(["via", "queue_only", "via_device", "attachments", "via_proof"]);
 /** Refuses (DOWNGRADE_WORK_PENDING) while any phone line is still waiting to send: a row that carries any of owner_sends's phone columns and is not
  * yet delivered, cancelled or answered with its text gone. Reads only. The memory downgrade runs it before its first change, and the phone step runs it again. */
 export function assertNoPendingPhoneWork(db: DatabaseSync): void {
   if (!has(db, "table", "owner_sends")) return;
   const present = new Set((db.prepare("PRAGMA table_info(owner_sends)").all() as Array<{ name: string }>).map(column => column.name));
-  const phone = [["queue_only", "queue_only=1"], ["via", "via IS NOT NULL"], ["via_device", "via_device IS NOT NULL"], ["attachments", "attachments IS NOT NULL"]]
+  const phone = [["queue_only", "queue_only=1"], ["via", "via IS NOT NULL"], ["via_device", "via_device IS NOT NULL"], ["attachments", "attachments IS NOT NULL"], ["via_proof", "via_proof IS NOT NULL"]]
     .filter(([name]) => present.has(name!)).map(([, test]) => test);
   if (phone.length === 0) return;
   const open = Number((db.prepare(`SELECT COUNT(*) AS n FROM owner_sends WHERE (${phone.join(" OR ")}) AND NOT ((status IN ('started','delivered','cancelled') OR (status IN ('unconfirmed','failed') AND message_id IS NOT NULL)) AND text='')`).get() as { n: number }).n);
@@ -495,6 +618,7 @@ export function finishBranchChangeForDowngrade(db: DatabaseSync, progress?: (sli
  * A crash anywhere leaves the rows (or the finished result): a retry recomputes the same files and the same drops. */
 export function downgradeApplicationSchemaTo101(db: DatabaseSync, dataDir: string, hooks: { beforeCommit?: () => void; branchChangeProgress?: (slices: number) => void } = {}): AppSchemaDowngrade {
   // (the memory downgrade already ran these in its preflight and its finish step; a direct caller gets them here, and the repeat is a no-op)
+  assertNoRestoreWindowOpen(dataDir);
   assertNoHeldVenuePosts(db);
   assertNoOwedWorkForDowngrade(db, dataDir);
   finishBranchChangeForDowngrade(db, hooks.branchChangeProgress);
@@ -568,7 +692,9 @@ export function downgradeApplicationSchemaTo101(db: DatabaseSync, dataDir: strin
         for (const id of exportedIds) requeue.run(id);
       }
       // before transcript_index_state (the fill's place) is dropped: leave an index 1.0.1's own resume completes
+      cancelOpenRecords(db, "Cancelled (version change)");
       trimUnfinishedSearchFill(db);
+      dropRetiredSearchTables(db);
       // the counter triggers (app-write-revision.ts) are temporary triggers of this connection that write app_write_revision: they go before it
       dropWriteRevisionTriggers(db);
       for (const [type, names] of [["trigger", APP_SCHEMA_102_ADDITIONS.triggers], ["index", APP_SCHEMA_102_ADDITIONS.indexes], ["table", APP_SCHEMA_102_ADDITIONS.tables]] as const) {
@@ -634,4 +760,23 @@ function rebuildDifferingTables(db: DatabaseSync): number {
     rebuilt++;
   }
   return rebuilt;
+}
+
+/** Every supported offline target predates by-reference intents and separate-file search.
+ * Drops stay in one transaction; a failed downgrade can repeat this safely before its success stamp. */
+export function downgradeMessageSearch(db: DatabaseSync): void {
+  beginWrite(db, "downgrade_message_search");
+  try {
+    dropRetiredSearchTables(db);
+    // Every supported older build stores FTS in messages.db. Its frozen
+    // schema validator requires the virtual table and its four shadow tables.
+    const legacyFts = SCHEMA_1_0_1.find(object => object.name === "messages_fts")!;
+    if (!has(db, "table", "messages_fts")) db.exec(legacyFts.ddl!);
+    db.exec("DROP TABLE IF EXISTS search_intents");
+    if (has(db, "table", "transcript_index_state")) {
+      db.exec("DELETE FROM transcript_index_state WHERE name='search_owner'");
+      db.exec("UPDATE transcript_index_state SET done=0,cursor=0,skipped=0 WHERE name='search_fts'");
+    }
+    endWrite(db, "downgrade_message_search");
+  } catch (error) { undoWrite(db, "downgrade_message_search"); throw error; }
 }

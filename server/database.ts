@@ -19,7 +19,7 @@ import { randomUUID } from "node:crypto";
 import { DATA_DIR } from "./config.ts";
 import { MEMORY_PRE_V2_SNAPSHOT, MEMORY_PRE_V3_SNAPSHOT, MEMORY_PRE_V4_SNAPSHOT, MEMORY_SCHEMA_VERSION, lineageRepairPending, migrateMemorySchema, repairOutputRootBackfill } from "./memory/schema.ts";
 import type { BlockingHeartbeat } from "./memory/blocking-heartbeat.ts";
-import { buildEagerIndexesBeforeListen, buildPreListenIndexes } from "./memory/optional-index.ts";
+import { buildEagerIndexesBeforeListen, buildPreListenIndexes, preListenIndexMissing } from "./memory/optional-index.ts";
 import { createProgressBoard, preListenHealthPort, setActivePreListenHealth, startPreListenHealth, type PreListenHealth, type ProgressBoard } from "./memory/upgrade-health.ts";
 import { UpgradeProgressTracker, nextUpgradeSeq, restampedUpgrade, upgradeCounts } from "./memory/upgrade-progress.ts";
 import { unknownUpgradeState } from "../shared/upgrade-contract.mjs";
@@ -38,6 +38,7 @@ import { inStatementReusePass, instrumentDatabase, sharedRowsStamp, ioBudget, no
 import { BACKGROUND_BUSY_MS, DEFAULT_BUSY_MS, DatabaseBusyError, awaitWriterGate, backgroundSourceNow, isDatabaseBusy, noteBusy, setBusy, writersHeldForIndexBuild } from "./db-busy.ts";
 import { noteIdentityEpoch } from "./memory/provenance-stamp.ts";
 import { initializeThreadSnooze } from "./thread-snooze.ts";
+import { initializeHighLevelThreadMarks } from "./highlevel/thread-marks.ts";
 import { initializeArtifacts } from "./artifacts.ts";
 import { initializeMessageTables } from "./message-tables.ts";
 import { startTranscriptBackfill, transcriptBackfillWorking, yieldTranscriptBackfillTo } from "./transcript-backfill.ts";
@@ -48,7 +49,8 @@ import { initializeReplySchema } from "./tts/reply-schema.ts";
 import { initializeBotCalls } from "./bot-calls-schema.ts";
 import { initializeAppTriggers } from "./app-trigger-store.ts";
 import { initializeRoomShares } from "./room-shares-schema.ts";
-import { prepareMessageSearchBackfill, settleInheritedSearchMerge } from "./message-search-index.ts";
+import { initializeDelegationPacks } from "./delegation-pack/schema.ts";
+import { prepareMessageSearchBackfill, settleInheritedSearchMerge, startSearchIndex, stopSearchIndex } from "./message-search-index.ts";
 import { startupMark } from "./startup-trace.ts";
 import { initializeProjectTables } from "./project-tables.ts";
 import { upgradeRoomRequestOwed } from "./room-request-owed.ts";
@@ -60,7 +62,7 @@ import { createCountsBlock, readCountsBlock, startExactCounts, UPGRADE_COUNTS_FI
 import { clearOverall, overallWriter, readOverallFloor, STARTING_SHARE } from "./memory/upgrade-overall.ts";
 import { backfillTurnSourceCopies, initializeTurnSourceHolds, turnSourceCopiesBackfilled } from "./turn-source-holds.ts";
 import { observeLine } from "./observe.ts";
-import { startWalMaintenance, stopWalMaintenance } from "./wal-maintenance.ts";
+import { startWalMaintenance, stopWalMaintenance, assertWalWriteAdmission } from "./wal-maintenance.ts";
 import { pathIsWithin, registerTestHandle } from "./test-handle-registry.ts";
 
 /** A random id per opened connection: every stamp, hold and verdict cache that rests on what a connection saw carries it, so nothing judged on one
@@ -161,6 +163,11 @@ export function retryAncestryRepair(): void { if (handle) runRepair(handle, unde
 let background: BackgroundHandle | null = null;
 /** The handle whose jobs are still running (null once its `done` settles, it is stopped, or the connection closes). */
 let runningBackground: BackgroundHandle | null = null;
+// Only the server holds worker launch; standalone tools and database fixtures
+// have no health route. Keep reset acknowledgement and idle pruning behind
+// the same gate by starting their worker only once startup writes may run.
+let searchStartHold: Promise<void> | null = null;
+export function holdSearchIndexUntil(ready: Promise<void> | null): void { searchStartHold = ready; }
 function trackBackground(started: BackgroundHandle): BackgroundHandle {
   runningBackground = started.jobs.length ? started : null;
   if (runningBackground) void started.done.then(() => { if (runningBackground === started) runningBackground = null; }, () => { if (runningBackground === started) runningBackground = null; });
@@ -292,7 +299,7 @@ export function database(): DatabaseSync {
     // and cuts the file back to its own frames, inside an ordinary write, so no
     // second connection ever has to take the writer lock to shrink it
     // (wal-maintenance.ts).
-    db.exec(`PRAGMA journal_size_limit=${JOURNAL_SIZE_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=1000;`);
+    db.exec(`PRAGMA journal_size_limit=${JOURNAL_SIZE_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=0;`);
     noteBusyTimeout(db, DEFAULT_BUSY_MS);
     // Backstop for the Inbox disk burn: a sort that outgrows the page cache must
     // spill into memory, not into a temp file opened and closed per statement.
@@ -381,14 +388,20 @@ export function database(): DatabaseSync {
         try { buildEagerIndexesBeforeListen(db, { log: firstOpen }); } finally { try { beat?.end(); } catch { /* as above */ } }
       }
       // The owner-pin index on every launch where it is missing (one scan, once per install): without it the first turn walked every active
-      // record of its scopes for its pins (MEM-PIN-INDEX-BOOT, 1.3 to 2.0 s on the owner's data).
-      buildPreListenIndexes(db, { log: firstOpen });
+      // record of its scopes for its pins (MEM-PIN-INDEX-BOOT, 1.3 to 2.0 s on the owner's data). On a slow disk that scan outlasts the shell's
+      // 5-minute limit (538 s at 50 IOPS), so the build runs under the same note as the steps above; a new installation has nothing to read.
+      {
+        let beat: BlockingHeartbeat | undefined;
+        if (!freshInstallation && preListenIndexMissing(db)) { try { beat = upgrade.blocking("backfill", undefined, undefined, "indexing", "indexing"); } catch { /* a status write never stops a start */ } }
+        try { buildPreListenIndexes(db, { log: firstOpen }); } finally { try { beat?.end(); } catch { /* as above */ } }
+      }
       upgrade.done();
     } catch (error) { upgrade.blocked(error); void responder?.close(); setActivePreListenHealth(null); throw error; } if (firstOpen) startupMark("database.noteDone");
     initializeInbox(db);
     initializeThreadSnooze(db);
+    initializeHighLevelThreadMarks(db);
     initializeArtifacts(db);
-    initializeProjectTables(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializeOwnerSends(db); initializePendingDelegations(db); initializeBotCalls(db); initializeReplySchema(db); initializeAppTriggers(db); initializeVenuePosts(db); initializeRoomShares(db); if (firstOpen) startupMark("database.tablesAll");
+    initializeProjectTables(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializeOwnerSends(db); initializePendingDelegations(db); initializeDelegationPacks(db); initializeBotCalls(db); initializeReplySchema(db); initializeAppTriggers(db); initializeVenuePosts(db); initializeRoomShares(db); if (firstOpen) startupMark("database.tablesAll");
     runOwnerHandoffMigration(db);   // admission of hand-offs is held until it succeeds (pending-delegations-schema.ts)
     // Every counted write from here on moves the counter the upgrade screen's figures are keyed to (app-write-revision.ts).
     installWriteRevisionTriggers(db);
@@ -397,10 +410,18 @@ export function database(): DatabaseSync {
   handle = db; handlePath = file; releaseIoBudget = release; generation++;
   // After migration and before traffic: one TRUNCATE gives back a high-water WAL, then the sizes are logged.
   startupStorage(db, file, firstOpen);
-  // From here the checkpoints run in a worker thread (PASSIVE only; it never takes the writer lock). The connection keeps
-  // wal_autocheckpoint=1000 until the worker is ready, and goes back to it if the worker ever fails.
+  // Automatic checkpoints stay disabled through readiness and retry gaps.
+  // Migration-before-listen and revoke-budget.ts's existing bounded own-debt
+  // drain are separate protocols; search adds no checkpoint to either path.
+  if (searchStartHold) {
+    void searchStartHold.then(() => {
+      if (handle === db) startSearchIndex(db, file);
+    }).catch(error => console.warn("[message-search] worker start failed:", error instanceof Error ? error.message : String(error)));
+  } else startSearchIndex(db, file);
   startWalMaintenance(file, {
     setAutocheckpoint: pages => { if (handle === db) db.exec(`PRAGMA wal_autocheckpoint=${Math.trunc(pages)}`); },
+    journalSizeLimit: () => (handle === db ? Number((db.prepare("PRAGMA journal_size_limit").get() as { journal_size_limit?: number } | undefined)?.journal_size_limit) : null),
+    pinJournalSizeLimit: () => { if (handle === db) db.exec(`PRAGMA journal_size_limit=${JOURNAL_SIZE_LIMIT_BYTES}`); },
     nudge: async () => {
       if (handle !== db || db.isTransaction) return false;
       await awaitWriterGate();
@@ -460,7 +481,7 @@ export function withBusyBudget<T>(busyMs: number, op: string, run: (db: Database
   const db = database();
   setBusy(db, busyMs);
   const started = performance.now();
-  try { return run(db); }
+  try { if (op !== "wal-scrub") assertWalWriteAdmission(handlePath); return run(db); }
   catch (error) {
     if (isDatabaseBusy(error)) { const waited = performance.now() - started; noteBusy(op, waited); throw new DatabaseBusyError(op, waited); }
     throw error;
@@ -471,6 +492,7 @@ export function withBusyBudget<T>(busyMs: number, op: string, run: (db: Database
 export function transaction<T>(operation: (db: DatabaseSync) => T, options: TransactionOptions = {}): T {
   const db = database();
   const nested = db.isTransaction;
+  if (!nested) assertWalWriteAdmission(handlePath);
   const point = `memory_tx_${++savepointId}`;
   if (!nested) noteIdentityEpoch(db);
   // a background source, or the process's own writer hold in force (a CREATE INDEX, the VACUUM holds the lock for the whole build): the background
@@ -550,6 +572,7 @@ export function closeDatabase() {
   try { handle?.close(); } catch { /* idempotent shutdown */ }
   // After the server connection has closed, so the checkpointer's is the last one and not this one.
   void stopWalMaintenance();
+  void stopSearchIndex();
   // After the handle closes, so dropping the shm descriptor cannot release a lock SQLite still holds.
   try { releaseIoBudget?.(); } catch { /* idempotent shutdown */ }
   handle = null; handlePath = null; releaseIoBudget = null; generation++;

@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -79,7 +80,7 @@ export async function launchRecipeTerminal(recipe, { platform = process.platform
     const launch = linuxTerminalLaunch(recipe, { exists, env });
     if (!launch) return { ok: false, code: "no-terminal" };
     let child;
-    try { child = start(launch.file, launch.args, launch.options); } catch { return { ok: false, code: "failed" }; }
+    try { child = start(launch.file, [...launch.args], withHideInherit(launch.options)); } catch { return { ok: false, code: "failed" }; }
     if (!(await waitForSpawn(child))) return { ok: false, code: "failed" };
     let closed = false;
     child.once("exit", () => { closed = true; });
@@ -91,7 +92,7 @@ export async function launchRecipeTerminal(recipe, { platform = process.platform
     if (!line) return { ok: false, code: "failed" };
     let child;
     // `/wait` keeps cmd alive for as long as the console, so its pid is the supervisor and taskkill /T reaches the sign-in.
-    try { child = start(win32.join(systemRootOf(env), "System32", "cmd.exe"), [line], { env: terminalEnv(recipe, env), stdio: "ignore", windowsHide: true, windowsVerbatimArguments: true, shell: false }); } catch { return { ok: false, code: "failed" }; }
+    try { child = start(win32.join(systemRootOf(env), "System32", "cmd.exe"), [line], withHideInherit({ env: terminalEnv(recipe, env), stdio: "ignore", windowsHide: true, windowsVerbatimArguments: true, shell: false })); } catch { return { ok: false, code: "failed" }; }
     if (!(await waitForSpawn(child))) return { ok: false, code: "failed" };
     let closed = false;
     child.once("exit", () => { closed = true; });

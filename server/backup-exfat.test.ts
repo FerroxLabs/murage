@@ -14,14 +14,14 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import { writeEncryptedInstallationBackup, restoreEncryptedInstallationNew } from "./installation-encrypted-backup.ts";
 import { writeInstallationArchive } from "./installation-archive.ts";
-import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
+import { backupFixture, testAgeKeys, optionalBackupAgeUnavailable } from "./testing/backup-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const mount = process.env.MURAGE_TEST_EXFAT;
 const selection = { scope: "application-data", credentialPolicy: "preserve-in-encrypted-fidelity" } as const;
 const visible = (folder: string) => readdirSync(folder).filter(name => !name.startsWith("._")).sort();
 
-it.skipIf(!mount || !existsSync(mount) || !process.env.MURAGE_BACKUP_TEST_AGE_DIR)("a backup into a folder on an exFAT drive is written, verified and restorable", async () => {
+it.skipIf(!mount || !existsSync(mount) || optionalBackupAgeUnavailable())("a backup into a folder on an exFAT drive is written, verified and restorable", async () => {
   const f = backupFixture(), keys = testAgeKeys();
   writeFileSync(join(f.data, "about-me.md"), "I keep bees.\n");
   const folder = mkdtempSync(join(mount!, "Murage Backups-"));
@@ -43,7 +43,7 @@ it.skipIf(!mount || !existsSync(mount))("an older-style .zip recovery file can b
   } finally { f.db.close(); removeTempDirSync(folder); removeTempDirSync(f.parent); }
 }, 60_000);
 
-it.skipIf(!mount || !existsSync(mount) || !process.env.MURAGE_BACKUP_TEST_AGE_DIR)("an existing file of the same name on an exFAT drive is never replaced", async () => {
+it.skipIf(!mount || !existsSync(mount) || optionalBackupAgeUnavailable())("an existing file of the same name on an exFAT drive is never replaced", async () => {
   const f = backupFixture(), keys = testAgeKeys();
   const folder = mkdtempSync(join(mount!, "Murage Backups-"));
   writeFileSync(join(folder, "backup.age"), "someone else's bytes");

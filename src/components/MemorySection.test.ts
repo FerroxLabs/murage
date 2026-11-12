@@ -43,7 +43,8 @@ describe("the Memory page, first screen", () => {
     const order = ["aria-label=\"Memory\"", "aria-label=\"How it learns\"", "aria-label=\"Your bots\"", "aria-label=\"What it learned\""].map(label => out.indexOf(label));
     expect(order.every(at => at >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
-    expect(out).toContain("Learning is on. Uses Flux Fast. 3,412 memories, 2 waiting in Needs you. Smart search ready.");
+    expect(out).toContain("3,412 saved memories · 2 waiting for you. Memory is on: your bots remember between conversations. Smart search ready.");
+    expect(out).toContain("Learning is on. Uses Flux Fast.");
     expect(out).toContain("Learning this month: 2.1M tokens read, 0.3M written.");
     const switches = out.match(/<button[^>]*role="switch"[^>]*>/g) ?? [];
     expect(switches.length).toBeGreaterThanOrEqual(8);
@@ -208,9 +209,9 @@ describe("history", () => {
 });
 
 describe("Advanced", () => {
-  it("holds mode, the monthly limit and the learning connection, with the limit's usage", () => {
+  it("holds mode and the learning connection (the monthly limit moved to Usage)", () => {
     const out = html();
-    for (const text of ["Memory mode", "Capture only", "Monthly learning limit", "Read: 2.1M of 100M tokens", "Written: 0.3M of 15M tokens", "The limit resets on the 1st of each month.", "Change limit", "Learning connection"]) expect(out).toContain(text);
+    for (const text of ["Memory mode", "Capture only", "Learning connection"]) expect(out).toContain(text);
     expect(out).toContain("Flux Fast (default)");
     expect(out).toContain('value="native" disabled=""');
     expect(out).toContain("Native sign-in: This connection does not provide text-only learning.");
@@ -221,8 +222,9 @@ describe("Advanced", () => {
     const out = html(p);
     expect(out.match(/Flux Fast \(default[^<]*/g)).toEqual([eligible ? "Flux Fast (default)" : "Flux Fast (default, add your key)"]);
   });
-  it("sends the new limit as a v3 ceiling patch from the editor", () => {
-    expect(read("./MemorySection.tsx")).toContain('onAction({ action: "configure", ceiling: next, learningRevision: learning.revision })');
+  it("sends the new limit as a v3 ceiling patch from the editor, which now lives on Usage", () => {
+    expect(read("./LearningLimitCard.tsx")).toContain('{ action: "configure", ceiling: next, learningRevision: learning.revision }');
+    expect(read("./MemorySection.tsx")).not.toContain("LimitCard");
   });
   it("is one Advanced toggle on the page, with no <details> left in the files this page owns", () => {
     const closed = renderToStaticMarkup(createElement(AdvancedSection, { section: "memory", summary: "Memory mode", open: false, onOpenChange: () => undefined, children: null }));
@@ -235,8 +237,8 @@ describe("Advanced", () => {
     }
   });
   it("renders every memory anchor its cards name", () => {
-    const source = ["MemorySection", "MemorySettings", "MemoryLearningControls", "ProcedureEvaluationAdmissions"].map(file => read(`./${file}.tsx`)).join("\n") + read("./SettingsModal.tsx");
-    for (const anchor of ["memory-heading", "memory-how-heading", "memory-bots-heading", "memory-learned-heading", "memory-people-heading", "memory-import-heading", "memory-mode-heading", "memory-limit-heading", "memory-connection-heading", "memory-audience-heading", "memory-procedures-heading", "memory-health-heading"]) expect(source, anchor).toContain(`id="${anchor}"`);
+    const source = ["MemorySection", "MemorySettings", "MemoryLearningControls", "ProcedureEvaluationAdmissions", "LearningLimitCard"].map(file => read(`./${file}.tsx`)).join("\n") + read("./SettingsModal.tsx") + read("./settings/pages/UsagePage.tsx");
+    for (const anchor of ["memory-heading", "memory-browser-heading", "memory-how-heading", "memory-bots-heading", "memory-learned-heading", "memory-people-heading", "memory-import-heading", "memory-mode-heading", "memory-limit-heading", "memory-connection-heading", "memory-audience-heading", "memory-procedures-heading", "memory-health-heading"]) expect(source.includes(`id="${anchor}"`) || source.includes(`anchor: "${anchor}"`) || read("./settings/pages/MemoryPage.tsx").includes(`"${anchor}"`), anchor).toBe(true);
   });
 });
 
@@ -255,7 +257,7 @@ it.each([
   expect(closed).not.toContain("Resets on the 1st.");
   expect(closed).not.toContain("Change limit");
   // The real page portals the limit editor into Advanced. The separate Needs you card is the way out.
-  expect(closed).toContain("Needs you");
+  expect(closed).toMatch(/Needs you|waiting for you/);
   expect(closed).toContain(ceilingStatusLine(p.status.learning.ceiling).text.replaceAll("'","&#x27;"));
   expect(tree(p).some(node => node.label === "Raise it")).toBe(false);
   expect(ceilingStatusLine(p.status.learning.ceiling).follow).toBe("none");

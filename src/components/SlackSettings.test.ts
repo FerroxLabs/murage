@@ -9,7 +9,7 @@ it("rejects failed status payloads and strips undeclared secret fields", () => {
     expect(() => slackStatusFrom(bad)).toThrow();
 });
 it("distinguishes saved credentials, pairing, connectivity and errors", () => {
-  expect(slackHealth(slackStatusFrom(base))).toBe("Save your Slack credentials");
+  expect(slackHealth(slackStatusFrom(base))).toBe("Not set up");
   expect(slackHealth(slackStatusFrom({ ...base, configured: true }))).toContain("not paired");
   expect(slackHealth(slackStatusFrom({ ...base, state: "pairing", enabled: true, requiresRevoke: true }))).toContain("Waiting");
   expect(slackHealth(slackStatusFrom({ ...base, paired: true, enabled: false }))).toContain("offline");

@@ -1,3 +1,4 @@
+import { FENCE_REBUILDS, MESSAGE_ONLY_NOTE, nextFenceTier } from "./fence-recovery.ts";
 import type { MemoryBundle } from "../../shared/memory.ts";
 import { database } from "../database.ts";
 import { assertMemoryAccess, type MemoryAccess } from "./policy.ts";
@@ -8,7 +9,7 @@ import { assertMemoryBundle, buildMemoryBundle, memoryHandleRecord } from "./bun
 import { assertMemoryDisclosureCurrent, bindMemoryDisclosureSession, continuationMemoryRevoked, deliverMemoryDisclosure, linkMemoryDisclosureOutput, noteMemoryLookup, prepareMemoryDisclosure, receiptJoinsTurn } from "./disclosures.ts";
 import { heldStep } from "../observe.ts";
 import { doorEpochVerdict, lineageLive, sessionLookup } from "./deny-read.ts";
-import { setSendFenceDeps } from "./send-fence.ts";
+import { fenceRefusalDiagnosis, type FenceRefusalDiagnosis, setSendFenceDeps } from "./send-fence.ts";
 import type { LineageReader, LineageVerdict } from "./lineage-types.ts";
 import { withSecondLook } from "./lineage-allowance.ts";
 import { sessionKeyOf } from "./session-incarnation.ts";
@@ -272,27 +273,87 @@ export function pinnedMemoryFailure(error: unknown, subject: string): string | u
 
 /** How a refused turn ended, for the person (noteTurnRefused in index.ts): its last rebuild ran with no remembered context, or nothing could
  * start it at all. */
-export type TurnRefusedKind = "without-memory" | "not-started";
+export type TurnRefusedKind = "without-memory" | "without-memory-checking" | "without-memory-unknown" | "not-started" | "after-submission" | "after-submission-uncertain" | "unknown-submission";
+/** One classification for setup catches and late terminal events, in direct chats and rooms alike. */
+export function submissionRefusalKind(boundary: { hasConfirmedSubmission: boolean; hasReleasedSubmission: boolean; canRetry: boolean }): TurnRefusedKind {
+  return boundary.hasConfirmedSubmission ? "after-submission"
+    : boundary.hasReleasedSubmission ? "after-submission-uncertain"
+    : boundary.canRetry ? "not-started" : "unknown-submission";
+}
+/** Notice evidence only: never an authorization or a retry decision. */
+export type MemoryRefusalCause = "checking" | "changed" | "unknown";
+const checkingReasons = new Set(["no-lineage", "thread-not-ready", "pending", "footprint-wide", "lookup-error", "not-built"]);
+const changedReasons = new Set(["own-flag", "tombstone", "thread-deny", "deny-line", "deny-range", "watermark", "footprint",
+  "deny-session", "session-forgotten", "deny-memory", "scope-deny", "murage-anchor", "door-epoch"]);
+/** Normalize the raw send-fence error and EngineInputRevoked's wrapper together. A recognized withheld verdict wins;
+ * otherwise malformed or inconsistent evidence is unknown. Only the two supported unfinished-session producers qualify. */
+export function memoryRefusalCause(error: unknown): MemoryRefusalCause {
+  try {
+    if (!error || typeof error !== "object") return "unknown";
+    const tags = error as { fence?: unknown; verdict?: unknown; unproven?: unknown };
+    const verdicts = [tags.fence, tags.verdict].filter(value => value !== undefined);
+    const valid = (value: unknown, state: string, reasons: Set<string>): boolean => {
+      if (!value || typeof value !== "object") return false;
+      const v = value as { state?: unknown; reason?: unknown };
+      return v.state === state && typeof v.reason === "string" && reasons.has(v.reason);
+    };
+    if (verdicts.some(value => valid(value, "withheld", changedReasons))) return "changed";
+    if (tags.unproven !== undefined && tags.unproven !== "lineage-warming" && tags.unproven !== "memory-frame-checking") return "unknown";
+    if (verdicts.length) {
+      if (!verdicts.every(value => valid(value, "checking", checkingReasons))) return "unknown";
+      if (verdicts.length === 2 && (verdicts[0] as { reason: string }).reason !== (verdicts[1] as { reason: string }).reason) return "unknown";
+      return "checking";
+    }
+    return tags.unproven === undefined ? "unknown" : "checking";
+  } catch { return "unknown"; }
+}
+/** Any observed change wins; incomplete history never becomes checking-only again. */
+export function mergeMemoryRefusalCause(previous: MemoryRefusalCause, next: MemoryRefusalCause): MemoryRefusalCause {
+  return previous === "changed" || next === "changed" ? "changed" : previous === "unknown" || next === "unknown" ? "unknown" : "checking";
+}
+export function memoryRefusalKind(cause: MemoryRefusalCause = "unknown"): TurnRefusedKind {
+  return cause === "changed" ? "without-memory" : cause === "checking" ? "without-memory-checking" : "without-memory-unknown";
+}
+/** Bounded evidence per logical direct turn, independent of the one-shot last-resort marker. Missing mid-retry means
+ * eviction/incomplete history, never a fresh checking-only chain. Room members carry their own value through recursion instead. */
+export class MemoryRefusalCauses {
+  private readonly causes = new Map<string, MemoryRefusalCause>();
+  private readonly diagnoses = new Map<string, FenceRefusalDiagnosis>();
+  private readonly max: number;
+  constructor(max = 512) { this.max = Math.max(1, max); }
+  record(messageId: string, error: unknown, newLogicalAttempt: boolean): void {
+    const previous = this.causes.get(messageId) ?? (newLogicalAttempt ? "checking" : "unknown");
+    if (!this.causes.has(messageId) && this.causes.size >= this.max) this.delete(this.causes.keys().next().value!);
+    this.causes.set(messageId, mergeMemoryRefusalCause(previous, memoryRefusalCause(error)));
+    this.diagnoses.set(messageId, fenceRefusalDiagnosis(error));
+  }
+  kind(messageId: string): TurnRefusedKind { return memoryRefusalKind(this.causes.get(messageId)); }
+  diagnosis(messageId: string): FenceRefusalDiagnosis | undefined { return this.diagnoses.get(messageId); }
+  delete(messageId: string): void { this.causes.delete(messageId); this.diagnoses.delete(messageId); }
+}
 /** The owner-facing line for a turn refused at its send (1.0.2 Keep all P0: a refusal is never silent). Plain words naming the engine, never
  * the code: what happened and, when the reply did not run, what to do. */
 export function turnRefusedLine(engine: string, kind: TurnRefusedKind): string {
-  return kind === "without-memory" ? `Memory changed while ${engine} was starting, so this reply ran without remembered context.`
+  if (kind === "unknown-submission") return "Context changed; previous attempt may have started. Review its output before trying again.";
+  if (kind === "after-submission" || kind === "after-submission-uncertain") return `${kind === "after-submission" ? "The original message was submitted." : "The earlier submission may have started."} Murage could not send it again because the submission checks failed. It was not automatically sent again.`;
+  return kind === "without-memory-checking" ? MESSAGE_ONLY_NOTE
+    : kind === "without-memory-unknown" ? "This reply ran without remembered context."
+    : kind === "without-memory" ? `Memory changed while ${engine} was starting, so this reply ran without remembered context.`
     : `${engine} could not start this reply. Send it again.`;
 }
 /** How many times a turn refused over revoked memory context and proven unwritten (refused before its write, or at a late write by an engine
  * that hands its id back first: ACP, Codex, Grok, OpenCode, Gemini, openai-chat) is rebuilt and sent again, each time against the deny
  * generation of its own build. The last of these rebuilds is the last resort (fresh session, no memory); past it the turn settles with a
  * card (1.0.3 engine-switch: the second refusal used to return early with no card at all). */
-export const MEMORY_REDISPATCH_ATTEMPTS = 3;
+export const MEMORY_REDISPATCH_ATTEMPTS = FENCE_REBUILDS;
 /** The next rebuild of a turn refused over memory and proven unwritten: its attempt number and whether it is the last resort (index.ts
  * memoryLastResort / roomLastResort: fresh session, no memory frame, no working context, its replay lines judged one by one at the fence).
  * Undefined once the last resort was refused too: the turn ends with a card. ONE rule for every site that rebuilds: the direct turn's setup
  * refusal and late refusal, and the room member's two (1.0.4 SETUP-LAST-RESORT: the direct setup path rebuilt three times with memory and
  * then showed the card, never reaching the last resort). `done` is the rebuilds already made (0 for the first dispatch). */
 export function nextMemoryRebuild(done: number): { attempt: number; lastResort: boolean } | undefined {
-  if (!(done >= 0) || done >= MEMORY_REDISPATCH_ATTEMPTS) return undefined;
-  const attempt = Math.floor(done) + 1;
-  return { attempt, lastResort: attempt >= MEMORY_REDISPATCH_ATTEMPTS };
+  const next = nextFenceTier(done);
+  return next ? { attempt: next.tier, lastResort: next.tier === 2 } : undefined;
 }
 /** The refusal a submission-boundary recheck of a resumed session throws (MemoryDispatchReceipt above, index.ts alsoCheck). Always
  * MEMORY_CONTEXT_REVOKED, so it is handled as every refusal is and nothing unproven is ever written into the session (fail closed). When the

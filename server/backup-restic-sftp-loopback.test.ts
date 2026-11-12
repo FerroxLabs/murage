@@ -26,10 +26,10 @@ afterEach(async()=>{for(const cleanup of cleanups.splice(0).reverse())await clea
 const freePort=()=>new Promise<number>(resolve=>{const server=createServer();server.listen(0,"127.0.0.1",()=>{const port=(server.address() as {port:number}).port;server.close(()=>resolve(port));});});
 
 async function sshd(root:string,name:string){
-  const keyFile=join(root,`${name}_host_key`);if(!existsSync(keyFile))execFileSync("/usr/bin/ssh-keygen",["-q","-t","ed25519","-N","","-f",keyFile]);
+  const keyFile=join(root,`${name}_host_key`);if(!existsSync(keyFile))execFileSync("/usr/bin/ssh-keygen",["-q","-t","ed25519","-N","","-f",keyFile], { windowsHide: true });
   const port=await freePort(),config=join(root,`${name}_sshd_config`);
   writeFileSync(config,[`Port ${port}`,"ListenAddress 127.0.0.1",`HostKey ${keyFile}`,`PidFile ${join(root,name+".pid")}`,`AuthorizedKeysFile ${join(root,"authorized_keys")}`,"PasswordAuthentication no","KbdInteractiveAuthentication no","UsePAM no","StrictModes no","Subsystem sftp internal-sftp",""].join("\n"));
-  const child:ChildProcess=spawn("/usr/sbin/sshd",["-D","-e","-f",config],{stdio:["ignore","ignore","pipe"]});
+  const child:ChildProcess=spawn("/usr/sbin/sshd",["-D","-e","-f",config],{ windowsHide: true,stdio:["ignore","ignore","pipe"]});
   await new Promise<void>((resolve,reject)=>{let text="";child.stderr!.on("data",chunk=>{text+=chunk;if(text.includes("Server listening"))resolve();});child.once("exit",()=>reject(Error("sshd exited: "+text)));});
   const stop=()=>new Promise<void>(resolve=>{if(child.exitCode!==null)return resolve();child.once("exit",()=>resolve());child.kill("SIGTERM");});
   cleanups.push(stop);
@@ -57,7 +57,7 @@ describe.skipIf(!qualified)("pinned restic over a loopback SFTP server",()=>{
     const f=await fixture();
     // The generated key is a real OpenSSH key: ssh-keygen derives the same public line.
     const keyFile=join(f.root,"check_key");writeFileSync(keyFile,f.key.privateKey,{mode:0o600});
-    expect(execFileSync("/usr/bin/ssh-keygen",["-y","-f",keyFile],{encoding:"utf8"}).trim().split(" ").slice(0,2).join(" ")).toBe(f.key.publicKey.split(" ").slice(0,2).join(" "));
+    expect(execFileSync("/usr/bin/ssh-keygen",["-y","-f",keyFile],{ windowsHide: true,encoding:"utf8"}).trim().split(" ").slice(0,2).join(" ")).toBe(f.key.publicKey.split(" ").slice(0,2).join(" "));
     // First contact: the scan reports exactly the server's own fingerprint and trusts nothing.
     const scanned=await f.adapter(f.base).scanServerIdentity();expect(scanned.fingerprint).toBe(f.server.fingerprint);expect(scanned.type).toBe("ssh-ed25519");
     const pinned:ResticSftpTarget={...f.base,revision:2,hostKey:{type:"ssh-ed25519",key:scanned.key}};
@@ -93,8 +93,8 @@ describe.skipIf(!qualified)("pinned restic over a loopback SFTP server",()=>{
     // The server is replaced: same address and port, different host key.
     await f.server.stop();const port=f.base.port;
     const config=readFileSync(join(f.root,"first_sshd_config"),"utf8").replace(join(f.root,"first_host_key"),join(f.root,"second_host_key"));
-    execFileSync("/usr/bin/ssh-keygen",["-q","-t","ed25519","-N","","-f",join(f.root,"second_host_key")]);writeFileSync(join(f.root,"second_sshd_config"),config.replace(`Port ${port}`,`Port ${port}`));
-    const second=spawn("/usr/sbin/sshd",["-D","-e","-f",join(f.root,"second_sshd_config")],{stdio:["ignore","ignore","pipe"]});cleanups.push(()=>new Promise<void>(resolve=>{if(second.exitCode!==null)return resolve();second.once("exit",()=>resolve());second.kill("SIGTERM");}));
+    execFileSync("/usr/bin/ssh-keygen",["-q","-t","ed25519","-N","","-f",join(f.root,"second_host_key")], { windowsHide: true });writeFileSync(join(f.root,"second_sshd_config"),config.replace(`Port ${port}`,`Port ${port}`));
+    const second=spawn("/usr/sbin/sshd",["-D","-e","-f",join(f.root,"second_sshd_config")],{ windowsHide: true,stdio:["ignore","ignore","pipe"]});cleanups.push(()=>new Promise<void>(resolve=>{if(second.exitCode!==null)return resolve();second.once("exit",()=>resolve());second.kill("SIGTERM");}));
     await new Promise<void>((resolve,reject)=>{let text="";second.stderr!.on("data",chunk=>{text+=chunk;if(text.includes("Server listening"))resolve();});second.once("exit",()=>reject(Error(text)));});
     await expect(f.adapter(pinned).prepareRepository()).rejects.toThrow("RESTIC_SFTP_HOST_KEY_CHANGED");
     await expect(f.adapter(pinned).store(f.input,f.receipt("e"))).rejects.toThrow("RESTIC_SFTP_HOST_KEY_CHANGED");

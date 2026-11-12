@@ -86,6 +86,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "tool",
+    "name": "web_read",
+    "term": "web_read",
+    "source": "server/drivers/agents-proxy.ts"
+  },
+  {
+    "kind": "tool",
     "name": "web_search",
     "term": "web_search",
     "source": "server/drivers/agents-proxy.ts"
@@ -356,8 +362,14 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "settings-page",
+    "name": "calls",
+    "term": "Calls",
+    "source": "src/lib/settings-pages.ts"
+  },
+  {
+    "kind": "settings-page",
     "name": "botDefaults",
-    "term": "Bots",
+    "term": "How every bot behaves",
     "alt": "Bot defaults",
     "source": "src/lib/settings-pages.ts"
   },
@@ -383,7 +395,7 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   {
     "kind": "settings-page",
     "name": "webSearch",
-    "term": "Tools",
+    "term": "Search, images and dictation",
     "alt": "Web search",
     "source": "src/lib/settings-pages.ts"
   },
@@ -395,15 +407,14 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "settings-page",
-    "name": "channels",
-    "term": "Messaging apps",
+    "name": "computer",
+    "term": "Computer & browser",
     "source": "src/lib/settings-pages.ts"
   },
   {
     "kind": "settings-page",
     "name": "companion",
-    "term": "Devices",
-    "alt": "Phone and other devices",
+    "term": "Phone and other devices",
     "source": "src/lib/settings-pages.ts"
   },
   {
@@ -421,7 +432,14 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   {
     "kind": "settings-page",
     "name": "about",
-    "term": "About & updates",
+    "term": "About & help",
+    "alt": "About & updates",
+    "source": "src/lib/settings-pages.ts"
+  },
+  {
+    "kind": "settings-page",
+    "name": "channels",
+    "term": "Messaging apps",
     "source": "src/lib/settings-pages.ts"
   },
   {
@@ -452,12 +470,6 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
     "kind": "settings-page",
     "name": "voice",
     "term": "Voice",
-    "source": "src/lib/settings-pages.ts"
-  },
-  {
-    "kind": "settings-page",
-    "name": "computer",
-    "term": "Computer & browser",
     "source": "src/lib/settings-pages.ts"
   },
   {
@@ -672,6 +684,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "route",
+    "name": "/api/connector-incidents",
+    "term": "connected apps",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
     "name": "/api/connectors",
     "term": "connected apps",
     "source": "server/index.ts"
@@ -810,6 +828,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "route",
+    "name": "/api/move-in",
+    "term": "moving in from another app",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
     "name": "/api/news",
     "term": "Murage news",
     "source": "server/index.ts"
@@ -896,6 +920,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
     "kind": "route",
     "name": "/api/sidebar-sections",
     "term": "teams",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
+    "name": "/api/signal",
+    "term": "Signal",
     "source": "server/index.ts"
   },
   {

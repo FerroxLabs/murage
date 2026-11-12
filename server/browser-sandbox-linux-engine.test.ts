@@ -87,7 +87,7 @@ describe("the system profile", () => {
   it.skipIf(!parser)("parses with this system's AppArmor", () => {
     const file = join(temporary("murage-engine-profile-"), "murage-browser-engine");
     writeFileSync(file, linuxEngineBrowserProfile());
-    const result = spawnSync(parser!, ["--skip-kernel-load", "--skip-cache", "--debug", file], { encoding: "utf8" });
+    const result = spawnSync(parser!, ["--skip-kernel-load", "--skip-cache", "--debug", file], { windowsHide: true, encoding: "utf8" });
     expect(result.status, result.stderr).toBe(0);
   });
   it("leaves no copy in the home folder: the module has no home path in it", () => {
@@ -225,7 +225,7 @@ describe("Enable browser", () => {
 /** The administrator script itself, run for real on a temporary tree standing in for / (the user stands in for root). */
 describe.skipIf(process.platform !== "linux")("the administrator script", () => {
   const tools = ["tar", "find", "sha256sum", "awk", "mktemp", "head", "sort", "mv", "rm", "chmod", "chown", "mkdir", "dirname", "printf"];
-  const haveTools = tools.every(tool => spawnSync("sh", ["-c", `command -v ${tool}`]).status === 0) && spawnSync("tar", ["--version"], { encoding: "utf8" }).stdout.includes("GNU");
+  const haveTools = tools.every(tool => spawnSync("sh", ["-c", `command -v ${tool}`], { windowsHide: true }).status === 0) && spawnSync("tar", ["--version"], { windowsHide: true, encoding: "utf8" }).stdout.includes("GNU");
   function setup(parser = "#!/bin/sh\necho \"$*\" >> \"$0.log\"\n") {
     const base = temporary("murage-engine-run-"), etc = join(base, "etc-apparmor.d"), bin = join(base, "bin"), root = join(base, "lib", "murage", "browser-engine");
     mkdirSync(etc); mkdirSync(bin);
@@ -233,9 +233,9 @@ describe.skipIf(process.platform !== "linux")("the administrator script", () => 
     const script = LINUX_ENGINE_ENABLE_SCRIPT.replace("owner=root:root", `owner=${uid}:${gid}`).replace("top=/\n", `top=${base}\n`).replace(`root=${LINUX_ENGINE_ROOT}`, `root=${root}`).replaceAll("/etc/apparmor.d", etc);
     const { bundle, chrome } = fakeBundle();
     const run = (overrides: { tar?: Buffer; inventory?: string; exeSha?: string; version?: string } = {}) => {
-      const tar = overrides.tar ?? spawnSync("tar", ["-C", dirname(chrome), "-cf", "-", "."], { maxBuffer: 1 << 26 }).stdout;
+      const tar = overrides.tar ?? spawnSync("tar", ["-C", dirname(chrome), "-cf", "-", "."], { windowsHide: true, maxBuffer: 1 << 26 }).stdout;
       return spawnSync("/bin/sh", ["-c", script, "murage-enable-browser", overrides.version ?? CHROME_VERSION, linuxEngineBrowserProfile(overrides.version ?? CHROME_VERSION), overrides.inventory ?? linuxEngineInventoryText(chromeInventory(bundle)), overrides.exeSha ?? sha256(chrome)],
-        { input: tar, encoding: "utf8", env: { PATH: `${bin}:/usr/bin:/bin` }, maxBuffer: 1 << 26 });
+        { windowsHide: true, input: tar, encoding: "utf8", env: { PATH: `${bin}:/usr/bin:/bin` }, maxBuffer: 1 << 26 });
     };
     return { base, etc, bin, root, run, bundle, chrome, final: join(root, CHROME_VERSION, CHROME_DIRECTORY), profileFile: join(etc, "murage-browser-engine") };
   }
@@ -300,7 +300,7 @@ describe.skipIf(process.platform !== "linux")("the administrator script", () => 
       const t = setup(), copy = temporary("murage-engine-stream-");
       cpSync(dirname(t.chrome), join(copy, "c"), { recursive: true, verbatimSymlinks: true });
       mutate(join(copy, "c"));
-      const tar = spawnSync("tar", ["-C", join(copy, "c"), "-cf", "-", "."], { maxBuffer: 1 << 26 }).stdout;
+      const tar = spawnSync("tar", ["-C", join(copy, "c"), "-cf", "-", "."], { windowsHide: true, maxBuffer: 1 << 26 }).stdout;
       const result = t.run({ tar });
       expect(result.status, result.stderr).not.toBe(0);
       expect(existsSync(join(t.root, CHROME_VERSION))).toBe(false);
@@ -310,7 +310,7 @@ describe.skipIf(process.platform !== "linux")("the administrator script", () => 
     const t = setup(), copy = temporary("murage-engine-stream-");
     mkdirSync(join(copy, "in"));
     writeFileSync(join(copy, "in", "x"), "x");
-    const escaped = spawnSync("tar", ["-C", join(copy, "in"), "-cf", "-", "-P", "--transform", "s,^x$,../escape,", "x"], { maxBuffer: 1 << 20 }).stdout;
+    const escaped = spawnSync("tar", ["-C", join(copy, "in"), "-cf", "-", "-P", "--transform", "s,^x$,../escape,", "x"], { windowsHide: true, maxBuffer: 1 << 20 }).stdout;
     expect(t.run({ tar: escaped }).status).not.toBe(0);
     expect(existsSync(join(t.base, "lib", "murage", "escape"))).toBe(false);
   });

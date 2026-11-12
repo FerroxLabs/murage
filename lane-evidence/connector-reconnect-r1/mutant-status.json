@@ -1,0 +1,44 @@
+[
+  {
+    "mutant": "P1-1-expiry",
+    "exit": 1,
+    "RED_assertion": "expected undefined to deeply equal",
+    "killed": true
+  },
+  {
+    "mutant": "P1-1-mcp",
+    "exit": 1,
+    "RED_assertion": "known expiry must arm a timer",
+    "killed": true
+  },
+  {
+    "mutant": "P1-2-renewal",
+    "exit": 1,
+    "RED_assertion": "// Object.is equality",
+    "killed": true
+  },
+  {
+    "mutant": "P1-3-attribution",
+    "exit": 1,
+    "RED_assertion": "expected [ { id:",
+    "killed": true
+  },
+  {
+    "mutant": "P1-4-receipt",
+    "exit": 1,
+    "RED_assertion": "late failure revokes delivery",
+    "killed": true
+  },
+  {
+    "mutant": "P2-5-unchanged",
+    "exit": 1,
+    "RED_assertion": "unchanged 10: expected 1 to be +0",
+    "killed": true
+  },
+  {
+    "mutant": "P2-6-recovery",
+    "exit": 1,
+    "RED_assertion": "to deeply equal []",
+    "killed": true
+  }
+]

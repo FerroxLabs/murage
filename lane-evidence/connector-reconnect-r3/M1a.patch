@@ -1,0 +1,10 @@
+--- server/composio.ts
++++ server/composio.ts
+@@ -2346,6 +2346,7 @@
+       : reading.brokerAuth ? "brokerAuth" : status === 401 || status === 403 ? "upstreamAuth"
+       : reading.errors.size || !reading.ok.has(slug) ? "toolError" : "ok";
+   } catch { /* Every probe outcome still requires the awaited refresh below. */ }
++  if (outcome === "transport") return "unknown";
+   let read: InventoryRead | undefined;
+   try { read = await postProbeInventory(cfg, owner); }
+   catch { /* Uncertainty preserves the incident and cannot restore healthy UI. */ }

@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 const electron = require("electron");
 const fixture = fileURLToPath(new URL("./fixtures/browser-closed-shadow.cjs", import.meta.url));
 const xvfb = process.platform === "linux" && !process.env.DISPLAY
-  ? spawnSync("which", ["xvfb-run"], { encoding: "utf8" }).stdout.trim()
+  ? spawnSync("which", ["xvfb-run"], { windowsHide: true, encoding: "utf8" }).stdout.trim()
   : "";
 const canRun = process.platform !== "linux" || Boolean(process.env.DISPLAY) || Boolean(xvfb);
 const canRunRealElectronFixture = canRun
@@ -205,6 +205,7 @@ it.runIf(canRunRealElectronFixture)("protects closed-shadow values and revalidat
   try {
     result = await new Promise((resolve, reject) => {
       const child = spawn(command, args, {
+        windowsHide: true,
         env: childEnv,
         stdio: ["ignore", "pipe", "pipe"],
       });

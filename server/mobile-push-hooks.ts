@@ -29,7 +29,7 @@ export function settledBy(card: { answered?: string | null; dismissed?: boolean;
 /** Where the last answer to a request came from, for "Answered on desktop"
  * (R6). Bounded; the card patch that settles the request takes its entry. */
 export class AnsweredWhere {
-  private readonly entries = new Map<string, Where>();
+  private readonly entries = new Map<string, { where: Where; attempt?: object; prior?: { where: Where; attempt?: object } }>();
   private readonly max: number;
 
   constructor(max = 1_000) {
@@ -40,9 +40,9 @@ export class AnsweredWhere {
     return this.entries.size;
   }
 
-  note(key: string, where: Where): void {
+  note(key: string, where: Where, attempt?: object): void {
     this.entries.delete(key);
-    this.entries.set(key, where);
+    this.entries.set(key, { where, ...(attempt ? { attempt } : {}) });
     while (this.entries.size > this.max) this.entries.delete(this.entries.keys().next().value!);
   }
 
@@ -52,9 +52,17 @@ export class AnsweredWhere {
    * stays, because the engine's own event often settles the card after the
    * route has already replied. */
   attempt(key: string, where: Where, res: { statusCode: number; once(event: "finish", listener: () => void): unknown }): void {
-    this.note(key, where);
+    // Cleanup is per attempt (Astra r4): a refused attempt removes only the entry it wrote, never a concurrent attempt's.
+    const mine = {};
+    const prior = this.entries.get(key);
+    this.note(key, where, mine);
+    if (prior) this.entries.set(key, { where, attempt: mine, prior: { where: prior.where, ...(prior.attempt ? { attempt: prior.attempt } : {}) } });
     res.once("finish", () => {
-      if (res.statusCode !== 200 && this.entries.get(key) === where) this.entries.delete(key);
+      const current = this.entries.get(key);
+      if (res.statusCode === 200 || current?.attempt !== mine) return;
+      // refused: put back the attempt it overwrote (a concurrent winner's attribution), or drop the entry when there was none
+      if (current.prior) this.entries.set(key, { where: current.prior.where, ...(current.prior.attempt ? { attempt: current.prior.attempt } : {}) });
+      else this.entries.delete(key);
     });
   }
 
@@ -63,7 +71,7 @@ export class AnsweredWhere {
   }
 
   take(key: string): Where {
-    const where = this.entries.get(key) ?? "elsewhere";
+    const where = this.entries.get(key)?.where ?? "elsewhere";
     this.entries.delete(key);
     return where;
   }

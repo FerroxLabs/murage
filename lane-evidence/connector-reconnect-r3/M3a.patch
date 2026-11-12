@@ -1,0 +1,10 @@
+--- server/connected-app-health.ts
++++ server/connected-app-health.ts
+@@ -191,6 +191,7 @@
+   const apps = [...new Set(tools.map(toolkitOfTool).filter((slug): slug is string => slug !== null))];
+   if (!apps.length) return reading;
+   const error = (slug: string, status: number | null) => {
++    const match = /\b(401|403)\b/.exec(new TextDecoder().decode(bytes)); if (match) status = Number(match[1]);
+     reading.errors.add(slug); reading.ok.delete(slug);
+     if (status === 401 || status === 403) {
+       reading.authStatus.set(slug, status); reading.failed.set(slug, `HTTP ${status}`);

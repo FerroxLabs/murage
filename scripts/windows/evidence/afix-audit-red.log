@@ -1,0 +1,58 @@
+✖ BLOCK 3: verification cites behavioral RED and killed implementation mutants (1.320102ms)
+✖ BLOCK 4: every quoted harness string is inventoried (1.03353ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 61.643441
+
+✖ failing tests:
+
+test at scripts/windows/winbox-proof-audit.node-test.mjs:16:1
+✖ BLOCK 3: verification cites behavioral RED and killed implementation mutants (1.320102ms)
+  AssertionError [ERR_ASSERTION]: verification must cite afix-reviewed-red.log
+      at TestContext.<anonymous> (file:///work/.test-tmp/afix-winbox-gate/audit-red/scripts/windows/winbox-proof-audit.node-test.mjs:19:5)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at scripts/windows/winbox-proof-audit.node-test.mjs:27:1
+✖ BLOCK 4: every quoted harness string is inventoried (1.03353ms)
+  AssertionError [ERR_ASSERTION]: missing string inventory sources
+  + actual - expected
+
+  + []
+  - [
+  -   'winbox-driver.mjs',
+  -   'winbox-driver.node-test.mjs',
+  -   'winbox-gate.ps1',
+  -   'winbox-sampler.cs',
+  -   'winbox-shell-mcp.mjs',
+  -   'winbox-proof-audit.node-test.mjs'
+  - ]
+
+      at TestContext.<anonymous> (file:///work/.test-tmp/afix-winbox-gate/audit-red/scripts/windows/winbox-proof-audit.node-test.mjs:29:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [],
+    expected: [ 'winbox-driver.mjs', 'winbox-driver.node-test.mjs', 'winbox-gate.ps1', 'winbox-sampler.cs', 'winbox-shell-mcp.mjs', 'winbox-proof-audit.node-test.mjs' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

@@ -1,0 +1,2 @@
+PASS actual C# schtasks timeout: 11 ordered native boundary events; unrelated PID untouched
+PASS actual C# timeout records empty proof before propagating failure

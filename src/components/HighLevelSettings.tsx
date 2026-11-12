@@ -2,17 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Settings > Connections > HighLevel (HL-S2). The owner saves a private integration token on this computer, checks one
-// location with it, confirms that location, then chooses per bot whether it may read the CRM or also suggest changes.
-// Every suggested change still waits for the owner's card on this computer. The token is never read back: the server
-// reports only whether one is saved.
+// location with it, confirms that location, then chooses the bot's family levels.
+// The token is never read back: the server reports only whether one is saved.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, useStore } from "@/state/store";
 import { t } from "@/lib/i18n";
-import { HIGHLEVEL_READ_TOOL_NAMES, type HighLevelBotAccess } from "../../shared/highlevel";
+import { HIGHLEVEL_FAMILIES, defaultHighLevelFamilies, effectiveHighLevelAccess, type Family, type FamilyLevel, type HighLevelBotAccess, type EffectiveHighLevelAccess } from "../../shared/highlevel";
 import { Card, Switch } from "./SettingsPrimitives";
 
-/** HL-S2 is read only (MurageMain 11-04): a bot can read a location or nothing. */
-export type HighLevelLevel = "off" | "read";
+/** The effective family level shown by Settings. */
+export type HighLevelLevel = FamilyLevel;
+export interface FamilyScopes { present: string[]; missing: string[]; missingNames: string[]; canRead: boolean; canChange: boolean; canFull: boolean }
 
 export interface HighLevelConnectionView {
   connectionId: string;
@@ -25,22 +25,39 @@ export interface HighLevelConnectionView {
 export interface HighLevelView {
   tokenSaved: boolean;
   connection: HighLevelConnectionView | null;
-  bots: { botId: string; access: HighLevelBotAccess }[];
+  redacted?: boolean;
+  familyScopes?: Partial<Record<Family, FamilyScopes>>;
+  bots: { botId: string; access?: HighLevelBotAccess | EffectiveHighLevelAccess; offered?: boolean; level?: HighLevelLevel }[];
 }
 
 export interface HighLevelCheck { opId: string; locationId: string; locationName?: string; expiresAt: number }
 
-/** The level a saved grant gives, for the switch. Any grant on this location reads as read (older data may hold a
- * change level; the server reads that as read too). A grant on another location reads as off here. */
-export function highlevelLevel(access: HighLevelBotAccess | undefined | null, connectionId: string | undefined): HighLevelLevel {
-  const grant = access?.grants.find((row) => row.accountId === connectionId);
-  return grant ? "read" : "off";
+/** Display only effective access: old propose rows never show as change access. */
+/** Display-only normalization; server status already validated the real bot binding. */
+function displayAccess(access: HighLevelBotAccess | EffectiveHighLevelAccess | undefined | null) {
+  return access ? effectiveHighLevelAccess(access, { id: access.grants[0]?.botId ?? "", roleBinding: access.roleBinding }) : null;
+}
+export function highlevelLevel(access: HighLevelBotAccess | EffectiveHighLevelAccess | undefined | null, connectionId: string | undefined): HighLevelLevel {
+  const grant = displayAccess(access)?.grants.find(row => row.accountId === connectionId);
+  const levels = Object.values(grant?.families ?? {});
+  return levels.includes("full") ? "full" : levels.includes("change") ? "change" : levels.includes("read") ? "read" : "off";
 }
 
-/** The body PUT /api/highlevel/bots/:botId/access takes for a level. Off sends no grants (the bot loses access). */
-export function highlevelGrantsFor(level: HighLevelLevel, connectionId: string): { grants: { connectionId: string; ceiling: string; tools: string[] }[] } {
+/** Simple deliberately cannot produce Full control, including when toggling an
+ * existing Full grant. Only families with verified write permissions change. */
+export function highlevelSimpleFamilies(enabled: boolean, scopes: Partial<Record<Family, Pick<FamilyScopes, "canChange">>> = {}, previous?: Partial<Record<Family, FamilyLevel>>): Record<Family, FamilyLevel> {
+  const families = { ...defaultHighLevelFamilies(), ...previous };
+  for (const family of HIGHLEVEL_FAMILIES) if (families[family] === "full" || families[family] === "change") families[family] = "read";
+  if (enabled) for (const family of HIGHLEVEL_FAMILIES) if (scopes[family]?.canChange) families[family] = "change";
+  return families;
+}
+
+export function highlevelGrantsFor(level: HighLevelLevel, connectionId: string, scopes: Partial<Record<Family, FamilyScopes>> = {}, previous?: Partial<Record<Family, FamilyLevel>>) {
   if (level === "off") return { grants: [] };
-  return { grants: [{ connectionId, ceiling: "read", tools: [...HIGHLEVEL_READ_TOOL_NAMES] }] };
+  // Full is available only in the explicit per-family Advanced control.
+  return { grants: [{ connectionId, families: highlevelSimpleFamilies(level === "change", scopes, previous),
+    ...(level === "change" ? { broaden: Object.fromEntries(HIGHLEVEL_FAMILIES.filter(family => scopes[family]?.canChange).map(family => [family, true])) } : {}),
+  }] };
 }
 
 /** The one status line under the title. */
@@ -63,6 +80,7 @@ export function HighLevelSettings() {
   const [view, setView] = useState<HighLevelView | null>(null);
   const [token, setToken] = useState("");
   const [locationId, setLocationId] = useState("");
+  const [advanced, setAdvanced] = useState(false);
   const [check, setCheck] = useState<HighLevelCheck | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -91,9 +109,9 @@ export function HighLevelSettings() {
     return t(clear ? "highlevel.tokenRemoved" : "highlevel.tokenSavedNotice");
   }, t(clear ? "highlevel.tokenRemoveError" : "highlevel.tokenSaveError"));
   const checkLocation = () => run("check", async () => {
-    const id = locationId.trim();
+    const id = locationId.trim() || view?.connection?.locationId;
     if (!id) return;
-    const result = await api("/api/highlevel/token/check", { method: "POST", body: JSON.stringify({ locationId: id }) }) as { check: HighLevelCheck };
+    const result = await api("/api/highlevel/token/check", { method: "POST", body: JSON.stringify({ locationId: id }) }) as { check: HighLevelCheck; familyScopes?: HighLevelView["familyScopes"] };
     setCheck(result.check);
   }, t("highlevel.checkError"));
   const confirm = () => run("confirm", async () => {
@@ -109,11 +127,27 @@ export function HighLevelSettings() {
   }, t("highlevel.disconnectError"));
   const setLevel = (botId: string, level: HighLevelLevel) => run("bot:" + botId, async () => {
     if (!view?.connection) return;
-    await api(`/api/highlevel/bots/${botId}/access`, { method: "PUT", body: JSON.stringify(highlevelGrantsFor(level, view.connection.connectionId)) });
+    const access = view.bots.find(bot => bot.botId === botId)?.access;
+    const families = displayAccess(access)?.grants.find(grant => grant.accountId === view.connection!.connectionId)?.families;
+    await api(`/api/highlevel/bots/${botId}/access`, { method: "PUT", body: JSON.stringify(highlevelGrantsFor(level, view.connection.connectionId, view.familyScopes, families)) });
     return t("highlevel.accessSaved");
   }, t("highlevel.accessError"));
 
-  const connection = view?.connection?.state === "connected" ? view.connection : null;
+  const setFamily = (botId: string, family: Family, level: FamilyLevel) => run("bot:" + botId, async () => {
+    if (!view?.connection) return;
+    const access = view.bots.find((bot) => bot.botId === botId)?.access;
+    const grant = displayAccess(access)?.grants.find(row => row.accountId === view.connection!.connectionId);
+    const families = grant?.families ?? defaultHighLevelFamilies();
+    const levels: readonly FamilyLevel[] = ["off", "read", "change", "full"];
+    const broadens = levels.indexOf(level) > levels.indexOf(families[family]);
+    await api(`/api/highlevel/bots/${botId}/access`, { method: "PUT", body: JSON.stringify({ grants: [{
+      connectionId: view.connection.connectionId, families: { ...families, [family]: level },
+      ...(broadens ? { broaden: { [family]: true } } : {}),
+    }] }) });
+    return t("highlevel.accessSaved");
+  }, t("highlevel.accessError"));
+
+  const connection = view?.connection && ["connected", "degraded"].includes(view.connection.state) ? view.connection : null;
   const bots = state.bots.filter((bot) => !bot.hidden);
   return <Card title={t("highlevel.title")} subtitle={t("highlevel.intro")}>
     <p role="status" className="text-[12px] text-ink-secondary">{highlevelStatus(view)}</p>
@@ -133,12 +167,12 @@ export function HighLevelSettings() {
     </div>
     <p className="mt-1 text-[11px] text-ink-secondary">{t("highlevel.tokenHelp")}</p>
 
-    {view?.tokenSaved && !connection && <>
+    {view?.tokenSaved && (!connection || advanced) && <>
       <label htmlFor="highlevel-location" className="mt-4 block text-[13px] font-medium text-ink">{t("highlevel.locationLabel")}</label>
       <div className="mt-1.5 flex flex-wrap gap-2">
         <input id="highlevel-location" value={locationId} autoComplete="off" spellCheck={false} disabled={Boolean(busy)}
           onChange={(event) => { setLocationId(event.target.value); setCheck(null); setError(""); setNotice(""); }} className={input} />
-        <button type="button" onClick={() => void checkLocation()} disabled={Boolean(busy) || !locationId.trim()} className={button}>
+        <button type="button" onClick={() => void checkLocation()} disabled={Boolean(busy) || (!locationId.trim() && !connection)} className={button}>
           {t(busy === "check" ? "highlevel.checking" : "highlevel.check")}
         </button>
       </div>
@@ -154,16 +188,46 @@ export function HighLevelSettings() {
         <h4 className="text-[13px] font-medium text-ink">{t("highlevel.botsTitle")}</h4>
         <button type="button" onClick={() => void disconnect()} disabled={Boolean(busy)} className={"min-h-11 rounded-lg px-2 text-[12px] text-danger disabled:opacity-50 " + focus}>{t("highlevel.disconnect")}</button>
       </div>
-      <p className="text-[11px] text-ink-secondary">{t("highlevel.botsHelp")}</p>
+      <p className="text-[11px] text-ink-secondary">{t("highlevel.canChangeHelp")}</p>
+      <button type="button" className={button} aria-expanded={advanced} onClick={() => setAdvanced(!advanced)}>{t("highlevel.advanced")}</button>
+      {advanced && <p className="text-[11px] text-ink-secondary">{t("highlevel.fullHelp")}</p>}
       <ul className="mt-2 space-y-2">
         {bots.map((bot) => {
-          const level = highlevelLevel(view?.bots.find((row) => row.botId === bot.id)?.access, connection.connectionId);
-          return <li key={bot.id} className="flex flex-wrap items-center justify-between gap-3">
-            <span className="text-[13px] text-ink">{bot.name}</span>
-            <label className="flex items-center gap-2 text-[12px] text-ink-secondary">
-              <Switch checked={level === "read"} disabled={Boolean(busy)} aria-label={t("highlevel.canReadFor", { name: bot.name })} onClick={() => void setLevel(bot.id, level === "read" ? "off" : "read")} />
-              {t("highlevel.canRead")}
-            </label>
+          const saved = view?.bots.find((row) => row.botId === bot.id);
+          const level = saved?.level ?? highlevelLevel(saved?.access, connection.connectionId);
+          const canChange = level === "change" || level === "full";
+          const desktop = view?.redacted === false;
+          const offered = saved?.offered === true;
+          const scopes = view?.familyScopes ?? {};
+          const hasWrites = Object.values(scopes).some((family) => family?.canChange);
+          const families = displayAccess(saved?.access)?.grants.find(grant => grant.accountId === connection.connectionId)?.families;
+          return <li key={bot.id} className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className="text-[13px] text-ink">{bot.name}</span>
+              <label className="flex items-center gap-2 text-[12px] text-ink-secondary">
+                <Switch checked={canChange} disabled={Boolean(busy) || !offered || (!canChange && (!desktop || !hasWrites))}
+                  aria-label={t("highlevel.canChangeFor", { name: bot.name })} onClick={() => void setLevel(bot.id, canChange ? "read" : "change")} />
+                {t("highlevel.canChange")}
+              </label>
+            </div>
+            {!offered && <p className="text-[11px] text-ink-secondary">{t("highlevel.engineUnsupported")}</p>}
+            {!desktop && <p className="text-[11px] text-ink-secondary">{t("highlevel.onComputerGrant")}</p>}
+            {advanced && <div className="space-y-2">
+              <button type="button" className={button} disabled={Boolean(busy)} onClick={() => void setLevel(bot.id, "off")}>{t("highlevel.removeAccess")}</button>
+              {HIGHLEVEL_FAMILIES.map((family) => <div key={family}>
+                <label className="flex items-center justify-between gap-2 text-[12px] text-ink">
+                  {t(`highlevel.family.${family}`)}
+                  <select aria-label={t(`highlevel.family.${family}`)} value={families?.[family] ?? "off"}
+                    className={input} disabled={Boolean(busy) || !offered || !desktop}
+                    onChange={(event) => void setFamily(bot.id, family, event.target.value as FamilyLevel)}>
+                    {(["off", "read", "change", "full"] as const).map((value) => <option key={value} value={value}
+                      disabled={value === "read" ? !scopes[family]?.canRead : value === "change" ? !scopes[family]?.canChange : value === "full" ? !scopes[family]?.canFull : false}>{t(`highlevel.level.${value}`)}</option>)}
+                  </select>
+                </label>
+                {Boolean(scopes[family]?.missingNames.length) && <p className="text-[11px] text-ink-secondary">{t("highlevel.missingScopes", { names: scopes[family]!.missingNames.join(", ") })}</p>}
+                {!scopes[family]?.present.length && !scopes[family]?.missing.length && <p className="text-[11px] text-ink-secondary">{t("highlevel.scopesUnverified")}</p>}
+              </div>)}
+            </div>}
           </li>;
         })}
       </ul>

@@ -28,7 +28,7 @@ function fixture() {
   writeFileSync(join(data, "config.json"), '{"profile":{"name":"Fixture"},"flux":{"apiKey":"never-print-this-canary"}}');
   return { root, data, target: join(root, "backup with spaces.zip") };
 }
-const run = (args: string[], env?: Record<string, string>) => exec(process.execPath, [cli, ...args], { timeout: 20_000, ...(env ? { env: { ...process.env, ...env } } : {}) });
+const run = (args: string[], env?: Record<string, string>) => exec(process.execPath, [cli, ...args], {  timeout: 20_000, ...(env ? { env: { ...process.env, ...env } } : {}), windowsHide: true });
 
 it("backs up and inspects an explicit offline installation through the real CLI", async () => {
   const f = fixture();
@@ -166,6 +166,21 @@ function currentInstallation() {
   mkdirSync(join(f.data, "health")); writeFileSync(join(f.data, "health", "counters"), "12");
   return f;
 }
+
+it("a captured restore journal makes the CLI print the exact instruction to finish recovery in this version", async () => {
+  const f = currentInstallation();
+  writeFileSync(join(f.data, "restore-job.json"), JSON.stringify({ version: 1, id: "job-X", archiveId: "arc1", source: "local", phase: "captured", at: 1_800_000_000_000 }));
+  const before = folderBytes(f.data);
+  const refused = await run(["memory-downgrade", "--data-dir", f.data, "--to", "10"]).catch(error => error);
+  expect(refused.code).toBe(1);
+  expect(refused.stdout).toBe("");
+  expect(JSON.parse(refused.stderr)).toEqual({
+    ok: false,
+    error: "DOWNGRADE_RESTORE_OPEN",
+    message: "A restore has not finished. Open this version of Murage to finish recovery, then try going back to the earlier version.",
+  });
+  expect(folderBytes(f.data)).toEqual(before);
+});
 
 // Going back to 1.0.1 or older goes through 1.0.2's own command: this build's step to that shape gives a file 1.0.1's inspector does not accept.
 it.each([[[]], [["--to", "1"]], [["--to", "2"]], [["--to", "3"]], [["--to", "4"]], [["--to", "5"]], [["--to", "6"]]] as Array<[string[]]>)("memory-downgrade %j says to go through 1.0.2 first, and every byte of the folder stays as it was", async form => {

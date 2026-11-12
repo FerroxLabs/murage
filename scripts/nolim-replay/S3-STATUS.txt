@@ -1,0 +1,53 @@
+S3 round 3 — Tier 1 qualification; integrated/live G-NL remains GATE-PENDING
+
+Design: /work/fuigo-builds/swarm-b/bld-nolim-s3r2/DESIGN-S3-r3.md.
+Base: 83a3a611c. Resumed implementation: 14c386260.
+Only server/drivers/**, scripts/no-limits-live/** and scripts/nolim-replay/**
+changed. The interrupted implementation was preserved, not reset.
+
+Findings 3–5:
+- Open native requests and failed sends have no count/attempt refusal. Closed
+  history alone is capped at 1,024; generation retirement touches its own bucket.
+- Native asks commit deletion, timer release and request.resolved after the
+  receipt. Writable failures retain the ask; retries coalesce; transport loss
+  reports unavailable; timeout/system retirement removes the ask.
+- ACP immutable-posture recovery allows unlimited owner level changes, with
+  two failed attempts per epoch, reset after acknowledgement, and a final-level
+  recheck. Exhaustion settles once with the existing permission-level line.
+
+Tier 1 evidence is under .afix-evidence/r3/; resume/ contains current checks.
+Q1: T3a–e, T4a–e, T5a–e assertion RED on original base; T3f is a GREEN
+     retirement guard. M74–M89 killed. Driver candidate checks GREEN.
+Q2: Independent read-only SQLite/file/HTTP/tap readers; missing surfaces FAIL;
+     schema column hash pinned; M90 killed. Integrated persistence binding and
+     S1 migration-pin comparison remain Tier 2 work.
+Q3: Isolated owner HTTP/SSE fake workflow witnesses cover two questions,
+     question instruction, actual queued:true receipt and two drained turns,
+     email stub capture, routine wake and both project-room routine bindings.
+     Explicitly UNBOUND: app-access deny/revoke and group webhook endpoints.
+Q4: Host provision owns two containers and one internal Docker network with
+     a CONNECT-only proxy; reachable external control and positive allowlist
+     path observed; direct egress and DNS blocked. M91–M95 rejected; M93 is a
+     timeout-report fixture. M95's DNS flag pin rejects the real provision even
+     on hosts where default DNS also fails on an internal network.
+Q5: Shared corpus /work/fuigo-builds/swarm-b/_private/nolim-cards/mac-select-v2.jsonl
+     was found on resume. Source read only; identical staged bytes mounted read
+     only in network-none container. Header excluded: 140 rows, all unavailable
+     input, five input shapes mapped to existing J3 rows. No policy verdict or
+     independent label claimed. See resume/j1-real-availability.json.
+Q6: 270-row fake-engine BASE against verified archived 292df98d server,
+     candidate fake CLIs, network none. Report hash pinned in baseline-f.sha256.
+     This is fixture baseline evidence, never live 1.0.18 BASE qualification.
+Q7: Six explicit dep:S1 field failures with decision-stub reason and fake native
+     execution witnesses; fixed RUN/zero-card and HOME CARD/one-card expectations.
+     --release refuses dependencies before launching engines/output; M96 killed.
+
+Tier 2 GATE-PENDING (integration owner): rerun Tier 1 on integrated sha, remove
+S1 dependency markers only after real policy success, compare migration pin,
+judged J1 with precommitted independent labels, compare fake BASE parity.
+Tier 3 GATE-PENDING (release gate operator): live all-five-engine J3 --release,
+live 1.0.18 BASE, witnessed J2 inside the containment. No S3 fake proof replaces
+these requirements; G-NL/1.0.19 is not released by this work.
+
+New product English: none beyond existing posture/continuation strings.
+No Mac, live app/data, billable engine/API, or review record was used.

@@ -7,6 +7,7 @@
 // a string is accepted only under the few keys that carry ids and codes, every `Outbound` is checked by its private field, and a body that was
 // not built here is never written. In a test a violation throws. In the running app it is logged and the reader gets the withheld line, so the
 // failure is closed, not open.
+import { ownPeerContentDelivered } from "./outside-own.ts";
 import type { ServerResponse } from "node:http";
 import { EgressViolation, WorkerText, collectRendered, type EgressOrigin, type SourceRange } from "./released-text.ts";
 import { MurageStatus, isOutbound, outboundCopy, outboundWords, status, statusRecordOf, type BotName, type Outbound } from "./murage-status.ts";
@@ -20,6 +21,8 @@ export type BotBody = Readonly<Record<string, unknown>> & { readonly [bodyBrand]
 export interface BotReply { status: number; body: BotBody }
 
 export interface BotBodyInput {
+  held?: boolean;
+  startsWhen?: "reply-ends" | "owner-review";
   botName?: BotName;
   toBotName?: BotName;
   text?: Outbound;
@@ -45,7 +48,7 @@ export interface BotBodyInput {
 }
 
 /** The keys under which a plain string may appear: ids, codes and a name taken from a bot's record. */
-const STRING_KEYS: ReadonlySet<string> = new Set(["taskId", "code", "status", "retry", "reason", "elapsed", "approvalOutcome", "approvalSource", "botName", "toBotName"]);
+const STRING_KEYS: ReadonlySet<string> = new Set(["startsWhen", "taskId", "code", "status", "retry", "reason", "elapsed", "approvalOutcome", "approvalSource", "botName", "toBotName"]);
 
 const bodies = new WeakSet<object>();
 /** What each body's released words rest on: the bot it is written to is shown them, so they join its running turn's sources. */
@@ -135,13 +138,16 @@ export function writeBotRow(sink: RowSink, threadId: string, extra: RowExtras, t
   // A copy is the producing bot's row (rule 5): one whose bot is not named keeps none of its words and is Murage's withheld line instead.
   if (outboundCopy(text)?.messageIds.length && !extra.from?.botId && !extra.handoffFrom) text = status("withheld");
   const copy = outboundCopy(text);
-  const words = outboundWords(text);
+  const shown = collectRendered(() => outboundWords(text));
+  const words = shown.value;
   const bare = { ...extra, role: "bot", kind: "text", text: reviewNonce ? reviewReplyShown(words, reviewNonce) : words, ...(copy?.messageIds.length ? { copyOf: copy } : {}) } as Omit<Message, "id" | "at">;
   // A copy of a bot's words is that bot's row (LINEAGE-DESIGN-S6 rule 5): role bot, `from` the producing bot, `copyOf` naming the source, no
   // stamp; the door validates the source on every read (rule 9). Words with no source to name stay Murage's line, never engine output.
   const copyOfBot = Boolean(copy?.messageIds.length) && Boolean(extra.from?.botId);
   const row = extra.handoffFrom || copyOfBot ? bare : { ...bare, ...keptStatus(bare.murage, text, "status") };
-  return appendRow(sink, threadId, extra.handoffFrom || copyOfBot ? row : murageLine(row), id);
+  const delivered = appendRow(sink, threadId, extra.handoffFrom || copyOfBot ? row : murageLine(row), id);
+  ownPeerContentDelivered(threadId, shown);
+  return delivered;
 }
 
 /** A Murage row written from a status keeps its key and parameters beside the words (LINEAGE-DESIGN-S6 rule 11), so a bot reads it only as

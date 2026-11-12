@@ -171,7 +171,7 @@ test('BF-2 integration: owned handoff, real cleanup and retained Quit surface su
     serverStopReason: { logOnce: noop }, stopDeskPresence: noop, sentinelHost: null,
     stopAutomaticRemoteBackups: noop, backupScheduleHost: null, desktopShutdownStarted: false,
     localEngineLogin: { shutdown: settled }, modelSignIn: disposable, mcpServers: disposable,
-    notificationAuthorization: disposable, showApprovalNotification: disposable,
+    notificationAuthorization: disposable, showApprovalNotification: disposable, bannerNative: disposable, attentionSurfaces: disposable,
     desktopBackupTool: disposable, desktopResticTool: null, remoteBackupAttestation: { abort: noop }, managedComposioShutdown: { abort: noop },
     cuaCleanedUp: false, desktopCleanup: null, syncCompanionKeepAwake: noop,
     androidDevice: { stop: settled }, nativeActions: {}, stopRecorder: settled, browserSurface: null,

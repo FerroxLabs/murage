@@ -35,7 +35,7 @@ beforeEach(() => {
   client = new FluxEmailClient({ fetch: fake.fetch, apiBase: "https://api.flux.test", appBase: "https://app.flux.test", credentials: emailCredentialProvider(secrets, () => null), timeoutMs: 100 });
   withdrawn = [];
   let n = 0;
-  service = new EmailBindingService({ store, client, secrets, installId: "inst", now: () => clock, newId: () => `op-${++n}`, withdrawSends: (botId, reason) => { withdrawn.push([botId, reason]); } });
+  service = new EmailBindingService({ store, client, secrets, installId: "inst", now: () => clock, sleep: async () => undefined, newId: () => `op-${++n}`, withdrawSends: (botId, reason) => { withdrawn.push([botId, reason]); } });
 });
 
 const minted = { status: 200, body: { key: "sk-email-1", key_id: "key_e1", label: "bot-email:b1" } };
@@ -238,9 +238,9 @@ describe("removal (2.6, F22, F25)", () => {
     fake.on("DELETE", /\/inboxes\/ibx_1$/, { status: 202, body: { object: "email.inbox", id: "ibx_1", state: "closing", closing_until: "2026-12-01T00:00:00Z" } });
     expect(await service.remove("b1")).toMatchObject({ state: "remove_requested", closingUntil: "2026-12-01T00:00:00Z" });
     fake.on("GET", /\/inboxes\/ibx_1$/, { status: 200, body: { id: "ibx_1", state: "closing", closing_until: "2026-12-01T00:00:00Z" } });
-    expect(await service.continueRemoval("b1")).toMatchObject({ state: "remove_requested" });
+    expect(await service.resumeRemoval("b1")).toMatchObject({ state: "remove_requested" });
     fake.on("GET", /\/inboxes\/ibx_1$/, fluxError(404, "inbox_not_found")).on("DELETE", /bot-keys\/key_e1$/, { status: 204 });
-    expect(await service.continueRemoval("b1")).toMatchObject({ state: "removed", inboxId: "ibx_1" });
+    expect(await service.resumeRemoval("b1")).toMatchObject({ state: "removed", inboxId: "ibx_1" });
     expect(secrets.botKey("b1")).toBeNull();
   });
 
@@ -254,7 +254,7 @@ describe("removal (2.6, F22, F25)", () => {
     fake.on("DELETE", /bot-keys\/key_e1$/, async () => { await gate; return { status: 204 }; }).on("DELETE", /bot-keys\/key_e1$/, { status: 204 });
     const stale = service.inboxDeleted("ibx_1");
     fake.on("GET", /\/inboxes\/ibx_1$/, fluxError(404, "inbox_not_found"));
-    expect(await service.continueRemoval("b1")).toMatchObject({ state: "removed", inboxId: "ibx_1" });
+    expect(await service.resumeRemoval("b1")).toMatchObject({ state: "removed", inboxId: "ibx_1" });
     expect(store.getBinding("b1")).toBeNull();
     // the owner sets the bot up again: a new op, key and inbox
     fake.on("POST", /bot-keys$/, { status: 200, body: { key: "sk-email-2", key_id: "key_e2", label: "bot-email:b1" } }).on("POST", /\/v1\/email\/inboxes$/, inbox({ id: "ibx_2", address: "juniper2@murage.email" }));
@@ -281,7 +281,7 @@ describe("removal (2.6, F22, F25)", () => {
     expect(await service.remove("b1")).toMatchObject({ state: "remove_requested" });
     const read = gated(fluxError(404, "inbox_not_found"));
     fake.on("GET", /\/inboxes\/ibx_1$/, read.reply);
-    const stale = service.continueRemoval("b1"); // waits on #5 for the old inbox
+    const stale = service.resumeRemoval("b1"); // waits on #5 for the old inbox
     fake.on("DELETE", /bot-keys\/key_e1$/, { status: 204 });
     expect(await service.inboxDeleted("ibx_1")).toMatchObject({ inboxId: "ibx_1", state: "removed" });
     setUpAgain();
@@ -351,7 +351,7 @@ describe("removal (2.6, F22, F25)", () => {
     await active();
     fake.on("DELETE", /\/inboxes\/ibx_1$/, { status: 202, body: { state: "closing" } }).on("GET", /\/inboxes\/ibx_1$/, fluxError(404, "inbox_not_found")).on("DELETE", /bot-keys\/key_e1$/, { status: 404 });
     await service.remove("b1");
-    await service.continueRemoval("b1");
+    await service.resumeRemoval("b1");
     expect(store.getBinding("b1")).toBeNull();
     expect(secrets.botKey("b1")).toMatchObject({ keyId: "key_e1" });
   });

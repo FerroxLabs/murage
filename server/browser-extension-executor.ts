@@ -1,10 +1,11 @@
+import { routeBrowserRead } from "./browser-read-route.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Trusted semantic executor. Model parameters are data, never JavaScript/CDP.
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { inspectClosedRoots } from "./browser-extension-dom-inspection.ts";
 import { BROWSER_DOCUMENT_GUARD_SOURCE } from "./browser-document-guard.ts";
 import { isClipboardInput, isClipboardKeyName } from "../shared/browser-clipboard.ts";
-import { COMPOSED_ACTIVE_SOURCE, COMPOSED_HIT_TEST_SOURCE, DESCRIBE_TARGET_SOURCE, HTML_LENGTH_EXPRESSION, htmlSliceExpression, presentedLinkExpression } from "./browser-extension-page-scripts.ts";
+import { COMPOSED_ACTIVE_SOURCE, COMPOSED_HIT_TEST_SOURCE, DESCRIBE_TARGET_SOURCE, HTML_LENGTH_EXPRESSION, HTML_RELEASE_EXPRESSION, htmlSliceExpression, presentedLinkExpression } from "./browser-extension-page-scripts.ts";
 import { collectFloorFacts, type FloorFactsExtra, type FloorFactsIo, type FloorTarget } from "./browser-floor-facts.ts";
 import { classifyFloor, type FloorFacts, type FloorResult } from "./browser-floor.ts";
 import { ACCOUNT_OWNER_PHRASE, FLOOR_OWNER_PHRASE } from "../shared/browser-floor-signatures.ts";
@@ -15,12 +16,39 @@ import { BrowserExtensionPolicyError } from "./browser-extension-policy.ts";
 import { redactSecretUrl } from "../shared/browser-secret-classifier.ts";
 
 import { extensionEngineTools, type BrowserExtensionEngineBackend, type EngineObject } from "./browser-extension-engine.ts";
-import { readWithBrowserAuthority, type EngineReadOptions } from "./browser-extension-engine-read.ts";
+import { WebDocuments } from "./web-documents.ts";
+import { type EngineReadOptions } from "./browser-extension-engine-read.ts";
 type Json = Record<string, unknown>;
 export type ExtensionDocument = { profileId: string; tabId: number; frameId: string; navigationEpoch: number; origin: string; url: string };
 export interface ExtensionCdpTransport {
   document(tabId?: number): Promise<ExtensionDocument>;
   send(method: string, params: Json, document: ExtensionDocument): Promise<any>;
+  /** BRLOCK19: every frame of the tab (chrome.webNavigation.getAllFrames, answered by the extension as `{ frames }`). The page
+   * lock cannot see a cross-site iframe through Page.getFrameTree, so this is how the extension route finds one. */
+  frames?(document: ExtensionDocument): Promise<unknown>;
+}
+/** BRLOCK19: do the tab's frames hold one from another origin than the page, or can they not be read? Either locks the page.
+ * `about:blank` and `about:srcdoc` frames take their parent's origin and are not a reason; a frame whose origin cannot be
+ * worked out is unknown, and unknown is a lock. */
+export function frameLockVerdict(reply: unknown, pageUrl: string): "clear" | "locked" | "unsure" {
+  const frames = (reply as { frames?: unknown } | null | undefined)?.frames;
+  if (!Array.isArray(frames) || frames.length === 0) return "unsure";
+  const originOfUrl = (url: unknown): string | undefined => { try { const origin = new URL(String(url)).origin; return origin === "null" ? undefined : origin; } catch { return undefined; } };
+  // A cached (back/forward) or prerendered document can keep frameId 0 beside the live one: two tops is a list that cannot be read as one page.
+  const tops = frames.filter((frame) => frame?.frameId === 0);
+  const top = tops.length === 1 ? tops[0] : undefined;
+  const topOrigin = originOfUrl(top?.url) ?? originOfUrl(pageUrl);
+  if (!top || topOrigin === undefined) return "unsure";
+  let verdict: "clear" | "locked" | "unsure" = "clear";
+  for (const frame of frames) {
+    if (frame === top) continue;
+    if (!frame || typeof frame.url !== "string") return "unsure";
+    if (/^(about:blank|about:srcdoc)([?#].*)?$/i.test(frame.url) || frame.url === "") continue;
+    const origin = originOfUrl(frame.url);
+    if (origin === undefined) verdict = "unsure";
+    else if (origin !== topOrigin) return "locked";
+  }
+  return verdict;
 }
 export type ExtensionAction = { name: string; arguments: Json; document: ExtensionDocument; digest: string; summary: string; mutation: boolean; presentedLink?: boolean;
   /** A0: set only on the bot's own tool-call admission, never on a redirect, popup or reader-fallback admission. */
@@ -40,11 +68,14 @@ export type ExtensionAction = { name: string; arguments: Json; document: Extensi
 /** The hard floor asked for the owner (spec 2.5.1). `text` is the plain sentence the bot reads. */
 /** SABLE-B 5.1: one call's scope. `fence` is the dispatch's identity (the service owns its shape); `signal` aborts when the call ends;
  * `admitted` and `admittedUrls` are the canonical origins and URLs this call admitted. */
-export type CallScope = { fence: unknown; signal: AbortSignal; admitted: Set<string>; admittedUrls: Set<string> };
+export type CallScope = { bootstrapOnly?: boolean; fence: unknown; signal: AbortSignal; admitted: Set<string>; admittedUrls: Set<string> };
 export type ExtensionFloorHandoff ={ result: FloorResult; operation: string; document: ExtensionDocument; text: string };
 /** What the executor reports to the activity log itself: the decisions the service cannot see. */
 export type ExtensionActivityEvent = { operation: string; document: ExtensionDocument; decision: "your turn" | "not done"; outcome: "handed over" | "failed"; level: 1 | 2 | 3; target?: string; fromPage?: boolean; textLength?: number; id?: string };
 export interface ExtensionExecutorOptions {
+  documentOwner?: string;
+  /** Live, server-authenticated permission; model arguments cannot set this. */
+  noLimits?: () => boolean;
   transport: ExtensionCdpTransport;
   authorize: () => boolean;
   authorizationError?: () => Error;
@@ -131,6 +162,8 @@ const recipientLine = (facts: { recipients?: unknown; recipientScanFailed?: unkn
 const recipientKey = (facts: { recipients?: unknown; recipientScanFailed?: unknown } | undefined) => JSON.stringify([facts?.recipients ?? null, facts?.recipientScanFailed ?? null]);
 
 export class BrowserExtensionExecutor {
+  private readDocuments: WebDocuments;
+  invalidateReadOrigin(origin: string) { this.readDocuments.invalidateOrigin(origin); }
   /** The approved target as it was described at admission (SEC-02): checked again right before every activating input. */
   private approvedShape?:{observed:string;structure:string;bound:string;editable:boolean;recipients:string;macs:string[]|null;skip:number[]};
   private currentOperation="";
@@ -179,6 +212,7 @@ export class BrowserExtensionExecutor {
   private busy = false;
   private options: ExtensionExecutorOptions;
   constructor(options: ExtensionExecutorOptions) {
+    this.readDocuments = new WebDocuments(undefined, undefined, options.documentOwner);
     this.options=options;
     this.engine=options.createEngine?.({beforeCommand:(document,method,params)=>this.beforeEngineCommand(document,method,params),beforeDestination:(url,document)=>this.destination(url,document,this.scope)});
   }
@@ -247,18 +281,40 @@ export class BrowserExtensionExecutor {
     if (typeof state !== "boolean") refuse("The page protection check is unavailable.");
     this.protectedUnsure = false;
     if (state) return true;
+    // BRLOCK19: a frame from another origin is a page the owner must use directly; frames that cannot be listed are the same doubt.
+    const frames = await this.frameVerdict(document);
+    if (frames === "locked") return true;
+    if (frames === "unsure") { this.protectedUnsure = true; return true; }
+    // An extension older than the app answers Murage.getAllFrames with method_denied. It can still give the browser's own DOM tree, where
+    // an iframe with no contentDocument is out-of-process; the page locks only when this route fails too.
+    const treeFrames = frames === "unlisted";
     // SEC-05: a closed shadow root cannot be read by any page function, so a secret inside one is invisible to the guard. When the page has
     // roots the page cannot read, the browser's own tree decides; an inspection failure is a stop.
     // Round 9 (R8-01): any element can host a closed root, so the browser's own tree is read for every page, and again before every input.
     if (fresh) this.closedChecked.delete(docKey(document));
-    const closed = await this.closedRoot(document);
+    const closed = await this.closedRoot(document, treeFrames);
     if (closed) this.protectedUnsure = true;
     return closed;
   }
+  private async frameVerdict(document: ExtensionDocument): Promise<"clear" | "locked" | "unsure" | "unlisted"> {
+    const list = this.options.transport.frames;
+    if (!list) return "clear";
+    let reply: unknown;
+    this.authorized();
+    try { reply = await list.call(this.options.transport, document); } catch (error) {
+      this.authorized();
+      // Only an extension that does not know the question falls back to the browser's tree; any other failure is doubt, and doubt locks.
+      return (error as { code?: unknown } | null)?.code === "method_denied" ? "unlisted" : "unsure";
+    }
+    this.authorized();
+    return frameLockVerdict(reply, document.url);
+  }
   /** Inspect shallow pieces, paging wide branches. Only the extension's own non-editable overlay may have a closed root. */
-  private async closedRoot(document: ExtensionDocument) {
+  private async closedRoot(document: ExtensionDocument, outOfProcessFrames = false) {
     const key = docKey(document);
-    if (this.closedChecked.has(key)) return false;
+    // The tree fallback for frames is never cached: an iframe can be inserted after a clean look, and the frame listing that would
+    // have caught it is the route that failed.
+    if (!outOfProcessFrames && this.closedChecked.has(key)) return false;
     // A page still settling (a navigation landing, the last task's overlay coming down) can fail one look or show a root that is
     // gone a moment later. One settled second look decides; a page that blocks or fails twice still goes to the owner.
     for (let attempt = 0; attempt < CLOSED_ROOT_LOOKS; attempt++) {
@@ -271,6 +327,7 @@ export class BrowserExtensionExecutor {
           (method, params = {}) => this.sendWithin(document, method, params),
           () => this.world(document, false, true),
           () => this.presenceHost(document),
+          { outOfProcessFrames },
         );
         // The verdict, blocking or not, is about this document only if it is still the one the look began on.
         await this.stable(document);
@@ -279,7 +336,7 @@ export class BrowserExtensionExecutor {
         if (isAuthorityRefusal(error)) throw error;
         continue;
       }
-      this.closedChecked.add(key);
+      if (!outOfProcessFrames) this.closedChecked.add(key);
       return false;
     }
     return true;
@@ -304,7 +361,7 @@ export class BrowserExtensionExecutor {
   private protectedUnsure = false;
   private handedText = "";
   private async guard(document: ExtensionDocument, scope: CallScope | undefined, fresh = false) {
-    if (!await this.protectedDocument(document, fresh)) return;
+    if (this.options.noLimits?.() || !await this.protectedDocument(document, fresh)) return;
     if (this.floorHandled) refuse(this.handedText || "YOUR TURN: this step needs the owner. Murage has asked them. End your turn now and wait. Do not try another way to do this step.");
     const unsure = this.protectedUnsure;
     await this.handOff(document, { floor: "credentials", rule: unsure ? "protected-page-unreadable" : "protected-page", reason: "This page needs the owner to take over.", unsure }, this.callOperation || "read", undefined, scope);
@@ -316,7 +373,7 @@ export class BrowserExtensionExecutor {
   private async resolveObject(target:EngineObject){
     await this.stable(target.document);
     let resolved:any;
-    try{resolved=await this.send(target.document,"DOM.resolveNode",{backendNodeId:target.backendNodeId,executionContextId:await this.world(target.document)});}
+    try{resolved=await this.send(target.document,"DOM.resolveNode",{backendNodeId:target.backendNodeId,...(this.options.noLimits?.()?{}:{executionContextId:await this.world(target.document)})});}
     catch(error){if(isAuthorityRefusal(error))throw error;this.worlds.delete(target.document.tabId);refuse("The approved target is no longer available, or it is inside an embedded frame. Take over if you need it.");}
     if(!resolved.object?.objectId)refuse("The approved target is no longer available.");return resolved.object.objectId as string;
   }
@@ -339,12 +396,12 @@ export class BrowserExtensionExecutor {
     const described=await this.send(document,"DOM.describeNode",{objectId,depth:1,pierce:true});
     if(!Number.isSafeInteger(described.node?.backendNodeId))refuse("The focused browser target is unavailable.");
     const name=String(described.node?.nodeName??"").toUpperCase();
-    if(["IFRAME","FRAME","OBJECT","EMBED"].includes(name))refuse("Keyboard focus is inside an embedded frame, which Murage does not act in. Take over to continue.");
-    if((described.node?.shadowRoots??[]).some((root:any)=>root?.shadowRootType==="closed"))refuse("Keyboard focus is inside protected page content. Take over to continue.");
+    if(!this.options.noLimits?.()&&["IFRAME","FRAME","OBJECT","EMBED"].includes(name))refuse("Keyboard focus is inside an embedded frame, which Murage does not act in. Take over to continue.");
+    if(!this.options.noLimits?.()&&(described.node?.shadowRoots??[]).some((root:any)=>root?.shadowRootType==="closed"))refuse("Keyboard focus is inside protected page content. Take over to continue.");
     return{backendNodeId:described.node.backendNodeId,document:{...document}};
   }
   private async describe(target:EngineObject):Promise<{observed:string;structure:string;bound:string;editable:boolean;detail:Detail;priv:{href?:string|null};macs:string[]|null;skip:number[]}>{
-    const text=String(await this.nodeCall(target,DESCRIBE_TARGET_SOURCE));
+    const text=String(await this.nodeCall(target,DESCRIBE_TARGET_SOURCE,this.options.noLimits?.()?[true]:[]));
     // Anything that is not the structured shape is still bound into the digest, and shown as plain text.
     let parsed:any;try{parsed=JSON.parse(text);}catch{parsed=undefined;}
     let values:unknown=null,editable=false,priv:{href?:string|null}={},macs:string[]|null=null,skip:number[]=[];
@@ -364,6 +421,7 @@ export class BrowserExtensionExecutor {
   /** SEC-02: right before an activating input the target is described and classified again. A page can turn the approved button into something
    * else between mousedown and mouseup (or between keydown and keyup); the activation is cancelled, nothing more reaches the page. */
   private async revalidate(document:ExtensionDocument,target:EngineObject,mouse:boolean,scope:CallScope|undefined){
+    if(this.options.noLimits?.())return;
     const shape=this.approvedShape;if(!shape)return refuse("The browser action was not approved.");
     const now=await this.describe(target);
     // Round 10 (R9-10): a mouse activation is bound to the whole payload, always, even on a control that holds an editable region (a click does not type, and a
@@ -395,8 +453,8 @@ export class BrowserExtensionExecutor {
   private async beforeEngineCommand(document:ExtensionDocument,method:string,params:Json){
     const scope=this.scope;
     this.authorized();if(!await this.options.access(document,undefined,undefined,scope))refuse("Site access was not approved.");
-    // Clipboard editing is never the bot's to do: a paste carries whatever the owner last copied into a page.
-    if(isClipboardInput(method,params))refuse("Pasting, copying and select-all are not available in the owner's browser. A paste could hand the page whatever the owner last copied.");
+    // Below No limits, clipboard editing stays with the owner.
+    if(!this.options.noLimits?.()&&isClipboardInput(method,params))refuse("Pasting, copying and select-all are not available in the owner's browser. A paste could hand the page whatever the owner last copied.");
     if(method==="Page.handleJavaScriptDialog")return this.answerDialog(document,params,scope);
     if(document.url==="about:blank")refuse("Navigate the bootstrap tab before observing it.");
     // Input belongs to an admitted action only: nothing the engine does before admit (resolving a target) may press or type.
@@ -415,7 +473,7 @@ export class BrowserExtensionExecutor {
     // The guard ends on a confirmed document; only an escape (which skips it) needs its own look.
     if(!(this.escaping&&ESCAPE_SETUP.has(method)))await this.guard(document,scope,method.startsWith("Input."));else await this.stable(document);
     if(method.startsWith("Input.")&&this.executing)this.mark("first_input",this.currentOperation||this.callOperation);
-    if(!this.executing||!this.mutation||!this.approvedTarget)return;
+    if(this.options.noLimits?.()||!this.executing||!this.mutation||!this.approvedTarget)return;
     const target=this.approvedTarget;
     // L1: input reaches only the document that was admitted. A navigation can commit between admit and dispatch.
     // Unsure is a stop: a frame tree without a loader id never matches, so no input reaches an unknown document.
@@ -455,6 +513,7 @@ export class BrowserExtensionExecutor {
     this.lastFacts=facts as FloorFacts&{visibility?:unknown};
     // Losing authority while looking is a stop, not a hand-off.
     this.authorized();
+    if(this.options.noLimits?.())return null;
     try{const result=classifyFloor(facts);if(!result.floor&&(facts as {recipientCapped?:boolean}).recipientCapped===true)return{floor:"consent",reason:"Murage could not read every recipient on this page, so the owner decides who this goes to.",rule:"recipient-scan-capped",unsure:true} as FloorResult;return result.floor?result:null;}
     catch{return classifyFloor({operation,factsFailed:true});}
   }
@@ -500,11 +559,18 @@ export class BrowserExtensionExecutor {
   private escaping=false;
   /** The page's HTML in slices, so a large page crosses the wire in pieces. */
   private async activeHtml(document:ExtensionDocument){
-    const total=Number(await this.evaluate(document,HTML_LENGTH_EXPRESSION));
-    if(!Number.isSafeInteger(total)||total<0)refuse("The page could not be read.");
-    const slice=120_000;let out="";
-    for(let at=0;at<total&&at<2_400_000;at+=slice)out+=String(await this.evaluate(document,htmlSliceExpression(at,at+slice)));
-    return out;
+    try {
+      const total=Number(await this.evaluate(document,HTML_LENGTH_EXPRESSION));
+      if(!Number.isSafeInteger(total)||total<0)refuse("The page could not be read.");
+      if(total>2*1024*1024)refuse("The page exceeds the read transport limit. No partial document was returned.");
+      const slice=120_000;let out="";
+      for(let at=0;at<total;at+=slice){
+        const chunk=await this.evaluate(document,htmlSliceExpression(at,Math.min(total,at+slice)));
+        if(typeof chunk!=="string"||chunk.length!==Math.min(slice,total-at))refuse("The saved page could not be read in full.");
+        out+=chunk;
+      }
+      return out;
+    } finally { await this.evaluate(document,HTML_RELEASE_EXPRESSION).catch(()=>{}); }
   }
   async call(name:unknown,args:unknown,outerScope?:CallScope):Promise<unknown>{
     // Some engines call an element reference `ref`; this tool names it `selector` (a reference starts with @).
@@ -522,8 +588,12 @@ export class BrowserExtensionExecutor {
     const scope:CallScope|undefined=outerScope?{...outerScope,signal:AbortSignal.any([outerScope.signal,callCancel.signal])}:undefined;
     this.scope=scope;
     try{
-      if(operation==="press"&&isClipboardKeyName(call.arguments.key))refuse("Pasting, copying and select-all are not available in the owner's browser. A paste could hand the page whatever the owner last copied.");
+      if(!this.options.noLimits?.()&&operation==="press"&&isClipboardKeyName(call.arguments.key))refuse("Pasting, copying and select-all are not available in the owner's browser. A paste could hand the page whatever the owner last copied.");
       this.authorized();document=await this.options.transport.document();
+      // Recovery after lending the browser may navigate an empty bootstrap tab.
+      // Check the actual document here, under execution ownership; a tool's URL
+      // or an earlier observation cannot exempt a populated page from snapshot.
+      if(scope?.bootstrapOnly && (operation!=="open" || document.url!=="about:blank"))refuse("Take a fresh browser snapshot before continuing on this page.");
       if(["tab_switch","tab_close"].includes(operation)&&typeof call.arguments.tab==="string")document=await this.backend().resolveTab(call.arguments.tab);
       let destination=typeof call.arguments.url==="string"?call.arguments.url:undefined;
       // SABLE-B 7.3: the page only here; the destination's one consent comes with the action, under the step lock.
@@ -555,10 +625,10 @@ export class BrowserExtensionExecutor {
           catch(error){if(error instanceof ReadLayerError)refuse(error.message);throw error;}
         }else target=typeof selector==="string"?await this.backend().resolveTarget(selector):await this.activeTarget(document);await this.stable(document);if(!sameDocument(target.document,document))refuse("The selected browser tab changed.");
         // The engine names the frame the node really lives in. Anything but the page's own frame is not Murage's to act in.
-        if(target.frameId!==undefined&&target.frameId!==document.frameId)refuse("This target is inside an embedded frame, which Murage does not act in. Take over to continue.");
+        if(!this.options.noLimits?.()&&target.frameId!==undefined&&target.frameId!==document.frameId)refuse("This target is inside an embedded frame, which Murage does not act in. Take over to continue.");
         {const first=await this.describe(target);({observed,bound,detail}=first);shapeStructure=first.structure;shapeEditable=first.editable;privHref=first.priv.href;shapeMacs=first.macs;shapeSkip=first.skip;}
         this.currentRole=String(detail.display.role||detail.display.tag||"element").toLowerCase();
-        // The hard floor comes before any card, in every mode.
+        // Below No limits, the hard floor comes before any card.
         const floor=await this.floorCheck(document,target,operation,typeof call.arguments.key==="string"?{key:call.arguments.key}:{});
         if(floor)await this.handOff(document,floor,operation,detail,scope);
       }
@@ -588,7 +658,7 @@ export class BrowserExtensionExecutor {
       // L1: the document that was admitted is the one the input may reach.
       if(!bootstrap&&!this.escaping&&this.mutation)this.loaderBase=await this.loaderId(document);
       if(!bootstrap&&!this.escaping)await this.guard(document,scope);
-      if(target){
+      if(target&&!this.options.noLimits?.()){
         const again=await this.describe(target);if(again.observed!==observed||again.bound!==bound)refuse("The target changed while waiting. Inspect it again before continuing.");
         // A page can change a button after the card: classify again, and drop the approval if it is now floor.
         const late=await this.floorCheck(document,target,operation,typeof call.arguments.key==="string"?{key:call.arguments.key}:{});
@@ -600,10 +670,10 @@ export class BrowserExtensionExecutor {
       const layer=this.layerOwnsRefs()?this.layerFor(document):undefined;
       const engineArgs=layer&&target&&typeof call.arguments.selector==="string"&&call.arguments.selector.startsWith("@")?{...call.arguments,selector:`node:${target.backendNodeId}`}:call.arguments;
       this.reading=operation==="read";
-      let output=operation==="read"?await readWithBrowserAuthority(call.arguments as EngineReadOptions,{fenceOrigin:document.origin,currentUrl:document.url,activeHtml:()=>this.activeHtml(document!),authorize:()=>this.options.authorize(),admitUrl:(url,signal)=>this.destination(url,document!,scope?{...scope,signal:signal?AbortSignal.any([scope.signal,signal]):scope.signal}:undefined)}):operation==="snapshot"&&layer?{content:[{type:"text",text:layer.fenced(await layer.snapshot()),murage:true}]}:await this.backend().call(call.name,engineArgs);
+      let output=operation==="read"?await routeBrowserRead("extension",call.arguments as EngineReadOptions,{documents:this.readDocuments,noLimits:this.options.noLimits,fenceOrigin:document.origin,currentUrl:document.url,activeHtml:()=>this.activeHtml(document!),authorize:()=>this.options.authorize(),admitUrl:(url,signal)=>this.destination(url,document!,scope?{...scope,signal:signal?AbortSignal.any([scope.signal,signal]):scope.signal}:undefined)}):operation==="snapshot"&&layer?{content:[{type:"text",text:layer.fenced(await layer.snapshot()),murage:true}]}:await this.backend().call(call.name,engineArgs);
       this.reading=false;if(operation==="read")output=markFenced(output);
       this.authorized();
-      if(operation==="close"){await this.engine?.close();this.engine=undefined;this.layers.clear();this.guardRegistered.clear();this.worlds.clear();return output;}
+      if(operation==="close"){this.readDocuments.clear();await this.engine?.close();this.engine=undefined;this.layers.clear();this.guardRegistered.clear();this.worlds.clear();return output;}
       // After an L2 or L3 action: what changed on the page, fenced, appended to the result.
       if(this.mutation&&layer){
         let diff:string|null=null;try{diff=await layer.diffSince();}catch{/* the action happened; the diff is a courtesy */}
@@ -653,5 +723,5 @@ export class BrowserExtensionExecutor {
     else if(method==="Page.javascriptDialogClosed"&&this.dialog?.tabId===tabId)this.dialog=undefined;
     this.engine?.event(tabId,epoch,method,params);
   }
-  async close(){await this.engine?.close();this.engine=undefined;this.refsDocument="";this.dialog=undefined;this.layers.clear();this.guardRegistered.clear();this.worlds.clear();}
+  async close(){this.readDocuments.dispose();await this.engine?.close();this.engine=undefined;this.refsDocument="";this.dialog=undefined;this.layers.clear();this.guardRegistered.clear();this.worlds.clear();}
 }

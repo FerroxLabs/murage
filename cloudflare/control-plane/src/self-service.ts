@@ -18,12 +18,15 @@
 //   GET  /v1/account/home/audit            this home's self-service log (customer, devices, watchdog)
 //   POST /v1/account/home/hold             fresh aal2: delete, start fresh or add a device, always behind the 72-hour hold
 //   POST /v1/account/home/hold/cancel      cancel a hold (sign-in is enough; any registered device can cancel too)
-//   POST /v1/account/export/download       fresh aal2: one-time download link and the archive key (AGE-SECRET-KEY-1...) for a ready export
+//   POST /v1/account/export/download       fresh aal2: one-time download link and the archive key (AGE-SECRET-KEY-1...) for a ready export;
+//                                          the same key comes back on each link until the client confirms it stored it
+//   POST /v1/account/export/key-confirm    fresh aal2: the client stored the key; the control plane drops it
 //   GET  /v1/export-download/<token>       the encrypted archive itself (the token is the credential: single purpose, 10 minutes, 3 uses)
 // Home side (machine credential, bound IP, current generation). Commands are a separate poll so the strict desired wire contract
 // (shared/cloud-control-shapes.json, additionalProperties false) is unchanged for homes that do not know them:
 //   GET  /v1/machines/<id>/commands        pending commands for this generation, oldest first; each is picked once and gets a run deadline
 //   POST /v1/machines/<id>/commands/ack    a command from GET commands ran (done, failed, unsupported); exactly once per command
+//   POST /v1/machines/<id>/update-state    the home's updater reports its installed sequence, lastResult and any Stuck code (optional: older homes never send it)
 //   POST /v1/machines/<id>/logs            redacted log lines for a collect_logs command, in chunks
 //   POST /v1/machines/<id>/export-ready    the encrypted export archive is in the home's backup space; carries its key once
 // The wire shapes on both sides are pinned by shared/self-service-contract.json (tested here and against deploy/cloud-home/murage-commands).
@@ -41,6 +44,7 @@
 // runs under the home's lease (billing-lease.ts) and is fenced by it; the watchdog takes the same lease, so it and the customer never act
 // on one home at once. Provider calls (reboot, start) re-check the lease, generation, lifecycle and job slot right before the call, and
 // record the intent first.
+import { refusedForAccount } from "./refusal";
 import { journalDispatch } from "./step-up-op";
 import { z } from "zod";
 import { b3Enabled } from "./b3-config";
@@ -58,9 +62,14 @@ import { boundCustomer, pinnedHome, pinnedLogsCommand, type Identity } from "./c
 import { HTTPError, json, type JSONValue } from "./http";
 import { sha256 } from "./installations";
 import { keyWrapperFor } from "./key-wrapper";
+import { auditedKeyUse, recordOwnProviderAction } from "./access-events";
 import { htmlOf, isoDate } from "./legal-flows";
+import { cancelMark, handoutGuard, joinHoldsView, joinRequired } from "./device-join";
+import { doorProofs } from "./door";
+import { CLOCK_SKEW_SECONDS } from "./supabase-jwt";
 import { readyPairHolds } from "./pairing";
-import { raiseAlert } from "./ops-monitor";
+import { persistAlert, raiseAlert, resolveAlertStatement } from "./ops-monitor";
+import { homeOnUnenrolledPoolServer } from "./pool-handoff";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -79,6 +88,7 @@ export const LIMITS = {
   hold: [[3, DAY]],
   hold_cancel: [[10, DAY]],
   export_download: [[10, DAY]],
+  export_key_confirm: [[20, DAY]],
   update: [[3, DAY]],
   reset: [[2, DAY]],
   reset_undo: [[2, DAY]],
@@ -91,6 +101,9 @@ export const LIMITS = {
   // Device management on My Cloud (devices.ts, CLOUD-DOOR-V2-DESIGN.md 3.2), keyed by the ACCOUNT id.
   devices_list: [[30, MINUTE]],
   devices_revoke: [[10, MINUTE]],
+  // Door device confirmation (device-join.ts): the owner's join view (40 a minute) and the resend (one a minute), keyed by the ACCOUNT id.
+  joins_get: [[40, MINUTE]],
+  joins_resend: [[1, MINUTE]],
 } as const satisfies Record<string, readonly (readonly [number, number])[]>;
 export type LimitName = keyof typeof LIMITS;
 
@@ -305,6 +318,8 @@ async function providerAction(env: Env, deps: SelfServiceDependencies, lease: Ho
     return "provider_error";
   }
   if (!server) return "no_server";
+  // KMS 10.1/12.2: never Start or Reboot a warm-pool server whose enrollment was not consumed; the claim path's checked power-on owns it.
+  try { if (await homeOnUnenrolledPoolServer(env.DB, h.id, h.resource_generation)) return "setting_up"; } catch { return "provider_error"; }
   // A start for a server that is already up is not sent (it could never be confirmed, and there is nothing to do): success.
   if (action === "start" && provider.server_up) {
     let up = false;
@@ -338,6 +353,11 @@ async function providerAction(env: Env, deps: SelfServiceDependencies, lease: Ho
     const actionId = answer && typeof answer.actionId === "string" ? answer.actionId : null;
     if (actionId) {
       await env.DB.prepare("UPDATE cloud_home_jobs SET action_id=? WHERE id=? AND kind='power' AND action_id IS NULL").bind(actionId, reservation).run();
+      // Our own action under the provider's id: the access sweep then finds it as ours. An operator's action is not recorded as routine.
+      if (actor !== "operator") {
+        await recordOwnProviderAction(env.DB, { homeId: h.id, generation: h.resource_generation, actionId, kind: "provider_power",
+          actor: actor === "customer" ? "owner" : "system", reason: action === "reboot" ? "server restarted by our reboot" : "server started by our start" });
+      }
     }
   }, () => { /* a refusal or a failure carries no receipt */ });
   let lateTimer: ReturnType<typeof setTimeout> | undefined;
@@ -566,12 +586,14 @@ async function activeJob(env: Env, homeId: string, now: number, deps?: SelfServi
 /** Admits a job for the home: the job row (the unique index is the slot), its command (fenced by generation) and whatever the caller
  *  adds, in one batch that keeps nothing unless all of it applied. 409 job_in_progress when the slot is taken. Returns the command id. */
 async function admitJob(env: Env, lease: HomeLease | null, h: Home, kind: JobKind, ref: string | null, commandKind: string,
-  payload: Record<string, JSONValue>, now: number, ttl: number, extra: (commandId: string) => Q[]): Promise<string> {
+  payload: Record<string, JSONValue>, now: number, ttl: number, extra: (commandId: string) => Q[], onlyIfRolling?: string): Promise<string> {
   const busy = await activeJob(env, h.id, now);
   if (busy) throw new HTTPError(409, "job_in_progress", { job: busy.kind });
   const id = crypto.randomUUID();
   try {
     await runBatch(env, lease, [
+      // A rollout dispatch inserts nothing once its release is no longer rolling: the guard rolls the whole batch back.
+      ...(onlyIfRolling ? holds("EXISTS (SELECT 1 FROM cloud_releases WHERE id=? AND state='rolling')", onlyIfRolling) : []),
       q("INSERT INTO cloud_home_jobs (id,home_id,kind,ref,generation,state,created_at) VALUES (?,?,?,?,?,'active',?)", id, h.id, kind, ref, h.generation, now),
       ...exactlyOne(commandQ(h, id, commandKind, payload, now, ttl)),
       ...extra(id),
@@ -627,6 +649,7 @@ const latestRun = (env: Env, homeId: string) => env.DB.prepare("SELECT * FROM cl
   .bind(homeId).first<RunRow>();
 
 async function status(env: Env, h: Home, now: number, deps: SelfServiceDependencies = {}): Promise<Response> {
+  const refused = await refusedForAccount(env, h.owner_id, now);
   const health = await env.DB.prepare("SELECT reported_at,disk_used_percent,last_backup_at,app_reported_at,app_ok_at,app_ok FROM cloud_home_health WHERE home_id=?")
     .bind(h.id).first<{ reported_at: number; disk_used_percent: number | null; last_backup_at: number | null } & AppHealth>();
   const holds = await env.DB.prepare(`SELECT id,action,started_at,completes_at,source FROM cloud_recovery_holds
@@ -650,22 +673,28 @@ async function status(env: Env, h: Home, now: number, deps: SelfServiceDependenc
     // Door v2 (r4.2): a running hold is "waiting" (completesAt); a completed, unspent pair hold stays listed as "ready" (readyUntil) or
     // "reserved" (an outstanding desktop door ticket holds it) until it is spent or lapses.
     holds: [...holds.results.map((x) => ({ holdId: x.id, action: x.action, startedAt: x.started_at, completesAt: x.completes_at, source: x.source,
-      state: "waiting" })), ...await readyPairHolds(env.DB, h.id, now)],
+      state: "waiting" })), ...await readyPairHolds(env.DB, h.id, now), ...(joinRequired(env) ? await joinHoldsView(env.DB, h.id, now) : [])],
     pendingCommands: commands.results.map((c) => ({ kind: c.kind, issuedAt: c.created_at })),
     job: running && running.kind !== "power" ? { kind: running.kind, startedAt: running.created_at } : null,
     export: job ? { requestId: job.request_id, state: job.state, requestedAt: job.requested_at, deliverBy: job.deliver_by, readyAt: job.ready_at,
       availableUntil: job.available_until, bytes: job.bytes, downloadedAt: job.downloaded_at } : null,
     provisioning,
+    // The checkout guard turned the home's latest order away (src/refusal.ts); null otherwise.
+    refused,
     reset: reset ? { resetId: reset.id, state: reset.state, requestedAt: reset.requested_at, doneAt: reset.done_at,
       undoUntil: reset.state === "done" && reset.keep_until > now ? reset.keep_until : null } : null,
   });
 }
 
+/** The one line a customer sees while their home waits for server capacity. House copy rules: no em dash, no safe or safety. */
+export const CAPACITY_LINE = "We are adding capacity. Your home will start as soon as it is ready.";
+
 async function provisioningView(env: Env, h: Home): Promise<JSONValue> {
   const a = await env.DB.prepare("SELECT attempts,next_at,last_error,gave_up_at,give_up_code FROM provision_attempts WHERE home_id=?").bind(h.id)
     .first<{ attempts: number; next_at: number; last_error: string | null; gave_up_at: number | null; give_up_code: string | null }>();
+  const noCapacity = a?.last_error === "no_capacity";
   return { state: h.desired_state, attempts: a?.attempts ?? 0, nextRetryAt: a && a.next_at > 0 ? a.next_at : null,
-    lastError: a?.last_error ?? null, gaveUpAt: a?.gave_up_at ?? null, refunded: h.entitlement === "refund_pending" || h.entitlement === "refunded" };
+    lastError: noCapacity ? null : a?.last_error ?? null, notice: noCapacity ? CAPACITY_LINE : null, gaveUpAt: a?.gave_up_at ?? null, refunded: h.entitlement === "refund_pending" || h.entitlement === "refunded" };
 }
 
 // ---- the Fix-it ladder ----------------------------------------------------------------------------------------------------------
@@ -790,6 +819,7 @@ async function direct(env: Env, deps: SelfServiceDependencies, h: Home, account:
     }
     const outcome = await providerAction(env, deps, lease, cur, action, "customer", account, null, now);
     await audit(env, h.id, "customer", account, action, outcome, {}, now);
+    if (outcome === "setting_up") throw new HTTPError(409, `${action}_setting_up`, { notice: CAPACITY_LINE });
     if (outcome !== "issued") throw new HTTPError(["provider_error", "provider_timeout", "provider_rejected"].includes(outcome) ? 502 : 409, `${action}_${outcome}`);
     return json({ action, state: "issued" }, 202);
   });
@@ -797,18 +827,60 @@ async function direct(env: Env, deps: SelfServiceDependencies, h: Home, account:
 
 // ---- Update my Cloud, Reset my Cloud, Undo reset ---------------------------------------------------------------------------------
 
+/** What the Update button says when there is nothing it may install: no release has been promoted past this home, so there is nothing newer. */
+export const UP_TO_DATE_WORDS = "You're on the latest version.";
+
+/** The newest sequence the rollout controller has promoted (every wave soaked), or null while none was. This is the only sequence a
+ *  customer's Update button ever installs; a release still rolling or halted is never offered to a customer. */
+export async function latestPromotedSequence(env: Env): Promise<number | null> {
+  const row = await env.DB.prepare("SELECT MAX(sequence) AS s FROM cloud_releases WHERE state='promoted'").first<{ s: number | null }>();
+  return row?.s ?? null;
+}
+
 async function updateSoftware(env: Env, deps: SelfServiceDependencies, h: Home, account: string, now: number): Promise<Response> {
   if (!ACTIVE_STATES.includes(h.desired_state)) throw new HTTPError(409, "home_inactive");
+  // Nothing promoted, or this home already reported the promoted sequence (or newer): there is nothing to install. Checked before any
+  // limit is charged and before a command exists; the home refuses any other sequence as well (murage-commands run_update).
+  const target = await latestPromotedSequence(env);
+  const seen = await env.DB.prepare("SELECT installed_sequence FROM cloud_home_update_reports WHERE home_id=? AND generation=?")
+    .bind(h.id, h.generation).first<{ installed_sequence: number | null }>();
+  if (target === null || (seen?.installed_sequence != null && seen.installed_sequence >= target)) {
+    throw new HTTPError(409, "up_to_date", { message: UP_TO_DATE_WORDS });
+  }
   await requireRunner(env, h);
   const busy = await activeJob(env, h.id, now, deps);
   if (busy) throw new HTTPError(409, "job_in_progress", { job: busy.kind });
   await limited(env, h, "update", "customer", account, "update", now);
   return underLease(env, h.id, async (lease) => {
     const cur = await currentHome(env, h);
-    const id = await admitJob(env, lease, cur, "update", null, "update_software", { keep: ["files", "settings", "logins"], reason: "customer" },
-      now, JOB_PICKUP_MS, (cmd) => [auditQ(h.id, "customer", account, "update", "queued", { commandId: cmd }, now)]);
+    const id = await admitJob(env, lease, cur, "update", null, "update_software", { keep: ["files", "settings", "logins"], reason: "customer", sequence: target },
+      now, JOB_PICKUP_MS, (cmd) => [auditQ(h.id, "customer", account, "update", "queued", { commandId: cmd, sequence: target }, now)]);
     return json({ action: "update", state: "queued", commandId: id, expiresAt: now + JOB_PICKUP_MS }, 202);
   });
+}
+
+/** SQL: a rollout command (update_software, reason "rollout") whose release is not rolling or promoted (halted, cancelled, draft, unknown). */
+export const ROLLOUT_COMMAND_STALE = `(kind='update_software' AND json_extract(payload,'$.reason')='rollout' AND NOT EXISTS (
+  SELECT 1 FROM cloud_releases r WHERE r.sequence=json_extract(payload,'$.sequence') AND r.state IN ('rolling','promoted')))`;
+
+/** The rollout controller's dispatch (rollout.ts): update_software with the release's TARGET sequence and reason "rollout", through the
+ *  same job slot, lease and generation fence as the customer's button. A refusal (busy, inactive, no runner yet) is returned, never
+ *  thrown: the controller leaves the home pending and tries again on its next pass. */
+export async function dispatchRolloutUpdate(env: Env, homeId: string, target: number, now: number, releaseId: string): Promise<{ commandId: string } | { refused: string }> {
+  const h = await env.DB.prepare("SELECT * FROM cloud_homes WHERE id=?").bind(homeId).first<Home>();
+  if (!h || !ACTIVE_STATES.includes(h.desired_state)) return { refused: "home_inactive" };
+  if (!await runnerKnown(env, h)) return { refused: "home_unsupported" };
+  try {
+    return await underLease(env, h.id, async (lease) => {
+      const cur = await currentHome(env, h);
+      const id = await admitJob(env, lease, cur, "update", null, "update_software", { keep: ["files", "settings", "logins"], reason: "rollout", sequence: target },
+        now, JOB_PICKUP_MS, (cmd) => [auditQ(h.id, "operator", null, "update", "queued", { commandId: cmd, sequence: target, reason: "rollout" }, now)], releaseId);
+      return { commandId: id };
+    });
+  } catch (e) {
+    if (e instanceof HTTPError) return { refused: e.code };
+    throw e;
+  }
 }
 
 /** Reset is reversible, so it never waits 72 hours: the home first keeps its current state as a tagged backup snapshot, then rebuilds
@@ -906,6 +978,20 @@ async function openHold(request: Request, env: Env, deps: SelfServiceDependencie
   // Type the home's name to confirm anything that loses data (SELF-SERVICE.md action 14).
   if (input.action !== "pair" && input.confirm !== h.id) throw new HTTPError(400, "confirmation_required");
   if (["deleting", "deleted"].includes(h.desired_state)) throw new HTTPError(409, "home_inactive");
+  // Door device confirmation: a No or Remove stamped join_cancel_at. For as long as a proof from before that mark could still be standing, a new
+  // pair hold needs a second step newer than the mark plus skew (the door asks the same of the ticket that spends it).
+  // The mark read here is also checked inside the hold's own insert batch (handoutGuard): a No that commits after this read aborts the insert.
+  let pairMark: number | null = null;
+  if (joinRequired(env) && input.action === "pair") {
+    const mark = await cancelMark(env.DB, h.id);
+    pairMark = mark;
+    if (mark > 0 && now - mark <= 2 * 3_600_000) {
+      const session = await identity.customer(request);
+      let at = 0;
+      try { if (session) at = Math.max(...(await doorProofs(request, env, identity, session, now)).map((p) => p.at)); } catch { at = 0; }
+      if (!(at > mark + CLOCK_SKEW_SECONDS * 1000)) throw new HTTPError(403, "step_up_required", { step_up: { reason: "email_code_required" } });
+    }
+  }
   const existing = await env.DB.prepare(`SELECT id,started_at,completes_at FROM cloud_recovery_holds WHERE home_id=? AND action=?
     AND completed_at IS NULL AND canceled_at IS NULL`).bind(h.id, input.action).first<{ id: string; started_at: number; completes_at: number }>();
   if (existing) {
@@ -922,7 +1008,13 @@ async function openHold(request: Request, env: Env, deps: SelfServiceDependencie
     // there is never a further charge. Cancelling the deletion later does not take the plan end back: only Keep my plan does.
     // Astra JOURNEY-B-1 #1: the hold, the cancellation intent and its receipt commit in ONE fenced transaction; Stripe is told after.
     const end = input.action === "delete" ? await deletionPlanEnd(env, h.id, now) : null;
-    const hold = await startHold(env, h, input.action as HoldAction, "customer", now, holdId, [env.DB.prepare(sql).bind(...(binds ?? [])), ...(end?.stmts ?? [])], lease);
+    const guard = pairMark === null ? [] : handoutGuard(env.DB, { homeId: h.id, mark: pairMark, mode: "hold", holdId: null });
+    const hold = await startHold(env, h, input.action as HoldAction, "customer", now, holdId, [env.DB.prepare(sql).bind(...(binds ?? [])), ...(end?.stmts ?? [])], lease, guard)
+      .catch(async (e) => {
+        // The guard aborted: a No moved the mark after this request read it. Ask for a newer second step rather than start a hold on an older proof.
+        if (pairMark !== null && await cancelMark(env.DB, h.id) !== pairMark) throw new HTTPError(403, "step_up_required", { step_up: { reason: "email_code_required" } });
+        throw e;
+      });
     const plan = end ? await confirmDeletionPlanEnd(env, deps.billing ?? {}, h.id, lease, end) : null;
     const planLine = plan ? planEndSentence(plan) : null;
     const text = `Someone signed in to your Murage Cloud account with your second factor and asked to ${ACTION_WORDS[input.action]}.\n\n`
@@ -1005,6 +1097,9 @@ async function completeDueHolds(env: Env, deps: SelfServiceDependencies, now: nu
 
 /** The only log messages kept: allowed diagnostic events, fixed text with bounded numbers or fixed words (shared/self-service-contract.json
  *  logEvents; the home's runner sends nothing else). Anything else a home uploads is replaced by "[1 line omitted]" before it is stored. */
+// Every word of this line is enumerated (no free text, no ids), so it is stored as is: the generic redact() below would
+// scrub its error codes (error=open-launcher-refused) and lose the one diagnostic the canary exists to give.
+const UI_CANARY_EVENT = String.raw`\[ui-canary\](?: (?:(?:stale-instance|teardown-unconfirmed|cleanup-busy-exit-75|instance-write-failed)|launch gen=\d{1,9} result=(?:ok|failed)(?: error=(?:(?:open|cdp-url|close|relay|browser|cdp)-(?:session-not-running|session-did-not-start|(?:session|endpoint-lookup|connect)-(?:timed-out|refused|failed)|unreachable|busy|stale-instance|launcher-refused|spawn-refused|spawn-error|unavailable|no-endpoint|no-page|error|disconnected|other|exit-(?:\d{1,3}|signal))|no-ui|timed-out|halted|aborted|other))?)){1,8}`;
 export const LOG_EVENTS = [
   String.raw`server started on port \d{1,5}`,
   String.raw`started scheduler in \d{1,7} ms`,
@@ -1022,6 +1117,8 @@ export const LOG_EVENTS = [
   String.raw`Cloud door page: (?:no_ticket|device_load|device_save|device_forget|refresh|bounce|v1_record|unexpected|unknown) (?:none|NotAllowedError|AbortError|InvalidStateError|SecurityError|NotSupportedError|ConstraintError|UnknownError|DataError|QuotaExceededError|TimeoutError|TypeError|NetworkError|OperationError|VersionError|ReadOnlyError|SyntaxError|unknown)`,
   String.raw`Cloud door page: device_open (?:timeout|blocked|error|unknown) (?:chrome|safari|firefox|edge|other|unknown)`,
   String.raw`Cloud owner factor: (?:owner_factor_issued|owner_factor_renewed|owner_factor_withheld)(?: (?:stale_proof|proof_kind_after_revoke))?`,
+  // The home UI canary (server/cloud-home/ui-canary.ts): one fixed-words tick line.
+  UI_CANARY_EVENT,
   String.raw`(?:Error|TypeError|RangeError|ReferenceError|SyntaxError|AbortError|TimeoutError)(?: \[ERR_[A-Z0-9_]{1,60}\])?`,
   String.raw`at (?:(?:async )?[A-Za-z0-9_$.<>\[\] ]{1,100} )?\(?(?:/opt/murage/[A-Za-z0-9_./@-]{1,200}|node:[a-z_/]{1,80}):\d{1,7}:\d{1,7}\)?`,
   String.raw`\[\d{1,4} lines? omitted\]`,
@@ -1030,6 +1127,13 @@ const LOG_EVENT_RES = LOG_EVENTS.map((p) => new RegExp(`^(?:${p})$`));
 export function allowedLogMessage(message: string): string {
   const text = message.replace(/[\u0000-\u001f\u007f]/g, " ").trim();
   return LOG_EVENT_RES.some((r) => r.test(text)) ? text : "[1 line omitted]";
+}
+
+const UI_CANARY_RE = new RegExp(`^(?:${UI_CANARY_EVENT})$`);
+/** What a home log line is stored as: an allowed event, then redact() again, except the fully enumerated UI canary line. */
+export function scrubLogMessage(message: string): string {
+  const text = allowedLogMessage(message);
+  return UI_CANARY_RE.test(text) ? text : redact(text);
 }
 
 /** Exactly the sources the home's runner maps its allow-listed units to (murage-commands LOG_UNITS); nothing else is accepted. */
@@ -1265,26 +1369,47 @@ async function exportDownloadLink(request: Request, env: Env, identity: Identity
   if (job.state !== "ready" || job.available_until === null || job.available_until <= now) throw new HTTPError(409, "export_not_ready");
   await limited(env, h, "export_download", "customer", account, "export_download", now);
   const archive = job.archive_id ?? job.request_id;
-  // The key is shown exactly once per archive (every request sharing it): whoever inserts the disclosure row gets it, in the same batch
-  // that drops the wrapped key. Later links download the same encrypted archive without it.
-  const shownBefore = await env.DB.prepare("SELECT 1 AS x FROM cloud_export_key_disclosures WHERE archive_id=?").bind(archive).first() !== null;
-  const keyBytes = !shownBefore && job.wrapped_key ? await keyWrapperFor(env).unwrap(h.id, job.wrapped_key) : null;
+  // The wrapped key stays until the client confirms it stored the identity (exportKeyConfirm): a response that never arrived is
+  // answered with the same key on the next link. Each unwrap is audited before the key service is called, and a failed audit write
+  // answers 503 audit_unavailable with nothing unwrapped.
+  const wrappedKey = job.wrapped_key;
+  const keyBytes = wrappedKey ? await auditedKeyUse(env.DB, { homeId: h.id, kind: "export_key_use", actor: "owner",
+    reason: "the owner asked to download a data export" }, () => keyWrapperFor(env).unwrap(h.id, wrappedKey)) : null;
   const token = b64url(crypto.getRandomValues(new Uint8Array(32)));
   // A step-up operation journals the link's issuance first (step-up-op.ts): a superseded runner stops here and discloses nothing.
   await journalDispatch(env, `export:${job.request_id}`);
-  const results = await env.DB.batch([
+  await env.DB.batch([
     env.DB.prepare("INSERT INTO cloud_export_downloads (token_hash,request_id,account_id,created_at,expires_at) VALUES (?,?,?,?,?)")
       .bind(await sha256(token), job.request_id, account, now, now + DOWNLOAD_TOKEN_MS),
     env.DB.prepare(keyBytes ? "INSERT OR IGNORE INTO cloud_export_key_disclosures (archive_id,account_id,disclosed_at) VALUES (?,?,?)"
       : "SELECT ?,?,? WHERE 0").bind(archive, account, now),
-    env.DB.prepare(keyBytes ? "UPDATE cloud_export_jobs SET wrapped_key=NULL WHERE archive_id=? OR request_id=?" : "SELECT ?,? WHERE 0").bind(archive, archive),
     env.DB.prepare("INSERT INTO selfservice_audit (id,home_id,actor,account_id,action,outcome,detail,at) VALUES (?,?,?,?,?,?,?,?)")
       .bind(crypto.randomUUID(), h.id, "customer", account, "export_download", keyBytes ? "link_and_key_issued" : "link_issued",
         JSON.stringify({ requestId: job.request_id }), now),
   ]);
-  const disclosed = keyBytes !== null && results[1].meta.changes === 1;
+  const disclosed = keyBytes !== null;
   return json({ url: `/v1/export-download/${token}`, expiresAt: now + DOWNLOAD_TOKEN_MS, key: disclosed ? ageIdentity(keyBytes) : null,
     keyFormat: "age-identity", keyShownBefore: !disclosed, format: job.format, bytes: job.bytes, sha256: job.sha256, availableUntil: job.available_until });
+}
+
+/** The client has stored the archive's identity: only now is the wrapped key dropped (for every request sharing the archive). Repeating
+ *  it is harmless. Fresh aal2 like the download (clearing the key is irreversible) and rate limited per home.
+ *  A key nobody confirms is still deleted when the export expires (the purge in the daily sweep). */
+async function exportKeyConfirm(request: Request, env: Env, identity: Identity, now: number): Promise<Response> {
+  await requireStepUp(request, env, identity);
+  const account = await customerAccount(request);
+  const input = await readJSON(request, requestIdBody);
+  const job = await env.DB.prepare(`SELECT j.request_id,j.archive_id,j.home_id ${OWNED_EXPORT} AND j.request_id=?`).bind(account, account, input.requestId)
+    .first<{ request_id: string; archive_id: string | null; home_id: string }>();
+  if (!job) throw new HTTPError(404, "not_found");
+  await limited(env, await loadHome(env.DB, job.home_id), "export_key_confirm", "customer", account, "export_key_confirm", now);
+  const archive = job.archive_id ?? job.request_id;
+  await env.DB.batch([
+    env.DB.prepare("UPDATE cloud_export_jobs SET wrapped_key=NULL WHERE archive_id=? OR request_id=?").bind(archive, archive),
+    env.DB.prepare("INSERT INTO selfservice_audit (id,home_id,actor,account_id,action,outcome,detail,at) VALUES (?,?,?,?,?,?,?,?)")
+      .bind(crypto.randomUUID(), job.home_id, "customer", account, "export_key_confirm", "key_cleared", JSON.stringify({ requestId: job.request_id }), now),
+  ]);
+  return json({ confirmed: true });
 }
 
 function boxFor(env: Env, deps: SelfServiceDependencies, boxId: number): StorageBoxAdapter | null {
@@ -1354,6 +1479,13 @@ export async function exportDownload(request: Request, env: Env, deps: SelfServi
 
 // ---- home-side routes -----------------------------------------------------------------------------------------------------------
 
+const MAX_SAFE_SEQUENCE = 9007199254740991;
+/** What the home's updater reports about itself (murage-commands report_update_state): the installed sequence, the journal's lastResult
+ *  and a Stuck code. All optional on the wire in the sense that an older home never sends it; a home that does sends exactly this. */
+const updateStateBody = z.object({ generation: z.number().int().positive(),
+  installedSequence: z.number().int().min(1).max(MAX_SAFE_SEQUENCE).nullable(),
+  lastResult: z.object({ commandId: z.string().uuid(), outcome: z.enum(["done", "failed"]), reason: z.string().regex(/^[a-z_]{1,64}$/).nullable() }).strict().nullable(),
+  stuck: z.string().regex(/^[a-z_]{1,64}$/).nullable() }).strict();
 const ackBody = z.object({ generation: z.number().int().positive(), commandId: z.string().uuid(),
   outcome: z.enum(["done", "failed", "unsupported"]) }).strict();
 const readyBody = z.object({ generation: z.number().int().positive(), commandId: z.string().uuid(), requestId: z.string().regex(/^[\w-]{1,128}$/),
@@ -1363,7 +1495,7 @@ interface CommandRow { id: string; kind: string; payload: string; acked_at: numb
   picked_at: number | null; run_deadline: number | null }
 
 export async function selfServiceMachineRoute(request: Request, env: Env, deps: SelfServiceDependencies = {}): Promise<Response | null> {
-  const m = /^\/v1\/machines\/([\w-]{1,128})\/(commands|commands\/ack|logs|export-ready)$/.exec(new URL(request.url).pathname);
+  const m = /^\/v1\/machines\/([\w-]{1,128})\/(commands|commands\/ack|logs|export-ready|update-state)$/.exec(new URL(request.url).pathname);
   if (!m) return null;
   if (request.method !== (m[2] === "commands" ? "GET" : "POST")) throw new HTTPError(405, "method_not_allowed");
   const h = await env.DB.prepare("SELECT * FROM cloud_homes WHERE id=?").bind(m[1]).first<Home>();
@@ -1377,7 +1509,7 @@ export async function selfServiceMachineRoute(request: Request, env: Env, deps: 
       env.DB.prepare(`INSERT INTO cloud_home_runner (home_id,generation,polled_at) VALUES (?,?,?)
         ON CONFLICT(home_id) DO UPDATE SET generation=excluded.generation,polled_at=excluded.polled_at`).bind(h.id, h.generation, now),
       env.DB.prepare(`UPDATE cloud_home_commands SET picked_at=?,run_deadline=?+CASE kind ${Object.entries(RUN_MS).map(([k, v]) => `WHEN '${k}' THEN ${v}`).join(" ")} ELSE ${COMMAND_TTL_MS} END
-        WHERE home_id=? AND generation=? AND acked_at IS NULL AND picked_at IS NULL AND expires_at>?`).bind(now, now, h.id, h.generation, now),
+        WHERE home_id=? AND generation=? AND acked_at IS NULL AND picked_at IS NULL AND expires_at>? AND NOT ${ROLLOUT_COMMAND_STALE}`).bind(now, now, h.id, h.generation, now),
     ]);
     const rows = await env.DB.prepare(`SELECT id,kind,payload,created_at,run_deadline FROM cloud_home_commands
       WHERE home_id=? AND generation=? AND acked_at IS NULL AND picked_at IS NOT NULL AND run_deadline>? ORDER BY created_at,rowid LIMIT 10`)
@@ -1419,12 +1551,38 @@ export async function selfServiceMachineRoute(request: Request, env: Env, deps: 
     if (job) await admitWaitingExports(env, now, h.id);
     return json({ acknowledged: true });
   }
+  if (m[2] === "update-state") {
+    const input = await readJSON(request, updateStateBody);
+    if (input.generation !== h.generation) throw new HTTPError(409, "stale_generation");
+    const before = await env.DB.prepare("SELECT last_command_id FROM cloud_home_update_reports WHERE home_id=?").bind(h.id).first<{ last_command_id: string | null }>();
+    const upsert = await env.DB.prepare(`INSERT INTO cloud_home_update_reports (home_id,generation,installed_sequence,last_command_id,last_outcome,last_reason,stuck,reported_at)
+      VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(home_id) DO UPDATE SET generation=excluded.generation,installed_sequence=excluded.installed_sequence,
+      last_command_id=excluded.last_command_id,last_outcome=excluded.last_outcome,last_reason=excluded.last_reason,stuck=excluded.stuck,reported_at=excluded.reported_at
+      WHERE cloud_home_update_reports.generation<=excluded.generation`)
+      .bind(h.id, input.generation, input.installedSequence, input.lastResult?.commandId ?? null, input.lastResult?.outcome ?? null,
+        input.lastResult?.reason ?? null, input.stuck, now).run();
+    if (upsert.meta.changes !== 1) throw new HTTPError(409, "stale_generation"); // a later generation already reported: this one must not touch its alerts
+    // Per-home alerts, from the report alone (whether or not a rollout is running): a Stuck updater needs a person (update.stuck, P5); a
+    // rolled-back update is a digest line (update.rolled_back), once per update, cleared by the next update that lands.
+    if (input.stuck !== null) {
+      await persistAlert(env, { homeId: h.id, kind: "update.stuck", severity: "high", detail: `the home's updater is stuck: ${input.stuck}` }, now);
+    } else {
+      await resolveAlertStatement(env.DB, h.id, "update.stuck", now).run();
+    }
+    if (input.lastResult?.outcome === "failed" && input.lastResult.commandId !== before?.last_command_id) {
+      await persistAlert(env, { homeId: h.id, kind: "update.rolled_back", severity: "medium",
+        detail: `an update rolled back (${input.lastResult.reason ?? "no reason recorded"}); the home kept its earlier version` }, now);
+    } else if (input.lastResult?.outcome === "done") {
+      await resolveAlertStatement(env.DB, h.id, "update.rolled_back", now).run();
+    }
+    return json({ recorded: true });
+  }
   if (m[2] === "logs") {
     const input = await readJSON(request, logsBody);
     const row = await command(input.commandId, input.generation, "collect_logs");
     if (row.acked_at !== null || row.run_deadline === null || row.run_deadline <= now) throw new HTTPError(409, "command_expired");
     // Allowed events only (anything else is reduced to the fact a line existed); then scrubbed again as a second line of defence.
-    const lines = input.lines.map((l) => ({ ...l, message: redact(allowedLogMessage(l.message)) }));
+    const lines = input.lines.map((l) => ({ ...l, message: scrubLogMessage(l.message) }));
     await env.DB.batch([
       ...(input.chunk === 0 ? [env.DB.prepare("DELETE FROM cloud_home_logs WHERE home_id=?").bind(h.id)] : []),
       env.DB.prepare(`INSERT INTO cloud_home_logs (home_id,chunk,command_id,lines,collected_at,expires_at) VALUES (?,?,?,?,?,?)
@@ -1480,7 +1638,7 @@ export async function selfServiceMachineRoute(request: Request, env: Env, deps: 
 
 export async function selfServiceRoute(request: Request, env: Env, identity: Identity, deps: SelfServiceDependencies = {}): Promise<Response | null> {
   const path = new URL(request.url).pathname;
-  if (path !== "/v1/account/home" && !path.startsWith("/v1/account/home/") && path !== "/v1/account/export/download" && path !== "/v1/account/usage"
+  if (path !== "/v1/account/home" && !path.startsWith("/v1/account/home/") && path !== "/v1/account/export/download" && path !== "/v1/account/export/key-confirm" && path !== "/v1/account/usage"
     && path !== "/v1/account/exports") return null;
   const method = request.method;
   const now = Date.now();
@@ -1496,6 +1654,7 @@ export async function selfServiceRoute(request: Request, env: Env, identity: Ide
     case "/v1/account/home/hold/cancel": return cancelCustomerHold(request, env, deps, now);
     case "/v1/account/home/logs/request": return requestLogs(request, env, identity, now);
     case "/v1/account/export/download": return exportDownloadLink(request, env, identity, now);
+    case "/v1/account/export/key-confirm": return exportKeyConfirm(request, env, identity, now);
     case "/v1/account/home/reset": return resetHome(request, env, deps, identity, now);
     case "/v1/account/home/reset/undo": return undoReset(request, env, deps, identity, now);
   }

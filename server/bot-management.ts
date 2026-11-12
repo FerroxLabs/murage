@@ -1,3 +1,4 @@
+import { serviceThreadNoLimits } from './service-no-limits.ts';
 import { assertHomeMove } from "./team-identities.ts";
 import { threadPartition, isHomePartition } from "./execution-audience.ts";
 import { createHash } from "node:crypto";
@@ -23,7 +24,9 @@ const requestSchema = z.discriminatedUnion("action", [
 const fail = (message: string, status = 403): never => { throw Object.assign(new Error(message), { status }); };
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
-export function mayInspectBot(sender: BotRecord, target: BotRecord): boolean {
+export function mayInspectBot(sender: BotRecord, target: BotRecord, noLimits = false): boolean {
+  if (noLimits) return true;
+  if (target.staged) return false;
   return sender.id === target.id || isWorkspaceChief(sender)
     || sender.chiefOfStaff === true && sectionKey(sender.section) === sectionKey(target.section)
     || !target.hidden && canReach(sender, target);
@@ -40,36 +43,41 @@ export function managedBotProfile(bot: BotRecord) {
   return { ...profile, revision: digest(profile), busy: Boolean(bot.busy) };
 }
 
-export function organizationRevision(store: Store, sender: BotRecord) {
-  return digest(store.bots.filter(bot => mayInspectBot(sender, bot))
+export function organizationRevision(store: Store, sender: BotRecord, noLimits = false) {
+  return digest(store.bots.filter(bot => mayInspectBot(sender, bot, noLimits))
     .map(bot => [bot.id, managedBotProfile(bot).revision]).sort(([a], [b]) => a.localeCompare(b)));
 }
 
 interface ManagementOptions {
   threadId?: string;
+  stage?: (target: BotRecord, fields: import('./bot-staging-types.ts').PendingBotRevision['fields'], revision: string) => { id: string; pendingReview: boolean; startsWhen: string };
   pendingWork: (bot: BotRecord) => boolean;
   validateSelection: (input: unknown, bot: BotRecord) => ModelSelection;
   validateLeader: (selection: ModelSelection) => void;
   revoke: (id: string) => void;
 }
 
-export function manageBot(store: Store, sender: BotRecord, input: unknown, options: ManagementOptions) {
-  if (options.threadId && sender.partitionedAt !== undefined && !isHomePartition(threadPartition(sender, options.threadId))) return fail(`Manage bots from ${sender.name}'s own team.`);
-  if (sender.hidden) return fail("This bot is archived and cannot manage the organization.");
+export function manageBot(store: Store, sender: BotRecord, input: { action: 'get'; botId: string }, options: ManagementOptions): { bot: Partial<ReturnType<typeof managedBotProfile>>; organizationRevision?: string };
+export function manageBot(store: Store, sender: BotRecord, input: unknown, options: ManagementOptions): { bot: Partial<ReturnType<typeof managedBotProfile>>; organizationRevision?: string } | { id: string; pendingReview: boolean; startsWhen: string };
+export function manageBot(store: Store, sender: BotRecord, input: unknown, options: ManagementOptions): { bot: Partial<ReturnType<typeof managedBotProfile>>; organizationRevision?: string; effective?: string } | { id: string; pendingReview: boolean; startsWhen: string } {
+  const noLimits = Boolean(options.threadId && serviceThreadNoLimits(options.threadId, sender.id));
+  if (!noLimits && options.threadId && sender.partitionedAt !== undefined && !isHomePartition(threadPartition(sender, options.threadId))) return fail(`Manage bots from ${sender.name}'s own team.`);
+  if (sender.hidden || sender.staged) return fail("This bot is archived and cannot manage the organization.");
   const parsed = requestSchema.safeParse(input);
   if (!parsed.success) return fail("Invalid bot-management request. Security settings cannot be changed here.", 400);
   const request = parsed.data;
   const target = store.bot(request.botId);
-  if (!target || !mayInspectBot(sender, target)) return fail("That bot is not in your permitted organization.", 404);
-  if (target.partitionedAt !== undefined) {
+  if (!target || !mayInspectBot(sender, target, noLimits)) return fail("That bot is not in your permitted organization.", 404);
+  if (!noLimits && target.partitionedAt !== undefined) {
     if (request.action === "move") assertHomeMove(target, request.section);
     if (request.action === "get") return { bot: { id: undefined, name: target.name, busy: Boolean(target.busy) } };
     return fail(`Only you can manage ${target.name}.`);
   }
-  const organization = organizationRevision(store, sender);
-  if (request.action === "get") return { bot: managedBotProfile(target), organizationRevision: organization };
-  if (!sender.chiefOfStaff || sender.hidden || isWorkspaceChief(target)
-    || !isWorkspaceChief(sender) && (target.chiefOfStaff || sectionKey(sender.section) !== sectionKey(target.section))) {
+  const organization = organizationRevision(store, sender, noLimits);
+  if (request.action === "get") return { bot: { ...managedBotProfile(target), ...(target.pendingRevision ? { pendingReview: true } : {}) }, organizationRevision: organization };
+  if (!noLimits && target.staged) return fail("This bot is waiting for your review.", 409);
+  if (!noLimits && (!sender.chiefOfStaff || sender.hidden || isWorkspaceChief(target)
+    || !isWorkspaceChief(sender) && (target.chiefOfStaff || sectionKey(sender.section) !== sectionKey(target.section)))) {
     return fail("Only the responsible team lead or Chief of Staff can manage this bot. The owner controls the Chief of Staff.");
   }
   if (managedBotProfile(target).revision !== request.revision) return fail("This bot changed. Read its current profile before applying the update.", 409);
@@ -95,29 +103,33 @@ export function manageBot(store: Store, sender: BotRecord, input: unknown, optio
     if (request.modelSelection !== undefined) {
       patch.modelSelection = options.validateSelection(request.modelSelection, target);
       if (target.chiefOfStaff) options.validateLeader(patch.modelSelection);
-      options.revoke(target.id);
     }
+    if (options.stage) return options.stage(target, { ...(patch.name !== undefined ? { name: patch.name } : {}), ...(patch.title !== undefined ? { role: patch.title } : {}), ...(patch.description !== undefined ? { instructions: patch.description } : {}), ...(patch.modelSelection ? { modelSelection: patch.modelSelection } : {}) }, request.revision);
+    if (patch.modelSelection) options.revoke(target.id);
     store.patchBot(target.id, patch);
   } else if (request.action === "archive" || request.action === "restore") {
     if (target.chiefOfStaff) fail("Choose another team lead before archiving or restoring a leadership role.", 409);
     if (request.action === "restore" && store.bots.some(bot => bot.id !== target.id && !bot.hidden
       && sectionKey(bot.section) === sectionKey(target.section) && bot.name.toLowerCase() === target.name.toLowerCase())) fail("That name is already used in this team.", 409);
+    if (request.action === 'restore' && options.stage) return options.stage(target, { restore: true }, request.revision);
     options.revoke(target.id);
     store.patchBot(target.id, { hidden: request.action === "archive" });
   } else if (request.action === "move") {
     if (!isWorkspaceChief(sender)) fail("Only the Chief of Staff can move bots between teams.");
     if (target.hidden || target.individual) fail("Restore this bot or have the owner change its individual role before moving it.", 409);
+    if (options.stage) return options.stage(target, { section: request.section }, request.revision);
     const moved = store.setBotsSection([target.id], request.section);
     if (!moved.ok) fail("The destination is unavailable or already has a team lead.", 409);
     options.revoke(target.id);
   } else {
-    if (!isWorkspaceChief(sender) || target.id === sender.id) fail("Only the Chief of Staff can appoint a team lead.");
+    if (!noLimits && (!isWorkspaceChief(sender) || target.id === sender.id)) fail("Only the Chief of Staff can appoint a team lead.");
     if (target.hidden) fail("Restore this bot before appointing it as lead.", 409);
     const affected = store.bots.filter(bot => sectionKey(bot.section) === sectionKey(target.section) && bot.chiefOfStaff && !isWorkspaceChief(bot));
     affected.forEach(idle);
     options.validateLeader(target.modelSelection);
+    if (options.stage) return options.stage(target, { lead: true }, request.revision);
     store.setChiefOfStaff(target.id, undefined, "section");
     for (const bot of [...affected, target]) options.revoke(bot.id);
   }
-  return { bot: managedBotProfile(store.bot(target.id)!), organizationRevision: organizationRevision(store, sender), effective: "next turn" };
+  return { bot: managedBotProfile(store.bot(target.id)!), organizationRevision: organizationRevision(store, sender, noLimits), effective: "next turn" };
 }

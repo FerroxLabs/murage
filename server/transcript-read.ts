@@ -20,8 +20,8 @@ export class TranscriptReader {
   private stopped = false;
   private closing?: Promise<void>;
   private file: string;
-  private options: { workerPath?: string; gate?: SharedArrayBuffer };
-  constructor(file: string, options: { workerPath?: string; gate?: SharedArrayBuffer } = {}) {
+  private options: { createWorker?: () => Worker; gate?: SharedArrayBuffer };
+  constructor(file: string, options: { createWorker?: () => Worker; gate?: SharedArrayBuffer } = {}) {
     this.file = file; this.options = options;
   }
 
@@ -37,7 +37,7 @@ export class TranscriptReader {
     return new Promise((resolve, reject) => {
       try {
         if (!this.worker) {
-          const worker = new Worker(this.options.workerPath ?? SPAWNED_PROXIES.transcriptReadWorker, { workerData: { file: this.file, gate: this.options.gate } });
+          const worker = this.options.createWorker ? this.options.createWorker() : new Worker(SPAWNED_PROXIES.transcriptReadWorker, { workerData: { file: this.file, gate: this.options.gate } });
           this.worker = worker;
           worker.on("message", (message: { id: number; result: ForgottenPage; error?: string }) => {
             const entry = this.pending.get(message.id);

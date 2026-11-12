@@ -56,7 +56,7 @@ describe("Gemini personal setup isolation", () => {
     expect(existsSync(join(g, "tmp"))).toBe(false);
     expect(lstatSync(join(g, "oauth_creds.json")).isSymbolicLink()).toBe(true);
     const settings = JSON.parse(readFileSync(join(g, "settings.json"), "utf8"));
-    expect(settings).toEqual({ security: { auth: { selectedType: "oauth-personal" } }, model: { name: "gemini-3.7-flash" } });
+    expect(settings).toEqual({ tools: { exclude: ["web_fetch"] }, security: { auth: { selectedType: "oauth-personal" } }, model: { name: "gemini-3.7-flash" } });
     // the owner's files are untouched
     expect(JSON.parse(readFileSync(join(home, ".gemini", "settings.json"), "utf8")).mcpServers["personal-a"]).toEqual({ command: "x" });
     expect(readFileSync(join(home, ".gemini", "GEMINI.md"), "utf8")).toBe("personal rules");
@@ -70,7 +70,46 @@ describe("Gemini personal setup isolation", () => {
     isolateGeminiFromPersonalSetup(later);
     expect(later.GEMINI_CLI_HOME).toBe(scoped);
     expect(readFileSync(join(scoped, ".gemini", "google_accounts.json"), "utf8")).toBe("{}");
-    expect(JSON.parse(readFileSync(join(g, "settings.json"), "utf8"))).toEqual({ model: { name: "gemini-3.8" } });
+    expect(JSON.parse(readFileSync(join(g, "settings.json"), "utf8"))).toEqual({ model: { name: "gemini-3.8" }, tools: { exclude: ["web_fetch"] } });
+  });
+
+  it("E6 No limits removes Gemini native exclusions, sandbox and folder trust without changing lower scopes", () => {
+    ensureDirs();
+    const home = geminiHome();
+    const path = join(home, ".gemini", "settings.json");
+    const original = JSON.stringify({ general: { defaultApprovalMode: "plan" }, tools: { exclude: ["run_shell_command", "write_file"], sandbox: true }, security: { folderTrust: { enabled: true }, auth: { selectedType: "oauth-personal" } } });
+    writeFileSync(path, original);
+    const lower = { HOME: home } as Record<string, string | undefined>;
+    isolateGeminiFromPersonalSetup(lower, "owner-bot", true);
+    const upper = { HOME: home } as Record<string, string | undefined>;
+    isolateGeminiFromPersonalSetup(upper, "owner-bot", true, true);
+    const settings = JSON.parse(readFileSync(join(upper.GEMINI_CLI_HOME!, ".gemini", "settings.json"), "utf8"));
+    expect(settings.tools).toEqual({ exclude: ["web_fetch"], sandbox: false });
+    expect(settings.general.defaultApprovalMode).toBe("default");
+    expect(settings.security).toEqual({ folderTrust: { enabled: false }, toolSandboxing: false, auth: { selectedType: "oauth-personal" } });
+    expect(upper.GEMINI_CLI_HOME).not.toBe(lower.GEMINI_CLI_HOME);
+    const stillLower = JSON.parse(readFileSync(join(lower.GEMINI_CLI_HOME!, ".gemini", "settings.json"), "utf8"));
+    expect(stillLower.tools.exclude).toContain("run_shell_command");
+    expect(stillLower.security.folderTrust.enabled).toBe(true);
+    expect(readFileSync(path, "utf8")).toBe(original);
+  });
+
+  it("E6 No limits removes native auto-allow rules so calls reach Murage's wipe verdict", () => {
+    const owner = { tools: { allowed: ["run_shell_command", "write_file"] } };
+    expect((filterGeminiSettings(owner, true).tools as Record<string, unknown>).allowed).toBeUndefined();
+    expect((filterGeminiSettings(owner).tools as Record<string, unknown>).allowed).toEqual(owner.tools.allowed);
+  });
+
+  it("E6 No limits overrides Gemini's inherited sandbox environment and restores it on downgrade", () => {
+    ensureDirs(); const home = geminiHome();
+    writeFileSync(join(home, ".gemini", "settings.json"), JSON.stringify({ security: { toolSandboxing: true } }));
+    const env: Record<string, string | undefined> = { HOME: home, GEMINI_SANDBOX: "docker" };
+    isolateGeminiFromPersonalSetup(env, "sandbox-bot", true, true);
+    expect(env.GEMINI_SANDBOX).toBe("false");
+    expect(JSON.parse(readFileSync(join(env.GEMINI_CLI_HOME!, ".gemini", "settings.json"), "utf8")).security.toolSandboxing).toBe(false);
+    isolateGeminiFromPersonalSetup(env, "sandbox-bot", true);
+    expect(env.GEMINI_SANDBOX).toBe("docker");
+    expect(JSON.parse(readFileSync(join(env.GEMINI_CLI_HOME!, ".gemini", "settings.json"), "utf8")).security.toolSandboxing).toBe(true);
   });
 
   it("stable per-bot state: what Gemini wrote in a scope survives a settings edit, a first sign-in lands in the owner's folder, and bots do not share state", () => {
@@ -98,13 +137,32 @@ describe("Gemini personal setup isolation", () => {
     expect(again.GEMINI_CLI_HOME).toBe(a.GEMINI_CLI_HOME);
     expect(readFileSync(join(ga, "tmp", "chats", "s1.json"), "utf8")).toBe("SESSION-A");
     expect(existsSync(join(gb, "tmp", "chats"))).toBe(false);
-    expect(JSON.parse(readFileSync(join(ga, "settings.json"), "utf8"))).toEqual({ model: { name: "other" } });
+    expect(JSON.parse(readFileSync(join(ga, "settings.json"), "utf8"))).toEqual({ model: { name: "other" }, tools: { exclude: ["web_fetch"] } });
     // a probe's shared scope is replaced by the bot's own on a bot turn
     const probe: Record<string, string | undefined> = { HOME: home };
     isolateGeminiFromPersonalSetup(probe);
     expect(probe.GEMINI_CLI_HOME).not.toBe(a.GEMINI_CLI_HOME);
     isolateGeminiFromPersonalSetup(probe, "bot-a");
     expect(probe.GEMINI_CLI_HOME).toBe(a.GEMINI_CLI_HOME);
+  });
+
+  it("N5 Gemini keeps the same native chats across Full access and No limits without sharing another bot", () => {
+    ensureDirs(); const home = geminiHome();
+    const lower: Record<string, string | undefined> = { HOME: home };
+    isolateGeminiFromPersonalSetup(lower, "state-bot", true);
+    const state = join(lower.GEMINI_CLI_HOME!, ".gemini", "tmp", "workspace", "chats");
+    mkdirSync(state, { recursive: true }); writeFileSync(join(state, "session.json"), "BEFORE-NO-LIMITS");
+    const upper: Record<string, string | undefined> = { HOME: home };
+    isolateGeminiFromPersonalSetup(upper, "state-bot", true, true);
+    const same = join(upper.GEMINI_CLI_HOME!, ".gemini", "tmp", "workspace", "chats", "session.json");
+    expect(readFileSync(same, "utf8")).toBe("BEFORE-NO-LIMITS");
+    writeFileSync(same, "AFTER-NO-LIMITS");
+    isolateGeminiFromPersonalSetup(upper, "state-bot", true);
+    expect(upper.GEMINI_CLI_HOME).toBe(lower.GEMINI_CLI_HOME);
+    expect(readFileSync(join(state, "session.json"), "utf8")).toBe("AFTER-NO-LIMITS");
+    const other: Record<string, string | undefined> = { HOME: home };
+    isolateGeminiFromPersonalSetup(other, "other-bot", true, true);
+    expect(existsSync(join(other.GEMINI_CLI_HOME!, ".gemini", "tmp", "workspace", "chats", "session.json"))).toBe(false);
   });
 
   it("retires unused scopes with limits: a long-idle one goes (its stranded login saved first), a recently used one stays", () => {
@@ -161,7 +219,7 @@ describe("Gemini personal setup isolation", () => {
     };
     expect(filterGeminiSettings(owner)).toEqual({
       mcp: { keep: 1 },
-      tools: { exclude: ["run_shell_command"], sandbox: true },
+      tools: { exclude: ["run_shell_command", "web_fetch"], sandbox: true },
       context: { other: "x" },
       security: { auth: { selectedType: "oauth-personal" } }, model: { name: "m" },
     });
@@ -185,7 +243,7 @@ describe("Gemini personal setup isolation", () => {
     const a: Record<string, string | undefined> = { HOME: empty };
     isolateGeminiFromPersonalSetup(a, "bot-first", true);
     expect(a.GEMINI_CLI_HOME!.startsWith(scopedCliHomeRoot("gemini"))).toBe(true);
-    expect(JSON.parse(readFileSync(join(a.GEMINI_CLI_HOME!, ".gemini", "settings.json"), "utf8"))).toEqual({});
+    expect(JSON.parse(readFileSync(join(a.GEMINI_CLI_HOME!, ".gemini", "settings.json"), "utf8"))).toEqual({ tools: { exclude: ["web_fetch"] } });
     // a first bot turn writes only into its scope: no dangling login links into a folder that is not there, nothing in the owner's home
     for (const login of GEMINI_LOGIN_ENTRIES) expect(existsSync(join(a.GEMINI_CLI_HOME!, ".gemini", login))).toBe(false);
     expect(existsSync(join(empty, ".gemini"))).toBe(false);
@@ -216,7 +274,7 @@ describe("Gemini personal setup isolation", () => {
       expect(env.GEMINI_CLI_HOME!.startsWith(scopedCliHomeRoot("gemini"))).toBe(true);
     }
     const g = join(bot.GEMINI_CLI_HOME!, ".gemini");
-    expect(JSON.parse(readFileSync(join(g, "settings.json"), "utf8"))).toEqual({ model: "m" });
+    expect(JSON.parse(readFileSync(join(g, "settings.json"), "utf8"))).toEqual({ model: "m", tools: { exclude: ["web_fetch"] } });
     expect(readFileSync(join(g, "oauth_creds.json"), "utf8")).toBe("EXPLICIT-LOGIN"); // linked to the explicit home's login
     expect(existsSync(join(g, "GEMINI.md"))).toBe(false);
     // the probe's shared scope was built from the same source, so the bot's rebuild keeps it even though the env named the scope
@@ -227,6 +285,29 @@ describe("Gemini personal setup isolation", () => {
     expect(readFileSync(join(owner, ".gemini", "GEMINI.md"), "utf8")).toBe("PERSONAL");
     expect(JSON.parse(readFileSync(join(owner, ".gemini", "settings.json"), "utf8")).mcpServers).toBeTruthy();
   });
+
+  it("E6 native launch receives the No limits scope through the ACP core", async () => {
+    ensureDirs();
+    const home = geminiHome();
+    writeFileSync(join(home, ".gemini", "settings.json"), JSON.stringify({ general: { defaultApprovalMode: "plan" }, tools: { exclude: ["run_shell_command"], sandbox: true }, security: { folderTrust: { enabled: true } } }));
+    const dump = join(home, "native-no-limits.json");
+    const instance = await GeminiAgentDriver.create({ instanceId: "gem-nl", displayName: "Gemini", enabled: true,
+      config: GeminiAgentDriver.decodeConfig({ cli }),
+      environment: { HOME: home, GEMINI_SANDBOX: "docker", GEMINI_API_KEY: "fixture-only", FAKE_ACP_MODE: "happy", FAKE_ACP_DUMP: dump, FAKE_ACP_MODELS: "fixture-model" } });
+    const recorder = recordEvents(instance.adapter);
+    try {
+      const sent = await instance.adapter.sendTurn({ threadId: "gem-native-nl", text: "hello", cwd: home, noLimits: true, stopLine: true });
+      expect(await recorder.until(e => e.type === "turn.completed" && e.turnId === sent.turnId)).toMatchObject({ ok: true });
+      const spawned = JSON.parse(readFileSync(dump, "utf8"));
+      expect(spawned.argv).toContain("--approval-mode");
+      expect(spawned.argv[spawned.argv.indexOf("--approval-mode") + 1]).toBe("default");
+      expect(spawned.env.GEMINI_SANDBOX).toBe("false");
+      const settings = JSON.parse(readFileSync(join(spawned.env.GEMINI_CLI_HOME, ".gemini", "settings.json"), "utf8"));
+      expect(settings.tools).toEqual({ exclude: ["web_fetch"], sandbox: false });
+      expect(settings.security.folderTrust.enabled).toBe(false);
+      expect(settings.security.toolSandboxing).toBe(false);
+    } finally { recorder.stop(); await instance.dispose(); }
+  }, 30_000);
 
   it("a bot turn spawns with the scoped home and still mounts Murage's servers", async () => {
     ensureDirs();
@@ -252,10 +333,10 @@ describe("Gemini personal setup isolation", () => {
 describe("Qwen personal setup isolation", () => {
   it("allows only the servers Murage mounts, drops extensions and skills, and fails open on an unknown or old CLI", () => {
     expect(qwenIsolationArgs(["agents", "computer"], "0.15.6")).toEqual([
-      "--allowed-mcp-server-names=agents", "--allowed-mcp-server-names=computer", "-e", "none", "--exclude-tools=skill", "--approval-mode", "default",
+      "--allowed-mcp-server-names=agents", "--allowed-mcp-server-names=computer", "-e", "none", "--exclude-tools=skill", "--exclude-tools=web_fetch", "--approval-mode", "default",
     ]);
     // no Murage servers: a name nothing matches, because an empty allow list means every server
-    expect(qwenIsolationArgs([], "0.10.0")).toEqual(["--allowed-mcp-server-names=murage-no-servers", "-e", "none", "--exclude-tools=skill", "--approval-mode", "default"]);
+    expect(qwenIsolationArgs([], "0.10.0")).toEqual(["--allowed-mcp-server-names=murage-no-servers", "-e", "none", "--exclude-tools=skill", "--exclude-tools=web_fetch", "--approval-mode", "default"]);
     expect(qwenIsolationArgs(undefined, "1.2.3")[0]).toBe("--allowed-mcp-server-names=murage-no-servers");
     // fails closed: an older, unknown or unreadable Qwen is rejected (update-required), never started without the switches
     for (const version of ["0.9.9", undefined, "not a version"]) {

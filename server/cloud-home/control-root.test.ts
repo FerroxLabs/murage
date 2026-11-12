@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import cloudControlShapes from "../../shared/cloud-control-shapes.json" with { type: "json" };
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
@@ -20,7 +20,7 @@ const homeKey = { algorithm: "ES256", payload, signature: sign("sha256", Buffer.
 const lease = { wire: 1, installationId: "installation-test", holder: "home-test", generation: 1, expiresAt: clock.wallMs + 3_600_000, renewAfterMs: 60_000, ttlMs: 3_600_000, skewMs: 120_000 };
 const desired = { wire: 1, homeId: "home-test", generation: 1, desiredState: "ready", engineSubscriptionGates: { claudeAgent: true, codex: true, grokAgent: true, kimiAgent: true, opencodeGo: true }, lease: { holder: "home-test", generation: 1, expiresAt: lease.expiresAt }, executionAllowed: true, heartbeatFresh: true, heartbeatEveryMs: 60_000, homeKey };
 interface Snapshot { homeId: string; cpGeneration: number; requestSend: { wallMs: number; bootMs: number; monoMs: number }; conservativeDeadlineBootMs: number; receivedAt: number; desired: typeof desired }
-interface Result { refused: boolean; invalidated: boolean; requests: Array<{ operation: string; body: unknown }>; snapshots: Snapshot[]; files: Record<string, unknown>; clock?: typeof clock; ticks?: number; publicationOrder?: string[] }
+interface Result { refused: boolean; invalidated: boolean; requests: Array<{ operation: string; body: unknown }>; snapshots: Snapshot[]; files: Record<string, unknown>; clock?: typeof clock; ticks?: number; publicationOrder?: string[]; extra?: { pending: [string, string] | null; tree: Record<string, string | [string, string]>; logs: string[]; subkey: string; environ: string } }
 
 interface Shape {
   type?: string; const?: unknown; enum?: unknown[]; anyOf?: Shape[];
@@ -58,7 +58,7 @@ function run(scenario: string, helper?: string, homeEnvExtra = ""): Result {
     writeFileSync(join(root, "state/generation"), "1\n", { mode: 0o600 });
     writeFileSync(join(root, "config/home.env"), "MURAGE_CLOUD_ROLE=home\nMURAGE_CLOUD_MACHINE_ID=home-test\nMURAGE_CLOUD_ADMIN_URL=https://admin.murage.test\nMURAGE_PUBLIC_ORIGIN=https://home.murage.test\n" + homeEnvExtra, { mode: 0o600 });
     writeFileSync(join(root, "config/control-plane-public-key.json"), JSON.stringify(publicJwk), { mode: 0o644 });
-    const result = spawnSync("python3", ["-I", fixture, program, root, scenario], { input: JSON.stringify({ credential, clock, lease, desired, helper }), encoding: "utf8", timeout: 10_000 });
+    const result = spawnSync("python3", ["-I", fixture, program, root, scenario], { windowsHide: true, input: JSON.stringify({ credential, clock, lease, desired, helper }), encoding: "utf8", timeout: 10_000 });
     expect(result.status, result.stderr).toBe(0); expect(result.stderr).toBe("");
     expect(result.stdout).not.toContain(credential);
     return JSON.parse(result.stdout) as Result;
@@ -142,7 +142,7 @@ it.skipIf(process.platform !== "linux")("Linux helper compiles and executes actu
   const root = mkdtempSync(join(process.cwd(), ".clock-fixture-")); chmodSync(root, 0o755);
   try {
     const helper = join(root, "murage-clock");
-    const built = spawnSync("cc", ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", clockSource, "-o", helper], { encoding: "utf8" });
+    const built = spawnSync("cc", ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", clockSource, "-o", helper], { windowsHide: true, encoding: "utf8" });
     expect(built.status, built.stderr).toBe(0); chmodSync(helper, 0o755);
     const result = run("helper", helper); expect(result.clock).toMatchObject({ ntpSynced: expect.any(Boolean), bootId: expect.any(String) });
     expect(result.clock!.bootMs).toBeGreaterThanOrEqual(result.clock!.monoMs - 1);
@@ -156,4 +156,71 @@ it("binding set check: 4 fields and 4 plus the optional site origin are accepted
   expect(run("valid").refused).toBe(false);
   expect(run("valid", undefined, "MURAGE_SITE_ORIGIN=https://murage.ai\n").refused).toBe(false);
   const unknown = run("valid", undefined, "MURAGE_SITE_ORIGIN_X=https://murage.ai\n"); expect(unknown.refused).toBe(true); expect(unknown.requests).toEqual([]);
+});
+
+describe("Flux sub-key delivery through the root poller", () => {
+  it("fetches the sub-key when renewal is due, hands it over only in a 0770 dir / 0640 file (group = the supervisor, no chown), and sends NO ack before the supervisor's receipt", () => {
+    const result = run("renewal-due"); expect(result.refused).toBe(false);
+    expect(result.requests.map(r => r.operation)).toEqual(["lease", "heartbeat", "desired", "flux/subkey"]);
+    expect(result.requests.at(-1)!.body).toEqual({ generation: 1, op_id: "renew:home-test:1:1" });
+    const tree = result.extra!.tree, delivered = tree["flux-subkey/key.json"] as [string, string];
+    expect(tree["flux-subkey"]).toBe("0o770");
+    expect(delivered[0]).toBe("0o640");
+    expect(JSON.parse(delivered[1])).toEqual({ key: result.extra!.subkey, generation: 2, expiresAt: "2030-01-01T00:00:00Z", capUsd: 5, op_id: "renew:home-test:1:1" });
+    // The root-only pending record (0600) survives a restart and carries identifiers, never the key.
+    expect(result.extra!.pending![0]).toBe("0o600");
+    expect(JSON.parse(result.extra!.pending![1])).toMatchObject({ generation: 1, op_id: "renew:home-test:1:1", key_generation: 2 });
+    expect(result.extra!.pending![1]).not.toContain(result.extra!.subkey);
+  });
+  it("finding 8: further polls with no supervisor receipt mint nothing and acknowledge nothing", () => {
+    const ops = run("renewal-unsealed").requests.map(r => r.operation);
+    expect(ops.filter(op => op === "flux/subkey")).toHaveLength(1);
+    expect(ops.filter(op => op === "flux/subkey/ack")).toHaveLength(0);
+  });
+  it("finding 8: once the receipt exists the next poll acknowledges, once, and clears the pending record and receipt", () => {
+    const result = run("renewal-sealed");
+    expect(result.requests.map(r => r.operation)).toEqual(["lease", "heartbeat", "desired", "flux/subkey", "lease", "heartbeat", "desired", "flux/subkey/ack"]);
+    expect(result.requests.find(r => r.operation === "flux/subkey/ack")!.body).toEqual({ generation: 1, op_id: "renew:home-test:1:1", key_generation: 2 });
+    expect(result.extra!.pending).toBeNull();
+    expect(result.extra!.tree["flux-subkey/receipt.json"]).toBeUndefined();
+  });
+  it("never puts the key in a snapshot, a published file, a log line or the environment; snapshots stay 0644", () => {
+    const result = run("renewal-due"), key = result.extra!.subkey;
+    for (const [name, row] of Object.entries(result.extra!.tree)) {
+      if (!Array.isArray(row)) continue;
+      if (name === "flux-subkey/key.json") continue;
+      expect(row[1], name).not.toContain(key);
+      expect(row[0], name).toBe("0o644");
+    }
+    expect(JSON.stringify(result.files)).not.toContain(key);
+    expect(JSON.stringify(result.snapshots)).not.toContain(key);
+    expect(JSON.stringify(result.snapshots)).not.toContain("flux_renewal_due");
+    expect(result.extra!.logs.join("")).not.toContain(key);
+    expect(result.extra!.environ).not.toContain(key);
+  });
+  it("does not call the sub-key route when renewal is not due", () => {
+    const result = run("renewal-not-due");
+    expect(result.requests.map(r => r.operation)).toEqual(["lease", "heartbeat", "desired"]);
+    expect(result.extra!.tree["flux-subkey"]).toBeUndefined();
+  });
+  it("honours flux_renewal_due: no cue from the control plane means no renewal question at all (dark)", () => {
+    const result = run("renewal-flag-absent");
+    expect(result.requests.map(r => r.operation)).toEqual(["lease", "heartbeat", "desired"]);
+    expect(result.extra!.logs.join("")).not.toContain("renewal unavailable");
+    expect(result.extra!.tree["flux-subkey"]).toBeUndefined();
+  });
+  it("hole 11: a lost ack is retried on the next poll without minting another key", () => {
+    const result = run("renewal-ack-fails");
+    const ops = result.requests.map(r => r.operation);
+    expect(ops.filter(op => op === "flux/subkey")).toHaveLength(1);
+    expect(ops.filter(op => op === "flux/subkey/ack")).toHaveLength(2);
+    expect(ops.lastIndexOf("flux/subkey/ack")).toBeGreaterThan(ops.indexOf("flux/subkey"));
+  });
+  it("refuses a response that is not a home key, logs nothing about it, and still publishes authority", () => {
+    const result = run("renewal-bad-response");
+    expect(result.extra!.tree["flux-subkey/key.json"]).toBeUndefined();
+    expect(result.requests.map(r => r.operation)).not.toContain("flux/subkey/ack"); // nothing delivered, nothing acknowledged
+    expect(result.extra!.logs.join("")).toBe("Cloud control Flux renewal unavailable\n");
+    expect(result.files["state.json"]).toEqual(result.snapshots[0]);
+  });
 });

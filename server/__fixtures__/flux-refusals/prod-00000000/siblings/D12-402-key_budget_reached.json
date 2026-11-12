@@ -1,0 +1,86 @@
+{
+ "status": 402,
+ "headers": {
+  "date": "<HTTP-date>",
+  "server": "uvicorn",
+  "x-flux-alias": "deepseek-v4-flash",
+  "content-type": "application/json",
+  "x-frame-options": "DENY",
+  "content-security-policy": "frame-ancestors 'none'",
+  "x-content-type-options": "nosniff",
+  "connection": "close",
+  "content-length": "<n>"
+ },
+ "body": {
+  "error": {
+   "message": "key_budget_reached",
+   "type": "None",
+   "param": "None",
+   "code": "402",
+   "provider_specific_fields": {
+    "error": "key_budget_reached",
+    "limit": "bot_monthly_spend",
+    "key_id": "KEYHASH_REDACTED",
+    "key_name": "my-key",
+    "key_monthly_budget_usd": null,
+    "key_monthly_token_limit": null,
+    "spent_usd_this_month": 25.0123,
+    "tokens_this_month": 91234,
+    "spend_basis": "customer_billed_sale",
+    "resets_at": "2026-12-01T00:00:00Z",
+    "message": "This bot has reached its $25.00 monthly budget across all of its keys. It resets on 1 December 2026 at 00:00 UTC. Raise the bot's monthly budget to let it keep going.",
+    "manage_url": "https://fluxrouter.ai/home/keys",
+    "bot_id": "BOTID_REDACTED",
+    "bot_monthly_budget_usd": 25.0
+   }
+  }
+ },
+ "endpoint": "/v1/chat/completions",
+ "chat_branch": "flux-gate passthrough (:26090-26100)",
+ "per_endpoint": {
+  "/v1/responses": {
+   "status": 402,
+   "headers": {
+    "content-length": "588",
+    "content-type": "application/json"
+   },
+   "body": {
+    "error": {
+     "error": "key_budget_reached",
+     "limit": "bot_monthly_spend",
+     "key_id": "KEYHASH_REDACTED",
+     "key_name": "my-key",
+     "key_monthly_budget_usd": null,
+     "key_monthly_token_limit": null,
+     "spent_usd_this_month": 25.0123,
+     "tokens_this_month": 91234,
+     "spend_basis": "customer_billed_sale",
+     "resets_at": "2026-12-01T00:00:00Z",
+     "message": "This bot has reached its $25.00 monthly budget across all of its keys. It resets on 1 December 2026 at 00:00 UTC. Raise the bot's monthly budget to let it keep going.",
+     "manage_url": "https://fluxrouter.ai/home/keys",
+     "bot_id": "BOTID_REDACTED",
+     "bot_monthly_budget_usd": 25.0
+    }
+   },
+   "method": "from-code (rendered in fixture env with the real Flux renderer)",
+   "headers_note": "content-type and content-length are from the real renderer. The security headers seen on every live chat capture (x-frame-options, content-security-policy, x-content-type-options) are app-wide and expected here too, but these routes were NOT live-captured (staging does not mount the Flux /v1/messages and /v1/responses handlers). x-request-id is echoed on /v1/messages only when the client sent one."
+  },
+  "/v1/messages": {
+   "status": 402,
+   "headers": {
+    "content-length": "236",
+    "content-type": "application/json"
+   },
+   "body": {
+    "type": "error",
+    "error": {
+     "type": "invalid_request_error",
+     "message": "This bot has reached its $25.00 monthly budget across all of its keys. It resets on 1 December 2026 at 00:00 UTC. Raise the bot's monthly budget to let it keep going."
+    }
+   },
+   "method": "from-code (rendered in fixture env with the real Flux renderer)",
+   "headers_note": "content-type and content-length are from the real renderer. The security headers seen on every live chat capture (x-frame-options, content-security-policy, x-content-type-options) are app-wide and expected here too, but these routes were NOT live-captured (staging does not mount the Flux /v1/messages and /v1/responses handlers). x-request-id is echoed on /v1/messages only when the client sent one."
+  }
+ },
+ "notes": "Sibling of 12, limit=bot_monthly_spend. Exception from the real fixture_policy.key_budget_reached(reason=REASON_BOT_SPEND, bot=BotFence(..., budget_usd=25.0), now=2026-11-11). Placeholders: key_id KEYHASH_REDACTED, key_name my-key, bot_id BOTID_REDACTED. spent_usd_this_month is the bot total across keys. No Retry-After; resets_at in body."
+}

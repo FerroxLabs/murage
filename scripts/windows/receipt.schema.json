@@ -1,0 +1,564 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Murage Windows split gate receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "fixture",
+    "executable",
+    "isolated",
+    "fakeProvidersOnly",
+    "groups",
+    "kind",
+    "commit",
+    "sha256",
+    "candidateVersion",
+    "updateVersion",
+    "updateSha256",
+    "user",
+    "observer",
+    "machine",
+    "packageSha256",
+    "appManifest",
+    "cleanup"
+  ],
+  "properties": {
+    "fixture": {
+      "type": "string",
+      "pattern": "^[A-Za-z]:\\\\[^\\r\\n]+$"
+    },
+    "executable": {
+      "type": "string",
+      "pattern": "^[A-Za-z]:\\\\[^\\r\\n]+\\.exe$"
+    },
+    "isolated": {
+      "type": "boolean"
+    },
+    "fakeProvidersOnly": {
+      "const": true
+    },
+    "groups": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 6,
+      "items": {
+        "$ref": "#/definitions/group"
+      }
+    },
+    "kind": {
+      "enum": [
+        "desktop",
+        "handoff"
+      ]
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "updateSha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "candidateVersion": {
+      "const": "1.0.19"
+    },
+    "updateVersion": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "user": {
+      "type": "string",
+      "minLength": 1
+    },
+    "observer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "samples",
+        "maxGapMs",
+        "visible",
+        "enumerationErrors",
+        "startedAt",
+        "stoppedAt",
+        "finalGapMs",
+        "controls"
+      ],
+      "properties": {
+        "samples": {
+          "type": "integer",
+          "minimum": 4
+        },
+        "maxGapMs": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "visible": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "enumerationErrors": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "startedAt": {
+          "type": "number"
+        },
+        "stoppedAt": {
+          "type": "number"
+        },
+        "finalGapMs": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "controls": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "group",
+              "edge",
+              "at",
+              "detected"
+            ],
+            "properties": {
+              "group": {
+                "type": "string"
+              },
+              "edge": {
+                "enum": [
+                  "start",
+                  "end"
+                ]
+              },
+              "at": {
+                "type": "number"
+              },
+              "detected": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "machine": {
+      "type": "string",
+      "minLength": 1
+    },
+    "packageSha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "appManifest": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "sha256"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-fA-F0-9]{64}$"
+          }
+        }
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "writer",
+        "pid",
+        "childPid",
+        "prefix",
+        "completedAt",
+        "finalizedAt",
+        "job",
+        "processes",
+        "tasks",
+        "launcher",
+        "registrations"
+      ],
+      "properties": {
+        "writer": {
+          "const": "operator"
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "childPid": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "prefix": {
+          "type": "string",
+          "pattern": "^MurageCI-[a-f0-9]{32}-$"
+        },
+        "completedAt": {
+          "type": "number",
+          "minimum": 1
+        },
+        "finalizedAt": {
+          "type": "number",
+          "minimum": 1
+        },
+        "job": {
+          "const": {
+            "ownerClosed": true,
+            "empty": true,
+            "flags": 8192,
+            "remaining": []
+          }
+        },
+        "processes": {
+          "type": "object",
+          "required": [
+            "ok",
+            "escaped",
+            "enrolled",
+            "browsers"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "ok": {
+              "const": true
+            },
+            "escaped": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "enrolled": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "browsers": {
+              "type": "array"
+            }
+          }
+        },
+        "tasks": {
+          "type": "object",
+          "required": [
+            "before",
+            "after",
+            "added",
+            "changed",
+            "removed",
+            "deleted",
+            "remaining",
+            "errors",
+            "ok"
+          ],
+          "properties": {
+            "before": {
+              "type": "array"
+            },
+            "after": {
+              "type": "array"
+            },
+            "added": {
+              "type": "array"
+            },
+            "changed": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "removed": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "deleted": {
+              "type": "array"
+            },
+            "remaining": {
+              "type": "array"
+            },
+            "errors": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "ok": {
+              "const": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "launcher": {
+          "type": "object",
+          "required": [
+            "before",
+            "after",
+            "added",
+            "changed",
+            "removed",
+            "deleted",
+            "remaining",
+            "errors",
+            "ok"
+          ],
+          "properties": {
+            "before": {
+              "type": "array"
+            },
+            "after": {
+              "type": "array"
+            },
+            "added": {
+              "type": "array"
+            },
+            "changed": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "removed": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "deleted": {
+              "type": "array"
+            },
+            "remaining": {
+              "type": "array"
+            },
+            "errors": {
+              "type": "array",
+              "maxItems": 0
+            },
+            "ok": {
+              "const": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "registrations": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "before",
+                "after",
+                "added",
+                "changed",
+                "removed",
+                "deleted",
+                "remaining",
+                "errors",
+                "ok"
+              ],
+              "properties": {
+                "before": {
+                  "type": "array"
+                },
+                "after": {
+                  "type": "array"
+                },
+                "added": {
+                  "type": "array"
+                },
+                "changed": {
+                  "type": "array",
+                  "maxItems": 0
+                },
+                "removed": {
+                  "type": "array",
+                  "maxItems": 0
+                },
+                "deleted": {
+                  "type": "array"
+                },
+                "remaining": {
+                  "type": "array"
+                },
+                "errors": {
+                  "type": "array",
+                  "maxItems": 0
+                },
+                "ok": {
+                  "const": true
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      }
+    }
+  },
+  "definitions": {
+    "group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "passed",
+        "failed",
+        "skipped",
+        "artifacts",
+        "startedAt",
+        "endedAt"
+      ],
+      "properties": {
+        "name": {
+          "enum": [
+            "bot-turns",
+            "tools",
+            "sentinel",
+            "mcp",
+            "browser",
+            "updates-isolated",
+            "updates-handoff"
+          ]
+        },
+        "passed": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "failed": {
+          "type": "integer",
+          "const": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "const": 0
+        },
+        "artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(?![\\\\/])(?!.*(?:^|[\\\\/])\\.\\.?(?:[\\\\/]|$))(?!.*[:\\x00-\\x1f])[^\\\\/]+(?:[\\\\/][^\\\\/]+)*$"
+          }
+        },
+        "startedAt": {
+          "type": "number"
+        },
+        "endedAt": {
+          "type": "number"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "desktop"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "isolated": {
+            "const": true
+          },
+          "groups": {
+            "minItems": 6,
+            "maxItems": 6,
+            "allOf": [
+              {
+                "contains": {
+                  "properties": {
+                    "name": {
+                      "const": "bot-turns"
+                    }
+                  }
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "name": {
+                      "const": "tools"
+                    }
+                  }
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "name": {
+                      "const": "sentinel"
+                    }
+                  }
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "name": {
+                      "const": "mcp"
+                    }
+                  }
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "name": {
+                      "const": "browser"
+                    }
+                  }
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "name": {
+                      "const": "updates-isolated"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "isolated": {
+            "const": false
+          },
+          "user": {
+            "const": "murage-gate"
+          },
+          "groups": {
+            "minItems": 1,
+            "maxItems": 1,
+            "items": {
+              "properties": {
+                "name": {
+                  "const": "updates-handoff"
+                }
+              }
+            }
+          },
+          "machine": {
+            "const": "gate-win-nogit"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -61,6 +61,18 @@ describe("incremental sweep", () => {
 });
 
 describe("preparePackageAddition", () => {
+  it("S9 package addition preserves an omitted permission level on disk and after publish", () => {
+    const {m,file,routines}=make();
+    const template={...JSON.parse(JSON.stringify(routines[0])),id:'svc-imported',enabled:false,nextRunAt:null};
+    delete template.permissionMode;delete template.permissionExplicit;
+    const batch=m.preparePackageAddition([template]);
+    const saved=JSON.parse(batch.bytes.toString('utf8')).routines.find((r:any)=>r.id===template.id);
+    expect(saved).not.toHaveProperty('permissionMode');expect(saved).not.toHaveProperty('permissionExplicit');
+    writeFileSync(file,batch.bytes);batch.publish();
+    expect(m.listRoutines().find(r=>r.id===template.id)).not.toHaveProperty('permissionMode');
+    expect(readRoutinesWithRuns(file).routines.find((r:any)=>r.id===template.id)).not.toHaveProperty('permissionMode');
+  });
+
   it("its bytes carry a fresh stateGeneration that publish records, so the next tick cannot clobber a cursor", () => {
     const { m, file, routines } = make();
     const i = m as Internals;

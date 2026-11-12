@@ -1,0 +1,27 @@
+[
+  {
+    "id": "R18-process-cap",
+    "killed": true,
+    "status": 1
+  },
+  {
+    "id": "R18-question-cap",
+    "killed": true,
+    "status": 1
+  },
+  {
+    "id": "R18-depth",
+    "killed": true,
+    "status": 1
+  },
+  {
+    "id": "A12-unicode",
+    "killed": true,
+    "status": 1
+  },
+  {
+    "id": "A2-conflict-fault",
+    "killed": true,
+    "status": 1
+  }
+]

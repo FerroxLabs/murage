@@ -41,7 +41,12 @@ function inertMessage(value: unknown) {
   if (!object(value)) fail("INVALID_REVIEW_MESSAGE");
   if (value.queued === true || (object(value.goalRun) && value.goalRun.status === "working")) fail("RESTORE_WORK_NOT_PAUSED");
   if (object(value.card) && (value.card.requestId || value.card.routineRequest || value.card.skillRequest) && !value.card.answered) fail("RESTORE_WORK_NOT_PAUSED");
-  if (object(value.card) && object(value.card.browserSetup) && value.card.browserSetup.resumed !== true && (!value.card.answered || value.card.browserSetup.continueRequested !== false)) fail("RESTORE_WORK_NOT_PAUSED");
+  if (object(value.card) && object(value.card.browserSetup) && value.card.browserSetup.resumed !== true) {
+    // Restore retires the card through terminal fields; the hashed action's
+    // continueRequested value is immutable. Such a card is never resumed.
+    const retired = !!value.card.answered && value.card.dismissed === true && value.card.orphaned === true;
+    if (!retired && (!value.card.answered || value.card.browserSetup.continueRequested !== false)) fail("RESTORE_WORK_NOT_PAUSED");
+  }
   for (const key of ["secret", "connector", "mcpSignIn"]) if (object(value[key]) && (value[key].dismissed !== true || value[key].resumed !== false)) fail("RESTORE_WORK_NOT_PAUSED");
 }
 function validatePaused(root: string) {
@@ -87,6 +92,7 @@ function validatePaused(root: string) {
   if (entry(join(root, "messages.db"))) {
     const db = new DatabaseSync(join(root, "messages.db"), { readOnly: true });
     try { inspectInstallationDatabase(db);
+      if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='approval_records'").get() && db.prepare("SELECT 1 FROM approval_records WHERE state='open' OR (state='answered' AND delivery='pending') LIMIT 1").get()) fail("RESTORE_WORK_NOT_PAUSED");
       // a restored copy queues nothing: the handoffs of the backup were moved to recovery-quarantine as evidence (installation-restore-preparation.ts)
       if (db.prepare("SELECT 1 AS x FROM sqlite_schema WHERE type='table' AND name='pending_delegations'").get() && db.prepare("SELECT 1 AS x FROM pending_delegations LIMIT 1").get()) fail("RESTORE_WORK_NOT_PAUSED");
       validateSharingPaused(records(json(join(root, "bots.json"))), records(json(join(root, "groups.json"))), db);

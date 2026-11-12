@@ -1,11 +1,15 @@
+import "../../shared/win-hide-child-process.mjs";
+import { createMcpCatalogWriter } from "../mcp-listed.ts";
+import { NotModelRequest } from "../../shared/engine-transport.ts";
 // No native ports, encryption keys, or engine paths cross the turn boundary.
 import { pathToFileURL } from "node:url";
-import { createLineSplitter, writeMcpLine } from "../mcp-bridge.ts";
+import { createLineSplitter } from "../mcp-bridge.ts";
 import { BuiltinFloorGate, floorToolResult, readBrowserRefusal } from "../browser-floor-builtin.ts";
 import { EXTENSION_CALL_FAILED_TEXT } from "../browser-extension-refusals.ts";
 import { BROWSER_EXTENSION_CALL_TIMEOUT_MS } from "../../shared/browser-extension-protocol.ts";
 import { turnSecret, turnSecretWired } from "../turn-credential.ts";
 export async function runUnifiedBrowserProxy(env: NodeJS.ProcessEnv = process.env, options: { transport?: "builtin" | "extension" } = {}) {
+  const catalog = createMcpCatalogWriter(env);
   // Only the owner-controlled mount selects the extension executor as the floor authority.
   const transport = options.transport ?? env.MURAGE_BROWSER_TRANSPORT ?? "builtin";
   if (transport !== "builtin" && transport !== "extension") throw new Error("Unknown browser transport");
@@ -19,7 +23,7 @@ export async function runUnifiedBrowserProxy(env: NodeJS.ProcessEnv = process.en
   const splitter = createLineSplitter(line => lines.push(line), 64 * 1024);
   const gate = transport === "builtin" ? new BuiltinFloorGate() : undefined;
   const forward = async (method: string | undefined, params: Record<string, unknown> | undefined): Promise<unknown> => {
-    const response = await fetch(url, { method: "POST", headers: { authorization: `Bearer ${turnSecret("MURAGE_CONTROL_TOKEN", env)}`, "content-type": "application/json" }, body: JSON.stringify({ method, params }), redirect: "error", signal: AbortSignal.timeout(callTimeout) });
+    const response = await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", fetch(url, { method: "POST", headers: { authorization: `Bearer ${turnSecret("MURAGE_CONTROL_TOKEN", env)}`, "content-type": "application/json" }, body: JSON.stringify({ method, params }), redirect: "error", signal: AbortSignal.timeout(callTimeout) }));
     if (!response.ok) { throw Object.assign(new Error(), { refusal: await readBrowserRefusal(response) }); }
     if (!response.body) throw new Error();
     const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
@@ -33,7 +37,9 @@ export async function runUnifiedBrowserProxy(env: NodeJS.ProcessEnv = process.en
       let rpc: { id?: number | string; method?: string; params?: Record<string, unknown> };
       try { rpc = JSON.parse(line); } catch { continue; }
       if (rpc.id === undefined) continue;
-      let result: unknown;
+      const req = catalog.observeRequest(rpc);
+      await req.published;
+    let result: unknown;
       try {
         if (rpc.method === "initialize") result = { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "murage-browser", version: "1" } };
         else if (rpc.method === "ping") result = {};
@@ -57,10 +63,10 @@ export async function runUnifiedBrowserProxy(env: NodeJS.ProcessEnv = process.en
         // A tool call fails as a tool result the model reads. Anything else
         // (tools/list above all) fails as a JSON-RPC error: a "result" with
         // no tools in it connected the server with zero tools and no reason.
-        if (rpc.method !== "tools/call") { await writeMcpLine(process.stdout, JSON.stringify({ jsonrpc: "2.0", id: rpc.id, error: { code: -32000, message: text, ...(failure ? { data: { code: failure.code } } : {}) } })); continue; }
+        if (rpc.method !== "tools/call") { await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", req.respond({ jsonrpc: "2.0", id: rpc.id, error: { code: -32000, message: text, ...(failure ? { data: { code: failure.code } } : {}) } })); continue; }
         result = { isError: true, ...(failure ? { code: failure.code } : {}), content: [{ type: "text", text }] };
       }
-      await writeMcpLine(process.stdout, JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result }));
+      await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", req.respond({ jsonrpc: "2.0", id: rpc.id, result }));
     }
   };
   for await (const chunk of process.stdin) { splitter.push(chunk); await drain(); }

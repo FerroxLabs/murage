@@ -1,0 +1,15 @@
+# Run from /work/fuigo-builds/swarm-b/winbox-gate/wt. One container at a time.
+# For each invocation, wait on the invoking host while load > 60:
+while awk '{exit !($1>60)}' /proc/loadavg; do sleep 5; done
+# Wrapper environment for every command below:
+export IT_JOB=afix-winbox-gate
+export IT_W=/work/fuigo-builds/swarm-b/winbox-gate/wt
+export IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh
+export IT_CAP=2
+export IT_BOXES='murage-vt1 murage-vt2'
+export NETARG='--network none'
+# Initial regressions, before changing reviewed driver:
+/work/fuigo-builds/tools/it-remote.sh 'set -eu; while awk '\''{exit !($1>60)}'\'' /proc/loadavg; do sleep 5; done; set +e; node --test --test-name-pattern="BLOCK [12]:" scripts/windows/winbox-driver.node-test.mjs > .test-tmp/afix-winbox-gate/reviewed-red.log 2>&1; result=$?; cat .test-tmp/afix-winbox-gate/reviewed-red.log; test "$result" -eq 1'
+# Run retained evidence runner (source is afix-run-evidence.mjs.txt):
+/work/fuigo-builds/tools/it-remote.sh 'set -eu; while awk '\''{exit !($1>60)}'\'' /proc/loadavg; do sleep 5; done; node .test-tmp/afix-winbox-gate/run-evidence.mjs'
+/work/fuigo-builds/tools/it-remote.sh 'set -eu; while awk '\''{exit !($1>60)}'\'' /proc/loadavg; do sleep 5; done; node .test-tmp/afix-winbox-gate/run-evidence.mjs --audit-mutants; node --test scripts/windows/winbox-driver.node-test.mjs scripts/windows/winbox-proof-audit.node-test.mjs > scripts/windows/evidence/afix-final-tests.log 2>&1; node --check scripts/windows/winbox-driver.mjs >> scripts/windows/evidence/afix-final-tests.log 2>&1; node --check scripts/windows/winbox-shell-mcp.mjs >> scripts/windows/evidence/afix-final-tests.log 2>&1; cat scripts/windows/evidence/afix-final-tests.log'

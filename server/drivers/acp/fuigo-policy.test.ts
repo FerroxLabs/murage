@@ -113,7 +113,7 @@ describe("the handed env and the engine's answers", () => {
   });
 });
 
-async function launch(options: { fullAuto: boolean; enforced?: ReturnType<typeof turnPermissionEnforcement>; env?: Record<string, string> }) {
+async function launch(options: { fullAuto?: boolean; enforced?: ReturnType<typeof turnPermissionEnforcement>; env?: Record<string, string>; resumeCursor?: string }) {
   const home = temp("home");
   const dump = join(home, "spawn.json");
   const log = join(home, "rpc.jsonl");
@@ -123,7 +123,7 @@ async function launch(options: { fullAuto: boolean; enforced?: ReturnType<typeof
     environment: { HOME: home, USERPROFILE: home, FAKE_ACP_MODE: "happy", FAKE_ACP_DUMP: dump, FAKE_ACP_RPC_FULL_LOG: log, FAKE_ACP_MCP_READY: "1", FAKE_ACP_MODELS: "fixture-model", FUIGO_API_KEY: "sk-flux-fixture-only", ...options.env } });
   const recorder = recordEvents(instance.adapter);
   try {
-    await instance.adapter.sendTurn({ threadId: "fpol", text: "hello", cwd: home, ...options.enforced });
+    await instance.adapter.sendTurn({ threadId: "fpol", text: "hello", cwd: home, resumeCursor: options.resumeCursor, ...options.enforced });
     await recorder.until((event) => event.threadId === "fpol" && event.type === "turn.completed", 15000);
   } finally { recorder.stop(); await instance.dispose(); }
   const sent = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { method: string; params: { _meta?: Record<string, unknown> } | null });
@@ -139,6 +139,70 @@ const LEVELS = [
 ] as const;
 
 describe("every Fuigo turn runs under the policy", () => {
+  it("N5 No limits resumes Fuigo's existing native session and retains skills without native denies", async () => {
+    const home = temp("native-state"), native = join(home, ".fuigo");
+    for (const name of ["sessions", "skills", "agents"]) mkdirSync(join(native, name), { recursive: true });
+    writeFileSync(join(native, "config.toml"), '[permission]\ndeny = ["Bash"]\n');
+    writeFileSync(join(native, "sessions", "existing.json"), "NATIVE-CONTEXT");
+    writeFileSync(join(native, "skills", "mine.md"), "OWNER-SKILL");
+    writeFileSync(join(native, "hooks"), "OWNER-HOOKS");
+    const run = await launch({ enforced: { stopLine: true, noLimits: true }, resumeCursor: "existing", env: { FUIGO_HOME: native } });
+    expect(run.sent.some(row => row.method === "session/load")).toBe(true);
+    expect(readFileSync(join(run.env.FUIGO_HOME!, "sessions", "existing.json"), "utf8")).toBe("NATIVE-CONTEXT");
+    expect(readFileSync(join(run.env.FUIGO_HOME!, "skills", "mine.md"), "utf8")).toBe("OWNER-SKILL");
+    expect(readFileSync(join(run.env.FUIGO_HOME!, "hooks"), "utf8")).toBe("OWNER-HOOKS");
+    writeFileSync(join(run.env.FUIGO_HOME!, "sessions", "next.json"), "NEXT-CONTEXT");
+    expect(readFileSync(join(native, "sessions", "next.json"), "utf8")).toBe("NEXT-CONTEXT");
+    expect(readFileSync(join(run.env.FUIGO_HOME!, "config.toml"), "utf8")).not.toContain("deny");
+  }, 30000);
+  it("E5 No limits strips the owner's native denies and mode pins while retaining the broker policy", async () => {
+    const home = temp("owner-denies");
+    const native = join(home, ".fuigo");
+    mkdirSync(native);
+    const original = '[permission]\ndeny = ["Bash", "Edit", "Read"]\n[ui]\ndisable_bypass_permissions_mode = true\n[models]\ndefault = "fixture-model"\n';
+    writeFileSync(join(native, "config.toml"), original);
+    const run = await launch({ enforced: { stopLine: true, noLimits: true }, env: { FUIGO_HOME: native } });
+    expect(run.env.FUIGO_HOME).not.toBe(native);
+    const policy = readFileSync(join(run.env.FUIGO_HOME!, "config.toml"), "utf8");
+    expect(policy).not.toContain("deny");
+    expect(policy).not.toContain("disable_bypass_permissions_mode");
+    expect(policy).toContain('[models]');
+    expect(policy).toContain('[claude_compat]\nimported = true');
+    expect(run.env.FUIGO_POLICY_SHA256).toBe(FUIGO_POLICY_SHA256);
+    expect(run.sent.some(row => row.method === "session/prompt")).toBe(true);
+    expect(readFileSync(join(native, "config.toml"), "utf8")).toBe(original);
+    const lower = await launch({ enforced: { stopLine: true }, env: { FUIGO_HOME: native } });
+    expect(lower.env.FUIGO_HOME).toBe(native);
+  }, 30_000);
+
+  it("N5 No limits keeps Full access sessions and the owner's skills, hooks, agents and logs", async () => {
+    const home = temp("history"), native = join(home, ".fuigo");
+    mkdirSync(native);
+    for (const name of ["sessions", "skills", "hooks", "agents", "logs"]) {
+      mkdirSync(join(native, name)); writeFileSync(join(native, name, "owner.txt"), `owner-${name}`);
+    }
+    writeFileSync(join(native, "config.toml"), '[permission]\ndeny = ["Bash"]\n');
+    const full = await launch({ enforced: { stopLine: true }, env: { FUIGO_HOME: native, FAKE_ACP_HOME_SESSION: "1" } });
+    expect(full.env.FUIGO_HOME).toBe(native);
+    const cursor = full.events.find(e => e.type === "session.started") as { sessionId: string };
+    expect(cursor.sessionId).toBeTruthy();
+    const unlimited = await launch({ enforced: { stopLine: true, noLimits: true }, resumeCursor: cursor.sessionId, env: { FUIGO_HOME: native, FAKE_ACP_HOME_SESSION: "1" } });
+    expect(unlimited.sent.some(row => row.method === "session/load")).toBe(true);
+    expect(unlimited.sent.some(row => row.method === "session/new")).toBe(false);
+    expect(unlimited.events.find(e => e.type === "turn.completed")).toMatchObject({ ok: true });
+    for (const name of ["sessions", "skills", "hooks", "agents", "logs"]) {
+      expect(readFileSync(join(unlimited.env.FUIGO_HOME!, name, "owner.txt"), "utf8")).toBe(`owner-${name}`);
+      writeFileSync(join(unlimited.env.FUIGO_HOME!, name, "next.txt"), "new-at-no-limits");
+      expect(readFileSync(join(native, name, "next.txt"), "utf8")).toBe("new-at-no-limits");
+    }
+  }, 30_000);
+
+  it("E5 native folder trust never cards at No limits", async () => {
+    const run = await launch({ enforced: { stopLine: true, noLimits: true }, env: { FAKE_ACP_MODE: "folder-trust", FAKE_ACP_TRUST_V: "2" } });
+    expect(run.events.filter(e => e.type === "request.opened" && e.tool === "folder_trust")).toEqual([]);
+    expect(run.events.find(e => e.type === "turn.completed")).toMatchObject({ ok: true });
+  }, 30_000);
+
   it.each(LEVELS)("%s: the engine gets the policy at launch and on every session it opens", async (_level, bot, fullAuto) => {
     const run = await launch({ fullAuto, enforced: turnPermissionEnforcement(bot) });
     const path = fuigoPolicyPath(DATA_DIR);

@@ -118,7 +118,7 @@ type Hold = {
   /** newest receipt rowid the session's receipts were judged up to */
   upTo: number;
   seen: Seen;
-  /** ids of the sources the session cites, of the sources its cited records rest on, and (as record:<id>) of the records it cites */
+  /** ids of cited and supporting sources, record:<id> citations, scope:<id> notebooks and thread:<id> dependencies */
   sourceIds: Set<string>;
   /** the scopes the reader held when the hold was made: a reader holding every one of them (and more: a task or a room added since,
    * SCOPED-REVOKES R4) is answered by it, since everything that hydrated under fewer scopes hydrates under more; a narrower reader is not */
@@ -154,7 +154,10 @@ function continuationMemoryRevokedWork(allowance: LineageAllowance, threadId: st
   let resume: Hold | undefined;
   if (parts && hold && hold.hard === parts.hard) {
     const touched = softChangedSince(hold.seq);
-    if (touched && ![...touched].some(id => hold.sourceIds.has(id) || hold.seen.threadDependenciesIncomplete && id.startsWith("thread:"))) resume = hold;
+    if (touched && ![...touched].some(id => hold.sourceIds.has(id)
+      || hold.seen.threadDependenciesIncomplete && (id.startsWith("thread:") || id.startsWith("scope:"))
+      // Legacy replay roots name threads, not their notebooks. Their unknown scope dependencies still need a full proof.
+      || (hold.seen.rootThreads?.size ?? 0) > 0 && id.startsWith("scope:"))) resume = hold;
   }
   verdictStore.loseHold(key, "consumed");
   // One pass: the reader's audience is worked out once, not once per cited record.
@@ -181,13 +184,17 @@ function continuationMemoryRevokedWork(allowance: LineageAllowance, threadId: st
         // Do not reuse a soft thread-change proof unless that ancestry is known.
         if (database().prepare("SELECT 1 FROM memory_derivations WHERE (child_id,child_version) IN (SELECT value->>0,value->>1 FROM json_each(?)) LIMIT 1").get(JSON.stringify(pairs))) progress.seen.threadDependenciesIncomplete = true;
         // Drive from the bounded citations. Starting at conversation scopes lets the planner walk all history.
-        for (const row of database().prepare("SELECT DISTINCT s.owner_key FROM json_each(?) p CROSS JOIN memory_records r ON r.id=p.value->>0 AND r.version=p.value->>1 CROSS JOIN memory_scopes s ON s.id=r.scope_id WHERE s.kind='conversation'").all(JSON.stringify(pairs))) sourceIds.add(`thread:${String(row.owner_key)}`);
+        for (const row of database().prepare("SELECT DISTINCT s.id,s.kind,s.owner_key FROM json_each(?) p CROSS JOIN memory_records r ON r.id=p.value->>0 AND r.version=p.value->>1 CROSS JOIN memory_scopes s ON s.id=r.scope_id").all(JSON.stringify(pairs))) {
+          sourceIds.add(`scope:${String(row.id)}`);
+          if (row.kind === "conversation") sourceIds.add(`thread:${String(row.owner_key)}`);
+        }
         for (const row of database().prepare("SELECT DISTINCT source_id FROM memory_evidence WHERE (record_id,record_version) IN (SELECT value->>0,value->>1 FROM json_each(?))").all(JSON.stringify(pairs))) newSources.add(String(row.source_id));
       }
       for (const id of newSources) sourceIds.add(id);
       sourceIds.add(`thread:${threadId}`);
       // Every source actually judged for these receipts, plus the session's replay roots.
-      for (const row of database().prepare("SELECT thread_id,kind FROM memory_sources WHERE id IN (SELECT value FROM json_each(?))").all(JSON.stringify([...newSources]))) {
+      for (const row of database().prepare("SELECT scope_id,thread_id,kind FROM memory_sources WHERE id IN (SELECT value FROM json_each(?))").all(JSON.stringify([...newSources]))) {
+        sourceIds.add(`scope:${String(row.scope_id)}`);
         sourceIds.add(`thread:${String(row.thread_id)}`);
         if (row.kind === "bring-in") progress.seen.threadDependenciesIncomplete = true;
       }

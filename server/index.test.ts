@@ -102,7 +102,7 @@ describe("harness HTTP API", () => {
     const env: NodeJS.ProcessEnv = { NODE_ENV: "test", TMPDIR: tmpdir(), HOME: isolatedHome, USERPROFILE: isolatedHome, MURAGE_DATA_DIR: data, MURAGE_STATIC_DIR: staticRoot, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET, FAKE_ACP_MODE: "credit-exhausted", ...(announces ? { FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized" } : { MURAGE_ACP_MCP_READY_MS: "1500" }), PATH: process.env.PATH };
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
     // The IPC channel asks the server to close the way the desktop does: on Windows a signal is TerminateProcess and nothing is flushed.
-    const isolatedChild = spawn(process.execPath, ["--import", pathToFileURL(fakeEngineSetup).href, join(SERVER_DIR, "index.ts")], { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+    const isolatedChild = spawn(process.execPath, ["--import", pathToFileURL(fakeEngineSetup).href, join(SERVER_DIR, "index.ts")], { windowsHide: true, cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe", "ipc"] });
     let isolatedStderr = "", isolatedStdout = "";
     isolatedChild.stderr!.on("data", chunk => { isolatedStderr += chunk; });
     // The desktop writes both streams into server.log.
@@ -1267,7 +1267,7 @@ describe("harness HTTP API", () => {
     const bot = (await desktopApi("POST", "/api/bots", { name: "Image fixture" })).body.bot;
     const receipt = join(home, "image-fixture-calls.json"); rmSync(receipt, { force: true });
     const imageCall = (env: Record<string,string>, args: Record<string,unknown>) => {
-      const proxy = spawn(process.execPath, [join(SERVER_DIR,"drivers","agents-proxy.ts")], { env: { PATH: process.env.PATH, ...env }, stdio:["pipe","pipe","pipe"] });
+      const proxy = spawn(process.execPath, [join(SERVER_DIR,"drivers","agents-proxy.ts")], { windowsHide: true, env: { PATH: process.env.PATH, ...env }, stdio:["pipe","pipe","pipe"] });
       let stdout="", stderr="";
       const result = new Promise<any>((resolve,reject)=>{
         const timer=setTimeout(()=>{proxy.kill();reject(new Error("Image MCP timed out: "+stderr));},15000);
@@ -1340,7 +1340,7 @@ describe("harness HTTP API", () => {
     const sha256 = (file: string) => createHash("sha256").update(readFileSync(file)).digest("hex");
     const proxies: ReturnType<typeof spawn>[] = [];
     const imageCall = (env: Record<string,string>, args: Record<string,unknown>) => {
-      const proxy = spawn(process.execPath, [join(SERVER_DIR,"drivers","agents-proxy.ts")], { env: { PATH: process.env.PATH, ...env }, stdio:["pipe","pipe","pipe"] });
+      const proxy = spawn(process.execPath, [join(SERVER_DIR,"drivers","agents-proxy.ts")], { windowsHide: true, env: { PATH: process.env.PATH, ...env }, stdio:["pipe","pipe","pipe"] });
       proxies.push(proxy);
       let stdout="", stderr="";
       const result = new Promise<any>((resolve,reject)=>{
@@ -1412,7 +1412,7 @@ describe("harness HTTP API", () => {
     const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
     const proxies: ChildProcess[] = [];
     const mcp = (env: Record<string, string>, name: string, args: Record<string, unknown>) => {
-      const proxy = spawn(process.execPath, [join(SERVER_DIR, "drivers", "agents-proxy.ts")], { env: { PATH: process.env.PATH, ...env }, stdio: ["pipe", "pipe", "pipe"] });
+      const proxy = spawn(process.execPath, [join(SERVER_DIR, "drivers", "agents-proxy.ts")], { windowsHide: true, env: { PATH: process.env.PATH, ...env }, stdio: ["pipe", "pipe", "pipe"] });
       proxies.push(proxy);
       let stdout = "", stderr = "";
       const result = new Promise<any>((resolve, reject) => {
@@ -1529,7 +1529,7 @@ describe("harness HTTP API", () => {
     const bot = (await api("POST", "/api/bots", { name: "Library fixture" })).body.bot;
     const proxies: ChildProcess[] = [];
     const mcp = (env: Record<string, string>, name: string, args: Record<string, unknown>) => {
-      const proxy = spawn(process.execPath, [join(SERVER_DIR, "drivers", "agents-proxy.ts")], { env: { PATH: process.env.PATH, ...env }, stdio: ["pipe", "pipe", "pipe"] });
+      const proxy = spawn(process.execPath, [join(SERVER_DIR, "drivers", "agents-proxy.ts")], { windowsHide: true, env: { PATH: process.env.PATH, ...env }, stdio: ["pipe", "pipe", "pipe"] });
       proxies.push(proxy);
       let stdout = "", stderr = "";
       const result = new Promise<any>((resolve, reject) => {
@@ -1684,7 +1684,7 @@ describe("harness HTTP API", () => {
     const receipt = join(home, "image-fixture-calls.json");
     const proxies: ChildProcess[] = [];
     const imageCall = (env: Record<string, string>, args: Record<string, unknown>) => {
-      const proxy = spawn(process.execPath, [join(SERVER_DIR, "drivers", "agents-proxy.ts")], { env: { PATH: process.env.PATH, ...env }, stdio: ["pipe", "pipe", "pipe"] });
+      const proxy = spawn(process.execPath, [join(SERVER_DIR, "drivers", "agents-proxy.ts")], { windowsHide: true, env: { PATH: process.env.PATH, ...env }, stdio: ["pipe", "pipe", "pipe"] });
       proxies.push(proxy);
       let stdout = "", stderr = "";
       const result = new Promise<any>((resolve, reject) => {

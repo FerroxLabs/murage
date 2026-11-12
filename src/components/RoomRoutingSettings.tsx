@@ -3,7 +3,7 @@
 //
 // Settings: the switch for channels set to Auto. With it on, Murage asks a
 // fast hosted model which bot should answer a message nobody was addressed in.
-// It follows the Flux Router connection by default; a choice saved here wins.
+// It stays off until the owner saves a choice here.
 import { useState } from "react";
 
 import { Switch } from "./SettingsPrimitives";
@@ -13,7 +13,7 @@ export const ROOM_ROUTING_COPY = {
   title: "Who answers in channels",
   subtitle: "For channels set to Auto, Murage picks which bot answers a message nobody was addressed in.",
   label: "Let Murage pick who answers in channels set to Auto",
-  help: "If it cannot decide, or takes too long, the channel's lead answers as usual. Your messages are never held up for it.",
+  help: "Turning this on sends your new message, recent room messages, the room name and bot names to Flux to choose who replies.",
   noKey: "Connect Flux Router to turn this on.",
   unavailable: "Not available on your current Flux Router account right now. Channels keep using their lead, and Murage checks again later.",
 } as const;
@@ -57,13 +57,13 @@ export function RoomRoutingSettings() {
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <div id="room-routing-label" className="text-[14px] font-medium text-ink">{ROOM_ROUTING_COPY.label}</div>
+          <div id="room-routing-name" className="text-[14px] font-medium text-ink">{ROOM_ROUTING_COPY.label}</div>
           <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{view.note || ROOM_ROUTING_COPY.help}</div>
         </div>
         <Switch
           checked={view.checked}
           data-setting-control="room-routing-label"
-          aria-labelledby="room-routing-label"
+          aria-labelledby="room-routing-name"
           disabled={saving || view.disabled}
           onClick={() => void toggle()}
           className="disabled:cursor-wait disabled:opacity-50"

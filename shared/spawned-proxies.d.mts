@@ -17,6 +17,7 @@ export declare const SPAWNED_PROXY_FILES: Readonly<{
   dweb: string;
   connectors: string;
   remoteMcp: string;
+  wipeMcp: string;
   phone: string;
   phoneJobs: string;
   highlevel: string;

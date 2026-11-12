@@ -16,8 +16,23 @@ export interface TailnetHttpsHelp {
   after: string;
 }
 
-export function tailnetHttpsHelp(remote: CompanionRemoteAccess | null | undefined): TailnetHttpsHelp | null {
+/** SIMPLE-COPY 3 and 9 B5: the Simple variant says what to click in plain words; `mode` absent or "advanced" is the original text. */
+export function tailnetHttpsHelp(remote: CompanionRemoteAccess | null | undefined, mode: "simple" | "advanced" = "advanced"): TailnetHttpsHelp | null {
   if (!remote || remote.on || remote.reason !== "no-certificates") return null;
+  if (mode === "simple") {
+    return {
+      title: "Turn on secure links in Tailscale",
+      steps: [
+        "Open Tailscale settings and sign in.",
+        "Make sure \"MagicDNS\" is on.",
+        "Choose \"Enable HTTPS\".",
+        "Come back and turn on Allow remote access again.",
+      ],
+      url: TAILSCALE_DNS_ADMIN_URL,
+      linkLabel: "Open Tailscale settings",
+      after: "A one-time switch. Until then, a browser can still open Murage, but the Murage phone app needs the secure link.",
+    };
+  }
   return {
     title: "Turn on HTTPS for your tailnet",
     steps: [

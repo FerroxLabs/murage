@@ -17,6 +17,7 @@ it.each([
     await import(${JSON.stringify(fixture)});
   `;
   const stdout = execFileSync(process.execPath, ["--input-type=module", "-e", source], {
+    windowsHide: true,
     encoding: "utf8", timeout: 5_000,
     env: { ...process.env, FAKE_ACP_AUTH: "0", FAKE_ACP_MODELS: "" },
   });

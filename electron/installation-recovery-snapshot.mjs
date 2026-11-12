@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 import { randomUUID } from "node:crypto";
 
 const fail = code => Object.assign(new Error(code), { code });
@@ -21,7 +22,7 @@ export async function captureRecoveryCopy({ spawn, helper, source, destination, 
       !Number.isSafeInteger(parentPid) || parentPid < 1) throw fail("INVALID_RECOVERY_CAPTURE");
   if (signal?.aborted) throw fail("RECOVERY_CAPTURE_CANCELLED");
   const nonce = randomUUID();
-  const child = spawn(helper, ["--bridge", String(parentPid)], { env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(helper, ["--bridge", String(parentPid)], withHideInherit({ env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }));
   if (!child.stdin || !child.stdout) { child.kill(); throw fail("INVALID_RECOVERY_CAPTURE"); }
   let phase = "prepare", buffered = "", bytes = 0, preview = null, result = null, failure = null;
   let confirmation = Promise.resolve();

@@ -4,7 +4,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { openSidebar } from "./fixtures.ts";
+import { dismissFirstRunWelcome, openSidebar } from "./fixtures.ts";
 import { accountMenuTrigger, chooseFromAccountMenu } from "./sidebar-nav";
 
 let fixture: { info: { url: string; dataDir: string }; close(): Promise<void> }, vite: ViteDevServer, origin: string;
@@ -21,7 +21,7 @@ test.afterAll(async () => { try { await vite?.close(); } finally { await fixture
 for (const skin of ["light", "dark"]) test("integrated Tools shortcut search and Escape restores focus in " + skin, async ({ page }, info) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.addInitScript(skin => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", skin); }, skin);
-  await page.goto(origin); const sidebar = await openSidebar(page);
+  await page.goto(origin); await dismissFirstRunWelcome(page); const sidebar = await openSidebar(page);
   const trigger = accountMenuTrigger(sidebar); await chooseFromAccountMenu(sidebar, "Keyboard shortcuts");
   const dialog = page.getByRole("dialog", { name: "Keyboard shortcuts", exact: true }); await expect(dialog).toBeVisible();
   const search = dialog.getByRole("textbox", { name: "Search shortcuts" }); await expect(search).toBeFocused(); await search.fill("Search and switch conversations");

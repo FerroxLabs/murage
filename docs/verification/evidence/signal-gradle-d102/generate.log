@@ -1,0 +1,65 @@
+D060 a8758b3ac6a22f5b35f3690101759a269f765ed619317c6e7903eb040b3cbe9d
+D061 21bd5da2de49b642904077f38c0efdc7778e92b3ed0889392dca61b97e389607
+gpg: keybox '/job/gnupg/pubring.kbx' created
+gpg: /job/gnupg/trustdb.gpg: trustdb created
+gpg: key 843C48A565F8F04B: public key "Adoptium GPG Key (DEB/RPM Signing Key) <temurin-dev@eclipse.org>" imported
+gpg: Total number processed: 1
+gpg:               imported: 1
+authenticated build-jdk {'url': 'https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_x64_linux_hotspot_25.0.5_8.tar.gz', 'sha256': '68982529869257d0ee6b824ec5aa270ff8b118bb438670da0b97ebdab178d7fb', 'build': '25.0.5+8-LTS'}
+openjdk version "25.0.5" 2026-10-20 LTS
+OpenJDK Runtime Environment Temurin-25.0.5+8 (build 25.0.5+8-LTS)
+OpenJDK 64-Bit Server VM Temurin-25.0.5+8 (build 25.0.5+8-LTS, mixed mode, sharing)
+Fetching distribution.
+Downloading file:/job/gradle-distribution.zip
+..............10%..............20%...............30%..............40%...............50%..............60%...............70%..............80%...............90%..............100%
+
+Welcome to Gradle 9.8.2!
+
+Here are the highlights of this release:
+ - Java 27 support
+ - Maven mirror settings reuse
+ - Linked problem locations in build output
+
+For more details see https://docs.gradle.org/9.8.2/release-notes.html
+
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/9.8.2/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build
+Calculating task graph as configuration cache cannot be reused due to --write-verification-metadata
+> Task :buildSrc:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :buildSrc:pluginDescriptors
+> Task :buildSrc:processResources
+> Task :buildSrc:compileKotlin
+> Task :buildSrc:compileJava NO-SOURCE
+> Task :buildSrc:compileGroovy NO-SOURCE
+> Task :buildSrc:classes
+> Task :buildSrc:jar
+
+> Task :libsignal-cli:compileJava
+Note: Some input files use or override a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+
+> Task :libsignal-cli:processResources
+> Task :libsignal-cli:classes
+> Task :libsignal-cli:jar
+> Task :compileJava
+> Task :processResources
+> Task :classes
+> Task :jar
+> Task :startScripts
+> Task :installDist
+A verification file was generated but some problems were discovered:
+   - some artifacts aren't signed or the signature couldn't be retrieved.
+   - some keys couldn't be downloaded. They were automatically added as ignored keys but you should review if this is acceptable. Look for entries with the following comment: Key couldn't be downloaded from any key server
+
+Exported 24 keys to /job/source/gradle/verification-keyring.gpg and /job/source/gradle/verification-keyring.keys
+A verification file was generated but some problems were discovered:
+   - some artifacts aren't signed or the signature couldn't be retrieved.
+   - some keys couldn't be downloaded. They were automatically added as ignored keys but you should review if this is acceptable. Look for entries with the following comment: Key couldn't be downloaded from any key server
+
+Exported 25 keys to /job/source/gradle/verification-keyring.gpg and /job/source/gradle/verification-keyring.keys
+
+[Incubating] Problems report is available at: file:///job/source/build/reports/problems/problems-report.html
+
+BUILD SUCCESSFUL in 4m 46s
+12 actionable tasks: 12 executed
+Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.8.2/userguide/configuration_cache_enabling.html

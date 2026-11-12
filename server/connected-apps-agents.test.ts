@@ -127,6 +127,7 @@ describe("an engine searching, then connecting a long-tail app (scripted engine 
       response.end(JSON.stringify({ messageIds: cards.map((_card, index) => `m${index}`) }));
     });
     child = spawn(process.execPath, ["--experimental-strip-types", ENTRY], {
+      windowsHide: true,
       env: { ...process.env, MURAGE_CONNECTOR_UPSTREAM_URL: `${base}/mcp`, MURAGE_HARNESS_URL: base, MURAGE_CONNECTORS_TOKEN: "fixture", MURAGE_BOT_ID: "bot", MURAGE_THREAD_ID: "thread" },
       stdio: ["pipe", "pipe", "pipe"],
     });

@@ -1,3 +1,6 @@
+import type { ServiceAuthority } from "./narrow-denials.ts";
+import { noLimitsAppliesTo, type NoLimitsOrigin } from './no-limits-origin.ts';
+import type { PermissionSetting } from './permission-inheritance.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -5,13 +8,14 @@
 // ownToolGate once, in front of every /api/internal/* route, after the capability checks and before the route runs:
 //   (a) the mark: every own tool but the clean readers marks the thread (1.0.19 4.2 r3: the recall tools and the saved-result
 //       read mark `memory` at their release, on evidence, not here); writers do not mark their
-//       own turn (r4 M1: OWN_WRITERS are their own list), except ask_bot / delegate_bot (`another bot`) and project_bring_in;
-//   (b) on a marked lane turn (judged on the state before this call) every writer but the five that keep their own owner
+//       own turn (r4 M1: OWN_WRITERS are their own list), except project_bring_in; ask_bot / delegate_bot mark on content delivery;
+//   (b) below No limits, on a marked lane turn (judged on the state before this call) every writer but the five that keep their own owner
 //       card, and every phoneJobs tool, is refused with the fixed text and changes nothing (the floor: v1 raises no card
 //       from the middleware);
-//   (c) off the lane, a writer on a marked turn records an ownWrite key (data only); a lane turn's start reads them.
+//   (c) a writer on a marked turn records an ownWrite key (data only) off the old lane and at No limits.
 // Pure over external-marks.ts: no Murage server imports, so the unit rows drive it directly.
-import { HIGHLEVEL_HELPER_NAMES, HIGHLEVEL_READ_TOOL_NAMES } from "../shared/highlevel.ts";
+import { decide } from './outside-authority.ts';
+import { HIGHLEVEL_HELPER_NAMES, HIGHLEVEL_FAMILY_TOOLS } from "../shared/highlevel.ts";
 import { PHONE_TOOL_NAMES } from "../shared/phone-jobs-contract.ts";
 import { TextBudget, type DownloadRegistry, type FsHooks } from "./download-registry.ts";
 import { anyOwnWrite, downloadRegistry, markTurnOutside, ownWrite, ownWritten, turnOutsideRead, type OutsideSource } from "./email/external-marks.ts";
@@ -51,13 +55,13 @@ export const OWN_MARKS_TOOLS: readonly string[] = [
   "memory_search", "memory_get", "thread_search", "thread_list", "thread_read",
   "check_delegation", "wait_delegation", "skills_list", "tool_result_read", "project_read_messages", "venue_read_messages",
   "email_list", "email_read", "dweb_repo_status", "dweb_opencode_models", ...PHONE_TOOL_NAMES,
-  // HL-S2-RO (b13t): a CRM read answers with HighLevel records, outside content, so each marks the turn (external-marks.ts isHighLevelReadToolName)
-  ...HIGHLEVEL_READ_TOOL_NAMES, ...HIGHLEVEL_HELPER_NAMES,
+  // Family calls can return CRM records; each marks the turn. The HighLevel host separately checks every operation and write approval.
+  ...Object.values(HIGHLEVEL_FAMILY_TOOLS), ...HIGHLEVEL_HELPER_NAMES,
 ];
 const READ_CLEAN = new Set(OWN_READ_CLEAN_TOOLS);
 /** 1.0.19 4.2 r3: the recall tools and the saved-result read never mark at the gate; each marks at its release, by what it
  *  returned (memory/outside-derived.ts markRecallRecords, external-marks.ts recallRowsOutside). Clean results never mark. */
-const RELEASE_JUDGED: ReadonlySet<string> = new Set(["memory_search", "memory_get", "thread_search", "thread_list", "thread_read", "tool_result_read"]);
+const RELEASE_JUDGED: ReadonlySet<string> = new Set(["memory_search", "memory_get", "thread_search", "thread_list", "thread_read", "check_delegation", "wait_delegation", "tool_result_read", "ask_bot", "delegate_bot"]);
 /** F1: the readers that return a recorded object (and generate_image, given prompt_blocks: coarse, any call). */
 const F1_READERS: ReadonlySet<string> = new Set(["get_bot", "list_bots", "get_prompt_block", "list_prompt_blocks", "list_reference_packs", "list_routines", "generate_image"]);
 const PHONE: ReadonlySet<string> = new Set<string>([...PHONE_TOOL_NAMES, "phone"]);
@@ -130,6 +134,9 @@ export function ownToolOfRoute(method: string, path: string, body?: Record<strin
   // tools at startup (unified-browser tools/list): marking there made every first turn "outside tool" before its first command.
   if (method === "POST" && LISTING_RPC_MOUNTS.has(path) && body?.method === "tools/list") return "";
   if (get && STATUS_GET_MOUNTS.has(path)) return "";
+  // Catalog publication is authenticated discovery metadata, handled before
+  // the own-tool gate. It neither invokes a tool nor releases its result.
+  if (path.startsWith("/api/internal/mcp-catalog/")) return "";
   if (path.startsWith("/api/internal/memory/")) return MEMORY_ROUTES[path.slice("/api/internal/memory/".length)] ?? "memory_save";
   if (path.startsWith("/api/internal/project/")) return PROJECT_ROUTES[path.slice("/api/internal/project/".length)] ?? "project_card_update";
   if (path.startsWith("/api/internal/email/")) return path.slice("/api/internal/email/".length) || "email_send";
@@ -168,6 +175,10 @@ export function ownSite(tool: string, rpc?: string): string {
 }
 
 export interface OwnCall {
+  authority?: ServiceAuthority;
+  /** Current server-resolved settings and proven origin, independent of the stored turn-policy reader. */
+  bot?: (PermissionSetting & { fullAccessChannelMessages?: boolean }) | null;
+  origin?: NoLimitsOrigin;
   threadId: string;
   /** the caller's bot */
   botId: string;
@@ -229,6 +240,11 @@ function ownWriteKeys(call: OwnCall): string[] {
   return [];
 }
 
+/** A hand-off marks only when released peer content reaches the caller. Status-only receipts carry no lineage. */
+export function ownPeerContentDelivered(threadId: string, shown: { origins: readonly unknown[]; ranges: readonly unknown[] }, site = 'peer-delivery'): void {
+  if (shown.origins.length || shown.ranges.length) markTurnOutside(threadId, 'another bot', undefined, undefined, site);
+}
+
 /** The one middleware step. Returns the refusal the route answers with, or null to let the route run. It records nothing:
  *  the keys of an off-lane write come from ownWritePlan (before the route) and ownWriteCommit (after the route succeeds). */
 export function ownToolGate(call: OwnCall): { refuse: string } | null {
@@ -236,7 +252,13 @@ export function ownToolGate(call: OwnCall): { refuse: string } | null {
   const before = turnOutsideRead(call.threadId);
   const mark = ownToolMark(call.tool);
   if (mark) markTurnOutside(call.threadId, mark, undefined, undefined, ownSite(call.tool, call.rpc));
+  // Bot-management refusals remain synchronous and cannot be waived by level.
+  const [decision, reason] = decide({ kind: 'tool', tool: call.tool }, {});
+  if (decision === 'refuse') return { refuse: reason ?? 'This action is unavailable.' };
   const writer = OWN_WRITERS.has(call.tool) || PHONE.has(call.tool);
+  // Sean 2026-11-12: outside content cannot refuse a No limits turn. Use the
+  // shared origin predicate even when a generation has no stored turn policy.
+  if (noLimitsAppliesTo(call.origin, call.bot)) return null;
   if (call.lane) {
     if (before !== null && writer && !OWN_HOLD_EXEMPT.has(call.tool)) return { refuse: OUTSIDE_WRITE_REFUSAL };
     return null;
@@ -244,10 +266,10 @@ export function ownToolGate(call: OwnCall): { refuse: string } | null {
   return null;
 }
 
-/** S4 R-a: the keys this call records if its route succeeds: an off-lane writer on a marked turn (judged after the gate own
- *  mark, as before). Empty otherwise. Call after ownToolGate returned null. */
+/** S4 R-a: the keys this call records if its route succeeds: a marked writer off the old lane or at No limits
+ *  (judged after the gate's own mark). Empty otherwise. Call after ownToolGate returned null. */
 export function ownWritePlan(call: OwnCall): string[] {
-  if (call.tool === "" || call.lane) return [];
+  if (call.tool === "" || (call.lane && !noLimitsAppliesTo(call.origin, call.bot))) return [];
   if (!OWN_WRITERS.has(call.tool) || turnOutsideRead(call.threadId) === null) return [];
   return ownWriteKeys(call);
 }

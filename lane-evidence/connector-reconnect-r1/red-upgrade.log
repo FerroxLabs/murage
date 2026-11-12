@@ -1,0 +1,43 @@
+
+ RUN  v4.1.12 /work
+
+ ❯ server/connector-health-store.test.ts (6 tests | 1 failed | 5 skipped) 32ms
+     ↓ retains identity, failed accounts and cooldown across process restarts
+     ↓ ignores a terminal MCP failure delivered after a newer sign-in projection
+     ↓ checks at boot and on a bounded schedule, without overlapping slow reads
+   ↓ P2-5 journal bytes for one changed account are constant at 10 and 1000 incidents
+   ↓ per-account incidents survive restart, recovery and account cooldowns independently
+   × upgrading a legacy incident keeps its UUID and delivery mark 28ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connector-health-store.test.ts > upgrading a legacy incident keeps its UUID and delivery mark
+AssertionError: expected { …(2) } to deeply equal { incidentId: 'original-uuid', …(2) }
+
+- Expected
++ Received
+
+  {
+-   "at": 1,
+-   "incidentId": "original-uuid",
+-   "notifiedAt": 2,
++   "at": 3,
++   "incidentId": "833b5355-44df-403d-a901-4aa1c72435c5",
+  }
+
+ ❯ server/connector-health-store.test.ts:125:63
+    123|     const store = new ConnectorHealthStore(file, () => 3);
+    124|     store.update("owner", "buffer", { accounts: [{ id: "A" }] });
+    125|     expect(store.get("owner", "buffer")!.accountIncidents!.A).toEqual(…
+       |                                                               ^
+    126|     expect(store.due("owner", "buffer", "A")).toBe(false);
+    127|   } finally { removeTempDir(dir); }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 5 skipped (6)
+   Start at  03:36:16
+   Duration  8.69s (transform 6.80s, setup 8.48s, import 38ms, tests 32ms, environment 0ms)
+

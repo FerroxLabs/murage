@@ -16,7 +16,7 @@ import { launchVerificationServer, type VerificationServer } from "../scripts/co
 
 const LEGACY_JOBS = 122;
 const FIRST_LEGACY_ID = 710001;
-const INSTANCES = ["rbdel", "rbbot", "rbstop", "rbsend", "rbcrash"] as const;
+const INSTANCES = ["rbdel", "rbbot", "rbstop", "rbsend", "rbcrash", "rbrej", "rbrejq", "rbrejstop", "rbrun", "rbrejcb"] as const;
 let fixture: VerificationServer, headers: Record<string, string>;
 const raw = async (method: string, path: string, body?: unknown) => {
   const response = await fetch(`${fixture.info.url}${path}`, { method, headers: { "content-type": "application/json", ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -42,6 +42,15 @@ const dumpOf = (instance: string) => join(fixture.info.dataDir, `${instance}-dum
 const dispatches = (instance: string, threadId: string) => existsSync(dumpOf(instance))
   ? readFileSync(dumpOf(instance), "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)).filter(row => row.threadId === threadId).length : 0;
 const holdFile = (instance: string, n: number) => join(fixture.info.dataDir, `${instance}-hold-${n}`);
+
+const diagnostic = "Fixture rebuild refused before admission: " + "detail ".repeat(25) + "Action: reconnect the engine and send again.";
+const refusalFile = (threadId: string) => join(fixture.info.dataDir, `rebuild-refuse-${threadId}`);
+const armRefusal = (threadId: string, hold = false) => writeFileSync(refusalFile(threadId), JSON.stringify({ error: diagnostic, hold }));
+const events = (threadId: string) => {
+  const file = join(fixture.info.dataDir, "rebuild-events");
+  return existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)).filter(event => event.threadId === threadId) : [];
+};
+
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /** The instance's sends, in order: each waits after its prompt was built and before the engine submits it for its hold file. */
@@ -101,7 +110,7 @@ const secondThread = async (botId: string) => {
 };
 /** Lets a send through until its reply lands: a revoke still being walked may refuse it once more, and its rebuild is let through too. */
 const passUntilReply = async (hold: ReturnType<typeof holds>, botId: string, threadId: string, want: number) => {
-  for (let attempt = 0; attempt < 4 && await replies(threadId) < want; attempt++) {
+  for (let attempt = 0; attempt < 3 && await replies(threadId) < want; attempt++) {
     if (attempt) console.log(`[drain-v2 test] ${threadId}: send refused again, rebuild ${attempt} let through`);
     await hold.pass(botId, threadId);
     await expect.poll(async () => await replies(threadId) >= want || !hold.idle(), { timeout: 60000 }).toBe(true);
@@ -113,10 +122,10 @@ const refuseAndWait = async (instance: string, hold: ReturnType<typeof holds>, b
   await api("POST", `/api/bots/${botId}/messages`, { threadId, text: "an earlier question" });
   await passUntilReply(hold, botId, threadId, 1);
   await expect.poll(async () => await taskBusy(botId, threadId), { timeout: 15000 }).toBe(false);
-  const warned = count(log(), `context revoked during dispatch on thread ${threadId}; re-preparing (1 of 3)`);
+  const warned = count(log(), `context revoked during dispatch on thread ${threadId}; re-preparing (1 of 2)`);
   await api("POST", `/api/bots/${botId}/messages`, { threadId, text: "the question refused at its send" });
   await hold.pass(botId, threadId, `Revoke before the ${instance} submission`);
-  await expect.poll(() => count(log(), `context revoked during dispatch on thread ${threadId}; re-preparing (1 of 3)`), { timeout: 30000 }).toBe(warned + 1);
+  await expect.poll(() => count(log(), `context revoked during dispatch on thread ${threadId}; re-preparing (1 of 2)`), { timeout: 30000 }).toBe(warned + 1);
   // the sends that reached the engine so far, the refused one included
   return dispatches(instance, threadId);
 };
@@ -125,6 +134,47 @@ describe.skipIf(process.platform === "win32")("DELETION-DRAIN-V2: a refused dire
   beforeAll(async () => {
     fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
       const fs=await import('node:fs'); const path=await import('node:path');
+      const {registerHooks}=await import('node:module');
+      globalThis.__rebuildLog=event=>fs.appendFileSync(path.join(process.env.MURAGE_DATA_DIR,'rebuild-events'),JSON.stringify(event)+'\\n');
+      globalThis.__rebuildRefusal=async threadId=>{
+        const flag=path.join(process.env.MURAGE_DATA_DIR,'rebuild-refuse-'+threadId);
+        if(!fs.existsSync(flag))return null;
+        const plan=JSON.parse(fs.readFileSync(flag,'utf8'));fs.rmSync(flag,{force:true});
+        fs.writeFileSync(flag+'.waiting','');
+        if(plan.hold)await new Promise(resolve=>{const timer=setInterval(()=>{if(!fs.existsSync(flag+'.released'))return;clearInterval(timer);resolve();},10);});
+        globalThis.__rebuildLog({kind:'refused',threadId});
+        return plan.error;
+      };
+      globalThis.__rebuildCallback=threadId=>{
+        if(fs.existsSync(path.join(process.env.MURAGE_DATA_DIR,'callback-throw-'+threadId)))throw Error('fixture dispatch callback failed');
+      };
+      globalThis.__rebuildWait=async threadId=>{
+        const gate=path.join(process.env.MURAGE_DATA_DIR,'rebuild-wait-'+threadId);
+        if(!fs.existsSync(gate)||fs.existsSync(gate+'.released'))return;
+        fs.writeFileSync(gate+'.waiting','');
+        await new Promise(resolve=>{const poll=setInterval(()=>{if(!fs.existsSync(gate+'.released'))return;clearInterval(poll);resolve();},10);});
+      };
+      globalThis.__rebuildSetupFailure=threadId=>{
+        const flag=path.join(process.env.MURAGE_DATA_DIR,'setup-error-'+threadId);
+        if(fs.existsSync(flag)){const error=fs.readFileSync(flag,'utf8');fs.rmSync(flag,{force:true});throw Error(error);}
+      };
+      registerHooks({load(url,context,next){
+        if(!url.endsWith('/server/index.ts'))return next(url,context);
+        let source=fs.readFileSync(new URL(url),'utf8');
+        const waitAnchor='  await settleRevokesForTurn(database()).catch(() => false);';
+        if(!source.includes(waitAnchor))throw Error('rebuild wait anchor moved');
+        source=source.replace(waitAnchor,'  await globalThis.__rebuildWait(held.threadId);\\n'+waitAnchor);
+        const anchor='  const fluxRefusal = providerRoute ? null : fluxSelectionRefusal(model, instance.driverKind);';
+        if(!source.includes(anchor))throw Error('rebuild refusal anchor moved');
+        source=source.replace(anchor,'  const fluxRefusal = (opts?.rebuildOf !== undefined ? await globalThis.__rebuildRefusal(threadId) : null) ?? (providerRoute ? null : fluxSelectionRefusal(model, instance.driverKind));');
+        source=source.replace(/opts\\?\\.onDispatchError\\?\\.\\((message, Object.assign[^;\\n]+)\\);/g,'(globalThis.__rebuildLog({kind:"dispatch-error",threadId,message}), opts?.onDispatchError?.($1), globalThis.__rebuildCallback(threadId));');
+        source=source.replace(/opts\\?\\.onDispatchError\\?\\.\\(("turn stopped before dispatch",[^;\\n]+)\\);/g,'(globalThis.__rebuildLog({kind:"dispatch-stopped",threadId}), opts?.onDispatchError?.($1));');
+        source=source.replace('      await yieldTurnSetup();','      await yieldTurnSetup(); globalThis.__rebuildSetupFailure(threadId);');
+        source=source.replace('onDispatchError?.(message, failure);','(globalThis.__rebuildLog({kind:"dispatch-error",threadId,message}), onDispatchError?.(message, failure), globalThis.__rebuildCallback(threadId));');
+        source=source.replace('  directConversationGenerations.set(conversation, token.generation);','  globalThis.__rebuildLog({kind:"admitted",threadId:run.threadId,generation:run.generation});\\n  directConversationGenerations.set(conversation, token.generation);');
+        return {format:'module-typescript',shortCircuit:true,source};
+      }});
+
       const {BUILT_IN_DRIVERS}=await import(${JSON.stringify(pathToFileURL(join(process.cwd(), "server/drivers/builtIn.ts")).href)});
       const {makeLateTerminalDriver}=await import(${JSON.stringify(pathToFileURL(join(process.cwd(), "server/testing/fake-late-terminal-driver.ts")).href)});
       const driver=makeLateTerminalDriver();
@@ -144,12 +194,7 @@ describe.skipIf(process.platform === "win32")("DELETION-DRAIN-V2: a refused dire
       };
       BUILT_IN_DRIVERS.push(driver);
       const dir=process.env.MURAGE_DATA_DIR;
-      // The settle window these tests act in needs the refused turn to WAIT for the revoke walk. Since IO-IDLE-DRAIN r3.5 (a2aa1309e) a turn whose
-      // drain room comes only after the 5 s deadline rebuilds at once, and the stuck jobs below keep the runner spending the minute's budget, so the
-      // room is always that far out. Give both ledgers (the pace and the write budget) room inside the window: the stuck jobs still never finish, so
-      // settleRevokesForTurn spins to its full deadline, the case the fixture builds. No production guard moves; only this server process's limits do.
-      const budget=await import(${JSON.stringify(pathToFileURL(join(process.cwd(), "server/memory/revoke-budget.ts")).href)});
-      budget.REVOKE_PACE.bytesPerMinute=2**50; budget.REVOKE_WRITE_BUDGET.bytesPerMinute=2**50;
+      // Marker budgets stay unchanged. The fixture pause above, not queue progress, makes recovery observable.
       const file=path.join(dir,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
       for(const name of ${JSON.stringify(INSTANCES)})cfg.instances[name]={driver:'fakeLateTerminal',environment:{HOLD_PREFIX:name+'-hold-',FAKE_LATE_PLAIN_SESSION:'1',FAKE_LATE_MEMORY_MCP:'1',FAKE_LATE_DUMP:path.join(dir,name+'-dump')}};
       fs.writeFileSync(file,JSON.stringify(cfg));
@@ -157,7 +202,19 @@ describe.skipIf(process.platform === "win32")("DELETION-DRAIN-V2: a refused dire
     await login();
     await ensureLegacyJobs();
   }, 120000);
-  afterAll(async () => { await fixture?.close(); });
+  afterAll(async () => {
+    try {
+      if (fixture && process.env.REBUILD_REJECTION_EVIDENCE) {
+        const prefix = join(process.env.REBUILD_REJECTION_EVIDENCE, "setup");
+        writeFileSync(prefix + "-fixture-info.json", JSON.stringify(fixture.info, null, 2));
+        writeFileSync(prefix + "-server.log", log());
+        const eventFile = join(fixture.info.dataDir, "rebuild-events");
+        writeFileSync(prefix + "-events.jsonl", existsSync(eventFile) ? readFileSync(eventFile) : "");
+        const bots = (await api("GET", "/api/bots?messages=0")).bots;
+        writeFileSync(prefix + "-conversations.json", JSON.stringify(await Promise.all(bots.map(async (bot: any) => ({ bot, messages: await messages(bot.threadId) }))), null, 2));
+      }
+    } finally { await fixture?.close(); }
+  });
 
   // Grok r4 High: the delete was allowed while the refused turn waited, never stopped the rebuild, and its reply landed on the deleted thread.
   it("a conversation delete while the refused turn waits is refused as for a working turn; the rebuilt reply lands, then it deletes", async () => {
@@ -201,11 +258,18 @@ describe.skipIf(process.platform === "win32")("DELETION-DRAIN-V2: a refused dire
     const hold = holds("rbstop");
     const bot = await newBot("Stop in the wait", "rbstop");
     const threadId = bot.threadId;
-    const sent = await refuseAndWait("rbstop", hold, bot.id, threadId);
-    expect(await taskBusy(bot.id, threadId)).toBe(true);
-    await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId });
-    await expect.poll(async () => await taskBusy(bot.id, threadId), { timeout: 15000 }).toBe(false);
-    // past the settle window: the rebuild never reached the engine
+    // A spent write budget may end settlement immediately. Hold the intended
+    // rebuild phase explicitly so Stop cannot race the next engine submission.
+    const gate=join(fixture.info.dataDir,`rebuild-wait-${threadId}`);writeFileSync(gate,"");
+    let sent=0;
+    try {
+      sent = await refuseAndWait("rbstop", hold, bot.id, threadId);
+      await expect.poll(()=>existsSync(gate+'.waiting'),{timeout:15000}).toBe(true);
+      expect(await taskBusy(bot.id, threadId)).toBe(true);
+      await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId });
+      await expect.poll(async () => await taskBusy(bot.id, threadId), { timeout: 15000 }).toBe(false);
+    } finally { writeFileSync(gate+'.released',""); }
+    // past the fixture recovery pause: the rebuild never reached the engine
     await sleep(7000);
     expect(hold.idle()).toBe(true);
     expect(dispatches("rbstop", threadId)).toBe(sent);
@@ -234,6 +298,100 @@ describe.skipIf(process.platform === "win32")("DELETION-DRAIN-V2: a refused dire
     await expect.poll(async () => await taskBusy(bot.id, threadId), { timeout: 15000 }).toBe(false);
     expect(dispatches("rbsend", threadId)).toBeGreaterThanOrEqual(sent + 2);
     expect(errorLines(await messages(threadId))).toEqual([]);
+  }, 180000);
+
+
+  it("a rebuild refused before its admission ends with the card, the full log and the dispatch error", async () => {
+    const hold = holds("rbrej");
+    const bot = await newBot("Rebuild admission refused", "rbrej"), threadId = bot.threadId;
+    const sent = await refuseAndWait("rbrej", hold, bot.id, threadId);
+    armRefusal(threadId);
+    await expect.poll(async () => await taskBusy(bot.id, threadId), { timeout: 30000 }).toBe(false);
+    const errors = (await messages(threadId)).filter(message => String(message.tool?.name ?? "").startsWith("error:"));
+    expect(errors).toHaveLength(1);
+    expect(errors[0].tool.errorDetails).toBe(diagnostic);
+    expect(errors[0].tool.name).toMatch(/… \(more\)$/);
+    expect(log()).toContain(`[turn] dispatch preparation failed on thread ${threadId}: ${diagnostic}`);
+    expect(log()).not.toContain(`ignored stale rejection on thread ${threadId}`);
+    expect(events(threadId).filter(event => event.kind === "dispatch-error")).toHaveLength(1);
+    expect(events(threadId).find(event => event.kind === "dispatch-error")?.message).toBe(diagnostic);
+    expect(dispatches("rbrej", threadId)).toBe(sent);
+    expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "after rejected rebuild" })).queued).not.toBe(true);
+    await passUntilReply(hold, bot.id, threadId, 2);
+  }, 180000);
+
+  it("a send queued behind a refused rebuild still sees the card first, then runs", async () => {
+    const hold = holds("rbrejq");
+    const bot = await newBot("Queued behind rejected rebuild", "rbrejq"), threadId = bot.threadId;
+    await refuseAndWait("rbrejq", hold, bot.id, threadId);
+    expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "queued behind refusal" })).queued).toBe(true);
+    armRefusal(threadId);
+    await expect.poll(() => events(threadId).some(event => event.kind === "refused"), { timeout: 30000 }).toBe(true);
+    // The queued send can reach the fake engine only after the old failure has been reported.
+    await expect.poll(() => !hold.idle(), { timeout: 30000 }).toBe(true);
+    const beforeReply = await messages(threadId);
+    const errors = beforeReply.filter(message => String(message.tool?.name ?? "").startsWith("error:"));
+    expect(errors).toHaveLength(1);
+    expect(errors[0].tool.errorDetails).toBe(diagnostic);
+    expect(errors[0].tool.name).toMatch(/… \(more\)$/);
+    expect(log()).toContain(`[turn] dispatch preparation failed on thread ${threadId}: ${diagnostic}`);
+    expect(log()).not.toContain(`ignored stale rejection on thread ${threadId}`);
+    expect(events(threadId).filter(event => event.kind === "dispatch-error")).toHaveLength(1);
+    expect(beforeReply.filter(isReply)).toHaveLength(1);
+    await passUntilReply(hold, bot.id, threadId, 2);
+    const all = await messages(threadId);
+    expect(all.findIndex(message => message.id === errors[0].id)).toBeLessThan(all.findLastIndex(isReply));
+    await expect.poll(async () => await taskBusy(bot.id, threadId), { timeout: 15000 }).toBe(false);
+  }, 180000);
+
+  it("an ordinary rebuild in the wait is admitted and answers, with no card", async () => {
+    const hold = holds("rbrun");
+    const bot = await newBot("Ordinary rebuild", "rbrun"), threadId = bot.threadId;
+    await refuseAndWait("rbrun", hold, bot.id, threadId);
+    await passUntilReply(hold, bot.id, threadId, 2);
+    await expect.poll(async () => await taskBusy(bot.id, threadId), { timeout: 15000 }).toBe(false);
+    expect(errorLines(await messages(threadId))).toEqual([]);
+    expect(log()).not.toContain(`dispatch preparation failed on thread ${threadId}`);
+    expect(events(threadId).filter(event => event.kind === "dispatch-error")).toEqual([]);
+  }, 180000);
+
+  it("a Stop while the rebuild is refused before admission ends stopped: no card, nothing reported", async () => {
+    const hold = holds("rbrejstop");
+    const bot = await newBot("Stop before rebuild admission", "rbrejstop"), threadId = bot.threadId;
+    await refuseAndWait("rbrejstop", hold, bot.id, threadId);
+    armRefusal(threadId, true);
+    await expect.poll(() => existsSync(refusalFile(threadId) + ".waiting"), { timeout: 30000 }).toBe(true);
+    await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId });
+    writeFileSync(refusalFile(threadId) + ".released", "");
+    await expect.poll(() => events(threadId).some(event => ["dispatch-stopped", "refused"].includes(event.kind)), { timeout: 15000 }).toBe(true);
+    // Let the rejection continuation finish before observing the absence of a card.
+    await sleep(1000);
+    expect(errorLines(await messages(threadId))).toEqual([]);
+    expect(log()).not.toContain(`dispatch preparation failed on thread ${threadId}`);
+    expect(events(threadId).filter(event => event.kind === "dispatch-error")).toEqual([]);
+    expect(events(threadId).filter(event => event.kind === "dispatch-stopped")).toHaveLength(1);
+    expect(await taskBusy(bot.id, threadId)).toBe(false);
+    expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "after stopped rebuild" })).queued).not.toBe(true);
+    await passUntilReply(hold, bot.id, threadId, 2);
+  }, 180000);
+
+
+  it("a throwing dispatch error callback writes one card and is called once, then the thread is free", async () => {
+    const hold = holds("rbrejcb");
+    const bot = await newBot("Throwing dispatch callback", "rbrejcb"), threadId = bot.threadId;
+    writeFileSync(join(fixture.info.dataDir, "callback-throw-" + threadId), "");
+    writeFileSync(join(fixture.info.dataDir, "setup-error-" + threadId), diagnostic);
+    await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "setup failure with throwing callback" });
+    await expect.poll(() => log().includes("a started turn failed after admission and gave its thread back: fixture dispatch callback failed"), { timeout: 30000 }).toBe(true);
+    await sleep(1000);
+    const errors = (await messages(threadId)).filter(message => String(message.tool?.name ?? "").startsWith("error:"));
+    expect(errors).toHaveLength(1);
+    expect(errors[0].tool.errorDetails).toBe(diagnostic);
+    expect(count(log(), `[turn] dispatch preparation failed on thread ${threadId}: ${diagnostic}`)).toBe(1);
+    expect(events(threadId).filter(event => event.kind === "dispatch-error")).toHaveLength(1);
+    expect(await taskBusy(bot.id, threadId)).toBe(false);
+    expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "after throwing callback" })).queued).not.toBe(true);
+    await passUntilReply(hold, bot.id, threadId, 1);
   }, 180000);
 
   // Last: it restarts the shared server.

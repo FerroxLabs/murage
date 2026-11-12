@@ -98,7 +98,7 @@ describe("killCliTree", () => {
       const [[data]] = await Promise.all([once(parent.stdout, "data"), once(canary.stdout, "data")]);
       helper = Number(String(data).trim());
       expect(helper).toBeGreaterThan(1);
-      const pgid = Number(execFileSync("ps", ["-o", "pgid=", "-p", String(helper)], { encoding: "utf8" }).trim());
+      const pgid = Number(execFileSync("ps", ["-o", "pgid=", "-p", String(helper)], { windowsHide: true, encoding: "utf8" }).trim());
       expect(pgid).toBe(parent.pid);
       expect(alive(canary.pid!)).toBe(true);
       killCliTree(parent);
@@ -132,7 +132,7 @@ describe("killCliTree", () => {
   }, 12_000);
 
   it.skipIf(process.platform === "win32")("refuses group proof for an unowned child", async () => {
-    const child = spawn(process.execPath, ["-e", "console.log(process.pid);setInterval(()=>{},1000)"], { stdio: ["ignore", "pipe", "ignore"] });
+    const child = spawn(process.execPath, ["-e", "console.log(process.pid);setInterval(()=>{},1000)"], { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
     try {
       await once(child.stdout!, "data");
       const signals = vi.spyOn(process, "kill");

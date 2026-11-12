@@ -1,0 +1,35 @@
+BOT-CREATE-OUTSIDE-1019 r3.3.1: predicate and actual helper-driver draft, NOT a completed bot-create server feature.
+
+Base: 81d7239a011b2851af6807142965cf51bea5585d
+MAIN ruling: /work/fuigo-builds/orph/_ev/designs/RULING-botcreate-r331-MAIN.md
+READY: /work/fuigo-builds/orph/_ev/designs/botcreate-spec-r331/READY.txt
+
+settle.py, gate.py, traces.tsv and mutants.tsv are byte-identical reference fixtures, SHA256 asserted by tests.
+106 traces (33 accept / 73 reject), including all five Susan/Sable cases.
+81 hand-ported mutants must each be killed by their named trace.
+Actual ACP and Codex helper tests cover complete, row-outside-read, torn-row, plus-other-mark and read-event.
+Claude's actual background-helper test proves its complete result row. All retain the live outside mark.
+Only settle_verdict computes MAIN's lifecycle-only helper waiver.
+
+OPEN SUSAN-a-delegate-mark:
+The real server/Fuigo workflow creates Susan staged:turn-open and holds its delegation, but ownToolGate marks
+source=another bot before the delegate route can return the held receipt. The complete reply settles outside.
+Reference world.py op_delegate emits no such mark, so SUSAN-a and A-held-work expect activation.
+No mark exemption or expectation change was invented. Stopped under the user's trace-conflict rule.
+
+Evidence and complete withdrawn runtime/UI source overlay:
+/work/fuigo-builds/swarm-b/bld2-botcreate/evidence/
+- OPEN-SUSAN-a-delegate-mark.txt: exact conflict, command, scope and remaining work.
+- SUSAN-a-conflict.txt: mandatory ACTIVE assertion fails through isolated launchVerificationServer.
+- SUSAN-a.json: verification wait=settled, messages and observed staged:outside record.
+- SUSAN-a-server.log: source=another bot site=own-route:delegate_bot.
+- runtime-draft-at-stop.tgz: complete source overlay onto the base, including all unfinished runtime/UI work.
+- final-r331-draft.txt / final-driver-regression.txt: retained draft's final checks.
+
+Runtime integration, T17s classifications, full owner workflow and Review UI are unfinished and withdrawn.
+The accepted helper traces are predicate outcomes driven by actual driver events, not a claim of shipped activation.
+
+Final retained tests: 390 passed (191 reference/pin assertions, 24 driver cases, 66 driver regressions, 109 stop-gate audit cases).
+All 81 mutant names and their failing witnesses are printed in final-r331-draft.txt.
+Three changed Codex terminal call signatures are reflected in stop-gate.rules.config.ts; no new exemption was added.
+Server typecheck passed: tsc -p tsconfig.server.json --noEmit (same container command, exit 0).

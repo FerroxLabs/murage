@@ -73,7 +73,7 @@ m['cleanup_engine_signins'].__globals__['erase_credential_at']=real_erase
 try: m['cleanup_engine_signins']({'mode':'engine-signin-cleanup','path':outside},root,owners,os.getuid()); raise AssertionError('path accepted')
 except ValueError: pass
 print('credential cleanup fixture passed')
-`,launcher,root],{encoding:"utf8"});
+`,launcher,root],{ windowsHide: true,encoding:"utf8"});
       expect(output.trim()).toBe("credential cleanup fixture passed");
     } finally {removeTempDirSync(root);}
   });
@@ -131,7 +131,7 @@ try: m['cleanup_engine_signins']({'mode':'engine-signin-cleanup'},root,{TURN},0)
 except m['CleanupFailed'] as e: assert e.results['claudeAgent'].startswith('failed'), e.results
 assert os.path.isfile(root+'/claudeAgent/.claude')
 print('production layout cleanup passed')
-`,launcher,root],{encoding:"utf8"});
+`,launcher,root],{ windowsHide: true,encoding:"utf8"});
       expect(output.trim()).toBe("production layout cleanup passed");
     } finally {removeTempDirSync(root);}
   });

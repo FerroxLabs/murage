@@ -1,0 +1,13 @@
+# Non-root-runner registrations from the 1.0.19 literal test-path audit.
+# path	runner	policy / command
+cloudflare/control-plane/test-node/gen-legal-text.test.mjs	Node qualification	node --test cloudflare/control-plane/test-node/gen-legal-text.test.mjs; separate Node suite
+cloudflare/control-plane/test/**/*.test.ts	Worker	pnpm control-plane:test; configured Worker suite covers all 43 audited additions
+deploy/cloud-home/qualify/sign-image-test/sign-image.test.mjs	OS qualification	node --test deploy/cloud-home/qualify/sign-image-test/sign-image.test.mjs; isolated image-signing fixtures
+evidence/bld5-toolid-s4a/probe.test.ts	Archived evidence	Frozen historical probes; excluded from current runners, imports refer to prior contracts
+evidence/bld6-toolid-s4a/base-app-action-grant.test.ts	Archived evidence	Frozen historical probes; excluded from current runners, imports refer to prior contracts
+evidence/bld6-toolid-s4a/base-routine-permissions.test.ts	Archived evidence	Frozen historical probes; excluded from current runners, imports refer to prior contracts
+scripts/signal-java-inputs.test.py	Python qualification	python3 scripts/signal-java-inputs.test.py; scripts/signal-runtime-contract.checks.mjs invokes this suite
+scripts/signal-native-stripping.test.py	Python qualification	python3 scripts/signal-native-stripping.test.py; scripts/signal-runtime-contract.checks.mjs invokes this suite
+scripts/windows-hide-gate-checks.test.ps1	Windows qualification	pwsh -File scripts/windows-hide-gate-checks.test.ps1; ci.yml Windows desktop gate parsing step
+server/__snapshots__/browser-owner-policy.test.ts.snap	Snapshot data	Consumed by server/browser-owner-policy.test.ts; not executable
+scripts/fetch-build-input.test.py	Python fixture	Invoked by scripts/fetch-build-input.test.mjs; no network

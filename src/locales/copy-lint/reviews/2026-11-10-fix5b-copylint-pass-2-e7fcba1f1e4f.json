@@ -1,0 +1,445 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "astra-fix-copylint",
+  "date": "2026-11-10",
+  "base": "da4d66dbc39e3d1e602f4900b5274f8e946e0436",
+  "scope": "fix2-copylint: only the 86 strings corrected after independent Sol review; confirm pass required",
+  "strings": {
+    "en:engine.toolLimit.catalogUnknown": {
+      "text": "Murage could not confirm this AI's tool list or the maximum number of tools it accepts. Your message was not sent.",
+      "en": "Murage could not confirm this AI's tool list or the maximum number of tools it accepts. Your message was not sent.",
+      "verdict": "pass"
+    },
+    "en:browser.BrowserChoice.13": {
+      "text": "Your Chrome connection method",
+      "en": "Your Chrome connection method",
+      "verdict": "pass"
+    },
+    "en:browser.versionUnknown": {
+      "text": "Check About {browser} for its version. Connecting to your browser this way needs version {minimum} or later.",
+      "en": "Check About {browser} for its version. Connecting to your browser this way needs version {minimum} or later.",
+      "verdict": "pass"
+    },
+    "en:browser.directScope": {
+      "text": "{name} uses your logins in its own tabs. Murage keeps the bot to those tabs and lets you take over to enter passwords and make payments. My Chrome, signed in has settings for each site and for how often the bot asks for confirmation.",
+      "en": "{name} uses your logins in its own tabs. Murage keeps the bot to those tabs and lets you take over to enter passwords and make payments. My Chrome, signed in has settings for each site and for how often the bot asks for confirmation.",
+      "verdict": "pass"
+    },
+    "en:browser.disclosure.floor": {
+      "text": "This browser doesn't ask per site or check each action. It still lets you take over to enter passwords and make payments.",
+      "en": "This browser doesn't ask per site or check each action. It still lets you take over to enter passwords and make payments.",
+      "verdict": "pass"
+    },
+    "en:browser.disclosure.direct": {
+      "text": "Uses your logins in tabs of its own. My Chrome, signed in has settings for each site and for how often the bot asks for confirmation.",
+      "en": "Uses your logins in tabs of its own. My Chrome, signed in has settings for each site and for how often the bot asks for confirmation.",
+      "verdict": "pass"
+    },
+    "en:browser.server.browser-owner-session.7": {
+      "text": "Murage could not process this browser request. Reopen the Browser tab and try again.",
+      "en": "Murage could not process this browser request. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "en:browser.server.browser-owner-session.8": {
+      "text": "This browser request contains more data than Murage can accept. Try sending less text at once.",
+      "en": "This browser request contains more data than Murage can accept. Try sending less text at once.",
+      "verdict": "pass"
+    },
+    "en:browser.server.browser-owner-session.10": {
+      "text": "Murage is missing details of your browser action or the page it applies to. Reopen the Browser tab and try the action again.",
+      "en": "Murage is missing details of your browser action or the page it applies to. Reopen the Browser tab and try the action again.",
+      "verdict": "pass"
+    },
+    "en:browser.server.browser-owner-session.11": {
+      "text": "Murage needs to refresh the browser state. Reopen the Browser tab and try again.",
+      "en": "Murage needs to refresh the browser state. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "en:browser.server.route.10": {
+      "text": "Murage could not apply this browser change. Reopen the Browser tab and try again.",
+      "en": "Murage could not apply this browser change. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "en:browser.server.route.11": {
+      "text": "Choose a browser and how to connect it.",
+      "en": "Choose a browser and how to connect it.",
+      "verdict": "pass"
+    },
+    "en:browser.server.route.15": {
+      "text": "Choose how to connect your browser.",
+      "en": "Choose how to connect your browser.",
+      "verdict": "pass"
+    },
+    "de:engine.toolLimit.catalogUnknown": {
+      "text": "Murage konnte die Werkzeugliste dieser KI oder die erlaubte Höchstzahl an Werkzeugen nicht bestätigen. Deine Nachricht wurde nicht gesendet.",
+      "en": "Murage could not confirm this AI's tool list or the maximum number of tools it accepts. Your message was not sent.",
+      "verdict": "pass"
+    },
+    "de:browser.directScope": {
+      "text": "{name} nutzt deine Anmeldungen in eigenen Tabs. Murage beschränkt den Bot auf diese Tabs und lässt dich übernehmen, wenn du Passwörter eingibst oder Zahlungen tätigst. Bei „Mein Chrome, angemeldet“ kannst du für jede Website festlegen, was der Bot tun darf und wie oft er nachfragen soll.",
+      "en": "{name} uses your logins in its own tabs. Murage keeps the bot to those tabs and lets you take over to enter passwords and make payments. My Chrome, signed in has settings for each site and for how often the bot asks for confirmation.",
+      "verdict": "pass"
+    },
+    "de:browser.continueWithout": {
+      "text": "Wähle „Nicht jetzt“, um ohne Browserverbindung fortzufahren.",
+      "en": "Choose Not now to continue without it.",
+      "verdict": "pass"
+    },
+    "de:browser.disclosure.floor": {
+      "text": "Dieser Browser fragt nicht pro Website nach und prüft nicht jede Aktion. Er lässt dich trotzdem übernehmen, wenn du Passwörter eingibst oder Zahlungen tätigst.",
+      "en": "This browser doesn't ask per site or check each action. It still lets you take over to enter passwords and make payments.",
+      "verdict": "pass"
+    },
+    "de:browser.server.browser-owner-session.7": {
+      "text": "Murage konnte diese Browseranfrage nicht verarbeiten. Öffne den Tab „Browser“ erneut und versuche es noch einmal.",
+      "en": "Murage could not process this browser request. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "de:browser.server.browser-owner-session.10": {
+      "text": "Murage fehlen Angaben zu deiner Browseraktion oder zur zugehörigen Seite. Öffne den Tab „Browser“ erneut und versuche die Aktion noch einmal.",
+      "en": "Murage is missing details of your browser action or the page it applies to. Reopen the Browser tab and try the action again.",
+      "verdict": "pass"
+    },
+    "de:browser.server.browser-owner-session.11": {
+      "text": "Murage muss den Browserstatus aktualisieren. Öffne den Tab „Browser“ erneut und versuche es noch einmal.",
+      "en": "Murage needs to refresh the browser state. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "de:browser.server.browser-mode-transition.3": {
+      "text": "Gib zuerst die Browsersteuerung zurück und ändere dann den Browser von {value0}.",
+      "en": "Hand back first, then change {value0}'s browser.",
+      "verdict": "pass"
+    },
+    "de:browser.server.route.10": {
+      "text": "Murage konnte diese Browseränderung nicht anwenden. Öffne den Tab „Browser“ erneut und versuche es noch einmal.",
+      "en": "Murage could not apply this browser change. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "es:engine.toolLimit.catalogUnknown": {
+      "text": "Murage no pudo confirmar la lista de herramientas de esta IA o el número máximo de herramientas que acepta. Tu mensaje no se envió.",
+      "en": "Murage could not confirm this AI's tool list or the maximum number of tools it accepts. Your message was not sent.",
+      "verdict": "pass"
+    },
+    "es:browser.BrowserChoice.13": {
+      "text": "Método de conexión a Tu Chrome",
+      "en": "Your Chrome connection method",
+      "verdict": "pass"
+    },
+    "es:browser.versionUnknown": {
+      "text": "Consulta la versión en Información de {browser}. Para conectar tu navegador de esta forma necesitas la versión {minimum} o posterior.",
+      "en": "Check About {browser} for its version. Connecting to your browser this way needs version {minimum} or later.",
+      "verdict": "pass"
+    },
+    "es:browser.directScope": {
+      "text": "{name} usa tus inicios de sesión en sus propias pestañas. Murage limita el bot a esas pestañas y te cede el control para introducir contraseñas y realizar pagos. Mi Chrome, con sesión iniciada tiene ajustes para cada sitio y para decidir con qué frecuencia el bot pide confirmación.",
+      "en": "{name} uses your logins in its own tabs. Murage keeps the bot to those tabs and lets you take over to enter passwords and make payments. My Chrome, signed in has settings for each site and for how often the bot asks for confirmation.",
+      "verdict": "pass"
+    },
+    "es:browser.profileWaiting": {
+      "text": "Abre {browser} con Murage for Chrome para conectar tu perfil de {name}. Tu tarea no se ha reiniciado.",
+      "en": "Open {browser} with Murage for Chrome to connect your profile for {name}. Your task has not restarted.",
+      "verdict": "pass"
+    },
+    "es:browser.disclosure.direct": {
+      "text": "Usa tus inicios de sesión en sus propias pestañas. Mi Chrome, con sesión iniciada tiene ajustes para cada sitio y para decidir con qué frecuencia el bot pide confirmación.",
+      "en": "Uses your logins in tabs of its own. My Chrome, signed in has settings for each site and for how often the bot asks for confirmation.",
+      "verdict": "pass"
+    },
+    "es:browser.server.browser-owner-session.7": {
+      "text": "Murage no pudo procesar esta solicitud del navegador. Vuelve a abrir la pestaña Navegador e inténtalo de nuevo.",
+      "en": "Murage could not process this browser request. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "es:browser.server.browser-owner-session.10": {
+      "text": "A Murage le faltan datos de tu acción en el navegador o de la página a la que se aplica. Vuelve a abrir la pestaña Navegador e intenta la acción de nuevo.",
+      "en": "Murage is missing details of your browser action or the page it applies to. Reopen the Browser tab and try the action again.",
+      "verdict": "pass"
+    },
+    "es:browser.server.browser-owner-session.11": {
+      "text": "Murage necesita actualizar el estado del navegador. Vuelve a abrir la pestaña Navegador e inténtalo de nuevo.",
+      "en": "Murage needs to refresh the browser state. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "es:browser.server.browser-extension-setup.21": {
+      "text": "Murage for Chrome tiene un nuevo perfil de navegador. Abre el panel Navegador, elígelo y vuelve a elegir Continuar.",
+      "en": "Murage for Chrome has a new browser profile. Open the Browser panel, choose it, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "es:browser.server.browser-extension-setup.23": {
+      "text": "Inicia una nueva tarea de navegador en Murage for Chrome y vuelve a elegir Continuar.",
+      "en": "Start a new browser task in Murage for Chrome, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "es:browser.server.browser-extension-setup.24": {
+      "text": "Inicia una nueva tarea de navegador en Murage for Chrome y vuelve a elegir Continuar.",
+      "en": "Start a new browser task in Murage for Chrome, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "es:browser.server.route.10": {
+      "text": "Murage no pudo aplicar este cambio del navegador. Vuelve a abrir la pestaña Navegador e inténtalo de nuevo.",
+      "en": "Murage could not apply this browser change. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "es:browser.server.route.11": {
+      "text": "Elige un navegador y cómo conectarlo.",
+      "en": "Choose a browser and how to connect it.",
+      "verdict": "pass"
+    },
+    "es:browser.server.route.15": {
+      "text": "Elige cómo conectar tu navegador.",
+      "en": "Choose how to connect your browser.",
+      "verdict": "pass"
+    },
+    "fr:engine.toolLimit.catalogUnknown": {
+      "text": "Murage n’a pas pu confirmer la liste des outils de cette IA ou le nombre maximal d’outils qu’elle accepte. Ton message n’a pas été envoyé.",
+      "en": "Murage could not confirm this AI's tool list or the maximum number of tools it accepts. Your message was not sent.",
+      "verdict": "pass"
+    },
+    "fr:browser.server.browser-owner-session.7": {
+      "text": "Murage n’a pas pu traiter cette demande du navigateur. Rouvre l’onglet Navigateur et réessaie.",
+      "en": "Murage could not process this browser request. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "fr:browser.server.browser-owner-session.10": {
+      "text": "Il manque à Murage des détails sur ton action dans le navigateur ou sur la page concernée. Rouvre l’onglet Navigateur et réessaie cette action.",
+      "en": "Murage is missing details of your browser action or the page it applies to. Reopen the Browser tab and try the action again.",
+      "verdict": "pass"
+    },
+    "fr:browser.server.browser-owner-session.11": {
+      "text": "Murage doit actualiser l’état du navigateur. Rouvre l’onglet Navigateur et réessaie.",
+      "en": "Murage needs to refresh the browser state. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "fr:browser.server.route.10": {
+      "text": "Murage n’a pas pu appliquer ce changement du navigateur. Rouvre l’onglet Navigateur et réessaie.",
+      "en": "Murage could not apply this browser change. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "hi:engine.toolLimit.catalogChanged": {
+      "text": "जब Murage इस बार की तैयारी कर रहा था, तब टूल सूची बदल गई। Murage इसे इस AI की सीमा के भीतर नहीं रख सका।",
+      "en": "The tool list changed while Murage was preparing this turn. Murage could not fit it within this AI's limit.",
+      "verdict": "pass"
+    },
+    "hi:browser.BrowserChoice.13": {
+      "text": "आपके Chrome से कनेक्ट करने का तरीका",
+      "en": "Your Chrome connection method",
+      "verdict": "pass"
+    },
+    "hi:browser.BrowserPreflight.1": {
+      "text": "Chrome में chrome://inspect/#remote-debugging खोलें, इसे चालू करें, Chrome को खुला रखें, और Chrome के पूछने पर अनुमति दें (Allow) पर क्लिक करें। Chrome रीस्टार्ट होने के बाद फिर से पूछता है।",
+      "en": "Open chrome://inspect/#remote-debugging in Chrome, turn it on, keep Chrome open, and click Allow when Chrome asks. Chrome asks again after it restarts.",
+      "verdict": "pass"
+    },
+    "hi:browser.BrowserSetupCard.10": {
+      "text": "Chrome में chrome://inspect/#remote-debugging खोलें, इसे चालू करें, Chrome को खुला रखें, और Chrome के पूछने पर अनुमति दें (Allow) पर क्लिक करें।",
+      "en": "Open chrome://inspect/#remote-debugging in Chrome, turn it on, keep Chrome open, and click Allow when Chrome asks.",
+      "verdict": "pass"
+    },
+    "hi:browser.versionUnknown": {
+      "text": "वर्शन जानने के लिए “{browser} के बारे में” देखें। ब्राउज़र को इस तरह कनेक्ट करने के लिए वर्शन {minimum} या उसके बाद का वर्शन चाहिए।",
+      "en": "Check About {browser} for its version. Connecting to your browser this way needs version {minimum} or later.",
+      "verdict": "pass"
+    },
+    "hi:browser.directScope": {
+      "text": "{name} अपने अलग टैब में आपके लॉगिन का उपयोग करता है। Murage बॉट को उन्हीं टैब तक सीमित रखता है और पासवर्ड डालने व पेमेंट करने के लिए नियंत्रण आपको सौंपता है। मेरा Chrome, साइन इन में हर साइट की सेटिंग और बॉट कितनी बार पुष्टि माँगे, यह चुनने की सेटिंग मिलती हैं।",
+      "en": "{name} uses your logins in its own tabs. Murage keeps the bot to those tabs and lets you take over to enter passwords and make payments. My Chrome, signed in has settings for each site and for how often the bot asks for confirmation.",
+      "verdict": "pass"
+    },
+    "hi:browser.cause.allow_not_given.action": {
+      "text": "Chrome में अनुमति दें (Allow) पर क्लिक करें",
+      "en": "Click Allow in Chrome",
+      "verdict": "pass"
+    },
+    "hi:browser.disclosure.direct": {
+      "text": "अपने अलग टैब में आपके लॉगिन का उपयोग करता है। मेरा Chrome, साइन इन में हर साइट की सेटिंग और बॉट कितनी बार पुष्टि माँगे, यह चुनने की सेटिंग मिलती हैं।",
+      "en": "Uses your logins in tabs of its own. My Chrome, signed in has settings for each site and for how often the bot asks for confirmation.",
+      "verdict": "pass"
+    },
+    "hi:browser.server.browser-owner-session.7": {
+      "text": "Murage ब्राउज़र के इस अनुरोध को पूरा नहीं कर सका। ब्राउज़र टैब दोबारा खोलें और फिर कोशिश करें।",
+      "en": "Murage could not process this browser request. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "hi:browser.server.browser-owner-session.10": {
+      "text": "Murage को ब्राउज़र में आपकी कार्रवाई या उससे जुड़े पेज की पूरी जानकारी नहीं मिली। ब्राउज़र टैब दोबारा खोलें और वह कार्रवाई फिर से करें।",
+      "en": "Murage is missing details of your browser action or the page it applies to. Reopen the Browser tab and try the action again.",
+      "verdict": "pass"
+    },
+    "hi:browser.server.browser-owner-session.11": {
+      "text": "Murage को ब्राउज़र की मौजूदा स्थिति फिर से जाँचनी होगी। ब्राउज़र टैब दोबारा खोलें और फिर कोशिश करें।",
+      "en": "Murage needs to refresh the browser state. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "hi:browser.server.browser-extension-setup.21": {
+      "text": "Murage for Chrome में एक नई ब्राउज़र प्रोफ़ाइल है। ब्राउज़र पैनल खोलें, उसे चुनें, फिर दोबारा जारी रखें चुनें।",
+      "en": "Murage for Chrome has a new browser profile. Open the Browser panel, choose it, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "hi:browser.server.browser-extension-setup.23": {
+      "text": "Murage for Chrome में एक नया ब्राउज़र कार्य शुरू करें, फिर दोबारा जारी रखें चुनें।",
+      "en": "Start a new browser task in Murage for Chrome, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "hi:browser.server.browser-extension-setup.24": {
+      "text": "Murage for Chrome में एक नया ब्राउज़र कार्य शुरू करें, फिर दोबारा जारी रखें चुनें।",
+      "en": "Start a new browser task in Murage for Chrome, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "hi:browser.server.route.2": {
+      "text": "ब्राउज़र टैब में ब्राउज़र प्रोफ़ाइल चुनें।",
+      "en": "Choose the browser profile in the Browser tab.",
+      "verdict": "pass"
+    },
+    "hi:browser.server.route.3": {
+      "text": "यह ब्राउज़र प्रोफ़ाइल अब उपलब्ध नहीं है। ब्राउज़र टैब में कोई प्रोफ़ाइल चुनें।",
+      "en": "This browser profile is no longer available. Choose a profile in the Browser tab.",
+      "verdict": "pass"
+    },
+    "hi:browser.server.route.10": {
+      "text": "Murage ब्राउज़र में यह बदलाव लागू नहीं कर सका। ब्राउज़र टैब दोबारा खोलें और फिर कोशिश करें।",
+      "en": "Murage could not apply this browser change. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "hi:browser.server.route.11": {
+      "text": "ब्राउज़र और उसे कनेक्ट करने का तरीका चुनें।",
+      "en": "Choose a browser and how to connect it.",
+      "verdict": "pass"
+    },
+    "hi:browser.server.route.15": {
+      "text": "अपने ब्राउज़र को कनेक्ट करने का तरीका चुनें।",
+      "en": "Choose how to connect your browser.",
+      "verdict": "pass"
+    },
+    "ja:browser.server.browser-owner-session.7": {
+      "text": "Murage はこのブラウザ操作のリクエストを処理できませんでした。［ブラウザ］タブを開き直して、もう一度お試しください。",
+      "en": "Murage could not process this browser request. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "ja:browser.server.browser-owner-session.10": {
+      "text": "ブラウザでの操作、または操作対象のページの情報が Murage に届いていません。［ブラウザ］タブを開き直して、もう一度操作してください。",
+      "en": "Murage is missing details of your browser action or the page it applies to. Reopen the Browser tab and try the action again.",
+      "verdict": "pass"
+    },
+    "ja:browser.server.browser-owner-session.11": {
+      "text": "Murage がブラウザの状態を更新する必要があります。［ブラウザ］タブを開き直して、もう一度お試しください。",
+      "en": "Murage needs to refresh the browser state. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "ja:browser.server.route.10": {
+      "text": "Murage はこのブラウザの変更を適用できませんでした。［ブラウザ］タブを開き直して、もう一度お試しください。",
+      "en": "Murage could not apply this browser change. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "ja:browser.server.route.11": {
+      "text": "ブラウザと接続方法を選択してください。",
+      "en": "Choose a browser and how to connect it.",
+      "verdict": "pass"
+    },
+    "ja:browser.server.route.15": {
+      "text": "ブラウザの接続方法を選択してください。",
+      "en": "Choose how to connect your browser.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.directScope": {
+      "text": "{name} usa seus logins em guias próprias. O Murage mantém o bot restrito a essas guias e passa o controle para você digitar senhas e fazer pagamentos. Meu Chrome, com login tem configurações para cada site e para escolher com que frequência o bot pede confirmação.",
+      "en": "{name} uses your logins in its own tabs. Murage keeps the bot to those tabs and lets you take over to enter passwords and make payments. My Chrome, signed in has settings for each site and for how often the bot asks for confirmation.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.profileWaiting": {
+      "text": "Abra o {browser} com o Murage for Chrome para conectar seu perfil de {name}. Sua tarefa não foi reiniciada.",
+      "en": "Open {browser} with Murage for Chrome to connect your profile for {name}. Your task has not restarted.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.server.browser-owner-session.7": {
+      "text": "O Murage não conseguiu processar esta solicitação do navegador. Abra a aba Navegador novamente e tente de novo.",
+      "en": "Murage could not process this browser request. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.server.browser-owner-session.10": {
+      "text": "Faltam ao Murage detalhes da sua ação no navegador ou da página correspondente. Abra a aba Navegador novamente e repita a ação.",
+      "en": "Murage is missing details of your browser action or the page it applies to. Reopen the Browser tab and try the action again.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.server.browser-owner-session.11": {
+      "text": "O Murage precisa atualizar o estado do navegador. Abra a aba Navegador novamente e tente de novo.",
+      "en": "Murage needs to refresh the browser state. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.server.browser-extension-setup.21": {
+      "text": "O Murage for Chrome tem um novo perfil de navegador. Abra o painel Navegador, selecione-o e escolha Continuar novamente.",
+      "en": "Murage for Chrome has a new browser profile. Open the Browser panel, choose it, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.server.browser-extension-setup.23": {
+      "text": "Inicie uma nova tarefa de navegador no Murage for Chrome e escolha Continuar novamente.",
+      "en": "Start a new browser task in Murage for Chrome, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.server.browser-extension-setup.24": {
+      "text": "Inicie uma nova tarefa de navegador no Murage for Chrome e escolha Continuar novamente.",
+      "en": "Start a new browser task in Murage for Chrome, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.server.route.10": {
+      "text": "O Murage não conseguiu aplicar esta alteração do navegador. Abra a aba Navegador novamente e tente de novo.",
+      "en": "Murage could not apply this browser change. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.server.route.11": {
+      "text": "Escolha um navegador e como conectá-lo.",
+      "en": "Choose a browser and how to connect it.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.server.route.15": {
+      "text": "Escolha como conectar seu navegador.",
+      "en": "Choose how to connect your browser.",
+      "verdict": "pass"
+    },
+    "zh:browser.profileWaiting": {
+      "text": "请使用 Murage for Chrome 打开 {browser}，以便为 {name} 连接你的浏览器配置文件。你的任务尚未重新启动。",
+      "en": "Open {browser} with Murage for Chrome to connect your profile for {name}. Your task has not restarted.",
+      "verdict": "pass"
+    },
+    "zh:browser.waitingProfile": {
+      "text": "请连接浏览器配置文件以继续你的任务。你的任务尚未重新启动。",
+      "en": "Connect a browser profile to continue your task. Your task has not restarted.",
+      "verdict": "pass"
+    },
+    "zh:browser.server.browser-owner-session.7": {
+      "text": "Murage 无法处理这次浏览器请求。请重新打开“浏览器”标签页后再试。",
+      "en": "Murage could not process this browser request. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "zh:browser.server.browser-owner-session.10": {
+      "text": "Murage 缺少你的浏览器操作或对应页面的信息。请重新打开“浏览器”标签页，再试一次该操作。",
+      "en": "Murage is missing details of your browser action or the page it applies to. Reopen the Browser tab and try the action again.",
+      "verdict": "pass"
+    },
+    "zh:browser.server.browser-owner-session.11": {
+      "text": "Murage 需要刷新浏览器状态。请重新打开“浏览器”标签页后再试。",
+      "en": "Murage needs to refresh the browser state. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "zh:browser.server.route.10": {
+      "text": "Murage 无法应用这项浏览器更改。请重新打开“浏览器”标签页后再试。",
+      "en": "Murage could not apply this browser change. Reopen the Browser tab and try again.",
+      "verdict": "pass"
+    },
+    "zh:browser.server.route.11": {
+      "text": "请选择浏览器及其连接方式。",
+      "en": "Choose a browser and how to connect it.",
+      "verdict": "pass"
+    },
+    "zh:browser.server.route.15": {
+      "text": "请选择浏览器的连接方式。",
+      "en": "Choose how to connect your browser.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

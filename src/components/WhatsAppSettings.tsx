@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { t } from "@/lib/i18n";
 import { api } from "@/state/store";
-import { InAdvanced } from "./SettingsPrimitives";
+import { HowThisWorks, InAdvanced, SetupArea } from "./SettingsPrimitives";
+import type { SettingsMode } from "@/lib/settings-mode";
 
 export type WhatsAppLinkState = "idle" | "linking" | "restarting" | "connected" | "retry" | "logged-out" | "conflict" | "blocked";
 export interface WhatsAppGroupEntry { jid: string; name?: string; activation: "mention" | "always" }
@@ -102,7 +103,17 @@ const checkClass = "flex min-h-11 items-center gap-2 text-[12px] text-ink";
 interface PersonChoice { personId: string; label: string }
 interface Groups { jid: string; name: string }
 
-export function WhatsAppSettings() {
+/** SIMPLE-COPY 1: the sentences Simple moves off the card, word for word, in this order. */
+export function WhatsAppHowThisWorks() {
+  return <>
+    <p>{t("whatsapp.intro")}</p>
+    <p className="font-medium text-ink">{t("whatsapp.risk.title")}</p>
+    <p>{t("whatsapp.risk.how")}</p><p>{t("whatsapp.risk.unofficial")}</p><p>{t("whatsapp.risk.local")}</p><p>{t("whatsapp.risk.official")}</p>
+    <p>{t("whatsapp.mode.help")}</p>
+  </>;
+}
+export function WhatsAppSettings({ mode, arrivalAnchor }: { mode?: SettingsMode; arrivalAnchor?: string | null } = {}) {
+  const piped = mode !== undefined;
   const [status, setStatus] = useState<WhatsAppStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null), [error, setError] = useState<string | null>(null), [notice, setNotice] = useState<string | null>(null);
   const [refreshError, setRefreshError] = useState(false), [method, setMethod] = useState<"qr" | "code">("qr"), [phone, setPhone] = useState("");
@@ -185,17 +196,18 @@ export function WhatsAppSettings() {
   for (const e of groupsFor?.allow ?? []) if (!shownGroups.some(g => g.jid === e.jid)) shownGroups.push({ jid: e.jid, name: e.name ?? t("whatsapp.groups.saved"), entry: e });
   const off = Boolean(busy) || !status || status.busy;
 
-  return <section aria-labelledby="whatsapp-settings-title" className="min-w-0 rounded-xl border border-hairline/40 bg-card p-4">
-    <h3 id="whatsapp-settings-title" className="text-[15px] font-semibold text-ink">{t("whatsapp.title")}</h3>
-    <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{t("whatsapp.intro")}</p>
-    <div className="mt-3 rounded-lg bg-inset p-3 text-[12px] leading-relaxed text-ink-secondary">
+  return <section aria-labelledby="whatsapp-settings-name" className="min-w-0 rounded-xl border border-hairline/40 bg-card p-4">
+    <h3 id="whatsapp-settings-name"className="text-[15px] font-semibold text-ink">{t("whatsapp.title")}</h3>
+    <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{piped ? t("whatsapp.simple.sentence") : t("whatsapp.intro")}</p>
+    {!piped && <div className="mt-3 rounded-lg bg-inset p-3 text-[12px] leading-relaxed text-ink-secondary">
       <h4 className="text-[13px] font-medium text-ink">{t("whatsapp.risk.title")}</h4>
       <p className="mt-1">{t("whatsapp.risk.how")}</p><p className="mt-2">{t("whatsapp.risk.unofficial")}</p><p className="mt-2">{t("whatsapp.risk.local")}</p>
       <p className="mt-2">{t("whatsapp.risk.official")}</p>
-    </div>
+    </div>}
     <p role="status" className="mt-3 text-[12px] font-medium text-ink">{whatsappMessage(status)}</p>
     {status?.state === "connected" && <p className="mt-1 text-[12px] text-ink-secondary">{t("whatsapp.status.chief")}</p>}
-
+    <SetupArea id="whatsapp-setup-area" mode={mode ?? "advanced"} label={status?.linked ? t("whatsapp.simple.manage") : t("whatsapp.simple.setUp")} forceOpen={linkState === "linking" || confirmUnlink} controlAnchor="whatsapp-settings-title" arrivalAnchor={arrivalAnchor} focusFirst={false}>
+    {piped && <p className="mt-3 text-[12px] text-ink-secondary">{t("whatsapp.risk.short")}</p>}
     {canLink && <div className="mt-3">
       {method === "code" && <label className="block text-[12px] text-ink-secondary">{t("whatsapp.link.phone")}
         <input name="whatsapp-phone" type="tel" inputMode="numeric" autoComplete="off" maxLength={24} value={phone} disabled={off} onChange={e => setPhone(e.target.value)} className={inputClass} />
@@ -242,10 +254,10 @@ export function WhatsAppSettings() {
         {(["self-chat", "contacts"] as const).map(m => <label key={m} className={checkClass}>
           <input type="radio" name="whatsapp-mode" checked={settings.mode === m} disabled={off} onChange={() => void saveSettings({ mode: m })} />{m === "self-chat" ? t("whatsapp.mode.self") : t("whatsapp.mode.contacts")}</label>)}
       </div>
-      <p className="text-[12px] text-ink-secondary">{t("whatsapp.mode.help")}</p>
+      {!piped && <p className="text-[12px] text-ink-secondary">{t("whatsapp.mode.help")}</p>}
 
       {settings.mode === "contacts" && <>
-        <InAdvanced><div id="whatsapp-allow-heading" tabIndex={-1} className="rounded-xl bg-card p-4">
+        <InAdvanced slot="allow-lists"><div className="rounded-xl bg-card p-4">
         <h4 className="mt-5 text-[13px] font-medium text-ink">{t("whatsapp.allow.title")}</h4>
         {settings.allowFrom.length === 0 ? <p className="mt-1 text-[12px] text-ink-secondary">{t("whatsapp.allow.empty")}</p> :
           <ul className="mt-1 space-y-1">{settings.allowFrom.map(n => <li key={n} className="flex items-center justify-between gap-2 text-[12px] text-ink">
@@ -281,7 +293,7 @@ export function WhatsAppSettings() {
             </div></li>)}</ul></>}
       </>}
 
-      <InAdvanced><div id="whatsapp-groups-heading" tabIndex={-1} className="rounded-xl bg-card p-4">
+      <InAdvanced slot="whatsapp-groups"><div className="rounded-xl bg-card p-4">
       <h4 className="mt-5 text-[13px] font-medium text-ink">{t("whatsapp.groups.title")}</h4>
       <p className="mt-1 text-[12px] text-ink-secondary">{t("whatsapp.groups.help")}</p>
       <label className={checkClass}><input type="checkbox" data-setting-control="whatsapp-groups-heading" checked={settings.groups.policy === "allowlist"} disabled={off}
@@ -312,6 +324,7 @@ export function WhatsAppSettings() {
           <option value="off">{t("whatsapp.options.quoteOff")}</option><option value="groups">{t("whatsapp.options.quoteGroups")}</option><option value="all">{t("whatsapp.options.quoteAll")}</option></select></label>
     </>}
 
+    </SetupArea>
     {(status?.pending ?? 0) > 0 && <p role="status" className="mt-3 text-[12px] text-ink-secondary">{t("whatsapp.status.pending")}</p>}
     {(status?.uncertain ?? 0) > 0 && <p role="alert" className="mt-2 text-[12px] text-warning">{t("whatsapp.status.uncertain")}</p>}
     {(status?.rejected ?? 0) > 0 && <p role="alert" className="mt-2 text-[12px] text-warning">{t("whatsapp.status.rejected")}</p>}
@@ -321,5 +334,6 @@ export function WhatsAppSettings() {
     {refreshError && <p role="alert" className="mt-2 text-[12px] text-warning">{t("whatsapp.error.refreshFailed")}</p>}
     {error && <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p>}
     {notice && <p role="status" className="mt-2 text-[12px] text-ink-secondary">{notice}</p>}
+    {piped && <HowThisWorks id="whatsapp-how-this-works" mode={mode}><WhatsAppHowThisWorks /></HowThisWorks>}
   </section>;
 }

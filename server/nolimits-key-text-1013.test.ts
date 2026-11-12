@@ -42,9 +42,11 @@ describe("the corpus", () => {
     it(label, () => {
       const levels = { ask: shell(ASK, row.text), auto: shell(AUTO, row.text), full: shell(FULL, row.text), noLimits: shell(NO_LIMITS, row.text) };
       const uncovered = { full: shell(FULL, row.text, OUTSIDE), noLimits: shell(NO_LIMITS, row.text, OUTSIDE) };
+      // Sean 2026-11-12 / MAIN: a bot explicitly set to No limits covers guests too; these rows contain no wipe.
+      expect(uncovered.noLimits.approve).toBeTruthy();
       if (row.class === "cards") {
         // the reader or the unread rule may speak first; either way nothing answers it
-        for (const [level, verdict] of Object.entries({ ...levels, fullOut: uncovered.full, noLimitsOut: uncovered.noLimits })) {
+        for (const [level, verdict] of Object.entries({ ...levels, fullOut: uncovered.full })) {
           expect(verdict.approve, level).toBeNull();
           expect(["sensitive-guard", "always-ask", "unread-call"], level).toContain(verdict.source);
         }
@@ -56,7 +58,7 @@ describe("the corpus", () => {
         expect(levels.noLimits.approve).toBeTruthy();
         expect(levels.full.approve).toBeTruthy();
         // never at Ask or Auto, never on a turn the level does not cover
-        for (const verdict of [levels.ask, levels.auto, uncovered.full, uncovered.noLimits]) {
+        for (const verdict of [levels.ask, levels.auto, uncovered.full]) {
           expect(verdict.approve).toBeNull();
           expect(verdict.source).toBe("sensitive-guard");
         }
@@ -87,6 +89,55 @@ describe("value shapes reach every string at every level (A10)", () => {
     expect(keyValueShapeIn("/tmp/run_1761900000131/out.log")).toBeNull();
     expect(keyValueShapeIn("channels/1234567890123456789")).toBeNull();
     expect(keyValueShapeIn("pip install sk-learn")).toBeNull();
+  });
+});
+
+describe("card number word boundaries (GitHub #26)", () => {
+  const tool = "mcp__meta_ads__get_insights";
+  // The customer's JSON example, with the public test number from the issue.
+  const inputFor = (object_id: string) => ({
+    object_id,
+    time_range: { since: "2026-11-02", until: "2026-11-08" },
+    level: "campaign",
+  });
+
+  it.each(["act_5555555555554444", "id5555555555554444"])("does not read %s as a card at any level", (id) => {
+    const input = inputFor(id);
+    expect(keyValueShapeIn(JSON.stringify(input))).toBeNull();
+    for (const bot of [ASK, AUTO, FULL, NO_LIMITS]) {
+      for (const unattended of [false, true]) {
+        for (const summary of ["Get campaign insights", JSON.stringify(input)]) {
+          const verdict = autoVerdict(bot as never, tool, summary, {
+            unattended,
+            call: { engine: "claude", toolCall: { name: tool, input }, mcpMounts: [{ engineName: "meta_ads", mountId: "custom:meta_ads", provenance: "custom" }] } as GrantCall,
+          });
+          expect(verdict.source).not.toBe("sensitive-guard");
+          expect(verdict.source).not.toBe("unread-call");
+          if (bot === NO_LIMITS && !unattended) expect(verdict.approve).toBeTruthy();
+        }
+      }
+    }
+  });
+
+  it.each([
+    "5555555555554444",
+    "card 5555 5555 5555 4444",
+    "card 5555555555554444",
+    "card:5555555555554444",
+    '"5555555555554444"',
+    "'5555555555554444'",
+    "card=5555555555554444",
+    "card 5555-5555-5555-4444",
+    "act_5555555555554444 card 5555555555554444",
+  ])("still cards %s at every level", (text) => {
+    expect(keyValueShapeIn(text)).not.toBeNull();
+    for (const bot of [ASK, AUTO, FULL, NO_LIMITS]) {
+      const verdict = autoVerdict(bot as never, tool, "Get campaign insights", {
+        call: { engine: "claude", toolCall: { name: tool, input: inputFor(text) }, mcpMounts: [{ engineName: "meta_ads", mountId: "custom:meta_ads", provenance: "custom" }] } as GrantCall,
+      });
+      expect(verdict.approve).toBeNull();
+      expect(verdict.source).toBe("sensitive-guard");
+    }
   });
 });
 
@@ -135,7 +186,7 @@ describe("known file tools, by field role (B1)", () => {
   it("at Ask, Auto and on an uncovered turn the content still reads whole", () => {
     const input = { file_path: `${CWD}/README.md`, content: "copy .env" };
     expect(claude("Write", input, {}, AUTO).source).toBe("sensitive-guard");
-    expect(claude("Write", input, { fullAccessOrigin: "other", unattended: true }).source).toBe("sensitive-guard");
+    expect(claude("Write", input, { fullAccessOrigin: "other", unattended: true }).source).toBe("no-limits");
   });
   it("an MCP tool or a tool with another name keeps the whole read", () => {
     const input = { src: "/x/.env" };
@@ -201,7 +252,9 @@ describe("PowerShell keeps today's read (3.6)", () => {
     expect(ps("Get-Content C:/Users/ada/AppData/Roaming/npm/./etc/npmrc").source).toBe("sensitive-guard");
     // MARKS r9 R2: probe Get-Content C:.profile at No limits -> always-ask unreadable held (b18: sensitive-guard); still a card
     // MARKS r11: back to b18 (M-R10 monotonic relief): the gate row holds it by name (r13: this probe is the owner's own clean turn, so it carries the owner-started proof; the other lines here are unchanged)
-    expect(ps("Get-Content C:.profile", { fullAccessOrigin: "owner", ownerStarted: true, outsideRead: null }).source).toBe("sensitive-guard");
+    // NOLIM 1.0.19: only the wipe list stays a card on proven turns, so the owner's turn runs this gate row; the unproven calls around it keep the sensitive-guard card
+    expect(ps("Get-Content C:.profile").source).toBe("always-ask"); // unproven turn: reads unreadable, as the MARKS r9 R2 probe said
+    expect(ps("Get-Content C:.profile", { fullAccessOrigin: "owner", ownerStarted: true, outsideRead: null })).toMatchObject({ source: "no-limits" });
     for (const path of ["etc//npmrc", "etc/../etc/npmrc", "../npm/etc/npmrc"]) expect(ps(`Get-Content C:/Users/ada/AppData/Roaming/npm/${path}`).source, path).toBe("sensitive-guard");
   });
 });

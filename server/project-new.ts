@@ -1,3 +1,4 @@
+import { inertBot } from "./store.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
 import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
@@ -25,7 +26,7 @@ export const projectCreateInput = projectProposalInput.extend({clientId:id,name:
   startGoal:z.literal(true).optional()}).strict()
   .refine(body => body.startGoal === undefined || (body.mode === 'goal' && body.goal !== undefined), {message:'Start now needs a goal.',path:['startGoal']});
 export interface ProjectMember { id:string; name:string; hidden?:boolean; contactBound?:boolean }
-export function eligibleProjectMember(member: ProjectMember) { return !member.hidden && !member.contactBound; }
+export function eligibleProjectMember(member: ProjectMember) { return !inertBot(member) && !member.contactBound; }
 const proposalSchema = z.object({members:z.array(id).max(32),leadBotId:id.nullable(),brief,mode,budget,planOutline:z.array(z.string().max(280)).max(8)});
 /** The Chief's proposal as a block in its reply (lane N2): every engine can
  * write text, so no engine has to be recognised calling a tool. The opening

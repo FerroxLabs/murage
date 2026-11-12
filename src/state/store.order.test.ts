@@ -208,11 +208,14 @@ describe("bot reconciliation event orders (BOTADDED-DESIGN-V3 r6 §11)", () => {
       boundary.beforeSubmit(() => {});
       boundary.notWritten();
       expect(row.dispatchedIn, "a row stamped for a write that never happened").toBeUndefined();
-      // Claude: the first fence passes, the MCP-readiness await runs, the second fence refuses
+      // C11: a released write is followed by a refused recovery write. A refusal
+      // alone cannot withdraw the earlier release (ENGINES-C11-1018.md:19).
       boundary.beforeSubmit(() => {});
       expect(row.dispatchedIn).toBe("T1"); // the relaunch's write is released
       expect(() => boundary.beforeSubmit(() => { throw new Error("retired during the MCP wait"); })).toThrow();
-      expect(row.dispatchedIn).toBeUndefined();
+      // 0058cec1b: a refusal after a write was already released does not unstamp the row (that earlier write may have happened); only a
+      // boundary that never released anything calls notWritten. The stamp stays, so a possibly-sent prompt is never replayed as unsent.
+      expect(row.dispatchedIn).toBe("T1");
       // the write that does happen is stamped, once
       boundary.beforeSubmit(() => {});
       expect(row.dispatchedIn).toBe("T1");

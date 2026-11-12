@@ -79,16 +79,16 @@ describe.skipIf(!built || process.platform !== "linux")("the real addon: lock() 
     writeFileSync(file, "x\n");
     const ready = join(scratch, "holder-ready");
     // a holder of the lock (a second process), and a waiter that counts the signals it is sent while it waits
-    const holder = spawn(process.execPath, ["-e", `const a=require(${JSON.stringify(addonPath)});const fs=require("fs");const fd=fs.openSync(${JSON.stringify(file)},"r+");if(!a.lock(fd))process.exit(3);fs.writeFileSync(${JSON.stringify(ready)},"1");setTimeout(()=>{},60000);`], { stdio: "ignore" });
+    const holder = spawn(process.execPath, ["-e", `const a=require(${JSON.stringify(addonPath)});const fs=require("fs");const fd=fs.openSync(${JSON.stringify(file)},"r+");if(!a.lock(fd))process.exit(3);fs.writeFileSync(${JSON.stringify(ready)},"1");setTimeout(()=>{},60000);`], { windowsHide: true, stdio: "ignore" });
     children.push(holder);
     for (let i = 0; i < 400 && !existsSync(ready); i++) sleepMs(25);
     expect(existsSync(ready)).toBe(true);
-    const waiter = spawn(process.execPath, ["-e", `const a=require(${JSON.stringify(addonPath)});const fs=require("fs");let n=0;process.on("SIGUSR2",()=>{n++;});const fd=fs.openSync(${JSON.stringify(file)},"r+");process.stdout.write("go\\n");setTimeout(()=>{const t=process.hrtime.bigint();const got=a.lock(fd);const ms=Number(process.hrtime.bigint()-t)/1e6;process.stdout.write(JSON.stringify({got,ms,sync:a.fullSync(fd)})+"\\n");process.exit(0);},200);`], { stdio: ["ignore", "pipe", "ignore"] });
+    const waiter = spawn(process.execPath, ["-e", `const a=require(${JSON.stringify(addonPath)});const fs=require("fs");let n=0;process.on("SIGUSR2",()=>{n++;});const fd=fs.openSync(${JSON.stringify(file)},"r+");process.stdout.write("go\\n");setTimeout(()=>{const t=process.hrtime.bigint();const got=a.lock(fd);const ms=Number(process.hrtime.bigint()-t)/1e6;process.stdout.write(JSON.stringify({got,ms,sync:a.fullSync(fd)})+"\\n");process.exit(0);},200);`], { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
     children.push(waiter);
     let out = "";
     waiter.stdout!.on("data", (chunk) => { out += String(chunk); });
     await new Promise<void>((resolve) => { const tick = () => (out.includes("go") ? resolve() : setTimeout(tick, 5)); tick(); });
-    const storm = spawn(process.execPath, ["-e", `const p=${waiter.pid};const end=Date.now()+3000;(function f(){for(let i=0;i<50;i++){try{process.kill(p,"SIGUSR2")}catch{process.exit(0)}}if(Date.now()<end)setImmediate(f);})();`], { stdio: "ignore" });
+    const storm = spawn(process.execPath, ["-e", `const p=${waiter.pid};const end=Date.now()+3000;(function f(){for(let i=0;i<50;i++){try{process.kill(p,"SIGUSR2")}catch{process.exit(0)}}if(Date.now()<end)setImmediate(f);})();`], { windowsHide: true, stdio: "ignore" });
     children.push(storm);
     await new Promise<void>((resolve) => waiter.on("exit", () => resolve()));
     const result = JSON.parse(out.split("\n").find((line) => line.startsWith("{"))!) as { got: boolean; ms: number; sync: string };

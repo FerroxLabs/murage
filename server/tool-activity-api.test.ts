@@ -1,3 +1,4 @@
+import { engineLimitLine } from "../shared/web-read-routing.ts";
 // End to end, through the real harness: a bot whose engine routes every tool
 // call through a wrapper must still produce a transcript that says which tool
 // ran, and a failed tool must arrive with the engine's reason attached.
@@ -21,6 +22,7 @@ const api = async (method: string, path: string, body?: unknown, owner = true) =
 beforeAll(async () => {
   fixture = await launchVerificationServer(process.env, undefined, {
     instrumentationSource: `
+      globalThis[Symbol.for('murage.hostPower.testUnwrapped')]=true;
       const fs=await import('node:fs');const path=await import('node:path');
       const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
       cfg.instances.wrapped={driver:'customAcp',displayName:'Wrapper tool fixture',config:{cli:${JSON.stringify(FAKE_ACP)}},environment:{FAKE_ACP_MODE:'wrapped-tool'}};
@@ -42,10 +44,15 @@ it("shows which tool a wrapper engine ran, and why it failed", async () => {
 
   const failedChip = async () => {
     const messages = (await api("GET", `/api/threads/${bot.threadId}/messages?limit=50`)).body.messages as any[];
-    return messages.find(message => message.kind === "activity" && message.tool?.ok === false)?.tool;
+    return messages.find(message => message.kind === "activity" && message.tool?.name === "memory_search" && message.tool.ok === false)?.tool;
   };
   await expect.poll(failedChip, { timeout: 20000 }).toBeTruthy();
   const chip = (await failedChip())!;
+  // 9e6f55e198 adds a visible custom-engine limitation before the tool result.
+  // Pin both rows, so selecting the actual wrapper tool cannot hide a new failure.
+  const messages = (await api("GET", `/api/threads/${bot.threadId}/messages?limit=50`)).body.messages as any[];
+  expect(messages.filter(message => message.kind === "activity" && message.tool?.ok === false).map(message => message.tool.name))
+    .toEqual([engineLimitLine("customAcp"), "memory_search"]);
 
   // the engine called it `use_tool`; the transcript names the tool itself
   expect(chip.name).toBe("memory_search");

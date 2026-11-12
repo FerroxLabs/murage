@@ -49,10 +49,11 @@ const homeIdArg = (args) => {
  * @param {{ client: any, open: (homeId: string) => unknown, senderHomeId: (event: any) => string | null }} deps.cloudHome installCloudHome's controller
  * @param {() => (string | undefined | null)} deps.getCpToken the signed-in Murage account's bearer, read in main
  * @param {(homeId: string) => void} [deps.showConnect] close the Cloud window and show the Connect panel in the local window
+ * @param {(request: {homeId: string, bot: string, engine: string}) => boolean | Promise<boolean>} [deps.showSignIn] open the existing Connect engine sign-in in the local window
  * @param {"staging" | "prod"} [deps.cpEnvironment] main passes the shared resolver's environment; "prod" when absent
  * @param {{ readText: () => string }} [deps.clipboard] Electron's clipboard, read in main for "Use copied link"
  */
-export function registerCloudHomeIpc(rawGate, { cloudHome, getCpToken, cpEnvironment = "prod", showConnect, clipboard, active = () => cloudHome.active?.() !== false }) {
+export function registerCloudHomeIpc(rawGate, { cloudHome, getCpToken, cpEnvironment = "prod", showConnect, showSignIn, clipboard, active = () => cloudHome.active?.() !== false }) {
   const { client } = cloudHome;
   // Registered at every start as refusing stubs: while Cloud is not live every call that would start new work is refused
   // before any work runs. The one exception is `continuing`: a channel an ALREADY-OPEN Cloud window uses for the task it is
@@ -120,8 +121,16 @@ export function registerCloudHomeIpc(rawGate, { cloudHome, getCpToken, cpEnviron
   }));
 
   gate.handle("cloud-home:open", (_event, ...args) => guard(async () => {
-    const homeId = homeIdArg(args);
-    await client.activate(homeId); // pin + version + token; refuses on a mismatch with plain copy
+    const reconnecting = args.length === 2 && args[1] === true;
+    const homeId = homeIdArg(reconnecting ? args.slice(0, 1) : args);
+    try {
+      await client.activate(homeId); // pin + version + token; refuses on a mismatch with plain copy
+    } catch (error) {
+      // The local window owns startup grace: the Cloud window cannot mount until activation succeeds.
+      // Only this transport/startup error is retryable; hard refusals still go through the normal guard.
+      if (reconnecting && error instanceof CloudHomeError && error.code === "unreachable") return { opened: false };
+      throw error;
+    }
     cloudHome.open(homeId);
     return { opened: true };
   }));
@@ -136,6 +145,20 @@ export function registerCloudHomeIpc(rawGate, { cloudHome, getCpToken, cpEnviron
     const bots = Array.isArray(body?.bots) ? body.bots : [];
     return bots.filter((bot) => typeof bot?.id === "string" && BOT_ID.test(bot.id))
       .map((bot) => ({ id: bot.id, name: typeof bot.name === "string" && bot.name.trim() ? bot.name.slice(0, 120) : bot.id }));
+  }));
+
+  gate.handle("cloud-home:request-sign-in", (event, ...args) => guard(async () => {
+    const request = args[0];
+    const engines = ["claudeAgent", "codex", "grokAgent", "kimiAgent", "opencodeGo"];
+    if (args.length !== 1 || !request || typeof request !== "object" || Array.isArray(request)
+      || Object.keys(request).some(key => key !== "bot" && key !== "engine")
+      || typeof request.bot !== "string" || !BOT_ID.test(request.bot) || !engines.includes(request.engine)) throw plain("Invalid request.");
+    const homeId = cloudHome.senderHomeId(event);
+    if (typeof homeId !== "string" || !HOME_ID.test(homeId)) throw plain("Invalid request.");
+    if (typeof showSignIn !== "function" || !await showSignIn({ homeId, bot: request.bot, engine: request.engine })) {
+      throw plain("Open Murage on this computer, then try signing in again.");
+    }
+    return { requested: true };
   }));
 
   gate.handle("cloud-home:reachable", (event, ...args) => guard(async () => {

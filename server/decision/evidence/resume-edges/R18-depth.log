@@ -1,0 +1,44 @@
+COMMAND node_modules/.bin/vitest run server/decision/budget.test.ts -t "R18 64 and 65"
+
+ RUN  v4.1.12 /work
+
+ ❯ server/decision/budget.test.ts (11 tests | 1 failed | 10 skipped) 19ms
+   ↓ A12a M64 50MB content hashes stably without an unbounded clone; depth/key bounds
+   ↓ R18 bounded registrations: 33rd same-thread request refuses and prior wipe survives
+   ↓ A12a prune walks settled index in batches of 500
+   ↓ M64 projection never calls structuredClone before enforcing bounds
+   ↓ M36 one cumulative reader budget covers outer scripts and all nested executables
+   ↓ A12a UTF-8 byte bounds apply to content heads, values and oversized keys
+   ↓ A12a content heads share the same one MB registration budget
+   ↓ R18 600 concurrent registrations enforce the process cap without evicting a live wipe
+   × R18 64 and 65 executables and five nested interpreters remain bounded and retain earlier wipe evidence 16ms
+   ↓ R18 1,000 changing deny revisions keep exact lookup work and retain a late deny
+   ↓ A12a content streaming hashes the original Unicode bytes at every chunk boundary
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 10 skipped (11)
+   Start at  08:11:22
+   Duration  4.25s (transform 3.28s, setup 3.84s, import 268ms, tests 19ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/budget.test.ts > R18 64 and 65 executables and five nested interpreters remain bounded and retain earlier wipe evidence
+AssertionError: expected [ 'home' ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ server/decision/budget.test.ts:54:46
+     52|  }
+     53|  let nested='rm -rf ~';for(let i=0;i<5;i++)nested='sh -c '+quote(neste…
+     54|  expect(readExecutable('sh',nested).classes).toHaveLength(0);
+       |                                              ^
+     55|  expect(readExecutable('sh','rm -rf ~; '+nested).classes).toContain('h…
+     56|  expect(performance.now()-start).toBeLessThan(2000);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

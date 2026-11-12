@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
+import { readCloudHomeSignIns } from "../cloud-home/signin-status.ts";
 import { fixtureCredentialFingerprint } from "../testing/fixture-dump.ts";
 // Codex driver contract tests, run against the scripted fake app-server
 // in server/testing/fake-codex-app-server.ts — the driver must drive the
@@ -9,7 +11,7 @@ import { fixtureCredentialFingerprint } from "../testing/fixture-dump.ts";
 // The fake is a shebang script — the same constraint codex.cmd itself
 // hits on Windows. resolveCliSpawn covers both, so these run everywhere.
 import { TURN_ASK_RULES } from "../../shared/ask-wording.ts";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,7 +48,7 @@ import * as localInject from "./local-inject.ts";
 import { beginOutsideTurn, forgetOutsideState, markTurnOutside, turnOutsideRead, wireOutsideStore } from "../email/external-marks.ts";
 import { fileOutsideStore } from "../outside-store.ts";
 import { noteEnginePath, noteToolStartOutside } from "../outside-wire.ts";
-import { forgetEngineEnv } from "../outside-scan.ts";
+import { forgetEngineEnv, engineEnvDenied, scanFailClosed } from "../outside-scan.ts";
 
 vi.mock("node:child_process", async (original) => (await import("../testing/exec-check-spy.ts")).withExecCheckSpy(await original()));
 
@@ -343,17 +345,49 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(seen.calls.filter((c: { method: string }) => c.method === "turn/start")).toHaveLength(1);
   });
 
+  it.each(["flux-revoked-rpc", "flux-revoked-notice"])("a nested Flux refusal stops before retry or dispatch (%s)", async mode => {
+    process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+    const calls = join(scratch,"flux-calls.log");
+    await create({mode,environment:{FAKE_CODEX_CALL_LOG:calls}});
+    await instance.adapter.sendTurn({cwd:fixtureBotFolder(),threadId:"flux-revoked",text:"hi",model:"fixture-model",providerRoute:{connectionId:"fixture",revision:"1",preset:"flux",protocol:"responses",baseUrl:"https://api.fluxrouter.ai/v1",apiKey:"fixture-budget",model:"fixture-model"}});
+    await recorder.until(e=>e.type==="turn.completed");
+    expect(recorder.events.find(e=>e.type==="runtime.error")).toMatchObject({fluxDecision:{reason:"keyRevoked",action:"STOP",wait:"-"}});
+    expect(recorder.events.filter(e=>e.type==="turn.retrying")).toHaveLength(0);
+    expect(readFileSync(calls,"utf8").trim().split("\n").filter(l=>l.endsWith("turn/start"))).toHaveLength(1);
+  });
+
+  it("R1 custom OpenAI responses URL stops the reviewer turn/start refusal", async () => {
+    process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+    const calls = join(scratch, "r1-calls.log");
+    await create({mode:"flux-revoked-rpc",environment:{FAKE_CODEX_CALL_LOG:calls}});
+    await instance.adapter.sendTurn({cwd:fixtureBotFolder(),threadId:"r1-custom",text:"hi",model:"fixture-model",providerRoute:{connectionId:"custom",revision:"1",preset:"openai",protocol:"responses",baseUrl:"https://api.fluxrouter.ai/v1",apiKey:"fixture",model:"fixture-model"}});
+    await recorder.until(e=>e.type==="turn.completed");
+    expect(recorder.events.find(e=>e.type==="runtime.error")).toMatchObject({fluxDecision:{reason:"keyRevoked",action:"STOP",wait:"-"}});
+    expect(recorder.events.filter(e=>e.type==="turn.retrying")).toHaveLength(0);
+    expect(readFileSync(calls,"utf8").trim().split("\n").filter(l=>l.endsWith("turn/start"))).toHaveLength(1);
+  });
+
+  it.each(["openai", "flux"] as const)("R1 non-Flux URL preserves legacy retry even with preset %s", async preset => {
+    process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+    const calls = join(scratch, "r1-nonflux-calls.log");
+    await create({mode:"flux-revoked-rpc",environment:{FAKE_CODEX_CALL_LOG:calls}});
+    await instance.adapter.sendTurn({cwd:fixtureBotFolder(),threadId:"r1-nonflux",text:"hi",model:"fixture-model",providerRoute:{connectionId:"custom",revision:"1",preset,protocol:"responses",baseUrl:"https://api.openai.com/v1",apiKey:"fixture",model:"fixture-model"}});
+    await recorder.until(e=>e.type==="turn.completed");
+    expect((recorder.events.find(e=>e.type==="runtime.error") as any)?.fluxDecision).toBeUndefined();
+    expect(readFileSync(calls,"utf8").trim().split("\n").filter(l=>l.endsWith("turn/start"))).toHaveLength(3);
+  });
+
   it.each(["key_budget_reached", "budget_exceeded", "premium_locked"])("preserves the routed CLI refusal %s and its key", async code => {
     const { isBudgetReached, resetUnavailable } = await import("../voice/voice-routes.ts");
     resetUnavailable();
     await create({ mode: `flux-budget-${code}` });
     await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-cli-budget", text: "hi", model: "fixture-model",
-      providerRoute: { connectionId: "fixture", revision: "1", preset: "flux", protocol: "responses", baseUrl: "https://fixture.invalid/v1", apiKey: "fixture-budget", model: "fixture-model" } });
+      providerRoute: { connectionId: "fixture", revision: "1", preset: "flux", protocol: "responses", baseUrl: "https://api.fluxrouter.ai/v1", apiKey: "fixture-budget", model: "fixture-model" } });
     await recorder.until(e => e.type === "turn.completed");
     const failure = recorder.events.find(e => e.type === "runtime.error" && e.providerError?.fluxBudget);
     expect(Boolean(failure)).toBe(code !== "premium_locked");
-    expect(isBudgetReached({ via: "flux", label: "Flux", baseUrl: "https://fixture.invalid/v1", key: "fixture-budget", model: "speech" })).toBe(code !== "premium_locked");
-    expect(isBudgetReached({ via: "flux", label: "Flux", baseUrl: "https://fixture.invalid/v1", key: "different-key", model: "speech" })).toBe(false);
+    expect(isBudgetReached({ via: "flux", label: "Flux", baseUrl: "https://api.fluxrouter.ai/v1", key: "fixture-budget", model: "speech" })).toBe(code !== "premium_locked");
+    expect(isBudgetReached({ via: "flux", label: "Flux", baseUrl: "https://api.fluxrouter.ai/v1", key: "different-key", model: "speech" })).toBe(false);
     if (code !== "premium_locked") expect(recorder.events.some(e => e.type === "content.delta" && e.streamKind === "assistant_text")).toBe(false);
     resetUnavailable();
   });
@@ -830,7 +864,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       // run the real launcher with a probe in place of the server's command
       const { spawnSync } = await import("node:child_process");
       const at = args.indexOf("murage-env-launch");
-      const probe = spawnSync(command, ["-e", args[1], "murage-env-launch", args[at + 1], process.execPath, "-e", "process.stdout.write(JSON.stringify([process.env.NOTES_TOKEN, Object.keys(process.env).filter((k) => k.startsWith('MURAGE_MCPV_'))]))"], { env: { ...childEnv, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8" });
+      const probe = spawnSync(command, ["-e", args[1], "murage-env-launch", args[at + 1], process.execPath, "-e", "process.stdout.write(JSON.stringify([process.env.NOTES_TOKEN, Object.keys(process.env).filter((k) => k.startsWith('MURAGE_MCPV_'))]))"], { windowsHide: true, env: { ...childEnv, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8" });
       const [token, leaked] = JSON.parse(probe.stdout);
       expect(leaked).toEqual([]);
       return token;
@@ -1135,6 +1169,19 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(argv.join(" ")).not.toContain("preloadBrowserTools");
   });
 
+  it("routes native page reads to Murage when the agents reader is mounted", async () => {
+    await create();
+    const file = join(scratch, "web-reader-surface.json");
+    process.env.FAKE_CODEX_DUMP = file;
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "web-reader", text: "read a page", integrations: {
+      agents: { command: process.execPath, args: ["/fake/agents-proxy.js"], env: {} },
+    } });
+    await recorder.until(event => event.type === "turn.completed");
+    const argv: string[] = JSON.parse(readFileSync(file, "utf8")).argv;
+    expect(argv).toContain('web_search="disabled"');
+    expect(argv.join(" ")).toContain("mcp_servers.agents.command");
+  });
+
   it("mounts dedicated memory without agents and rejects custom replacement without exposing its token in argv", async () => {
     await create();
     const dump=join(scratch,"memory.json");process.env.FAKE_CODEX_DUMP=dump;
@@ -1380,50 +1427,77 @@ describe("CodexDriver turns (fake app-server)", () => {
     }
   });
 
+  it("E4 No limits on Cloud homes uses the local full-access policy on start and resume", async () => {
+    await create({ mode: "resume" });
+    const dump = join(scratch, "e4-cloud.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+    const realSpawn = procs.spawnCli;
+    const rendered: Record<string, string | undefined>[] = [];
+    const spy = vi.spyOn(procs, "spawnCli").mockImplementation((cli, args, opts, ...rest) => {
+      rendered.push({ ...opts.env });
+      vi.stubEnv("MURAGE_CLOUD_ROLE", "");
+      try { return realSpawn(cli, args, { ...opts, env: { ...process.env } }, ...rest); }
+      finally { vi.stubEnv("MURAGE_CLOUD_ROLE", "home"); }
+    });
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+    try {
+      for (const resumeCursor of [undefined, "codex-thread-9"]) {
+        const threadId = resumeCursor ? "e4-resume" : "e4-start";
+        const sent = await instance.adapter.sendTurn({ threadId, text: "fixture", cwd: scratch, resumeCursor,
+          stopLine: true, noLimits: true, warmIdentity: { botId: "owner-bot", audience: "owner" } });
+        const done = await recorder.until(e => e.type === "turn.completed" && e.turnId === sent.turnId);
+        expect(done).toMatchObject({ ok: true });
+        const calls = JSON.parse(readFileSync(dump, "utf8")).calls;
+        const method = resumeCursor ? "thread/resume" : "thread/start";
+        expect(calls.find((c: { method: string }) => c.method === method).params)
+          .toMatchObject({ sandbox: "danger-full-access", approvalPolicy: "on-request" });
+        expect(calls.find((c: { method: string }) => c.method === "turn/start").params.approvalPolicy).toBe("on-request");
+        if (resumeCursor) expect(JSON.parse(rendered.at(-1)![TURN_RENDER]!)).toMatchObject({
+          codexPolicy: { sandbox: "danger-full-access", approval: "on-request" },
+        });
+      }
+    } finally { vi.unstubAllEnvs(); spy.mockRestore(); }
+  });
+
   describe("Flux Memory headers on a Cloud home", () => {
     const FLUX_KEY = "sk-flux-Mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm"; // secret-scan: fixture
-    // Capture the spawn as the launcher would get it (argv and render), then run it as a desktop spawn of the fake.
-    const captureHomeSpawn = async (turn: Record<string, unknown>) => {
+    // B4 hole 6: on a Cloud home Codex runs only on the customer's own ChatGPT sign-in, so no Flux route (saved connection or native
+    // flux model) is rendered for it. The turn is refused in plain words and Codex is never started.
+    it.each([
+      ["a saved Flux connection", { threadId: "t-cloud-flux-conn", model: "flux-auto", providerRoute: { connectionId: "c1", revision: "r1", preset: "flux", protocol: "responses", baseUrl: "https://api.fluxrouter.ai/v1", apiKey: FLUX_KEY, model: "flux-auto" } }],
+      ["a native flux model", { threadId: "t-cloud-flux-native", model: "flux::flux-auto", warmIdentity: { botId: "bot-atlas", audience: "owner", decidedOwner: true } }],
+    ])("refuses %s in plain words and starts no Codex", async (_name, turn) => {
       await create();
-      const realSpawnCli = procs.spawnCli;
-      const spawned: Array<{ args: string[]; env: Record<string, string | undefined> }> = [];
-      const spy = vi.spyOn(procs, "spawnCli").mockImplementation((cli, args, opts, ...rest) => {
-        spawned.push({ args: [...args], env: { ...(opts.env as Record<string, string | undefined>) } });
-        vi.stubEnv("MURAGE_CLOUD_ROLE", "");
-        try { return realSpawnCli(cli, args, { ...opts, env: { ...process.env } }, ...rest); }
-        finally { vi.stubEnv("MURAGE_CLOUD_ROLE", "home"); }
-      });
+      const spy = vi.spyOn(procs, "spawnCli");
       vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
       vi.stubEnv("FLUX_API_KEY", FLUX_KEY);
       try {
-        await instance.adapter.sendTurn({ text: "hi", cwd: scratch, ...turn } as never);
-        await recorder.until((e) => e.type === "turn.completed");
-        return spawned.at(-1)!;
+        await expect(instance.adapter.sendTurn({ text: "hi", cwd: scratch, ...turn } as never)).rejects.toThrow(/run only on your own Claude or ChatGPT sign-in/);
+        expect(spy).not.toHaveBeenCalled();
+        expect(JSON.stringify(recorder.events)).not.toContain(FLUX_KEY);
       } finally { vi.unstubAllEnvs(); spy.mockRestore(); }
-    };
-    const memoryOff = { "x-flux-memory-app": "murage", "x-flux-memory-capture": "off", "x-flux-memory-inject": "off" };
-
-    it("a saved Flux connection sends no model_providers argv and carries the headers on the render route", async () => {
-      const providerRoute = { connectionId: "c1", revision: "r1", preset: "flux", protocol: "responses", baseUrl: "https://api.fluxrouter.ai/v1", apiKey: FLUX_KEY, model: "flux-auto" };
-      const seen = await captureHomeSpawn({ threadId: "t-cloud-flux-conn", model: "flux-auto", providerRoute, warmIdentity: { botId: "bot-atlas", audience: "owner", decidedOwner: true } });
-      expect(seen.args.filter((arg) => arg.startsWith("model_providers."))).toEqual([]);
-      expect(JSON.parse(seen.env[TURN_RENDER]!).route.headers).toEqual({ "x-flux-memory-app": "murage" });
     });
+  });
 
-    it("a non-owner native flux turn renders the flux-off table with the capture-off headers", async () => {
-      const seen = await captureHomeSpawn({ threadId: "t-cloud-flux-guest", model: "flux::flux-auto", warmIdentity: { botId: "bot-atlas", audience: "non-owner", decidedOwner: false } });
-      expect(seen.args.filter((arg) => arg.startsWith("model_providers."))).toEqual([]);
-      const route = JSON.parse(seen.env[TURN_RENDER]!).route;
-      expect(route.provider).toBe("flux-off");
-      expect(route.headers).toEqual(memoryOff);
-    });
-
-    it("an owner native flux turn renders the base flux table", async () => {
-      const seen = await captureHomeSpawn({ threadId: "t-cloud-flux-owner", model: "flux::flux-auto", warmIdentity: { botId: "bot-atlas", audience: "owner", decidedOwner: true } });
-      const route = JSON.parse(seen.env[TURN_RENDER]!).route;
-      expect(route.provider).toBe("flux");
-      expect(route.headers).toEqual({ "x-flux-memory-app": "murage" });
-    });
+  // Finding 4: sendTurn has already returned a turn id when the final-boundary check runs (inside the launch). A key or address that reaches
+  // the typed render AFTER the early scrub must end the turn with a message, not leave it hanging with none.
+  it("a Flux key that reaches the launch after the early scrub ends the turn with a message and starts no Codex", async () => {
+    await create();
+    const key = "sk-flux-home-" + "k".repeat(30); // secret-scan: fixture
+    const spy = vi.spyOn(procs, "spawnCli");
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+    try {
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-late-flux", text: "hi", cwd: scratch, warmIdentity: { botId: "bot-atlas", audience: "owner" },
+        // an MCP mount that points at a Flux address: not seen by the early scrub, rendered into the launch, caught by the final boundary
+        integrations: { composio: { url: "https://api.fluxrouter.ai/mcp" } } as never });
+      const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+      expect(done).toMatchObject({ ok: false });
+      const error = recorder.events.find((e) => e.type === "runtime.error" && e.turnId === turnId);
+      expect((error as { message?: string } | undefined)?.message).toMatch(/run only on your own Claude or ChatGPT sign-in/);
+      expect(recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId)).toHaveLength(1);
+      expect(spy).not.toHaveBeenCalled();
+      expect(JSON.stringify(recorder.events)).not.toContain(key);
+    } finally { vi.unstubAllEnvs(); spy.mockRestore(); }
   });
 
   it("reports API billing on a Cloud home only when the launcher says Codex runs on an enrolled key", async () => {
@@ -2076,6 +2150,10 @@ describe("CodexDriver turns (fake app-server)", () => {
       return undefined as never;
     });
     try {
+      // the home-wide sign-in reading is cached for a few seconds and is a second launcher question; prime it so the count below is the
+      // billing probe alone whatever ran before this test (the order-dependence the 1.0.19 tests' timing exposed)
+      await readCloudHomeSignIns();
+      launcher.mockClear();
       expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: true, billing });
       expect(launcher).toHaveBeenCalledExactlyOnceWith(undefined, undefined);
       expect(exec.mock.calls.filter(call => call[1].includes("status"))).toHaveLength(1);
@@ -2151,6 +2229,37 @@ describe("CodexDriver turns (fake app-server)", () => {
     // exactly one settled reply across all three app-server launches
     const replies = recorder.events.filter((e) => e.type === "item.completed" && e.itemType === "assistant_text");
     expect(replies).toHaveLength(1);
+  }, 20_000);
+
+  it("a retry that cannot launch (spawn throws after the first attempt installed its entry) ends the turn with one runtime.error and one turn.completed, and frees the thread", async () => {
+    process.env.FAKE_CODEX_TRANSIENTS = "1";
+    process.env.FAKE_CODEX_STATE = join(scratch, "codex-launches-retry-fail");
+    process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+    const real = procs.spawnCli;
+    let spawns = 0;
+    const spy = vi.spyOn(procs, "spawnCli").mockImplementation((...args: Parameters<typeof procs.spawnCli>) => {
+      // Only a turn launch counts: the background model catalog also runs `codex app-server`, with no -c flags, and can land here.
+      if (!recorder.events.some((e) => e.type === "turn.retrying") || !String(args[1]).includes(",-c,")) return real(...args);
+      spawns++;
+      if (spawns === 1) throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+      return real(...args);
+    });
+    try {
+      await create();
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-codex-retry-launch-fail", text: "hi" });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(spawns).toBe(1);
+      expect(recorder.events.filter((e) => e.type === "turn.retrying")).toHaveLength(1);
+      expect(recorder.events.filter((e) => e.type === "runtime.error" && e.turnId === turnId)).toHaveLength(1);
+      // INT1019-CLOUD: the 1.0.19 stop gate ends a startup that throws (gate.handoff), once, as "error" with its own plain line
+      // (Cloud's launchFailed ended it as rpc_error; the plan drops that function, so the gate's ending is the one pinned here).
+      expect(recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject([{ ok: false, stopReason: "error" }]);
+      // the conversation is not left busy: the next turn starts
+      spy.mockRestore();
+      const next = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-codex-retry-launch-fail", text: "again" });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === next.turnId);
+    } finally { spy.mockRestore(); }
   }, 20_000);
 
   it("does not relaunch a provider safety rejection wrapped in 429", async () => {
@@ -3474,10 +3583,15 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
       expect(started).toMatchObject({ origin: "engine", input: { changes: [{ path: out }] }, callKey: "u8" });
       noteToolStartOutside("t-u8", started, scratch);
       beginOutsideTurn("t-u8-fresh", "codex-gate", undefined, false);
+      // Isolate file provenance from the fake app-server's launch environment, as in the H4 row above.
+      // The environment guard is covered separately; it must not mask the downloaded-file assertion.
+      forgetEngineEnv();
       // a fresh chat's engine is spawned (spawnCli notes its PATH for the thread) before any of its tools is judged
-      noteEnginePath("t-u8-fresh", process.env.PATH);
+      // pnpm's inherited PATH can contain inaccessible host-only directories in an isolated container.
+      // This provenance fixture uses the system reader, not an unresolved or workspace-local executable.
+      noteEnginePath("t-u8-fresh", process.platform === "win32" ? process.env.PATH : "/usr/bin:/bin");
       noteToolStartOutside("t-u8-fresh", { origin: "engine", title: "cat", toolIdentity: { name: "shell" }, input: { command: `cat ${out}` } }, scratch);
-      expect(turnOutsideRead("t-u8-fresh")).toBe("downloaded file");
+      expect(turnOutsideRead("t-u8-fresh"), JSON.stringify({ env: engineEnvDenied(), reason: scanFailClosed.reason, branches: scanFailClosed.interpreterBranches })).toBe("downloaded file");
     } finally {
       forgetOutsideState();
     }
@@ -3508,30 +3622,35 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     expect(denied.opened).toHaveLength(1);
   });
 
-  it("keeps the gate on a retained app-server: one handshake, a fresh token each turn, and every call still asked", async () => {
+  it("keeps the gate on a retained app-server: one handshake, one token per child, and every call still asked", async () => {
     const log = join(scratch, "calls-warm.log");
     process.env.FAKE_CODEX_CALL_LOG = log;
     await create();
     const warm = { warmIdentity: { botId: "b-warm", audience: "owner" as const } };
     const tools = [{ kind: "shell", id: "w1", command: "ls", cwd: scratch }]; // the SAME tools both turns: the warm key's env must not change
     const first = await run("t-warm", tools, () => ({ behavior: "allow" }), warm);
+    expect(first.opened.map((e) => e.tool)).toEqual(["shell"]);
     const firstPid = first.dump().pid;
     const home = first.dump().env.CODEX_HOME as string;
     const envFile = first.dump().env.MURAGE_CODEX_HOOK_ENV as string;
     expect(dirname(envFile)).toBe(join(home, "hook-env"));
     const tokenOne = readFileSync(envFile, "utf8");
     let tokenTwo = "";
-    // read while the second turn's card is open: the live process's file holds this turn's token (03-1: a closed process's file is gone)
+    // Rev 8: a retained child's canonical env bytes and expected hash stay
+    // fixed; generation checks and stale-turn denial bind each delivery.
     const second = await run("t-warm", tools, () => {
-      tokenTwo = readdirSync(dirname(envFile)).map((name) => readFileSync(join(dirname(envFile), name), "utf8")).join("");
+      tokenTwo = readFileSync(envFile, "utf8");
       return { behavior: "deny" };
     }, { ...warm, resumeCursor: "codex-thread-1" });
     expect(second.done).toMatchObject({ ok: true });
     expect(second.opened.map((e) => e.tool)).toEqual(["shell"]);
     expect(second.dump().hookLog.at(-1)).toMatchObject({ id: "w1", verdict: "deny" });
     expect(second.dump().pid).toBe(firstPid); // real reuse, under the real settle probe
+    expect(second.dump().env.MURAGE_CODEX_HOOK_ENV).toBe(envFile);
+    expect(second.dump().env.MURAGE_CODEX_HOOK_ENV_SHA256).toBe(first.dump().env.MURAGE_CODEX_HOOK_ENV_SHA256);
     expect(tokenTwo).toMatch(/TOKEN=/);
-    expect(tokenTwo).not.toBe(tokenOne);
+    expect(tokenTwo).toBe(tokenOne);
+    expect(createHash("sha256").update(tokenTwo).digest("hex")).toBe(second.dump().env.MURAGE_CODEX_HOOK_ENV_SHA256);
     const handshakes = readFileSync(log, "utf8").split("\n").filter((l) => l.startsWith(`${first.dump().pid} `) && l.endsWith(" initialize"));
     expect(handshakes).toHaveLength(1);
   });

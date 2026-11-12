@@ -1,0 +1,50 @@
+COMMAND node_modules/.bin/vitest run server/decision/faults.test.ts -t M51
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/faults.test.ts > A5 M51 non-owner ask faults use frozen BASE callback
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/faults.test.ts (12 tests | 4 failed | 8 skipped) 1336ms
+   ↓ A5 M38 protected match wins before stored-source failure; reads run (M28)
+   ↓ A5 stored browser fault refuses without inventing a card
+   × A5 M51 non-owner ask faults use frozen BASE callback 387ms
+   × A5 M51 non-owner auto faults use frozen BASE callback 299ms
+   × A5 M51 non-owner full faults use frozen BASE callback 345ms
+   × A5 M51 non-owner unlimited faults use frozen BASE callback 301ms
+   ↓ R9 M23 M24 unproven owner does not mint BASE card; missing command runs
+   ↓ R16 M21 deny revision is rechecked immediately before RUN delivery
+   ↓ M23 reader throws: owner clean runs, guest retains BASE fault behavior
+   ↓ R9 record creation failure denies the engine without a second card
+   ↓ R9 provenance/level reader failures produce bounded refusal, never a waiting engine
+   ↓ R9 answer row failure delivers deny and bounded text without another card
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 8 skipped (12)
+   Start at  06:31:38
+   Duration  6.38s (transform 3.97s, setup 4.68s, import 249ms, tests 1.34s, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/faults.test.ts > A5 M51 non-owner ask faults use frozen BASE callback
+ FAIL  server/decision/faults.test.ts > A5 M51 non-owner auto faults use frozen BASE callback
+ FAIL  server/decision/faults.test.ts > A5 M51 non-owner full faults use frozen BASE callback
+ FAIL  server/decision/faults.test.ts > A5 M51 non-owner unlimited faults use frozen BASE callback
+AssertionError: expected 'run' to be 'card' // Object.is equality
+
+Expected: "card"
+Received: "run"
+
+ ❯ server/decision/faults.test.ts:13:67
+     11| it.each(['ask','auto','full','unlimited'] as const)('A5 M51 non-owner …
+     12|  const f=fixture(level,{k:'webhook'});const base=vi.fn<d.BaseVerdictFn…
+     13|  expect(d.decide(f.open('guest',{command:'rm -rf ~'}),base).kind).toBe…
+       |                                                                   ^
+     14| });
+     15| it('R9 M23 M24 unproven owner does not mint BASE card; missing command…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+

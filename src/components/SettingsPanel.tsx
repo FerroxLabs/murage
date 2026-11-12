@@ -1,3 +1,7 @@
+import { NoLimitsFollowers } from "./NoLimitsFollowers";
+import { ModelRouteRow } from "./ModelRouteRow";
+import { BrowserChoice } from './BrowserChoice';
+import { BrowserExtensionPanel } from './BrowserExtensionPanel';
 import { ChevronDown, ChevronLeft, FolderOpen, X } from "lucide-react";
 import { notebookLastWrittenLine } from "../lib/notebook-last-written";
 import { Suspense, useEffect, useState } from "react";
@@ -53,6 +57,7 @@ import { useOlderTasks } from "@/lib/use-ensure-task";
 import { useBotSettingsDraft, useBotSettingsNavigation } from "./bot-settings-drafts";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 import { notebookCanSave, notebookSaveBody } from "./notebook-save";
+import { SettingsAskLine } from "./SettingsAskLine";
 
 // Bot settings > Teams loads on first open (SPEC-X 13.1): the owner's
 // sharing routes are desktop only, and none of it belongs in first paint.
@@ -66,7 +71,7 @@ export function SettingsSection({ id, active, children }: { id: BotSettingsSecti
   const shown = active === undefined || active === id;
   const [seen, setSeen] = useState(shown);
   if (shown && !seen) setSeen(true);
-  return <section hidden={!shown} data-settings-section={id} className="space-y-4">{seen ? children : null}</section>;
+  return <section hidden={!shown} data-settings-section={id} className="space-y-4">{seen ? <>{children}<SettingsAskLine /></> : null}</section>;
 }
 
 function Field({
@@ -651,6 +656,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
 
 
           <SettingsSection id="permissions" active={section}>
+          {desktop === true && <NoLimitsFollowers />}
           <div id="bot-setting-can-talk" data-setting="bot.permissions.can-talk" className="empty:hidden"><CanTalkToControl bot={bot} /></div>
           <div id="bot-setting-peers" data-setting="bot.permissions.peers" className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
@@ -729,10 +735,12 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               className="disabled:cursor-not-allowed"
             />
           </div>
+          <BrowserChoice bot={bot}>{choose=>bot.browserMode==='chrome-extension'?<BrowserExtensionPanel bot={bot} onChoose={choose}/>:null}</BrowserChoice>
 
           </SettingsSection>
           <SettingsSection id="model" active={section}>
           <div id="bot-setting-model" data-setting="bot.model.model" className="rounded-xl bg-card p-4">
+            <ModelRouteRow engine={engine} manage={() => dispatch({ type: "toggleAppSettings", open: true, section: "models", anchor: "engines-heading" })} className="mb-3" />
             <ModelPicker
               bot={bot}
               contained
@@ -792,6 +800,9 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           {desktop === true && (
           <div id="bot-setting-computer" data-setting="bot.access.computer" className="rounded-xl bg-card p-4">
             <div className="text-[15px] font-medium text-ink">{t("settings.bot.computer.title")}</div>
+            {(!bot.computer || bot.computer === "local") && state.botComputerNotices?.[bot.id] && (
+              <p role="status" className="mt-2 text-[13px] text-ink-secondary">{state.botComputerNotices[bot.id]}</p>
+            )}
             <div className="mt-0.5 text-[13px] text-ink-secondary">
               {bot.computer ? t("settings.bot.computer.note") : t("settings.bot.computer.noteAuto")}
             </div>

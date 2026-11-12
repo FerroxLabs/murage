@@ -1,3 +1,4 @@
+import { rebuildSearchFixture } from "./testing/message-search-fixture.ts";
 import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -183,6 +184,7 @@ describe("thread_search (rules 4 to 8, 16)", () => {
   it("returns the newest first with titles and snippets, from every thread of the set and no other bot's", async () => {
     seed(); exclude("t-excl");
     const r = rig();
+    await rebuildSearchFixture();
     const { status, body } = await r.call("thread_search", { query: "vault" });
     expect(status).toBe(200);
     expect(body.hits.map((hit: Json) => hit.messageId)).toEqual(["b2", "b1", "u1"]);
@@ -195,6 +197,7 @@ describe("thread_search (rules 4 to 8, 16)", () => {
   it("pages by oldest_at: the next page continues strictly below the oldest hit", async () => {
     for (let i = 0; i < 25; i++) put("t-main", `m${String(i).padStart(2, "0")}`, `needle number ${i}`, 10_000 + i * 10);
     const r = rig();
+    await rebuildSearchFixture();
     const first = (await r.call("thread_search", { query: "needle" })).body;
     expect(first.hits).toHaveLength(20);
     expect(first.more).toBe(true);
@@ -253,6 +256,7 @@ describe("thread_search (rules 4 to 8, 16)", () => {
   it("a short batch with only silent revocations is complete, not partial", async () => {
     put("t-main", "a1", "needle kept", 100); put("t-main", "a2", "needle revoked", 200);
     forget("t-main", "a2");
+    await rebuildSearchFixture();
     const body = (await rig().call("thread_search", { query: "needle" })).body;
     expect(body.partial).toBe(false);
     expect(body.more).toBe(false);

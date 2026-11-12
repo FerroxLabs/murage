@@ -113,7 +113,7 @@ migrateMemorySchema(db, "off", { snapshotV2Path: join(root, ${JSON.stringify(MEM
 process.stdout.write("DONE\\n");
 `);
   return new Promise<{ signal: NodeJS.Signals | null; out: string }>((resolve, reject) => {
-    const child = spawn(process.execPath, ["--no-warnings", script], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, HOME: root } });
+    const child = spawn(process.execPath, ["--no-warnings", script], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, HOME: root } });
     let out = ""; let err = "";
     const kill = () => { try { child.kill("SIGKILL"); } catch { /* gone */ } };
     child.stdout.on("data", chunk => { out += chunk; for (const line of String(chunk).split("\n")) if (line) onLine?.(line, kill); });

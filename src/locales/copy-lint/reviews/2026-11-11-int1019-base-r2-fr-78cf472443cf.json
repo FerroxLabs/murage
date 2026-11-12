@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "int1019 base backlog round 2 (Sonnet fixes)",
+  "date": "2026-11-11",
+  "base": "9955459fc",
+  "scope": "int1019-base-backlog-r2-fr",
+  "strings": {
+    "fr:gatewayBusy.repeated.title": {
+      "text": "{engine} continue de refuser cette demande. Ton message est conservé.",
+      "en": "{engine} keeps rejecting this request. Your message is saved. Try again or use another AI.",
+      "verdict": "fail",
+      "note": "Missing the next step. Fix: {engine} continue de refuser cette demande. Ton message est conservé. Réessaie ou utilise une autre IA."
+    },
+    "fr:gatewayBusy.tryAgain": {
+      "text": "Réessayer",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "fr:gatewayBusy.useAnotherAI": {
+      "text": "Utiliser une autre IA",
+      "en": "Use another AI",
+      "verdict": "pass"
+    },
+    "fr:gatewayBusy.getHelp": {
+      "text": "Obtenir de l’aide",
+      "en": "Get help",
+      "verdict": "pass"
+    },
+    "fr:engine.toolLimit.notice": {
+      "text": "Certains outils ont été omis pour cette demande : cette IA accepte au maximum {limit} outils.",
+      "en": "Some tools were left out for this request: this AI accepts at most {limit} tools.",
+      "verdict": "pass"
+    },
+    "fr:engine.toolLimit.catalogUnknown": {
+      "text": "Murage n’a pas pu confirmer la liste des outils de cette IA. Le message n’a pas été envoyé, car le nombre d’outils accepté par cette IA n’a pas pu être vérifié.",
+      "en": "Murage could not confirm this AI's tool list. Your message was not sent because Murage could not check how many tools this AI can accept. Choose another AI and try again.",
+      "verdict": "fail",
+      "note": "Missing the instruction to choose another AI and retry. Fix: Murage n’a pas pu confirmer la liste des outils de cette IA. Ton message n’a pas été envoyé, car Murage n’a pas pu vérifier combien d’outils cette IA peut accepter. Choisis une autre IA et réessaie."
+    },
+    "fr:engine.toolLimit.catalogChanged": {
+      "text": "La liste des outils a changé pendant que Murage préparait ta demande. Murage n’a pas pu faire tenir la liste dans la limite d’outils de cette IA. Choisis une autre IA et réessaie.",
+      "en": "The tool list changed while Murage was preparing your request. Murage could not fit the list within this AI's tool limit. Choose another AI and try again.",
+      "verdict": "pass"
+    },
+    "fr:engine.submission.afterSubmission": {
+      "text": "Ton message initial a été envoyé. Murage n’a pas pu le renvoyer car les vérifications avant l’envoi n’ont pas réussi. Il n’a pas été renvoyé automatiquement. Vérifie la conversation avant de réessayer.",
+      "en": "Your original message was sent. Murage could not send it again because the checks before sending did not pass. It was not sent again automatically. Check the conversation before trying again.",
+      "verdict": "pass"
+    },
+    "fr:engine.submission.afterSubmissionUncertain": {
+      "text": "Murage a peut-être commencé à envoyer ton message précédent. Murage n’a pas pu le renvoyer car les vérifications avant l’envoi n’ont pas réussi. Il n’a pas été renvoyé automatiquement. Vérifie la conversation avant de réessayer.",
+      "en": "Murage may have started sending your earlier message. Murage could not send it again because the checks before sending did not pass. It was not sent again automatically. Check the conversation before trying again.",
+      "verdict": "pass"
+    },
+    "fr:acp.defaultThinking": {
+      "text": "Réglage par défaut de l’IA",
+      "en": "AI's default setting",
+      "verdict": "pass"
+    },
+    "fr:ux.cloud.firstRun.bookmarkDoor": {
+      "text": "Ajoute cette page à tes favoris pour pouvoir revenir. Tu peux toujours revenir sur {site}/home/cloud.",
+      "en": "Bookmark this page so you can come back. You can always return at {site}/home/cloud.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

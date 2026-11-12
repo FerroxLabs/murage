@@ -422,7 +422,7 @@ it("filters the transcript of a resumed direct turn before dispatch, not only a 
   expect(resumed).toBeLessThan(bundle);
   const branch=direct.slice(resumed,bundle);
   expect(branch).toContain("filterDirectReplay(allowance,threadId,activeMessages,access,skipTranscript,replayOptions)");
-  expect(branch).toMatch(/transcript=replayLines\(botViewer\(bot\.id\),activeMessages,replayed,/);
+  expect(branch).toMatch(/transcript=await replayLinesInSlices\(botViewer\(bot\.id\),activeMessages,replayed,/);
 });
 
 it("retires an accepted provider and awaits interruption when true forgetting invalidates its memory receipt",async()=>{

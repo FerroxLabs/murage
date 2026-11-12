@@ -18,7 +18,7 @@ import type { Routine } from "../routines.ts";
 afterEach(() => registerBotEmailAddressLookup(() => null));
 
 describe("restore (F23)", () => {
-  it("live bindings wait for Reconnect, a removal stays a removal, receipts stay, the old cursor goes", () => {
+  it("live bindings wait for Reconnect, a removal is parked, receipts stay, the old cursor goes", () => {
     const db = new DatabaseSync(":memory:");
     const store = new EmailStore(db);
     const base = { inboxId: "ibx_1", address: "a@murage.email", username: "a", displayName: "A", emailKeyRef: "k", fluxAccountId: null, step: null, opId: null, opStartedAt: null, policy: "auto" as const, failure: null, updatedAt: 1 };
@@ -27,7 +27,7 @@ describe("restore (F23)", () => {
     store.setCursor("events", "c-old", 1); store.setCursor("install-id", "inst", 1);
     expect(prepareRestoredEmail(db)).toBe(1);
     expect(store.getBinding("b1")!.state).toBe("restored_unverified");
-    expect(store.getBinding("b2")!.state).toBe("remove_requested");
+    expect(store.getBinding("b2")!.state).toBe("removal_parked");
     expect(store.getCursor("events")).toBeNull();
     expect(store.getCursor("install-id")).toBe("inst");
     expect(prepareRestoredEmail(new DatabaseSync(":memory:"))).toBe(0);

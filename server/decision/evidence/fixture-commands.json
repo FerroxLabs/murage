@@ -1,0 +1,41 @@
+[
+  [
+    "doctor",
+    "--url",
+    "http://127.0.0.1:21614"
+  ],
+  [
+    "new-bot",
+    "--name",
+    "Verification Probe",
+    "--url",
+    "http://127.0.0.1:21614"
+  ],
+  [
+    "send",
+    "--bot",
+    "bd96fb03-a504-422a-ac5d-3ab9787dc2d8",
+    "--text",
+    "hello from the isolated fixture",
+    "--url",
+    "http://127.0.0.1:21614"
+  ],
+  [
+    "wait",
+    "--bot",
+    "bd96fb03-a504-422a-ac5d-3ab9787dc2d8",
+    "--timeout",
+    "30",
+    "--url",
+    "http://127.0.0.1:21614"
+  ],
+  [
+    "messages",
+    "--bot",
+    "bd96fb03-a504-422a-ac5d-3ab9787dc2d8",
+    "--limit",
+    "10",
+    "--url",
+    "http://127.0.0.1:21614"
+  ]
+]

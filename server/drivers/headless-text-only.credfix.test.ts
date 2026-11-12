@@ -7,6 +7,7 @@ import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // F6 the structure pins. Every owner home here is a temp fixture; nothing reads a real credential.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { inspect } from "node:util";
 import { join, posix as posixPath, win32 as win32Path } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +15,7 @@ import {
   CLAUDE_ENV_KEEP, claudeAllowlistEnv, claudeKeychainItemPresent, claudeLoginNamespace, claudeTextOnlyTurn, forgetClaudeLoginProbes, ownerCredmanFlag,
   resolveClaudeLoginProbes, type ClaudeTextOnlyConfig, type KeychainLookup,
 } from "./headless-text-only.ts";
+import { readClaudeCodeServers, readClaudeCodeSkills, realImportFs, type ImportFs } from "../claude-code-import.ts";
 import { claudeAccountEnvironment } from "../claude-accounts.ts";
 import type { TempRoot, TextOnlyTurnInput } from "../memory/pip-transport.ts";
 import { openLearningGate } from "../testing/open-learning-gate.ts";
@@ -262,13 +264,53 @@ describe("F6 and F8 structure", () => {
     expect(at[0] > probe && at[0] < probeEnd).toBe(true);
     for (const f of productFiles) expect(readFileSync(join(server, f), "utf8"), f).not.toContain("credentialsDir");
   });
+  it("the Claude Code importer (the .claude.json exception) never reads, keeps or logs a credential, and keeps only mcpServers", () => {
+    const home = mkdtempSync(join(tmpdir(), "cci-cred-"));
+    const TOKENS = ["sk-ant-oat01-ACCESSSECRET", "sk-ant-ort01-REFRESHSECRET", "PRIMARYKEYSECRET"];
+    try {
+      mkdirSync(join(home, ".claude", "skills"), { recursive: true });
+      writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: TOKENS[0], refreshToken: TOKENS[1] } }));
+      writeFileSync(join(home, ".claude.json"), JSON.stringify({
+        oauthAccount: { accessToken: TOKENS[0], refreshToken: TOKENS[1], emailAddress: "owner@example.com" }, primaryApiKey: TOKENS[2],
+        mcpServers: { notes: { command: "npx", args: ["-y", "notes-mcp"] } },
+      }));
+      const opened: string[] = [];
+      const spy: ImportFs = { ...realImportFs, openSync: (path, flags) => { opened.push(path); return realImportFs.openSync(path, flags); } };
+      const logs: string[] = [];
+      const sinks = (["log", "info", "warn", "error", "debug"] as const).map((k) => vi.spyOn(console, k).mockImplementation((...a: unknown[]) => { logs.push(a.map((arg) => inspect(arg, { depth: null })).join(" ")); }));
+      let servers, skills;
+      try { servers = readClaudeCodeServers(home, [], spy); skills = readClaudeCodeSkills(home, spy); } finally { sinks.forEach((x) => x.mockRestore()); }
+      // only the mcpServers entry came out, and it is the fixture's server
+      expect(servers.servers.map((x) => x.name)).toEqual(["notes"]);
+      expect(Object.keys(servers).sort()).toEqual(["servers", "skipped"]);
+      // nothing the importer returned or logged carries a token, an account or the credentials file
+      const everything = JSON.stringify({ servers, skills }) + logs.join("\n");
+      for (const token of [...TOKENS, "owner@example.com", "accessToken", "refreshToken", "oauthAccount", "primaryApiKey"]) expect(everything).not.toContain(token);
+      // the importer never opened .credentials.json, and the only file it read at the home root is .claude.json
+      // nothing at all reached the console (objects are serialised in full, so a logged parsed .claude.json would show here)
+      const logged = logs.join("\n");
+      for (const secret of [...TOKENS, "owner@example.com"]) expect(logged).not.toContain(secret);
+      expect(opened.some((path) => /\.credentials\.json/.test(path))).toBe(false);
+      expect(opened.some((path) => path.endsWith(".claude.json"))).toBe(true);
+    } finally { removeTempDirSync(home); }
+  });
   it("ownerCredmanFlag returns boolean and is the only parser of an owner .claude.json in server/", () => {
     expect(source).toMatch(/export function ownerCredmanFlag\(full: NodeJS\.ProcessEnv\): boolean \{/);
     const literal = /["']\.claude\.json["']/;
-    expect(productFiles.filter((f) => literal.test(readFileSync(join(server, f), "utf8")))).toEqual([join("drivers", "headless-text-only.ts")]);
+    // a9e405c19 added the opt-in Claude Code copy import, the one other reader of that file: it keeps only the top-level mcpServers
+    // object and never the credential flag (checked below). server/testing/ holds fixtures, not product code.
+    const importer = readFileSync(join(server, "claude-code-import.ts"), "utf8");
+    expect(importer).toContain("only the top-level mcpServers object is kept");
+    expect(importer).not.toMatch(/credman|oauthAccount|primaryApiKey|ownerCredmanFlag/i);
+    expect(productFiles.filter((f) => !f.split(/[\\/]/).includes("testing") && literal.test(readFileSync(join(server, f), "utf8")))).toEqual([join("drivers", "headless-text-only.ts")]);
     expect(source.match(/["']\.claude\.json["']/g)).toHaveLength(1);
     const body = source.slice(source.indexOf("export function ownerCredmanFlag"), source.indexOf("\n}\n", source.indexOf("export function ownerCredmanFlag")));
-    expect(body).toContain("JSON.parse");
+    expect(body).toContain("parseOwnerClaudeConfig(text)");
+    // Import now projects MCP settings through this same parser; no second JSON parser may appear.
+    expect(source.match(/JSON\.parse\(/g)).toHaveLength(1);
+    expect(source).toContain("const parsed = parseOwnerClaudeConfig(text);");
+    expect(importer).toContain('ownerClaudeMcpServers(buffer.toString("utf8"), MAX_JSON_DEPTH + 1)');
+    expect(importer).not.toMatch(/JSON\.parse\(/);
     expect(body).not.toMatch(/console\.|writeFile|appendFile/);
   });
 });

@@ -1,7 +1,58 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 import { readFileSync } from "node:fs";
-import { folderMemoryInUse, memoryAudienceLabel, memoryListAction, memoryModeDescription, recordAudienceLabel, unnamedScopeIds } from "./MemorySettings";
+import { URL as NodeURL } from "node:url";
+import { MemoryBrowser, folderMemoryInUse, memoryAudienceLabel, memoryListAction, memoryModeDescription, recordAudienceLabel, unnamedScopeIds } from "./MemorySettings";
 import { initialContext } from "../../shared/upgrade-machine.mjs";
+
+it("keeps the browser collapsed until opened, reveals anchor targets and retains its state after landing", async () => {
+  const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+  const previousActEnvironment = environment.IS_REACT_ACT_ENVIRONMENT;
+  environment.IS_REACT_ACT_ENVIRONMENT = true;
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const render = (anchor: string | null = null, collapsible = true) => act(async () => {
+    root.render(createElement(MemoryBrowser, { anchor, collapsible, children: createElement("input", { defaultValue: "saved search" }) }));
+  });
+  try {
+    await render();
+    const button = () => container.querySelector("button")!;
+    const panel = () => document.getElementById(button().getAttribute("aria-controls")!)!;
+    expect(button().textContent).toContain("Open memory");
+    expect(container.querySelectorAll("#memory-browser-heading")).toHaveLength(1);
+    expect(container.querySelector("#memory-browser-heading")?.getAttribute("data-setting-control")).toBe("memory-browser-heading");
+    expect(panel().hidden).toBe(true);
+    await act(async () => button().click());
+    expect(panel().hidden).toBe(false);
+    const input = container.querySelector("input")!;
+    input.value = "retained search";
+    await act(async () => button().click());
+    expect(panel().hidden).toBe(true);
+    await render("memory-heading");
+    expect(panel().hidden).toBe(true);
+    for (const anchor of ["memory-browser-heading", "memory.browser", "memory-people-heading", "memory.people"]) {
+      await render(anchor);
+      expect(panel().hidden).toBe(false);
+      await render(); // the shell clears its request after landing
+      expect(panel().hidden).toBe(false);
+      expect(container.querySelector("input")).toBe(input);
+      expect(input.value).toBe("retained search");
+      await act(async () => button().click());
+    }
+    await render(null, false); // compact/bot browsers and the inner Settings slot have no extra fold
+    expect(container.querySelector("button")).toBeNull();
+    expect(container.querySelector("[hidden]")).toBeNull();
+    expect(container.querySelector("#memory-browser-heading")).toBeNull();
+    expect(container.querySelector("input")).not.toBeNull();
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+    environment.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+  }
+});
 
 describe("owner memory audience requests", () => {
   it("retains the bot boundary through search, audience changes and pagination", () => {
@@ -61,7 +112,7 @@ describe("a record in a conversation the status left out", () => {
     for (const settled of [true, false]) expect(recordAudienceLabel("conv-9", held, settled)).not.toBe("A conversation");
   });
   it("the settings screen no longer prints the generic label", () => {
-    const source = readFileSync(new URL("./MemorySettings.tsx", import.meta.url), "utf8");
+    const source = readFileSync(new NodeURL("./MemorySettings.tsx", import.meta.url), "utf8");
     expect(source).not.toMatch(/\? "A conversation"/);
     expect(source).toContain('action: "scope-labels"');
   });

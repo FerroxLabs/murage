@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // secret-scan: fixture (fake paths, policy test rows)
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -109,7 +110,7 @@ const probe=(output,extra={})=>guard.shipItState({execPath:EXE,home:UA,supported
 test("T7 exact production ps command and unsupported output cannot authorize absence",()=>{
   assert.equal(probe("/sbin/launchd\n",{exec:(command,args,options)=>{
     assert.equal(command,"/bin/ps");assert.deepEqual(args,["-ww","-ax","-o","command="]);
-    assert.deepEqual(options,{timeout:3000,killSignal:"SIGKILL",maxBuffer:4194304,env:{PATH:"/usr/bin:/bin"}});return Buffer.from("/sbin/launchd\n");
+    assert.deepEqual(options,withHideInherit({timeout:3000,killSignal:"SIGKILL",maxBuffer:4194304,env:{PATH:"/usr/bin:/bin"}}));return Buffer.from("/sbin/launchd\n");
   }}),"absent");
   assert.equal(probe("/sbin/launchd\n",{supported:false}),"error");
   assert.equal(guard.classifyShipIt({output:"/sbin/launchd\n",supported:true},{bundle:"/Applications/Murage.app",home:UA}),"error");

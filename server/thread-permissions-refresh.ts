@@ -126,7 +126,7 @@ export function openRefreshRequest(body: unknown): OpenRefreshRequest | null {
 }
 /** The apply's three checks; true when it may write. */
 export function openApplyCurrent(bot: PermissionHolder, request: { targetLevel: PermissionLevel; rosterId: string; afterRev: number }, preview: OpenRefreshPreview): boolean {
-  return permissionLevel(bot) === request.targetLevel && (bot.permissionRev ?? 0) === request.afterRev && preview.rosterId === request.rosterId;
+  return permissionLevel(bot) === request.targetLevel && (bot.permissionRev ?? 0) === request.afterRev && (preview.rosterId === request.rosterId || preview.eligible.length === 0);
 }
 
 /** One server-derived eligibility decision shared by preview and apply. */

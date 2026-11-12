@@ -1,0 +1,41 @@
+COMMAND node_modules/.bin/vitest run server/decision/records-crash.test.ts -t "orphaned queue re-decided RUN"
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/records-crash.test.ts > A4a A4c orphaned queue re-decided RUN persists one answerId before transport and across a crash
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/records-crash.test.ts (5 tests | 1 failed | 4 skipped) 276ms
+   ↓ A4a M53 queue-first crash, tx rollback, committed restart yield exactly one usable row
+   ↓ A4a M53 record and row roll back together when messageRewrite drops the row
+   ↓ A4c M55 answer/answerId/pending survive crash before acceptance; restart never claims execution
+   ↓ recovery refuses a missing queue adapter instead of reporting success
+   × A4a A4c orphaned queue re-decided RUN persists one answerId before transport and across a crash 273ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 4 skipped (5)
+   Start at  08:16:02
+   Duration  4.70s (transform 3.46s, setup 4.06s, import 254ms, tests 276ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/records-crash.test.ts > A4a A4c orphaned queue re-decided RUN persists one answerId before transport and across a crash
+AssertionError: expected undefined to match object { …(2) }
+
+- Expected:
+{
+  "answerId": "8828ea90-0a7b-47ec-8430-fff954c8b3bf",
+  "delivery": "pending",
+}
+
++ Received:
+undefined
+
+ ❯ server/decision/records-crash.test.ts:34:140
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

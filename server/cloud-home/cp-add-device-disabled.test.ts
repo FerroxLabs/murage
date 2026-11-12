@@ -12,13 +12,17 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { DatabaseSync } from "node:sqlite";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { setSigningCheckForTests, signingKeyMatchesPin } from "../../cloudflare/control-plane/src/env-isolation";
 import { createWorker } from "../../cloudflare/control-plane/src/index";
 import { resolveCloudAccount } from "../../cloudflare/control-plane/src/cloud-accounts";
 import { base64, stagingKeyWrapper } from "../../cloudflare/control-plane/src/key-wrapper";
 import { CloudSessions } from "../cloud-sessions.ts";
 import { verifiedRecoveryHold } from "./b1b-identity.ts";
 import { createCloudRequestAuth } from "../cloud-request-auth.ts";
+
+// G3 environment isolation also applies to fixtures; use this fixture's real throwaway signing pin.
+afterEach(() => setSigningCheckForTests());
 
 const CP_ROOT = join(import.meta.dirname, "../../cloudflare/control-plane");
 
@@ -61,8 +65,9 @@ describe("CP add-device route against the real home verifier (Astra MAKERKIT8 #1
     const kek = Buffer.alloc(32, 120).toString("base64");
     const signing = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]) as CryptoKeyPair;
     const signingJwk = await crypto.subtle.exportKey("jwk", signing.privateKey), signingPublic = await crypto.subtle.exportKey("jwk", signing.publicKey);
+    setSigningCheckForTests(jwk => signingKeyMatchesPin(jwk, signingPublic as { kty: string; crv: string; x: string; y: string }));
     const env = {
-      DB, BETTER_AUTH_SECRET: "synthetic-test-secret-over-32-characters", BETTER_AUTH_URL: "https://auth.murage.test",
+      DB, MURAGE_ENV: "staging", BETTER_AUTH_SECRET: "synthetic-test-secret-over-32-characters", BETTER_AUTH_URL: "https://auth.murage.test",
       ALLOWED_ORIGINS: "https://murage.ai", CLOUDFLARE_ACCOUNT_ID: "1".repeat(32), CLOUDFLARE_ZONE_ID: "2".repeat(32),
       CLOUDFLARE_API_TOKEN: "synthetic-cloudflare-key-not-real", COMPANION_HOST_SUFFIX: "companion.example.test",
       EMAIL_FROM: "no-reply@example.test", EMAIL: { async send(m: unknown) { mail.push(m); } },

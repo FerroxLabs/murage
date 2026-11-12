@@ -148,12 +148,32 @@ describe("engine-history deletion structure", () => {
     });
     it("the one eval worker that is allowed (wal-maintenance.ts) may require only its own list", () => {
       const wal = source("wal-maintenance.ts");
-      const allowed = ["node:worker_threads", "node:sqlite"];
-      expect(evalWorkerViolations("wal-maintenance.ts", wal, allowed)).toEqual([]);
-      expect(evalWorkerViolations("wal-maintenance.ts", wal.replace('require("node:sqlite")', 'require("node:sqlite"); require("node:fs")'), allowed).some((item) => /node:fs/.test(item))).toBe(true);
-      expect(evalWorkerViolations("wal-maintenance.ts", wal.replace('require("node:sqlite")', 'require("node:" + "sqlite")'), allowed).some((item) => /computed/.test(item))).toBe(true);
-      expect(evalWorkerViolations("wal-maintenance.ts", wal.replace("const WORKER_SOURCE = `", "const WORKER_SOURCE = `eval('1');"), allowed).some((item) => /eval/.test(item))).toBe(true);
+      const allowed = ["node:worker_threads", "node:sqlite", "node:fs"];
+      // C2-FSYNC-DEBT-RULING's fd reads/flush, plus 5d5a791f19's reviewed
+      // off-thread free-space admission sample. Any other member still fails.
+      const pins = { "node:fs": ["openSync", "fstatSync", "readSync", "closeSync", "fdatasyncSync", "statfsSync"] };
+      const fsLine = 'const { openSync, fstatSync, readSync, closeSync, fdatasyncSync, statfsSync } = require("node:fs");';
+      expect(wal).toContain(fsLine);
+      expect(evalWorkerViolations("wal-maintenance.ts", wal, allowed, pins)).toEqual([]);
+      for (const member of ["writeSync", "unlinkSync"]) {
+        const mutant = wal.replace(fsLine, fsLine.replace(" } =", `, ${member} } =`));
+        expect(evalWorkerViolations("wal-maintenance.ts", mutant, allowed, pins).some((item) => item.includes(`member ${member}`)), member).toBe(true);
+      }
+      expect(evalWorkerViolations("wal-maintenance.ts", wal.replace(fsLine, 'const fs = require("node:fs");'), allowed, pins).some((item) => /whole object/.test(item))).toBe(true);
+      expect(evalWorkerViolations("wal-maintenance.ts", wal.replace('require("node:sqlite")', 'require("node:sqlite"); require("node:os")'), allowed, pins).some((item) => /node:os/.test(item))).toBe(true);
+      expect(evalWorkerViolations("wal-maintenance.ts", wal.replace('require("node:sqlite")', 'require("node:" + "sqlite")'), allowed, pins).some((item) => /computed/.test(item))).toBe(true);
+      expect(evalWorkerViolations("wal-maintenance.ts", wal.replace("const WORKER_SOURCE = `", "const WORKER_SOURCE = `eval('1');"), allowed, pins).some((item) => /eval/.test(item))).toBe(true);
       expect(evalWorkerViolations("x.ts", "declare const s: string;\nnew Worker(s, { eval: true });", allowed).some((item) => /cannot be read/.test(item))).toBe(true);
+    });
+    it.each([
+      'const { readSync: read } = require("node:fs");',
+      'let { readSync } = require("node:fs");',
+      'var { readSync } = require("node:fs");',
+    ])("pinned eval-worker members require plain const bindings: %s", (binding) => {
+      const wrap = (body: string) => `const WORKER_SOURCE = ${JSON.stringify(body)}; new Worker(WORKER_SOURCE, { eval: true });`;
+      const pins = { "node:fs": ["openSync", "fstatSync", "readSync", "closeSync", "fdatasyncSync"] };
+      expect(evalWorkerViolations("wal-maintenance.ts", wrap('const { readSync } = require("node:fs");'), ["node:fs"], pins)).toEqual([]);
+      expect(evalWorkerViolations("wal-maintenance.ts", wrap(binding), ["node:fs"], pins).length).toBeGreaterThan(0);
     });
     // r17 finding 11: the aliases and option forms the first version of the guard let through
     it("a layer reached through an import alias is still a layer: destructuring or handing on the alias is rejected", () => {

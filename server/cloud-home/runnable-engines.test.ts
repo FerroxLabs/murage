@@ -6,7 +6,7 @@ import { allInstanceConfigs, instanceConfigs, type AppConfig } from "../config.t
 import type { InstanceConfigMap } from "../contracts.ts";
 import { cloudHomeCopy } from "./copy.ts";
 import { ENGINE_LOGIN_ENGINES } from "./engine-login.ts";
-import { CLOUD_DESKTOP_ONLY_ENGINES, CLOUD_HIDDEN_ENGINES, CLOUD_LOCAL_ONLY_ENGINES, CLOUD_RUNNABLE_ENGINES, cloudEngineChoiceRefusal, cloudLocalOnlyEngineNames, isCloudHiddenEngine } from "./runnable-engines.ts";
+import { CLOUD_DESKTOP_ONLY_ENGINES, CLOUD_HIDDEN_ENGINES, CLOUD_LOCAL_ONLY_ENGINES, CLOUD_RUNNABLE_ENGINES, CLOUD_WITHHELD_ENGINES, cloudEngineChoiceRefusal, cloudEngineClientRefusal, cloudLocalOnlyEngineNames, cloudHiddenEngineLine, isCloudEngineWithheldFromClient, isCloudHiddenEngine, parseClientCapabilities } from "./runnable-engines.ts";
 import { CLOUD_ENGINES } from "./turn-process.ts";
 
 const read = (relative: string) => readFileSync(new URL(relative, import.meta.url), "utf8");
@@ -18,12 +18,12 @@ describe("the runnable set cannot drift from the launcher or the image", () => {
   it("equals the launcher's ARGV_RULES engines", () => {
     const launcher = read("../../deploy/cloud-home/murage-turn-launch.py");
     const body = launcher.slice(launcher.indexOf("\nARGV_RULES = {"), launcher.indexOf("\nARGV_PROBES"));
-    const keys = [...body.matchAll(/^ {4}"(\w+)": ArgvRule\(/gm)].map(match => match[1]);
+    const keys = [...body.matchAll(/^ {4}"(\w+)": ArgvRule\(/gm)].map(match => driverKind(match[1]));
     expect(sorted(keys)).toEqual(sorted(CLOUD_RUNNABLE_ENGINES));
   });
   it("equals the engines the image manifest installs", () => {
     const build = read("../../deploy/cloud-home/build-image.sh");
-    const engines = [...build.matchAll(/\("(\w+)", "\/opt\/murage\/bin\/\w+"\)/g)].map(match => match[1]);
+    const engines = [...build.matchAll(/\("(\w+)", "\/opt\/murage\/bin\/\w+"\)/g)].map(match => driverKind(match[1]));
     expect(sorted(engines)).toEqual(sorted(CLOUD_RUNNABLE_ENGINES));
   });
   it("with the hidden set covers every cloud engine exactly once", () => {
@@ -33,8 +33,8 @@ describe("the runnable set cannot drift from the launcher or the image", () => {
     expect(CLOUD_DESKTOP_ONLY_ENGINES.filter(name => (CLOUD_ENGINES as readonly string[]).includes(name))).toEqual([]);
     expect(CLOUD_RUNNABLE_ENGINES.filter(name => (CLOUD_HIDDEN_ENGINES as readonly string[]).includes(name))).toEqual([]);
   });
-  it("hides exactly the nine engines the home cannot run", () => {
-    expect(sorted(CLOUD_HIDDEN_ENGINES)).toEqual(sorted(["piAgent", "hermesAgent", "geminiAgent", "cursorAgent", "antigravityAgent", "droidAgent", "qwenAgent", "customAcp", "museCode"]));
+  it("hides exactly the eight engines the home cannot run", () => {
+    expect(sorted(CLOUD_HIDDEN_ENGINES)).toEqual(sorted(["piAgent", "hermesAgent", "geminiAgent", "cursorAgent", "droidAgent", "qwenAgent", "customAcp", "museCode"]));
   });
   it("keeps Muse Code desktop only, launcher and image included", () => {
     expect(isCloudHiddenEngine("museCode")).toBe(true);
@@ -59,10 +59,11 @@ const cfg = { instances: fleet } as unknown as AppConfig;
 const drivers = (map: InstanceConfigMap) => Object.values(map).map(entry => entry.driver);
 
 describe("the engine list a home offers", () => {
-  it("leaves out the nine hidden engines and keeps the six it runs", () => {
+  it("leaves out the eight hidden engines and keeps the six it offers", () => {
     const offered = drivers(instanceConfigs(cfg, { MURAGE_CLOUD_ROLE: "home" }));
     for (const hidden of CLOUD_HIDDEN_ENGINES) expect(offered).not.toContain(hidden);
-    for (const runnable of CLOUD_RUNNABLE_ENGINES) expect(offered).toContain(runnable);
+    for (const runnable of CLOUD_RUNNABLE_ENGINES) if (!(CLOUD_WITHHELD_ENGINES as readonly string[]).includes(runnable)) expect(offered).toContain(runnable);
+    expect(offered).not.toContain("antigravityAgent");
     expect(offered).toContain("boxAgent");
   });
   it("leaves out hidden engines the default fleet would add", () => {
@@ -83,7 +84,7 @@ describe("choosing an engine the home hides", () => {
     for (const hidden of CLOUD_HIDDEN_ENGINES) expect(cloudEngineChoiceRefusal(true, hidden, true)).toBe(cloudHomeCopy.engineNotOnCloud);
   });
   it("lets a runnable engine through, and a bot that keeps its engine", () => {
-    for (const runnable of CLOUD_RUNNABLE_ENGINES) expect(cloudEngineChoiceRefusal(true, runnable, true)).toBeUndefined();
+    for (const runnable of CLOUD_RUNNABLE_ENGINES) if (runnable !== "antigravityAgent") expect(cloudEngineChoiceRefusal(true, runnable, true)).toBeUndefined();
     expect(cloudEngineChoiceRefusal(true, "piAgent", false)).toBeUndefined();
   });
   it("never refuses on the desktop", () => {
@@ -95,6 +96,12 @@ describe("choosing an engine the home hides", () => {
     expect(index).toContain("cloudEngineChoiceRefusal(cloudHome, allInstanceConfigs(cfg)[selection.instanceId]?.driver, !current || Boolean(changed))");
     expect(index).toContain("{ engineNote: cloudHomeCopy.engineNotOnCloud }");
     expect(index).toContain("isCloudHiddenEngine(allInstanceConfigs(cfg)[instanceId.trim()]?.driver)");
+    expect(index).toContain("cloudHome && isCloudHiddenEngine(hiddenDriver) ? cloudHiddenEngineLine(hiddenDriver)");
+  });
+  it("refuses an Antigravity sign-in target at admission and keeps the other engines", async () => {
+    const { checkEngineLoginTarget } = await import("./engine-login-target.ts");
+    expect(checkEngineLoginTarget({ engine: "antigravityAgent", action: "login", bot: "atlas" })).toEqual({ ok: false, fault: "unknown" });
+    expect(checkEngineLoginTarget({ engine: "grokAgent", action: "login", bot: "atlas" }).ok).toBe(true);
   });
 });
 
@@ -147,5 +154,55 @@ describe("Cline and Copilot run only on the person's computer", () => {
     const index = read("../index.ts");
     expect(index).toContain("const localOnlyEngines = cloudHome ? cloudLocalOnlyEngineNames(Object.values(allInstanceConfigs(cfg)).filter(entry => entry.hidden !== true).map(entry => entry.driver)) : [];");
     expect(index).toContain("...(localOnlyEngines.length ? { localOnlyEngines } : {})");
+  });
+});
+
+describe("Antigravity is offered only to a desktop that can sign it in (capability flag, fail closed)", () => {
+  const withFlag = parseClientCapabilities("antigravity-signin");
+  it("is runnable on a home but withheld from a client with no flag, a wrong flag or a version string", () => {
+    expect(CLOUD_RUNNABLE_ENGINES).toContain("antigravityAgent");
+    for (const header of [undefined, "", "other-flag", "1.0.4", "antigravity-signin-not"]) {
+      const caps = parseClientCapabilities(header);
+      expect(isCloudEngineWithheldFromClient(true, "antigravityAgent", caps), String(header)).toBe(true);
+      expect(cloudEngineClientRefusal(true, "antigravityAgent", caps)).toBe("Update Murage to use Antigravity on Cloud");
+    }
+    expect(isCloudEngineWithheldFromClient(true, "antigravityAgent", undefined)).toBe(true);
+  });
+  it("is offered with the flag, and the flag never changes other engines or the desktop", () => {
+    expect(isCloudEngineWithheldFromClient(true, "antigravityAgent", withFlag)).toBe(false);
+    expect(cloudEngineClientRefusal(true, "antigravityAgent", withFlag)).toBeUndefined();
+    expect(cloudEngineClientRefusal(true, "claudeAgent", parseClientCapabilities(undefined))).toBeUndefined();
+    expect(cloudEngineClientRefusal(false, "antigravityAgent", parseClientCapabilities(undefined))).toBeUndefined();
+  });
+  it("reads a comma list, ignores junk and is bounded", () => {
+    expect([...parseClientCapabilities(" Antigravity-Signin , x y,,a".concat(",b".repeat(200)))].includes("antigravity-signin")).toBe(true);
+    expect(parseClientCapabilities("a,".repeat(500)).size).toBeLessThanOrEqual(32);
+  });
+  it("is wired into the engine list answer and the bot model check", () => {
+    const index = read("../index.ts");
+    expect(index).toContain("isCloudEngineWithheldFromClient(true, allInstanceConfigs(cfg)[item.instanceId]?.driver, currentClientCapabilities())");
+    expect(index).toContain("cloudEngineClientRefusal(cloudHome, allInstanceConfigs(cfg)[selection.instanceId]?.driver, currentClientCapabilities())");
+    expect(index).toContain("withClientCapabilities(req.headers");
+  });
+});
+
+describe("Antigravity is withheld on a Cloud home until its sign-in can finish there", () => {
+  const line = "Antigravity isn't available on Murage Cloud yet. Pick another engine for this bot.";
+  it("is not offered on a home, a re-pick or birth fallback has no such instance, and the desktop list is unchanged", () => {
+    expect(drivers(instanceConfigs(cfg, { MURAGE_CLOUD_ROLE: "home" }))).not.toContain("antigravityAgent");
+    expect(drivers(instanceConfigs({} as AppConfig, { MURAGE_CLOUD_ROLE: "home" }))).not.toContain("antigravityAgent");
+    expect(drivers(instanceConfigs(cfg, {}))).toContain("antigravityAgent");
+    expect(isCloudHiddenEngine("antigravityAgent")).toBe(true);
+  });
+  it("refuses a new bot or a switch to it with the plain line, and never on the desktop or for a bot that keeps it", () => {
+    expect(cloudHomeCopy.antigravityNotOnCloud).toBe(line);
+    expect(cloudEngineChoiceRefusal(true, "antigravityAgent", true)).toBe(line);
+    expect(cloudEngineChoiceRefusal(false, "antigravityAgent", true)).toBeUndefined();
+    expect(cloudEngineChoiceRefusal(true, "antigravityAgent", false)).toBeUndefined();
+    expect(cloudHiddenEngineLine("piAgent")).toBe(cloudHomeCopy.engineNotOnCloud);
+  });
+  it("tells a bot already on it the same line when its turn is refused, and the copy has no banned words", () => {
+    expect(read("../index.ts")).toContain("return cloudHiddenEngineLine(allInstanceConfigs(cfg)[instanceId.trim()]?.driver);");
+    expect(line).not.toMatch(/[\u2013\u2014]|\b(safe|unsafe|safety|free|will fail)\b/i);
   });
 });

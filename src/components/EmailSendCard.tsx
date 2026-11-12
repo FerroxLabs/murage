@@ -18,6 +18,20 @@ export function emailAnswerBody(requestId: string, revision: number, action: Ema
   return { requestId, behavior, emailAction: action, emailRevision: revision, ...(action === "edit" && draft ? { emailDraft: draft } : {}) };
 }
 
+/** New approval actions omit the body; presentation retains the exact editable text.
+ * End-relative boundaries also handle blank lines, Unicode and attachment-like body text. */
+export function emailDraftText(card: NonNullable<Message["card"]>): string {
+  const draft = card.emailSend!.draft;
+  if (draft.text || !draft.presentation) return draft.text;
+  const { textLength, trailingLength } = draft.presentation;
+  const subtitle = card.subtitle ?? "";
+  if (!Number.isSafeInteger(textLength) || !Number.isSafeInteger(trailingLength) || textLength < 0 || trailingLength < 0 || textLength + trailingLength > subtitle.length) {
+    throw new Error("The email draft is unavailable. Refresh this card before editing.");
+  }
+  const end = subtitle.length - trailingLength;
+  return subtitle.slice(end - textLength, end);
+}
+
 const LABEL: Record<EmailCardAction, string> = { send: "Send", edit: "Edit", dont_send: "Don't send", retry: "Retry" };
 
 export function EmailSendCard({ threadId, message, onManage }: { threadId: string; message: Message; onManage?: () => void }) {
@@ -60,7 +74,11 @@ export function EmailSendCard({ threadId, message, onManage }: { threadId: strin
             </>
           ) : email.actions.map(action => (
             <button key={action} type="button" disabled={busy}
-              onClick={() => action === "edit" ? setEditing(email.draft.text) : void answer(action)}
+              onClick={() => {
+                if (action !== "edit") { void answer(action); return; }
+                try { setEditing(emailDraftText(card)); setError(null); }
+                catch (caught) { setError(caught instanceof Error ? caught.message : "The email draft is unavailable."); }
+              }}
               className={`min-h-9 rounded-lg px-3 text-[13px] font-medium disabled:opacity-60 ${action === "send" || action === "retry" ? "bg-accent text-white" : "bg-control text-ink"}`}>{LABEL[action]}</button>
           ))}
         </div>

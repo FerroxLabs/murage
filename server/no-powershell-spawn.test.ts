@@ -1,11 +1,11 @@
-// Murage permits only its fixed bounded command-environment probe and the user terminal on Windows.
+// Murage permits only its fixed bounded environment/owner probes and the user terminal on Windows.
 // Packaged smoke records that probe exception explicitly. This guard reads every shipped code file
 // (server/, electron/ including the vendored bundles, shared/, installer/lib/ and the packaged script) and finds each LINE that
 // holds a PowerShell program name as a code string. Each such line must be on server/no-powershell-spawn.allowlist.json by its
 // fingerprint (sha256 of the trimmed line), with a written reason for its file: a new line, even inside a file already listed,
 // fails until it is reviewed, and a listed line that is gone fails too, so the list cannot go stale (Astra nops #8).
-// Independently, every executable launch site whose target is PowerShell fails, wherever it is and whatever the list says, unless
-// it is the one user_terminal entry: the person's own Open terminal (MurageMain, nops round 3, C).
+// MAIN's POWERSHELL GUARD RULING r2 (2026-11-11) also permits three reviewed security reads. Their exact call and source digests
+// pin the script, arguments and validation; they are never recognizer exemptions. All other executable launch sites still fail.
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -20,7 +20,7 @@ const SHIPPED_FILES = ["scripts/browser-extension-host-registration.mjs"];
 const PROGRAM = /(["'`])(?:[^"'`\n]*[\\/])?(?:powershell|pwsh)(?:\.exe)?\1/i;
 const FOLDER = /WindowsPowerShell[\\/]+v1/;
 // a call that starts a program (its opening parenthesis is matched), and a shell option naming PowerShell
-const LAUNCH = /(?:(?<![.\w$])(?:spawn|spawnSync|execFile|execFileSync|exec|execSync|fork|execa|execaSync)|\b(?:child_process\w*|childProcess|cp)\.(?:spawn|spawnSync|execFile|execFileSync|exec|execSync|fork)\)?|\bShellExecute\w*)\s*\(/g;
+const LAUNCH = /(?:(?<![.\w$])(?:spawn|spawnSync|execFile|execFileSync|exec|execSync|fork|execa|execaSync|run|runTool|defaultSecurityRunner)|\b(?:child_process\w*|childProcess|cp)\.(?:spawn|spawnSync|execFile|execFileSync|exec|execSync|fork)\)?|\bShellExecute\w*)\s*\(/g;
 const SHELL_OPTION = /\bshell\s*:\s*([^,}\n]*)/g;
 // a launch descriptor: [executable, [arguments...]] (the shape electron/terminal-launch.mjs hands to its launcher)
 const DESCRIPTOR = /\[\s*([^\[\],]+?)\s*,\s*\[/g;
@@ -55,6 +55,10 @@ interface Allowlist {
   _about: string;
   fixed_probe?: { file: string; launch: string; script: string; reason: string };
   names_only: Record<string, { reason: string; lines: Record<string, string> }>;
+  reviewed_security: Record<string, {
+    reason: string; citation: string; callsite: string;
+    lines: Record<string, string>; launches: Record<string, string>; source_sha256: string;
+  }>;
   user_terminal: Record<string, { reason: string; lines: Record<string, string>; launches?: Record<string, string> }>;
   open_spawns: Record<string, unknown>;
 }
@@ -125,6 +129,7 @@ function bracketed(text: string, open: number) {
  *  that names it, or through cmd / start / conhost / wt arguments; the one user_terminal launch is allowed by its exact text. */
 export function scanForPowerShell(files: Record<string, string>, list: Allowlist) {
   const holders: Finding[] = [], launches: Finding[] = [], userTerminalLaunches: Finding[] = [];
+  const callPrints = new Map<string, string>();
   const names = constantNames(files);
   let powershellName: RegExp | null = null, hostName: RegExp | null = null;
   const namesPowerShell = (text: string) => MENTION.test(text) || !!powershellName?.test(text);
@@ -146,7 +151,11 @@ export function scanForPowerShell(files: Record<string, string>, list: Allowlist
     const flag = (index: number) => { const finding = findingAt(index); flagged.set(`${finding.line}`, finding); };
     for (const match of code.matchAll(LAUNCH)) {
       const call = bracketed(code, match.index! + match[0].length - 1), first = call.pieces[0] ?? "", rest = call.pieces.slice(1).join(",");
-      if (namesPowerShell(first) || (namesHost(first) && namesPowerShell(rest))) flag(match.index!);
+      if (namesPowerShell(first) || (namesHost(first) && namesPowerShell(rest))) {
+        flag(match.index!);
+        const finding = findingAt(match.index!);
+        callPrints.set(`${file}:${finding.line}`, fingerprint(match[0].trim() + call.whole.slice(1)));
+      }
       for (const option of call.whole.matchAll(SHELL_OPTION)) if (namesPowerShell(option[1] ?? "")) flag(match.index!);
     }
     for (const match of code.matchAll(SHELL_OPTION)) if (namesPowerShell(match[1] ?? "")) flag(match.index!);
@@ -161,13 +170,22 @@ export function scanForPowerShell(files: Record<string, string>, list: Allowlist
     userTerminalLaunches.push(...exact.values());
   }
   const listed = (group: Allowlist["names_only"], { file, fingerprint: print }: Finding) => Object.hasOwn(group, file) && Object.hasOwn(group[file]!.lines, print);
-  const unlisted = holders.filter(finding => !listed(list.names_only, finding) && !listed(list.user_terminal, finding));
+  const unlisted = holders.filter(finding => !listed(list.names_only, finding) && !listed(list.user_terminal, finding) && !listed(list.reviewed_security, finding));
   // The user_terminal launch is the exact site above, once, and its fingerprint is on the list; every other launch is forbidden.
   const permitted = userTerminalLaunches.slice(0, 1).filter(finding => Object.hasOwn(list.user_terminal[finding.file]?.launches ?? {}, finding.fingerprint));
-  const forbiddenLaunches = [...launches, ...userTerminalLaunches.filter(finding => !permitted.includes(finding))];
+  // A source digest pins the complete fixed script and its failure handling as well as the invocation. A new launch, altered
+  // argument, altered script or copied call in one of these files invalidates the exception, even if its first line is unchanged.
+  const securityPermitted = launches.filter(finding => {
+    const entry = list.reviewed_security[finding.file];
+    const call = callPrints.get(`${finding.file}:${finding.line}`);
+    return entry && call && Object.hasOwn(entry.launches, call)
+      && createHash("sha256").update(files[finding.file]!).digest("hex") === entry.source_sha256;
+  });
+  const forbiddenLaunches = [...launches.filter(finding => !securityPermitted.includes(finding)), ...userTerminalLaunches.filter(finding => !permitted.includes(finding))];
   const seen = new Set(holders.map(({ file, fingerprint: print }) => `${file}\u0000${print}`));
-  const stale = [...Object.entries(list.names_only), ...Object.entries(list.user_terminal)].flatMap(([file, entry]) => Object.keys(entry.lines).filter(print => !seen.has(`${file}\u0000${print}`)).map(print => `${file} ${print}`));
+  const stale = [...Object.entries(list.names_only), ...Object.entries(list.user_terminal), ...Object.entries(list.reviewed_security)].flatMap(([file, entry]) => Object.keys(entry.lines).filter(print => !seen.has(`${file}\u0000${print}`)).map(print => `${file} ${print}`));
   const staleLaunches = Object.entries(list.user_terminal).flatMap(([file, entry]) => Object.keys(entry.launches ?? {}).filter(print => !permitted.some(finding => finding.file === file && finding.fingerprint === print)).map(print => `${file} ${print}`));
+  staleLaunches.push(...Object.entries(list.reviewed_security).flatMap(([file, entry]) => Object.keys(entry.launches).filter(print => !securityPermitted.some(finding => finding.file === file && callPrints.get(`${file}:${finding.line}`) === print)).map(print => `${file} ${print}`)));
   return { holders, launches, userTerminalLaunches: permitted, unlisted, forbiddenLaunches, stale: [...stale, ...staleLaunches] };
 }
 
@@ -179,17 +197,17 @@ const result = scanForPowerShell(shipped, list);
 
 describe("no app-spawned PowerShell", () => {
   it("reads the shipped vendored bundles too (electron/vendor)", () => {
-    expect(Object.keys(shipped).filter(file => file.startsWith("electron/vendor/")).sort()).toEqual(["electron/vendor/electron-updater.cjs", "electron/vendor/ws.cjs"]);
+    expect(Object.keys(shipped).filter(file => file.startsWith("electron/vendor/")).sort()).toEqual(["electron/vendor/dbus-next.cjs", "electron/vendor/electron-updater.cjs", "electron/vendor/ws.cjs"]);
   });
   it("every shipped line naming PowerShell as a program is on the allowlist by its fingerprint", () => {
     expect(result.unlisted, "not allowlisted: remove it or add its fingerprint with a reason").toEqual([]);
   });
-  it("no additional direct PowerShell launch sites beyond the user terminal; the fixed probe uses execCli", () => {
+  it("no additional direct PowerShell launch sites beyond the reviewed exceptions; the fixed probe uses execCli", () => {
     expect(result.forbiddenLaunches, "a PowerShell launch").toEqual([]);
   });
   it("every allowlist entry is current and carries a written reason", () => {
     expect(result.stale, "stale fingerprints").toEqual([]);
-    for (const [file, entry] of [...Object.entries(list.names_only), ...Object.entries(list.user_terminal)]) {
+    for (const [file, entry] of [...Object.entries(list.names_only), ...Object.entries(list.user_terminal), ...Object.entries(list.reviewed_security)]) {
       expect(entry.reason.trim().length, file).toBeGreaterThan(40);
       expect(Object.keys(entry.lines).length, file).toBeGreaterThan(0);
     }
@@ -240,6 +258,28 @@ describe("no app-spawned PowerShell", () => {
 
   // Astra nops #8: the old guard exempted whole files, so a new spawn in an already-listed file passed.
   describe("the guard itself", () => {
+    it("only the three security reads authorized by MAIN r2 have exact source and call pins", () => {
+      expect(Object.keys(list.reviewed_security).sort()).toEqual([
+        "server/browser-window-chrome.ts", "server/channels/signal/service.ts", "server/channels/signal/storage.ts",
+      ]);
+      for (const [file, entry] of Object.entries(list.reviewed_security)) {
+        expect(entry.citation, file).toContain("POWERSHELL GUARD RULING r2");
+        expect(entry.callsite, file).toContain(file + ":");
+        expect(entry.source_sha256, file).toMatch(/^[a-f0-9]{64}$/);
+        expect(Object.keys(entry.launches), file).toHaveLength(1);
+        expect(file in list.names_only, file).toBe(false);
+        const source = shipped[file]!;
+        // Pin the payload and refuse even an unchanged approved launch copied into its own file.
+        for (const changed of [source.replace("$ErrorActionPreference", "$DifferentActionPreference"), source + "\n" + source]) {
+          expect(changed, file).not.toBe(source);
+          expect(scanForPowerShell({ [file]: changed }, list).forbiddenLaunches.length, file).toBeGreaterThan(0);
+        }
+        const line = 'spawn("powershell.exe", ["-NoProfile"]);';
+        const extra = scanForPowerShell({ [file]: `${source}\n${line}` }, list);
+        expect(extra.unlisted.map(finding => finding.text), file).toContain(line);
+        expect(extra.forbiddenLaunches.map(finding => finding.text), file).toContain(line);
+      }
+    });
     const index = shipped["server/index.ts"]!;
     it("a new PowerShell spawn inside an already-listed file fails, as an unlisted line and as a launch", () => {
       const found = scanForPowerShell({ ...shipped, "server/index.ts": `${index}\nspawn("powershell.exe", ["-NoProfile"]);` }, list);
@@ -263,7 +303,8 @@ describe("no app-spawned PowerShell", () => {
     });
 
     const terminal = shipped["electron/terminal-launch.mjs"]!;
-    const site = terminal.split("\n").find(line => line.includes('out.push([cmd, ["/d"'))!;
+    // 50f939d674 added a preceding wt row with the same cmd prefix. Select the PowerShell fallback that these mutants exercise.
+    const site = terminal.split("\n").find(line => line.includes('out.push([cmd, ["/d"') && line.includes('"user_terminal"'))!;
     const scan = (extra: Record<string, string>, base: Record<string, string> = shipped) => scanForPowerShell({ ...base, ...extra }, list).forbiddenLaunches.map(finding => `${finding.file}:${finding.text}`);
     it("the real user_terminal launch passes, and is the only launch", () => {
       expect(scan({})).toEqual([]);

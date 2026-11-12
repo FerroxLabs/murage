@@ -1,3 +1,4 @@
+import { BotReviewSheet } from './BotReviewSheet';
 import { useSlashSkills } from "@/lib/use-slash-skills";
 import { CallMeWhenDone } from "./CallMeWhenDone";
 import { track } from "@/lib/analytics";
@@ -97,6 +98,11 @@ import { ComposerPlusMenu } from "./ComposerPlusMenu";
 import { PushToTalk, browserPushToTalkFacts } from "./PushToTalk";
 import {
   cleanupEnabled,
+  CLEANUP_NOTICE,
+  requestCleanupNotice,
+  cleanupNoticePending,
+  subscribeCleanupNotice,
+  markCleanupNoticeShown,
   undoCleanup,
   undoOffered,
   type CleanupUndo,
@@ -292,6 +298,15 @@ function PermissionLevelMenu({ bot, routine, onPick, onDone }: {
 }
 
 /** Renders the editable message composer and its pending attachments. */
+/** The level chip of the composer that owns `from`: the nearest ancestor holding one, so a second composer is never focused. */
+function levelChipNear(from: HTMLElement | null): HTMLElement | null {
+  for (let node = from?.parentElement ?? null; node; node = node.parentElement) {
+    const chip = node.querySelector<HTMLElement>('[data-coach="level-chip"]');
+    if (chip) return chip;
+  }
+  return null;
+}
+
 export function Composer({
   bot,
   group,
@@ -568,6 +583,20 @@ export function Composer({
   // tap puts the raw words back. Offered only while the box still holds what
   // clean-up wrote (undoOffered), so it never overwrites later typing.
   const [cleanupUndo, setCleanupUndo] = useState<CleanupUndo | null>(null);
+  const [showCleanupNotice, setShowCleanupNotice] = useState(cleanupNoticePending);
+  const cleanupNoticeRef = useRef<HTMLParagraphElement>(null);
+  const onCleanupStart = () => setShowCleanupNotice(requestCleanupNotice());
+  useEffect(() => {
+    const resumeNotice = () => {
+      if (cleanupNoticePending()) setShowCleanupNotice(true);
+    };
+    const unsubscribe = subscribeCleanupNotice(resumeNotice);
+    resumeNotice();
+    return unsubscribe;
+  }, []);
+  useEffect(() => {
+    if (showCleanupNotice && cleanupNoticeRef.current?.isConnected) markCleanupNoticeShown();
+  }, [showCleanupNotice, bot?.staged]);
 
   // image paste is offered only when every bot that will actually answer
   // can open one. sendGroup routes to mentions, else the room default —
@@ -695,15 +724,34 @@ export function Composer({
       ?.scrollIntoView({ block: "nearest" });
   }, [highlight, mentionPickerOpen]);
 
-  // one line at rest, then grow with the draft — hard cap at six lines
-  useEffect(() => {
+  // one line at rest, then grow with the draft; capped at six lines of text (the CSS max-height, which also carries the compact box's 96px, is the other bound)
+  const fitField = useCallback(() => {
     const el = inputRef.current;
     if (!el) return;
-    const line = parseFloat(getComputedStyle(el).lineHeight) || 24;
-    const cap = line * 6;
+    const cs = getComputedStyle(el);
+    const line = parseFloat(cs.lineHeight) || 24;
+    const cssMax = parseFloat(cs.maxHeight);
+    const cap = Math.min(line * 6 + (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0), Number.isFinite(cssMax) ? cssMax : Infinity);
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, cap)}px`;
-  }, [text]);
+  }, []);
+  // also when the phone layout flips (rotation across 768px) or the field's width changes: the same words wrap differently
+  useEffect(() => { fitField(); }, [text, phoneComposer, compact, fitField]);
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let width = el.clientWidth;
+    let frame = 0;
+    // fitField resizes the observed field itself, so it runs next frame, never inside the observer's own delivery (that raises "ResizeObserver loop")
+    const watch = new ResizeObserver(() => {
+      if (el.clientWidth === width) return;
+      width = el.clientWidth;
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => { frame = 0; fitField(); });
+    });
+    watch.observe(el);
+    return () => { watch.disconnect(); if (frame) cancelAnimationFrame(frame); };
+  }, [fitField, phoneComposer, compact]);
 
   const pickMention = (peer: MentionChoice) => {
     if (!mention) return;
@@ -1135,6 +1183,7 @@ export function Composer({
         write: (next) => editTextRef.current(next),
         read: () => readComposerDraft(draftIdRef.current).text,
         target: () => targetRef.current,
+        onCleanupStart,
         applyCleanup: (next, undo) => {
           setCleanupUndo(undo);
           editTextRef.current(next);
@@ -1221,13 +1270,22 @@ export function Composer({
       return;
     }
     setSpeechError(null);
+    setShowCleanupNotice(false);
     dictationPress(draftId, text.trim());
   };
 
+  if (bot?.staged) return bot.staged.reason === 'turn-open'
+    ? <p className="p-4 text-sm text-ink-secondary">{bot.name} starts when this reply finishes.</p>
+    : <BotReviewSheet botIds={[bot.id]} />;
   return (
     <div data-composer className="pointer-events-none relative px-5 pb-3" data-composer-compact={compact ? "" : undefined}>
       {/* No fill or hairline on this wrapper — those were the black frame
           in the pill's top corners. The dock overlays the transcript. */}
+      {showCleanupNotice && (
+        <p ref={cleanupNoticeRef} data-cleanup-notice role="status" className="pointer-events-auto mb-2 text-[12px] text-ink-secondary">
+          {CLEANUP_NOTICE}
+        </p>
+      )}
       {cleanupUndo && undoOffered(cleanupUndo, text) && (
         <div className="pointer-events-auto mb-2 flex w-full items-center gap-2 rounded-lg border border-hairline/60 bg-raised px-3 py-2 text-[12px] text-ink-secondary">
           <span className="min-w-0 flex-1">Dictation cleaned up.</span>
@@ -1464,7 +1522,7 @@ export function Composer({
               the textarea it came out of and above the controls row — not
               inside that row, and not at the far end of a transcript the
               user has scrolled away from. */}
-          <div className={phoneComposer ? "w-full" : "contents"}>
+          <div className={phoneComposer ? "w-full empty:hidden" : "contents"}>
           <QueuedComposerMessages
             items={shownQueued}
             phone={phoneComposer}
@@ -1645,7 +1703,7 @@ export function Composer({
           aria-label={`Message ${group ? group.name : (bot?.name ?? "")}`}
           aria-invalid={sendNotice ? true : undefined}
           aria-describedby={sendNotice ? sendNoticeId : undefined}
-            className={cn(compact ? "max-h-24" : "max-h-[9rem]", "min-h-6 w-full resize-none overflow-y-auto bg-transparent px-2 pb-0.5 pt-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none", phoneComposer && "w-auto min-w-0 flex-1 basis-[8rem]", approval && "hidden")}
+            className={cn(compact ? "max-h-24" : "max-h-[9rem]", "min-h-6 w-full resize-none overflow-y-auto bg-transparent px-2 pb-0.5 pt-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none", phoneComposer && "w-auto min-w-0 flex-1 basis-[8rem]", approval && "hidden", phoneComposer && !compact && "keep-font-size min-h-11 max-h-[calc(9rem+20px)] self-center py-[10px] text-[16px]")}
           />
           {/* One controls row: chips on the left, send and dictation on the
               right, sharing a baseline at every composer height. */}
@@ -1775,6 +1833,7 @@ export function Composer({
               nativeDictation: capabilities.dictation.available,
               fluxConfigured: Boolean(state.config?.flux?.configured),
             })}
+            onCleanupStart={onCleanupStart}
             cleanup={cleanupEnabled() ? { botId: bot?.id, groupId: group?.id } : undefined}
             onTranscript={(said, raw) => {
               // trimEnd, not trim: the utterance joins the draft with one
@@ -1845,7 +1904,7 @@ export function Composer({
         }}
       />
       {levelConfirm && autoBot && (
-        <LazyBoundary inline onRetry={LevelConfirmChunk.retry} onDismiss={() => setLevelConfirm(null)}>
+        <LazyBoundary inline onRetry={LevelConfirmChunk.retry} onDismiss={() => { setLevelConfirm(null); requestAnimationFrame(() => (levelChipNear(inputRef.current) ?? inputRef.current)?.focus()); }}>
           <Suspense fallback={null}>
             <LevelConfirmChunk.Component
               bot={autoBot.name}

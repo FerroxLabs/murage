@@ -67,7 +67,7 @@ export function needsRoutineReview(pending: Pending): boolean {
 export function isPendingApprovalMessage(m: Message): boolean {
   // a publish card carries its own Publish / Not now buttons and is never answered by voice or from the composer
   // a limit offer card is a choice of engine, never a permission (1.0.4 SL-I I5)
-  return m.kind === "options" && m.card?.kind !== "publish" && m.card?.kind !== "email-send" && m.card?.kind !== "email-trust-offer" && m.card?.tool !== "murage_limit_offer" && Boolean(m.card?.requestId && m.card.tool && !m.card.answered && !m.card.dismissed);
+  return !m.card?.botReviewId && m.kind === "options" && m.card?.kind !== "publish" && m.card?.kind !== "email-send" && m.card?.kind !== "email-trust-offer" && m.card?.tool !== "murage_limit_offer" && Boolean(m.card?.requestId && m.card.tool && !m.card.answered && !m.card.dismissed);
 }
 
 /** A waiting card as the panel reads it. */

@@ -77,9 +77,10 @@ export function withDeadline<T>(run: (signal: AbortSignal) => Promise<T>, ms: nu
 
 /** null means "could not check", never "nothing to accept". A stalled check
  *  ends as null after the deadline, so the gate can retry. */
-export async function fetchTermsStatus(request: Request, timeoutMs: number = TERMS_REQUEST_TIMEOUT_MS, outer?: AbortSignal): Promise<TermsStatus | null> {
+export async function fetchTermsStatus(request: Request, timeoutMs: number = TERMS_REQUEST_TIMEOUT_MS, outer?: AbortSignal, fresh = false): Promise<TermsStatus | null> {
   try {
-    const answer = await withDeadline((signal) => request("/api/terms", { signal }), timeoutMs, outer);
+    // fresh: a Cloud home skips its short "nothing yet" memory (the customer just came back from agreeing on the site).
+    const answer = await withDeadline((signal) => request(fresh ? "/api/terms?fresh=1" : "/api/terms", { signal }), timeoutMs, outer);
     return isStatus(answer) ? answer : null;
   } catch {
     return null;
@@ -227,13 +228,13 @@ export function watchTermsAcceptance(
     timer = setTimeout(() => { timer = undefined; void check(); }, watchDelayMs(attempt));
     attempt += 1;
   };
-  const check = async () => {
+  const check = async (fresh = false) => {
     if (stopped || busy) return;
     busy = true;
     lastStart = Date.now();
     const mine = new AbortController();
     controller = mine;
-    const answer = await fetchTermsStatus(request, TERMS_REQUEST_TIMEOUT_MS, mine.signal);
+    const answer = await fetchTermsStatus(request, TERMS_REQUEST_TIMEOUT_MS, mine.signal, fresh);
     busy = false;
     if (controller === mine) controller = undefined;
     if (stopped) return;
@@ -245,15 +246,15 @@ export function watchTermsAcceptance(
   const soon = () => {
     if (stopped || doc?.visibilityState === "hidden") return;
     const wait = lastStart + WATCH_AUTO_MIN_GAP_MS - Date.now();
-    if (wait <= 0) { attempt = 0; void check(); return; }
+    if (wait <= 0) { attempt = 0; void check(true); return; }
     if (trailing) return;
-    trailing = setTimeout(() => { trailing = undefined; attempt = 0; void check(); }, wait);
+    trailing = setTimeout(() => { trailing = undefined; attempt = 0; void check(true); }, wait);
   };
   doc?.addEventListener("visibilitychange", soon);
   win?.addEventListener("focus", soon);
   schedule();
   return {
-    recheck() { attempt = 0; void check(); },
+    recheck() { attempt = 0; void check(true); },
     stop() {
       stopped = true;
       if (timer) clearTimeout(timer);

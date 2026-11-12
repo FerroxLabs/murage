@@ -76,6 +76,7 @@ async function bootServer(homeDir: string, port: number): Promise<{ child: Child
     },
   }));
   const proc = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    windowsHide: true,
     cwd: join(SERVER_DIR, ".."),
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -182,10 +183,33 @@ posixOnly("FUIGO-TRUST-V2 through the harness (generation 2, pooled)", () => {
     expect((await request("PATCH", `/api/bots/${owner.id}`, { cwd: atNoLimits })).status).toBe(200);
     await turn(owner);
     expect(requestsFor(atNoLimits)).toBe(1);
-    expect(JSON.parse(trustEvents().filter((entry) => entry.event === "reply").at(-1)!.raw!).result).toEqual({ outcome: "reject" });
+    expect(JSON.parse(trustEvents().filter((entry) => entry.event === "reply").at(-1)!.raw!).result).toEqual({ outcome: "trust", scope: "configAndCommands" });
     expect(await openCard(owner.threadId)).toBeUndefined();
     expect(stored()[atNoLimits]).toMatchObject({ decision: "trust", source: "picker" });
     expect(stored()[atNoLimits].consent).not.toBe(2);
+  }, 40_000);
+
+  it("E5 owner No limits opens native Fuigo folder trust through the isolated server", async () => {
+    const owner = await makeBot("No limits native trust", "fuigo-1037");
+    const folder = join(home, "e5-no-limits-native");
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, "AGENTS.md"), "fixture instructions\n");
+    try {
+      expect((await request("POST", "/api/no-limits/terms", { acknowledgeNoLimits: true })).status).toBe(200);
+      expect((await raise(owner, "no-limits", { fullAccess: true, acknowledgeFullAccess: true, noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
+      expect((await request("PATCH", `/api/bots/${owner.id}`, { cwd: folder })).status).toBe(200);
+      await turn(owner);
+      const native = trustEvents().filter(entry => entry.event === "request" && entry.params.workspace === folder);
+      expect(native).toHaveLength(1);
+      const reply = trustEvents().filter(entry => entry.event === "reply" && entry.pid === native[0]!.pid).at(-1)!;
+      expect(JSON.parse(reply.raw!).result).toEqual({ outcome: "trust", scope: "configAndCommands" });
+      expect(await openCard(owner.threadId)).toBeUndefined();
+      expect(stored()[folder]).toMatchObject({ decision: "trust", source: "picker" });
+      expect(stored()[folder].consent).not.toBe(2);
+    } finally {
+      await request("DELETE", `/api/bots/${owner.id}`);
+      await forget(folder);
+    }
   }, 40_000);
 
   it("(1) the combined topology: a reject at the main checkout answers a bot elsewhere, is listed, and Forget brings the card back", async () => {

@@ -71,6 +71,8 @@ interface CardExecutorDeps {
   open(): boolean;
   context(request: RoomRequest): ProjectContext | undefined;
   usable(request: RoomRequest): boolean;
+  /** A staged assignee waits without consuming admission or cancelling its durable request. */
+  ready?(request: RoomRequest): boolean;
   desk(request: RoomRequest): string;
   authorize?(request: RoomRequest, threadId: string): ReturnType<typeof authorizeWork>;
   writerRoot(request: RoomRequest): WriterRoot | undefined;
@@ -251,6 +253,7 @@ export function createProjectCardExecutor(deps: CardExecutorDeps) {
           completeRequest(db, request.id, { state: "cancelled", now: deps.now(), outcomeNote: "This card run is no longer available." }, deps.hooks);
           cancelBackoff(request.id); deps.changed(request.groupId); continue;
         }
+        if (deps.ready?.(request) === false) continue;
         // F3 start guard (CANCEL-TREE-104 D4): a card continuation wake whose card run ended is cancelled, never started (fresh read, one transaction)
         if (closeQueuedIfAskerEnded(db, request.id, deps.now(), deps.hooks)) { cancelBackoff(request.id); deps.changed(request.groupId); continue; }
         if (retry && retry.at > deps.now()) { schedule(retry.at); continue; }

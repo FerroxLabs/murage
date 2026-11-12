@@ -11,6 +11,8 @@
 import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
 import type { EngineHealthRow, FluxHealthInfo, FluxHealthState } from "@/components/shell/shell-contract";
+import { isCloudHome } from "@/lib/cloud-workspace";
+import { FLUX_NOT_READY_COPY } from "../../../shared/provider-error";
 import type { HealthFold } from "../../../shared/health-levels";
 import type { HealthIssue } from "../../../shared/sentinel-view";
 
@@ -92,9 +94,13 @@ function engineFinding(row: EngineHealthRow, primaryId: string | null): HealthFi
 }
 
 /** Flux Router findings: the key, the allowance used up, and the two early warnings (80% used, expiring within 7 days). */
-export function fluxFindings(flux: FluxHealthState, info: FluxHealthInfo | null | undefined, desktop: boolean, now: number): HealthFinding[] {
+export function fluxFindings(flux: FluxHealthState, info: FluxHealthInfo | null | undefined, desktop: boolean, now: number, cloud: boolean = isCloudHome()): HealthFinding[] {
   const subject = t("ux.l2a.health.fluxName");
   const base = { area: 1, subject };
+  if (flux === "key-problem" && cloud) {
+    // We deliver a Cloud home's key, so the customer has no key to check and no Models page to open.
+    return [{ ...base, key: "flux-key", level: "act", title: FLUX_NOT_READY_COPY, matters: t("ux.l2b.health.doc.fluxStops.matters"), fix: { kind: "step", step: "ux.l2b.health.doc.fluxNotReady.step", then: "flux-recheck" } }];
+  }
   if (flux === "key-problem") {
     return [{ ...base, key: "flux-key", level: "act", title: t("ux.l2b.health.doc.fluxKey.title"), matters: t("ux.l2b.health.doc.fluxStops.matters"), fix: { kind: "go", section: "models", step: "ux.l2b.health.doc.fluxKey.step" } }];
   }
@@ -179,9 +185,9 @@ const STATE_WORD: Readonly<Record<EngineHealthRow["state"], LocaleKey>> = {
 export const engineStateWord = (row: EngineHealthRow): string => t(STATE_WORD[row.state]);
 
 /** The Flux Router line in the What was checked card. "Checking" while no valid figures came in, never a stale number. */
-export function fluxPanelLine(flux: FluxHealthState, info: FluxHealthInfo | null | undefined): string {
+export function fluxPanelLine(flux: FluxHealthState, info: FluxHealthInfo | null | undefined, cloud: boolean = isCloudHome()): string {
   if (flux === "none") return t("ux.l2a.health.flux.none");
-  if (flux === "key-problem") return t("ux.l2a.health.flux.keyProblem");
+  if (flux === "key-problem") return cloud ? FLUX_NOT_READY_COPY : t("ux.l2a.health.flux.keyProblem");
   if (flux === "allowance-used-up") return t("ux.l2a.health.flux.usedUp");
   if (!info) return t("ux.l2a.health.flux.checking");
   return info.spendPct === null ? t("ux.l2a.health.flux.working") : t("ux.l2a.health.flux.pct", { n: info.spendPct });

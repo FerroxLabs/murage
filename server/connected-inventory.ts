@@ -32,7 +32,7 @@ export interface InventoryService {
   status: string;
   /** Set on the way out, never stored: a call to this app was refused. */
   needsReconnect?: boolean;
-  accounts: Array<{ id: string; alias?: string; status: string }>;
+  accounts: Array<{ id: string; alias?: string; status: string; expiresAt?: number }>;
 }
 export type InventoryServices = Record<string, InventoryService>;
 
@@ -47,7 +47,7 @@ const fileSchema = z.object({
     connected: z.boolean(),
     pending: z.boolean(),
     status: z.string(),
-    accounts: z.array(z.object({ id: z.string(), alias: z.string().optional(), status: z.string() })),
+    accounts: z.array(z.object({ id: z.string(), alias: z.string().optional(), status: z.string(), expiresAt: z.number().optional() })),
   })),
 });
 

@@ -15,14 +15,14 @@ describe("what counts as a computer's address", () => {
 
 describe("the QR code", () => {
   it("reads the browser door's pairing link (spec §3.1)", () => {
-    expect(parseInvitation("https://Mac.tailnet123.ts.net/enter#murage_pair_Ab-9_z")).toEqual({
-      origin: "https://mac.tailnet123.ts.net",
+    expect(parseInvitation("https://Mac.tail000000.ts.net/enter#murage_pair_Ab-9_z")).toEqual({
+      origin: "https://mac.tail000000.ts.net",
       credential: "murage_pair_Ab-9_z",
     });
   });
 
   it("keeps a non-443 Serve port", () => {
-    expect(parseInvitation("https://mac.tailnet123.ts.net:8444/enter#murage_pair_x")).toMatchObject({ origin: "https://mac.tailnet123.ts.net:8444" });
+    expect(parseInvitation("https://mac.tail000000.ts.net:8444/enter#murage_pair_x")).toMatchObject({ origin: "https://mac.tail000000.ts.net:8444" });
   });
 
   it("refuses anything that is not a pairing link, in words", () => {
@@ -32,16 +32,16 @@ describe("the QR code", () => {
   });
 
   it("says an http link is not secure (spec §7)", () => {
-    expect(parseInvitation("http://mac.tailnet123.ts.net/enter#murage_pair_x")).toEqual({ error: COPY.insecure, insecure: true });
+    expect(parseInvitation("http://mac.tail000000.ts.net/enter#murage_pair_x")).toEqual({ error: COPY.insecure, insecure: true });
   });
 
   it("refuses what native's PairingLink refuses", () => {
     for (const text of [
-      "https://mac.tailnet123.ts.net/enter?x=1#murage_pair_x",
-      "https://mac.tailnet123.ts.net/enter/#murage_pair_x",
+      "https://mac.tail000000.ts.net/enter?x=1#murage_pair_x",
+      "https://mac.tail000000.ts.net/enter/#murage_pair_x",
       "https://100.101.102.103/enter#murage_pair_x",
-      "https://mac.tailnet123.ts.net/enter#",
-      `https://mac.tailnet123.ts.net/enter#${"a".repeat(513)}`,
+      "https://mac.tail000000.ts.net/enter#",
+      `https://mac.tail000000.ts.net/enter#${"a".repeat(513)}`,
       "http://example.com/",
     ]) {
       expect(parseInvitation(text)).toEqual({ error: COPY.notACode });
@@ -49,10 +49,10 @@ describe("the QR code", () => {
   });
 
   it("trims pasted spaces and newlines first, the way native trims its input", () => {
-    for (const text of ["  https://mac.tailnet123.ts.net/enter#murage_pair_x  ", "\nhttps://mac.tailnet123.ts.net/enter#murage_pair_x\r\n", "\t https://mac.tailnet123.ts.net/enter#murage_pair_x "]) {
-      expect(parseInvitation(text)).toEqual({ origin: "https://mac.tailnet123.ts.net", credential: "murage_pair_x" });
+    for (const text of ["  https://mac.tail000000.ts.net/enter#murage_pair_x  ", "\nhttps://mac.tail000000.ts.net/enter#murage_pair_x\r\n", "\t https://mac.tail000000.ts.net/enter#murage_pair_x "]) {
+      expect(parseInvitation(text)).toEqual({ origin: "https://mac.tail000000.ts.net", credential: "murage_pair_x" });
     }
-    expect(parseInvitation("\n http://mac.tailnet123.ts.net/enter#murage_pair_x \n")).toEqual({ error: COPY.insecure, insecure: true });
+    expect(parseInvitation("\n http://mac.tail000000.ts.net/enter#murage_pair_x \n")).toEqual({ error: COPY.insecure, insecure: true });
   });
 });
 
@@ -76,23 +76,23 @@ describe("the launcher's trim", () => {
 
 describe("typing the address and code", () => {
   it("accepts a bare MagicDNS name and six digits, spaced or not", () => {
-    expect(parseTypedPairing(" mac.tailnet123.ts.net/ ", "123 456")).toEqual({ origin: "https://mac.tailnet123.ts.net", credential: "123456" });
-    expect(parseTypedPairing("https://mac.tailnet123.ts.net:8444", "123-456")).toEqual({ origin: "https://mac.tailnet123.ts.net:8444", credential: "123456" });
+    expect(parseTypedPairing(" mac.tail000000.ts.net/ ", "123 456")).toEqual({ origin: "https://mac.tail000000.ts.net", credential: "123456" });
+    expect(parseTypedPairing("https://mac.tail000000.ts.net:8444", "123-456")).toEqual({ origin: "https://mac.tail000000.ts.net:8444", credential: "123456" });
   });
 
   it("explains each mistake", () => {
     expect(parseTypedPairing("", "123456")).toEqual({ error: COPY.badAddress });
-    expect(parseTypedPairing("http://mac.tailnet123.ts.net", "123456")).toEqual({ error: COPY.insecure, insecure: true });
-    expect(parseTypedPairing("mac.tailnet123.ts.net", "12345")).toEqual({ error: COPY.badCode });
-    expect(parseTypedPairing("mac.tailnet123.ts.net", "abcdef")).toEqual({ error: COPY.badCode });
+    expect(parseTypedPairing("http://mac.tail000000.ts.net", "123456")).toEqual({ error: COPY.insecure, insecure: true });
+    expect(parseTypedPairing("mac.tail000000.ts.net", "12345")).toEqual({ error: COPY.badCode });
+    expect(parseTypedPairing("mac.tail000000.ts.net", "abcdef")).toEqual({ error: COPY.badCode });
   });
 
   it("trims leading and trailing spaces and newlines from both fields", () => {
-    const want = { origin: "https://mac.tailnet123.ts.net", credential: "123456" };
-    expect(parseTypedPairing("\n  mac.tailnet123.ts.net  \n", "\n123456\n")).toEqual(want);
-    expect(parseTypedPairing("\r\nhttps://mac.tailnet123.ts.net/\r\n", " \t123456\t ")).toEqual(want);
+    const want = { origin: "https://mac.tail000000.ts.net", credential: "123456" };
+    expect(parseTypedPairing("\n  mac.tail000000.ts.net  \n", "\n123456\n")).toEqual(want);
+    expect(parseTypedPairing("\r\nhttps://mac.tail000000.ts.net/\r\n", " \t123456\t ")).toEqual(want);
     expect(parseTypedPairing(" \n ", "123456")).toEqual({ error: COPY.badAddress });
-    expect(parseTypedPairing("\nhttp://mac.tailnet123.ts.net\n", "123456")).toEqual({ error: COPY.insecure, insecure: true });
+    expect(parseTypedPairing("\nhttp://mac.tail000000.ts.net\n", "123456")).toEqual({ error: COPY.insecure, insecure: true });
   });
 
   it("never turns a scheme on its own into a computer called https", () => {
@@ -104,7 +104,7 @@ describe("typing the address and code", () => {
   });
 
   it("refuses an address native would refuse", () => {
-    for (const address of ["100.101.102.103", "mac_x.tailnet123.ts.net", "user@mac.tailnet123.ts.net", "mac.tailnet123\n.ts.net", "ftp://mac.tailnet123.ts.net"]) {
+    for (const address of ["100.101.102.103", "mac_x.tail000000.ts.net", "user@mac.tail000000.ts.net", "mac.tail000000\n.ts.net", "ftp://mac.tail000000.ts.net"]) {
       expect(parseTypedPairing(address, "123456")).toEqual({ error: COPY.badAddress });
     }
   });

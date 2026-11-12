@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "int1019 base backlog round 3 (Sonnet fixes)",
+  "date": "2026-11-11",
+  "base": "9955459fc",
+  "scope": "int1019-base-backlog-r3",
+  "strings": {
+    "de:gatewayBusy.repeated.title": {
+      "text": "{engine} lehnt diese Anfrage immer wieder ab. Deine Nachricht bleibt gespeichert. Versuche es erneut oder verwende eine andere KI.",
+      "en": "{engine} keeps rejecting this request. Your message is saved. Try again or use another AI.",
+      "verdict": "pass"
+    },
+    "de:engine.toolLimit.catalogUnknown": {
+      "text": "Murage konnte die Werkzeugliste dieser KI nicht bestätigen. Deine Nachricht wurde nicht gesendet, weil Murage nicht prüfen konnte, wie viele Werkzeuge diese KI akzeptiert. Wähle eine andere KI und versuche es erneut.",
+      "en": "Murage could not confirm this AI's tool list. Your message was not sent because Murage could not check how many tools this AI can accept. Choose another AI and try again.",
+      "verdict": "pass"
+    },
+    "de:engine.submission.afterSubmission": {
+      "text": "Deine ursprüngliche Nachricht wurde gesendet. Murage konnte sie nicht erneut senden, weil die Prüfungen vor dem Senden nicht bestanden wurden. Die Nachricht wurde nicht automatisch erneut gesendet. Schau im Gespräch nach, bevor du es erneut versuchst.",
+      "en": "Your original message was sent. Murage could not send it again because the checks before sending did not pass. It was not sent again automatically. Check the conversation before trying again.",
+      "verdict": "pass"
+    },
+    "de:engine.submission.afterSubmissionUncertain": {
+      "text": "Murage hat möglicherweise bereits begonnen, deine vorherige Nachricht zu senden. Murage konnte sie nicht erneut senden, weil die Prüfungen vor dem Senden nicht bestanden wurden. Die Nachricht wurde nicht automatisch erneut gesendet. Schau im Gespräch nach, bevor du es erneut versuchst.",
+      "en": "Murage may have started sending your earlier message. Murage could not send it again because the checks before sending did not pass. It was not sent again automatically. Check the conversation before trying again.",
+      "verdict": "pass"
+    },
+    "es:gatewayBusy.repeated.title": {
+      "text": "{engine} sigue rechazando esta solicitud. Tu mensaje se conserva. Inténtalo de nuevo o usa otra IA.",
+      "en": "{engine} keeps rejecting this request. Your message is saved. Try again or use another AI.",
+      "verdict": "pass"
+    },
+    "es:engine.toolLimit.catalogUnknown": {
+      "text": "Murage no pudo confirmar la lista de herramientas de esta IA. Tu mensaje no se envió porque Murage no pudo comprobar cuántas herramientas acepta esta IA. Elige otra IA e inténtalo de nuevo.",
+      "en": "Murage could not confirm this AI's tool list. Your message was not sent because Murage could not check how many tools this AI can accept. Choose another AI and try again.",
+      "verdict": "pass"
+    },
+    "fr:gatewayBusy.repeated.title": {
+      "text": "{engine} continue de refuser cette demande. Ton message est conservé. Réessaie ou utilise une autre IA.",
+      "en": "{engine} keeps rejecting this request. Your message is saved. Try again or use another AI.",
+      "verdict": "pass"
+    },
+    "fr:engine.toolLimit.catalogUnknown": {
+      "text": "Murage n’a pas pu confirmer la liste des outils de cette IA. Ton message n’a pas été envoyé, car Murage n’a pas pu vérifier combien d’outils cette IA peut accepter. Choisis une autre IA et réessaie.",
+      "en": "Murage could not confirm this AI's tool list. Your message was not sent because Murage could not check how many tools this AI can accept. Choose another AI and try again.",
+      "verdict": "pass"
+    },
+    "hi:gatewayBusy.repeated.title": {
+      "text": "{engine} इस अनुरोध को बार-बार ठुकरा रहा है। आपका संदेश सहेजा गया है। फिर कोशिश करें या दूसरा AI इस्तेमाल करें।",
+      "en": "{engine} keeps rejecting this request. Your message is saved. Try again or use another AI.",
+      "verdict": "pass"
+    },
+    "hi:engine.toolLimit.catalogUnknown": {
+      "text": "Murage इस AI की टूल सूची की पुष्टि नहीं कर सका। यह जाँचा नहीं जा सका कि यह AI कितने टूल स्वीकार करता है, इसलिए संदेश नहीं भेजा गया। दूसरा AI चुनें और फिर कोशिश करें।",
+      "en": "Murage could not confirm this AI's tool list. Your message was not sent because Murage could not check how many tools this AI can accept. Choose another AI and try again.",
+      "verdict": "pass"
+    },
+    "hi:engine.toolLimit.catalogChanged": {
+      "text": "Murage इस अनुरोध की तैयारी कर रहा था, तभी टूल सूची बदल गई। Murage टूल की संख्या को इस AI की सीमा के भीतर नहीं रख सका। दूसरा AI चुनें और फिर कोशिश करें।",
+      "en": "The tool list changed while Murage was preparing your request. Murage could not fit the list within this AI's tool limit. Choose another AI and try again.",
+      "verdict": "pass"
+    },
+    "ja:gatewayBusy.repeated.title": {
+      "text": "{engine}がこのリクエストを繰り返し断っています。メッセージは保存されています。もう一度試すか、別のAIを使ってください。",
+      "en": "{engine} keeps rejecting this request. Your message is saved. Try again or use another AI.",
+      "verdict": "pass"
+    },
+    "ja:engine.toolLimit.catalogUnknown": {
+      "text": "MurageはこのAIのツール一覧を確認できませんでした。このAIが受け付けられるツール数をMurageが確認できなかったため、メッセージは送信されませんでした。別のAIを選んで、もう一度試してください。",
+      "en": "Murage could not confirm this AI's tool list. Your message was not sent because Murage could not check how many tools this AI can accept. Choose another AI and try again.",
+      "verdict": "pass"
+    },
+    "pt-br:gatewayBusy.repeated.title": {
+      "text": "{engine} continua recusando este pedido. Sua mensagem está salva. Tente novamente ou use outra IA.",
+      "en": "{engine} keeps rejecting this request. Your message is saved. Try again or use another AI.",
+      "verdict": "pass"
+    },
+    "zh:gatewayBusy.repeated.title": {
+      "text": "{engine} 一直拒绝这个请求。你的消息已保留。请重试或换一个 AI。",
+      "en": "{engine} keeps rejecting this request. Your message is saved. Try again or use another AI.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

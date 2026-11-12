@@ -92,10 +92,10 @@ test("the environment keeps only the allowlist and adds ELECTRON_RUN_AS_NODE", (
 
 test("electron/main.mjs imports the trampoline entry before any other app module", () => {
   const main = readFileSync(path.join(import.meta.dirname, "main.mjs"), "utf8");
-  // The proxy launch guard module stays first (proxy-launch-guard.node-test.mjs); it only defines the guard and runs
-  // nothing at evaluation, so the trampoline entry is the first module that acts, before every other app module.
+  // The Windows runtime installer runs before the guard and Sentinel trampoline.
+  // The guard only defines functions; the trampoline still precedes app modules.
   const imports = main.split("\n").filter(line => line.startsWith("import "));
-  assert.deepEqual(imports.slice(0, 2), ['import { enforceProxyLaunchGuard } from "./proxy-launch-guard.mjs";', 'import "./sentinel-trampoline-entry.mjs";']);
+  assert.deepEqual(imports.slice(0, 3), ['import "../shared/win-hide-child-process.mjs";', 'import { enforceProxyLaunchGuard } from "./proxy-launch-guard.mjs";', 'import "./sentinel-trampoline-entry.mjs";']);
   const guard = readFileSync(path.join(import.meta.dirname, "proxy-launch-guard.mjs"), "utf8");
   assert.deepEqual(guard.split("\n").filter(line => line.startsWith("import ")), ['import { SPAWNED_PROXY_FILES } from "../shared/spawned-proxies.mjs";']);
   const entry = readFileSync(path.join(import.meta.dirname, "sentinel-trampoline-entry.mjs"), "utf8");

@@ -8,7 +8,7 @@ import { expect, it } from "vitest";
 import { launchDispositions } from "./testing/launch-dispositions.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
-const scan = (root = resolve(".")) => execFileSync("bash", [resolve("scripts/marks-launch-sites.sh"), root], { encoding: "utf8" }).trim().split("\n").filter(Boolean);
+const scan = (root = resolve(".")) => execFileSync("bash", [resolve("scripts/marks-launch-sites.sh"), root], { windowsHide: true, encoding: "utf8" }).trim().split("\n").filter(Boolean);
 const turnFiles = ["drivers/cli-memory-learning.ts", "drivers/acp/cline.ts", "drivers/acp/cursor.ts", "drivers/acp/custom.ts", "drivers/acp/droid.ts", "drivers/acp/fuigo.ts", "drivers/acp/gemini.ts", "drivers/acp/grok.ts", "drivers/acp/hermes.ts", "drivers/acp/kimi.ts", "drivers/acp/openclaw.ts", "drivers/acp/opencode-go.ts", "drivers/acp/qwen.ts", "drivers/claude.ts", "drivers/codex.ts", "drivers/acp/core.ts", "drivers/antigravity.ts", "drivers/pi.ts", "drivers/headless-text-only.ts", "procs.ts", "host-power.ts", "drivers/chat-mcp-client.ts", "drivers/openai-chat.ts"];
 it("R16-a every scanned file has exactly one disposition and every row has a file", () => {
   const files = scan();
@@ -38,6 +38,6 @@ it("R16-d recognizes injected launchers, any receiver, imports and wrapper impor
   } finally { removeTempDirSync(root); }
 });
 it("R16-d committed D5 file list matches fresh generation", () => {
-  const generated = execFileSync("bash", [resolve("scripts/marks-gen-d5-files.sh"), resolve(".")], { encoding: "utf8" });
+  const generated = execFileSync("bash", [resolve("scripts/marks-gen-d5-files.sh"), resolve(".")], { windowsHide: true, encoding: "utf8" });
   expect(readFileSync(resolve("d5-files.txt"), "utf8")).toBe(generated);
 });

@@ -1,3 +1,7 @@
+import { observeOutsideMarks } from '../email/external-marks.ts';
+import { noteToolStartOutside } from '../outside-wire.ts';
+import { Store } from '../store.ts';
+import { BotOutsideWrites } from '../bot-outside-writes.ts';
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Codex sub agents (collabAgentToolCall helper threads), against the fake
 // app-server: the parent's turn/completed is not the end of the turn while a
@@ -18,7 +22,7 @@ import { beginOutsideTurn, restartOutsideForTests, turnOutsideRead, wireOutsideS
 import { fileOutsideStore } from "../outside-store.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-codex-app-server.ts");
-const ENV = ["FAKE_CODEX_BG_LOG", "FAKE_CODEX_BG_ASKS", "FAKE_CODEX_BG_HOLD", "FAKE_CODEX_BG_WAKE", "MURAGE_BACKGROUND_CAP_MIN_MS", "MURAGE_BACKGROUND_CAP_MS", "MURAGE_CODEX_WAKE_GRACE_MS"];
+const ENV = ["FAKE_CODEX_BOTCREATE", "FAKE_CODEX_BG_LOG", "FAKE_CODEX_BG_ASKS", "FAKE_CODEX_BG_HOLD", "FAKE_CODEX_BG_WAKE", "MURAGE_BACKGROUND_CAP_MIN_MS", "MURAGE_BACKGROUND_CAP_MS", "MURAGE_CODEX_WAKE_GRACE_MS"];
 
 describe("CodexDriver sub agents (fake app-server)", () => {
   let instance: ProviderInstance;
@@ -48,6 +52,25 @@ describe("CodexDriver sub agents (fake app-server)", () => {
     recorder?.stop();
     await instance?.dispose();
     await removeTempDir(scratch);
+  });
+
+  for (const kind of ['complete', 'row-outside-read', 'torn-row', 'plus-other-mark', 'read-event'] as const) it(`r331 actual Codex ${kind}`, async () => {
+    process.env.FAKE_CODEX_BG_ASKS = '0'; process.env.FAKE_CODEX_BG_WAKE = '1'; process.env.FAKE_CODEX_BOTCREATE = kind;
+    process.env.MURAGE_CODEX_WAKE_GRACE_MS = '20000';
+    restartOutsideForTests(); expect(wireOutsideStore(fileOutsideStore(join(scratch, 'outside.jsonl')))).toBe(true);
+    onTestFinished(() => restartOutsideForTests());
+    const threadId = 'T'; beginOutsideTurn(threadId, 'codex-sub-test', undefined, false);
+    const store = new Store(() => ({ instanceId: 'fixture', model: 'm' }));
+    const writes = new BotOutsideWrites(store, turnOutsideRead); writes.ledger.open('G', threadId, 'codex', 'own');
+    const off = observeOutsideMarks((thread, source, lifecycle) => writes.ledger.mark(thread, source, lifecycle)); onTestFinished(off);
+    const eventsOff = instance.adapter.onEvent(e => { if (e.type === 'item.started' && e.itemType === 'tool') noteToolStartOutside(threadId, e, scratch); }); onTestFinished(eventsOff);
+    const bot = store.createBot({ name: `Sable Trainee ${kind}` }, { staged: writes.staging('G', threadId, 'chief', 'turn-open', { autoApprove: true, fullAccess: false, noLimits: false, lead: false }), seedMessages: false }); writes.record(bot.id);
+    const { turnId } = await send(threadId);
+    const done = await recorder.until(e => e.type === 'turn.completed' && e.turnId === turnId);
+    if (done.type !== 'turn.completed') throw new Error('missing terminal');
+  expect(done).toMatchObject({ ok: true, readsComplete: true, helperRow: { name: 'codex-helpers', site: 'held_done', recorded: true } });
+    writes.settle('G', done); expect(bot.staged?.reason ?? 'ACTIVE').toBe(kind === 'complete' ? 'ACTIVE' : 'outside');
+    expect(turnOutsideRead(threadId)).not.toBeNull();
   });
 
   it("holds the turn past the parent's turn/completed: the helpers' asks take the approval path", async () => {

@@ -1,0 +1,17 @@
+✔ MAIN 1: suspended job has no breakaway and verifies empty after owner close (1.275135ms)
+✔ MAIN 2: full task snapshots and prefix-only new-task cleanup (3.987268ms)
+✔ MAIN 3: HTTPS dispatch is handoff only; Desktop keeps refusal rows (0.255031ms)
+✔ MAIN 4: registration diff is Handoff-only and guarded by machine (0.233931ms)
+✔ MAIN 5: only operator finalizes after cleanup; receipt needs cleanup proof (7.334335ms)
+✔ p11b 1: TimeoutSeconds 60, prelaunch CIM blocked beyond 150s still has operator-owned wrapper cleanup (1.072817ms)
+✔ p11b 2: schtasks beyond 30s uses suspended job creation, job timeout and empty proof (0.393141ms)
+✔ p11b 2: no Process.Kill or Stop-Process in Windows production scripts (2.264518ms)
+✔ p11b 3: all six MAIN mutants are installed (0.203951ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 73.314609

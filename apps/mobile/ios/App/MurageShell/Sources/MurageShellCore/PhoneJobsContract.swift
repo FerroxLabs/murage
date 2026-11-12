@@ -1263,6 +1263,7 @@ public enum PhoneJobsContract {
     }
 
     public struct Offer {
+        public let permissionRun: Bool
         public let operationId: String
         public let offerId: String
         public let workspace: String
@@ -1278,6 +1279,7 @@ public enum PhoneJobsContract {
         public let decodedArgs: Args?
 
         private init(_ o: [String: Any]) {
+            permissionRun = (o["permission"] as? String) == "run"
             operationId = o["operationId"] as! String; offerId = o["offerId"] as! String
             workspace = o["workspace"] as! String; bot = NamedParty(o["bot"] as! [String: Any])
             capability = o["capability"] as! String; action = o["action"] as! String
@@ -1290,7 +1292,7 @@ public enum PhoneJobsContract {
 
         /// Mirrors offerSchema. Use decodedArgs before executing an action.
         public static func parse(_ any: Any?) -> Offer? {
-            guard let o = any as? [String: Any], Set(o.keys) == ["operationId", "offerId", "workspace", "bot", "capability", "action", "args", "say", "provider", "expiresAt", "leaseMs"],
+            guard let o = any as? [String: Any], (o["permission"] == nil || (o["permission"] as? String) == "run"), Set(o.keys).subtracting(["permission"]) == ["operationId", "offerId", "workspace", "bot", "capability", "action", "args", "say", "provider", "expiresAt", "leaseMs"],
                   let operation = o["operationId"] as? String, matches(operation, uuid4),
                   let offer = o["offerId"] as? String, matches(offer, uuid4),
                   Rule.text(1, 120).accepts(o["workspace"]!),

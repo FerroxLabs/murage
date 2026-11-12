@@ -33,7 +33,7 @@ const ALLOWED_APP_PERMISSIONS = new Set([
 
 // Opaque origins (data:, about:blank, javascript:) serialise as the string
 // "null"; never let two of them match each other.
-function webOrigin(value) {
+export function webOrigin(value) {
   if (typeof value !== "string" || !value) return null;
   try {
     const origin = new URL(value).origin;
@@ -148,24 +148,24 @@ export function cloudExternalWebUrl(rawUrl) {
   return url;
 }
 
+/** The private address "Show the log" links point at: the server's setup page and the startup error page. Opening it asks the
+ *  window-open handler to open server.log; it is honoured only from the two senders mainWindowOpenAction trusts. */
+export const OPEN_LOG_URL = "murage-open-log:now";
+
 /**
  * Decide what a main-window `window.open` does. Every popup is denied; a
  * credential-free web URL opens in the default browser, an obsidian:// note
- * link opens Obsidian, and the startup error
- * page's exact server-log link (a data: page, see buildErrorPage) opens that
- * one log file. Anything else is refused.
+ * link opens Obsidian, and OPEN_LOG_URL opens the server log, but only from the
+ * app's own origin (where the server's setup page is served) or from the exact
+ * startup error page main last built (a data: URL, see buildErrorPage).
+ * Anything else, including every file: address, is refused.
  *
  * @param {unknown} url requested popup URL
- * @param {{ currentUrl?: string, diagnosticsLogHref?: string | null }} context
+ * @param {{ currentUrl?: string, trustedOrigin?: string | null, errorPageUrl?: string | null }} context
  * @returns {{ kind: "external", url: string } | { kind: "diagnostics-log" } | { kind: "refuse" }}
  */
-export function mainWindowOpenAction(url, { currentUrl, diagnosticsLogHref } = {}) {
-  if (
-    typeof url === "string" && typeof diagnosticsLogHref === "string" && diagnosticsLogHref &&
-    url === diagnosticsLogHref && typeof currentUrl === "string" && currentUrl.startsWith("data:text/html")
-  ) {
-    return { kind: "diagnostics-log" };
-  }
+export function mainWindowOpenAction(url, { currentUrl, trustedOrigin, errorPageUrl } = {}) {
+  if (url === OPEN_LOG_URL && logLinkSenderTrusted({ currentUrl, trustedOrigin, errorPageUrl })) return { kind: "diagnostics-log" };
   try {
     return { kind: "external", url: externalWebUrl(url) };
   } catch {
@@ -174,6 +174,15 @@ export function mainWindowOpenAction(url, { currentUrl, diagnosticsLogHref } = {
     const note = obsidianNoteUrl(url);
     return note ? { kind: "external", url: note } : { kind: "refuse" };
   }
+}
+
+/** The app origin (exact scheme, host and port; opaque origins never match), or the one data: page main last built. Fails closed on anything unset or malformed. */
+function logLinkSenderTrusted({ currentUrl, trustedOrigin, errorPageUrl }) {
+  if (typeof currentUrl !== "string" || !currentUrl) return false;
+  const trusted = webOrigin(trustedOrigin);
+  if (trusted !== null && webOrigin(currentUrl) === trusted) return true;
+  // A built error page has content after the comma; a bare "data:text/html" is malformed and never trusted.
+  return typeof errorPageUrl === "string" && errorPageUrl.startsWith("data:text/html") && errorPageUrl.indexOf(",") > 0 && errorPageUrl.indexOf(",") < errorPageUrl.length - 1 && currentUrl === errorPageUrl;
 }
 
 const OBSIDIAN_OPEN_PARAMS = new Set(["vault", "file", "path"]);
@@ -196,11 +205,11 @@ export function obsidianNoteUrl(rawUrl) {
  * Build the main window's setWindowOpenHandler. Always denies the popup.
  * Opening failures are logged without the raw URL.
  */
-export function createMainWindowOpenHandler({ openExternal, openDiagnosticsLog, currentUrl, diagnosticsLogHref, warn = () => {} }) {
+export function createMainWindowOpenHandler({ openExternal, openDiagnosticsLog, currentUrl, trustedOrigin, errorPageUrl, warn = () => {} }) {
   return ({ url } = {}) => {
     let action;
     try {
-      action = mainWindowOpenAction(url, { currentUrl: currentUrl?.(), diagnosticsLogHref: diagnosticsLogHref?.() });
+      action = mainWindowOpenAction(url, { currentUrl: currentUrl?.(), trustedOrigin: trustedOrigin?.(), errorPageUrl: errorPageUrl?.() });
     } catch {
       action = { kind: "refuse" };
     }

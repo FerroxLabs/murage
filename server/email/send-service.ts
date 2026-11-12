@@ -1,3 +1,6 @@
+import { serviceQueue, producerBase, type ProducerApprovalQueue, type ServiceAuthorityReader } from "../narrow-denials.ts";
+import { readApproval, presentApproval, settle, type PendingQueueApproval, type ApprovalAnswer } from "../decision/index.ts";
+import { emailCardView } from './cards.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -22,6 +25,12 @@ import { InboxLocks } from "./inbox-lock.ts";
 import { decideSend, type WhyCode } from "./send-policy.ts";
 import { OPEN_SEND_STATES, TERMINAL_SEND_STATES, type EmailStore, type OwnerReceipt, type PayloadPart, type ReplySource, type SendRow, type SendState, type SendSummary } from "./email-store.ts";
 
+/** A retained No limits decision is bound to this exact payload. It is not an
+ * owner click and never earns a recipient trust grant. */
+export function noLimitsSend(row: SendRow): boolean {
+  return row.receipt?.device==='decision:no-limits' && row.receipt.payloadHash===row.payloadHash;
+}
+
 export const HOLD_LIFETIME_MS = 72 * 3_600_000;
 export const SENT_DUPLICATE_WINDOW_MS = 24 * 3_600_000;
 /** The read-only reconcile of an uncertain send: reads at 1 min, 5 min, 30 min and 2 h after it became uncertain (gaps between reads). */
@@ -35,6 +44,8 @@ export interface EmailOutcomeEvent { sendId: string; botId: string; threadId: st
 export type SendClient = Pick<FluxEmailClient, "send" | "reply" | "getApproval" | "listApprovals" | "approve" | "withdrawHeld" | "retryHeld" | "listMessages">;
 
 export interface SendServiceOptions {
+  authorityFor?: ServiceAuthorityReader;
+  botName?: (botId:string)=>string;
   store: EmailStore;
   client: SendClient;
   installId: string;
@@ -84,12 +95,61 @@ export function partsDraft(kind: "send" | "reply", parts: PayloadPart[]): EmailD
 }
 
 export class EmailSendService {
+  private readonly approvals:ProducerApprovalQueue;
+  private trustDelivery?: (item:PendingQueueApproval,answer:ApprovalAnswer)=>Promise<void>;
+  configureTrustDelivery(deliver:(item:PendingQueueApproval,answer:ApprovalAnswer)=>Promise<void>){this.trustDelivery=deliver;}
+  pendingApprovals(){return this.approvals.pendingApprovals();}
+  approvalQueue(){return this.approvals;}
+  authorityFor(threadId:string,botId:string){return this.options.authorityFor?.(threadId,botId);}
+  private async acceptApproval(item:PendingQueueApproval,answer:ApprovalAnswer):Promise<void> {
+    const input=item.call.input as {sendId?:string;kind?:string;payloadHash?:string};
+    if(input.kind==='trust'){if(!this.trustDelivery)throw new Error('approval-queue-delivery-unavailable');return this.trustDelivery(item,answer);}
+    const row=this.store.getSend(input.sendId??'');
+    if(!row||row.payloadHash!==input.payloadHash)throw new Error('approval-queue-conflict');
+    const current=row.state==='prepared'?(this.move(row,{state:'awaiting_owner'})??this.fresh(row.sendId)):row;
+    const result=answer.behavior==='allow'?await this.ownerSend(current.sendId,current.revision,'decision:owner'):await this.dontSend(current.sendId,current.revision);
+    if(result.status==='stale'||result.status==='retry_later')throw new Error('approval-queue-delivery-unavailable');
+  }
+  private readonly approvalSyncFlights=new Map<string,Promise<void>>();
+  syncApproval(row:SendRow):Promise<void> {
+    const prior=this.approvalSyncFlights.get(row.sendId);if(prior)return prior;
+    const done=this.syncApprovalNow(row).finally(()=>this.approvalSyncFlights.delete(row.sendId));
+    this.approvalSyncFlights.set(row.sendId,done);return done;
+  }
+  private async syncApprovalNow(row:SendRow):Promise<void> {
+    await this.approvals.idle(row.sendId);
+    row=this.store.getSend(row.sendId)??row;
+    const item=this.pendingApprovals().find(item=>item.ref===row.sendId);
+    const record=item&&readApproval(item.approvalId);
+    if(item){
+      if(!record)return; // queue-first crash: S1 recovery reopens this exact item
+      if(record.state==='open'){
+        if(['awaiting_owner','held','approved_unsent','unknown_expired'].includes(row.state))await presentApproval(record.ref,item.view);
+        else await settle(record.ref,'cancelled');
+        return;
+      }
+    }
+    // A retained RUN failure is execution status, never another permission.
+    if(noLimitsSend(row)||!['awaiting_owner','held','approved_unsent','unknown_expired'].includes(row.state))return;
+    const card=emailCardView(row,{botName:this.options.botName?.(row.botId)??row.botId,text:this.textOf(row),approved:address=>this.store.isApproved(row.botId,address)});
+    const {title,subtitle,requestId:_legacyId,answered:_answered,...action}=card;
+    // The payload store owns the send bytes. Keep the body in presentation
+    // only, outside the immutable action copied into approval records/backups.
+    action.emailSend={...action.emailSend,draft:{...action.emailSend.draft,text:''}};
+    const request=this.approvals.open({authority:this.authorityFor(row.threadId,row.botId),ref:row.sendId,tool:'email_send',
+      input:{kind:'send',sendId:row.sendId,payloadHash:row.payloadHash,summary:row.summary,text:this.textOf(row)},action,view:{title,subtitle},base:producerBase(true)});
+    if(request.outcome.kind==='run'||request.outcome.kind==='refuse')return;
+    await this.approvals.present(request,request.outcome.ref);
+  }
+
   readonly locks: InboxLocks;
   private readonly now: () => number;
   private readonly newId: () => string;
   private readonly options: SendServiceOptions;
   constructor(options: SendServiceOptions) {
     this.options = options;
+    this.approvals=serviceQueue('email');
+    for(const tool of ['email_send','email_reply','email_trust_offer'])this.approvals.bindAcceptance(tool,(item,answer)=>this.acceptApproval(item,answer));
     this.locks = options.locks ?? new InboxLocks();
     this.now = options.now ?? Date.now;
     this.newId = options.newId ?? (() => uuidv7(this.now()));
@@ -175,10 +235,30 @@ export class EmailSendService {
       text: this.textOf(row), attachmentCount: row.summary.attachments.length, replySource: row.summary.replySource,
       isApproved: address => this.store.isApproved(row.botId, address),
     });
-    if (decision.needsOwner) return this.move(row, { state: "awaiting_owner", why: decision.why }) ?? this.fresh(row.sendId);
-    const dispatching = this.move(row, { state: "dispatching", why: decision.why, dispatchedAt: this.now() });
-    if (!dispatching) return this.fresh(row.sendId);
-    return this.dispatch(dispatching);
+    const planned={...row,state:'awaiting_owner' as const,revision:row.revision+1};
+    const card=emailCardView(planned,{botName:this.options.botName?.(row.botId)??row.botId,text:this.textOf(row),approved:address=>this.store.isApproved(row.botId,address)});
+    const {title,subtitle,requestId:_legacyId,answered:_answered,...action}=card;
+    // The payload store owns the send bytes. Keep the body in presentation
+    // only, outside the immutable action copied into approval records/backups.
+    action.emailSend={...action.emailSend,draft:{...action.emailSend.draft,text:''}};
+    const request=this.approvals.open({authority:this.authorityFor(row.threadId,row.botId),ref:row.sendId,tool:row.kind==='reply'?'email_reply':'email_send',
+      input:{kind:'send',sendId:row.sendId,payloadHash:row.payloadHash,summary:row.summary,text:this.textOf(row)},action,view:{title,subtitle},base:producerBase(decision.needsOwner)});
+    const result=await this.approvals.execute(request,async(call)=>{
+      const input=call.input as {payloadHash:string};if(this.fresh(row.sendId).payloadHash!==input.payloadHash)throw new Error('approval-queue-conflict');
+      let current=this.fresh(row.sendId);
+      if(!request.baseBranch){
+        const receipt:OwnerReceipt={sendId:row.sendId,payloadHash:row.payloadHash,revision:current.revision,at:this.now(),device:'decision:no-limits',used:false};
+        current=this.move(current,{receipt})??this.fresh(row.sendId);
+      }
+      const dispatching=this.move(current,{state:'dispatching',why:decision.why,dispatchedAt:this.now()});
+      return dispatching?this.dispatch(dispatching):this.fresh(row.sendId);
+    });
+    if(result.kind==='executed')return result.value;
+    if(result.kind==='refuse')return this.settle(row,'refused',{code:'decision-refused'})??this.fresh(row.sendId);
+    this.approvals.stage(request,result.ref);
+    const waiting=this.move(row,{state:'awaiting_owner',why:decision.why})??this.fresh(row.sendId);
+    await this.approvals.present(request,result.ref);
+    return waiting;
   }
 
   private textOf(row: SendRow): string { return partsDraft(row.kind, this.store.getPayload(row.sendId)).text; }
@@ -282,7 +362,7 @@ export class EmailSendService {
           continue;
         }
         if (local.state !== "held") return { status: "refresh", row: current, reason: "moved" };
-        if (!local.ownerSent) return { status: "waiting_sibling", row: current, siblingSendId: local.sendId };
+        if (!local.ownerSent && !noLimitsSend(local)) return { status: "waiting_sibling", row: current, siblingSendId: local.sendId };
         if (!this.matchesFrozen(local, held)) return { status: "refresh", row: current, reason: "content_mismatch" };
         approving.push(local);
       }
@@ -516,7 +596,8 @@ export class EmailSendService {
           if (current.state !== "unknown") return current;
           if (held.state === "send_failed") return this.move(current, { state: "approved_unsent", heldIds: [held.id], approvalId: approval.id, code: "send_failed", dueAt: null }) ?? this.fresh(row.sendId);
           if (current.stopRequested) { const pendingRow = this.move(current, { state: "withdraw_pending", code: "stopped", heldIds: [held.id], approvalId: approval.id }); return pendingRow ? this.withdraw(pendingRow) : this.fresh(row.sendId); }
-          return this.move(current, { state: "held", heldIds: [held.id], approvalId: approval.id, dueAt: null, code: null }) ?? this.fresh(row.sendId);
+          const recovered = this.move(current, { state: "held", heldIds: [held.id], approvalId: approval.id, dueAt: null, code: null }) ?? this.fresh(row.sendId);
+          return noLimitsSend(recovered) ? (await this.approve(recovered)).row ?? recovered : recovered;
         }
       } else readable = false;
     }

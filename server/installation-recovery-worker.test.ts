@@ -18,7 +18,7 @@ it("the actual worker emits a bounded summary without archive contents or inheri
   const data = join(root, "source"); mkdirSync(data);
   const original = '{"profile":{"name":"Private fixture"},"flux":{"apiKey":"private-worker-canary"}}';
   writeFileSync(join(data, "config.json"), original);
-  const { stdout, stderr } = await promisify(execFile)(process.execPath, [worker, "backup", "--data-dir", data, "--output", join(root, "backup.zip")], { timeout: 20_000, env: { PATH: dirname(process.execPath), HOME: root, USERPROFILE: root, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) } });
+  const { stdout, stderr } = await promisify(execFile)(process.execPath, [worker, "backup", "--data-dir", data, "--output", join(root, "backup.zip")], { windowsHide: true, timeout: 20_000, env: { PATH: dirname(process.execPath), HOME: root, USERPROFILE: root, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) } });
   const result = JSON.parse(stdout);
   expect(result).toMatchObject({ ok: true, operation: "backup", omittedCount: 1 });
   expect(stdout.length).toBeLessThan(4096);

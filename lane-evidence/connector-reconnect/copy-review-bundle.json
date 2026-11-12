@@ -1,0 +1,202 @@
+{
+  "version": 1,
+  "base": "b4dc27ea9",
+  "since": null,
+  "author": "bld-connreconnect",
+  "scope": "Connector reconnect alerts",
+  "strings": {
+    "en:connectorHealth.signIn": {
+      "text": "{connector} needs you to sign in again",
+      "en": "{connector} needs you to sign in again",
+      "verdict": "",
+      "note": ""
+    },
+    "en:connectorHealth.reconnect": {
+      "text": "Reconnect",
+      "en": "Reconnect",
+      "verdict": "",
+      "note": ""
+    },
+    "en:connectorHealth.reconnectApp": {
+      "text": "Reconnect {connector}",
+      "en": "Reconnect {connector}",
+      "verdict": "",
+      "note": ""
+    },
+    "en:connectorHealth.computer": {
+      "text": "Reconnect it on your computer.",
+      "en": "Reconnect it on your computer.",
+      "verdict": "",
+      "note": ""
+    },
+    "de:connectorHealth.signIn": {
+      "text": "{connector} braucht eine erneute Anmeldung",
+      "en": "{connector} needs you to sign in again",
+      "verdict": "",
+      "note": ""
+    },
+    "de:connectorHealth.reconnect": {
+      "text": "Erneut verbinden",
+      "en": "Reconnect",
+      "verdict": "",
+      "note": ""
+    },
+    "de:connectorHealth.reconnectApp": {
+      "text": "{connector} erneut verbinden",
+      "en": "Reconnect {connector}",
+      "verdict": "",
+      "note": ""
+    },
+    "de:connectorHealth.computer": {
+      "text": "Verbinde die App auf deinem Computer erneut.",
+      "en": "Reconnect it on your computer.",
+      "verdict": "",
+      "note": ""
+    },
+    "es:connectorHealth.signIn": {
+      "text": "Necesitas volver a iniciar sesión en {connector}",
+      "en": "{connector} needs you to sign in again",
+      "verdict": "",
+      "note": ""
+    },
+    "es:connectorHealth.reconnect": {
+      "text": "Volver a conectar",
+      "en": "Reconnect",
+      "verdict": "",
+      "note": ""
+    },
+    "es:connectorHealth.reconnectApp": {
+      "text": "Volver a conectar {connector}",
+      "en": "Reconnect {connector}",
+      "verdict": "",
+      "note": ""
+    },
+    "es:connectorHealth.computer": {
+      "text": "Vuelve a conectarlo en tu ordenador.",
+      "en": "Reconnect it on your computer.",
+      "verdict": "",
+      "note": ""
+    },
+    "fr:connectorHealth.signIn": {
+      "text": "Tu dois te reconnecter à {connector}",
+      "en": "{connector} needs you to sign in again",
+      "verdict": "",
+      "note": ""
+    },
+    "fr:connectorHealth.reconnect": {
+      "text": "Reconnecter",
+      "en": "Reconnect",
+      "verdict": "",
+      "note": ""
+    },
+    "fr:connectorHealth.reconnectApp": {
+      "text": "Reconnecter {connector}",
+      "en": "Reconnect {connector}",
+      "verdict": "",
+      "note": ""
+    },
+    "fr:connectorHealth.computer": {
+      "text": "Reconnecte cette application sur ton ordinateur.",
+      "en": "Reconnect it on your computer.",
+      "verdict": "",
+      "note": ""
+    },
+    "hi:connectorHealth.signIn": {
+      "text": "{connector} में फिर से साइन इन करें",
+      "en": "{connector} needs you to sign in again",
+      "verdict": "",
+      "note": ""
+    },
+    "hi:connectorHealth.reconnect": {
+      "text": "फिर से कनेक्ट करें",
+      "en": "Reconnect",
+      "verdict": "",
+      "note": ""
+    },
+    "hi:connectorHealth.reconnectApp": {
+      "text": "{connector} को फिर से कनेक्ट करें",
+      "en": "Reconnect {connector}",
+      "verdict": "",
+      "note": ""
+    },
+    "hi:connectorHealth.computer": {
+      "text": "इसे अपने कंप्यूटर पर फिर से कनेक्ट करें।",
+      "en": "Reconnect it on your computer.",
+      "verdict": "",
+      "note": ""
+    },
+    "ja:connectorHealth.signIn": {
+      "text": "{connector} に再度サインインしてください",
+      "en": "{connector} needs you to sign in again",
+      "verdict": "",
+      "note": ""
+    },
+    "ja:connectorHealth.reconnect": {
+      "text": "再接続",
+      "en": "Reconnect",
+      "verdict": "",
+      "note": ""
+    },
+    "ja:connectorHealth.reconnectApp": {
+      "text": "{connector} を再接続",
+      "en": "Reconnect {connector}",
+      "verdict": "",
+      "note": ""
+    },
+    "ja:connectorHealth.computer": {
+      "text": "コンピューターで再接続してください。",
+      "en": "Reconnect it on your computer.",
+      "verdict": "",
+      "note": ""
+    },
+    "pt-br:connectorHealth.signIn": {
+      "text": "Você precisa entrar novamente no {connector}",
+      "en": "{connector} needs you to sign in again",
+      "verdict": "",
+      "note": ""
+    },
+    "pt-br:connectorHealth.reconnect": {
+      "text": "Reconectar",
+      "en": "Reconnect",
+      "verdict": "",
+      "note": ""
+    },
+    "pt-br:connectorHealth.reconnectApp": {
+      "text": "Reconectar {connector}",
+      "en": "Reconnect {connector}",
+      "verdict": "",
+      "note": ""
+    },
+    "pt-br:connectorHealth.computer": {
+      "text": "Reconecte no seu computador.",
+      "en": "Reconnect it on your computer.",
+      "verdict": "",
+      "note": ""
+    },
+    "zh:connectorHealth.signIn": {
+      "text": "请重新登录 {connector}",
+      "en": "{connector} needs you to sign in again",
+      "verdict": "",
+      "note": ""
+    },
+    "zh:connectorHealth.reconnect": {
+      "text": "重新连接",
+      "en": "Reconnect",
+      "verdict": "",
+      "note": ""
+    },
+    "zh:connectorHealth.reconnectApp": {
+      "text": "重新连接 {connector}",
+      "en": "Reconnect {connector}",
+      "verdict": "",
+      "note": ""
+    },
+    "zh:connectorHealth.computer": {
+      "text": "请在电脑上重新连接。",
+      "en": "Reconnect it on your computer.",
+      "verdict": "",
+      "note": ""
+    }
+  },
+  "files": {}
+}

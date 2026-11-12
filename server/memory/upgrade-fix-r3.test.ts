@@ -412,6 +412,9 @@ it("R2-06: every connection that opens messages.db for writing installs the revi
     "database.ts": "triggers", "installation-restore-preparation.ts": "epoch", "memory/restore.ts": "epoch", "installation-memory-downgrade.ts": "epoch",
     // the TURNSTART gate seam's "foreign-commit": a second connection inserts a message, with the revision triggers installed like any writer
     "memory/lineage-warm-surface.ts": "triggers",
+    // RESTORE-PARK r3.1 / J4: the Cloud marker consumer and the restore job's prepare step rewrite the swapped-in messages.db as a whole (the email preparation),
+    // so each writes a new epoch in its own transaction; the job's stage step only writes marks into a private copy that install later renames over the live file.
+    "email/restore-marker.ts": "epoch", "email/restore-job-effects.ts": "epoch",
   };
   // memory/provenance-stamp.ts: its worker connection only reads (one BEGIN, one SELECT, COMMIT: the identity snapshot)
   // memory/optional-index.ts: its worker connection runs one CREATE INDEX (schema only, no row is written, so no revision moves)

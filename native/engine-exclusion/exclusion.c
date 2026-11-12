@@ -51,6 +51,9 @@
 //   cwdOf(pid)                     Windows (DELETION-WHILE-OPEN-107): another process's working folder, read from its PEB
 //                                  (ProcessParameters->CurrentDirectory.DosPath); null when it cannot be read. Optional: an older
 //                                  build without it only means the open-home pass does not run there (it fails closed).
+//   anchorBegin / anchorOpen / anchorList / anchorRead / anchorStat / anchorClose / anchorEnd
+//                                  Windows (version 11): the anchored opens the Claude Code copy import reads through, in anchored-win.c (CONTRACTS-B 1.3)
+//                                  every folder and file opened relative to its held parent, on the session own I/O thread, under a deadline.
 //   dropShutdownPrivileges         Windows (version 10): removes both shutdown privileges from this process's primary token and
 //                                  verifies they are absent. Returns { ok: true } or { ok: false, step, error }.
 //   diskWritten()                  macOS (IO-IDLE-DRAIN-1018 r3.6): this process's cumulative bytes written to storage
@@ -73,6 +76,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/file.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
@@ -89,10 +93,11 @@
 #ifdef __linux__
 #include <signal.h>
 #include <sys/syscall.h>
+#include <sys/prctl.h>
 #endif
 #endif
 
-#define ADDON_VERSION 10
+#define ADDON_VERSION 11
 #define LOCK_WAIT_MS 1000
 #define LOCK_STEP_MS 10
 
@@ -1734,6 +1739,8 @@ typedef struct {
   LONG result;
   wchar_t publisher[512];
   wchar_t subject[2048];
+  wchar_t organization[512];
+  char thumbprint[65];
 } AuthenticodeWork;
 
 static const char *authenticode_status(LONG result) {
@@ -1772,6 +1779,16 @@ static void authenticode_execute(napi_env env, void *data) {
     CRYPT_PROVIDER_CERT *leaf = signer ? WTHelperGetProvCertFromChain(signer, 0) : NULL;
     if (leaf && leaf->pCert) {
       CertGetNameStringW(leaf->pCert, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, NULL, job->publisher, 512);
+      // Chrome admission needs the leaf organization (not a display-name
+      // substring) and the certificate SHA-256 from this verified chain.
+      DWORD organization_chars = CertGetNameStringW(leaf->pCert, CERT_NAME_ATTR_TYPE, 0, (void *)szOID_ORGANIZATION_NAME, job->organization, 512);
+      if (organization_chars <= 1 || organization_chars >= 512) job->organization[0] = L'\0';
+      BYTE digest[32]; DWORD digest_bytes = sizeof digest;
+      if (CertGetCertificateContextProperty(leaf->pCert, CERT_SHA256_HASH_PROP_ID, digest, &digest_bytes) && digest_bytes == sizeof digest) {
+        static const char hex[] = "0123456789abcdef";
+        for (size_t i = 0; i < sizeof digest; ++i) { job->thumbprint[i * 2] = hex[digest[i] >> 4]; job->thumbprint[i * 2 + 1] = hex[digest[i] & 15]; }
+        job->thumbprint[64] = '\0';
+      }
       // Version 9: the signer's whole subject, as .NET's X500DistinguishedName.Name writes it ("CN=..., O=..., C=..."), for the
       // updater's publisher check (electron/windows-update-signature.mjs).
       if (!CertNameToStrW(X509_ASN_ENCODING, &leaf->pCert->pCertInfo->Subject, CERT_X500_NAME_STR | CERT_NAME_STR_REVERSE_FLAG, job->subject, 2048))
@@ -1798,6 +1815,12 @@ static void authenticode_complete(napi_env env, napi_status status, void *data) 
     napi_create_string_utf8(env, subject ? subject : "", NAPI_AUTO_LENGTH, &value);
     free(subject);
     napi_set_named_property(env, result, "subject", value);
+    char *organization = wide_to_utf8(job->organization, (int)wcslen(job->organization));
+    napi_create_string_utf8(env, organization ? organization : "", NAPI_AUTO_LENGTH, &value);
+    free(organization);
+    napi_set_named_property(env, result, "organization", value);
+    napi_create_string_utf8(env, job->thumbprint, NAPI_AUTO_LENGTH, &value);
+    napi_set_named_property(env, result, "thumbprint", value);
     napi_create_int64(env, (int64_t)(uint32_t)job->result, &value);
     napi_set_named_property(env, result, "code", value);
     napi_resolve_deferred(env, job->deferred, result);
@@ -1839,6 +1862,7 @@ static napi_value authenticode(napi_env env, napi_callback_info info) {
 #include <sddl.h>
 #include <aclapi.h>
 #include "exclusion-lsa.h"
+#include "anchored-win.h"
 #define COBJMACROS
 #include <sapi.h>
 #pragma comment(lib, "ole32.lib")
@@ -2461,12 +2485,32 @@ static napi_value disk_written(napi_env env, napi_callback_info info) {
 }
 #endif
 
+/* Disable kernel cores before a password may enter this process. The hard
+ * limit is inherited by children. Linux dumpable=0 also prevents piped core
+ * handlers and same-user ptrace/proc memory reads; verify both OS answers.
+ * Windows has no equivalent implemented here and must refuse admission. */
+static napi_value disable_core_dumps(napi_env env, napi_callback_info info) {
+  (void)info;
+#ifdef _WIN32
+  return make_bool(env, 0);
+#else
+  struct rlimit zero = {0, 0}, actual;
+  if (setrlimit(RLIMIT_CORE, &zero) != 0 || getrlimit(RLIMIT_CORE, &actual) != 0
+      || actual.rlim_cur != 0 || actual.rlim_max != 0) return make_bool(env, 0);
+#ifdef __linux__
+  if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0 || prctl(PR_GET_DUMPABLE, 0, 0, 0, 0) != 0) return make_bool(env, 0);
+#endif
+  return make_bool(env, 1);
+#endif
+}
+
 static void add(napi_env env, napi_value exports, const char *name, napi_callback fn) {
   napi_value value;
   if (napi_create_function(env, name, NAPI_AUTO_LENGTH, fn, NULL, &value) == napi_ok) napi_set_named_property(env, exports, name, value);
 }
 
 NAPI_MODULE_INIT() {
+  add(env, exports, "disableCoreDumps", disable_core_dumps);
   add(env, exports, "lock", lock_file);
   add(env, exports, "processes", list_processes);
   add(env, exports, "renameNoReplace", rename_no_replace);
@@ -2504,6 +2548,7 @@ NAPI_MODULE_INIT() {
   add(env, exports, "speechVoices", speech_voices);
   add(env, exports, "speechToWave", speech_to_wave);
   add(env, exports, "cwdOf", cwd_of);
+  anchored_win_register(env, exports);
 #endif
   add(env, exports, "bootId", boot_id);
   add(env, exports, "version", version);

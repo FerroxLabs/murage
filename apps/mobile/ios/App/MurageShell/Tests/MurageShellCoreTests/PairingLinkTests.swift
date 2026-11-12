@@ -33,28 +33,28 @@ final class PairingLinkTests: XCTestCase {
 
     /// P17: the QR scanner hands the launcher only `<origin>/enter#<credential>`.
     func testParsesTheComputersPairingLink() {
-        let link = PairingLink.parse("https://Mac.tailnet123.ts.net:443/enter#murage_pair_abc")
-        XCTAssertEqual(link?.origin.serialized, "https://mac.tailnet123.ts.net")
+        let link = PairingLink.parse("https://Mac.tail000000.ts.net:443/enter#murage_pair_abc")
+        XCTAssertEqual(link?.origin.serialized, "https://mac.tail000000.ts.net")
         XCTAssertEqual(link?.credential, "murage_pair_abc")
-        XCTAssertEqual(PairingLink.parse(" https://mac.tailnet123.ts.net:8444/enter#123456 ")?.origin.port, 8444)
+        XCTAssertEqual(PairingLink.parse(" https://mac.tail000000.ts.net:8444/enter#123456 ")?.origin.port, 8444)
     }
 
     func testRefusesAnyOtherCode() {
         for text in [
-            "https://mac.tailnet123.ts.net/",
-            "https://mac.tailnet123.ts.net/enter",
-            "https://mac.tailnet123.ts.net/enter#",
-            "https://mac.tailnet123.ts.net/enter/#murage_pair_abc",
-            "https://mac.tailnet123.ts.net/other#murage_pair_abc",
-            "https://mac.tailnet123.ts.net/enter?x=1#murage_pair_abc",
-            "https://mac.tailnet123.ts.net/enter#murage_pair_abc&installId=ios-0123456789abcdef",
-            "https://mac.tailnet123.ts.net/enter#a#b",
-            "http://mac.tailnet123.ts.net/enter#murage_pair_abc",
-            "https://user@mac.tailnet123.ts.net/enter#murage_pair_abc",
+            "https://mac.tail000000.ts.net/",
+            "https://mac.tail000000.ts.net/enter",
+            "https://mac.tail000000.ts.net/enter#",
+            "https://mac.tail000000.ts.net/enter/#murage_pair_abc",
+            "https://mac.tail000000.ts.net/other#murage_pair_abc",
+            "https://mac.tail000000.ts.net/enter?x=1#murage_pair_abc",
+            "https://mac.tail000000.ts.net/enter#murage_pair_abc&installId=ios-0123456789abcdef",
+            "https://mac.tail000000.ts.net/enter#a#b",
+            "http://mac.tail000000.ts.net/enter#murage_pair_abc",
+            "https://user@mac.tail000000.ts.net/enter#murage_pair_abc",
             "https://100.64.0.1/enter#murage_pair_abc",
-            "https://mac.tailnet123.ts.net/enter#murage_pair_abc\n",
+            "https://mac.tail000000.ts.net/enter#murage_pair_abc\n",
             "WIFI:S:home;T:WPA;P:secret;;",
-            "https://mac.tailnet123.ts.net/enter#" + String(repeating: "a", count: 513),
+            "https://mac.tail000000.ts.net/enter#" + String(repeating: "a", count: 513),
         ] {
             XCTAssertNil(PairingLink.parse(text), text)
         }

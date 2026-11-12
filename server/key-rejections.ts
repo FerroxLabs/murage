@@ -79,6 +79,7 @@ function changed(): void {
   }
 }
 
+/** LOW LEVEL: only flux-key-health.ts (reportFluxKeyEvidence) may call this; every producer reports through a ticket, see the rule there. */
 export function noteKeyRejected(scope: string, key: string): void {
   if (!key.trim()) return;
   const mark = keyMark(scope, key);
@@ -87,7 +88,7 @@ export function noteKeyRejected(scope: string, key: string): void {
   changed();
 }
 
-/** A request with this key went through: any earlier refusal of it is over. */
+/** LOW LEVEL (same rule as noteKeyRejected). A request with this key went through: any earlier refusal of it is over. */
 export function noteKeyAccepted(scope: string, key: string): void {
   if (!key.trim()) return;
   const cleared = rejectedKeys.delete(keyMark(scope, key));
@@ -102,7 +103,7 @@ export function noteKeyAccepted(scope: string, key: string): void {
   if (cleared || clearedAnywhere || clearedTurn) changed();
 }
 
-/** What a catalog refresh learned about this key. Only a 401 ("unauthorized") says the key is bad: a 403 is a provider that refuses /models but may still answer chat, so it neither marks nor clears the key. */
+/** LOW LEVEL (same rule as noteKeyRejected). What a catalog refresh learned about this key. Only a 401 ("unauthorized") says the key is bad: a 403 is a provider that refuses /models but may still answer chat, so it neither marks nor clears the key. */
 export function noteCatalogOutcome(key: string, outcome: "ok" | "refused", code?: "unauthorized" | "forbidden"): void {
   if (outcome === "ok") noteKeyAccepted(ANY_ADDRESS, key);
   else if (code !== "forbidden") noteKeyRejected(ANY_ADDRESS, key);

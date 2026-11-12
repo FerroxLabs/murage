@@ -9,6 +9,7 @@ import { ANY_ADDRESS, KEY_REJECTED_REASON, noteKeyAccepted, noteKeyRejected, res
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureDirs } from "../config.ts";
+import { installFluxStartGate } from "../flux-start-gate.ts";
 import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
 import { recordEvents } from "../testing/events.ts";
 import { appendBounded, createOpenAIChatRuntime, MAX_RESPONSE_BYTES, MAX_SSE_LINE_BYTES } from "./openai-chat.ts";
@@ -324,7 +325,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
   });
 
   it("1.0.18 (f): a Flux free_cap_reached 429 is sent exactly once, and its code travels on the error", async () => {
-    // Recorded shape: flux-router rate_limiter.py raises HTTPException(429, detail={"error":{...,"state":"free_cap_reached"}}),
+    // Recorded shape: the Flux router's rate limiter raises HTTPException(429, detail={"error":{...,"state":"free_cap_reached"}}),
     // and LiteLLM flattens that dict into the OpenAI envelope's error.message as a Python repr.
     const repr = "{'error': {'type': 'rate_limit_exceeded', 'state': 'free_cap_reached', 'tier': 'free', 'message': \"Your account's monthly free-tier token allowance is exhausted.\"}}";
     const refusal = () => new Response(JSON.stringify({ error: { message: repr, type: "None", param: "None", code: "429" } }), { status: 429, headers: { "content-type": "application/json" } });
@@ -336,7 +337,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
   });
 
   it("FLUX-BURN-COPY-1018: a Flux hourly_burn_limit 429 is sent exactly once, and its code and reset time travel on the error", async () => {
-    // Recorded shape: flux-router forge_hook.py's hourly burn gate raises HTTPException(429, detail={"error": "hourly_burn_limit", ..., "retry_after": s}).
+    // Recorded shape: the Flux service's hourly burn gate raises HTTPException(429, detail={"error": "hourly_burn_limit", ..., "retry_after": s}).
     const refusal = () => new Response(JSON.stringify({ detail: { error: "hourly_burn_limit", subscription_tier: "pro", spent_usd_last_hour: 12.5, inflight_usd: 0.2, threshold_usd: 12, retry_after: 1800 } }), { status: 429, headers: { "content-type": "application/json" } });
     const before = Date.now();
     const { completed, events } = await runTurn("t-flux-hourly", [refusal, refusal, refusal], { retryScale: 0.001, apiUrl: FLUX_URL });
@@ -367,11 +368,22 @@ describe("createOpenAIChatRuntime stream contract", () => {
     expect(events.find((event) => event.type === "runtime.error")).toMatchObject({ gatewayCode: "credit_exhausted" });
   });
 
-  it("1.0.18 (f, Astra r5): a header-only Flux hold keeps its retries and, when they run out, reaches the error as the hold", async () => {
+  it("UX-L2C-PAUSE r6: a Flux chat 402 key_budget_reached is reported to the spend gate with the key it was sent with", async () => {
+    const reported: Array<{ body: unknown; key: unknown }> = [];
+    installFluxStartGate({ onBudgetReached: (body: unknown, key?: string | null) => { reported.push({ body, key }); return { armed: true }; }, authorizeFluxDispatch: async () => {} } as never);
+    try {
+      const refusal = () => new Response(JSON.stringify({ error: "key_budget_reached", limit: "monthly_spend", key_id: "k1", as_of: "2026-11-10T10:00:00Z" }), { status: 402, headers: { "content-type": "application/json" } });
+      await runTurn("t-hook-402", [refusal, refusal, refusal], { retryScale: 0.001, apiUrl: FLUX_URL });
+    } finally { installFluxStartGate(null); }
+    expect(reported.length).toBeGreaterThanOrEqual(1);
+    expect(reported[0]).toMatchObject({ key: SECRET, body: { error: "key_budget_reached", limit: "monthly_spend" } });
+  });
+
+  it("1.0.18 (f, Astra r5): a header-only Flux hold retries exactly once and reaches the error as the hold", async () => {
     const hold = () => new Response(JSON.stringify({ error: { message: "Too many requests" } }), { status: 429, headers: { "content-type": "application/json", "x-flux-hold-reason": "concurrency" } });
     const { completed, events } = await runTurn("t-flux-hold-header", [hold, hold, hold], { retryScale: 0.001, apiUrl: FLUX_URL });
     expect(completed).toMatchObject({ ok: false });
-    expect(calls).toBe(3);
+    expect(calls).toBe(2);
     expect(events.find((event) => event.type === "runtime.error")).toMatchObject({ gatewayCode: "hold" });
   });
 

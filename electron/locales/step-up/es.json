@@ -1,5 +1,5 @@
 {
-  "@source": "57c41d0f4509791921344f3d826b6015ceced077",
+  "@source": "500fec5c01dbd58f272383f9dc5a866d959cfd15",
   "label.cloudPairing": "Añadir un dispositivo nuevo a tu hogar en Cloud",
   "label.cloudDevicesAccount": "Cambiar los dispositivos o la cuenta de tu hogar en Cloud",
   "label.modelSigninStart": "Comenzar el proceso de inicio de sesión de un modelo en tu hogar en Cloud",
@@ -8,6 +8,7 @@
   "label.modelSigninRemove": "Quitar una conexión de modelo de tu hogar en Cloud",
   "label.ownServer": "Cambiar el servidor que tus bots usan como ordenador",
   "label.engineLogin": "Iniciar o cerrar sesión en un motor de tu hogar en Cloud",
+  "label.engineSigninCode": "Terminar un inicio de sesión en Antigravity para un bot de tu página de inicio de Cloud",
   "label.botCreate": "Crear un bot",
   "label.botDelete": "Eliminar un bot y sus conversaciones",
   "label.botSettings": "Cambiar los ajustes de un bot",
@@ -59,6 +60,7 @@
   "label.localModels": "Cambiar los modelos locales",
   "label.claudeAccounts": "Cambiar una cuenta de Claude",
   "label.chatChannels": "Cambiar una conexión de Telegram, Slack o Discord",
+  "label.signal": "Cambiar la conexión de Signal",
   "label.whatsapp": "Cambiar la conexión de WhatsApp",
   "label.memory": "Cambiar la memoria",
   "label.skillsCollection": "Cambiar la colección de habilidades",
@@ -131,5 +133,6 @@
   "dialog.close": "Cerrar",
   "prepare.voiceFinishing": "Murage está terminando una respuesta de voz.",
   "prepare.voiceFinishingDetail": "Vuelve a intentarlo en aproximadamente {minutes} min. Tus chats y recuerdos siguen como estaban.",
-  "prepare.quit": "Salir"
+  "prepare.quit": "Salir",
+  "label.claudeCodeImport": "Importar habilidades y servidores de herramientas de Claude Code"
 }

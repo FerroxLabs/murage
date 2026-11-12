@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "astra-fix-copylint",
+  "date": "2026-11-10",
+  "base": "98ccb6c1acd2dc15ade2e0d2c9a5c7e0357b721e",
+  "scope": "fix3-copylint: 39 previously passed translations with changed English context; 86 corrected entries already approved in rev2",
+  "strings": {
+    "de:browser.BrowserChoice.13": {
+      "text": "Verbindungsart für dein Chrome",
+      "en": "Your Chrome connection method",
+      "verdict": "pass"
+    },
+    "de:browser.versionUnknown": {
+      "text": "Sieh unter Über {browser} nach, welche Version installiert ist. Diese Verbindungsart braucht Version {minimum} oder neuer.",
+      "en": "Check About {browser} for its version. Connecting to your browser this way needs version {minimum} or later.",
+      "verdict": "pass"
+    },
+    "de:browser.server.route.11": {
+      "text": "Wähle einen Browser und eine Verbindungsart.",
+      "en": "Choose a browser and how to connect it.",
+      "verdict": "pass"
+    },
+    "de:browser.server.route.15": {
+      "text": "Wähle eine Verbindungsart für den Browser.",
+      "en": "Choose how to connect your browser.",
+      "verdict": "pass"
+    },
+    "es:browser.disclosure.floor": {
+      "text": "Este navegador no pide permiso por sitio ni revisa cada acción. Aun así, te devuelve el control para contraseñas y pagos.",
+      "en": "This browser doesn't ask per site or check each action. It still lets you take over to enter passwords and make payments.",
+      "verdict": "pass"
+    },
+    "fr:browser.BrowserChoice.13": {
+      "text": "Mode d'accès à ton Chrome",
+      "en": "Your Chrome connection method",
+      "verdict": "pass"
+    },
+    "fr:browser.versionUnknown": {
+      "text": "Consulte À propos de {browser} pour connaître sa version. Ce mode d'accès nécessite la version {minimum} ou ultérieure.",
+      "en": "Check About {browser} for its version. Connecting to your browser this way needs version {minimum} or later.",
+      "verdict": "pass"
+    },
+    "fr:browser.disclosure.floor": {
+      "text": "Ce navigateur ne demande pas site par site et ne vérifie pas chaque action. Il te rend quand même la main pour les mots de passe et les paiements.",
+      "en": "This browser doesn't ask per site or check each action. It still lets you take over to enter passwords and make payments.",
+      "verdict": "pass"
+    },
+    "fr:browser.server.route.11": {
+      "text": "Choisis un navigateur et un mode d'accès.",
+      "en": "Choose a browser and how to connect it.",
+      "verdict": "pass"
+    },
+    "fr:browser.server.route.15": {
+      "text": "Choisis un mode d'accès au navigateur.",
+      "en": "Choose how to connect your browser.",
+      "verdict": "pass"
+    },
+    "hi:engine.toolLimit.catalogUnknown": {
+      "text": "Murage इस AI की टूल सूची की पुष्टि नहीं कर सका। बिना सत्यापित टूल सीमा के संदेश नहीं भेजा गया।",
+      "en": "Murage could not confirm this AI's tool list or the maximum number of tools it accepts. Your message was not sent.",
+      "verdict": "pass"
+    },
+    "hi:browser.disclosure.floor": {
+      "text": "यह ब्राउज़र हर साइट के लिए अनुमति नहीं माँगता और न ही हर कार्रवाई की जाँच करता है। फिर भी पासवर्ड और भुगतान का काम यह आपको ही सौंपता है।",
+      "en": "This browser doesn't ask per site or check each action. It still lets you take over to enter passwords and make payments.",
+      "verdict": "pass"
+    },
+    "ja:engine.toolLimit.catalogUnknown": {
+      "text": "MurageはこのAIのツール一覧を確認できませんでした。ツール数の上限を確認できない状態ではメッセージを送信しませんでした。",
+      "en": "Murage could not confirm this AI's tool list or the maximum number of tools it accepts. Your message was not sent.",
+      "verdict": "pass"
+    },
+    "ja:browser.BrowserChoice.13": {
+      "text": "お使いの Chrome の接続方法",
+      "en": "Your Chrome connection method",
+      "verdict": "pass"
+    },
+    "ja:browser.versionUnknown": {
+      "text": "［{browser} について］でバージョンを確認してください。この接続方法にはバージョン {minimum} 以降が必要です。",
+      "en": "Check About {browser} for its version. Connecting to your browser this way needs version {minimum} or later.",
+      "verdict": "pass"
+    },
+    "ja:browser.disclosure.floor": {
+      "text": "このブラウザはサイトごとの確認や操作ごとのチェックを行いません。ただし、パスワードや支払いの操作は引き続きユーザーに委ねられます。",
+      "en": "This browser doesn't ask per site or check each action. It still lets you take over to enter passwords and make payments.",
+      "verdict": "pass"
+    },
+    "pt-br:engine.toolLimit.catalogUnknown": {
+      "text": "O Murage não conseguiu confirmar a lista de ferramentas desta IA. A mensagem não foi enviada com um limite de ferramentas não verificado.",
+      "en": "Murage could not confirm this AI's tool list or the maximum number of tools it accepts. Your message was not sent.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.versionUnknown": {
+      "text": "Consulte Sobre o {browser} para ver a versão. Este modo exige a versão {minimum} ou posterior.",
+      "en": "Check About {browser} for its version. Connecting to your browser this way needs version {minimum} or later.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.disclosure.floor": {
+      "text": "Este navegador não pede permissão por site nem verifica cada ação. Ainda assim, ele devolve a você o controle de senhas e pagamentos.",
+      "en": "This browser doesn't ask per site or check each action. It still lets you take over to enter passwords and make payments.",
+      "verdict": "pass"
+    },
+    "zh:engine.toolLimit.catalogUnknown": {
+      "text": "Murage 无法确认此 AI 的工具列表。工具数量限制未经验证，因此未发送消息。",
+      "en": "Murage could not confirm this AI's tool list or the maximum number of tools it accepts. Your message was not sent.",
+      "verdict": "pass"
+    },
+    "zh:browser.BrowserChoice.13": {
+      "text": "你的 Chrome 连接方式",
+      "en": "Your Chrome connection method",
+      "verdict": "pass"
+    },
+    "zh:browser.versionUnknown": {
+      "text": "请在“关于 {browser}”中查看其版本。此连接方式需要 {minimum} 或更高版本。",
+      "en": "Check About {browser} for its version. Connecting to your browser this way needs version {minimum} or later.",
+      "verdict": "pass"
+    },
+    "zh:browser.disclosure.floor": {
+      "text": "此浏览器不会按网站询问，也不会检查每项操作。但仍会将密码和付款操作交还给你处理。",
+      "en": "This browser doesn't ask per site or check each action. It still lets you take over to enter passwords and make payments.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

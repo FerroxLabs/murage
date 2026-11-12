@@ -9,9 +9,9 @@
 // The `cli` string carries the whole command (wrapper strings resolve via
 // splitCliString, so "npx -y some-agent acp" works too). There is no auth
 // story on purpose: the user's CLI is expected to be signed in from a
-// terminal already, exactly like the qwen harness. Model choice stays
-// inside the agent — we advertise a single passthrough id and never pass
-// a model on argv, because -m conventions differ per CLI.
+// terminal already. Models and thinking choices come from an empty ACP session.
+// Model selection uses ACP, never an assumed argv convention.
+import { resolveCustomAcpModels } from "./custom-model-catalog.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 
 const CONFIGURE_HINT =
@@ -23,7 +23,11 @@ const support: AcpSupport = {
   access: "custom",
   // One passthrough id: the agent runs whatever it is configured for.
   // Advertising a made-up catalog would promise switching we cannot do.
-  models: { default: "agent-default", options: [{ id: "agent-default", label: "Agent default" }] },
+  models: { default: "agent-default", options: [{ id: "agent-default", label: "Agent default", custom: true }] },
+  resolveModels: (env, config) => resolveCustomAcpModels(env, config),
+  resolveModelsOnCreate: false,
+  selectModel: { configId: "model", agentDefault: "agent-default", allowLegacy: true },
+  modelVariants: true,
   defaultCli: "",
   nativeSource: "custom.acp",
   loginNote: CONFIGURE_HINT,

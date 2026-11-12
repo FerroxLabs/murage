@@ -3,7 +3,11 @@
 // and RS256 keys generated here (RS256 published but never accepted), JWKS served exactly as https://<ref>.supabase.co/auth/v1/.well-known/jwks.json does.
 import { env } from "cloudflare:workers";
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { releaseItem9HoldForTests } from "../src/held-until-item9-highs";
+// ITEM 9 (TOPUP-OFFERS-LIVE): the journey A3 top-up cases switch auto top-up on; the launch hold is released here only.
+beforeAll(() => releaseItem9HoldForTests(true));
+afterAll(() => releaseItem9HoldForTests(false));
 import { createAuth } from "../src/auth";
 import { resolveCloudAccount, type CurrentUserLoader } from "../src/cloud-accounts";
 import { readConfig } from "../src/config";

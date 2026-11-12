@@ -32,7 +32,7 @@ function expectOriginalPreserved(root:string,before:Record<string,string>){
   expect(added.filter(path=>path!=="messages.db-wal"&&path!=="messages.db-shm")).toEqual([]);
   if(added.includes("messages.db-wal"))expect(statSync(join(root,"messages.db-wal")).size).toBe(0);
 }
-const ownedAge=(tool:string)=>execFileSync("ps",["-axo","pid=,command="],{encoding:"utf8"}).split("\n").filter(line=>line.includes(tool)).map(line=>line.trim());
+const ownedAge=(tool:string)=>execFileSync("ps",["-axo","pid=,command="],{ windowsHide: true,encoding:"utf8"}).split("\n").filter(line=>line.includes(tool)).map(line=>line.trim());
 async function expectNoOwnedAge(tool:string){
   const deadline=Date.now()+5000;
   while(ownedAge(tool).length&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,25));

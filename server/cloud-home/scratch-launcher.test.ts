@@ -12,7 +12,7 @@ try:
 except ValueError as e:
  print(json.dumps({"error":str(e)}))`;
 const run = (engine: string, scratch: unknown) =>
-  JSON.parse(execFileSync("python3", ["-I", "-c", script, launcher, engine, JSON.stringify(scratch)], { encoding: "utf8" })) as { argv?: string[]; error?: string };
+  JSON.parse(execFileSync("python3", ["-I", "-c", script, launcher, engine, JSON.stringify(scratch)], { windowsHide: true, encoding: "utf8" })) as { argv?: string[]; error?: string };
 const ok = "native/provider-turns/fuigoAgent-abcDEF123456";
 it("mounts a scratch tmpfs before the file binds that land inside it", () => {
   // A routed Fuigo turn's $FUIGO_HOME is the scratch tmpfs; the launcher renders its tiers there.

@@ -173,7 +173,7 @@ describe("L-c: the mount predicate for the owner's own servers", () => {
     const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
     const mounts = source.split("\n").filter((line) => line.includes("instance.adapter.capabilities.customMcp === true"));
     expect(mounts).toHaveLength(2);
-    for (const line of mounts) expect(line).toContain("&& ownServersAllowedFor(bot)");
+    for (const line of mounts) expect(line).toMatch(/&& ownServersAllowedFor\(bot, serviceNoLimits\((dispatchClaimId|internalGeneration), threadId, bot.id\)\)/);
     expect(source).not.toMatch(/function ownServersAllowedFor/);
   });
 });

@@ -156,7 +156,7 @@ export interface TeamChip { id: string; name: string; working: boolean }
 export function TeamChips({ bots, onOpen, onHire }: { bots: readonly TeamChip[]; onOpen: (botId: string) => void; onHire: () => void }) {
   return (
     <div className="flex items-center gap-2 px-2 py-2">
-      <ul className="flex min-w-0 flex-1 flex-nowrap gap-2 overflow-x-auto md:flex-wrap">
+      <ul className="no-scrollbar-phone flex min-w-0 flex-1 flex-nowrap gap-2 overflow-x-auto md:flex-wrap">
         {bots.map((bot) => (
           <li key={bot.id} className="shrink-0">
             <button type="button" onClick={() => onOpen(bot.id)} data-working={bot.working ? "" : undefined}

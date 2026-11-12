@@ -1,3 +1,4 @@
+import { inertBot } from "./store.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -70,7 +71,7 @@ export function mayMessage(from: BotRecord, to: BotRecord, options: { projectRoo
 
 /** The bots a Can talk to value names, out of `bots`. */
 export function targetsOf(self: BotRecord, bots: BotRecord[]): BotRecord[] {
-  const others = bots.filter((b) => b.id !== self.id && !b.hidden);
+  const others = bots.filter((b) => b.id !== self.id && !inertBot(b));
   if (self.messageAllow?.mode === "all") return others;
   if (self.messageAllow?.mode === "list") return others.filter((b) => self.messageAllow!.botIds?.includes(b.id));
   return [];

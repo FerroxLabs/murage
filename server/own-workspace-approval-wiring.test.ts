@@ -103,7 +103,7 @@ const verdictFor = (event: { tool: string; summary: string; filePaths?: string[]
     ownWorkspace: isOwnWorkspaceBookkeeping({ dataDir, botId: BOT, threadId: THREAD, tool: event.tool, paths: event.filePaths }),
   });
 
-describe.skipIf(process.platform === "win32")("a bot's own bookkeeping never reaches the owner", () => {
+describe("a bot's own bookkeeping never reaches the owner", () => {
   it("carries the edited file's real path, not the display summary", async () => {
     const file = join(botDir, "MEMORY.md");
     const event = await ask("d57-memory", "Edit", {

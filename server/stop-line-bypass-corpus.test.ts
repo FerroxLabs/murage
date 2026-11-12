@@ -22,6 +22,7 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import type { GrantCall } from "../shared/app-action-grant.ts";
 import type { AutoApprover, AutoContext } from "./auto-approve.ts";
 import type { StopHit, StopLinePlace } from "./stop-line.ts";
+import { plainWipe } from "./outside-scan.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 
 // The always-ask reader freezes this computer's home folder and the folder holding it when server/shell/walk.ts loads
@@ -175,7 +176,9 @@ describe.runIf(process.platform !== "win32")("ISSUE-PERMS-1010 bypass corpus (1.
   it.each(columns)("frees only the patch envelope and marker forms both engines read, and nothing %s held besides", (_version, base) => {
     // the bounded claim: every hold this subset removes on these routes is a patch both engines apply the same way
     expect(corpus.rows.filter((row) => row.removes).map((row) => row.id).sort()).toEqual(["p-heredoc-envelope", "p-leading-blank", "p1-eof"]);
-    const freed = corpus.rows.filter((row) => !row.removes && Object.entries(base[row.id]!.held).some(([level, held]) => held && !outcomes.get(row.id)!.held[level as keyof Outcome["held"]] && !(level === "noLimits" && row.noLimitsLifts)));
+    // NOLIM 1.0.19: No limits runs what the owner's bots decide, so a recorded No limits hold may be lifted, and only by the
+    // finalizer (source "no-limits"); every other level is still held as recorded
+    const freed = corpus.rows.filter((row) => !row.removes && Object.entries(base[row.id]!.held).some(([level, held]) => held && !outcomes.get(row.id)!.held[level as keyof Outcome["held"]] && !(level === "noLimits" && (row.noLimitsLifts || outcomes.get(row.id)!.noLimitsSource === "no-limits"))));
     expect(freed.map((row) => row.id)).toEqual([]);
     // NOLIMITS-CODEX-EDIT: the bounded exception, and each is a stop-line row that was held at No limits only as unread
     const lifted = corpus.rows.filter((row) => row.noLimitsLifts);
@@ -199,41 +202,60 @@ describe.runIf(process.platform !== "win32")("ISSUE-PERMS-1010 bypass corpus (1.
     }
     expect(acp.at(FULL, ROUTINE).approve, "Full access routine").toBeNull();
     expect(acp.at(FULL, OWNER).approve, "Full access owner").toBeNull();
-    expect(acp.at(NO_LIMITS, ROUTINE).approve, "No limits routine").toBeNull();
+    // NOLIM 1.0.19: a stop-line card stays at No limits; an unread patch is not a wipe, so the owner's routine and the owner run it
+    if (row.expect === "unread") {
+      expect(acp.at(NO_LIMITS, ROUTINE), "No limits routine").toMatchObject({ source: "no-limits" });
+      expect(acp.at(NO_LIMITS, ROUTINE).approve, "No limits routine runs").toBeTruthy();
+    } else expect(acp.at(NO_LIMITS, ROUTINE).approve, "No limits routine").toBeNull();
     expect(acp.at(AUTO, {}).approve, "Auto").toBeNull();
-    if (row.expect === "unread") expect(acp.at(NO_LIMITS, OWNER), "No limits owner").toMatchObject({ approve: null, source: "unread-call" });
+    if (row.expect === "unread") {
+      expect(acp.at(NO_LIMITS, OWNER), "No limits owner").toMatchObject({ source: "no-limits" });
+      expect(acp.at(NO_LIMITS, OWNER).approve, "No limits owner runs").toBeTruthy();
+    }
   });
 
   it.each(corpus.rows.filter((row) => row.expect === "stop" || row.expect === "unread").map((row) => [row.id, row] as const))("%s at No limits on a routine (not the owner's turn): the stop line and unread card still hold", (_id, row) => {
     // a recorded column holds No limits for the owner's own turn only, where No limits lifts the stop line; a routine,
     // webhook or someone else's turn keeps it (auto-approve.ts), so every stop and unread row is held there too
     const text = Array.isArray(row.text) ? row.text.map(fill) : fill(row.text);
-    const judgeAt = (tool: string, summary: string, call: GrantCall, stopLine: StopHit | null) => autoVerdict(NO_LIMITS, tool, summary, { call, stopLine, ...ROUTINE });
+    // NOLIM 1.0.19: the card stays only for the stop line itself, a wipe, the wipe-word proxy; an unread call, or a row another
+    // reader names, runs for the owner's routine (stored origin "routine"). `expectCard` is that rule for one verdict.
+    const cmdText = Array.isArray(text) ? text.join(" ") : text;
+    const judgeAt = (tool: string, summary: string, call: GrantCall, stopLine: StopHit | null) => {
+      const verdict = autoVerdict(NO_LIMITS, tool, summary, { call, stopLine, ...ROUTINE });
+      if (row.expect === "unread") {
+        expect(verdict, "an unread call runs").toMatchObject({ source: "no-limits" });
+        expect(verdict.approve, "an unread call runs").toBeTruthy();
+      } else if (verdict.approve === null) {
+        expect(verdict.source === "stop-line" || verdict.source === "always-ask" || plainWipe(cmdText), `a card stays only for the stop line or a wipe (${verdict.source}/${verdict.rule})`).toBe(true);
+      } else expect(verdict.source, "a non-wipe row runs").toBe("no-limits");
+      return verdict;
+    };
     switch (row.form) {
       case "patch": case "patch-missing": case "patch-null": {
         const input = row.form === "patch" ? { input: text } : row.form === "patch-missing" ? {} : null;
         const route = routeDelivery({ tool_name: "apply_patch", tool_input: input, tool_use_id: "u1", turn_id: "t1", cwd: project }, { mounts: [], project, home });
         if (route.route !== "ask") { expect(route.route).toBe("deny"); return; }
         const call: GrantCall = { engine: "codex", toolCall: route.toolCall as GrantCall["toolCall"], inputMissing: route.toolInputMissing, truncated: false };
-        expect(judgeAt(route.tool, route.summary, call, classifyAsk({ ...call, tool: route.tool, summary: route.summary }, place)).approve).toBeNull();
+        judgeAt(route.tool, route.summary, call, classifyAsk({ ...call, tool: route.tool, summary: route.summary }, place));
         return;
       }
       case "line": {
         const route = routeDelivery({ tool_name: "exec_command", tool_input: { cmd: text }, tool_use_id: "u1", turn_id: "t1", cwd: project }, { mounts: [], project, home });
         if (route.route !== "ask") { expect(route.route).toBe("deny"); return; }
         const call: GrantCall = { engine: "codex", toolCall: route.toolCall as GrantCall["toolCall"], inputMissing: route.toolInputMissing, truncated: false };
-        expect(judgeAt(route.tool, route.summary, call, classifyAsk({ ...call, tool: route.tool, summary: route.summary }, place)).approve).toBeNull();
+        judgeAt(route.tool, route.summary, call, classifyAsk({ ...call, tool: route.tool, summary: route.summary }, place));
         return;
       }
       case "argv": {
         const input = { command: text };
-        expect(judgeAt("shell", "shell", { toolCall: { name: "shell", input } }, classifyStopLine("shell", input, "shell", place)).approve).toBeNull();
+        judgeAt("shell", "shell", { toolCall: { name: "shell", input } }, classifyStopLine("shell", input, "shell", place));
         return;
       }
       case "ps": case "ps-shell": {
         const tool = row.form === "ps" ? "powershell" : "shell";
         const input = { command: text };
-        expect(judgeAt(tool, tool, { toolCall: { name: tool, input } }, classifyStopLine(tool, input, tool, win)).approve).toBeNull();
+        judgeAt(tool, tool, { toolCall: { name: tool, input } }, classifyStopLine(tool, input, tool, win));
         return;
       }
       default: throw new Error(`unknown form ${row.form}`);
@@ -248,15 +270,19 @@ describe.runIf(process.platform !== "win32")("ISSUE-PERMS-1010 bypass corpus (1.
     else if (was.reader !== null) expect(now.reader, "stop line").not.toBeNull();
     if (!row.removes && was.inside === false) expect(now.inside, "Auto guard placed inside").toBe(false);
     for (const level of ["fullRoutine", "fullOwner", "auto", "noLimits"] as const) {
-      if (!row.removes && was.held[level] && !(level === "noLimits" && row.noLimitsLifts)) expect(now.held[level], level).toBe(true);
+      if (!row.removes && was.held[level] && !(level === "noLimits" && (row.noLimitsLifts || now.noLimitsSource === "no-limits"))) expect(now.held[level], level).toBe(true);
     }
+    // a No limits hold that is lifted is lifted by the finalizer only; a No limits hold that stays is a stop-line, wipe or kept card
+    if (was.held.noLimits && !now.held.noLimits && !row.noLimitsLifts && !row.removes) expect(now.noLimitsSource, "lifted by the No limits finalizer").toBe("no-limits");
+    const noNoLimits = (o: Outcome): Outcome => ({ ...o, held: { ...o.held, noLimits: false }, noLimitsSource: undefined });
     switch (row.expect) {
       case "stop":
         expect(now.reader, "stop line").not.toBeNull();
         expect(now.held.fullRoutine && now.held.fullOwner && now.held.auto, "held at Full access and Auto").toBe(true);
         break;
       case "unread":
-        expect(now).toMatchObject({ route: "ask", missing: "patch", noLimitsSource: "unread-call", held: { fullRoutine: true, fullOwner: true, auto: true, noLimits: true } });
+        // an unread patch is not a wipe: held at Full access and Auto as recorded, and No limits runs it for the owner
+        expect(now).toMatchObject({ route: "ask", missing: "patch", noLimitsSource: "no-limits", held: { fullRoutine: true, fullOwner: true, auto: true, noLimits: false } });
         break;
       case "run":
         expect(now.reader, "stop line").toBeNull();
@@ -264,7 +290,8 @@ describe.runIf(process.platform !== "win32")("ISSUE-PERMS-1010 bypass corpus (1.
         break;
       case "109":
         // the general shell class (since 0.1.59): exactly what shipped; grammar A (ISSUE-PERMS-GRAMMAR) closes it
-        expect(now).toEqual(was);
+        // (the No limits column is checked above: held as recorded, or lifted by the finalizer)
+        expect(noNoLimits(now)).toEqual(noNoLimits(was));
         break;
     }
   });

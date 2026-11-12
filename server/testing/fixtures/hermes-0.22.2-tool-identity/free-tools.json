@@ -1,0 +1,21 @@
+[
+  "read_file",
+  "search_files",
+  "tool_describe",
+  "skills_list",
+  "skill_view",
+  "session_search",
+  "todo_list",
+  "clarify",
+  "web_search",
+  "web_extract",
+  "vision_analyze",
+  "video_analyze",
+  "show_tip",
+  "read_terminal",
+  "read_window_below",
+  "x_search",
+  "memory",
+  "write_file",
+  "patch"
+]

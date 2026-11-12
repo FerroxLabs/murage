@@ -6,17 +6,11 @@ protocols:
   - name: Murage package install
     schemes: [murage]
 
-# In-app auto-update reads latest-mac.yml + the .zip (macOS) or latest.yml +
-# the NSIS .exe (Windows) from this PUBLIC releases repo (separate from the
-# source repo). Public → no token on users' machines. Baked into
-# app-update.yml; both metadata files are emitted here even with
-# --publish never, and must be uploaded to the GitHub release alongside the
-# artifacts — a release missing latest.yml leaves every Windows install
-# stranded on its installed version.
-publish:
-  - provider: github
-    owner: FerroxLabs
-    repo: murage-releases
+# Release mutations belong exclusively to scripts/release-guard.mjs.
+# Explicit null also disables token/repository based publisher auto-detection.
+# Updater metadata is written locally by offline-update-metadata.mjs.
+publish: null
+afterAllArtifactBuild: ./scripts/offline-update-metadata.mjs
 
 directories:
   buildResources: build
@@ -25,6 +19,9 @@ directories:
 # electron-builder makes copied directories group-writable by default. The
 # Linux CUA trust boundary requires root-owned package ancestors to be 0755.
 afterPack: ./scripts/after-pack.mjs
+afterSign: ./scripts/windows-hide-package-manifest.mjs
+# Bind action commands after the target has generated its main desktop Exec.
+beforePack: ./scripts/linux-desktop-actions.mjs
 
 # The app is three self-contained pieces, none needing node_modules at
 # runtime: the Electron main/preload (plain .mjs/.cjs), the built UI
@@ -33,6 +30,15 @@ afterPack: ./scripts/after-pack.mjs
 # ELECTRON_RUN_AS_NODE (the agentcal-hq pattern).
 files:
   - electron/**
+  - server/testing/safe-wipe.mjs
+  - src/locales/en.json
+  - src/locales/de.json
+  - src/locales/es.json
+  - src/locales/fr.json
+  - src/locales/hi.json
+  - src/locales/ja.json
+  - src/locales/pt-br.json
+  - src/locales/zh.json
   - scripts/browser-extension-host-registration.mjs
   # Every shared/*.mjs the main process imports must be named here: this list
   # is explicit, not a glob, so adding an import without adding a line here
@@ -52,9 +58,12 @@ files:
   - shared/backup-max-bytes.mjs
   - shared/setup-backup-record.mjs
   - shared/upgrade-wait.mjs
+  - shared/murage-lockup.mjs
   - shared/upgrade-contract.mjs
   - shared/boot-proof.mjs
   - shared/spawned-proxies.mjs
+  - shared/win-hide-child-process.mjs
+  - shared/win-hide-child-process.cjs
   - shared/upgrade-machine.mjs
   - shared/closed-volume-sentences.mjs
   - shared/backup-folder-refusals.mjs
@@ -62,12 +71,17 @@ files:
   - shared/remote-mcp-url.mjs
   - shared/guarded-http.mjs
   - shared/flux-desktop-signin-default.mjs
+  - shared/flux-credential-scan.mjs
+  - shared/password-process-protection.mjs
   - shared/windows-sddl.mjs
   - shared/md-secret-label.mjs
+  - shared/notify-surfaces.mjs
+  - shared/outside-limits.mjs
   - installer/lib/systemd.mjs
   - installer/lib/private-files.mjs
   - installer/lib/service-account.mjs
   - "!electron/**/*.test.*"
+  - "!electron/notify-s0.node-test.mjs"
   - "!electron/resources/speech-helper"
   - "!electron/resources/speech-helper.swift"
   - "!electron/resources/speech-helper-Info.plist"
@@ -82,6 +96,9 @@ files:
 asar: true
 
 extraResources:
+  # Ordinary Node descendants cannot require from Electron asar archives.
+  - from: shared/win-hide-child-process.cjs
+    to: shared/win-hide-child-process.cjs
   - from: electron/resources/murage-approval.wav
     to: murage-approval.wav
   # Ship the app's own license terms in every desktop distribution: Murage is
@@ -121,6 +138,8 @@ extraResources:
   # text must travel), and the MIT Hermes Agent / OpenClaw code it adapts.
   - from: dist-server/licenses/whatsapp
     to: licenses/whatsapp-runtime
+  - from: licenses/signal-runtime
+    to: licenses/signal-runtime
   - from: third_party/baileys
     to: licenses/baileys
   - from: third_party/libsignal-node
@@ -211,10 +230,17 @@ mac:
   # its inner signatures; the normal outer app signing/seal remains enabled.
   signIgnore:
     - '/Contents/Resources/gepa-worker(?:/|$)'
+    - '/Contents/Resources/signal-runtime/jre(?:/|$)'
   # the dictation helper is a signed background app — Windows and Linux never see it
   extraResources:
+    - from: dist-native/signal-runtime/darwin-${arch}
+      to: signal-runtime
     - from: dist-native/notification-authorization/${arch}/notification-authorization.node
       to: notification-authorization.node
+    - from: dist-native/anchored-read/darwin-${arch}/anchored-read.node
+      to: anchored-read.node
+    - from: dist-native/presence-guard/darwin-${arch}/presence-guard.node
+      to: presence-guard.node
     - from: dist-native/notification-authorization/${arch}/build.json
       to: notification-authorization-build.json
     - from: dist-native/engine-exclusion/darwin-${arch}/engine-exclusion.node
@@ -288,6 +314,38 @@ win:
       arch: x64
   icon: build/icon.ico
   extraResources:
+    - from: dist-native/signal-runtime/win32-x64
+      to: signal-runtime
+      filter:
+        - "**/*"
+        - "!jre/**/*.exe"
+    # Individual file copies bypass the directory signing transformer.
+    - from: dist-native/signal-runtime/win32-x64/jre/bin/java.exe
+      to: signal-runtime/jre/bin/java.exe
+    - from: dist-native/signal-runtime/win32-x64/jre/bin/javaw.exe
+      to: signal-runtime/jre/bin/javaw.exe
+    - from: dist-native/signal-runtime/win32-x64/jre/bin/jfr.exe
+      to: signal-runtime/jre/bin/jfr.exe
+    - from: dist-native/signal-runtime/win32-x64/jre/bin/jwebserver.exe
+      to: signal-runtime/jre/bin/jwebserver.exe
+    - from: dist-native/signal-runtime/win32-x64/jre/bin/keytool.exe
+      to: signal-runtime/jre/bin/keytool.exe
+    - from: dist-native/signal-runtime/win32-x64/jre/bin/rmiregistry.exe
+      to: signal-runtime/jre/bin/rmiregistry.exe
+    - from: dist-native/signal-runtime/win32-x64/jre/bin/jabswitch.exe
+      to: signal-runtime/jre/bin/jabswitch.exe
+    - from: dist-native/signal-runtime/win32-x64/jre/bin/jaccessinspector.exe
+      to: signal-runtime/jre/bin/jaccessinspector.exe
+    - from: dist-native/signal-runtime/win32-x64/jre/bin/jaccesswalker.exe
+      to: signal-runtime/jre/bin/jaccesswalker.exe
+    - from: dist-native/signal-runtime/win32-x64/jre/bin/jrunscript.exe
+      to: signal-runtime/jre/bin/jrunscript.exe
+    - from: dist-native/signal-runtime/win32-x64/jre/bin/kinit.exe
+      to: signal-runtime/jre/bin/kinit.exe
+    - from: dist-native/signal-runtime/win32-x64/jre/bin/klist.exe
+      to: signal-runtime/jre/bin/klist.exe
+    - from: dist-native/signal-runtime/win32-x64/jre/bin/ktab.exe
+      to: signal-runtime/jre/bin/ktab.exe
     # Preserve the pre-signed worker executable using the existing single-file
     # copy path. The rest of onedir contains no additional EXEs (validated).
     - from: dist-native/gepa/win32-x64
@@ -319,7 +377,11 @@ win:
       to: fuigo-probe/launcher.exe
     - from: dist-native/fuigo-probe/win32-x64/manifest.json
       to: fuigo-probe/manifest.json
-    - from: dist-native/engine-exclusion/win32-x64/engine-exclusion.node
+    - from: dist-native/anchored-read/win32-x64/anchored-read.node
+      to: anchored-read.node
+    - from: dist-native/presence-guard/win32-x64/presence-guard.node
+      to: presence-guard.node
+    - from: dist-native/engine-exclusion/win32-${arch}/engine-exclusion.node
       to: engine-exclusion.node
     - from: dist-native/cloudflared/win32-x64/cloudflared.exe
       to: cloudflared/cloudflared.exe
@@ -395,6 +457,8 @@ linux:
   # The reviewed x64 CLI runtime is staged before packaging and remains
   # outside ASAR so executable modes and adjacent sidecars are preserved.
   extraResources:
+    - from: dist-native/signal-runtime/linux-x64
+      to: signal-runtime
     - from: dist-native/gepa/linux-x64
       to: gepa-worker
     - from: dist-native/memory-model/linux-x64
@@ -437,6 +501,38 @@ linux:
       Name: Murage
       Comment: Your own team of AI bots, in a chat app
       Keywords: AI;Agents;Chat;Productivity;
+      Actions: new-chief;needs-you;pause;
+    # electron-builder 26.15.3: desktopActions is a sibling of entry.
+    # beforePack generates Exec from the target's main entry (AppRun for
+    # AppImage, the installed absolute executable for deb), plus the task id.
+    desktopActions:
+      new-chief:
+        Name: New task for Chief
+        "Name[de]": "Neue Aufgabe für Chief"
+        "Name[es]": "Nueva tarea para Chief"
+        "Name[fr]": "Nouvelle tâche pour Chief"
+        "Name[hi]": "Chief के लिए नया काम"
+        "Name[ja]": "Chiefに新しいタスクを依頼"
+        "Name[pt_BR]": "Nova tarefa para Chief"
+        "Name[zh]": "给Chief分配新任务"
+      needs-you:
+        Name: Open Needs you
+        "Name[de]": "„Braucht dich“ öffnen"
+        "Name[es]": "Abrir «Te necesita»"
+        "Name[fr]": "Ouvrir « Besoin de toi »"
+        "Name[hi]": "“आपकी ज़रूरत है” खोलें"
+        "Name[ja]": "「対応待ち」を開く"
+        "Name[pt_BR]": "Abrir “Precisa de você”"
+        "Name[zh]": "打开“需要你处理”"
+      pause:
+        Name: Pause automations
+        "Name[de]": "Automatisierungen pausieren"
+        "Name[es]": "Pausar automatizaciones"
+        "Name[fr]": "Mettre les automatisations en pause"
+        "Name[hi]": "ऑटोमेशन रोकें"
+        "Name[ja]": "自動処理を一時停止"
+        "Name[pt_BR]": "Pausar automações"
+        "Name[zh]": "暂停自动化"
 
 deb:
   packageCategory: utils

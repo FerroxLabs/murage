@@ -1,0 +1,642 @@
+{
+  "baseline": "c12aaad93",
+  "sites": [
+    {
+      "file": "companion/src/listener.ts",
+      "callee": "execFile",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{\n          timeout: Math.max(250, left),\n          // SIGTERM is a request, and the budget above is only worth as much\n          // as the thing that enforces it: a wedged CLI that ignores the\n          // polite signal would sit there past the deadline it was supposed\n          // to be bounded by. SIGKILL is not a request.\n          killSignal: \"SIGKILL\",\n          // `status --json` describes every peer in the tailnet, and the\n          // default cap is 1 MiB \u2014 a large enough tailnet fails the probe with\n          // ENOBUFS, which the code below reads as \"no MagicDNS name\" and\n          // which looks from outside exactly like \"Tailscale is not\n          // installed\". That is a wrong answer rather than a missing one.\n          // Generous, and still a bound: the alternative is a subprocess\n          // deciding how much memory this process uses.\n          maxBuffer: 16 * 1024 * 1024,\n          env: tailscaleChildEnvironment(cli),\n        }"
+    },
+    {
+      "file": "companion/src/listener.ts",
+      "callee": "run",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{\n        timeout:Math.max(1,left),killSignal:\"SIGKILL\",maxBuffer:1024*1024,\n        env:tailscaleChildEnvironment(cli),\n      }"
+    },
+    {
+      "file": "electron/android-device.mjs",
+      "callee": "run",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ timeout: 4_000, env: { ...process.env, ADB_TRACE: \"\" } }"
+    },
+    {
+      "file": "electron/android-device.mjs",
+      "callee": "run",
+      "ordinal": 1,
+      "index": 2,
+      "options": "{ timeout: 4_000, env: { ...process.env, ADB_TRACE: \"\" } }"
+    },
+    {
+      "file": "electron/android-device.mjs",
+      "callee": "run",
+      "ordinal": 2,
+      "index": 2,
+      "options": "{\n      timeout: extra.timeout ?? 6_000,\n      maxBuffer: extra.maxBuffer ?? 32 * 1024 * 1024,\n      encoding: extra.encoding ?? \"utf8\",\n      env: { ...process.env, ADB_TRACE: \"\" },\n    }"
+    },
+    {
+      "file": "electron/attention-wiring.mjs",
+      "callee": "spawn",
+      "ordinal": 0,
+      "index": 2,
+      "options": null
+    },
+    {
+      "file": "electron/backup-age-attestation.mjs",
+      "callee": "spawnSync",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{stdio:[\"ignore\",\"pipe\",\"pipe\"],encoding:\"utf8\",timeout:10000,maxBuffer:65536}"
+    },
+    {
+      "file": "electron/backup-age-attestation.mjs",
+      "callee": "spawnCommand",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{stdio:[\"ignore\",\"pipe\",\"pipe\"]}"
+    },
+    {
+      "file": "electron/backup-restic-attestation.mjs",
+      "callee": "spawnSync",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{stdio:[\"ignore\",\"pipe\",\"pipe\"],encoding:\"utf8\",timeout:10000,maxBuffer:65536}"
+    },
+    {
+      "file": "electron/backup-windows-acl.mjs",
+      "callee": "spawnSync",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{encoding:\"utf8\",windowsHide:true,timeout:60000,maxBuffer:1024*1024,...options}"
+    },
+    {
+      "file": "electron/backup-windows-acl.mjs",
+      "callee": "execFile",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{encoding:\"utf8\",windowsHide:true,timeout:60000,maxBuffer:1024*1024,...options}"
+    },
+    {
+      "file": "electron/companion-remote-access.mjs",
+      "callee": "execFile",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{\n        timeout: Math.max(250, timeoutMs),\n        // SIGTERM is a request; the budget is only worth what enforces it.\n        killSignal: \"SIGKILL\",\n        maxBuffer: 16 * 1024 * 1024,\n        env: { ...process.env, PATH: searchPath() },\n      }"
+    },
+    {
+      "file": "electron/cua.mjs",
+      "callee": "execFile",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ ...options, killSignal: \"SIGKILL\" }"
+    },
+    {
+      "file": "electron/data-dir-lease.mjs",
+      "callee": "execFileSync",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{\n        encoding: \"utf8\", timeout: 5_000, maxBuffer: 1024, stdio: [\"ignore\", \"pipe\", \"ignore\"],\n      }"
+    },
+    {
+      "file": "electron/desktop-relaunch.mjs",
+      "callee": "spawn",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{\n    detached: true, stdio: \"ignore\", cwd: start, env: appImageRelaunchEnv(env, appDir),\n  }"
+    },
+    {
+      "file": "electron/desktop-relaunch.mjs",
+      "callee": "spawn",
+      "ordinal": 1,
+      "index": 2,
+      "options": "{\n    detached: true, stdio: \"ignore\", cwd: relaunchDirectory(env, cwd, homedir), env: appImageRelaunchEnv(env, env.APPDIR),\n  }"
+    },
+    {
+      "file": "electron/engine-login-terminal.mjs",
+      "callee": "start",
+      "ordinal": 0,
+      "index": 2,
+      "options": "launch.options"
+    },
+    {
+      "file": "electron/engine-login-terminal.mjs",
+      "callee": "start",
+      "ordinal": 3,
+      "index": 2,
+      "options": "{ stdio: \"ignore\" }"
+    },
+    {
+      "file": "electron/ipc-inventory-harness.mjs",
+      "callee": "spawnSync",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{\n      cwd: scratch, encoding: \"utf8\", timeout: 60_000, maxBuffer: 16 * 1024 * 1024,\n      env: {\n        ...environment, ...env, HOME: home, USERPROFILE: home, MURAGE_DATA_DIR: dataDir, MURAGE_USER_DATA: userData,\n        MURAGE_TEST_MAIN_URL: pathToFileURL(path.join(electronDir, \"main.mjs\")).href,\n        MURAGE_TEST_ELECTRON_EXPORTS: JSON.stringify(electronNamedImports(electronDir)),\n        MURAGE_TEST_ELECTRON_PATHS: JSON.stringify(paths),\n      },\n    }"
+    },
+    {
+      "file": "electron/linux-password-store.mjs",
+      "callee": "run",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ encoding: \"utf8\", timeout: KEYRING_PROBE_TIMEOUT_MS, killSignal: \"SIGKILL\", maxBuffer: 64 * 1024, stdio: [\"ignore\", \"pipe\", \"ignore\"] }"
+    },
+    {
+      "file": "electron/linux-url-handler.mjs",
+      "callee": "execFile",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ timeout: 10_000 }"
+    },
+    {
+      "file": "electron/mac-install-guard.mjs",
+      "callee": "exec",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{timeout:3000, killSignal:\"SIGKILL\", maxBuffer:4*1024*1024, env:{PATH:\"/usr/bin:/bin\"}}"
+    },
+    {
+      "file": "electron/mac-install-guard.mjs",
+      "callee": "exec",
+      "ordinal": 1,
+      "index": 2,
+      "options": "{input:bytes,encoding:\"utf8\",timeout:3000,killSignal:\"SIGKILL\",maxBuffer:1024*1024,env:{PATH:\"/usr/bin:/bin\"}}"
+    },
+    {
+      "file": "electron/main.mjs",
+      "callee": "execFile",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{timeout:1500,maxBuffer:65536,env:process.env}"
+    },
+    {
+      "file": "electron/server-connection.electron-smoke.mjs",
+      "callee": "spawn",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ env: { PATH: process.env.PATH, HOME: evidence, TMPDIR: tmpdir(), MURAGE_CONNECTION_EVIDENCE: evidence, MURAGE_FIXTURE_HARNESS: engine.info.url }, stdio: [\"ignore\", \"pipe\", \"pipe\"] }"
+    },
+    {
+      "file": "electron/skill-recorder.mjs",
+      "callee": "spawn",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ stdio: \"ignore\" }"
+    },
+    {
+      "file": "electron/speech.mjs",
+      "callee": "spawn",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ stdio: \"ignore\" }"
+    },
+    {
+      "file": "electron/vendor/electron-updater.cjs",
+      "callee": "(0, child_process_1.spawnSync)",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{\n          env: { ...mergedEnv, PATH: this.sanitizeEnvPath((_a = mergedEnv.PATH) !== null && _a !== void 0 ? _a : \"\") },\n          encoding: \"utf-8\",\n          shell: true\n        }"
+    },
+    {
+      "file": "electron/vendor/electron-updater.cjs",
+      "callee": "(0, child_process_1.spawn)",
+      "ordinal": 0,
+      "index": 2,
+      "options": "params"
+    },
+    {
+      "file": "electron/vendor/electron-updater.cjs",
+      "callee": "(0, child_process_1.execFileSync)",
+      "ordinal": 0,
+      "index": 2,
+      "options": null
+    },
+    {
+      "file": "electron/vendor/electron-updater.cjs",
+      "callee": "(0, child_process_1.execFileSync)",
+      "ordinal": 1,
+      "index": 2,
+      "options": "{ env }"
+    },
+    {
+      "file": "electron/vendor/electron-updater.cjs",
+      "callee": "(0, child_process_1.execFileSync)",
+      "ordinal": 2,
+      "index": 2,
+      "options": "{ encoding: \"utf8\" }"
+    },
+    {
+      "file": "electron/vendor/electron-updater.cjs",
+      "callee": "(0, child_process_1.execFileSync)",
+      "ordinal": 3,
+      "index": 2,
+      "options": "{ encoding: \"utf8\" }"
+    },
+    {
+      "file": "installer/bin/murage.mjs",
+      "callee": "spawnSync",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ stdio: \"ignore\" }"
+    },
+    {
+      "file": "installer/bin/murage.mjs",
+      "callee": "spawnSync",
+      "ordinal": 1,
+      "index": 2,
+      "options": "{ stdio: \"inherit\" }"
+    },
+    {
+      "file": "installer/bin/murage.mjs",
+      "callee": "spawnSync",
+      "ordinal": 2,
+      "index": 2,
+      "options": "{ stdio: \"inherit\" }"
+    },
+    {
+      "file": "installer/bin/murage.mjs",
+      "callee": "spawn",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ env: { ...env, ...launchSecretVia(\"MURAGE_COMPANION_TOKEN\", \"stdin\") }, stdio: [\"pipe\", \"inherit\", \"inherit\"] }"
+    },
+    {
+      "file": "installer/bin/murage.mjs",
+      "callee": "(deps.spawn ?? spawn)",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ env: spec.env, stdio: [\"ignore\", \"ignore\", \"inherit\"], detached: true }"
+    },
+    {
+      "file": "installer/bin/murage.mjs",
+      "callee": "spawn",
+      "ordinal": 1,
+      "index": 2,
+      "options": "{\n    env,\n    stdio: \"inherit\",\n  }"
+    },
+    {
+      "file": "installer/lib/companion.mjs",
+      "callee": "run",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{\n    env: opts.env,\n    stdio: opts.stdio ?? \"inherit\",\n    ...(opts.as ? { uid: opts.as.uid, gid: opts.as.gid } : {}),\n  }"
+    },
+    {
+      "file": "installer/lib/companion.mjs",
+      "callee": "spawn",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ env, stdio: [\"ignore\", \"pipe\", \"pipe\"] }"
+    },
+    {
+      "file": "installer/lib/service-account.mjs",
+      "callee": "run",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ encoding: \"utf8\", stdio: [\"ignore\", \"pipe\", \"ignore\"] }"
+    },
+    {
+      "file": "installer/lib/tailscale.mjs",
+      "callee": "spawnSync",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ stdio: \"ignore\" }"
+    },
+    {
+      "file": "installer/lib/tailscale.mjs",
+      "callee": "run",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{\n    encoding: \"utf8\",\n    timeout: opts.timeoutMs ?? 120_000,\n    stdio: [\"inherit\", \"pipe\", \"pipe\"],\n  }"
+    },
+    {
+      "file": "installer/lib/ui.mjs",
+      "callee": "run",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ encoding: \"utf8\" }"
+    },
+    {
+      "file": "server/backup-restic-loopback-s3.fixture.ts",
+      "callee": "execFileSync",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{stdio:\"ignore\"}"
+    },
+    {
+      "file": "server/browser-extension-panel-avatar.ts",
+      "callee": "fork",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ execArgv: ['--experimental-strip-types'], stdio: ['ignore', 'ignore', 'pipe', 'ipc'], serialization: 'advanced', env }"
+    },
+    {
+      "file": "server/browser-macos-identity.ts",
+      "callee": "execFile",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ encoding: \"utf8\", timeout: CODESIGN_TIMEOUT_MS, maxBuffer: 65536 }"
+    },
+    {
+      "file": "server/channels/whatsapp/bridge-host.ts",
+      "callee": "this.forkFn",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ execArgv, stdio: [\"ignore\", \"ignore\", \"ignore\", \"ipc\"], env }"
+    },
+    {
+      "file": "server/cloud-home/b1b-recovery.ts",
+      "callee": "spawn",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{stdio:[\"ignore\",\"ignore\",\"ignore\",\"pipe\"],env:{PATH:\"/usr/bin:/bin\"}}"
+    },
+    {
+      "file": "server/cloud-home/bot-state.ts",
+      "callee": "spawn",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{\n    env: { PATH: \"/usr/bin:/bin\" }, cwd: \"/\", detached: true, stdio: [\"pipe\", \"pipe\", \"pipe\", \"pipe\"],\n  }"
+    },
+    {
+      "file": "server/cloud-home/browser-process.ts",
+      "callee": "spawn",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{\n    env: { PATH: \"/usr/bin:/bin\" }, shell: false, stdio: [\"pipe\", \"pipe\", \"pipe\", \"pipe\"],\n  }"
+    },
+    {
+      "file": "server/cloud-home/browser-process.ts",
+      "callee": "spawn",
+      "ordinal": 1,
+      "index": 2,
+      "options": "{\n      env: { PATH: \"/usr/bin:/bin\" }, stdio: [\"ignore\", \"ignore\", \"ignore\", \"pipe\"],\n    }"
+    },
+    {
+      "file": "server/cloud-home/cloud-process-hooks.ts",
+      "callee": "execFile",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ timeout: 3_000, env: { PATH: \"/usr/bin:/bin\" }, maxBuffer: 4096 }"
+    },
+    {
+      "file": "server/cloud-home/control-state.ts",
+      "callee": "execFileSync",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{timeout:CLOCK_HELPER_TIMEOUT_MS,maxBuffer:4096,encoding:\"utf8\",env:{},stdio:[\"ignore\",\"pipe\",\"ignore\"]}"
+    },
+    {
+      "file": "server/cloud-home/engine-launch-fixture.ts",
+      "callee": "spawnSync",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ encoding: \"utf8\", maxBuffer: 64 * 1024 * 1024 }"
+    },
+    {
+      "file": "server/cloud-home/engine-launch-fixture.ts",
+      "callee": "spawnSync",
+      "ordinal": 1,
+      "index": 2,
+      "options": "{ encoding: \"utf8\", maxBuffer: 64 * 1024 * 1024 }"
+    },
+    {
+      "file": "server/cloud-home/engine-launch-fixture.ts",
+      "callee": "execFileSync",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ encoding: \"utf8\", stdio: [\"ignore\", \"pipe\", \"pipe\"], env: { ...process.env, MURAGE_RIG_ROOT: root } }"
+    },
+    {
+      "file": "server/cloud-home/supervisor.ts",
+      "callee": "launch",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ env: input.env, stdio: [\"ignore\", \"inherit\", \"inherit\", \"pipe\", \"ipc\"] }"
+    },
+    {
+      "file": "server/cloud-home/vps-mcp-relay.ts",
+      "callee": "spawn",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ stdio: [\"pipe\", \"pipe\", \"ignore\"], env: ownServerChildEnv({ ...process.env, PATH: augmentedPath() }) }"
+    },
+    {
+      "file": "server/container-computer.ts",
+      "callee": "exec",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{\n    timeout,\n    encoding: \"utf8\",\n    maxBuffer: 16 * 1024 * 1024,\n    env: { ...process.env, PATH: augmentedPath() },\n  }"
+    },
+    {
+      "file": "server/drivers/chat-mcp-client.ts",
+      "callee": "spawnCli",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ cwd, stdio: [\"pipe\", \"pipe\", \"pipe\"], env }"
+    },
+    {
+      "file": "server/drivers/pi-mcp-extension.ts",
+      "callee": "spawn",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{\n      stdio: [\"pipe\", \"pipe\", \"pipe\"],\n      env: { ...process.env, ...(def.env ?? {}) },\n    }"
+    },
+    {
+      "file": "server/drivers/process-identity.ts",
+      "callee": "execFileSync",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{\n      encoding: \"utf8\", timeout: 3_000, stdio: [\"ignore\", \"pipe\", \"ignore\"], env: { ...process.env, LC_ALL: \"C\", LANG: \"C\" },\n    }"
+    },
+    {
+      "file": "server/drivers/process-tree.ts",
+      "callee": "execFile",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ timeout: 5_000, killSignal: \"SIGKILL\", maxBuffer: 4 * 1024 * 1024, env: PS_LOOKUP_ENV }"
+    },
+    {
+      "file": "server/drivers/process-tree.ts",
+      "callee": "execFile",
+      "ordinal": 1,
+      "index": 2,
+      "options": "{ timeout: 5_000, killSignal: \"SIGKILL\", maxBuffer: 4 * 1024 * 1024, env: PS_ENV }"
+    },
+    {
+      "file": "server/drivers/process-tree.ts",
+      "callee": "execFile",
+      "ordinal": 2,
+      "index": 2,
+      "options": "{ timeout: 5_000, killSignal: \"SIGKILL\", maxBuffer: 4 * 1024 * 1024, env: PS_ENV }"
+    },
+    {
+      "file": "server/drivers/process-tree.ts",
+      "callee": "execFile",
+      "ordinal": 3,
+      "index": 2,
+      "options": "{ timeout: 5_000, maxBuffer: 4 * 1024 * 1024, env: PS_LOOKUP_ENV }"
+    },
+    {
+      "file": "server/drivers/process-tree.ts",
+      "callee": "execFile",
+      "ordinal": 4,
+      "index": 2,
+      "options": "{ timeout: 5_000, killSignal: \"SIGKILL\", maxBuffer: 4 * 1024 * 1024, env: PS_ENV }"
+    },
+    {
+      "file": "server/drivers/process-tree.ts",
+      "callee": "execFile",
+      "ordinal": 5,
+      "index": 2,
+      "options": "{ timeout: 2_000, killSignal: \"SIGKILL\", env: PS_LOOKUP_ENV }"
+    },
+    {
+      "file": "server/drivers/warm-pool.ts",
+      "callee": "execFile",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ timeout: 3_000, killSignal: \"SIGKILL\", maxBuffer: 16 * MB }"
+    },
+    {
+      "file": "server/drivers/warm-pool.ts",
+      "callee": "execFile",
+      "ordinal": 1,
+      "index": 2,
+      "options": "{ timeout: 3_000, killSignal: \"SIGKILL\" }"
+    },
+    {
+      "file": "server/engine-fs.ts",
+      "callee": "execFileSync",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ encoding: \"utf8\", timeout: 10_000, maxBuffer: 64 * 1024 * 1024, stdio: [\"ignore\", \"pipe\", \"ignore\"] }"
+    },
+    {
+      "file": "server/env-path.ts",
+      "callee": "execFile",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ timeout: CAPTURE_MS, maxBuffer: CAPTURE_BYTES, encoding: \"utf8\", env }"
+    },
+    {
+      "file": "server/env-path.ts",
+      "callee": "spawn",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ detached: true, stdio: [\"ignore\", \"pipe\", \"pipe\"], env }"
+    },
+    {
+      "file": "server/env-path.ts",
+      "callee": "spawnSync",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{\n      env, encoding: \"utf8\", timeout: 3000, windowsHide: true, maxBuffer: 16 * 1024, input: \"\", stdio: [\"pipe\", \"pipe\", \"pipe\"], ...(process.platform === \"win32\" ? {} : { detached: true }),\n    }"
+    },
+    {
+      "file": "server/fuigo-probe-isolation.ts",
+      "callee": "exec",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ cwd: home, env, timeout: 15000, maxBuffer: 65536 }"
+    },
+    {
+      "file": "server/installation-archive.ts",
+      "callee": "spawnSync",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ stdio: \"ignore\", env: {}, timeout: 120_000 }"
+    },
+    {
+      "file": "server/mcp-bridge.ts",
+      "callee": "spawn",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{\n      shell: false,\n      env: { ...process.env, PATH: augmentedPath() },\n      stdio: [\"ignore\", \"ignore\", \"ignore\"],\n    }"
+    },
+    {
+      "file": "server/mcp-bridge.ts",
+      "callee": "spawn",
+      "ordinal": 1,
+      "index": 2,
+      "options": "{\n    shell: false,\n    env: { ...process.env, PATH: augmentedPath() },\n    stdio: [\"pipe\", \"pipe\", \"pipe\"],\n  }"
+    },
+    {
+      "file": "server/memory/pip-reaper.ts",
+      "callee": "execFile",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ timeout: 10_000, encoding: \"utf8\", windowsHide: true, ...(abort ? { signal: abort } : {}) }"
+    },
+    {
+      "file": "server/memory/revocation-index.bench.mjs",
+      "callee": "execFileSync",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ env: { ...env, REVOKE_BENCH_ROLE: \"seed\" }, stdio: [\"ignore\", \"inherit\", \"inherit\"] }"
+    },
+    {
+      "file": "server/memory/revocation-index.bench.mjs",
+      "callee": "execFileSync",
+      "ordinal": 1,
+      "index": 2,
+      "options": "{ env: { ...env, REVOKE_BENCH_ROLE: \"upgrade\" }, stdio: [\"ignore\", \"pipe\", \"inherit\"], maxBuffer: 1 << 20 }"
+    },
+    {
+      "file": "server/memory/worker-controller.ts",
+      "callee": "fork",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{execArgv:[\"--experimental-strip-types\"],stdio:[\"ignore\",\"ignore\",\"pipe\",\"ipc\"],\n      env:{ELECTRON_RUN_AS_NODE:\"1\",\n        // The helper loads the server's config, which reads the home directory as it loads: it gets the server's own data\n        // directory and home, or an account with no home entry cannot start a helper at all (RED2C).\n        MURAGE_DATA_DIR:DATA_DIR,...(process.env.HOME?{HOME:process.env.HOME}:{}),...(process.env.USERPROFILE?{USERPROFILE:process.env.USERPROFILE}:{}),...(process.env.MURAGE_MEMORY_BACKEND===\"wasm\"?{MURAGE_MEMORY_BACKEND:\"wasm\"}:{}),...(process.env.SystemRoot?{SystemRoot:process.env.SystemRoot}:{}),...(process.env.TMPDIR?{TMPDIR:process.env.TMPDIR}:{})}}"
+    },
+    {
+      "file": "server/procs.ts",
+      "callee": "spawn",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{\n    ...rest,\n    stdio,\n    // Cloud home: the launcher itself gets a fixed PATH and cwd and four pipes;\n    // the turn's env (handed pins included) rides the request on fd 3, and\n    // stdin stays a pipe as Rule 74c requires.\n    ...(launch ? { env: { PATH: \"/usr/bin:/bin\" }, cwd: \"/\", stdio: [\"pipe\", \"pipe\", \"pipe\", \"pipe\"] as SpawnOptions[\"stdio\"] } : {}),\n    // posix: a new session (setsid), so neither the CLI nor any descendant has\n    // a controlling terminal (Rule 74c), and its own process group, so\n    // kill(-pid) reaps child MCP servers. win32: a hidden console of its own\n    // (CREATE_NO_WINDOW, every stdio piped), never DETACHED_PROCESS: a console\n    // descendant of a console-less process would get a new visible console.\n    // PIP and engine turns on Windows use a named job through the launcher; other Windows CLIs use taskkill /T.\n    ...(process.platform === \"win32\" ? { windowsHide: true } : { detached: true }),\n  }"
+    },
+    {
+      "file": "server/procs.ts",
+      "callee": "spawn",
+      "ordinal": 2,
+      "index": 2,
+      "options": "{ ...rest, stdio, detached: true }"
+    },
+    {
+      "file": "server/procs.ts",
+      "callee": "spawn",
+      "ordinal": 3,
+      "index": 2,
+      "options": "{ env: plan.env, cwd: opts.cwd, stdio: wrappedStdio, detached: true }"
+    },
+    {
+      "file": "server/procs.ts",
+      "callee": "spawn",
+      "ordinal": 4,
+      "index": 2,
+      "options": "{\n      cwd: opts.cwd,\n      env: opts.env,\n      stdio: [\"pipe\", \"pipe\", \"pipe\"],\n      windowsHide: true,\n      ...(win32 ? {} : { detached: true }),\n    }"
+    },
+    {
+      "file": "server/procs.ts",
+      "callee": "spawnSync",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{\n    cwd: opts.cwd ?? probeFolder(), env: { ...opts.env }, timeout: opts.timeout, maxBuffer: opts.maxBuffer, input: \"\", stdio: [\"pipe\", \"pipe\", \"pipe\"],\n    windowsHide: true, ...(process.platform === \"win32\" ? {} : { detached: true }),\n  }"
+    },
+    {
+      "file": "server/procs.ts",
+      "callee": "execFile",
+      "ordinal": 0,
+      "index": 2,
+      "options": "options"
+    },
+    {
+      "file": "server/tts/system-voices.ts",
+      "callee": "execFileAsync",
+      "ordinal": 0,
+      "index": 2,
+      "options": "{ timeout, maxBuffer: 4 * 1024 * 1024 }"
+    }
+  ]
+}

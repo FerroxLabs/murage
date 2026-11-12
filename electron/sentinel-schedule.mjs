@@ -1,3 +1,5 @@
+import { sentinelWindowsHideFiles } from "./sentinel-windows-hide-stage.mjs";
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -51,11 +53,19 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const pathFor = platform => (platform === "win32" ? path.win32 : path.posix);
 
 /** The per-installation OS names. Nothing else is ever created, read or removed. */
+function gateTaskContext() {
+  const prefix=process.env.MURAGE_GATE_RUN_PREFIX;
+  if(!prefix) return null;
+  const helper=process.env.MURAGE_GATE_TASK_HELPER;
+  const job=process.env.MURAGE_GATE_JOB_NAME;
+  if(!/^MurageCI-[a-f0-9]{32}-$/.test(prefix) || job!==`Local\\${prefix}` || !/^C:\\murage-ci\\results\\[^\r\n]+\\task-bridge\.exe$/i.test(helper ?? '')) refuse('SENTINEL_GATE_CONTEXT_INVALID');
+  return {prefix,helper,job};
+}
 export function sentinelNames(installationId) {
   if (typeof installationId !== "string" || !ID.test(installationId)) refuse("SENTINEL_INSTALLATION_ID_INVALID");
   return Object.freeze({
     label: `com.ferroxlabs.murage.sentinel.${installationId}`,
-    task: `${SENTINEL_TASK_FOLDER}${installationId}`,
+    task: `${SENTINEL_TASK_FOLDER}${gateTaskContext()?.prefix ?? ""}${installationId}`,
     unit: `murage-sentinel-${installationId}`,
     autostart: `murage-sentinel-${installationId}.desktop`,
   });
@@ -67,7 +77,11 @@ export function sentinelInvocation({ platform, descriptor, descriptorPath, mode 
   const exe = descriptor?.executable;
   const p = pathFor(platform);
   for (const value of [exe?.path, exe?.entry, descriptorPath]) if (typeof value !== "string" || !p.isAbsolute(value) || /[\0\r\n]/.test(value)) refuse("SENTINEL_PATH_INVALID");
-  if (platform === "win32") return { executable: exe.path, args: [SENTINEL_TRAMPOLINE_FLAG, exe.entry, descriptorPath, mode], env: {} };
+  if (platform === "win32") {
+    const gate=gateTaskContext();
+    const args=[SENTINEL_TRAMPOLINE_FLAG, exe.entry, descriptorPath, mode];
+    return gate ? {executable:gate.helper,args:[gate.job,exe.path,...args],env:{}} : {executable:exe.path,args,env:{}};
+  }
   return { executable: exe.path, args: [exe.entry, descriptorPath, mode, ...(platform === "linux" ? [APPRUN_NO_SANDBOX] : [])], env: { ELECTRON_RUN_AS_NODE: "1" } };
 }
 
@@ -148,6 +162,9 @@ export function parseLaunchdPlist(text) {
   return { executable: words[0], args: words.slice(1), installationId: found[1], revision: Number(found[2]) };
 }
 
+// Starts the GUI-subsystem Murage.exe directly, never cmd/PowerShell. after-pack
+// verifies that PE invariant; the trampoline hides its Node scanner child.
+// <Hidden> below controls Task Scheduler visibility, not console creation.
 function taskXml(id, revision, invocation, userSid) {
   if (typeof userSid !== "string" || !/^S-1-(?:\d+-){1,14}\d+$/.test(userSid)) refuse("SENTINEL_OWNER_UNKNOWN");
   const args = invocation.args.map(windowsArgument).join(" ");
@@ -357,7 +374,7 @@ export function defaultScheduleRun({ executable, args, timeoutMs = 15_000, env }
   return new Promise(resolve => {
     const baseEnv = { PATH: process.platform === "win32" ? process.env.PATH ?? "" : "/usr/bin:/bin", LANG: "C", LC_ALL: "C" };
     for (const key of ["HOME", "USERPROFILE", "SystemRoot", "SYSTEMROOT", "WINDIR", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "LOCALAPPDATA", "TEMP", "TMP"]) if (typeof process.env[key] === "string") baseEnv[key] = process.env[key];
-    execFile(executable, args, { env: { ...baseEnv, ...(env ?? {}) }, encoding: "buffer", timeout: timeoutMs, maxBuffer: LIMIT * 2, windowsHide: true, shell: false }, (error, stdout) => {
+    execFile(executable, [...args], withHideInherit({ env: { ...baseEnv, ...(env ?? {}) }, encoding: "buffer", timeout: timeoutMs, maxBuffer: LIMIT * 2, windowsHide: true, shell: false }), (error, stdout) => {
       if (error && (error.killed || typeof error.code !== "number")) { resolve({ code: null, stdout: "" }); return; }
       resolve({ code: error?.code ?? 0, stdout: decodeOutput(stdout) });
     });
@@ -618,11 +635,19 @@ export function entryDigest(bytes) { return createHash("sha256").update(bytes).d
  *  changes the file a registered job runs. */
 export function stageEntry({ outputRoot, source, platform = process.platform, uid = process.getuid?.() ?? -1 }) {
   const p = pathFor(platform);
-  const bytes = readFileSync(source);
+  const staged = sentinelWindowsHideFiles(source, readFileSync(source));
+  const bytes = staged.entry;
   if (bytes.length === 0 || bytes.length > 16 * 1024 * 1024) refuse("SENTINEL_ENTRY_INVALID");
   const sha256 = entryDigest(bytes);
   const dir = p.join(outputRoot, SENTINEL_RUNTIME_DIR);
   ensurePrivateDirs(outputRoot, dir, uid, platform);
+  for (const file of staged.files) {
+    const target = p.join(dir, file.name);
+    let prior;
+    try { prior = readFileSync(target); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+    if (!prior || !prior.equals(file.bytes)) writeOwnedAtomic(target, file.bytes, platform);
+    if (!readFileSync(target).equals(file.bytes)) refuse('SENTINEL_ENTRY_INVALID');
+  }
   const entry = p.join(dir, `cli-${sha256.slice(0, 16)}.js`);
   let existing = null;
   try { existing = readFileSync(entry); } catch (error) { if (error?.code !== "ENOENT") throw error; }

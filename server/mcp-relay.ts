@@ -1,3 +1,4 @@
+import { inertBot } from "./store.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
 //
@@ -54,16 +55,17 @@ export function mcpRemoteAudienceRefusal(threadId: string, isOwner: (threadId: s
 
 /** A bot the owner restricted to approved connected-app tools, or hid, does not
  * get the owner's own tool servers either. */
-export function mcpRemoteBotRefusal(bot: { hidden?: boolean; draftOnly?: true }, accessMode: "restricted" | "unrestricted"): string | null {
+export function mcpRemoteBotRefusal(bot: { hidden?: boolean; draftOnly?: true }, accessMode: "restricted" | "unrestricted", noLimits = false): string | null {
+  if (noLimits && !inertBot(bot)) return null;
   if (bot.draftOnly === true) return MCP_REMOTE_DRAFT_ONLY_BOT;
-  return bot.hidden === true || accessMode === "restricted" ? MCP_REMOTE_RESTRICTED_BOT : null;
+  return inertBot(bot) || accessMode === "restricted" ? MCP_REMOTE_RESTRICTED_BOT : null;
 }
 
 /** The owner's own command and link servers are mounted for a bot only when the
  * owner has not restricted or hidden it (MCP-LINK H1). Both mount sites in
  * index.ts gate on this. */
-export function ownServersAllowedFor(bot: AccessRole): boolean {
-  return mcpRemoteBotRefusal(bot, botAccessPolicy(bot).mode) === null;
+export function ownServersAllowedFor(bot: AccessRole, noLimits = false): boolean {
+  return mcpRemoteBotRefusal(bot, botAccessPolicy(bot).mode, noLimits) === null;
 }
 
 /** The relay's audience test on the turn's own record: the audience

@@ -23,22 +23,25 @@ describe("source code offer (AGPL section 13)", () => {
   });
 
   it("renders in the About section on every surface, not only the desktop", () => {
-    const modal = read("../components/SettingsModal.tsx");
-    const about = modal.slice(modal.indexOf('section === "about" && ('));
-    const block = about.slice(0, about.indexOf("</>"));
+    const page = read("../components/settings/pages/AboutPage.tsx");
+    const block = page.slice(page.indexOf('id: "about.shortcuts"'), page.indexOf("\n  ];"));
     expect(block).toMatch(/<SourceCodeRow\s*\/>/);
     expect(block).not.toMatch(/desktop === true && <SourceCodeRow/);
+    expect(block).not.toMatch(/desktop[^\n]*\?[^\n]*<SourceCodeRow/);
+    expect(block).toContain('subtitle={t("settings.about.sourceNote")}');
+    expect(block).toMatch(/<Card\b[^>]*><SourceCodeRow\s*\/><\/Card>/);
     const sections = read("./settings-sections.ts");
     expect(sections).toMatch(/\{ id: "about", group: "app" \}/); // not desktopOnly: the browser door shows it
   });
 
   it("links to the repository with the running version", () => {
-    const modal = read("../components/SettingsModal.tsx");
-    const row = modal.slice(modal.indexOf("function SourceCodeRow"));
+    const rows = read("../components/settings/pages/about-rows.tsx");
+    const row = rows.slice(rows.indexOf("function SourceCodeRow"));
     const body = row.slice(0, row.indexOf("\n}\n"));
     expect(body).toContain("sourceCodeLink()");
-    expect(body).toContain("APP_VERSION");
     expect(body).toContain('rel="noopener noreferrer"');
+    // About owns the surrounding Card; the retained row names the running version and links to its exact commit.
+    expect(body).toContain("sourceVersionLabel(APP_VERSION)");
   });
 
   it("links to the exact commit when the build knows it, else the repository", () => {

@@ -1,3 +1,4 @@
+import { readMcpCatalog } from "./mcp-listed.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -65,6 +66,7 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
         // round trips that carry a command's state (not the record cleanup after it)
         if (command.includes("EXEC_STATE")) requests += 1;
         const child = spawn("bash", ["-c", command], {
+          windowsHide: true,
           env: { HOME: home, PATH: process.env.PATH ?? "/usr/bin:/bin" },
           detached: true,
           stdio: ["ignore", "pipe", "pipe"],
@@ -115,6 +117,7 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
 
   const start = (env: Record<string, string> = {}) => {
     proxy = spawn(process.execPath, ["--experimental-strip-types", PROXY], {
+      windowsHide: true,
       env: {
         ...process.env,
         MURAGEBOX_BOX_API: `http://127.0.0.1:${boxPort}`,
@@ -241,6 +244,23 @@ describe.skipIf(process.platform !== "linux")("computer_exec on the cloud box (r
     expect(await untilDead(sleeper)).toBe(true);
     await new Promise((r) => setTimeout(r, 1_500));
     expect(results.has(5)).toBe(false);
+    rmSync(pidFile, { force: true });
+  }, 40_000);
+
+  it("c11-cancel computer P-4: a cancelled computer_exec call gets no frame and the catalog still certifies from the next tools/list", async () => {
+    silenceMs = 600_000;
+    const marker = join(home, "generation.computer");
+    start({ MURAGE_MCP_LISTED_FILE: marker });
+    const pidFile = join(home, "stop-catalog.pid");
+    exec(15, `sleep 120 & echo $! > ${pidFile}; wait`);
+    const sleeper = await untilFile(pidFile);
+    rpc({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 15, reason: "stop" } });
+    expect(await untilDead(sleeper)).toBe(true);
+    rpc({ jsonrpc: "2.0", id: 16, method: "tools/list" });
+    const listed = await waitFor(16);
+    await new Promise((r) => setTimeout(r, 1_000));
+    expect(results.has(15)).toBe(false);
+    expect(readMcpCatalog(marker)).toMatchObject({ complete: true, tools: listed.result.tools.map((tool: { name: string }) => tool.name) });
     rmSync(pidFile, { force: true });
   }, 40_000);
 

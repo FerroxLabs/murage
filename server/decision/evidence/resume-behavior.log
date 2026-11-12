@@ -1,0 +1,419 @@
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/settle-states.test.ts > R9 never resolving transport retries same answerId, interrupts by 20s and ignores late completion
+[memory] index build before listen name=memory_records_pinned ms=0
+[memory] index build before listen name=memory_source_lsn_created ms=0
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/decision/settle-states.test.ts > R9 never resolving transport retries same answerId, interrupts by 20s and ignores late completion 319ms
+ ✓ server/decision/settle-states.test.ts > R8 R9 M33 X7 two questions retain FIFO; instructions remain a normal send 254ms
+ ✓ server/decision/settle-states.test.ts > R19 Ask→No limits answers open owner BASE before returning; webhook stays BASE 242ms
+ ✓ server/decision/settle-states.test.ts > R19 a retained wipe card is reclassified when owner moves into No limits 249ms
+ ✓ server/decision/settle-states.test.ts > native request.resolved retires the captured generation and preserves its replacement 255ms
+ ✓ server/decision/settle-states.test.ts > native turn.completed retires the captured generation and preserves its replacement 259ms
+ ✓ server/decision/settle-states.test.ts > R19 non-owner open BASE records stay untouched on a move into No limits 267ms
+ ✓ server/decision/settle-states.test.ts > R18 ninth question refuses under a bounded reply and leaves the eight FIFO records intact 301ms
+stdout | server/decision/ingress.test.ts > A2 R16 M19 M22 M47 M48 first capture binds input, aliases and conflicts
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/decision/ingress.test.ts > A2 R16 M19 M22 M47 M48 first capture binds input, aliases and conflicts 306ms
+ ✓ server/decision/ingress.test.ts > A2 M49 claims alone supply service identity; spec/options are frozen and reserved fields rejected 280ms
+ ✓ server/decision/ingress.test.ts > R16 actor substitution ignored and all authority objects frozen at registration 242ms
+ ✓ server/decision/ingress.test.ts > R12 decision never reads message history 247ms
+ ✓ server/decision/ingress.test.ts > service execution joins concurrent calls, retains frozen content and never uses caller mutations 245ms
+ ✓ server/decision/ingress.test.ts > ingress duplicate event envelope metadata does not change input identity 250ms
+stdout | server/decision/ingress.test.ts > R12 ten and ten-thousand message histories have identical deny lookup cost and zero message reads
+[sqlite] slow op=WITH RECURSIVE n(x) AS(VALUES(?) UNION ALL SELECT x+? FROM n WHERE x<?) INSERT I ms=113 source=caller:ingress.test.ts:36<ingress.test.ts:36
+
+ ✓ server/decision/ingress.test.ts > R16 service request keys are scoped to their verified conversation, never another owner handle 250ms
+ ✓ server/decision/ingress.test.ts > R12 ten and ten-thousand message histories have identical deny lookup cost and zero message reads 364ms
+ ✓ server/decision/ingress.test.ts > A2 BASE conflict reads the latest bounded snapshot and keeps reader faults inside policy 258ms
+stdout | server/decision/budget.test.ts > R18 bounded registrations: 33rd same-thread request refuses and prior wipe survives
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=2
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/decision/budget.test.ts > A12a M64 50MB content hashes stably without an unbounded clone; depth/key bounds 107ms
+ ✓ server/decision/budget.test.ts > R18 bounded registrations: 33rd same-thread request refuses and prior wipe survives 357ms
+ ✓ server/decision/budget.test.ts > A12a prune walks settled index in batches of 500 286ms
+ ✓ server/decision/budget.test.ts > M64 projection never calls structuredClone before enforcing bounds 4ms
+ ✓ server/decision/budget.test.ts > M36 one cumulative reader budget covers outer scripts and all nested executables 3ms
+ ✓ server/decision/budget.test.ts > A12a UTF-8 byte bounds apply to content heads, values and oversized keys 16ms
+ ✓ server/decision/budget.test.ts > A12a content heads share the same one MB registration budget 7ms
+ ✓ server/decision/budget.test.ts > R18 600 concurrent registrations enforce the process cap without evicting a live wipe 336ms
+ ✓ server/decision/budget.test.ts > R18 64 and 65 executables and five nested interpreters remain bounded and retain earlier wipe evidence 7ms
+ ✓ server/decision/budget.test.ts > R18 1,000 changing deny revisions keep exact lookup work and retain a late deny 366ms
+ ✓ server/decision/budget.test.ts > A12a content streaming hashes the original Unicode bytes at every chunk boundary 4ms
+stdout | server/decision/cost.test.ts > A12a 10,000 settled records stay bounded; million-row pruning uses index and bounded batches
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+[sqlite] slow op=exec: WITH RECURSIVE n(x) AS(VALUES(?) UNION ALL SELECT x+? FROM n WHERE x<?) IN ms=5016 source=exec:WITH RECURSIVE n(x) AS(VALUES(?) UNION A
+[sqlite] slow op=DELETE FROM approval_records WHERE id IN(SELECT id FROM approval_records INDEXED ms=93 source=caller:records.ts:60<cost.test.ts:12
+{"metric":"million-row-prune","milliseconds":98.15064999999959,"batch":500,"cache":1024}
+
+stdout | server/decision/cost.test.ts > A12a 10,000 streamed text patches report trigger overhead ≤10%
+[sqlite] slow op=SELECT rowid AS position, seq, kind, text, CASE kind WHEN ? THEN json_extract(js ms=102 source=caller:message-db.ts:1138<message-db.ts:1135
+{"metric":"text-patch-trigger-cost","patches":10000,"on":[25934.957534999998],"off":[43097.80815999999],"ratio":0.6017697567986947}
+
+ ✓ server/decision/cost.test.ts > A12a 10,000 settled records stay bounded; million-row pruning uses index and bounded batches 5985ms
+ ✓ server/decision/cost.test.ts > A12a 10,000 streamed text patches report trigger overhead ≤10% 69606ms
+stdout | server/pm-sends-102-r22.test.ts > 1. a hand-off of owner origin starts exactly once through every crash > crash before-commit
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/pm-sends-102-r22.test.ts > 1. a hand-off of owner origin starts exactly once through every crash > crash before-commit 424ms
+ ✓ server/pm-sends-102-r22.test.ts > 1. a hand-off of owner origin starts exactly once through every crash > crash after-commit 340ms
+ ✓ server/pm-sends-102-r22.test.ts > 1. a hand-off of owner origin starts exactly once through every crash > crash after-accept 346ms
+stderr | server/pm-sends-102-r22.test.ts > 1. a hand-off of owner origin starts exactly once through every crash > crash after-receipt
+delegations: a finished handoff could not be settled; its row stays and the next pass settles it Error: refused
+    at StatementSync.instrumentedStatement [as run] (/work/server/io-budget.ts:615:26)
+    at op (/work/server/delegations.ts:627:29)
+    at transaction (/work/server/database.ts:495:22)
+    at settleReceipted (/work/server/delegations.ts:617:5)
+    at recordDelegationReceipt (/work/server/delegations.ts:498:3)
+    at /work/server/pm-sends-102-r22.test.ts:107:38
+    at Object.startTurn (/work/server/testing/handoff-turn.ts:64:13)
+    at launch (/work/server/handoff-dispatch.ts:729:13)
+    at dispatchStart (/work/server/handoff-dispatch.ts:468:46)
+    at dispatchOne (/work/server/handoff-dispatch.ts:460:10) {
+  code: 'ERR_SQLITE_ERROR',
+  errcode: 1811,
+  errstr: 'constraint failed'
+}
+
+ ✓ server/pm-sends-102-r22.test.ts > 1. a hand-off of owner origin starts exactly once through every crash > crash after-receipt 338ms
+ ✓ server/pm-sends-102-r22.test.ts > 1. a hand-off of room origin starts exactly once through every crash > crash before-commit 329ms
+ ✓ server/pm-sends-102-r22.test.ts > 1. a hand-off of room origin starts exactly once through every crash > crash after-commit 296ms
+ ✓ server/pm-sends-102-r22.test.ts > 1. a hand-off of room origin starts exactly once through every crash > crash after-accept 291ms
+stderr | server/pm-sends-102-r22.test.ts > 1. a hand-off of room origin starts exactly once through every crash > crash after-receipt
+delegations: a finished handoff could not be settled; its row stays and the next pass settles it Error: refused
+    at StatementSync.instrumentedStatement [as run] (/work/server/io-budget.ts:615:26)
+    at op (/work/server/delegations.ts:627:29)
+    at transaction (/work/server/database.ts:495:22)
+    at settleReceipted (/work/server/delegations.ts:617:5)
+    at recordDelegationReceipt (/work/server/delegations.ts:498:3)
+    at /work/server/pm-sends-102-r22.test.ts:107:38
+    at Object.startTurn (/work/server/testing/handoff-turn.ts:64:13)
+    at launch (/work/server/handoff-dispatch.ts:729:13)
+    at dispatchStart (/work/server/handoff-dispatch.ts:468:46)
+    at dispatchOne (/work/server/handoff-dispatch.ts:460:10) {
+  code: 'ERR_SQLITE_ERROR',
+  errcode: 1811,
+  errstr: 'constraint failed'
+}
+
+ ✓ server/pm-sends-102-r22.test.ts > 1. a hand-off of room origin starts exactly once through every crash > crash after-receipt 298ms
+ ✓ server/pm-sends-102-r22.test.ts > 1. a hand-off of legacy origin starts exactly once through every crash > crash before-commit 284ms
+ ✓ server/pm-sends-102-r22.test.ts > 1. a hand-off of legacy origin starts exactly once through every crash > crash after-commit 274ms
+ ✓ server/pm-sends-102-r22.test.ts > 1. a hand-off of legacy origin starts exactly once through every crash > crash after-accept 265ms
+stderr | server/pm-sends-102-r22.test.ts > 1. a hand-off of legacy origin starts exactly once through every crash > crash after-receipt
+delegations: a finished handoff could not be settled; its row stays and the next pass settles it Error: refused
+    at StatementSync.instrumentedStatement [as run] (/work/server/io-budget.ts:615:26)
+    at op (/work/server/delegations.ts:627:29)
+    at transaction (/work/server/database.ts:495:22)
+    at settleReceipted (/work/server/delegations.ts:617:5)
+    at recordDelegationReceipt (/work/server/delegations.ts:498:3)
+    at /work/server/pm-sends-102-r22.test.ts:107:38
+    at Object.startTurn (/work/server/testing/handoff-turn.ts:64:13)
+    at launch (/work/server/handoff-dispatch.ts:729:13)
+    at dispatchStart (/work/server/handoff-dispatch.ts:468:46)
+    at dispatchOne (/work/server/handoff-dispatch.ts:460:10) {
+  code: 'ERR_SQLITE_ERROR',
+  errcode: 1811,
+  errstr: 'constraint failed'
+}
+
+ ✓ server/pm-sends-102-r22.test.ts > 1. a hand-off of legacy origin starts exactly once through every crash > crash after-receipt 274ms
+ ✓ server/pm-sends-102-r22.test.ts > 1b. the start is one commit with the prompt > a start that cannot be recorded leaves no prompt; a second start of the same hand-off is refused and adds no second prompt 334ms
+ ✓ server/pm-sends-102-r22.test.ts > 1b. the start is one commit with the prompt > a hand-off the queue no longer holds cannot start 304ms
+ ✓ server/pm-sends-102-r22.test.ts > 1b. the start is one commit with the prompt > a second cut-short start is held for the owner (did not start) instead of a third turn, and is never deleted 346ms
+ ✓ server/pm-sends-102-r22.test.ts > 1c. shared work: the row is stamped by the start, after the approval wait, never by the dispatch > dispatching the request leaves the row unstarted; the start (after the wait) stamps it; a restart that finds it accepted receipts it as interrupted, never re-runs it 276ms
+ ✓ server/pm-sends-102-r22.test.ts > 1c. shared work: the row is stamped by the start, after the approval wait, never by the dispatch > a shared hand-off whose request is gone is settled with a receipt, never started as a plain hand-off 257ms
+ ✓ server/pm-sends-102-r22.test.ts > 2. a pruned or unknown request can no longer bring a hand-off back > interrupt, unresolved sender, prune at day 31, sender restored: exactly one start in all 322ms
+ ✓ server/pm-sends-102-r22.test.ts > 2. a pruned or unknown request can no longer bring a hand-off back > a request whose hand-off row is still in the queue is never pruned from under it, and the boot sweep leaves it alone 244ms
+stdout | server/pm-sends-102-r22.test.ts > 3. the owner's recorded deletions settle hand-offs independently of the sender > a delayed import skips entries whose source conversation, sender or target was deleted, and counts them
+delegations: 3 queued handoff(s) of deleted conversations or bots were not imported
+
+ ✓ server/pm-sends-102-r22.test.ts > 3. the owner's recorded deletions settle hand-offs independently of the sender > a delayed import skips entries whose source conversation, sender or target was deleted, and counts them 232ms
+ ✓ server/pm-sends-102-r22.test.ts > 3. the owner's recorded deletions settle hand-offs independently of the sender > a live sender does not hide a deleted source conversation: the drain cancels with a receipt and no chip, and nothing starts 247ms
+ ✓ server/pm-sends-102-r22.test.ts > 3. the owner's recorded deletions settle hand-offs independently of the sender > queueing from a deleted conversation is refused 262ms
+ ✓ server/pm-sends-102-r22.test.ts > 3. the owner's recorded deletions settle hand-offs independently of the sender > a deletion that lands between the drain's check and the start transaction rolls the start back: no prompt, no started row 295ms
+stdout | server/pm-sends-102-r22.test.ts > 4. owner hand-offs cost the rooms nothing > 100,000 parked owner hand-offs: the room tables hold no row for them, and the new statements plan without a table scan
+[sqlite] slow op=exec: WITH RECURSIVE n(i) AS (SELECT ? UNION ALL SELECT i+? FROM n WHERE i<?) IN ms=520 source=exec:WITH RECURSIVE n(i) AS (SELECT ? UNION A
+
+stdout | server/pm-sends-102-r22.test.ts > 4. owner hand-offs cost the rooms nothing > 100,000 parked owner hand-offs: the room tables hold no row for them, and the new statements plan without a table scan
+[sqlite] slow op=DELETE FROM pending_delegations ms=380 source=caller:delegations.ts:2223<pm-sends-102-r22.test.ts:55
+
+ ✓ server/pm-sends-102-r22.test.ts > 4. owner hand-offs cost the rooms nothing > 100,000 parked owner hand-offs: the room tables hold no row for them, and the new statements plan without a table scan 1121ms
+ ✓ server/pm-sends-102-r22.test.ts > 4. owner hand-offs cost the rooms nothing > completion leaves no running record behind: after the receipt there is no row and no room request 360ms
+ ✓ server/pm-sends-102-r22.test.ts > 4. owner hand-offs cost the rooms nothing > a restore with 50 owner hand-offs reports no room-request notices and holds nothing for them 263ms
+ ✓ server/pm-sends-102-r22.test.ts > 4. owner hand-offs cost the rooms nothing > the one-time cleanup of the development stand-in records keeps a running hand-off from ever running again 316ms
+ ✓ server/pm-sends-102-r22.test.ts > 5. the downgrade drops every 1.0.2 application object (frozen list) and the real 1.0.1 inspector accepts the result > without the inbox projection the stepped file is accepted by the real 1.0.1 inspector; any one 1.0.2 object left behind is rejected 2165ms
+ ✓ server/pm-sends-102-r22.test.ts > 5. the downgrade drops every 1.0.2 application object (frozen list) and the real 1.0.1 inspector accepts the result > the frozen manifest equals the 1.0.1 referenceSchema(), and every 1.0.2 object is either a 1.0.1 object, a memory object or in the frozen list 274ms
+ ✓ server/pm-sends-102-r22.test.ts > 5. the downgrade drops every 1.0.2 application object (frozen list) and the real 1.0.1 inspector accepts the result > an injected failure right before the commit changes nothing; the retry writes the same files; a third run is a no-op 695ms
+ ✓ server/pm-sends-102-r22.test.ts > 5. the downgrade drops every 1.0.2 application object (frozen list) and the real 1.0.1 inspector accepts the result > a leftover entry with the same id is replaced, one that must not run is removed, and a re-upgrade imports every hand-off exactly once 944ms
+ ✓ server/pm-sends-102-r22.test.ts > 5. the downgrade drops every 1.0.2 application object (frozen list) and the real 1.0.1 inspector accepts the result > it refuses, touching nothing, while an owner send or a restore hold still keeps the owner's words 446ms
+stdout | server/added-table-lifecycle.test.ts > the lifecycle map beside the list of added tables > a retained entry names a function that exists, and a child entry carries its cascade in a fresh database
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/added-table-lifecycle.test.ts > the lifecycle map beside the list of added tables > has one entry for every listed table and no entry for a table that is not listed 5ms
+ ✓ server/added-table-lifecycle.test.ts > the lifecycle map beside the list of added tables > a retained entry names a function that exists, and a child entry carries its cascade in a fresh database 377ms
+ ✓ server/added-table-lifecycle.test.ts > the lifecycle map beside the list of added tables > every child entry is reached by the sweep, and the sweep is reached from pruning and from project deletion 244ms
+ ✓ server/added-table-lifecycle.test.ts > rows that belong to a request leave with it > pruning 1,000 finished requests leaves no mapping behind 1106ms
+ ✓ server/added-table-lifecycle.test.ts > rows that belong to a request leave with it > deleting a project group takes its mappings with it 291ms
+ ✓ server/added-table-lifecycle.test.ts > rows that belong to a request leave with it > a restored file with orphan rows (made with foreign keys off) is cleaned by the next prune 364ms
+ ✓ server/added-table-lifecycle.test.ts > rows that belong to a request leave with it > a table an earlier build made without the cascade is rebuilt once, keeping only rows whose request exists 323ms
+ ✓ server/added-table-lifecycle.test.ts > rows that belong to a request leave with it > an archive written before the cascade still passes the inspector 556ms
+ ✓ server/added-table-lifecycle.test.ts > R5-04: a card result still owed to its project room is never discarded by the downgrade > refuses with a plain sentence, leaves the owed row and its payload where they were, and goes through once the delivery is done 299ms
+ ✓ server/added-table-lifecycle.test.ts > against the real 1.0.1 (git archive d950cbf67) > the list names what fresh 1.0.2 adds to the real 1.0.1, beside the inbox projection and the forget table, and nothing listed already existed in 1.0.1 193ms
+ ✓ server/added-table-lifecycle.test.ts > against the real 1.0.1 (git archive d950cbf67) > the real 1.0.1 inspector refuses a stepped file only over the inbox projection, and accepts it without, after rows in every registered table 654ms
+ ✓ server/added-table-lifecycle.test.ts > C2 adds zero objects to the real 1.0.1 base inventory 279ms
+ ✓ server/added-table-lifecycle.test.ts > T-DOWNGRADE offline orchestration to 6 drops previews without serving acquisition 822ms
+ ✓ server/added-table-lifecycle.test.ts > T-DOWNGRADE offline orchestration to 10 drops previews without serving acquisition 749ms
+ ✓ server/added-table-lifecycle.test.ts > T-DOWNGRADE offline orchestration to 12 drops previews without serving acquisition 641ms
+ ✓ server/added-table-lifecycle.test.ts > T-DOWNGRADE offline orchestration rolls both preview drops back after the second drop fails 295ms
+stdout | server/decision/settle-faults.test.ts > R9 retained fault grid actor / owner-clean
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid actor / owner-clean 388ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid actor / owner-wipe 283ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid actor / guest-full 265ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid deny / owner-clean 270ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid deny / owner-wipe 294ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid deny / guest-full 303ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid shell / owner-clean 284ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid shell / owner-wipe 243ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid shell / guest-full 253ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid python / owner-clean 253ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid python / owner-wipe 281ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid python / guest-full 257ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid base / owner-clean 279ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid base / owner-wipe 272ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid base / guest-full 276ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid guard / owner-clean 303ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid guard / owner-wipe 260ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid guard / guest-full 262ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid row / owner-clean 292ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid row / owner-wipe 277ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid row / guest-full 288ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid answer / owner-clean 263ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid answer / owner-wipe 274ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid answer / guest-full 255ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid observer / owner-clean 262ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid observer / owner-wipe 268ms
+ ✓ server/decision/settle-faults.test.ts > R9 retained fault grid observer / guest-full 260ms
+ ✓ server/decision/settle-faults.test.ts > protected matching is total over malformed and escaped paths 6ms
+stdout | server/decision/faults.test.ts > A5 M38 protected match wins before stored-source failure; reads run (M28)
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/decision/faults.test.ts > A5 M38 protected match wins before stored-source failure; reads run (M28) 337ms
+ ✓ server/decision/faults.test.ts > A5 stored browser fault refuses without inventing a card 257ms
+ ✓ server/decision/faults.test.ts > A5 M51 non-owner ask faults use frozen BASE callback 267ms
+ ✓ server/decision/faults.test.ts > A5 M51 non-owner auto faults use frozen BASE callback 303ms
+ ✓ server/decision/faults.test.ts > A5 M51 non-owner full faults use frozen BASE callback 307ms
+ ✓ server/decision/faults.test.ts > A5 M51 non-owner unlimited faults use frozen BASE callback 261ms
+ ✓ server/decision/faults.test.ts > R9 M23 M24 unproven owner does not mint BASE card; missing command runs 277ms
+ ✓ server/decision/faults.test.ts > R16 M21 deny revision is rechecked immediately before RUN delivery 291ms
+ ✓ server/decision/faults.test.ts > M23 reader throws: owner clean runs, guest retains BASE fault behavior 258ms
+ ✓ server/decision/faults.test.ts > R9 record creation failure denies the engine without a second card 265ms
+ ✓ server/decision/faults.test.ts > R9 provenance/level reader failures produce bounded refusal, never a waiting engine 285ms
+ ✓ server/decision/faults.test.ts > R9 answer row failure delivers deny and bounded text without another card 274ms
+ ✓ server/decision/faults.test.ts > A5 X10 non-owner ask faults retain BASE fault CARD even when normal BASE would RUN 285ms
+ ✓ server/decision/faults.test.ts > A5 X10 non-owner auto faults retain BASE fault CARD even when normal BASE would RUN 301ms
+ ✓ server/decision/faults.test.ts > A5 X10 non-owner full faults retain BASE fault CARD even when normal BASE would RUN 295ms
+ ✓ server/decision/faults.test.ts > A5 X10 non-owner unlimited faults retain BASE fault CARD even when normal BASE would RUN 266ms
+ ✓ server/decision/faults.test.ts > R9 missing live authority is not weakened by a simultaneous action-reader fault 257ms
+ ✓ server/decision/workflow-smoke.test.ts > isolated fake-engine fixture launches and settles a chat through the documented control surface 4461ms
+ ✓ server/decision/inventory.test.ts > R2 M9 raw-writer and per-file producer inventory pins all existing sites 4099ms
+ ✓ server/decision/inventory.test.ts > L5 M68 credential card producer and fresh raw writer mutations are detected 1ms
+ ✓ server/decision/inventory.test.ts > replay authority adapter is restricted to tests and replay scripts 71ms
+stdout | server/decision/schema-lifecycle.test.ts > A5c M57 restore/downgrade cancellation settles record before same-action row
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/decision/schema-lifecycle.test.ts > A4 A5b M50 schema is registered once and migration DDL is atomic and restartable 10ms
+ ✓ server/decision/schema-lifecycle.test.ts > A5c M57 restore/downgrade cancellation settles record before same-action row 344ms
+ ✓ server/decision/schema-lifecycle.test.ts > A4 full downgrade with open engine and queue records is accepted by the real 1.0.1 inspector 733ms
+ ✓ server/decision/schema-lifecycle.test.ts > A4 staged email redaction terminalizes records and changes display only 292ms
+ ✓ server/decision/schema-lifecycle.test.ts > A4 bound email bodies cannot escape in a staged backup (email tables true) 255ms
+ ✓ server/decision/schema-lifecycle.test.ts > A4 bound email bodies cannot escape in a staged backup (email tables false) 272ms
+ ✓ server/decision/schema-lifecycle.test.ts > A5b process death inside migration leaves no partial DDL 88ms
+stderr | server/decision/schema-lifecycle.test.ts > A5c real archive restore settles engine and browser queue records without changing their actions
+memory receipts revoked scope=global cause=restore count=0
+memory receipts revoked scope=records cause=tombstones count=0
+
+ ✓ server/decision/schema-lifecycle.test.ts > A5c real archive restore settles engine and browser queue records without changing their actions 883ms
+stdout | server/decision/engine-action.test.ts > BASE engine builder receives frozen authority/verdict and binds grant keys and options once
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/decision/engine-action.test.ts > BASE engine builder receives frozen authority/verdict and binds grant keys and options once 347ms
+ ✓ server/decision/engine-action.test.ts > owner RUN never calls the engine builder or BASE callback 263ms
+ ✓ server/decision/engine-action.test.ts > reserved engine action identities cannot create an approval 244ms
+ ✓ server/decision/engine-action.test.ts > cleared deny before engine presentation runs and leaves no card 257ms
+ ✓ server/decision/engine-action.test.ts > a cleared service deny after queue persistence executes once without a new permission row 230ms
+ ✓ server/decision/engine-action.test.ts > native posture retirement supersedes an answered identity without sending another answer 250ms
+ ✓ server/decision/engine-action.test.ts > structured question parts keep their native choices and settle with one complete answer 244ms
+ ✓ server/decision/engine-action.test.ts > BASE native questions retain their original card path at ask 236ms
+ ✓ server/decision/engine-action.test.ts > BASE native questions retain their original card path at auto 238ms
+ ✓ server/decision/engine-action.test.ts > BASE native questions retain their original card path at full 250ms
+ ✓ server/decision/engine-action.test.ts > BASE native questions retain the guest card at No limits 257ms
+stdout | server/decision/base-parity.test.ts > R13 405 frozen 1.0.18 verdicts remain byte equal on BASE
+approvals: asked bot=unknown tool=Bash reason=no-grant origin=owner unattended=0 cmd=shell level=ask owner=0 suppressed=0
+approvals: asked bot=unknown tool=Bash reason=destructive-guard origin=owner unattended=0 cmd=shell level=ask owner=0 suppressed=0
+approvals: asked bot=unknown tool=Bash reason=unreadable origin=owner unattended=0 cmd=shell reader=held level=ask owner=0 held=unread suppressed=0 why=tokenizer
+approvals: asked bot=unknown tool=Bash reason=always-ask:delete-root origin=owner unattended=0 cmd=shell level=ask owner=0 suppressed=0
+approvals: asked bot=unknown tool=Bash reason=sensitive-guard origin=owner unattended=0 cmd=shell level=ask owner=0 held=key-row suppressed=0 row=ssh
+approvals: asked bot=unknown tool=Bash reason=stop-line:delete origin=routine unattended=0 cmd=shell level=ask owner=0 suppressed=0
+approvals: asked bot=unknown tool=Bash reason=unattended-block origin=owner-channel unattended=1 cmd=shell level=auto owner=0 suppressed=0
+
+stdout | server/decision/base-parity.test.ts > R10 outside-marked owner request runs: ssh host 'echo fixture'
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/decision/base-parity.test.ts > R13 405 frozen 1.0.18 verdicts remain byte equal on BASE 147ms
+ ✓ server/decision/base-parity.test.ts > R10 outside-marked owner request runs: ssh host 'echo fixture' 350ms
+ ✓ server/decision/base-parity.test.ts > R10 outside-marked owner request runs: cd d && ls 247ms
+ ✓ server/decision/base-parity.test.ts > R10 outside-marked owner request runs: git commit -am x && git push origin HEAD && rm -f /tmp/x.tmp 233ms
+ ✓ server/decision/base-parity.test.ts > R3 data fields never become executable evidence 3ms
+ ✓ server/decision/base-parity.test.ts > R3 content-only email runs its exact registered action without cards 226ms
+ ✓ server/decision/base-parity.test.ts > R3 content-only peer runs its exact registered action without cards 236ms
+ ✓ server/decision/base-parity.test.ts > R3 content-only memory runs its exact registered action without cards 239ms
+stdout | server/decision/record-presentation.test.ts > A6 F5 terminal allow emits the persisted patch
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/decision/record-presentation.test.ts > A6 F5 terminal allow emits the persisted patch 366ms
+ ✓ server/decision/record-presentation.test.ts > A6 F5 terminal deny emits the persisted patch 276ms
+ ✓ server/decision/record-presentation.test.ts > A6 F5 terminal expired emits the persisted patch 276ms
+ ✓ server/decision/record-presentation.test.ts > R17 M5 queue→card consumes one record, accepts JSON round-trip, rejects wrong refs (M20) 289ms
+ ✓ server/decision/record-presentation.test.ts > A6 F5 restart expires an engine record and emits its terminal patch after durable state 281ms
+ ✓ server/decision/record-presentation.test.ts > A6 F5 legacy terminal patches reach the client 281ms
+stdout | server/decision/authority-attacks.test.ts > R2 M1 M3 M4 M6 M7 M8 forged, discarded and factory authority cannot present
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/decision/authority-attacks.test.ts > R2 M1 M3 M4 M6 M7 M8 forged, discarded and factory authority cannot present 318ms
+ ✓ server/decision/authority-attacks.test.ts > R2 M13 insertMessageAfter patched[] aborts and leaves no permission rows 258ms
+ ✓ server/decision/authority-attacks.test.ts > R2 M15 rewrite-injected card is checked after transformations 259ms
+ ✓ server/decision/authority-attacks.test.ts > R2 M16 computed payload mutation after a real record cannot change action in raw SQL 261ms
+ ✓ server/decision/authority-attacks.test.ts > R2 M2 wrong-request authority cannot attach another registered queue call 292ms
+stdout | server/decision/seam.test.ts > A1 R2 M10 M11 M12 M15 M17 refuse unregistered final rows through real Store and raw SQL
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/decision/seam.test.ts > A1 R2 M10 M11 M12 M15 M17 refuse unregistered final rows through real Store and raw SQL 326ms
+stderr | server/decision/seam.test.ts > A1 M18 emit-only forged permission patch is dropped; credentials cannot carry cards
+card-emit-dropped message.patch
+
+ ✓ server/decision/seam.test.ts > A1 M14 M16 action identity and unknown payload fields cannot change; terminal patches emitted 297ms
+ ✓ server/decision/seam.test.ts > A1 M18 emit-only forged permission patch is dropped; credentials cannot carry cards 248ms
+ ✓ server/decision/seam.test.ts > M40 invalid JSON on ordinary rows is admitted without parsing; permission erasure aborts 239ms
+ ✓ server/decision/seam.test.ts > M40 malformed options JSON is inert and can be repaired without a JSON parser error 222ms
+stdout | server/decision/records-crash.test.ts > A4a M53 queue-first crash, tx rollback, committed restart yield exactly one usable row
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/decision/records-crash.test.ts > A4a M53 queue-first crash, tx rollback, committed restart yield exactly one usable row 276ms
+ ✓ server/decision/records-crash.test.ts > A4a M53 record and row roll back together when messageRewrite drops the row 223ms
+ ✓ server/decision/records-crash.test.ts > A4c M55 answer/answerId/pending survive crash before acceptance; restart never claims execution 232ms
+ ✓ server/decision/records-crash.test.ts > recovery refuses a missing queue adapter instead of reporting success 232ms
+ ✓ server/decision/records-crash.test.ts > A4a A4c orphaned queue re-decided RUN persists one answerId before transport and across a crash 239ms
+stdout | server/decision/routine-policy.test.ts > A7a core validates exact routine run source, bot and generation
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/decision/routine-policy.test.ts > R4b R4c M29 owner routines override captured ceiling only while bot is unlimited; draft stays Ask 4ms
+ ✓ server/decision/routine-policy.test.ts > A7a core validates exact routine run source, bot and generation 309ms
+ ✓ server/decision/routine-policy.test.ts > A7a core validates exact routine wake source, bot and generation 265ms
+ ✓ server/decision/routine-policy.test.ts > A7a core validates exact routine peer source, bot and generation 246ms
+ ✓ server/decision/routine-policy.test.ts > A7a core validates exact routine project-room source, bot and generation 242ms
+stdout | server/decision/records-dedup.test.ts > A4b M54 terminal duplicate allow retains one tombstone and row
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/decision/records-dedup.test.ts > A4b M54 terminal duplicate allow retains one tombstone and row 310ms
+ ✓ server/decision/records-dedup.test.ts > A4b M54 terminal duplicate deny retains one tombstone and row 247ms
+ ✓ server/decision/records-dedup.test.ts > A4b M54 terminal duplicate expire retains one tombstone and row 245ms
+ ✓ server/decision/records-dedup.test.ts > M54 terminal SQL tombstone rejects a second record with the same request key 256ms
+stdout | server/decision/exec-mode.test.ts > R1 Python evidence reaches real decision and sink: import shutil as s; s.rmtree('/')
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign printf '%s\n' 'mkfs.ext4 /dev/sda' 6ms
+ ✓ server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign echo "rm -rf ~" 2ms
+ ✓ server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign # rm -rf / 1ms
+ ✓ server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign cat <<EOF
+rm -rf ~
+EOF 1ms
+ ✓ server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign python3 -c "print('shutil.rmtree(\"/\")')" 3ms
+ ✓ server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign node -e "const s='rm -rf ~'" 2ms
+ ✓ server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign git commit -m "remove mkfs notes" 1ms
+ ✓ server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign printf '%s\n' '$(rm -rf ~)' 1ms
+ ✓ server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign echo \$(rm -rf ~) 1ms
+ ✓ server/decision/exec-mode.test.ts > R14 A8a M25 M26 M60 M61 executable/data benign cat <<'EOF'
+$(rm -rf ~)
+EOF 1ms
+ ✓ server/decision/exec-mode.test.ts > R15 A8a real twin mkfs.ext4 /dev/sda 1ms
+ ✓ server/decision/exec-mode.test.ts > R15 A8a real twin sh -c 'rm -rf ~' 1ms
+ ✓ server/decision/exec-mode.test.ts > R15 A8a real twin rm -rf / 1ms
+ ✓ server/decision/exec-mode.test.ts > R15 A8a real twin bash <<EOF
+rm -rf ~
+EOF 1ms
+ ✓ server/decision/exec-mode.test.ts > R15 A8a real twin python3 -c "import shutil;shutil.rmtree('/')" 2ms
+ ✓ server/decision/exec-mode.test.ts > R15 A8a real twin node -e "require('child_process').execSync('rm -rf ~')" 1ms
+ ✓ server/decision/exec-mode.test.ts > R15 A8a real twin dd if=/dev/zero of=/dev/sda 1ms
+ ✓ server/decision/exec-mode.test.ts > R15 A8a real twin echo "$(rm -rf ~)" 1ms
+ ✓ server/decision/exec-mode.test.ts > R15 A8a real twin echo `rm -rf ~` 1ms
+ ✓ server/decision/exec-mode.test.ts > R15 A8a real twin cat <<EOF
+$(rm -rf ~)
+EOF 1ms
+ ✓ server/decision/exec-mode.test.ts > R1 aliases retain nested Python wipe evidence 1ms
+ ✓ server/decision/exec-mode.test.ts > R1 Python evidence reaches real decision and sink: import shutil as s; s.rmtree('/') 321ms
+ ✓ server/decision/exec-mode.test.ts > R1 Python evidence reaches real decision and sink: from shutil import rmtree as r; r('/') 262ms
+ ✓ server/decision/exec-mode.test.ts > R1 Python evidence reaches real decision and sink: __import__('shutil').rmtree('/') 250ms
+ ✓ server/decision/exec-mode.test.ts > R1 Python evidence reaches real decision and sink: import subprocess; subprocess.run(['rm','-rf','/']) 261ms
+ ✓ server/decision/exec-mode.test.ts > fork bomb executes but its printed documentation is inert 3ms
+ ✓ server/decision/exec-mode.test.ts > PowerShell root deletion and nested command are executable evidence 3ms
+ ✓ server/decision/exec-mode.test.ts > engine execute kinds and argv preserve executable arguments 2ms
+ ✓ server/decision/exec-mode.test.ts > connected-app multi-execute binds each catalog operation and exact account 3ms
+stdout | server/decision/legacy-import.test.ts > A5a M56 lazy legacy unanswered permission rows are terminal on import
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/decision/legacy-import.test.ts > A5a M56 lazy legacy unanswered permission rows are terminal on import 297ms
+ ✓ server/decision/legacy-import.test.ts > A5a malformed legacy JSON has no actionable presentation 248ms
+stdout | server/permission-level-parity.test.ts > R6 M30 X5 full 512-cell transition parity, including non-owner No-limits sole mirroring
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/permission-level-parity.test.ts > R6 M30 X5 full 512-cell transition parity, including non-owner No-limits sole mirroring 367ms
+
+ Test Files  22 passed (22)
+      Tests  216 passed (216)
+   Start at  08:12:08
+   Duration  163.27s (transform 5.27s, setup 18.03s, import 2.32s, tests 140.55s, environment 2ms)
+

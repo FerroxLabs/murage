@@ -368,6 +368,55 @@ describe("revoke (companion) and the barrier (Astra AS2)", () => {
     expect(rig.revocations.barred(A)).toBe(false);
     expect((await ok(call(rig, "POST", "/api/phones/minted", { companion: true, device: null, body: { deviceId: A, scope: "other" } }))).status).toBe(400);
   });
+  it("GET /api/phones says per phone whether its latest ask mint opted in to its device id", async () => {
+    const rig = makeRig(newDbFile());
+    await register(rig);
+    const list = async () => ((await ok(call(rig, "GET", "/api/phones", { desktop: true }))).body as { phones: Array<{ deviceId: string; deviceIdOptIn?: boolean | "unknown" }> }).phones;
+    // a phone this host has no record for (a jobs-only phone, or one that minted before the host kept a record) is the explicit "unknown", never left out
+    expect((await list()).map((p) => [p.deviceId, p.deviceIdOptIn])).toEqual([[A, "unknown"]]);
+    // a jobs mint says nothing about the ask opt-in
+    await ok(call(rig, "POST", "/api/phones/minted", { companion: true, device: null, body: { deviceId: A, scope: "jobs", wantsDeviceId: true } }));
+    expect((await list())[0].deviceIdOptIn).toBe("unknown");
+    // an ask mint that opted in is true, and a re-registration keeps it
+    await ok(call(rig, "POST", "/api/phones/minted", { companion: true, device: null, body: { deviceId: A, scope: "ask", wantsDeviceId: true } }));
+    expect((await list())[0].deviceIdOptIn).toBe(true);
+    await register(rig);
+    expect((await list())[0].deviceIdOptIn).toBe(true);
+    // the plain ask mint that follows (a phone that minted without opting in, e.g. paired before pin-at-pairing) is false
+    await ok(call(rig, "POST", "/api/phones/minted", { companion: true, device: null, body: { deviceId: A, scope: "ask" } }));
+    expect((await list())[0].deviceIdOptIn).toBe(false);
+    // the flag is never in what the bot-facing registry returns
+    expect(Object.keys(rig.registry.get(A)!)).not.toContain("deviceIdOptIn");
+  });
+  it("after an upgrade a legacy ask-enabled phone and a legacy jobs-only phone are listed by what the host can know, and re-registering keeps it", async () => {
+    const file = newDbFile();
+    const seed = new DatabaseSync(file);
+    seed.exec("CREATE TABLE phone_registrations (device_id TEXT PRIMARY KEY, body TEXT NOT NULL, updated_at INTEGER NOT NULL)");
+    const body = (extra: Record<string, unknown>) => JSON.stringify({ ...REGISTRATION, ...extra });
+    // A and device-c had the earlier build's stored boolean (device-c opted in); B is a shipped 1.0.x phone with no metadata at all (it may or may not hold an ask credential)
+    seed.prepare("INSERT INTO phone_registrations VALUES (?, ?, 1)").run(A, body({ deviceIdOptIn: false }));
+    seed.prepare("INSERT INTO phone_registrations VALUES (?, ?, 2)").run(B, body({}));
+    seed.prepare("INSERT INTO phone_registrations VALUES (?, ?, 3)").run("device-c", body({ deviceIdOptIn: true }));
+    seed.close();
+    const rig = makeRig(file);
+    const list = async () => ((await ok(call(rig, "GET", "/api/phones", { desktop: true }))).body as { phones: Array<Record<string, unknown>> }).phones;
+    const view = async () => Object.fromEntries((await list()).map((p) => [p.deviceId, p.deviceIdOptIn]));
+    expect(await view()).toEqual({ [A]: false, [B]: "unknown", "device-c": true });
+    for (const p of await list()) expect(Object.keys(p).filter((k) => k === "deviceIdOptIn")).toHaveLength(1);
+    await register(rig, A);
+    await register(rig, B);
+    expect(await view()).toEqual({ [A]: false, [B]: "unknown", "device-c": true });
+    expect(Object.keys(rig.registry.get(A)!)).not.toContain("deviceIdOptIn");
+  });
+  it("an opt-in minted before the phone's first registration is applied when it registers; the list is desktop-only; a non-boolean flag is refused", async () => {
+    const rig = makeRig(newDbFile());
+    await ok(call(rig, "POST", "/api/phones/minted", { companion: true, device: null, body: { deviceId: B, scope: "ask", wantsDeviceId: true } }));
+    await register(rig, B);
+    const answer = (await ok(call(rig, "GET", "/api/phones", { desktop: true }))).body as { phones: Array<{ deviceId: string; deviceIdOptIn: boolean }> };
+    expect(answer.phones.find((p) => p.deviceId === B)?.deviceIdOptIn).toBe(true);
+    expect((await ok(call(rig, "GET", "/api/phones", { desktop: false }))).status).toBe(403);
+    expect((await ok(call(rig, "POST", "/api/phones/minted", { companion: true, device: null, body: { deviceId: B, scope: "ask", wantsDeviceId: "yes" } }))).status).toBe(400);
+  });
   it("revoke and minted refuse a malformed body, and revoke answers 0 for a device with nothing open", async () => {
     const rig = makeRig(newDbFile());
     for (const body of [{}, { deviceId: "bad id" }, { deviceId: A, reason: "other" }, { deviceId: A }]) {

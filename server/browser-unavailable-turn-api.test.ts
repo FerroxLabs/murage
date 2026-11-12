@@ -1,3 +1,4 @@
+import {confirmedBrowserFields} from './testing/browser-choice.ts';
 // A browser that cannot be bound never takes the turn down with it. Drives
 // the real server over HTTP with the isolated fake Claude CLI and a fake
 // agent-browser whose `--version` answer this suite controls: it can hang past
@@ -84,6 +85,10 @@ registerHooks({ load(url, context, nextLoad) {
       const fake = 'resolve(binary) === resolve(' + JSON.stringify(binary) + ')';
       patched = patched.replace(anchor, 'const child = spawn(' + fake + ' ? process.execPath : binary, ' + fake + ' ? [' + JSON.stringify(engineScript) + ', ...args] : args, {');
     }
+    // 0b8e3d7232 rejects real engine launches on container hosts. The version
+    // check still runs this suite's fake executable; the native relay is fake.
+    patched = patched.replace('export function agentBrowserIntegration(', 'function unusedRealAgentBrowserIntegration(')
+      + String.fromCharCode(10) + 'export function agentBrowserIntegration(input) { return { command: input.binaryPath, args: [], env: { HOME: input.dataDir, AGENT_BROWSER_SESSION: input.session, AGENT_BROWSER_SOCKET_DIR: input.dataDir } }; }';
     return { format: 'module-typescript', shortCircuit: true, source: patched };
   }
   return nextLoad(url, context);
@@ -95,6 +100,7 @@ let headers: Record<string, string> = {};
 let model: string;
 
 const api = async (method: string, path: string, body?: unknown) => {
+  if(method==='PATCH'&&path.startsWith('/api/bots/')&&body&&typeof body==='object'&&('useMyChrome' in body||'browserTransport' in body))body=await confirmedBrowserFields(fixture.info.url,headers,path,body as Record<string,unknown>);
   const response = await fetch(fixture.info.url + path, {
     method,
     headers: { ...headers, "content-type": "application/json" },
@@ -174,7 +180,7 @@ it("completes the turn without browser tools when the browser check times out, a
   // One quiet, accurate note — not an error chip.
   const notes = await activities(first.threadId, BROWSER_UNAVAILABLE_PREFIX);
   expect(notes).toHaveLength(1);
-  expect(notes[0].tool.name).toBe(`${BROWSER_UNAVAILABLE_PREFIX} agent-browser command timed out`);
+  expect(notes[0].tool.name).toBe(`${BROWSER_UNAVAILABLE_PREFIX} browser-cause:builtin_restart:0|agent-browser command timed out`);
   expect(notes[0].tool.ok).toBe(true);
   expect(versionSpawns()).toBe(1);
 }, 60_000);
@@ -243,7 +249,7 @@ it("lets a room member's turn go on without the browser when the check times out
   expect(dump().mcpConfig?.mcpServers?.browser).toBeUndefined();
   expect(await activities(room.threadId, "error:")).toEqual([]);
   const notes = await activities(room.threadId, BROWSER_UNAVAILABLE_PREFIX);
-  expect(notes.map((m) => [m.tool.name, m.from?.botId])).toEqual([[`${BROWSER_UNAVAILABLE_PREFIX} agent-browser command timed out`, bot.id]]);
+  expect(notes.map((m) => [m.tool.name, m.from?.botId])).toEqual([[`${BROWSER_UNAVAILABLE_PREFIX} browser-cause:builtin_restart:0|agent-browser command timed out`, bot.id]]);
   expect(versionSpawns()).toBe(before + 1);
 }, 60_000);
 
@@ -288,6 +294,7 @@ it("hands a consent step to the owner on a default-on browser turn", async () =>
     expect((await api("GET", "/api/config")).body.features.browser).toBe(true);
     expect(JSON.parse(readFileSync(join(fixture.info.dataDir, "config.json"), "utf8")).features ?? {}).not.toHaveProperty("browser");
     proxy = spawn(mounted.command, mounted.args, {
+      windowsHide: true,
       env: { PATH: process.env.PATH, HOME: fixture.info.dataDir, MURAGE_DATA_DIR: fixture.info.dataDir, ...mounted.env },
       stdio: ["pipe", "pipe", "pipe"],
     });

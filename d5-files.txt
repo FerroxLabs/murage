@@ -15,12 +15,14 @@ server/approval-card-class.test.ts
 server/approval-card-grants.test.ts
 server/approval-hold-note.test.ts
 server/approvals-simple-1018.test.ts
+server/ask-shape.test.ts
 server/auto-approve-own-always-ask.test.ts
 server/auto-approve-prompt.test.ts
 server/auto-approve-reason-log.test.ts
 server/auto-approve-u20.test.ts
 server/auto-approve.test.ts
 server/auto-review.test.ts
+server/base-reds-runtime.test.ts
 server/compound-read-109.test.ts
 server/connected-apps-vendor-name.test.ts
 server/decider/clef-on.test.ts
@@ -54,6 +56,7 @@ server/full-access-options.test.ts
 server/full-access-unreadable-d-108.test.ts
 server/full-access.test.ts
 server/full-deny-1018.test.ts
+server/highlevel/engines-native.test.ts
 server/hook-selfguard.test.ts
 server/image-approval.test.ts
 server/installation-encrypted-backup.test.ts
@@ -98,6 +101,7 @@ server/memory/pip-p1.test.ts
 server/memory/pip-p2-audit.test.ts
 server/memory/pip-p2-b1.test.ts
 server/memory/rank-ties-read-once.test.ts
+server/memory/rollover-write-cost.test.ts
 server/memory/search-authorization.test.ts
 server/memory/search-tool-recall.test.ts
 server/memory/worker-delete-scrub.test.ts
@@ -106,6 +110,12 @@ server/nl-win-1018.test.ts
 server/nlmi-marks-guards.test.ts
 server/nlmi-marks-r13-rows.test.ts
 server/nlmi-marks-r16-rows.test.ts
+server/no-limits-b5-1019.test.ts
+server/no-limits-cwd-refusal-1019.test.ts
+server/no-limits-do-everything-1019.test.ts
+server/no-limits-r13-gate.test.ts
+server/no-limits-r13.test.ts
+server/no-limits-r13b.test.ts
 server/nolimits-cards-1010.test.ts
 server/nolimits-key-text-1013.test.ts
 server/nolimits-means-it-1020.test.ts

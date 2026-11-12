@@ -1,7 +1,9 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
-import { appCountLabel, appsClaimFor, catalogNotice, catalogSections, connectedCards, inCategory, rankCategories, type AppCard, type CatalogFallbackReason } from "./app-catalog";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { appCountLabel, appCountParts, appsClaimFor, catalogNotice, catalogSections, connectedCards, inCategory, rankCategories, type AppCard, type CatalogFallbackReason } from "./app-catalog";
 
 describe("the live app count", () => {
   it("rounds down so the claim stays true", () => {
@@ -58,6 +60,28 @@ describe("the Connected tab is built from the inventory (Part B)", () => {
 describe("audit round 1: the Browse all count keeps its thousands", () => {
   it("is the whole number", () => {
     expect(appCountLabel(1_634)).toBe("1,600+ apps");
+  });
+});
+
+describe("the app count takes the right plural in every language", () => {
+  it("one app is not '1 apps'", () => {
+    expect(appCountLabel(1)).toBe("1 app");
+    expect(appCountLabel(2)).toBe("2 apps");
+    expect(appCountParts(1)).toEqual({ form: "one", count: "1" });
+    expect(appCountParts(1_634)).toEqual({ form: "plus", count: "1,600" });
+    expect(appCountParts(0)).toBeNull();
+  });
+  it("every pack has the plural and Browse all keys", () => {
+    const root = join(__dirname, "..", "locales");
+    for (const code of ["en", "de", "es", "fr", "hi", "ja", "pt-br", "zh"]) {
+      const pack = JSON.parse(readFileSync(join(root, `${code}.json`), "utf8")) as Record<string, string>;
+      for (const form of ["one", "other", "plus"]) {
+        expect(pack[`plugins.appCount.${form}`], `${code} appCount.${form}`).toContain("{count}");
+        expect(pack[`plugins.browseAll.${form}`], `${code} browseAll.${form}`).toContain("{count}");
+      }
+      expect(pack["plugins.browseAll.fallback"], code).toBeTruthy();
+      expect(pack["settings.pageSelectAria"], code).toBeTruthy();
+    }
   });
 });
 

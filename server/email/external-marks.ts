@@ -80,9 +80,9 @@ export function forgetAllTurnMarks(): void { marked.clear(); persisted = null; f
 
 export type OutsideSource = "web page" | "web search" | "email" | "another person" | "another bot" | "browser page" | "outside tool"
   | "downloaded file" | "network command" | "package install" | "git" | "archive" | "interpreter" | "helper" | "earlier turn"
-  | "earlier session" | "memory" | "cloned folder";
+  | "earlier session" | "memory" | "cloned folder" | "folder not checked";
 
-export interface OutsideMarkRow { threadId: string; source: OutsideSource; at: number; turnId?: string; provenance?: { callKey?: string; late?: boolean } }
+export interface OutsideMarkRow { threadId: string; source: OutsideSource; at: number; turnId?: string; site?: string; why?: string; provenance?: { callKey?: string; late?: boolean } }
 export interface SessionBinding { sessionKey: string; gen: number; birthRunId: string }
 export interface OutsideSessionRow { sessionKey?: string; gen?: number; birthRunId?: string; threadId: string; instanceId: string; tainted: boolean; wrote: boolean; edits: string[]; /** when the engine session began (rows from before this field have none) */ startedAt?: number }
 /** `begunAt` (v1 V9): the start of the marked turn as beginOutsideTurn recorded it (rows written before v1 have none: their
@@ -400,8 +400,15 @@ export function safeMarkSite(site: string | undefined): string {
   if (site === undefined) return "unlabelled";
   return /^[A-Za-z0-9_:/.<>=+ -]{1,160}$/.test(site) ? site : "other";
 }
-export function markTurnOutside(threadId: string, source: OutsideSource, by?: string, provenance?: OutsideMarkRow["provenance"], site?: string): void {
+type OutsideMarkObserver = (threadId: string, source: OutsideSource, lifecycle: boolean) => void;
+const outsideMarkObservers = new Set<OutsideMarkObserver>();
+export function observeOutsideMarks(observer: OutsideMarkObserver): () => void {
+  outsideMarkObservers.add(observer); return () => { outsideMarkObservers.delete(observer); };
+}
+export function markTurnOutside(threadId: string, source: OutsideSource, by?: string, provenance?: OutsideMarkRow["provenance"], site?: string, helperLifecycle = false, why?: string): void {
   if (refuseProducer()) return;
+  // Every source reaches the settle ledger, including marks hidden by the first-source live view.
+  for (const observer of outsideMarkObservers) observer(threadId, source, source === "helper" && helperLifecycle);
   noteOutsideStoreWrite();
   if (outsideMarks.has(threadId)) {
     // 1.0.19 A3: a later mark never overwrites `by`; one from another call (or none) voids the first call's exemption
@@ -410,9 +417,9 @@ export function markTurnOutside(threadId: string, source: OutsideSource, by?: st
     return;
   }
   const running = runningTurns.get(threadId);
-  const row: OutsideMarkRow = { threadId, source, at: clock(), ...(provenance ? { provenance } : {}), ...(running?.turnId ? { turnId: running.turnId } : {}) };
+  const row: OutsideMarkRow = { threadId, source, at: clock(), site: safeMarkSite(site), ...(why ? { why } : {}), ...(provenance ? { provenance } : {}), ...(running?.turnId ? { turnId: running.turnId } : {}) };
   outsideMarks.set(threadId, row);
-  console.info(`outside: first-mark thread=${threadId} source=${source} site=${safeMarkSite(site)}`);
+  console.info(`outside: first-mark thread=${threadId} source=${source} site=${safeMarkSite(site)}${why ? ` why=${why}` : ""}`);
   if (by !== undefined && by !== "") callExemptions.set(threadId, { by, consumed: false, contested: false });
   durableWrite((store) => store.setMark(row));
   // v1 V9: always a markedTurns row (a synthetic turn id when the turn has none), with the turn's start

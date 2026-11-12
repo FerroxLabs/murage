@@ -87,6 +87,7 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => stub.listen(0, "127.0.0.1", resolve));
   stubPort = (stub.address() as { port: number }).port;
   child = spawn(process.execPath, ["--experimental-strip-types", PROXY], {
+    windowsHide: true,
     env: {
       ...process.env,
       MURAGE_BROWSER_URL: `http://127.0.0.1:${stubPort}`,
@@ -215,7 +216,7 @@ describe("browser MCP proxy", () => {
     ]);
     expect(text(waited)).toContain("More of the page is off-screen: 900px below");
     const read = await callTool("browser_read", {});
-    expect(text(read)).toBe("Cart: https://shop.example/cart\n\nCart\n\n2 items · $80");
+    expect(JSON.parse(text(read))).toMatchObject({ url: "https://shop.example/cart", text: "Cart\n\n2 items · $80", eof: true, next_offset: null });
     const bad = await callTool("browser_select_option", { ref: "b2" });
     expect(bad.result.isError).toBe(true);
     const emptyWait = await callTool("browser_wait_for", {});

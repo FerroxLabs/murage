@@ -1,3 +1,5 @@
+import { serviceNoLimits, serviceThreadNoLimits } from './service-no-limits.ts';
+import { restoreHeldPeerAuthority } from './held-peer-authority.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -41,6 +43,7 @@ import { type HumanPrincipal } from "./human-principals.ts";
 import { type ProjectCard } from "./project-records.ts";
 import { APP_CHILD_NOT_ALLOWED, assertNotAppChild, refuseAppChild } from "./app-trigger-zero.ts";
 import { readDoneWhen } from "./done-when.ts";
+type PackAuthority = NonNullable<Parameters<BoundaryPorts["comms"]["queueDelegation"]>[4]>;
 
 export type EventReply = { status: number; body: unknown };
 
@@ -106,6 +109,7 @@ export function askTimeoutVerdict(turn: { done: boolean; settling: boolean }, ma
 
 /** What the boundary asks of the rest of the server, supplied by server/index.ts. */
 export interface BoundaryPorts {
+  holdBotWork?: (targetId: string, work: import("./bot-staging-types.ts").HeldBotWork) => boolean;
   ASK_BOT_TIMEOUT_MS: number;
   MAX_COMMS_DEPTH: 2;
   approvalBus: ApprovalBus;
@@ -130,7 +134,10 @@ export interface BoundaryPorts {
   /** The id of the request a hand-off's row belongs to (room-requests.ts handoffRequest), read by the server: the boundary holds no database handle. */
   handoffRequestId: (taskId: string) => string | undefined;
   fullAccessSkipsPeerCard: (botId: string, threadId: string) => boolean;
-  internalCapabilities: InternalCapabilities;
+  internalCapabilities: InternalCapabilities & {
+    /** Server-owned proof for this generation; only ownerPackAuthority turns return their input. */
+    turnInputOf?(threadId: string, generation: string): { messageId: string } | undefined;
+  };
   isUnattended: (threadId?: string | null) => boolean;
   markTaskContextExternallyUpdated: (bot: BotRecord, threadId: string, messageId: string) => void;
   ownerSurfacesByThread: Map<string, boolean>;
@@ -574,7 +581,7 @@ export function replayHandoff(bx: ReplayHandoffPorts, receipt: string, via: "ask
     }, joined);
 }
 
-export type AskBotRouteContext = Pick<BoundaryPorts, "ASK_BOT_TIMEOUT_MS" | "MAX_COMMS_DEPTH" | "approvalBus" | "askerWake" | "askBotAndWait" | "beginRoomAsk" | "comms" | "connectorThread" | "coordinationBudget" | "coordinationHasCapacity" | "delegationWatch" | "fullAccessSkipsPeerCard" | "internalCapabilities" | "isUnattended" | "ownerSurfacesByThread" | "resultEgressDeps" | "roomAskDuplicate" | "roomAskKey" | "roomAskParent" | "roomAskRefused" | "routinePeerSource" | "settleRoomAsk" | "sharedApprovedRequests" | "sourceExecutionAudience" | "store" | "syncAskRequests" | "taskResolutionDeps" | "waitSharedRequest" | "rows"> & Pick<RouteLocals, "eventAction" | "internalClaim" | "internalEventId" | "internalOwner" | "readInternalBody" | "requireActiveInternal" | "res">;
+export type AskBotRouteContext = Pick<BoundaryPorts, "holdBotWork" | "ASK_BOT_TIMEOUT_MS" | "MAX_COMMS_DEPTH" | "approvalBus" | "askerWake" | "askBotAndWait" | "beginRoomAsk" | "comms" | "connectorThread" | "coordinationBudget" | "coordinationHasCapacity" | "delegationWatch" | "fullAccessSkipsPeerCard" | "internalCapabilities" | "isUnattended" | "ownerSurfacesByThread" | "resultEgressDeps" | "roomAskDuplicate" | "roomAskKey" | "roomAskParent" | "roomAskRefused" | "routinePeerSource" | "settleRoomAsk" | "sharedApprovedRequests" | "sourceExecutionAudience" | "store" | "syncAskRequests" | "taskResolutionDeps" | "waitSharedRequest" | "rows"> & Pick<RouteLocals, "eventAction" | "internalClaim" | "internalEventId" | "internalOwner" | "readInternalBody" | "requireActiveInternal" | "res">;
 /** A draft-only sender (server/draft-only.ts) names a bot that can send: refused before reach, approval or any card, whatever
  *  the target's scope, so the answer never depends on who the sender may otherwise reach. */
 function draftOnlyRefusesTarget<T extends Parameters<typeof resolveCoordinationTarget>[0] & { draftOnly?: true }>(roster: T[], sender: T, selector: string): boolean {
@@ -599,7 +606,7 @@ export async function askBotRoute(bx: AskBotRouteContext): Promise<void> {
   const depth = Number(body.depth ?? 0) || 0;
   if (!toBotId || !message) return sendBot(res, 400, botBody({ error: status("fields_required") }));
   if (toBotId === fromBotId) return sendBot(res, 400, botBody({ error: status("cannot_message_self") }));
-  if (depth >= MAX_COMMS_DEPTH) return sendBot(res, 200, botBody({ error: status("depth_exhausted") }));
+  if (!serviceThreadNoLimits(internalClaim.threadId, internalClaim.botId) && depth >= MAX_COMMS_DEPTH) return sendBot(res, 200, botBody({ error: status("depth_exhausted") }));
   const target = store.bot(toBotId);
   if (!target) return sendBot(res, 404, botBody({ error: status("no_such_bot") }));
   // A draft-only sender (server/draft-only.ts) never reaches a bot that can send, at any level and before any approval.
@@ -624,12 +631,16 @@ export async function askBotRoute(bx: AskBotRouteContext): Promise<void> {
   // a wait cycle or when the owner's message has used its team steps.
   const roomAskRefusal = roomAskRefused(fromBotId, toBotId, fromThreadId);
   if (roomAskRefusal) return sendBot(res, 200, botBody({ error: roomAskRefusal }));
-  const repeated = roomAskDuplicate(fromBotId, toBotId, fromThreadId, message);
+  const repeated = serviceNoLimits(internalClaim.generation, internalClaim.threadId, internalClaim.botId) ? undefined : roomAskDuplicate(fromBotId, toBotId, fromThreadId, message);
   if (repeated) {
     const taskId = handoffRow(repeated.id) ? repeated.id : undefined;
     return sendBot(res, 200, botBody(isTerminalRoomRequestState(repeated.state)
       ? { botName: botName(target), text: status("already_asked_done", { name: botName(target) }) }
       : { busy: true, ...(taskId ? { taskId } : {}), toBotName: botName(target), note: status("already_asked_note") }));
+  }
+  if (target.staged && bx.holdBotWork) {
+    const held = await holdPeerWork(bx, from, target, message, 'ask');
+    return sendBot(res, held.status, held.body);
   }
   // A busy peer used to be a flat bounce ("try again later") - a
   // dead-end mid-turn that models rarely retry, so the exchange just
@@ -661,20 +672,20 @@ export async function askBotRoute(bx: AskBotRouteContext): Promise<void> {
     },
     replay: (receipt, joined) => replayHandoff(bx, receipt, "ask", { fromBotId, toBotId, fromThreadId, targetName: botName(target) }, joined),
   }, async ({ charge, record, unrun }) => {
-  const handoffSlot = internalCapabilities.reserve(internalClaim, "handoff", MAX_HANDOFFS_PER_TURN);
+  const handoffSlot = serviceNoLimits(internalClaim.generation, internalClaim.threadId, internalClaim.botId) ? { commit: () => internalCapabilities.isActive(internalClaim), release: () => {} } : internalCapabilities.reserve(internalClaim, "handoff", MAX_HANDOFFS_PER_TURN);
   if (!handoffSlot) return botReply(429, { error: status("handoff_limit", { max: MAX_HANDOFFS_PER_TURN }) });
   try {
   const eventAdmissionId = randomUUID();
   let childCoordination: CoordinationTrace | undefined;
   const nextCoordination = () => childCoordination ??= (() => {
-    try { return coordinationBudget.advance(internalOwner.coordination, fromBotId, toBotId); }
+    try { return coordinationBudget.advance(internalOwner.coordination, fromBotId, toBotId, serviceNoLimits(internalClaim.generation, fromThreadId, fromBotId)); }
     catch (error) { if (coordinationRefusalText(error) !== undefined) unrun(); throw error; }
   })();
   const queueBusyFallback = async (approvalAlreadyGranted = false) => {
     requireActiveInternal();
     // one handoff per ask: a repeat (or a concurrent twin that waited on
     // the same approval) returns the first one's receipt (SPEC-P 5.2)
-    const twin = roomAskDuplicate(fromBotId, toBotId, fromThreadId, message);
+    const twin = serviceNoLimits(internalClaim.generation, internalClaim.threadId, internalClaim.botId) ? undefined : roomAskDuplicate(fromBotId, toBotId, fromThreadId, message);
     if (twin) return botReply(200, isTerminalRoomRequestState(twin.state)
       ? { botName: botName(target), text: status("already_asked_done", { name: botName(target) }) }
       : { busy: true, taskId: twin.id, toBotName: botName(target) });
@@ -1016,7 +1027,16 @@ export async function checkDelegationRoute(bx: CheckDelegationRouteContext): Pro
   }
 }
 
-export type DelegateBotRouteContext = Pick<BoundaryPorts, "MAX_COMMS_DEPTH" | "askerWake" | "beginRoomAsk" | "comms" | "connectorThread" | "coordinationBudget" | "fullAccessSkipsPeerCard" | "internalCapabilities" | "isUnattended" | "ownerSurfacesByThread" | "resultEgressDeps" | "roomAskDuplicate" | "roomAskParent" | "roomAskRefused" | "routinePeerSource" | "settleRoomAsk" | "sourceExecutionAudience" | "store" | "taskResolutionDeps"> & Pick<RouteLocals, "eventAction" | "internalClaim" | "internalEventId" | "internalOwner" | "readInternalBody" | "res">;
+export type DelegateBotRouteContext = Pick<BoundaryPorts, "holdBotWork" | "MAX_COMMS_DEPTH" | "askerWake" | "beginRoomAsk" | "comms" | "connectorThread" | "coordinationBudget" | "fullAccessSkipsPeerCard" | "internalCapabilities" | "isUnattended" | "ownerSurfacesByThread" | "resultEgressDeps" | "roomAskDuplicate" | "roomAskParent" | "roomAskRefused" | "routinePeerSource" | "settleRoomAsk" | "sourceExecutionAudience" | "store" | "taskResolutionDeps"> & Pick<RouteLocals, "eventAction" | "internalClaim" | "internalEventId" | "internalOwner" | "readInternalBody" | "res">;
+/** Only the authenticated generation and its stored input can mint this proof, never request JSON. */
+function packAuthorityOf(bx: DelegateBotRouteContext, fromBotId: string, fromThreadId: string): PackAuthority | undefined {
+  const { internalClaim: claim, internalCapabilities: capabilities, store } = bx;
+  if (!claim || !capabilities.turnInputOf || claim.botId !== fromBotId || claim.threadId !== fromThreadId
+    || capabilities.activeGeneration(fromThreadId) !== claim.generation || bx.isUnattended(fromThreadId)) return undefined;
+  const input = capabilities.turnInputOf?.(fromThreadId, claim.generation);
+  if (!input || store.ownerInput?.(fromThreadId, input.messageId) !== true) return undefined;
+  return Object.freeze({ fromBotId, fromThreadId, generation: claim.generation, inputMessageId: input.messageId }) as PackAuthority;
+}
 export async function delegateBotRoute(bx: DelegateBotRouteContext): Promise<void> {
   const { MAX_COMMS_DEPTH, beginRoomAsk, comms, connectorThread, coordinationBudget, eventAction, fullAccessSkipsPeerCard, internalCapabilities, internalClaim, internalEventId, internalOwner, isUnattended, ownerSurfacesByThread, readInternalBody, res, roomAskDuplicate, roomAskParent, roomAskRefused, routinePeerSource, sourceExecutionAudience, store } = bx;
   // The hard zero (app-trigger-zero.ts): an app-origin delegation is refused before its body, any card, ledger or queue.
@@ -1050,10 +1070,14 @@ export async function delegateBotRoute(bx: DelegateBotRouteContext): Promise<voi
   }
   const roomAskRefusal = roomAskRefused(fromBotId, toBotId, fromThreadId);
   if (roomAskRefusal) return sendBot(res, 200, botBody({ error: roomAskRefusal }));
-  const repeated = roomAskDuplicate(fromBotId, toBotId, fromThreadId, message);
+  const repeated = serviceNoLimits(internalClaim.generation, internalClaim.threadId, internalClaim.botId) ? undefined : roomAskDuplicate(fromBotId, toBotId, fromThreadId, message);
   if (repeated) {
     const again = repeatedHandoffReply(repeated, botName(target));
     return sendBot(res, 200, botBody({ queued: true, taskId: again.taskId, message: again.message, ...(again.done ? { done: true, status: again.status } : {}) }));
+  }
+  if (target.staged && bx.holdBotWork) {
+    const held = await holdPeerWork(bx, from, target, message, 'delegate');
+    return sendBot(res, held.status, held.body);
   }
   // The same hand-off, asked again anywhere in an event run (another turn, a restart, at the same time), is the same
   // action: the run's ledger answers with the first task and nothing is charged or queued twice.
@@ -1070,7 +1094,7 @@ export async function delegateBotRoute(bx: DelegateBotRouteContext): Promise<voi
     },
     replay: (receipt, joined) => replayHandoff(bx, receipt, "delegate", { fromBotId, toBotId, fromThreadId, targetName: botName(target) }, joined),
   }, async ({ charge, record, unrun }) => {
-  const handoffSlot = internalCapabilities.reserve(internalClaim, "handoff", MAX_HANDOFFS_PER_TURN);
+  const handoffSlot = serviceNoLimits(internalClaim.generation, internalClaim.threadId, internalClaim.botId) ? { commit: () => internalCapabilities.isActive(internalClaim), release: () => {} } : internalCapabilities.reserve(internalClaim, "handoff", MAX_HANDOFFS_PER_TURN);
   if (!handoffSlot) return botReply(429, { error: status("handoff_limit", { max: MAX_HANDOFFS_PER_TURN }) });
   try {
   await charge();
@@ -1078,9 +1102,10 @@ export async function delegateBotRoute(bx: DelegateBotRouteContext): Promise<voi
   assertNotAppChild(fromThreadId, "delegate");
   const queued = comms.queueDelegation(
     from,
-    { toBotId, message, reason, ...(doneWhen ? { doneWhen } : {}), depth, ...(peerCardWaived ? { fullAccessWaived: true } : {}), ...(ownerSurfacesByThread.get(internalClaim.threadId) === false ? { notOwnerAudience: true } : {}), ...(isUnattended(fromThreadId) ? { unattended: true } : {}), routineAuthority: routinePeerSource(fromThreadId, fromBotId), executionAudience: sourceExecutionAudience(fromBotId, fromThreadId, true) ?? undefined, eventId: internalEventId, coordination: (() => { try { return coordinationBudget.advance(internalOwner.coordination, fromBotId, toBotId); } catch (error) { if (coordinationRefusalText(error) !== undefined) unrun(); throw error; } })() },
+    { toBotId, message, reason, ...(doneWhen ? { doneWhen } : {}), depth, ...(peerCardWaived ? { fullAccessWaived: true } : {}), ...(ownerSurfacesByThread.get(internalClaim.threadId) === false ? { notOwnerAudience: true } : {}), ...(isUnattended(fromThreadId) ? { unattended: true } : {}), routineAuthority: routinePeerSource(fromThreadId, fromBotId), executionAudience: sourceExecutionAudience(fromBotId, fromThreadId, true) ?? undefined, eventId: internalEventId, coordination: (() => { try { return coordinationBudget.advance(internalOwner.coordination, fromBotId, toBotId, serviceNoLimits(internalClaim.generation, fromThreadId, fromBotId)); } catch (error) { if (coordinationRefusalText(error) !== undefined) unrun(); throw error; } })() },
     MAX_COMMS_DEPTH,
     fromThreadId,
+    packAuthorityOf(bx, fromBotId, fromThreadId),
   );
   if (queued.result !== "ok" || !queued.id) {
     unrun(); // nothing was queued, so nothing is charged
@@ -1116,3 +1141,51 @@ export async function delegateBotRoute(bx: DelegateBotRouteContext): Promise<voi
   return sendBot(res, delegated.status, delegated.body);
 }
 
+
+/** Capture the authenticated turn, including its next coordination hop, before it can end. */
+function captureHeldPeerAuthority(bx: DelegateBotRouteContext | AskBotRouteContext, toBotId: string) {
+  const claim = bx.internalClaim;
+  return restoreHeldPeerAuthority({
+    version: 1, handoffId: randomUUID(), depth: claim.depth,
+    notOwnerAudience: claim.notOwnerAudience === true || bx.ownerSurfacesByThread.get(claim.threadId) === false,
+    unattended: bx.isUnattended(claim.threadId), eventId: bx.internalEventId ?? null,
+    routineAuthority: bx.routinePeerSource(claim.threadId, claim.botId) ?? null,
+    executionAudience: bx.sourceExecutionAudience(claim.botId, claim.threadId, true) ?? null,
+    parentRequestId: bx.roomAskParent(claim.botId, claim.threadId)?.id ?? null,
+    coordination: bx.coordinationBudget.advance(bx.internalOwner.coordination, claim.botId, toBotId),
+    source: { botId: claim.botId, threadId: claim.threadId, generation: claim.generation,
+      providerTurnId: bx.internalCapabilities.providerTurnOf(claim.threadId, claim.generation) },
+  }, claim.botId, claim.threadId);
+}
+
+/** Held work spends the same per-turn/root/event allowance as an immediate handoff, before acknowledging it. */
+async function holdPeerWork(bx: DelegateBotRouteContext | AskBotRouteContext, from: BotRecord, target: BotRecord, message: string, kind: 'ask' | 'delegate'): Promise<BotReply> {
+  const claim = bx.internalClaim;
+  const receipt = () => botReply(200, { held: true, startsWhen: target.staged?.reason === 'turn-open' ? 'reply-ends' : 'owner-review' });
+  return bx.eventAction<BotReply>({
+    kind: 'handoff', identity: ['held-handoff', from.id, target.id, message], from, fromThreadId: claim.threadId, targetName: target.name, orphan: 'next',
+    fullAccess: () => bx.fullAccessSkipsPeerCard(from.id, claim.threadId),
+    revalidate: () => {
+      if (!bx.store.bot(target.id)?.staged || !bx.connectorThread(from.id, claim.threadId)) return botReply(409, { error: status('source_gone') });
+      const allowed = authorizeStatus({ edge: 'peer', requesterBotId: from.id, requesterThreadId: claim.threadId, targetBotId: target.id, verb: 'ask',
+        tag: bx.sourceExecutionAudience(from.id, claim.threadId), ownerAudience: claim.notOwnerAudience !== true, parentRequestId: bx.roomAskParent(from.id, claim.threadId)?.id });
+      return allowed.ok ? undefined : botReply(403, { error: allowed.line });
+    },
+    replay: value => value.startsWith('held-bot:') ? receipt() : undefined,
+  }, async ({ charge, record, unrun }) => {
+    const slot = bx.internalCapabilities.reserve(claim, 'handoff', MAX_HANDOFFS_PER_TURN);
+    if (!slot) return botReply(429, { error: status('handoff_limit', { max: MAX_HANDOFFS_PER_TURN }) });
+    try {
+      await charge();
+      const peer = captureHeldPeerAuthority(bx, target.id);
+      if (peer.depth >= bx.MAX_COMMS_DEPTH) { unrun(); return botReply(200, { error: status('depth_exhausted') }); }
+      const ref = peer.handoffId;
+      if (!bx.holdBotWork?.(target.id, { kind, fromBotId: claim.botId, fromThreadId: claim.threadId, text: message, peer, ref })) {
+        unrun(); return botReply(409, { error: status('no_such_bot') });
+      }
+      slot.commit(); record(`held-bot:${ref}`);
+      return receipt();
+    } catch (error) { unrun(); throw error; }
+    finally { slot.release(); }
+  });
+}

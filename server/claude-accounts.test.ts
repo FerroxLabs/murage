@@ -42,7 +42,7 @@ describe("native Claude account boundaries",()=>{
     const cli=join(scratch,"fake cli's.mjs"),dir=join(scratch,"account's root");
     writeFileSync(cli,"process.stdout.write(JSON.stringify({args:process.argv.slice(2),dir:process.env.CLAUDE_CONFIG_DIR,token:process.env.CLAUDE_CODE_OAUTH_TOKEN,home:process.env.HOME}));");
     const command=claudeSignInCommand(`${JSON.stringify(process.execPath)} ${JSON.stringify(cli)}`,dir);
-    const result=JSON.parse(execFileSync("/bin/sh",["-c",command],{env:{HOME:scratch,CLAUDE_CODE_OAUTH_TOKEN:"synthetic-only"},encoding:"utf8"}));
+    const result=JSON.parse(execFileSync("/bin/sh",["-c",command],{ windowsHide: true,env:{HOME:scratch,CLAUDE_CODE_OAUTH_TOKEN:"synthetic-only"},encoding:"utf8"}));
     expect(result).toEqual({args:["auth","login"],dir,home:scratch});expect(command).not.toContain("synthetic-only");
   });
   it.each(["claude", "C:\\Program Files\\Claude's app\\claude.exe"])("PowerShell recipe quotes paths and restores process environment: %s",(executable)=>{

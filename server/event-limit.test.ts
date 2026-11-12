@@ -1,3 +1,6 @@
+import {database} from './database.ts';
+import {initializeApprovals} from './decision/records.ts';
+import {producerFixture} from './testing/producer-fixture.ts';
 // A run started by an event may hand off or create a few times on its own. At
 // that limit the owner is asked instead of the bot hitting a dead end.
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -5,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { bindServiceTurn } from './service-no-limits.ts';
 import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
 import { admitEventWithOwner, decodeHandoffReceipt, eventActionId, runEventAction, type EventActionHandle, type EventActionSpec, type EventLimitContext } from "./event-limit.ts";
@@ -34,7 +38,8 @@ describe("event run limits ask the owner", () => {
   beforeEach(() => {
     store = new Store(selection);
     ops = store.patchBot(store.createBot().id, { name: "Ops" })!;
-    bus = { store, broadcast: () => {} };
+    const authority=producerFixture(store,ops.id,ops.threadId,"event-fixture");
+    bus = { store, broadcast: () => {}, authorityFor:()=>authority };
     const root = mkdtempSync(join(tmpdir(), "murage-event-limit-")); roots.push(root);
     options = { file: join(root, "routines.json"), botState: () => "busy" as const, createTask: () => ({ threadId: "unused" }), startTurn: async () => {} };
     manager = new RoutineManager(options);
@@ -54,6 +59,58 @@ describe("event run limits ask the owner", () => {
   const openCard = () => store.messagesFor(ops.threadId).find(m => m.kind === "options" && m.card?.requestId && !m.card.answered && !m.card.dismissed);
   const answer = (behavior: "allow" | "deny") => { const card = openCard()!; expect(resolvePeerComms(bus, card.card!.requestId!, behavior)).toBe(true); };
   const flush = () => new Promise(resolve => setTimeout(resolve, 0));
+
+  it("S7 No limits admits handoff 65 without a card and survives restart", async () => {
+    manager.raiseEventLimit(eventId, "handoff", 64); fill("handoff", 64);
+    bindServiceTurn("svc-65", ops.threadId, ops.id, () => true, () => ({ ownerAudience:true, origin:'webhook', noLimits:true }));
+    await admitEventWithOwner(ctx({ admissionId: "sixty-five", handoffPair: '["a","b"]' }));
+    expect(openCard()).toBeUndefined();
+    const restarted = new RoutineManager(options);
+    expect(restarted.getEventBudget(eventId)?.admissions).toHaveLength(65);
+    expect(restarted.admitEventActionDetailed(eventId, 'sixty-six', 'handoff', { pair:'["a","c"]' })).toEqual({ ok:true });
+    expect(restarted.admitEventActionDetailed(eventId, 'lower-level', 'handoff')).toMatchObject({ ok:false, reason:'limit' });
+  });
+
+  it("N4 S7 twenty different A-to-B hand-offs and 65 distinct jobs pass without a card", async () => {
+    bindServiceTurn('svc-distinct',ops.threadId,ops.id,()=>true,()=>({ownerAudience:true,origin:'routine',noLimits:true}));
+    const perform=(message:string)=>runEventAction({routines:manager,bus,eventId,kind:'handoff',identity:['handoff',ops.id,'peer-a',message],from:ops,fromThreadId:ops.threadId,
+      fullAccess:()=>false,stillActive:()=>{},revalidate:()=>undefined,replay:()=>undefined,orphan:'next'},async handle=>{await handle.charge();handle.record(`delegation:${message}`);return 'sent';});
+    for(let i=0;i<65;i++) expect(await perform(`different job ${i}`)).toBe('sent');
+    expect(manager.getEventBudget(eventId)?.admissions).toHaveLength(65);
+    expect(openCard()).toBeUndefined();
+    const restarted=new RoutineManager(options);
+    expect(restarted.getEventBudget(eventId)?.admissions).toHaveLength(65);
+    expect(restarted.admitEventActionDetailed(eventId,'distinct-after-restart','handoff',{pair:'new digest'})).toEqual({ok:true});
+  });
+
+  it("No limits identical handoffs keep running across a restart", async () => {
+    const peer=store.createBot();
+    for(const bot of [ops,peer]) bindServiceTurn(`svc-bounce-${bot.id}`,bot.threadId,bot.id,()=>true,()=>({ownerAudience:true,origin:'routine',noLimits:true}));
+    const perform=(routines:RoutineManager,reverse:boolean,message='same request')=>{
+      const from=reverse?peer:ops,to=reverse?ops:peer;
+      return runEventAction({routines,bus,eventId,kind:'handoff',identity:['handoff',from.id,to.id,message],from,fromThreadId:from.threadId,
+        fullAccess:()=>false,stillActive:()=>{},revalidate:()=>undefined,replay:()=>undefined,orphan:'next'},async handle=>{await handle.charge();handle.record('ended:failed');return 'sent';});
+    };
+    for(let i=0;i<8;i++) expect(await perform(manager,i%2===1)).toBe('sent');
+    const restarted=new RoutineManager(options);
+    for(let i=0;i<12;i++) expect(await perform(restarted,i%2===1)).toBe('sent');
+    expect(openCard()).toBeUndefined();
+    const line=store.messagesFor(ops.threadId).find(m=>m.kind==='text'&&m.text?.includes('same hand-off'));
+    expect(line).toBeUndefined();
+    expect(restarted.getEventBudget(eventId)?.admissions).toHaveLength(20);
+    expect(await perform(restarted,false,'a different request')).toBe('sent');
+  });
+
+  it("No limits continues beyond the old generous ceiling without approval", async () => {
+    const disk=readRoutinesWithRuns(options.file!);
+    disk.runs[0].eventBudget={version:2,limits:{create:4,handoff:4096},admissions:Array.from({length:4096},(_,i)=>({id:`ceiling-${i}`,kind:'handoff'})),closed:false};
+    writeFileSync(options.file!,JSON.stringify(disk));
+    const restarted=new RoutineManager(options);
+    bindServiceTurn("svc-ceiling",ops.threadId,ops.id,()=>true,()=>({ownerAudience:true,origin:'unattended',noLimits:true}));
+    await expect(admitEventWithOwner(ctx({routines:restarted,admissionId:'ceiling-stop',handoffPair:'["a","b"]'}))).resolves.toBeUndefined();
+    expect(new RoutineManager(options).getEventBudget(eventId)?.admissions).toHaveLength(4097);
+    expect(openCard()).toBeUndefined();
+  });
 
   it("limit reached: the owner gets a card in plain words, Allow extends the run by four and the hand-off goes ahead", async () => {
     fill("handoff", 4);
@@ -91,7 +148,7 @@ describe("event run limits ask the owner", () => {
     expect(error.status).toBe(409);
     expect(manager.getEventBudget(eventId)).toMatchObject({ limits: { create: 4, handoff: 4 } });
     expect(manager.getEventBudget(eventId)!.admissions).toHaveLength(4);
-    expect(store.messagesFor(ops.threadId).find(m => m.card?.tool === "more_handoffs")?.card?.answered).toBe("deny");
+    expect(store.messagesFor(ops.threadId).find(m => m.card?.tool === "more_handoffs")?.card?.answered).toBe("Denied");
   });
 
   it("retries of one hand-off reuse one admission and never spend more", async () => {
@@ -175,9 +232,18 @@ describe("event run limits ask the owner", () => {
 
   it("after a restart a card nobody can answer is settled, and the run keeps what it had", async () => {
     fill("handoff", 4);
-    const stale = store.appendMessage(ops.threadId, { role: "bot", kind: "options", card: { title: "t", subtitle: "s", options: ["Allow", "Not now"], requestId: "gone", tool: "more_handoffs" } });
-    expect(dismissStalePeerCards(bus)).toBe(1);
-    expect(store.messagesFor(ops.threadId).find(m => m.id === stale.id)?.card).toMatchObject({ answered: "unavailable", dismissed: true });
+    // Seed an actual pre-approval-record row in this isolated database, then
+    // restore the production trigger before exercising restart cleanup.
+    const stale = store.appendMessage(ops.threadId, {role:'bot', kind:'text', text:'legacy fixture'});
+    const db=database();
+    const legacy={...stale,kind:'options',card:{title:'t',subtitle:'s',options:['Allow','Not now'],requestId:'gone',tool:'more_handoffs'}};
+    db.exec('DROP TRIGGER approval_card_update');
+    try { db.prepare('UPDATE messages SET kind=?,json=? WHERE id=?').run('options',JSON.stringify(legacy),stale.id); }
+    finally { initializeApprovals(db); }
+    db.prepare('INSERT OR IGNORE INTO open_card(thread_id,id) VALUES(?,?)').run(ops.threadId,stale.id);
+    const restartedStore=new Store(selection);
+    expect(dismissStalePeerCards({...bus,store:restartedStore})).toBe(1);
+    expect(restartedStore.messagesFor(ops.threadId).find(m => m.id === stale.id)?.card).toMatchObject({ answered: "unavailable", dismissed: true });
     expect(new RoutineManager(options).getEventBudget(eventId)).toMatchObject({ limits: { handoff: 4 } });
   });
 
@@ -302,7 +368,8 @@ describe("event run action ledger", () => {
   beforeEach(() => {
     store = new Store(selection);
     ops = store.patchBot(store.createBot().id, { name: "Ops" })!;
-    bus = { store, broadcast: () => {} };
+    const authority=producerFixture(store,ops.id,ops.threadId,"event-fixture");
+    bus = { store, broadcast: () => {}, authorityFor:()=>authority };
     const root = mkdtempSync(join(tmpdir(), "murage-event-actions-")); roots.push(root);
     options = { file: join(root, "routines.json"), botState: () => "busy" as const, createTask: () => ({ threadId: "unused" }), startTurn: async () => {} };
     manager = new RoutineManager(options);

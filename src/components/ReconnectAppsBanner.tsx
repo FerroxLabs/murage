@@ -9,19 +9,21 @@
 // account's own Reconnect goes through the confirmed label form like every
 // other sign-in (#758): nothing is authorized from the chat line itself.
 // The same fact reaches the bot as a plain line in its instructions.
-import { useCallback, useEffect, useState } from "react";
+import { t } from "@/lib/i18n";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link2Off } from "lucide-react";
 
 import { useDesktopSurface } from "@/lib/use-surface";
-import { api, useStore } from "@/state/store";
+import { routeNotification } from "@/lib/attention-offer";
+import { showNotification } from "@/lib/notify";
+import type { Notification } from "../../server/notify";
+import { api, openNotificationTarget, useStore } from "@/state/store";
 
-export interface ReconnectApp { slug: string; label: string; accounts: Array<{ id: string; alias?: string }> }
+export interface ReconnectApp { incidentId?: string; slug: string; label: string; accounts: Array<{ id: string; alias?: string }> }
 
 export function reconnectNotice(apps: ReadonlyArray<ReconnectApp>): string | null {
   if (!apps.length) return null;
-  const labels = apps.map((app) => app.label);
-  const list = labels.length === 1 ? labels[0]! : `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`;
-  return `${list} ${labels.length === 1 ? "needs" : "need"} reconnecting.`;
+  return apps.map(app => t("connectorHealth.signIn", { connector: app.label })).join(". ");
 }
 
 export interface ReconnectAppsBannerViewProps {
@@ -49,11 +51,11 @@ export function ReconnectAppsBannerView({ apps, busy, onReconnect, desktop = tru
           disabled={busy !== null}
           onClick={() => { onReconnect(app); }}
           className="min-h-9 rounded-lg bg-control px-3 py-1 text-[13px] font-medium text-ink hover:bg-raised-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-40"
-          aria-label={`Reconnect ${app.label}`}
+          aria-label={t("connectorHealth.reconnectApp", { connector: app.label })}
         >
-          {apps.length > 1 ? `Reconnect ${app.label}` : "Reconnect"}
+          {apps.length > 1 ? t("connectorHealth.reconnectApp", { connector: app.label }) : t("connectorHealth.reconnect")}
         </button>
-      )) : <span className="text-ink-secondary">Reconnect it on your computer.</span>}
+      )) : <span className="text-ink-secondary">{t("connectorHealth.computer")}</span>}
       {problem && <span className="text-danger">{problem}</span>}
     </div>
   );
@@ -61,15 +63,21 @@ export function ReconnectAppsBannerView({ apps, busy, onReconnect, desktop = tru
 
 export function ReconnectAppsBanner({ enabled }: { enabled: boolean }) {
   const desktop = useDesktopSurface();
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
+  const latest = useRef(state);
+  latest.current = state;
   const [apps, setApps] = useState<ReconnectApp[]>([]);
 
   const load = useCallback(async () => {
     try {
-      const answer = await api("/api/connectors/needs-reconnect");
+      const answer = await api(desktop === true ? "/api/connectors/needs-reconnect" : "/api/connector-incidents");
       setApps(Array.isArray(answer?.apps) ? answer.apps : []);
+      if (desktop === true) for (const frame of (answer.notifications ?? []) as Notification[]) {
+        routeNotification({ ...frame }, shown => showNotification(shown as unknown as Notification,
+          target => openNotificationTarget(dispatch, target, latest.current)));
+      }
     } catch { /* a missed check shows nothing; the next one asks again */ }
-  }, []);
+  }, [desktop, dispatch]);
 
   useEffect(() => {
     if (!enabled) { setApps([]); return; }
@@ -82,8 +90,11 @@ export function ReconnectAppsBanner({ enabled }: { enabled: boolean }) {
 
   // Reconnect opens Connected apps; the account's Reconnect there asks for
   // the label before any sign-in starts.
-  const openConnectedApps = () => { dispatch({ type: "togglePlugins", open: true, surface: "apps" }); };
+  const openConnectedApps = (app: ReconnectApp) => {
+    if (app.incidentId) { dispatch({ type: "openConnectorReconnect", incidentId: app.incidentId }); return; }
+    dispatch({ type: "togglePlugins", open: true, surface: app.slug.startsWith("mcp-") ? "mcp" : "apps",
+    reconnect: { slug: app.slug, accountId: app.accounts[0]?.id, alias: app.accounts[0]?.alias } }); };
 
   if (!enabled) return null;
-  return <ReconnectAppsBannerView apps={apps} busy={null} desktop={desktop === true} onReconnect={openConnectedApps} />;
+  return <ReconnectAppsBannerView apps={apps} busy={null} desktop={desktop === true || apps.some(app => app.incidentId && !app.slug.startsWith("mcp-"))} onReconnect={openConnectedApps} />;
 }

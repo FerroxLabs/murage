@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/cn";
 import { desktopCallerHeaders } from "@/lib/live-events";
-import type { CleanupTarget } from "@/lib/dictation-cleanup";
+import { cleanupEnabled, type CleanupTarget } from "@/lib/dictation-cleanup";
 
 // Voice typing for every surface the native macOS helper cannot reach.
 //
@@ -335,6 +335,8 @@ export interface PushToTalkProps {
   /** Ask the server to tidy the transcript (`?cleanup=1`), for the bot or room
    *  the message is going to. Absent means raw, which is what calls want. */
   cleanup?: CleanupTarget;
+  /** Inline notice owned by the composer, with no response needed. */
+  onCleanupStart?: () => void;
 }
 
 /**
@@ -350,6 +352,7 @@ export async function postClip(
   timeoutMs: number = CLIP_TIMEOUT_MS,
   signal?: AbortSignal,
   cleanup?: CleanupTarget,
+  onCleanupStart?: () => void,
 ): Promise<{ text: string; raw?: string }> {
   // A deadline, because the button is DISABLED while this is outstanding. A
   // socket that never answers — a tailnet that dropped between the release
@@ -363,9 +366,11 @@ export async function postClip(
   const deadline = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
   try {
-    const query = cleanup
-      ? `?cleanup=1${cleanup.botId ? `&botId=${encodeURIComponent(cleanup.botId)}` : ""}${cleanup.groupId ? `&groupId=${encodeURIComponent(cleanup.groupId)}` : ""}`
+    const tidy = cleanupEnabled() ? cleanup : undefined;
+    const query = tidy
+      ? `?cleanup=1${tidy.botId ? `&botId=${encodeURIComponent(tidy.botId)}` : ""}${tidy.groupId ? `&groupId=${encodeURIComponent(tidy.groupId)}` : ""}`
       : "";
+    if (tidy) onCleanupStart?.();
     response = await fetch(`/api/voice/transcribe${query}`, {
       method: "POST",
       redirect: "error",
@@ -377,7 +382,7 @@ export async function postClip(
     if (!response.ok) throw Object.assign(new Error(body?.error ?? "Transcribing failed."), { reason: body?.reason });
     return {
       text: typeof body?.text === "string" ? body.text : "",
-      ...(cleanup && body?.cleaned === true && typeof body?.raw === "string" ? { raw: body.raw } : {}),
+      ...(tidy && body?.cleaned === true && typeof body?.raw === "string" ? { raw: body.raw } : {}),
     };
   } catch (error) {
     if (signal?.aborted) throw new Error("Cancelled locally. Flux may still process audio that was already uploaded.");
@@ -398,7 +403,7 @@ export async function postClip(
  * thumb off the control mid-sentence loses the pointerup and leaves the
  * microphone open with nothing listening for the release.
  */
-export function PushToTalk({ onTranscript, onNote, facts, transcribe, cleanup }: PushToTalkProps) {
+export function PushToTalk({ onTranscript, onNote, facts, transcribe, cleanup, onCleanupStart }: PushToTalkProps) {
   const [phase, setPhase] = useState<Phase>("idle");
   const recorder = useRef<MediaRecorder | null>(null);
   const startedAt = useRef(0);
@@ -411,8 +416,8 @@ export function PushToTalk({ onTranscript, onNote, facts, transcribe, cleanup }:
   // composer's `onTranscript` closes over its own `text`, and that text can
   // change while the clip is in flight. Calling the captured one would append
   // to a stale draft and overwrite whatever the person typed in the meantime.
-  const latest = useRef({ onTranscript, onNote, cleanup });
-  latest.current = { onTranscript, onNote, cleanup };
+  const latest = useRef({ onTranscript, onNote, cleanup, onCleanupStart });
+  latest.current = { onTranscript, onNote, cleanup, onCleanupStart };
   const gate = pushToTalkGate(facts);
 
   const release = useCallback(() => {
@@ -482,7 +487,7 @@ export function PushToTalk({ onTranscript, onNote, facts, transcribe, cleanup }:
       // stops a running recorder, which lands here — and a clip that has been
       // recorded must reach the composer or say why, never evaporate.
       void deliverClip(clip, {
-        transcribe: transcribe ?? ((blob) => postClip(blob, CLIP_TIMEOUT_MS, undefined, latest.current.cleanup)),
+        transcribe: transcribe ?? ((blob) => postClip(blob, CLIP_TIMEOUT_MS, undefined, latest.current.cleanup, latest.current.onCleanupStart)),
         onTranscript: (said, raw) => latest.current.onTranscript(said, raw),
         onNote: (note) => latest.current.onNote?.(note),
         mounted: () => alive.current,

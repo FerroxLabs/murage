@@ -1,0 +1,10 @@
+PASS reparse ancestor under runs
+PASS outside root
+PASS fresh contained path
+PASS cleanup after child timeout preserves unrelated task
+PASS enumeration error is failure
+PASS delete no-op fails final enumeration
+PASS unledgered prefixed task fails final enumeration
+PASS stale publication after successful scheduler exit
+PASS publication newer than tested run start
+PASS unresolved registration ownership refuses admission

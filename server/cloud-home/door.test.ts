@@ -607,6 +607,17 @@ describe("the remembered-owner factor", () => {
     const f = await h.call("POST", "/api/cloud/enter", enter(h.now(), mkDevice(), { proof: "factor" }).body);
     expect(h.sessions.device(f.body.deviceId)!.factor).toBe("remembered-owner");
   });
+  it("a NEW owner factor tells the server once; a renewal and a desktop proof ticket do not", async () => {
+    const h = await home(); const dev = mkDevice(); let fired = 0;
+    h.sessions.onOwnerFactorIssued = () => { fired++; };
+    await h.call("POST", "/api/cloud/enter", enter(h.now(), dev, { proof: "email" }).body);
+    expect(fired).toBe(1);
+    h.tick(60_000);
+    await h.call("POST", "/api/cloud/enter", enter(h.now(), dev, { proof: "email" }).body);   // renewal
+    expect(fired).toBe(1);
+    await h.call("POST", "/api/cloud/enter", enter(h.now(), mkDevice(), { kind: "desktop", proof: "email" }).body);
+    expect(fired).toBe(1);
+  });
   it("an unknown proof value is a malformed ticket, and a desktop proof ticket writes no factor", async () => {
     const now = 1_800_000_000_000;
     expect(outcomeOf(() => verify(ticket(now, { proof: "x" }), now))).toBe("ticket_malformed");

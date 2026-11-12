@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { bwrapProcessDeps, hostProcessGone, hostProcessIdentity, hostProcessIsChild, resolveBwrapProcesses } from "./bwrap-process.ts";
+import { bwrapProcessDeps, hostProcessExited, hostProcessGone, hostProcessIdentity, hostProcessIsChild, resolveBwrapProcesses } from "./bwrap-process.ts";
 
 const root = { pid: 71001, start: "100" };
 const init = { pid: 71002, start: "101" };
@@ -104,6 +104,21 @@ describe("bwrap host process resolution", () => {
     expect(hostProcessGone(init)).toBe(true);
     files.delete(`/proc/${init.pid}/stat`);
     expect(hostProcessGone(init)).toBe(true);
+  });
+  it("proves an unpinned status PID exited only from absence or a dead state", () => {
+    expect(hostProcessExited(init.pid)).toBe(false);
+    stat(init.pid, root.pid, init.start, "Z");
+    expect(hostProcessExited(init.pid)).toBe(true);
+    stat(init.pid, root.pid, init.start, "X");
+    expect(hostProcessExited(init.pid)).toBe(true);
+    files.delete(`/proc/${init.pid}/stat`);
+    expect(hostProcessExited(init.pid)).toBe(true);
+    files.set(`/proc/${init.pid}/stat`, "incomplete");
+    expect(hostProcessExited(init.pid)).toBe(false);
+    vi.mocked(bwrapProcessDeps.read).mockImplementation(() => { throw Object.assign(new Error("denied"), { code: "EACCES" }); });
+    expect(hostProcessExited(init.pid)).toBe(false);
+    expect(hostProcessExited(1)).toBe(false);
+    expect(hostProcessExited(process.pid)).toBe(false);
   });
   it("does not treat a malformed stat as proof of disappearance", () => {
     files.set(`/proc/${init.pid}/stat`, "incomplete");

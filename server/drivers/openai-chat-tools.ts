@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 // Tool calling for the OpenAI-chat engines (OPENAI-TOOLS-109): the pieces of the round loop that hold no runtime state of
 // their own — redaction, the per-turn tool catalog and its caps, provider refusal readers, the remembered text-only models and
 // the per-turn MCP child teardown set. The loop itself lives in openai-chat.ts.
@@ -25,6 +26,9 @@ export const STEPS_ALREADY_RAN = "The steps so far already ran, so ask only for 
 export const stoppedAfter = (count: string) => `Stopped after ${count} without a final answer. ${STEPS_ALREADY_RAN}`;
 export const FENCE_AFTER_TOOLS = `Murage stopped this turn before its next step. ${STEPS_ALREADY_RAN}`;
 export const TEXT_ONLY_NOTICE = "This model cannot use tools, so this bot is answering without them. Choose a model with tool support to let it use its tools.";
+/** A Cloud home cannot start a chat engine's tool servers yet: they would be spawned by the server itself, and a home runs every
+ *  child through the turn launcher, which starts engines only. The turn runs without tools and says so once per conversation. */
+export const CLOUD_HOME_TOOLS_NOTICE = "This engine cannot use its tools on Murage Cloud yet, so this bot is answering without them.";
 export const PERMISSION_DENIED = "Permission denied; the tool was not executed.";
 export const TOOL_INTERRUPTED = "Tool interrupted; an operation already dispatched may have taken effect. Verify its state before retrying.";
 export const SCREENSHOT_NOT_SHOWN = "Screenshot not shown: this engine reads text only";
@@ -93,7 +97,7 @@ export const namesSecret = (text: string, secrets: readonly string[]): boolean =
 export function providerArguments(text: string, secrets: readonly string[]): string {
   if (!secrets.length) return text;
   try {
-    const parsed: unknown = JSON.parse(text);
+    const parsed: unknown = registerBusyloopPayloadSite("read", JSON.parse(text));
     // a replayed call's keys are the model's own words, never matched on: a secret used as a key is removed too (Astra code-r2)
     const scrubbed = scrubKnownLeaves(parsed, secrets, 0, true);
     const out = JSON.stringify(scrubbed);
@@ -146,7 +150,7 @@ export class SecretStreamFilter {
 // ── provider refusal readers (ported from upstream openai-chat.ts) ─────────
 
 const errorEnvelope = (body: string): Record<string, unknown> | undefined => {
-  try { return object(JSON.parse(body)); } catch { return undefined; }
+  try { return object(registerBusyloopPayloadSite("read", JSON.parse(body))); } catch { return undefined; }
 };
 
 /** The provider refused the `tools` parameter itself (not a tool call): the model is text-only. */

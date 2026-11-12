@@ -1,3 +1,4 @@
+import { inertBot } from "./store.ts";
 // Incoming images are authorized by server-owned message metadata or an
 // upload bound to this exact conversation. Text paths never grant a read.
 import { basename, join } from "node:path";
@@ -91,10 +92,10 @@ export function removedImagePaths(dataDir: string, texts: readonly string[]): st
 
 /** Validate actual ownership, including detached tasks and room membership. */
 export function turnImageAudience(store: Store, threadId: string, botId?: string): boolean {
-  const direct = store.bots.find(bot => !bot.hidden && (bot.threadId === threadId || bot.tasks?.some(task => task.threadId === threadId)));
+  const direct = store.bots.find(bot => !inertBot(bot) && (bot.threadId === threadId || bot.tasks?.some(task => task.threadId === threadId)));
   if (direct) return !botId || direct.id === botId;
   const room = store.groups.find(group => group.threadId === threadId || group.tasks?.some(task => task.threadId === threadId));
-  return Boolean(room && room.memberIds.some(id => (!botId || id === botId) && store.bots.some(bot => bot.id === id && !bot.hidden)));
+  return Boolean(room && room.memberIds.some(id => (!botId || id === botId) && store.bots.some(bot => bot.id === id && !inertBot(bot))));
 }
 
 export class TurnImages {

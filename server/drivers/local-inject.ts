@@ -1,3 +1,5 @@
+import { registerBusyloopPayloadSite, fluxRouteFor } from "../../shared/flux-route.ts";
+import { inspectFluxResponse } from "./flux-busyloop-readers.ts";
 // Shared local-host inject — the sidecar workflow, inside the picker.
 // Probe Ollama / LM Studio / llama.cpp / vLLM / SGLang / oMLX / EXO /
 // Unsloth plus the servers the user added under Settings → Models → Local
@@ -114,7 +116,7 @@ export interface InjectedModel {
   model: string;
   label: string;
   /** The server, named the way the picker and the settings card name it
-   *  ("llama.cpp on seanbeast"). Spec V3. */
+   *  ("llama.cpp on a local box"). Spec V3. */
   server: string;
   /** Outcome of the last Local models tool test for this server+model, if any.
    *  `failed` is what the picker marks with a warning. Spec V3. */
@@ -258,7 +260,7 @@ function firstUnslothToken(row: unknown): string | null {
 function readUnslothKey(env: Record<string, string | undefined>): string | null {
   const home = env.HOME || env.USERPROFILE || homedir();
   try {
-    const raw = JSON.parse(readFileSync(join(home, ".unsloth", "studio", "auth", "agent_api_key.json"), "utf8")) as {
+    const raw = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(join(home, ".unsloth", "studio", "auth", "agent_api_key.json"), "utf8"))) as {
       api_key?: unknown;
       servers?: unknown;
     };
@@ -334,7 +336,7 @@ export async function localRequestJson(
   const timer = setTimeout(() => controller.abort(), init.timeoutMs ?? 1200);
   timer.unref?.();
   try {
-    const response = await fetchImpl(url, {
+    const response = await fetchImpl(fluxRouteFor(url).requestUrl, {
       method: init.method ?? "GET",
       signal: controller.signal,
       redirect: "error",
@@ -344,9 +346,11 @@ export async function localRequestJson(
       },
       ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
     });
+    const fluxResponse = await inspectFluxResponse(response, fluxRouteFor(url).routed, controller.signal, true);
+    if (fluxResponse.decision && fluxResponse.decision.action !== "PASS") return {ok:false, status:response.status, json:null};
     let json: unknown = null;
     try {
-      json = await response.json();
+      json = fluxResponse.rawBody !== undefined ? registerBusyloopPayloadSite("read", JSON.parse(fluxResponse.rawBody)) : await registerBusyloopPayloadSite("read", response.json());
     } catch {
       json = null;
     }
@@ -793,7 +797,7 @@ export async function probeLocalInjects(
         id: encodeInjectId(host.id, model),
         host: host.id,
         model,
-        // "qwen3.8-27b · llama.cpp on seanbeast" (spec V3): one row that says
+        // "qwen3.8-27b · llama.cpp on a local box" (spec V3): one row that says
         // both which model and which machine, in that order.
         label: `${model} · ${host.label}`,
         server: host.label,

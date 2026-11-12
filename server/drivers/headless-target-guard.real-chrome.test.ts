@@ -19,7 +19,7 @@ const note = (line: string) => trace.push(`${new Date().toISOString()} ${line}`)
 
 async function launch(): Promise<{ child: ChildProcess; url: string; dir: string }> {
   const dir = mkdtempSync(join(tmpdir(), "mb-chrome-"));
-  const child = spawn(chrome!, ["--headless", "--no-sandbox", "--disable-gpu", "--remote-debugging-port=0", `--user-data-dir=${dir}`, "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
+  const child = spawn(chrome!, ["--headless", "--no-sandbox", "--disable-gpu", "--remote-debugging-port=0", `--user-data-dir=${dir}`, "about:blank"], { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
   const url = await new Promise<string>((resolve, reject) => {
     let text = "";
     const timer = setTimeout(() => reject(new Error("chrome did not start")), 20_000);

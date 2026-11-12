@@ -43,7 +43,7 @@ beforeAll(() => {
   // its long name only through the native call).
   scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "murage-safe-wipe-")));
   // A live foreign lease owner: a real process that is not this one.
-  leaseHolder = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  leaseHolder = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { windowsHide: true, stdio: "ignore" });
 });
 
 afterAll(async () => {

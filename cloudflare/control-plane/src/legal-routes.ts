@@ -15,16 +15,18 @@
 //   POST /v1/admin/abuse-closure      operator: records an evidenced abuse closure (the only thing that disqualifies the 7-day refund)
 //   POST /v1/admin/refund-identity-objection  operator: records an objection to keeping a person's refund codes (restricted at once), and
 //                                     later the checkpoint that the decision notice was sent (keep or erase), which lifts the restriction
+import { refusedForAccount, type Refused } from "./refusal";
 import { assertPinnedHome } from "./customer-identity";
 import { readyAnchorSql, refundWindow, withdrawalEndsAt, withdrawalOpen } from "./checkout-moments";
 import { issueDisclosureToken } from "./disclosure-token";
-import { acceptanceCounts, authorizationFor, createManagedQuote, LINK_SELLER_LINE, retentionDaysText, SCREEN_VERSION, traderIdentity } from "./legal-flows";
+import { acceptanceCounts, authorizationFor, createManagedQuote, firstMonthOfferHint, LINK_SELLER_LINE, retentionDaysText, SCREEN_VERSION, traderIdentity } from "./legal-flows";
 import { sellerFor, sellerSettings } from "./seller";
 import { applyServiceLog } from "./service-intervals";
 import { z } from "zod";
+import { ageShown } from "./home-terms";
 import { accountSession, type ControlPlaneAuth } from "./auth";
 import { admin } from "./b3-control";
-import { PLAN_MONTHLY_USD } from "./b5-config";
+import { FLUX_TERMS_VERSION, PLAN_MONTHLY_USD } from "./b5-config";
 import { promiseOf } from "./cancel-charges";
 import { fluxOn } from "./b4-flux";
 import { claimDisputeCredit, closeDisputeHold, markDisputeCreditApplied, resolveInexactDispute, actor, applyTopup, listCustomerOrphans, ORPHAN_REVIEW_MS, ORPHAN_ESCALATE_MS, CancelUnconfirmed, cfg, getSub, homeSoldByLink, liftTermsCancel, notify, recordNotice, replayParkedAcceptance, syncCancellation, readJSON, stubFluxHooks, type BillingDependencies, inAppPending, IN_APP_CANCEL_INTENT_SQL, inAppResolutionQ, keepableBy, openDeclarationsSql, scheduleParked, inAppCancellationId, noFurtherCharge, planEndSentence, renewalStopSentence, planEndState, planEnding, publicCancelEndSql, publicCurrentSql, type OpenDeclaration } from "./b5-billing";
@@ -49,6 +51,7 @@ import { denialText, recordObjection, recordObjectionDecision, refusalReceiptFor
   RefusalWithdrawn } from "./refund-identity";
 import { queueExportArchive } from "./self-service";
 import { planEndOf } from "./plan-end-reason";
+import { TOPUP_HELD_MESSAGE, topupOffered } from "./held-until-item9-highs";
 
 const homeIdSchema = z.string().regex(/^[\w-]{1,128}$/);
 const cancelSchema = z.object({ homeId: homeIdSchema.optional() }).strict();
@@ -62,7 +65,10 @@ const refundBody = z.object({ homeId: homeIdSchema.optional(), requestId: z.stri
 const quoteBody = z.object({ plan: z.string().max(20), country: z.string().regex(/^[A-Za-z]{2}$/), postalCode: z.string().trim().max(20).optional(),
   topupAmountUsd: z.number().int().min(5).max(500).optional(), homeId: homeIdSchema.optional() }).strict();
 const versionsBody = z.object({ cloudTerms: z.string().max(80), termsOfService: z.string().max(80), privacyPolicy: z.string().max(80) }).strict();
-const acceptBody = z.object({ termsAccepted: z.literal(true), documentVersions: versionsBody, client: clientSchema.optional() }).strict();
+// screenVersion and ageConfirmed (browser-owner design section 11): the re-accept page must say which screen it showed (its words carry the age
+// confirmation since SCREEN_VERSION .7) and that the box was ticked, so a page left open across the change cannot store words it never showed.
+const acceptBody = z.object({ termsAccepted: z.literal(true), ageConfirmed: z.literal(true), screenVersion: z.string().min(1).max(100), documentVersions: versionsBody,
+  client: clientSchema.optional() }).strict();
 const abuseBody = z.object({ homeId: homeIdSchema, evidence: z.string().trim().min(10).max(4000) }).strict();
 /** Round 10 (Astra TAXCOUNTRY-9 P1-2 / P2-a): an operator's record of money or credit, always with its evidence and who recorded it. */
 const resolveReturnedBody = z.object({ returnedCents: z.number().int().min(0).max(100_000_000), evidence: z.string().trim().min(10).max(4000),
@@ -127,14 +133,15 @@ function disclosure(request: Request, env: Env, deps: BillingDependencies): Resp
   if (!Number.isInteger(amount) || amount < 5 || amount > 500) throw new HTTPError(400, "invalid_request");
   const base = buildDisclosure(plan, nowOf(deps), null, { siteLocale, topupAmountUsd: amount });
   const declared = params.get("declaredCountry");
-  if (declared === null) return json(base as never);
+  // TOPUP-OFFERS-LIVE: while auto top-up is held (held-until-item9-highs.ts) it is not offered here, as for a Link buyer.
+  if (declared === null) return json({ ...base, topupAvailable: base.topupAvailable && topupOffered() } as never);
   if (!/^[A-Za-z]{2}$/.test(declared)) throw new HTTPError(400, "invalid_request");
   const seller = sellerFor(sellerSettings(env), declared);
   const d = renderDisclosure(plan, declared, siteLocale, seller, params.get("checkoutLanguage") ?? siteLocale);
   // WP4 r2-3: the token binds this rendering (page language, country, path, Stripe locale, text) to the consent the page sends back.
   const token = issueDisclosureToken(env, { screenVersion: SCREEN_VERSION, siteLanguage: siteLocale, declaredCountry: d.declaredCountry, path: d.path,
     locale: d.locale, renewalText: d.renewalText }, nowOf(deps));
-  return json({ ...base, seller, sellerLine: seller === "link" ? LINK_SELLER_LINE : null, topupAvailable: seller !== "link",
+  return json({ ...base, seller, sellerLine: seller === "link" ? LINK_SELLER_LINE : null, topupAvailable: seller !== "link" && topupOffered(),
     wording: { ...base.wording, authorization: authorizationFor(seller) },
     disclosure: { screenVersion: SCREEN_VERSION, declaredCountry: d.declaredCountry, locale: d.locale, path: d.path, lines: d.lines, renewalText: d.renewalText,
       token } } as never);
@@ -168,7 +175,7 @@ async function quote(request: Request, env: Env, deps: BillingDependencies, auth
 
 /** B2, the ended view: the signed-in customer has no live home, only a deleted one. Instead of 404 the page gets what ended and when, and
  *  whether anything is still kept; "Start again" is a new checkout (a deleted home never blocks a reservation: b3-control.ts). */
-async function endedView(env: Env, userId: string): Promise<Response | null> {
+async function endedView(env: Env, userId: string, refused: Refused | null): Promise<Response | null> {
   const h = await env.DB.prepare("SELECT id,updated_at FROM cloud_homes WHERE owner_id=? AND desired_state='deleted' ORDER BY updated_at DESC, created_at DESC LIMIT 1")
     .bind(userId).first<{ id: string; updated_at: number }>();
   if (!h) return null;
@@ -193,6 +200,7 @@ async function endedView(env: Env, userId: string): Promise<Response | null> {
   const planEndAll = sub ? await planEndOf(env, h.id, sub) : { reason: null, refundState: null };
   return json({
     homeId: null,
+    refused,
     home: { id: h.id, state: "deleted", deletedAt },
     subscription: sub ? { plan: sub.plan, planName: plan ? PLAN_NAMES[plan] : sub.plan, priceUsd: plan ? PLAN_MONTHLY_USD[plan] : null, status: sub.status,
       ended: true, endedAt, cancelAtPeriodEnd: true, activeUntil: endedAt, endedReason: planEndAll.reason, refundState: planEndAll.refundState,
@@ -212,9 +220,13 @@ async function summary(request: Request, env: Env, deps: BillingDependencies, au
   catch (e) {
     // No live home: a customer whose Cloud was deleted sees the ended view, never a bare 404 (the operator still names a live home).
     if (!(e instanceof HTTPError && e.status === 404) || await isOperator(request, env)) throw e;
-    const ended = await endedView(env, (await currentUser(request, deps, auth)).id);
-    if (!ended) throw e;
-    return ended;
+    const userId = (await currentUser(request, deps, auth)).id;
+    const refusedNow = await refusedForAccount(env, userId, nowOf(deps));
+    const ended = await endedView(env, userId, refusedNow);
+    if (ended) return ended;
+    // No home at all, but the guard just turned an order away (its reservation lapsed or was released): the page still reads why.
+    if (refusedNow) return json({ homeId: null, home: null, subscription: null, refused: refusedNow });
+    throw e;
   }
   const now = nowOf(deps);
   // Every read the page needs, in ONE D1 batch (one round trip, not fourteen). The statements are the ones getSub, getTopup,
@@ -269,11 +281,13 @@ async function summary(request: Request, env: Env, deps: BillingDependencies, au
     .first<{ collected_country: string; seller: string; reason: string; expires_at: number }>();
   const sub = (subR.results[0] ?? null) as Awaited<ReturnType<typeof getSub>>;
   const refundWin = sub && sub.first_paid_at !== null ? refundWindow(refund7Frozen, sub.first_paid_at, homeRow) : null;
+  const refundEligible = await firstMonthOfferHint(env, { homeId: who.homeId, userId: who.userId }, now); // identifiers only: every other input is read on the primary
   const topup = (topupR.results[0] ?? null) as Awaited<ReturnType<typeof getTopup>>;
   const exp = (expR.results[0] ?? null) as { id: string; status: string; requested_at: number; delivered_at: number | null; pause_until: number | null } | null;
   const wd = withdrawalFrom((consentR.results[0] ?? null) as WithdrawalConsent | null, (doneR.results[0] ?? null) as { confirmed_at: number; status: string } | null, now);
   const linkRow = (linkR.results[0] ?? null) as { tax_source: string | null } | null;
-  const topupBlocked = linkRow !== null && sellerOfConsent(linkRow) === "link";
+  // TOPUP-OFFERS-LIVE: not offered while held (held-until-item9-highs.ts), on the same path as a Link (Managed Payments) contract.
+  const topupBlocked = !topupOffered() || (linkRow !== null && sellerOfConsent(linkRow) === "link");
   const acceptance = (accR.results[0] ?? null) as AcceptanceRow | null;
   const noticePending = olderR.results.length > 0 && noticeR.results.length === 0;
   const termsState = { noticePending };
@@ -357,6 +371,8 @@ async function summary(request: Request, env: Env, deps: BillingDependencies, au
   const keepingEnds = cancelState === "keeping" && cancelEndsAt !== null && (periodEnd === null || cancelEndsAt <= periodEnd);
   return json({
     homeId: who.homeId,
+    // The checkout guard turned the account's latest order away (src/refusal.ts); null otherwise, after a newer checkout, and after 7 days.
+    refused: await refusedForAccount(env, who.userId, now),
     // Pre-fill only (never decides anything): billingCountry is the ISO-2 of the last confirmed payment; country is the country the customer
     // declared then (the account's stored country). Both null before a first confirmed payment.
     retryCountry: iso2(retry?.collected_country),
@@ -385,6 +401,11 @@ async function summary(request: Request, env: Env, deps: BillingDependencies, au
       refundWindowStartsWhenReady: refundWin?.startsWhenReady ?? false,
       // R16: an outstanding or decided first-month refund request for the current first payment, or null (the page then offers the buttons).
       refundRequest,
+      // Whether the 7-day first-month offer can still be granted (false: asking only creates a request a person must decline). Omitted when
+      // it cannot be decided from stored records; the page treats a missing field as today.
+      // refundEligible concerns ONLY the voluntary 7-day first-month offer; it never gates the EU/UK statutory withdrawal (summary.withdrawal),
+      // which consumers must show independently. Read on the primary (firstMonthOfferHint), not from the replica this route uses.
+      ...(refundEligible === undefined ? {} : { refundEligible }),
       // A cancellation made through the public form: its id (POST /v1/account/cancellations/{id}/keep takes it back), kind and end.
       // keepIds: every declaration of this plan Keep my plan accepts now (normally just `id`).
       // state (Astra CANCEL-SUMMARY-1 #6): "confirmed" | "pending" | "keeping" | null; cancelAtPeriodEnd is true only when confirmed or keeping.
@@ -397,7 +418,7 @@ async function summary(request: Request, env: Env, deps: BillingDependencies, au
       : { available: !topupBlocked, enabled: false, ...TOPUP_DEFAULTS, capPeriod: TOPUP_CAP_PERIOD, capResets: TOPUP_CAP_RESETS, applied: true, applyError: null },
     exportRequest: exp ? { id: exp.id, status: exp.status, requestedAt: exp.requested_at, deliveredAt: exp.delivered_at,
       pausesDeletionUntil: exp.status === "open" ? exp.pause_until : null, pausesDeletion: exp.status === "open" && exp.pause_until !== null } : null,
-    terms: { reacceptRequired: terms.length > 0 },
+    terms: { reacceptRequired: terms.length > 0 || await ageConfirmationMissing(env, who.userId, acceptance) },
     // B2: the home's lifecycle state, and until when its data is kept once the plan has ended (the retention schedule), else null.
     home: { id: homeRow.id, state: homeRow.desired_state },
     dataKeptUntil: dataKeptUntil(env, homeRow, exp?.status === "open" ? exp.pause_until : null),
@@ -448,6 +469,20 @@ async function noticeState(env: Env, userId: string, now: number) {
   return { cur, notice, acc, acceptedCurrent, existingCustomer, noticePending, effective };
 }
 
+/** True when the customer's newest acceptance already covers the documents in force but no acceptance covering them carries the age
+ *  confirmation (given before the age screen): their home then has no terms proof to pull, so the account page must offer the age-confirming
+ *  acceptance even though no document changed. An ageless acceptance of OLDER versions counts too, whether or not the change notice has gone
+ *  out: with the notice pending the changed documents are not offered, and without this the customer would have no way to give the age. */
+export async function ageConfirmationMissing(env: Env, userId: string, acc: AcceptanceRow | null): Promise<boolean> {
+  if (!acc) return false;
+  const cur = currentVersions();
+  const rows = (await env.DB.prepare(`SELECT a.source, a.wording, a.cloud_terms_version AS c, a.tos_version AS t, a.privacy_version AS p, c.screen_version
+    FROM terms_acceptances a LEFT JOIN checkout_consents c ON c.id=a.consent_id WHERE a.user_id=? AND ${acceptanceCounts("a")}
+    ORDER BY a.accepted_at DESC, a.rowid DESC LIMIT 50`).bind(userId).all<{ source: string; wording: string; c: string; t: string; p: string; screen_version: string | null }>()).results;
+  if (changedSince(acc).length > 0) return !rows.some((r) => ageShown(r));
+  return !rows.some((r) => r.c === cur.cloudTerms && r.t === cur.termsOfService && r.p === cur.privacyPolicy && ageShown(r));
+}
+
 async function termsStatus(request: Request, env: Env, deps: BillingDependencies, auth: ControlPlaneAuth): Promise<Response> {
   const user = await currentUser(request, deps, auth);
   const cur = currentVersions();
@@ -456,8 +491,9 @@ async function termsStatus(request: Request, env: Env, deps: BillingDependencies
   // No prompt before the notice: the customer is asked to accept only after the 30-day notice went out.
   const changed = st.noticePending ? [] : changedSince(acc);
   const notice = st.notice;
-  return json({ effective: st.effective, noticePending: st.noticePending, current: cur, accepted: acc ? { cloudTerms: acc.cloud_terms_version, termsOfService: acc.tos_version, privacyPolicy: acc.privacy_version,
-    acceptedAt: acc.accepted_at } : null, reacceptRequired: changed.length > 0, changed: changed.map((d) => ({ title: d.title, versionId: d.versionId })),
+  const ageMissing = await ageConfirmationMissing(env, user.id, acc);
+  return json({ effective: st.effective, noticePending: st.noticePending, current: cur, screenVersion: SCREEN_VERSION, accepted: acc ? { cloudTerms: acc.cloud_terms_version, termsOfService: acc.tos_version, privacyPolicy: acc.privacy_version,
+    acceptedAt: acc.accepted_at } : null, reacceptRequired: changed.length > 0 || ageMissing, ageConfirmationRequired: ageMissing, changed: changed.map((d) => ({ title: d.title, versionId: d.versionId })),
   noticeSentAt: notice?.notified_at ?? null, effectiveAt: notice?.effective_at ?? null,
   // Not accepted by the effective date: the plan ends (does not renew) at the end of this paid period unless accepted before then.
   planEndsAt: changed.length > 0 && notice?.cancel_set_at && !notice.lifted_at ? notice.period_end : null,
@@ -470,13 +506,17 @@ async function acceptTerms(request: Request, env: Env, deps: BillingDependencies
   const cur = currentVersions(); const dv = body.documentVersions;
   // Acceptance binds to the versions the page showed; a page from before another change is stale.
   if (dv.cloudTerms !== cur.cloudTerms || dv.termsOfService !== cur.termsOfService || dv.privacyPolicy !== cur.privacyPolicy) throw new HTTPError(409, "disclosure_stale");
+  if (body.screenVersion !== SCREEN_VERSION) throw new HTTPError(409, "disclosure_stale");
   const now = nowOf(deps);
   // An existing customer accepts changed versions only after the 30-day notice was delivered (the notice comes first, in code).
-  if ((await noticeState(env, user.id, now)).noticePending) throw new HTTPError(409, "notice_pending");
+  // (Not when the documents in force were already accepted: a customer asked only for the age confirmation has no notice to wait for.)
+  const before = await noticeState(env, user.id, now);
+  // (Nor when the customer has never given the age confirmation: that acceptance is their only way forward, so it is taken while the notice is pending.)
+  if (before.noticePending && !before.acceptedCurrent && !await ageConfirmationMissing(env, user.id, before.acc)) throw new HTTPError(409, "notice_pending");
   await env.DB.batch([...archiveCurrentDocs(env, now),
-    env.DB.prepare(`INSERT INTO terms_acceptances (id,user_id,cloud_terms_version,tos_version,privacy_version,source,consent_id,wording,accepted_at,client_meta)
-      VALUES (?,?,?,?,?,'reaccept',NULL,?,?,?)`).bind(`accept-${crypto.randomUUID()}`, user.id, cur.cloudTerms, cur.termsOfService, cur.privacyPolicy,
-      WORDING.reaccept, now, JSON.stringify(clientMeta(body.client, request)))]);
+    env.DB.prepare(`INSERT INTO terms_acceptances (id,user_id,cloud_terms_version,tos_version,privacy_version,source,consent_id,wording,accepted_at,client_meta,flux_terms_version)
+      VALUES (?,?,?,?,?,'reaccept',NULL,?,?,?,?)`).bind(`accept-${crypto.randomUUID()}`, user.id, cur.cloudTerms, cur.termsOfService, cur.privacyPolicy,
+      WORDING.reaccept, now, JSON.stringify(clientMeta(body.client, request)), FLUX_TERMS_VERSION)]);
   // Accepted before the paid period ended: the plan carries on (a non-renewal set for non-acceptance is taken back).
   let planContinues = true;
   try { await liftTermsCancel(env, deps, user.id, now); } catch { planContinues = false; /* the sweep lifts it on its next run */ }
@@ -592,6 +632,8 @@ async function topup(request: Request, env: Env, deps: BillingDependencies, auth
     // it, so top-ups are not offered to those customers (switching one off is always allowed). Checked INSIDE the lease, against the
     // contract that holds the home now (applyTopup checks it again before anything reaches Flux).
     if (body.enabled && await homeSoldByLink(env, who.homeId)) throw new HTTPError(409, "topup_not_available");
+    // TOPUP-OFFERS-LIVE: switching it on is refused while held; switching it off (or keeping it off) still saves.
+    if (body.enabled && !topupOffered()) throw new HTTPError(409, "topup_not_available", { message: TOPUP_HELD_MESSAGE });
     // The worker gate lets a top-up change through without a second factor only when it cannot raise spending (topupReduces). The settings it
     // compared with may have changed since (a concurrent switch-off makes an "unchanged" request an enable), so the rule is checked again HERE,
     // inside the lease, against the settings this save replaces, immediately before saving (Astra JOURNEY-A-1 A3).

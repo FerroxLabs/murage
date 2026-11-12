@@ -39,6 +39,7 @@ describe("private companion authority", () => {
       process.stdout.write(JSON.stringify({consumed,childSafe:child.stdout === 'true',configSafe,originalWorks:companionAuthorized({'x-murage-companion-token':proof}),replacementDenied:!companionAuthorized({'x-murage-companion-token':'b'.repeat(64)})}));
     `;
     const result = spawnSync(process.execPath,["--experimental-strip-types","--input-type=module","-e",script],{
+      windowsHide: true,
       encoding:"utf8",env:{...process.env,MURAGE_COMPANION_TOKEN:PRIVATE_TOKEN},timeout:10_000,
     });
     expect(result.status,result.stderr).toBe(0);

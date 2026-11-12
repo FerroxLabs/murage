@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "park-B3b builder (Claude Sonnet)",
+  "date": "2026-11-11",
+  "base": "8062c99aa",
+  "scope": "emailPark restore check and bot row buttons",
+  "strings": {
+    "en:emailPark.restoreCheckLine": {
+      "text": "Check your email setup after the restore.",
+      "en": "Check your email setup after the restore.",
+      "verdict": "pass",
+      "note": "English as approved by MurageMain 2026-11-11 (shared/email-copy.ts); faithful, same register as the emailPark.* pack, no dash or banned word."
+    },
+    "en:emailPark.confirmInventory": {
+      "text": "Everything looks right",
+      "en": "Everything looks right",
+      "verdict": "pass",
+      "note": "English as approved by MurageMain 2026-11-11 (shared/email-copy.ts); faithful, same register as the emailPark.* pack, no dash or banned word."
+    },
+    "en:emailPark.tryAgainNow": {
+      "text": "Try again now",
+      "en": "Try again now",
+      "verdict": "pass",
+      "note": "English as approved by MurageMain 2026-11-11 (shared/email-copy.ts); faithful, same register as the emailPark.* pack, no dash or banned word."
+    },
+    "de:emailPark.restoreCheckLine": {
+      "text": "Prüfe nach der Wiederherstellung deine E-Mail-Einrichtung.",
+      "en": "Check your email setup after the restore.",
+      "verdict": "pass",
+      "note": "Faithful to the approved English, same register as the emailPark.* strings in this pack; no dash or banned word."
+    },
+    "de:emailPark.confirmInventory": {
+      "text": "Alles sieht richtig aus",
+      "en": "Everything looks right",
+      "verdict": "pass",
+      "note": "Faithful to the approved English, same register as the emailPark.* strings in this pack; no dash or banned word."
+    },
+    "de:emailPark.tryAgainNow": {
+      "text": "Jetzt erneut versuchen",
+      "en": "Try again now",
+      "verdict": "pass",
+      "note": "Faithful to the approved English, same register as the emailPark.* strings in this pack; no dash or banned word."
+    },
+    "es:emailPark.restoreCheckLine": {
+      "text": "Revisa tu configuración de correo después de la restauración.",
+      "en": "Check your email setup after the restore.",
+      "verdict": "pass",
+      "note": "Faithful to the approved English, same register as the emailPark.* strings in this pack; no dash or banned word."
+    },
+    "es:emailPark.confirmInventory": {
+      "text": "Todo se ve bien",
+      "en": "Everything looks right",
+      "verdict": "pass",
+      "note": "Faithful to the approved English, same register as the emailPark.* strings in this pack; no dash or banned word."
+    },
+    "es:emailPark.tryAgainNow": {
+      "text": "Intentar de nuevo ahora",
+      "en": "Try again now",
+      "verdict": "pass",
+      "note": "Faithful to the approved English, same register as the emailPark.* strings in this pack; no dash or banned word."
+    },
+    "fr:emailPark.restoreCheckLine": {
+      "text": "Vérifie ta configuration e-mail après la restauration.",
+      "en": "Check your email setup after the restore.",
+      "verdict": "pass",
+      "note": "Faithful to the approved English, same register as the emailPark.* strings in this pack; no dash or banned word."
+    },
+    "fr:emailPark.confirmInventory": {
+      "text": "Tout est correct",
+      "en": "Everything looks right",
+      "verdict": "pass",
+      "note": "Faithful to the approved English, same register as the emailPark.* strings in this pack; no dash or banned word."
+    },
+    "fr:emailPark.tryAgainNow": {
+      "text": "Réessayer maintenant",
+      "en": "Try again now",
+      "verdict": "pass",
+      "note": "Faithful to the approved English, same register as the emailPark.* strings in this pack; no dash or banned word."
+    },
+    "hi:emailPark.restoreCheckLine": {
+      "text": "रिस्टोर के बाद अपना ईमेल सेटअप जाँच लें।",
+      "en": "Check your email setup after the restore.",
+      "verdict": "pass",
+      "note": "Faithful to the approved English, same register as the emailPark.* strings in this pack; no dash or banned word."
+    },
+    "hi:emailPark.confirmInventory": {
+      "text": "सब कुछ सही दिख रहा है",
+      "en": "Everything looks right",
+      "verdict": "pass",
+      "note": "Faithful to the approved English, same register as the emailPark.* strings in this pack; no dash or banned word."
+    },
+    "hi:emailPark.tryAgainNow": {
+      "text": "अभी फिर कोशिश करें",
+      "en": "Try again now",
+      "verdict": "pass",
+      "note": "Faithful to the approved English, same register as the emailPark.* strings in this pack; no dash or banned word."
+    },
+    "ja:emailPark.restoreCheckLine": {
+      "text": "復元のあとで、メールの設定を確認してください。",
+      "en": "Check your email setup after the restore.",
+      "verdict": "pass",
+      "note": "Faithful to the approved English, same register as the emailPark.* strings in this pack; no dash or banned word."
+    },
+    "ja:emailPark.confirmInventory": {
+      "text": "すべて問題ありません",
+      "en": "Everything looks right",
+      "verdict": "pass",
+      "note": "Faithful to the approved English, same register as the emailPark.* strings in this pack; no dash or banned word."
+    },
+    "ja:emailPark.tryAgainNow": {
+      "text": "今すぐもう一度試す",
+      "en": "Try again now",
+      "verdict": "pass",
+      "note": "Faithful to the approved English, same register as the emailPark.* strings in this pack; no dash or banned word."
+    },
+    "pt-br:emailPark.restoreCheckLine": {
+      "text": "Confira sua configuração de e-mail depois da restauração.",
+      "en": "Check your email setup after the restore.",
+      "verdict": "pass",
+      "note": "Faithful to the approved English, same register as the emailPark.* strings in this pack; no dash or banned word."
+    },
+    "pt-br:emailPark.confirmInventory": {
+      "text": "Tudo parece certo",
+      "en": "Everything looks right",
+      "verdict": "pass",
+      "note": "Faithful to the approved English, same register as the emailPark.* strings in this pack; no dash or banned word."
+    },
+    "pt-br:emailPark.tryAgainNow": {
+      "text": "Tentar novamente agora",
+      "en": "Try again now",
+      "verdict": "pass",
+      "note": "Faithful to the approved English, same register as the emailPark.* strings in this pack; no dash or banned word."
+    },
+    "zh:emailPark.restoreCheckLine": {
+      "text": "恢复之后，请检查你的邮件设置。",
+      "en": "Check your email setup after the restore.",
+      "verdict": "pass",
+      "note": "Faithful to the approved English, same register as the emailPark.* strings in this pack; no dash or banned word."
+    },
+    "zh:emailPark.confirmInventory": {
+      "text": "一切正常",
+      "en": "Everything looks right",
+      "verdict": "pass",
+      "note": "Faithful to the approved English, same register as the emailPark.* strings in this pack; no dash or banned word."
+    },
+    "zh:emailPark.tryAgainNow": {
+      "text": "立即重试",
+      "en": "Try again now",
+      "verdict": "pass",
+      "note": "Faithful to the approved English, same register as the emailPark.* strings in this pack; no dash or banned word."
+    }
+  },
+  "files": {}
+}

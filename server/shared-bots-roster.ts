@@ -1,3 +1,4 @@
+import { inertBot } from "./store.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { mayInspectBot } from "./bot-management.ts";
@@ -12,7 +13,7 @@ export function partitionRoster(store: Store, sender: BotRecord, threadId: strin
   const legacy = sender.partitionedAt === undefined;
   const reachAudience = ownerAudience && !isAutomationThread(sender.id, threadId);
   const tag = issueExecutionAudience(sender.id, threadId, threadId);
-  return store.bots.filter(bot => bot.id !== sender.id && !bot.hidden && (legacy && bot.partitionedAt === undefined ? mayInspectBot(sender, bot) || mayMessage(sender, bot, { ownerAudience: reachAudience }) : authorizeWork({ edge: "peer", requesterBotId: sender.id, requesterThreadId: threadId, targetBotId: bot.id, verb: "ask", tag, ownerAudience }).ok))
+  return store.bots.filter(bot => bot.id !== sender.id && !inertBot(bot) && (legacy && bot.partitionedAt === undefined ? mayInspectBot(sender, bot) || mayMessage(sender, bot, { ownerAudience: reachAudience }) : authorizeWork({ edge: "peer", requesterBotId: sender.id, requesterThreadId: threadId, targetBotId: bot.id, verb: "ask", tag, ownerAudience }).ok))
     .map(bot => bot.partitionedAt !== undefined && sectionKey(bot.section) !== sectionKey(sender.section)
       ? { id: bot.id, name: `${bot.name} (shared)`, shared: true as const, busy: Boolean(bot.busy) }
       : { id: bot.id, name: bot.name, model: bot.modelSelection.model, busy: Boolean(bot.busy), reachable: legacy && bot.partitionedAt === undefined ? mayMessage(sender, bot, { ownerAudience: reachAudience }) : true, individual: isIndividualAssistant(bot) || undefined, title: bot.title || undefined, description: bot.description || undefined, section: bot.section || undefined, chiefOfStaff: bot.chiefOfStaff || undefined });

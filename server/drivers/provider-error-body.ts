@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Adapted from OpenMausBot httpErrorDetail in server/drivers/openai-chat.ts (Apache-2.0), see NOTICE.
@@ -20,7 +21,7 @@ const str = (value: unknown): string | undefined =>
 export function providerErrorFields(body: string): ProviderErrorFields {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(body);
+    parsed = registerBusyloopPayloadSite("read", JSON.parse(body));
   } catch {
     return {};
   }

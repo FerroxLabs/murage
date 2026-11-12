@@ -6,7 +6,7 @@ import { DATA_DIR } from "./config.ts";
 import { database, transaction } from "./database.ts";
 import { appendMessage, closeMessageDb, deleteThread, insertMessage, insertMessageAfter, insertMessageBefore, searchMessagesWithMeta, setActiveLeaf, updateMessage } from "./message-db.ts";
 import { prepareThreadSummaryBackfill, readThreadSummary, resetThreadSummaries, stepThreadSummaryBackfill, syncThreadSummary, threadSummaryPending } from "./thread-summary.ts";
-import { rebuildMessageSearchIndex } from "./message-search-index.ts";
+import { finishBackgroundUpgradeWorkNow } from "./database.ts";
 import { forgottenMessages } from "./memory/memory-revocation.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 import type { Message } from "./store.ts";
@@ -128,14 +128,14 @@ it("commits its cursor after the time budget and resumes after a failed chunk", 
   expect(summary("t4")?.snippet).toBe("kept 4");
 });
 
-it("rebuilds restored summaries with the search repair and reads previews by primary key only", () => {
+it("rebuilds restored summaries with background upgrade work and reads previews by primary key only", () => {
   appendMessage("t", msg("m1", "visible"));
   appendMessage("t", msg("m2", "private forgotten", "m1", { withheldFromBots: "forgotten" }));
   database().prepare("UPDATE thread_summary SET snippet='stale archive text'").run();
   resetThreadSummaries(database());
   expect(summary()).toBeUndefined();
   expect(threadSummaryPending(database())).toBe(true);
-  rebuildMessageSearchIndex(database());
+  finishBackgroundUpgradeWorkNow();
   expect(summary()?.snippet).toBe("visible");
   expect(threadSummaryPending(database())).toBe(false);
   const spy = vi.spyOn(database(), "prepare");

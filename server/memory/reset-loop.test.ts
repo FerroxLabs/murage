@@ -14,7 +14,7 @@ import { beforeEach, expect, it } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
 import { DATA_DIR } from "../config.ts";
-import { closeDatabase, database } from "../database.ts";
+import { closeDatabase, database, transaction } from "../database.ts";
 import { stopWalMaintenance } from "../wal-maintenance.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { Store } from "../store.ts";
@@ -189,10 +189,14 @@ it("the replay a reset turn carries on a long thread is bounded and quick to ass
   const insert = database().prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,0,'delivered',?)");
   // 1.0.2: the lines are stored (the write-time layer judges stored lines; a line it never saw reads "checking" and is withheld)
   const stored: Array<{ id: string; role: string; kind: string; text: string }> = [];
-  for (let turn = 0; turn < 3_000; turn++) {
-    stored.push(store.appendMessage(bot.threadId, { role: "user", kind: "text", text: `owner ${turn} ${filler}`, origin: "desktop" } as never) as never,
-      store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: `sable ${turn} ${filler}`, turnId: `t${turn}`, from: { botId: bot.id, name: "Sable", color: "x" } } as never) as never);
-  }
+  // Setup is outside the replay timer. Preserve all 6,000 real writer rows
+  // without a synchronous commit burst exceeding 5d5a791f19's WAL ceiling.
+  transaction(() => {
+    for (let turn = 0; turn < 3_000; turn++) {
+      stored.push(store.appendMessage(bot.threadId, { role: "user", kind: "text", text: `owner ${turn} ${filler}`, origin: "desktop" } as never) as never,
+        store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: `sable ${turn} ${filler}`, turnId: `t${turn}`, from: { botId: bot.id, name: "Sable", color: "x" } } as never) as never);
+    }
+  });
   database().exec("BEGIN");
   for (let turn = 0; turn < 3_000; turn++) {
     messages.push(stored[2 * turn], stored[2 * turn + 1]);

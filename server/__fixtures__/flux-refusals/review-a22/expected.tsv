@@ -1,0 +1,15 @@
+id	endpoint	reason	action	wait
+P1-sse	chat	keyRevoked	STOP	-
+P1-long	chat	keyRevoked	STOP	-
+P1-long-tail	chat	keyRevoked	STOP	-
+P1-acp-result	resp	keyRevoked	STOP	-
+P2-text-401	chat	keyRefused	STOP	-
+P2-text-revoked	chat	keyRevoked	STOP	-
+P2-duplicate	chat	keyRevoked	STOP	-
+P2-conflicting	chat	keyRevoked	STOP	-
+P2-tool	chat	busy	BACKOFF	60
+P2-compat	chat	hold	RETRY_ONCE	2
+budget-key_budget_reached-bare	chat	keyBudget	STOP	-
+budget-key_budget_reached-header	chat	keyBudget	STOP	-
+budget-free_tier_exhausted-bare	chat	fluxStop	STOP	-
+budget-free_tier_exhausted-header	chat	freeCredit	STOP	-

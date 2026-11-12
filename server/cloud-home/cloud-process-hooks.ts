@@ -1,3 +1,4 @@
+import { withHideInherit } from "../../shared/win-hide-child-process.mjs";
 // Cloud implementation of the platform process hooks. A home mounts /proc with hidepid=2, so the server
 // (user murage) cannot see sudo, the root launcher or the engine (murage-turn); anything that walks /proc
 // would read "nothing left" and fail OPEN. These hooks never touch /proc: each turn runs in a scope unit
@@ -49,7 +50,7 @@ export const realEnvironment: HookEnvironment = {
     }
   },
   systemctlShow: unit => new Promise((resolve, reject) => execFile(SYSTEMCTL, ["show", "--no-pager", "-p", "ActiveState", "-p", "LoadState", unit],
-    { timeout: 3_000, env: { PATH: "/usr/bin:/bin" }, maxBuffer: 4096 }, (error, stdout) => error ? reject(error) : resolve(stdout))),
+    withHideInherit({ timeout: 3_000, env: { PATH: "/usr/bin:/bin" }, maxBuffer: 4096 }), (error, stdout) => error ? reject(error) : resolve(stdout))),
   now: () => Date.now(),
   sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
 };

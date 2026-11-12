@@ -1,3 +1,4 @@
+import "../shared/win-hide-child-process.mjs";
 // Where the server's own files live at runtime, and the one place a spawned
 // proxy's path is worked out.
 //

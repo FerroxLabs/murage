@@ -8,7 +8,7 @@ const nft = readFileSync(fileURLToPath(new URL("../../deploy/cloud-home/murage-e
 const py = (body: string) => JSON.parse(execFileSync("python3", ["-I", "-c", `
 import importlib.util, json, os, sys
 spec = importlib.util.spec_from_file_location("l", sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-${body}`, launcher], { encoding: "utf8" }));
+${body}`, launcher], { windowsHide: true, encoding: "utf8" }));
 const SEP = "--";
 it("builds a pasta spawn argv with only the 8799 loopback forward, no host mapping and the DNS forward", () => {
   const a = py(`print(json.dumps(m.pasta_argv("/run/murage-turn/t-0123456789abcdef")))`) as string[];

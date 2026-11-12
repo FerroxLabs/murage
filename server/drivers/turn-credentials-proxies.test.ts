@@ -40,6 +40,7 @@ describe.each(cases)("$name proxy follows the credential file between calls", (c
       await new Promise<void>((resolve) => stub!.listen(0, "127.0.0.1", resolve));
       const port = (stub.address() as { port: number }).port;
       child = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL(c.file, import.meta.url)), ...(c.args ?? [])], {
+        windowsHide: true,
         env: { ...process.env, ...c.env, [c.urlEnv]: `http://127.0.0.1:${port}`, MURAGE_CRED_FILE: store.path, MURAGE_CRED_SERVER: c.server, [c.envVar]: "stale-env-token" },
         stdio: ["pipe", "pipe", "ignore"],
       });

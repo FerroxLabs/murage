@@ -1,0 +1,42 @@
+COMMAND node_modules/.bin/vitest run server/decision/records-crash.test.ts -t "M53 record and row"
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/records-crash.test.ts > A4a M53 record and row roll back together when messageRewrite drops the row
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/records-crash.test.ts (4 tests | 1 failed | 3 skipped) 437ms
+   ↓ A4a M53 queue-first crash, tx rollback, committed restart yield exactly one usable row
+   × A4a M53 record and row roll back together when messageRewrite drops the row 434ms
+   ↓ A4c M55 answer/answerId/pending survive crash before acceptance; restart never claims execution
+   ↓ recovery refuses a missing queue adapter instead of reporting success
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 skipped (4)
+   Start at  06:33:35
+   Duration  5.42s (transform 3.94s, setup 4.60s, import 261ms, tests 437ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/records-crash.test.ts > A4a M53 record and row roll back together when messageRewrite drops the row
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ server/decision/records-crash.test.ts:19:161
+     17| it('A4a M53 record and row roll back together when messageRewrite drop…
+     18|  const f=fixture();const q=queue(f);try{d.attachQueue(q.ref,{kind:'ema…
+     19|  await expect(d.presentApproval(q.ref,{title:'Queue',subtitle:'x'})).r…
+       |                                                                                                                                                                 ^
+     20|  }finally{q.dispose();}
+     21| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

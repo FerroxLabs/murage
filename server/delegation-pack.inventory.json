@@ -1,0 +1,34 @@
+[
+  {
+    "file": "server/delegation-pack-routes.ts",
+    "name": "DELEGATION_PACK_PROMPT_KIND",
+    "kind": "prompt-part",
+    "value": "delegation-context",
+    "why": "Declares the fenced recent-chat prompt kind for L5b-3 integration."
+  },
+  {
+    "file": "server/delegation-pack-routes.ts",
+    "name": "DELEGATION_PACK_ROUTE",
+    "kind": "owner-route",
+    "value": "/api/delegation-packs/:packId",
+    "why": "Lets only the authenticated owner inspect prepared chat lines."
+  },
+  {
+    "file": "src/components/DelegationPack.tsx",
+    "name": "DelegationPackChip",
+    "kind": "chip",
+    "why": "Opens the recent chat lines prepared for this job."
+  },
+  {
+    "file": "src/components/DelegationPack.tsx",
+    "name": "DelegationPackLine",
+    "kind": "line",
+    "why": "Shows whether recent chat lines or only the note were prepared."
+  },
+  {
+    "file": "src/components/DelegationPack.tsx",
+    "name": "DelegationPackSheet",
+    "kind": "sheet",
+    "why": "Shows prepared rows through the owner reader under current forget."
+  }
+]

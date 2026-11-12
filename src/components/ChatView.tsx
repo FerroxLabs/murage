@@ -1,6 +1,9 @@
+import { EngineLimitRow } from "./EngineLimitRow";
+import { engineLimitNotice } from "../../shared/web-read-routing";
 import { LazyOverlay } from "@/components/LazyOverlay";
 import { bubbleSelector, activitySelector, messagesSelector } from "@/state/chat-row-selectors";
 import { useStoreActions, useStoreSelector, useStoreSnapshot } from "@/state/store";
+import { toolBudgetLabel } from "@/lib/tool-budget-copy";
 import { ThreadLinkProvider } from "@/components/ThreadLinkMenu";
 import { DoneWhenLine } from "./DoneWhenLine";
 import { hasDoneWhenLine } from "@/lib/done-when-line";
@@ -64,14 +67,14 @@ import { WidgetMessage } from "./widget/WidgetMessage";
 import { LAZY_RETRY_TEXT, retryableLazy } from "./LazyBoundary";
 import { claudeUpdateTarget } from "@/lib/claude-update";
 import { hermesPinNoteProfile, hermesPinNoteText } from "../../shared/hermes-pin-note";
-import { ProviderErrorCard } from "./ProviderErrorCard";
+import { FluxNotReadyCard, ProviderErrorCard } from "./ProviderErrorCard";
 import { RuntimeErrorCard } from "./RuntimeErrorCard";
+import { OPEN_MODEL_PICKER_EVENT } from "@/lib/local-models-view";
 import { GatewayBusyCard, gatewayBusyReason } from "./GatewayBusyCard";
-import type { ProviderErrorInfo } from "../../shared/provider-error";
+import { isCloudFluxLine, type ProviderErrorInfo } from "../../shared/provider-error";
 import type { IncidentMessageSelection } from "./DiagnosticDetails";
 import { BotAvatar } from "./Avatar";
 import { ChatHeader } from "./ChatHeader";
-import { ReconnectAppsBanner } from "./ReconnectAppsBanner";
 import { CommAvatar } from "./CommAvatar";
 import { TurnPresence } from "./TurnPresence";
 import { LiveThinking } from "./LiveThinking";
@@ -88,7 +91,7 @@ import { liveActivityLabel, modelStillThinking, turnStatusLabel } from "@/lib/li
 import { ChatMarkdown } from "./ChatMarkdown";
 import { LiveReplyBubble, useStreamPaint } from "./LiveReplyBubble";
 import { streamPaintText } from "@/lib/stream-paint";
-import { OptionCard, shouldHideOnboardingCard } from "./OptionCard";
+import { OptionCard, shouldHideOnboardingCard, permissionCardRenderable } from "./OptionCard";
 import { ApprovalCard } from "./ApprovalCard";
 import { QuestionCard } from "./QuestionCard";
 import { isQuestionCard } from "../../shared/questions";
@@ -197,6 +200,9 @@ import { JumpToLatestButton } from "./JumpToLatestButton";
 import { canScroll, describeKeyTarget, jumpScrollBehavior, jumpToLatestVisible, keyBreaksFollow, shortTranscriptReveal, useCanScroll } from "@/lib/transcript-viewport";
 import { t } from "@/lib/i18n";
 import { copyOrReport, useCopyFeedback } from "@/lib/copy-text";
+import { BotSignInOffer, ChatComposerGate, useChatSignIn } from "@/components/cloud/BotSignInOffer";
+import { fluxReadyOf, fuigoPendingHere, ownSignedInOf } from "@/lib/cloud-signin-status";
+import { isCloudHome } from "@/lib/cloud-workspace";
 
 /** Long user messages collapse behind a fade so pasted walls of text don't
  * bury the conversation; bots get full markdown. */
@@ -424,16 +430,25 @@ const ClaudeUpdatePrompt = retryableLazy(() => import("./ClaudeUpdatePrompt")).C
 // Find in this conversation loads when someone asks for it (Cmd+F).
 const ChatFindBar = retryableLazy(() => import("./ChatFindBar").then((module) => ({ default: module.ChatFindBar })));
 
-export function ErrorRow({ message, details, errorKind, localFailure, localFailureEngine, diagnostic, turnId, incident, onRetry, retryLabel, setupInstance, authRequired = false, claudeUpdateInstance, providerError, botName, onOpenProviderSettings, fuigoWall }: {
+export function ErrorRow({ message, details, errorKind, localFailure, localFailureEngine, diagnostic, turnId, incident, onRetry, retryLabel, setupInstance, ownSignedIn, authRequired = false, claudeUpdateInstance, providerError, botName, onOpenProviderSettings, fuigoWall, engineName, signInAgain }: {
+  /** The engine this bot runs on, named in the Cloud sign-in line. */
+  engineName?: string;
+  /** Cloud: the bot and its engine kind, for the sign-in again button on a 401 or 403 from the customer's own engine. */
+  signInAgain?: { bot: { id: string; name: string }; engine: string };
   /** 1.0.14 F0: the bot and the engine list, so a sign-in wall leads with "Use Fuigo instead" when Fuigo can answer. */
   fuigoWall?: FuigoWall;
   message: string; details?: string; errorKind?: string; localFailure?: string; localFailureEngine?: string; onRetry?: () => void; retryLabel?: string; setupInstance?: InstanceInfo; botName?: string; claudeUpdateInstance?: InstanceInfo;
+  /** On a Cloud home: whether THIS bot is signed in to its engine (its own line, not the home's). Undefined elsewhere. */
+  ownSignedIn?: boolean;
   authRequired?: boolean; providerError?: ProviderErrorInfo; diagnostic?: unknown; turnId?: string; incident?:IncidentMessageSelection; onOpenProviderSettings: () => void;
 }) {
   const [authRecovered, setAuthRecovered] = useState(false);
-  if (providerError) return <ProviderErrorCard info={providerError} details={details} diagnostic={diagnostic} turnId={turnId} incident={incident} onRetry={onRetry} retryLabel={retryLabel} onOpenProviderSettings={onOpenProviderSettings} fuigoWall={fuigoWall} botName={botName} />;
+  // A Cloud home's Flux refusal (the server words it: not ready, used-up month or service hold): that line alone, no settings button, no details.
+  if (isCloudHome() && isCloudFluxLine(message)) return <FluxNotReadyCard onRetry={onRetry} retryLabel={retryLabel} copy={message} />;
+  if (providerError) return <ProviderErrorCard engineName={engineName} signInAgain={signInAgain} info={providerError} details={details} diagnostic={diagnostic} turnId={turnId} incident={incident} onRetry={onRetry} retryLabel={retryLabel} onOpenProviderSettings={onOpenProviderSettings} fuigoWall={fuigoWall} botName={botName} />;
   const forceSignIn = authRequired && !authRecovered;
-  const needsSetup = setupInstance && (forceSignIn || !(setupInstance.snapshot.state === "available" && setupInstance.snapshot.authenticated !== false));
+  const signedIn = ownSignedIn ?? setupInstance?.snapshot.authenticated !== false;
+  const needsSetup = setupInstance && (forceSignIn || !(setupInstance.snapshot.state === "available" && signedIn));
   if (claudeUpdateInstance) {
     return <RuntimeErrorCard message={message} details={details} botName={botName} diagnostic={diagnostic} turnId={turnId} incident={incident} onOpenProviderSettings={onOpenProviderSettings}
       setup={<Suspense fallback={null}><ClaudeUpdatePrompt instance={claudeUpdateInstance} onRetry={onRetry} /></Suspense>} />;
@@ -1026,7 +1041,7 @@ function ActivityChip({ message, botName }: { message: Message; botName: string 
               <Check size={13} className="text-success" />
             )}
           </span>
-          <span data-testid="tool-chip-name" className={cn(CHIP_NAME, "font-mono")}>{loopNoticeLabel(tool.name) ?? tool.name}</span>
+          <span data-testid="tool-chip-name" className={cn(CHIP_NAME, "font-mono")}>{toolBudgetLabel(tool.name) ?? loopNoticeLabel(tool.name) ?? tool.name}</span>
           {noResult && <span data-testid="tool-chip-no-result" className="shrink-0">{t("toolChip.noResult")}</span>}
           {/* not mono: the argument reads as prose beside the tool's name, and
               inherits the chip's colour so a failed call stays one piece */}
@@ -1089,7 +1104,7 @@ function PagedScreenFrame({ threadId, messageId }: { threadId: string; messageId
  * the streaming tail below it commits. This is the t3code structural-sharing
  * idea at component granularity. */
 
-const MessagesList = memo(function MessagesList({
+export const MessagesList = memo(function MessagesList({
   bot,
   messages,
   transcript,
@@ -1099,6 +1114,7 @@ const MessagesList = memo(function MessagesList({
   emergingId,
   canRetryLast,
   engine,
+  ownSignedIn,
   onStartEdit,
   onCancelEdit,
   onSubmitEdit,
@@ -1121,6 +1137,8 @@ const MessagesList = memo(function MessagesList({
   canRetryLast: boolean;
   /** This bot's engine, for rendering setup help on a `setup` error. */
   engine: InstanceInfo | undefined;
+  /** On a Cloud home: this bot's own sign-in for its engine; undefined when the home did not say. */
+  ownSignedIn?: boolean;
   onStartEdit: (id: string) => void;
   onCancelEdit: (id: string) => void;
   onSubmitEdit: (id: string, text: string) => void;
@@ -1263,6 +1281,7 @@ const MessagesList = memo(function MessagesList({
             case "mcpSignIn":
               return m.mcpSignIn ? <McpSignInCard botId={bot.id} threadId={bot.threadId} message={m} /> : null;
             case "options":
+              if (!permissionCardRenderable(m)) return null;
               // A turn of the setup conversation is checked FIRST, before the
               // approval box and before any hide logic. It is neither a live
               // provider ask nor the retired first-run quiz, and both of the
@@ -1363,13 +1382,15 @@ const MessagesList = memo(function MessagesList({
               // ran without (or gains next time), visible with Tool calls off
               // the one-time O12 note on a Hermes bot pinned to its profile:
               // a quiet sentence, visible with Tool calls off (audit, Kimi 1)
+              const limit = engineLimitNotice(m.tool?.name);
+              if (limit) return <EngineLimitRow text={limit.text} />;
               const pinnedProfile = hermesPinNoteProfile(m.tool?.name);
               if (pinnedProfile) return <div className="flex justify-start"><div role="status" data-testid="hermes-pin-note" className="min-w-0 max-w-full rounded-2xl border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary [overflow-wrap:anywhere]">{hermesPinNoteText(pinnedProfile)}</div></div>;
               const trustNotice = folderTrustNotice(m.tool?.name);
               if (trustNotice) return <FolderTrustRow kind={trustNotice.kind} sources={trustNotice.sources} forgetKey={trustNotice.key} botId={bot.id} threadId={bot.threadId} />;
               // a turn that ran without its browser: a quiet note, not a card
               const browserReason = browserUnavailableReason(m.tool?.name);
-              if (browserReason) return <BrowserUnavailableRow reason={browserReason} botName={bot.name} />;
+              if (browserReason) return <BrowserUnavailableRow reason={browserReason} botName={bot.name} botId={bot.id} />;
               // a picture this bot's model cannot see, left out of the turn
               const imagesLeftOut = imagesLeftOutCount(m.tool?.name);
               if (imagesLeftOut) return <ImagesLeftOutRow botName={bot.name} count={imagesLeftOut} />;
@@ -1379,14 +1400,17 @@ const MessagesList = memo(function MessagesList({
               if (m.tool?.name.startsWith("error:")) {
                 // 1.0.18: a Fuigo / Flux refusal that is not a limit is ONE card (GatewayBusyCard), never a problem card plus a limit card.
                 const busyReason = gatewayBusyReason(m.tool.busy?.reason);
-                if (m.tool.busy && busyReason) return <GatewayBusyCard engine={m.tool.busy.engine} reason={busyReason} resetsAt={m.tool.busy.resetsAt} onRetry={m.id === messages.at(-1)?.id && canRetryLast ? onRegenerate : undefined} />;
+                if (m.tool.busy && busyReason) return <GatewayBusyCard engine={m.tool.busy.engine} reason={busyReason} resetsAt={m.tool.busy.resetsAt} waitSeconds={m.tool.busy.waitSeconds} shortReason={m.tool.busy.shortReason} onChooseAI={() => window.dispatchEvent(new CustomEvent(OPEN_MODEL_PICKER_EVENT))} onGetHelp={() => { dispatch({ type: "toggleAppSettings", open: true, section: "about", anchor: "diagnostics-heading" }); void window.muragebox?.exportDiagnostics?.().catch(error => raiseTransientError(dispatch, error instanceof Error ? error.message : String(error))); }} onRetry={m.id === messages.at(-1)?.id && canRetryLast ? onRegenerate : undefined} />;
                 return (
                   <ErrorRow
                     message={m.tool.name.slice(6).trim()}
                     botName={bot.name}
+                    engineName={engine?.displayName}
+                    signInAgain={engine?.driverKind ? { bot: { id: bot.id, name: bot.name }, engine: engine.driverKind } : undefined}
                     onRetry={m.id === messages.at(-1)?.id && canRetryLast ? onRegenerate : undefined}
                     setupInstance={m.tool.setup ? engine : undefined}
                     authRequired={m.tool.authRequired}
+                    ownSignedIn={ownSignedIn}
                     claudeUpdateInstance={m.tool.claudeUpdate ? claudeUpdateTarget(engine) : undefined}
                     details={m.tool.errorDetails}
                     errorKind={m.tool.errorKind}
@@ -1506,6 +1530,11 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const composerDock = useComposerDockPad();
+  // The bot's OWN sign-in for its engine (Cloud home only), the same lines the Connect panel shows. The poll and the composer gate
+  // judge the one engine this chat runs on.
+  const chatSignIn = useChatSignIn(bot, state.instances);
+  const signInLines = chatSignIn.lines;
+  const ownSignedIn = ownSignedInOf(signInLines, bot.id);
   // Where an active call's full-screen view portals to (src/lib/call-slot.ts).
   const callSlotRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -1987,7 +2016,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
       <CallBarStrip ownId={bot.id} ownThreadId={bot.threadId} />
 
       <WorkThreadNotice bot={bot} />
-      <ReconnectAppsBanner enabled={bot.composio !== false && state.config?.composio?.configured === true} />
+      <BotSignInOffer bot={bot} />
       {findOpen && <LazyOverlay name="chat-find" kind="dialog" covers="while-loading" onRetry={ChatFindBar.retry} onDismiss={() => setFindOpen(false)}><ChatFindBar.Component threadId={bot.threadId} onClose={() => setFindOpen(false)} /></LazyOverlay>}
 
       {/* Error banner */}
@@ -2022,7 +2051,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
         /* A phone gets a trim, not a margin: `px-5` is a desktop gutter, and
            on a 390px screen it spent 40px - a tenth of the screen - before
            the bubble's own padding had started. See transcript-width.human. */
-        className="h-full overflow-x-hidden overflow-y-auto overscroll-y-contain px-5 max-md:px-3 [overflow-anchor:none]"
+        className="h-full overflow-x-hidden overflow-y-auto overscroll-y-contain px-5 max-md:px-3 max-md:data-[scrolled]:[mask-image:linear-gradient(to_bottom,transparent,#000_16px)] [overflow-anchor:none]"
         onPointerDown={(e) => {
           // grabbing the scrollbar is a scroll gesture too - the lane lives
           // past the content box (clientWidth excludes it)
@@ -2043,6 +2072,8 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
           const el = scrollRef.current;
           if (!el) return;
           const scrollTop = el.scrollTop;
+          // the soft fade under the header only once there is text above the edge to fade (data-scrolled in the class list)
+          el.toggleAttribute("data-scrolled", scrollTop > 1);
           const fromBottom = el.scrollHeight - scrollTop - el.clientHeight;
           const resume = shouldResumeBottomFollow({
             following: followRef.current,
@@ -2097,6 +2128,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
             emergingId={popping?.id}
             canRetryLast={!bot.busy && Boolean(lastUserMessage) && canEditLine(lastUserMessage!)}
             engine={state.instances.find((i) => i.instanceId === bot.modelSelection.instanceId)}
+            ownSignedIn={ownSignedIn}
             onStartEdit={startEdit}
             onCancelEdit={cancelEdit}
             onSubmitEdit={submitEdit}
@@ -2189,6 +2221,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
         ref={composerDock.ref}
         className="dock-safe-bottom absolute inset-x-0 bottom-0 z-[2] flex max-h-full flex-col"
       >
+      <ChatComposerGate bot={bot} signIn={chatSignIn} fuigoPending={fuigoPendingHere({ cloud: isCloudHome(), fluxReady: fluxReadyOf(state.config), inUseEngine: chatSignIn.inUseEngine })}>
       <Composer
         key={bot.threadId}
         bot={bot}
@@ -2198,6 +2231,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
         onRestoreReply={restoreReply}
         onEditLast={lastUserMessage && canEditLine(lastUserMessage) && !bot.busy ? () => setEditingId(lastUserMessage.id) : undefined}
       />
+      </ChatComposerGate>
       </div>
       </div>
     </div>
